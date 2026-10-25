@@ -109,42 +109,19 @@ fn main() {
         }
         return;
     }
-    if entry == "inheritance-check" {
-        let cx = op(router.root_cancel());
-        let captured = std::env::var(effigy_kernel::inheritance::ENV)
-            .ok()
-            .and_then(|marker| {
-                effigy_kernel::inheritance::InheritedCapability::capture(&cx, &marker).ok()
-            });
-        let Some(capability) = captured else {
-            std::process::exit(41);
-        };
-        for _ in 0..3 {
-            if capability.payload::<serde_json::Value>(&cx).ok()
-                != Some(serde_json::json!({"admitted": true, "class": "foreground"}))
-            {
-                std::process::exit(42);
-            }
-        }
-        return;
-    }
-    if entry == "runtime-open" {
-        let cx = op(router.root_cancel()).effects().unwrap();
-        let grant = effigy_kernel::inheritance::RuntimeParent::inherited(cx.operation())
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            grant.class,
-            effigy_kernel::inheritance::RunClass::Foreground
+    if entry == "capability-free" {
+        // Nothing a run spawns carries a parent capability and nothing reads
+        // one: a child that opens a durable journal is an ordinary run.
+        assert!(std::env::var_os("EFFIGY_PARENT_CAPABILITY").is_none());
+        // SAFETY: F_GETFD only queries this process's descriptor table.
+        assert!(
+            unsafe { libc::fcntl(9, libc::F_GETFD) } < 0,
+            "slot 9 carries nothing"
         );
-        let home = Path::new(args.get(1).expect("private nonexistent fixture home"));
-        let location = effigy_kernel::migration::CheckoutLocation {
-            root: home.join("checkout"),
-            git_directory: None,
-        };
-        assert!(StateRoot::checkout_effects(&cx, &home.join("machine"), &location).is_err());
-        assert!(StateRoot::runtime_machine_effects(&cx, &home.join("machine")).is_err());
-        assert!(!home.exists());
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let home = Path::new(args.get(1).expect("private fixture home"));
+        let root = StateRoot::effects(&cx, home).unwrap();
+        effigy_kernel::store::Store::open(&cx, &root).unwrap();
         return;
     }
     if matches!(entry, "foreground-owner" | "foreground-tree-owner") {
@@ -564,7 +541,7 @@ fn engine_launch(home: &Path) -> EngineLaunch {
         payload: home.as_os_str().as_encoded_bytes().to_vec(),
         cwd: home.into(),
         env: vec![("FIXTURE_ENGINE_ENV".into(), "present".into())],
-        inheritance: SupervisorInheritance::ClientLease,
+
         handoff: None,
     }
 }

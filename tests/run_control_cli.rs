@@ -77,6 +77,21 @@ run = "for i in 1 2 3 4 5; do echo tick-$i; sleep 0.3; done; exit 2"
 
 [tasks.chatty]
 run = "i=1; while [ $i -le 60 ]; do echo line-$i; echo eline-$i >&2; i=$((i+1)); sleep 0.02; done; while [ ! -f release.txt ]; do sleep 0.05; done"
+
+[tasks.foreground-durable]
+run = "\"$EFFIGY_TEST_BIN\" --run-id nested-durable nested"
+
+[tasks.nested]
+run = "touch nested.txt"
+
+[tasks.nine-closed]
+run = "exec 9>&-; \"$EFFIGY_TEST_BIN\" nested"
+
+[tasks.nine-file]
+run = "exec 9>/dev/null; \"$EFFIGY_TEST_BIN\" nested"
+
+[tasks.nine-leaked]
+run = "EFFIGY_PARENT_CAPABILITY=memory-v1:9:0000000000000000000000000000000000000000000000000000000000000000 \"$EFFIGY_TEST_BIN\" nested"
 "#;
 
 /// Admits, then holds its slot until Effigy stops it at the run's end.
@@ -128,7 +143,6 @@ impl Fixture {
             .env_remove("EFFIGY_ADMISSION_HOOK")
             .env_remove("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS")
             .env_remove("EFFIGY_ADMITTED")
-            .env_remove("EFFIGY_PARENT_CAPABILITY")
             .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
             .env_remove("EFFIGY_CUSTODY_NONCE")
             .env_remove("EFFIGY_LOCK_WAIT_MS")
@@ -403,6 +417,89 @@ fn a_hook_timeout_or_crash_fails_closed_and_the_hook_never_outlives_the_run() {
         text(&output)
     );
     assert!(!fixture.exists("ran.txt"));
+}
+
+/// Q-011: a nested run is an ordinary invocation. A durable child of a
+/// foreground task step journals in this checkout; under parent-capability
+/// inheritance this was refused as a late durable effect in a foreground tree.
+#[test]
+fn a_nested_durable_run_from_a_foreground_task_step_journals() {
+    let fixture = Fixture::new();
+    git(&fixture.repo, &["init", "-q"]);
+    assert!(
+        !fixture.has_journal(),
+        "a foreground tree writes no journal"
+    );
+    let output = fixture.run(&["foreground-durable"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("nested.txt"), "the nested run executed");
+    assert!(
+        fixture.has_journal(),
+        "the nested durable run journalled in this checkout"
+    );
+    let listed = fixture.run(&["--json", "runs"]);
+    assert!(listed.status.success(), "{}", text(&listed));
+    let envelope: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("runs");
+    let runs = envelope["result"]["runs"].as_array().expect("runs");
+    assert!(
+        runs.iter()
+            .any(|run| run["task"] == "nested" && run["state"] == "succeeded"),
+        "{envelope}"
+    );
+}
+
+/// Q-011: the mechanism left no residue. A nested run whose slot 9 is closed,
+/// holds an unrelated descriptor, or was handed a leaked selector from an
+/// older launcher runs normally instead of refusing.
+#[test]
+fn a_nested_run_ignores_descriptor_nine_and_a_leaked_selector() {
+    for task in ["nine-closed", "nine-file", "nine-leaked"] {
+        let fixture = Fixture::new();
+        let output = fixture.run(&[task]);
+        assert!(output.status.success(), "{task}: {}", text(&output));
+        assert!(
+            fixture.exists("nested.txt"),
+            "{task}: the nested run executed"
+        );
+    }
+}
+
+/// Q-011: a child whose launcher was SIGKILLed still runs a nested Effigy
+/// normally, with an unrelated descriptor at slot 9 and a leaked selector in
+/// its environment. Both used to make the child refuse.
+#[test]
+fn a_nested_run_survives_a_sigkilled_launcher() {
+    let fixture = Fixture::new();
+    let script = fixture.repo.join("launcher.sh");
+    fs::write(
+        &script,
+        format!(
+            "exec 9>/dev/null\n( sleep 1; exec \"{}\" --run-id killed-parent nested ) &\nsleep 1\nkill -9 $$\n",
+            env!("CARGO_BIN_EXE_effigy")
+        ),
+    )
+    .expect("launcher script");
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg(&script)
+        .current_dir(&fixture.repo)
+        .env("HOME", &fixture.home)
+        .env("EFFIGY_TEST_BIN", env!("CARGO_BIN_EXE_effigy"))
+        .env(
+            "EFFIGY_PARENT_CAPABILITY",
+            format!("memory-v1:9:{}", "0".repeat(64)),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut launcher = command.spawn_owned().expect("launcher starts");
+    let status = wait_child(&mut launcher);
+    assert_eq!(status.signal(), Some(9), "the launcher was killed");
+    fixture.wait_for("the orphaned nested run", || fixture.exists("nested.txt"));
+    assert!(
+        fixture.has_journal(),
+        "the orphaned durable run journalled in this checkout"
+    );
 }
 
 #[test]

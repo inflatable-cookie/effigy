@@ -208,20 +208,25 @@ lifetime belongs to its invoking process/session even when it has no terminal.
 A run tree has one durability requirement: a durable descendant makes its
 foreground ancestors checkout-durable before the first effect. Local children
 of a durable run use that checkout journal. Late-bound scripts and adapters
-must declare durable capabilities before execution with `durable = true` on
-their task table. This includes test harnesses which exercise durable kernel
-operations or launch named/detached Effigy children from shell code. The default
-`false` permits foreground admission only when the remaining tree is local.
-A referenced durable task makes its ancestors durable too. Repository test launchers remove the selector’s parent
-capability before entering independent private fixture runtimes, preserving host
-admission. They do not change ordinary workload-child inheritance; tests of
-parent inheritance install their own native capabilities. A declared capability
-selects durability for the whole tree before workload go; discovering it after
-go refuses that effect rather than promoting a partially executed tree. There
-is no promotion after workload go and no silent fallback to the machine
-database. A container-free foreground
-build never opens either database for writing. Machine-store failure is not a
-foreground dependency; existing local predecessor evidence stays read-only.
+must declare durability before execution with `durable = true` on their task
+table. This includes test harnesses which exercise durable kernel operations or
+launch named/detached Effigy children from shell code. The default `false`
+permits foreground admission only when the remaining tree is local. A
+referenced durable task makes its ancestors durable too. A declared durable
+task selects the journal for the whole tree before workload go; there is no
+promotion after workload go and no silent fallback to the machine database. A
+container-free foreground build never opens either database for writing.
+Machine-store failure is not a foreground dependency; existing local
+predecessor evidence stays read-only.
+
+The durability class belongs to the invocation that declares it. A nested
+`effigy` is an ordinary invocation: it classifies its own tree, and a durable
+nested run journals in its own checkout. No process inherits or checks a
+"parent capability", so closing a descriptor, killing or sleeping the parent, a
+dead admission hook or a leaked environment variable never makes a nested run
+refuse. Tom, 2026-10-25 (Q-011): "Parent-capability inheritance
+(`EFFIGY_PARENT_CAPABILITY` plus fd 9) is removed. This reverses that part of
+the Q-010 kernel design."
 
 Foreground admission reads any existing checkout journal read-only for
 unresolved predecessors. Missing journal means none, and a journal that cannot
@@ -240,43 +245,26 @@ or fsyncs run metadata. Lock-file creation and best-effort diagnostic bytes
 are transient exclusion machinery, not durable run records. Task outputs and
 explicit user-requested exports are outside runtime-state accounting.
 
-The kernel's memory parent capability uses an anonymous Unix socket pair.
-Custody explicitly exports its reading end to reserved descriptor 9;
-native engine helpers receive a fresh allocated descriptor (at least 128),
-selected by the same verified marker, so std spawn-error pipes cannot be overwritten;
-the writing end never reaches a workload or group anchor. A bounded grant is
-peeked without consumption (short/nonblocking contention retries stay within
-25 ms and the caller deadline), checked against its environment selector, native
-peer UID/PID and fresh boot/start identity, with socket closure checked before
-and after. The receiver marks the inherited slot CLOEXEC; forwarding requires
-an explicit capability again. Queued bytes after owner closure grant nothing.
-A selector whose reserved descriptor is closed (`EBADF`) carries no grant: an
-intermediate process such as Bun, Node or Python's `subprocess` closed
-inherited descriptors. The invocation then runs as an independent one, with one
-notice, and never probes that slot again in the process (it may since hold an
-unrelated file). A present descriptor with a wrong, dead or mismatched grant
-still refuses.
-The typed runtime grant identifies its protocol purpose, run class, run id
-and optional native hook identity. Durable factories, journal open, supervisor
-launch and migration check the inherited grant before work. A supervisor
-launched for an environment-owned run inherits no grant at all (§10.2): the
-environment owns that run, not the starter's revocable lease. Lexical engine
-scopes impose the same restriction inside one process; dropping another scope
-cannot lift a live foreground restriction. An existing writable handle cannot
-write from a foreground scope. Already-admitted durable owners retain their
-fenced cleanup authority when a parent lease ends. Engines continue to own
-classification and live hook checks while workloads run.
+Admission nesting is one advisory environment fact. `EFFIGY_ADMITTED=<admitting
+run id>` is set on everything an admitted heavy run spawns; a heavy invocation
+that sees it does not call the admission hook again (contract
+[049](049-heavy-validation-admission-contract.md)). There is no liveness check
+and no other authority in it: a forged marker only lets a run skip the local
+orchestrator's queue, which is the orchestrator's risk on a single-user
+machine.
 
-A foreground grant also binds the device/inode identity of its guard's
-anonymous cleanup pipe, a live descriptor that never outlives the run, so no
-reboot can change it. Custody exports only a write-only pin in reserved
-descriptor 10. A descendant guard verifies that pipe against the native parent
-grant and retains a pin through its own settlement. Ancestor guards keep their
-gates until all pins close and EOF is observed. Pin bytes carry no protocol or
-heartbeat and confer no gate, journal-write or signalling authority; a pipe
-cannot be shut down to forge EOF while another guard still holds a pin. Unknown
-closure keeps the ancestor gated. The guard checks descriptor type and access
-before adopting it, and group anchors inherit neither a grant reader nor a pin.
+Custody of a run's own descendants is unaffected by that: process groups, the
+memory guard and the sentinel settle the tree the run started. Foreground
+descendant custody uses an anonymous cleanup pipe whose writing end the run
+keeps. Custody exports only a write-only copy in reserved descriptor 10. A
+descendant guard holds a pin through its own settlement, and ancestor guards
+keep their gates until all pins close and EOF is observed. Pin bytes carry no
+protocol or heartbeat and confer no gate, journal-write or signalling
+authority; a pipe cannot be shut down to forge EOF while another guard still
+holds a pin. Unknown closure keeps the ancestor gated. The guard checks
+descriptor type and access before adopting it, and group anchors receive no
+pin. A durable run with no memory guard keeps its checkout custody backup in
+the same way.
 
 Bound checkout admission always takes the filesystem owner alias alongside its
 persisted-token spelling and every verified import alias. The sentinel derives
@@ -385,8 +373,7 @@ a persisted predecessor check after all foreground evidence is lost. K6 and
 O1/O2 promise restartable closure only for durable runs; foreground loss is
 reported with the custody limits above. K7's foreground fence includes RunId.
 I-G4 permits a foreground owner gate across its workload; I-G5 requires memory
-closure before unlock for it. I-G6's helper-only inheritance exception above
-preserves exclusion during memory-guard cleanup. §5.6's store transactions,
+closure before unlock for it. §5.6's store transactions,
 requests, `Interrupted` projection and §5.8's journal-backed sentinel apply
 only to durable runs; an inline durable `--run-id` run still uses them. These
 are deliberate Q-010 changes, not claims of the former durability without I/O.
@@ -834,7 +821,7 @@ A write waits for its own bounded window, never for the caller's remaining
 deadline: at least 30 s for admission and effects, and up to two minutes for
 settle and outcome writes (K4). Opening a current store reads it and takes no
 write lock, so an ordinary run's admission is one short insert transaction.
-Class-capability and trust refusal rules are unchanged. SQLite opens files by
+Trust refusal rules are unchanged. SQLite opens files by
 path, so checkout `kernel.db` and machine `machine.db` are the K13 exceptions to
 descriptor-relative opens: the kernel creates or verifies it
 descriptor-relative inside the verified 0700 root (regular, operator-owned,
@@ -1124,7 +1111,7 @@ impl RouterHandle {
 ```
 
 A spawn may hand its child one short-lived reader at `HANDOFF_FD` (11), above
-the capability reader (9) and the cleanup pin (10). The child reads one framed
+the cleanup pin (10). The child reads one framed
 payload and closes it; the parent keeps no copy once the spawn returns, and the
 anchor process never holds it. That is how a session secret reaches an Effigy
 child without argv or a persistent environment (contract 032; effigy#338), and
@@ -2319,8 +2306,9 @@ Doctor additionally reports imported-but-missing roots, legacy-store cutover
 state and verified external resource residue; it performs no import, repair or
 numeric signalling. Queue admission does not reconstruct capacity from this
 view: the contract 049 hook receives cwd/root and holds a live process/pipe
-lease, with its own identity-verified grant and nested capability. No global
-run index or database scan is needed to decide whether that lease is live.
+lease, and a nested invocation sees the advisory `EFFIGY_ADMITTED` marker
+instead. No global run index or database scan is needed to decide whether that
+lease is live.
 
 ## 8. Host and guest model
 
@@ -2796,19 +2784,14 @@ and `--detach` are front ends over the same run. Row by row:
   log; `container status` projects the run, state and last exit. A v0.14.1
   PID/spec supervisor is stopped by its recorded identity on the next `up` or
   `down`, never by a process-name pattern.
-  That supervisor is launched with `SupervisorInheritance::Independent`: it
-  outlives the `up` that started it, so it never inherits that process's
-  parent capability. When `up` runs as a step of a durable task, that lease is
-  revoked with the task's custody; a supervisor that kept it failed its own
-  endpoint-store opens (`parent capability was revoked`), stopped the
-  listener and left the environment unsettled (effigy#332, Acow #756). A host
-  process's own heavy work still runs its own admission hook, so nothing
-  bypasses admission. A managed run's supervisor keeps
-  `SupervisorInheritance::ClientLease`: the client owns that run and its death
-  is the run's stop. A store or capability failure while supervising renders
-  as `RunError::StepFailed { step, cause }` — the store error with its cause
-  and a next step — never `RunError::Invalid` and never a "not a valid run
-  request" message.
+  That supervisor is an ordinary invocation: it outlives the `up` that started
+  it and keeps no authority from it (effigy#332, Acow #756). A host process's
+  own heavy work still runs its own admission hook, so nothing bypasses
+  admission. A managed run's supervisor likewise keeps nothing from its client
+  except the run it already owns. A store failure while supervising renders as
+  `RunError::StepFailed { step, cause }` — the store error with its cause and a
+  next step — never `RunError::Invalid` and never a "not a valid run request"
+  message.
   A listener route records the kernel run that published it. The next run of
   the same checkout scope reclaims a route only when this checkout's journal
   proves that recorded run settled — its run row closed, or its resource gate

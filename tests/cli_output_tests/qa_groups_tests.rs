@@ -23,7 +23,6 @@ fn fixture_command(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
     command.env("HOME", &home);
     for key in [
-        "EFFIGY_PARENT_CAPABILITY",
         "EFFIGY_CUSTODY_NONCE",
         "EFFIGY_PROBE_NONCE",
         "EFFIGY_ADMITTED",

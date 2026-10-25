@@ -93,9 +93,7 @@ impl effigy_builtin::HostSuiteCustody for SuiteCustody {
                 "the suite's run was already settled",
             ));
         };
-        let _scope = run
-            .enter()
-            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+        let _scope = run.enter();
         let exit = crate::runner::task_engine::run_plain(
             run,
             crate::runner::task_engine::PlainCommand {

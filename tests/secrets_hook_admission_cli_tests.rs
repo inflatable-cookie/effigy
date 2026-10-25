@@ -252,7 +252,7 @@ fn required_secret_task_without_a_declared_hook_stays_foreground() {
 }
 
 #[test]
-fn undeclared_late_durable_child_still_refuses_before_its_effects() {
+fn an_undeclared_late_durable_child_runs_and_journals() {
     let root = support::temp_workspace("effigy-hook-admission", "late-durable-child");
     let binary = env!("CARGO_BIN_EXE_effigy");
     fs::write(
@@ -269,19 +269,17 @@ run = "sh -lc 'printf inner > inner.out'"
     )
     .expect("write manifest");
 
+    // Q-011: a nested run is an ordinary invocation. The parent is a
+    // foreground tree, and the child classifies its own durability instead of
+    // being refused as a late durable effect.
     let run = effigy(&root, &["outer"]);
-    assert!(
-        !run.status.success(),
-        "a foreground tree cannot acquire an undeclared durable child"
-    );
-    let report = text(&run);
-    assert!(
-        report.contains("foreground parent cannot acquire late durable capabilities")
-            || report.contains("late durable effect refused"),
-        "unexpected refusal: {report}"
+    assert!(run.status.success(), "{}", text(&run));
+    assert_eq!(
+        fs::read_to_string(root.join("inner.out")).expect("nested body"),
+        "inner"
     );
     assert!(
-        !root.join("inner.out").exists(),
-        "the refused child's effect must never run: {report}"
+        ran_durable(&root),
+        "the nested durable run journalled in its own checkout"
     );
 }

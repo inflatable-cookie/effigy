@@ -490,11 +490,6 @@ fn start_host_processes_inner(
                     payload,
                     cwd: spec.cwd.clone(),
                     env: environment,
-                    // This supervisor outlives the `up` that started it, and
-                    // that `up` may itself be a step of a task whose revocable
-                    // lease ends with its custody. The environment owns this
-                    // run, not the starter's lease (effigy#332).
-                    inheritance: effigy_kernel::supervise::SupervisorInheritance::Independent,
                     handoff: None,
                 },
                 &executable,

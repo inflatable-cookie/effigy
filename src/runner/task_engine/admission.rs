@@ -10,9 +10,11 @@
 //! Effigy itself is killed (the sentinel settles). An orchestrator holds its
 //! slot for exactly as long as the hook process lives.
 //!
-//! `EFFIGY_ADMITTED` names an admission for diagnostics. Nested authority
-//! requires the anonymous parent capability and a verified live hook; no
-//! journal liveness or unreadable state grants admission. Failure, a crash and a timeout all fail closed.
+//! `EFFIGY_ADMITTED=<admitting run id>` is set on everything an admitted
+//! run spawns. A heavy invocation that sees it does not call the hook again;
+//! the marker is advisory, so there is no liveness check. Nothing else grants
+//! nested admission, and a hook failure, a crash or a timeout still fails
+//! closed for the run that had to call the hook.
 //!
 //! ## Admission protocol v2 (effigy#325)
 //!
@@ -117,31 +119,36 @@ impl Plan {
 /// Decides admission before the run begins; a malformed timeout refuses.
 pub(super) fn plan(class: Option<ManifestTaskAdmission>) -> Result<Plan, RunnerError> {
     verify_held()?;
-    let inherited = inherited_hook()?.is_some();
     decide(
         class,
         &held_marker(),
-        &|| inherited,
+        &inherited_marker(),
         &std::env::var(HOOK_ENV).ok(),
         &std::env::var(TIMEOUT_ENV).ok(),
     )
 }
 
+/// The marker an admitted run put in this process's environment. It is
+/// advisory evidence that this invocation already ran under an admission.
+fn inherited_marker() -> bool {
+    std::env::var_os(ADMITTED_ENV).is_some()
+}
+
 /// `plan` against explicit ambient state, in the order the decisions nest:
-/// the class, this thread's held admission, a live inherited one, the hook,
+/// the class, this thread's held admission, the inherited marker, the hook,
 /// then its timeout. Keeping it pure is what lets the proof put a marker on
 /// one thread and a heavy run on another.
 fn decide(
     class: Option<ManifestTaskAdmission>,
     held: &Option<String>,
-    inherited_live: &dyn Fn() -> bool,
+    inherited: &bool,
     hook: &Option<String>,
     timeout_ms: &Option<String>,
 ) -> Result<Plan, RunnerError> {
     if class.is_none() {
         return Ok(Plan::Run);
     }
-    if held.is_some() || inherited_live() {
+    if held.is_some() || *inherited {
         return Ok(Plan::Nested);
     }
     let command = match hook {
@@ -280,27 +287,11 @@ impl Drop for AdmissionScope {
     }
 }
 
-/// A journal row or environment marker never grants nested admission.
-/// The native capability's peer and the hook it names must both remain live.
-pub(super) fn inherited_hook() -> Result<Option<ProcessIdentity>, RunnerError> {
-    let grant = super::run::foreground::inherited_class()?;
-    if grant.is_none() && std::env::var_os(ADMITTED_ENV).is_some() {
-        return Err(RunnerError::task_invocation(
-            "inherited admission has no memory capability; drain older launchers before continuing",
-        ));
-    }
-    let hook = grant.and_then(|grant| grant.hook);
-    if let Some(hook) = &hook {
-        verify_hook(hook)?;
-    }
-    Ok(hook)
-}
+/// The hook this thread's run holds in process, if any. Only an in-process
+/// admission names a hook; an inherited marker is advisory and names none.
 pub(super) fn current_hook() -> Result<Option<ProcessIdentity>, RunnerError> {
     verify_held()?;
-    match HELD.with(|held| held.borrow().last().map(|(_, hook)| hook.clone())) {
-        Some(hook) => Ok(Some(hook)),
-        None => inherited_hook(),
-    }
+    Ok(HELD.with(|held| held.borrow().last().map(|(_, hook)| hook.clone())))
 }
 fn verify_hook(hook: &ProcessIdentity) -> Result<(), RunnerError> {
     if matches!(effigy_kernel::ident::process_identity(hook.pid), Observed::Verified(ref current, _) if current == hook)
@@ -323,9 +314,7 @@ pub(super) fn verify_held() -> Result<(), RunnerError> {
             verify_hook(hook)?;
         }
         Ok::<(), RunnerError>(())
-    })?;
-    inherited_hook()?;
-    Ok(())
+    })
 }
 
 /// The v2 report channel: the hook process both sides address, and the
@@ -391,9 +380,6 @@ pub(super) struct Admission {
 }
 
 impl Admission {
-    pub(super) fn identity(&self) -> ProcessIdentity {
-        lock(&self.core.hook).identity().identity
-    }
     pub(super) fn verify(&mut self) -> Result<(), RunnerError> {
         let mut hook = lock(&self.core.hook);
         if matches!(hook.poll(), Observed::Verified(..)) {
@@ -1194,7 +1180,6 @@ mod tests {
     #[test]
     fn a_held_admission_marker_belongs_to_the_thread_that_holds_it() {
         let hook = Some("/bin/true".to_owned());
-        let no_inherited = || false;
         push_marker(
             "run-held".to_owned(),
             effigy_kernel::ident::process_identity(std::process::id())
@@ -1208,7 +1193,7 @@ mod tests {
             decide(
                 Some(ManifestTaskAdmission::Heavy),
                 &held_marker(),
-                &no_inherited,
+                &false,
                 &hook,
                 &None
             ),
@@ -1224,7 +1209,7 @@ mod tests {
                     decide(
                         Some(ManifestTaskAdmission::Heavy),
                         &held_marker(),
-                        &|| false,
+                        &false,
                         &thread_hook,
                         &None
                     ),
@@ -1241,7 +1226,7 @@ mod tests {
             decide(
                 Some(ManifestTaskAdmission::Heavy),
                 &held_marker(),
-                &no_inherited,
+                &false,
                 &hook,
                 &None
             ),

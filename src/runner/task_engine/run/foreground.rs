@@ -1,60 +1,14 @@
-//! Memory-only task admission and explicit parent-class inheritance.
+//! Memory-only task admission for a foreground tree.
 use super::*;
 use effigy_kernel::custody::{Custody, Exit, OwnedProcess, ProcessSpec, SpawnError};
-use effigy_kernel::inheritance::{MemoryLease, RunClass, RuntimeParent};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::ForegroundRun;
 
-pub(in crate::runner::task_engine) fn inherited_class() -> Result<Option<RuntimeParent>, RunnerError>
-{
-    match RuntimeParent::inherited(kernel::effects().operation()) {
-        Ok(grant) => Ok(grant),
-        Err(error) => Err(start_refusal(
-            &error.to_string(),
-            super::super::pending_stop("a nested run's start").is_some(),
-        )),
-    }
-}
-/// A start that could not read its parent's capability reports what actually
-/// happened: a stop cancelled this process, or the capability refused it.
-///
-/// An ordinary `run stop` or Ctrl-C stops the parent's admission hook before
-/// the child reads it, so the capability's own sentence is `cancelled by
-/// SIGTERM`. That is this run's cancellation, not a refusal to act on
-/// (effigy#341).
-fn start_refusal(reason: &str, cancelled: bool) -> RunnerError {
-    if cancelled {
-        return RunnerError::task_invocation(format!(
-            "the run was cancelled before it started ({reason}); nothing was started"
-        ));
-    }
-    capability_error(reason)
-}
-/// The parent run's capability refused this child, or could not be read.
-///
-/// The evidence is the capability's own sentence; the next action is the
-/// top-level command that grants the child its own capability.
-fn capability_error(reason: &str) -> RunnerError {
-    RunnerError::task_invocation(format!(
-        "the parent run capability refused this child ({reason}); nothing was started. Run the child as its own top-level command, for example `effigy <task>`, so it owns its capability"
-    ))
-}
 /// This foreground run could not start; the evidence is the cause.
 fn start_error(reason: &str) -> RunnerError {
     RunnerError::task_invocation(format!(
         "this task run could not start ({reason}); nothing was started"
     ))
-}
-
-pub(super) fn require_durable_parent() -> Result<(), RunnerError> {
-    if PARENTS.with(|parents| parents.borrow().last().is_some_and(|p| p.memory.is_some()))
-        || inherited_class()?.is_some_and(|grant| grant.class == RunClass::Foreground)
-    {
-        return Err(capability_error(
-            "a foreground parent cannot acquire late durable capabilities",
-        ));
-    }
-    Ok(())
 }
 
 impl TaskRun {
@@ -71,15 +25,12 @@ impl TaskRun {
         task_gate: bool,
     ) -> Result<Self, RunnerError> {
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
-        let inherited = inherited_class()?;
-        if parent.as_ref().is_some_and(|parent| parent.run.is_some())
-            || inherited.is_some_and(|grant| grant.class != RunClass::Foreground)
-        {
+        if parent.as_ref().is_some_and(|parent| parent.run.is_some()) {
             return Self::begin_with(request, task_gate, LifecyclePlacement::Inline);
         }
         if request.key.is_some() || request.managed_run_token.is_some() {
-            return Err(capability_error(
-                "named and managed runs need a durable parent run",
+            return Err(start_error(
+                "a named or managed run needs a journal, and this tree keeps its record in memory",
             ));
         }
         let plan = super::super::admission::plan(request.admission)?;
@@ -158,8 +109,6 @@ impl TaskRun {
         let mut run = Self {
             run: None,
             memory: Some(Arc::new(Mutex::new(memory))),
-            lease: None,
-            prior_leases: Vec::new(),
             shared: None,
             target: request.target.clone(),
             ancestors,
@@ -174,26 +123,6 @@ impl TaskRun {
         Ok(run)
     }
 
-    pub(super) fn runtime_closure(
-        &self,
-    ) -> Result<Option<effigy_kernel::inheritance::ClosureIdentity>, RunnerError> {
-        match &self.memory {
-            Some(memory) => memory
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .closure_identity()
-                .map(Some)
-                .map_err(|e| start_error(&e.to_string())),
-            None => self
-                .run
-                .as_ref()
-                .ok_or_else(|| start_error("run is closed"))?
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .cleanup_closure_identity()
-                .map_err(|e| start_error(&e.to_string())),
-        }
-    }
     pub(in crate::runner) fn spawn(
         &mut self,
         spec: ProcessSpec,
@@ -213,43 +142,6 @@ impl TaskRun {
     ) -> Result<OwnedProcess, RunnerError> {
         self.verify_admission()?;
         let cx = kernel::effects();
-        let closure = self.runtime_closure()?;
-        if let Some(lease) = &self.lease {
-            let prior: RuntimeParent = lease
-                .capability()
-                .payload(cx.operation())
-                .map_err(|e| start_error(&e.to_string()))?;
-            if prior.closure != closure {
-                self.prior_leases
-                    .push(self.lease.take().expect("existing lease"));
-            }
-        }
-        if self.lease.is_none() {
-            self.lease = Some(
-                MemoryLease::new(
-                    &cx,
-                    &RuntimeParent::new(
-                        self.id(),
-                        if self.memory.is_some() {
-                            RunClass::Foreground
-                        } else {
-                            RunClass::CheckoutDurable
-                        },
-                        self.admission
-                            .as_ref()
-                            .map(|admission| admission.identity())
-                            .or(super::super::admission::current_hook()?),
-                    )
-                    .with_closure(closure),
-                )
-                .map_err(|error| start_error(&error.to_string()))?,
-            );
-        }
-        let capability = self
-            .lease
-            .as_ref()
-            .expect("lease constructed above")
-            .capability();
         // Under admission protocol v2 every workload group is reported — and
         // acknowledged — between its recorded receipt and its `go`. A refused
         // report leaves the child unexecuted and fails the run closed.
@@ -266,33 +158,21 @@ impl TaskRun {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match gate.as_mut() {
-                    Some(gate) => Custody::spawn_foreground_with_lease_gated(
+                    Some(gate) => {
+                        Custody::spawn_foreground_gated(&mut memory, spec, &cx, gate, handoff)
+                    }
+                    None => Custody::spawn_foreground_with_handoff(
                         &mut memory,
                         spec,
                         &cx,
-                        &capability,
-                        !auxiliary,
-                        gate,
-                        handoff,
-                    ),
-                    None => Custody::spawn_foreground_with_lease(
-                        &mut memory,
-                        spec,
-                        &cx,
-                        &capability,
                         !auxiliary,
                         handoff,
                     ),
                 }
             }
-            None => Custody::spawn_with_lease(
-                &mut *self.run_mut()?,
-                spec,
-                &cx,
-                &capability,
-                !auxiliary,
-                handoff,
-            ),
+            None => {
+                Custody::spawn_with_handoff(&mut *self.run_mut()?, spec, &cx, !auxiliary, handoff)
+            }
         };
         if let Some(error) = gate.as_mut().and_then(|gate| gate.take_failure()) {
             return Err(error);
@@ -404,8 +284,6 @@ impl TaskRun {
         Ok(Self {
             run: None,
             memory: Some(Arc::new(Mutex::new(memory))),
-            lease: None,
-            prior_leases: Vec::new(),
             shared: None,
             target,
             ancestors,
@@ -451,34 +329,5 @@ pub(super) fn close_memory(
             warnings.push(format!("foreground settle: {error}"));
             (None, warnings)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A stop that cancelled this process while it read its parent's
-    /// capability reports cancellation: an ordinary `run stop` or Ctrl-C never
-    /// prints a capability refusal (effigy#341).
-    #[test]
-    fn a_cancelled_start_reports_cancellation_not_a_refusal() {
-        let error = start_refusal("cancelled by SIGTERM", true);
-        let text = error.to_string();
-        assert!(text.contains("cancelled before it started"), "{text}");
-        assert!(!text.contains("capability"), "{text}");
-        assert_eq!(error.task_exit_status(), None);
-    }
-
-    /// A capability that really refused the child still says so, with the
-    /// command that grants it its own.
-    #[test]
-    fn a_refused_capability_still_names_its_reason() {
-        let text = start_refusal("unsupported runtime parent grant", false).to_string();
-        assert!(
-            text.contains("the parent run capability refused this child"),
-            "{text}"
-        );
-        assert!(text.contains("unsupported runtime parent grant"), "{text}");
     }
 }
