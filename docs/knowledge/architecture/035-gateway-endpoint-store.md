@@ -107,20 +107,12 @@ route can obtain a new proof under the current fence. A changed or withdrawn
 route refuses the old request. Requests never wait for a retired worker to
 replenish a socket, and refreshing a fence never reuses its old ownership proof.
 
-Managed connections are prepared and fully verified by background workers before
-request code can acquire them. Request code never invokes the process table,
-ancestry or socket inventory. It checks the bounded supervisor readiness record
-and direct kernel identities for the three recorded PIDs, including on a reused
-HTTP connection. Thus a supervisor's unavailable record or a reused PID refuses
-immediately. The connected socket stays attached to the peer that was verified;
-a reconnect cannot consume an unverified connection on a reused port.
-
-Until the supervisor's claim revocation is represented directly in the kernel,
-background workers repeat the full liveness proof once per second and before
-publishing a newly prepared socket. An observation older than three seconds or
-any Unknown/error refuses traffic. Workers are owned by the proxy lifetime and
-canceled with it. This bounded cache is the interim liveness seam; the Store
-remains the sole persistent endpoint authority.
+A managed host-listener route is forwarded to its published target exactly like
+a container route: one connection pool per published route identity, no
+per-connection process check, and no second copy of the listener's liveness
+proof. The supervisor owns that liveness: it probes the reserved port every five
+seconds, withdraws the route after three consecutive misses and republishes it
+when the port answers again.
 
 The daemon runs its bounded HTTP/DNS self-test on a blocking worker, allowing
 the runtime to poll the same servers under test before identity publication.

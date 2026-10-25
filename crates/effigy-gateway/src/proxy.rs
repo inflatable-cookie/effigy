@@ -529,18 +529,6 @@ async fn handle_request(
             return Ok(no_route_response(&host));
         }
     };
-    if route
-        .managed_listener
-        .as_ref()
-        .is_some_and(|owner| owner.address != target)
-    {
-        GatewayStats::inc(&stats.upstream_errors);
-        return Ok(error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Managed listener route target does not match its recorded address",
-        ));
-    }
-
     // Check for WebSocket upgrade.
     if is_websocket_upgrade(&req) {
         GatewayStats::inc(&stats.websocket_upgrades);
@@ -694,11 +682,7 @@ async fn handle_websocket_upgrade(
         Ok(stream) => stream,
         Err(error) => {
             return Ok(error_response(
-                if error.kind() == std::io::ErrorKind::PermissionDenied {
-                    StatusCode::SERVICE_UNAVAILABLE
-                } else {
-                    StatusCode::BAD_GATEWAY
-                },
+                StatusCode::BAD_GATEWAY,
                 &format!("WebSocket upstream is unavailable: {error}"),
             ))
         }

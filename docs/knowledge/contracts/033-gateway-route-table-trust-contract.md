@@ -32,9 +32,16 @@ State what a route claim is and why there is no separate trust verdict.
    recorded owner is provably gone: its checkout path no longer exists, or its
    target does not accept a TCP connection within 200 ms. Otherwise the write
    is refused, naming the other checkout and the command that stops it.
-3. **Route targets name the publishing port.** A target is the host port the
-   running container publishes, read back after `up`. A route never names a
-   port Effigy reserved or guessed.
+3. **Route targets name the publishing port.** A container route's target is
+   the host port the running container publishes, read back after `up`; a route
+   never names a port Effigy guessed.
+4. **A managed listener route names its address, not the process behind it.**
+   It carries its owner token, its supervisor and child generations and the
+   loopback address handed to the listener; the proxy forwards it like any
+   other route, including WebSocket upgrades. A listener is live while that
+   port answers, and the supervisor withdraws the route when it stops
+   answering. This data never authorizes the daemon to launch or signal a
+   process, and a static `target_host` route stays external route intent.
 
 ## What changed from v0.14
 

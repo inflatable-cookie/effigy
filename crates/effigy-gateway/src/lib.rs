@@ -37,7 +37,6 @@ pub mod error;
 pub mod identity;
 pub mod listener_handoff;
 pub mod loopback;
-pub mod managed_listener;
 pub mod operator;
 pub mod ports;
 pub mod private_state;
