@@ -1699,14 +1699,34 @@ fn supervise_managed_host_listener(
         }
         match liveness.poll() {
             Some(true) => {
-                state.write("ready")?;
-                append_log_line(
-                    &log_path,
-                    &format!(
-                        "[effigy host-process] listener `{}` answers again at {address}",
-                        spec.process_name
-                    ),
-                );
+                // The port answers again: republish the route this generation
+                // had withdrawn. A failed republication keeps the generation
+                // withdrawn and is retried on the next answer, so a gateway
+                // store that is briefly unavailable never costs the child.
+                match publish_managed_listener_route(spec, listener, &owner) {
+                    Ok(()) => {
+                        state.route_owner = Some(owner.clone());
+                        state.write("ready")?;
+                        append_log_line(
+                            &log_path,
+                            &format!(
+                                "[effigy host-process] listener `{}` answers again at {address}; route republished",
+                                spec.process_name
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        state.route_owner = None;
+                        state.write("unavailable")?;
+                        append_log_line(
+                            &log_path,
+                            &format!(
+                                "[effigy host-process] listener `{}` answers at {address} but its route could not be republished: {error}",
+                                spec.process_name
+                            ),
+                        );
+                    }
+                }
             }
             Some(false) => {
                 // Three consecutive misses: withdraw the route and keep the

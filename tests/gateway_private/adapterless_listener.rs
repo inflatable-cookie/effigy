@@ -657,3 +657,124 @@ fn managed_host_listener_probe_miss_does_not_restart_the_child() {
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
     assert_success(down);
 }
+
+/// Three consecutive liveness misses withdraw the route; when the port
+/// answers again the same generation republishes it. The child is never
+/// restarted, so its generation and pid stay the same throughout.
+#[test]
+fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let setup = AdapterlessSetup::start(fixture, &effects, &foreign_ca, &mut gateway_cleanup);
+    let profile = "adapterless-republish";
+    let domain = "adapterless-republish.host.test";
+    let manifest = format!(
+        "[[containers.web.host_processes]]\nname = {}\nrun = 'exec python3 server.py'\nrestart = \"always\"\nrestart_delay_ms = 100\n\n{}",
+        toml_quote(LISTENER_NAME),
+        listener_declaration(domain, "127.0.0.1:0", 30)
+    );
+    let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
+    fs::write(
+        checkout.join("server.py"),
+        format!(
+            "{}\nimport threading, time\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    time.sleep(3)\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    time.sleep(25)\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
+            plain_server("answered again")
+        ),
+    )
+    .expect("fixture server script");
+    let cleanup = setup.cleanup(&effects, &checkout, profile);
+    let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
+    let log_path = listener_log_path(&checkout, profile, LISTENER_NAME);
+    let routes_path = setup.private_gateway.join("routes.json");
+
+    parse_json_success(run_container_cli(
+        &checkout,
+        &cleanup,
+        &["up", "--detach", "--json"],
+    ));
+    let state = read_json_file(&state_path);
+    assert_eq!(state["status"], "ready", "{state}");
+    let generation = state["generation"].clone();
+    let child_pid = state["child_pid"].clone();
+    let address = state["address"]
+        .as_str()
+        .expect("published address")
+        .to_owned();
+    assert_eq!(
+        curl_https(setup.https_address, &setup.ca_path, domain, "/"),
+        "answered again"
+    );
+
+    // The port is silent for 25 seconds: at least three consecutive five-second
+    // probes miss, so the route is withdrawn.
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let published = RouteTable::load(&routes_path)
+            .expect("published routes")
+            .lookup(domain)
+            .is_some();
+        if !published {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "three consecutive probe misses never withdrew the route: state={:?}",
+            read_json_file(&state_path)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    let withdrawn = read_json_file(&state_path);
+    assert_eq!(withdrawn["status"], "unavailable", "{withdrawn}");
+    assert!(withdrawn["route_owner"].is_null(), "{withdrawn}");
+    assert_eq!(withdrawn["generation"], generation, "{withdrawn}");
+    assert_eq!(withdrawn["child_pid"], child_pid, "{withdrawn}");
+    wait_for_file_contains(&log_path, "route withdrawn", Duration::from_secs(10));
+
+    // The port answers again: the same generation republishes the route.
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let republished = RouteTable::load(&routes_path)
+            .expect("published routes")
+            .lookup(domain)
+            .cloned();
+        if republished
+            .as_ref()
+            .is_some_and(|route| route.target.as_deref() == Some(address.as_str()))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "an answering listener never republished its route: state={:?}",
+            read_json_file(&state_path)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    let republished = read_json_file(&state_path);
+    assert_eq!(republished["status"], "ready", "{republished}");
+    assert_eq!(republished["generation"], generation, "{republished}");
+    assert_eq!(republished["child_pid"], child_pid, "{republished}");
+    assert_eq!(
+        republished["route_owner"]["generation"], generation,
+        "the republished route names the same generation: {republished}"
+    );
+    wait_for_file_contains(&log_path, "route republished", Duration::from_secs(10));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+        if body.contains("answered again") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the republished route never reached the listener: {body}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    assert_success(down);
+}
