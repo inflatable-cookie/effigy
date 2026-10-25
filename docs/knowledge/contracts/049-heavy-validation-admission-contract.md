@@ -127,6 +127,18 @@ Downgrade means unsetting it; nothing else changes.
 Under v2 the request is `effigy.admission-request.v2`, carrying every v1 field
 plus `"protocol": 2`.
 
+**v2 is the foreground class's protocol.** Its `custodians` report names the
+memory guard, and only a foreground run has one (Q-010); a durable run keeps a
+journal sentinel instead and already records its own run row. A durable run —
+`--run-id`, or a run inside a durable parent tree — therefore refuses v2
+**before the hook starts**, with the existing `effigy.admission.v1` `failed`
+error naming `EFFIGY_ADMISSION_PROTOCOL` and its next action ("unset it for
+this run, or run it without `--run-id`"). Reporting an incomplete custodian
+set would be worse than no report, and silently downgrading to v1 would let a
+provider believe it had coverage it does not have. With the variable unset, a
+durable run is admitted exactly as today. The terminal record below is
+foreground-only for the same reason.
+
 ### Reports and acknowledgements
 
 Under v2 Effigy writes newline-delimited `effigy.admission-event.v1` JSON
@@ -338,6 +350,7 @@ Queue's migration to the hook is described in
 | Guarantee | Proof |
 | --- | --- |
 | Hook admit, hold, release; deny; timeout; crash; nested marker; no-hook default; `qa`/`ci` | `test:run-control:cli` |
+| v2 refuses a durable run before the hook starts; the same run without the opt-in is admitted as v1 | `test:run-control:cli` (`admission_protocol_v2_refuses_a_durable_run_before_the_hook`) |
 | v1 stays byte for byte: unchanged request, stdin at EOF, no journal | `test:run-control:cli` (`admission_protocol_v1_stays_byte_identical_without_the_opt_in`) |
 | v2 reports every workload group with its real PGID and leader, the group's first effect only after its ack, one terminal report, and the `run status`/`runs` terminal record | `test:run-control:cli` (`admission_protocol_v2_reports_every_workload_group_and_the_terminal_result`) |
 | v2 fails closed for a missing ack, hook EOF, a malformed ack and a write failure | `test:run-control:cli` (`admission_protocol_v2_fails_closed_when_a_report_is_not_acknowledged`) |

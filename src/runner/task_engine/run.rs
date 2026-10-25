@@ -673,6 +673,13 @@ impl TaskRun {
         }
     }
 
+    /// Whether this run's custody is the memory class (contract 052 Q-010):
+    /// the only class admission protocol v2 can report custodians for, since
+    /// a durable run's sentinel is not a memory guard.
+    pub(in crate::runner) fn is_memory_class(&self) -> bool {
+        self.memory.is_some()
+    }
+
     /// The run's own identity and its memory guard's, the two custodians a
     /// v2 admission reports before any workload spawns. In-process work runs
     /// inside the owner and dies with it, so the owner covers it.

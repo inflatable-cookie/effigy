@@ -628,26 +628,6 @@ impl Custody {
             Some(gate),
         )
     }
-    /// `spawn_with_lease` with a gate between the recorded receipt and `go`.
-    pub fn spawn_with_lease_gated(
-        run: &mut Run<'_>,
-        spec: ProcessSpec,
-        cx: &EffectContext,
-        lease: &crate::inheritance::InheritedCapability,
-        required: bool,
-        gate: &mut dyn SpawnGate,
-    ) -> Result<OwnedProcess, SpawnError> {
-        Self::spawn_inner(
-            run,
-            spec,
-            cx,
-            None,
-            crate::ctx::Capability::AdapterEffect,
-            required,
-            Some(lease),
-            Some(gate),
-        )
-    }
     // Every parameter is a distinct spawn knob the public entry points set;
     // the gate is the one an engine adds between receipt and `go`.
     #[allow(clippy::too_many_arguments)]

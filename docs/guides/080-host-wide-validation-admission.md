@@ -66,6 +66,11 @@ opts that launcher in to a second protocol; v1 consumers are untouched, since
 without the variable the request, stdin and behaviour are exactly what they
 were. Any other value refuses the run, naming the variable.
 
+v2 is for foreground runs, because its first report names the memory guard
+that keeps a foreground run's custody. A durable run (`--run-id`) refuses v2
+before the hook starts, naming the variable: unset it for those runs; they
+already record their own run row.
+
 Under v2 the request is `effigy.admission-request.v2` (every v1 field plus
 `"protocol": 2`), and Effigy sends newline-delimited
 `effigy.admission-event.v1` reports to the hook's **stdin**. Each report must

@@ -1219,3 +1219,60 @@ fn admission_protocol_v2_reported_identity_grants_no_signal_or_reclaim() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+/// Protocol v2 reports the foreground memory guard as a custodian, so it is an
+/// opt-in for that class only. A durable `--run-id` run refuses it before the
+/// hook starts: an incomplete custodian report would be worse than no report,
+/// and the durable journal already records the run.
+#[test]
+fn admission_protocol_v2_refuses_a_durable_run_before_the_hook() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(&fixture, "durable-v2.sh", "", "");
+    let output = fixture
+        .effigy(&["--json", "--run-id", "durable-v2", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", hook)
+        .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+        .output_owned()
+        .expect("effigy runs");
+    assert!(!output.status.success(), "{}", text(&output));
+    let envelope = json_of(&String::from_utf8_lossy(&output.stdout));
+    let details = &envelope["error"]["details"];
+    assert_eq!(details["schema"], "effigy.admission.v1");
+    assert_eq!(details["decision"], "failed");
+    let reason = details["reason"].as_str().expect("reason");
+    assert!(
+        reason.contains("EFFIGY_ADMISSION_PROTOCOL") && reason.contains("durable"),
+        "{details}"
+    );
+    assert!(
+        details["next_action"]
+            .as_str()
+            .is_some_and(|next| next.contains("EFFIGY_ADMISSION_PROTOCOL")),
+        "{details}"
+    );
+    assert!(!fixture.exists("ran.txt"), "the workload never ran");
+    assert!(
+        !fixture.exists("hook.log") && !fixture.exists("hook.log.request"),
+        "the hook never started"
+    );
+
+    // Without the opt-in the same durable run is admitted exactly as before.
+    let v1 = fixture.hook(
+        "durable-v1.sh",
+        r#"#!/bin/sh
+printf '%s' "$EFFIGY_ADMISSION_REQUEST" > "$HOOK_LOG"
+trap 'exit 0' TERM
+echo admit
+while :; do sleep 0.1; done
+"#,
+    );
+    let output = fixture
+        .effigy(&["--run-id", "durable-v1", "heavy"])
+        .env("EFFIGY_ADMISSION_HOOK", v1)
+        .output_owned()
+        .expect("effigy runs");
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("ran.txt"));
+    let request = json_of(&fixture.read("hook.log"));
+    assert_eq!(request["schema"], "effigy.admission-request.v1");
+}

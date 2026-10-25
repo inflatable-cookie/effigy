@@ -492,7 +492,10 @@ During v0.x, MINOR bumps may include breaking changes.
   "foreground-terminal-record.v1"`, `checkout_id` and `boot`. The row carries
   no process identity: it is evidence for the provider's own lease, never
   authority for Effigy to signal or reclaim, and runs without the opt-in keep
-  Q-010 unchanged (no journal write at all). Contracts 049 and 052 §3.1 define
+  Q-010 unchanged (no journal write at all). v2 is the foreground class's
+  protocol: its `custodians` report names the memory guard, so a durable
+  `--run-id` run refuses the opt-in before the hook starts instead of
+  reporting an incomplete custodian set. Contracts 049 and 052 §3.1 define
   the protocol, the coverage witness, and Tom's 2026-10-24 release ruling.
 - Host processes are environment-owned kernel runs (effigy#320).
   `[[containers.<env>.host_processes]]` no longer start a `setsid` supervisor

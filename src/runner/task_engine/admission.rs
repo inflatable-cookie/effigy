@@ -588,6 +588,23 @@ pub(super) fn admit(
             return Err(refused("failed", reason));
         }
     };
+    if protocol == Protocol::V2 && !run.is_memory_class() {
+        // v2's custodians report names the memory guard, which only a
+        // foreground run has. A durable run has a journal sentinel instead,
+        // so reporting a custodian set would be incomplete: refuse before the
+        // hook starts rather than run under a protocol Effigy cannot witness.
+        let reason = format!(
+            "`{PROTOCOL_ENV}` selects the reported custody protocol, which reports the \
+             foreground memory guard as a custodian; this run is durable (`--run-id` or a \
+             durable parent tree), so its custodian set cannot be reported"
+        );
+        let next = format!("unset `{PROTOCOL_ENV}` for this run, or run it without `--run-id`");
+        effigy_ui::steps::step(&admission_wait_label(&target.label, None)).fail(&format!(
+            "heavy admission for `{}` was refused: {reason}",
+            target.label
+        ));
+        return Err(refusal_with(target, &run_id, "failed", reason, next));
+    }
     let mut request = serde_json::json!({
         "schema": REQUEST_SCHEMA,
         "run_id": run_id,
@@ -1096,6 +1113,18 @@ fn refusal(target: &TaskTarget, run_id: &str, decision: &str, reason: String) ->
     let next_action = format!(
         "check the admission hook `{HOOK_ENV}`, or unset it to run without host-wide admission"
     );
+    refusal_with(target, run_id, decision, reason, next_action)
+}
+
+/// A refusal with a next action of its own: some refusals are about the
+/// launcher's configuration rather than a misbehaving hook.
+fn refusal_with(
+    target: &TaskTarget,
+    run_id: &str,
+    decision: &str,
+    reason: String,
+    next_action: String,
+) -> RunnerError {
     let detail = format!(
         "heavy task `{}` was not admitted (run {run_id}): {reason}. The task did not run; \
          admission fails closed\nnext: {next_action}",
