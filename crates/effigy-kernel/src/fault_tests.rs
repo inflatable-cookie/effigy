@@ -638,9 +638,13 @@ fn store_path_safety_wrong_owner_refuses_mutate_and_reads_unknown() {
         StateRoot::observe(&observe(), home.path()),
         Observed::Unknown(UnknownReason::Untrusted(_))
     ));
+    // An observed refusal carries the operator's whole sentence, not the bare
+    // reason: the host reads the path, the fault and the recovery together.
     assert!(matches!(
         read_record::<Text>(&observe(), &dir, &name("record")),
-        Observed::Unknown(UnknownReason::Untrusted(reason)) if reason == "wrong owner"
+        Observed::Unknown(UnknownReason::Untrusted(reason))
+            if reason.contains("not trusted store state (wrong owner)")
+                && reason.contains("fix its ownership and permissions")
     ));
     assert!(matches!(
         Store::read(&observe(), &root),
