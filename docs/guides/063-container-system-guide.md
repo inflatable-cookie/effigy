@@ -494,13 +494,20 @@ keeps the declared name. A listener result looks like this:
 
 Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact loopback address
 (the reserved port for a `:0` declaration), `HOST` and `PORT` to that address
-and port unless the process declares its own, `EFFIGY_HOST_PROCESS_PUBLIC_URL`
+and port, `EFFIGY_HOST_PROCESS_PUBLIC_URL`
 and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and reserved
 endpoint, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` to a private report path,
 and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` to the current child generation.
 Effigy verifies that the reported socket is exactly the address it reserved,
 belongs to the current child generation, and accepts connections before it
 publishes the route.
+
+`HOST` and `PORT` are the address Effigy reserved and verified, so they replace
+an ambient `HOST`/`PORT` inherited from the shell Effigy was started in: a
+server that reads them binds the port the gateway route points at. Only a value
+the manifest itself declares outranks them (for example an adapter that must
+see a specific `HOST`), and `EFFIGY_MANAGED_HOST_LISTENER_BIND` always carries
+the reserved address unconditionally.
 The adapter must bind strictly to the requested address and write the report
 after the socket is listening. Readiness is an HTTP `GET` to the configured
 path with the effective route domain as `Host`; only the configured status makes the

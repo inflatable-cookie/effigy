@@ -488,8 +488,10 @@ During v0.x, MINOR bumps may include breaking changes.
   loads, so a typo fails naming the `env` key and the valid names; values
   resolve at start, after Prepare assigned published ports and after every
   declared service reported ready. A listener process now receives its own
-  `EFFIGY_HOST_PROCESS_PUBLIC_URL`/`EFFIGY_HOST_PROCESS_INTERNAL_URL`,
-  `HOST`/`PORT`, and the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`, with
+  `EFFIGY_HOST_PROCESS_PUBLIC_URL`/`EFFIGY_HOST_PROCESS_INTERNAL_URL`, the
+  reserved address as `HOST`/`PORT` (replacing an ambient value; only a value
+  the manifest declares wins), and the active gateway's CA in
+  `EFFIGY_GATEWAY_CA_FILE`, with
   `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` filled in only when the operator
   has not set them. A `bind = "127.0.0.1:0"` listener gets a concrete port
   reserved through the gateway endpoint store before launch: the port survives

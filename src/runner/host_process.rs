@@ -1399,8 +1399,42 @@ fn spawn_generation(
     dependency_env: &[(String, String)],
     listener: Option<(&str, &Path, &str)>,
 ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
-    use effigy_kernel::custody::{Custody, EnvValue, Lifetime, ProcessSpec, Terminal};
-    let mut environment: BTreeMap<OsString, EnvValue> = std::env::vars_os()
+    use effigy_kernel::custody::{Custody, Lifetime, ProcessSpec, Terminal};
+    let environment = child_environment(std::env::vars_os(), spec, dependency_env, listener);
+    let process = ProcessSpec {
+        argv: vec![
+            OsString::from("/bin/sh"),
+            OsString::from("-c"),
+            OsString::from(spec.run.clone()),
+        ],
+        cwd: spec.cwd.clone(),
+        env: environment,
+        grace: Duration::from_secs(spec.shutdown_grace_secs.max(1)),
+        lifetime: Lifetime::Open(effigy_kernel::ctx::OpenReason::DevServer),
+        terminal: Terminal::Inherit { capture: false },
+        label: spec.process_name.clone(),
+    };
+    Custody::spawn_auxiliary(run, process, cx)
+}
+
+/// The complete environment one generation receives, with its two inputs
+/// supplied so the precedence is provable without mutating this process's
+/// environment.
+///
+/// Highest first: the process's declared `env`, its dependency endpoints, the
+/// reserved listener `HOST`/`PORT`, Effigy's listener and process identity
+/// variables, then the ambient environment the supervisor was started with.
+/// `HOST`/`PORT` from a reserved bind replace an ambient value because the
+/// process must serve the port Effigy reserved and verified; only a value the
+/// manifest itself declares outranks them.
+fn child_environment(
+    ambient: impl Iterator<Item = (OsString, OsString)>,
+    spec: &HostProcessRuntimeSpec,
+    dependency_env: &[(String, String)],
+    listener: Option<(&str, &Path, &str)>,
+) -> BTreeMap<OsString, effigy_kernel::custody::EnvValue> {
+    use effigy_kernel::custody::EnvValue;
+    let mut environment: BTreeMap<OsString, EnvValue> = ambient
         .map(|(key, value)| (key, EnvValue::Plain(value)))
         .collect();
     for (key, value) in &spec.env {
@@ -1431,31 +1465,22 @@ fn spawn_generation(
             EnvValue::Plain(OsString::from(generation)),
         );
         // Effigy reserved this listener's concrete port, so the process
-        // receives it as `HOST`/`PORT` (effigy#321). A value the manifest
+        // receives it as `HOST`/`PORT` (effigy#321). The reserved address
+        // outranks an ambient value, because the process must serve the port
+        // Effigy reserved and then verified; only a value the manifest itself
         // declares is the process's own decision and wins.
         if let Ok(address) = bind.parse::<SocketAddr>() {
-            environment
-                .entry(OsString::from("HOST"))
-                .or_insert_with(|| EnvValue::Plain(OsString::from(address.ip().to_string())));
-            environment
-                .entry(OsString::from("PORT"))
-                .or_insert_with(|| EnvValue::Plain(OsString::from(address.port().to_string())));
+            for (key, value) in [
+                ("HOST", address.ip().to_string()),
+                ("PORT", address.port().to_string()),
+            ] {
+                if !spec.env.contains_key(key) {
+                    environment.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
+                }
+            }
         }
     }
-    let process = ProcessSpec {
-        argv: vec![
-            OsString::from("/bin/sh"),
-            OsString::from("-c"),
-            OsString::from(spec.run.clone()),
-        ],
-        cwd: spec.cwd.clone(),
-        env: environment,
-        grace: Duration::from_secs(spec.shutdown_grace_secs.max(1)),
-        lifetime: Lifetime::Open(effigy_kernel::ctx::OpenReason::DevServer),
-        terminal: Terminal::Inherit { capture: false },
-        label: spec.process_name.clone(),
-    };
-    Custody::spawn_auxiliary(run, process, cx)
+    environment
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3495,6 +3520,112 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("DATABASE_URL"), "{message}");
         assert!(message.contains("service.postgres.prot"), "{message}");
+    }
+
+    fn runtime_spec(env: &[(&str, &str)]) -> HostProcessRuntimeSpec {
+        HostProcessRuntimeSpec {
+            schema: HOST_PROCESS_SPEC_SCHEMA.to_owned(),
+            project_path: "/checkout".to_owned(),
+            runtime_generation: "runtime".to_owned(),
+            cwd: PathBuf::from("/checkout"),
+            env: env
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            listener: None,
+            owner: "owner".to_owned(),
+            dependencies: Vec::new(),
+            listener_state_file: PathBuf::from("/checkout/app.listener.json"),
+            gateway_root: None,
+            environment: "web".to_owned(),
+            profile: "effigy".to_owned(),
+            process_name: "api".to_owned(),
+            container_name: "web".to_owned(),
+            run: "/bin/true".to_owned(),
+            log_file: PathBuf::from("/checkout/app.log"),
+            restart: "never".to_owned(),
+            restart_delay_ms: 10,
+            shutdown_signal: "sigterm".to_owned(),
+            shutdown_grace_secs: 1,
+            checkout: None,
+            state_home: PathBuf::from("/home"),
+        }
+    }
+
+    fn plain_env(
+        environment: BTreeMap<OsString, effigy_kernel::custody::EnvValue>,
+        key: &str,
+    ) -> Option<String> {
+        match environment.get(&OsString::from(key))? {
+            effigy_kernel::custody::EnvValue::Plain(value) => {
+                Some(value.to_string_lossy().into_owned())
+            }
+            _ => None,
+        }
+    }
+
+    /// The reserved listener port reaches the child as `HOST`/`PORT` even when
+    /// the supervisor's own environment exports a value for them; only a value
+    /// the manifest declares outranks the reserved address (effigy#321).
+    #[test]
+    fn reserved_listener_host_and_port_outrank_an_ambient_value() {
+        let bind = "127.0.0.1:8311";
+        let report = PathBuf::from("/checkout/report.json");
+        let ambient = vec![
+            (OsString::from("HOST"), OsString::from("0.0.0.0")),
+            (OsString::from("PORT"), OsString::from("9999")),
+        ];
+        let spec = runtime_spec(&[]);
+        let environment = child_environment(
+            ambient.clone().into_iter(),
+            &spec,
+            &[],
+            Some((bind, &report, "generation")),
+        );
+        assert_eq!(
+            plain_env(environment.clone(), "HOST").as_deref(),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            plain_env(environment.clone(), "PORT").as_deref(),
+            Some("8311")
+        );
+        // The adapter contract is still absolute.
+        assert_eq!(
+            plain_env(environment, HOST_LISTENER_BIND_ENV).as_deref(),
+            Some(bind)
+        );
+
+        // A declared value is the process's own decision and wins.
+        let declared = runtime_spec(&[("HOST", "0.0.0.0"), ("PORT", "3000")]);
+        let environment = child_environment(
+            ambient.into_iter(),
+            &declared,
+            &[],
+            Some((bind, &report, "generation")),
+        );
+        assert_eq!(
+            plain_env(environment.clone(), "HOST").as_deref(),
+            Some("0.0.0.0")
+        );
+        assert_eq!(plain_env(environment, "PORT").as_deref(), Some("3000"));
+
+        // A process without a listener keeps the ambient environment untouched.
+        let environment = child_environment(
+            vec![
+                (OsString::from("HOST"), OsString::from("0.0.0.0")),
+                (OsString::from("PORT"), OsString::from("9999")),
+            ]
+            .into_iter(),
+            &runtime_spec(&[]),
+            &[],
+            None,
+        );
+        assert_eq!(
+            plain_env(environment.clone(), "HOST").as_deref(),
+            Some("0.0.0.0")
+        );
+        assert_eq!(plain_env(environment, "PORT").as_deref(), Some("9999"));
     }
 
     /// A legacy PID-file supervisor is stopped by its exact recorded identity

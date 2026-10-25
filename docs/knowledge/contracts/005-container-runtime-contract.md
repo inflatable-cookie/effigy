@@ -300,8 +300,11 @@ tls = true
 
 The adapter receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`,
 `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, `EFFIGY_MANAGED_HOST_LISTENER_GENERATION`,
-`HOST` and `PORT` (unless the process declares its own), and the process's own
-`EFFIGY_HOST_PROCESS_PUBLIC_URL` and `EFFIGY_HOST_PROCESS_INTERNAL_URL`. Port
+`HOST` and `PORT`, and the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
+`EFFIGY_HOST_PROCESS_INTERNAL_URL`. `HOST`/`PORT` are the reserved, verified
+address: they replace an ambient value inherited from the caller's environment,
+because a process reading them must bind the port the published route targets.
+Only a value the manifest declares outranks them. Port
 `0` asks Effigy for a concrete port: `container up` reserves one loopback port
 in the environment's generated range through the gateway endpoint store before
 any child launches, passes it as the bind, keeps the assignment across
