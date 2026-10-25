@@ -1357,6 +1357,15 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
     let version = schema_version(&conn)?;
     Ok(Some(StoreReader { conn, version }))
 }
+/// How many times one live snapshot may restart before its source is reported
+/// busy. SQLite restarts an online backup from the source's first page whenever
+/// another connection writes it mid-copy, so a checkout journal under a
+/// continuous writer (a busy sibling Queue worktree) can keep one snapshot
+/// looping for the whole observation budget: a `fmt:check` was sampled at 100%
+/// CPU for 13+ minutes that way on 2026-10-25. A restart count turns that into
+/// one bounded `Busy` that every caller already reads as `Unknown`.
+const SNAPSHOT_RESTARTS: u32 = 8;
+
 /// Close the filesystem reader before returning. Besides giving every query
 /// one coherent snapshot, this prevents a read-only shared-memory attachment
 /// from constraining a subsequent writer in the same process.
@@ -1368,11 +1377,24 @@ fn snapshot_live(
     source.busy_timeout(busy)?;
     source.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")?;
     let mut memory = Connection::open_in_memory()?;
+    let started = Instant::now();
     {
         let backup = rusqlite::backup::Backup::new(&source, &mut memory)?;
+        // Pages still to copy. A restart resets the copy to the first page, so
+        // the count grows again: that growth is the restart, and it is counted.
+        let mut remaining: Option<i32> = None;
+        let mut restarts = 0u32;
         loop {
             cx.check("store WAL snapshot")
                 .map_err(StoreError::Interrupted)?;
+            let progress = backup.progress().remaining;
+            if remaining.is_some_and(|previous| progress > previous) {
+                restarts += 1;
+                if restarts > SNAPSHOT_RESTARTS {
+                    return Err(snapshot_busy(started));
+                }
+            }
+            remaining = Some(progress);
             match backup.step(128)? {
                 rusqlite::backup::StepResult::Done => break,
                 rusqlite::backup::StepResult::More => {}
@@ -1385,6 +1407,16 @@ fn snapshot_live(
     }
     drop(source);
     verify_reader(memory, cx.remaining())
+}
+
+/// The store could not be copied: its own writer kept restarting the snapshot.
+fn snapshot_busy(started: Instant) -> StoreError {
+    StoreError::Busy {
+        waited: started.elapsed(),
+        holder: Box::new(Observed::Unknown(UnknownReason::Busy {
+            phase: "store WAL snapshot".into(),
+        })),
+    }
 }
 
 /// Without an existing WAL index, SQLite would create side files even for a
@@ -1567,7 +1599,7 @@ fn read_unknown(error: &StoreError) -> UnknownReason {
             path.display()
         )),
         StoreError::NeedsRecovery => UnknownReason::StoreNeedsRecovery,
-        StoreError::Busy { .. } => UnknownReason::TimedOut {
+        StoreError::Busy { .. } => UnknownReason::Busy {
             phase: "store read".into(),
         },
         StoreError::Io(io) if io.is_permission() => UnknownReason::PermissionDenied,

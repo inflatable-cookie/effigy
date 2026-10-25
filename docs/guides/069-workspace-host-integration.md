@@ -361,7 +361,12 @@ What does not follow the scratch directory:
 
 ### Retention
 
-- A run that succeeded releases its directory at settle.
+- A run that succeeded releases its directory at settle. Removal restores owner
+  write permission through the tree first, so a tree holding Effigy's own
+  immutable objects — mode-`0500` directories, mode-`0400` files, which test
+  fixtures publish under `TMPDIR` — is still cleared. The repair never follows a
+  symlink and never leaves the tree; a symlink, a mount point inside it or an
+  entry owned by another user stops it.
 - A run that failed, was cancelled or timed out keeps it for 24 hours, and the
   failure output names the path. The 24 hours start when the run ended, not
   when it started, so a long run that fails late keeps its full window.
@@ -371,6 +376,10 @@ What does not follow the scratch directory:
 - A run killed outright leaves the effect open; the sentinel's settle keeps
   the directory rather than guessing, and its 24 hours run from the close the
   sentinel recorded.
+- A directory Effigy still cannot remove — another owner's entry, another
+  device, a tree deeper than the removal walk — is reported once, by name, with
+  the path and the entry that stopped it, and left for a later sweep. It never
+  refuses the task's next run.
 - A bounded sweep during a later run's Prepare step removes retained
   directories whose run is closed and whose 24 hours have passed. The sweep
   only touches a directory Effigy can prove it named: the marker inside it must
@@ -378,6 +387,14 @@ What does not follow the scratch directory:
   the directory ever writes that marker, so a step's or a nested run's result
   can never decide the parent's retention, and a directory that some other
   process put at that path is never removed.
+
+The sweep is bounded in time as well as in work, because a run start must never
+wait for scratch: it decides from the marker wherever the marker is enough,
+reads another checkout's journal only for a directory whose run died before
+recording a verdict (a few reads, each in its own bounded observation), and
+stops at its budget. A journal it cannot read — typically a busy sibling
+worktree's under a continuous writer — is skipped and retried on a later run,
+never waited for.
 
 ### Interaction with Oxide
 

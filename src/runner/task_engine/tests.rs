@@ -342,6 +342,64 @@ fn a_host_run_uses_its_scratch_as_temp_and_the_settle_removes_it_on_success() {
     assert!(warnings.is_empty(), "{warnings:?}");
 }
 
+/// Publishes the immutable state objects Effigy's own fixtures leave in a temp
+/// directory: mode-0500 directories holding mode-0400 files, which a plain
+/// `remove_dir_all` cannot clear.
+fn publish_immutable_objects(temp: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let objects = temp.join("state/objects/ab");
+    std::fs::create_dir_all(&objects).expect("objects");
+    let object = objects.join("blob");
+    std::fs::write(&object, b"immutable object").expect("object");
+    std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o400)).expect("object mode");
+    for dir in [&objects, &temp.join("state/objects")] {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).expect("mode");
+    }
+}
+
+/// A successful run whose temp tree holds Effigy's own read-only state objects
+/// is released completely, and the task's next run is admitted: nothing the
+/// predecessor left can refuse it.
+#[test]
+fn a_successful_run_releases_a_read_only_scratch_tree_and_its_task_runs_again() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "test", &catalog);
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+
+    crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            let mut first = begin_scratching(&target);
+            let (seen, wrote) = read_temp(&mut first, work.path());
+            assert!(wrote, "the run writes into its own scratch");
+            publish_immutable_objects(Path::new(&seen));
+            let warnings = first.close(WorkloadOutcome::Succeeded);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert!(
+                !Path::new(&seen).exists(),
+                "the settle removed a tree holding read-only objects"
+            );
+
+            // The same task, admitted again: the released directory left no
+            // residue to settle and nothing to refuse this run.
+            let mut second = begin_scratching(&target);
+            let (again, wrote) = read_temp(&mut second, work.path());
+            assert!(wrote);
+            assert_ne!(again, seen, "a later run gets its own directory");
+            let warnings = second.close(WorkloadOutcome::Succeeded);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert!(!Path::new(&again).exists());
+        },
+    );
+}
+
 #[test]
 fn a_failed_run_keeps_its_scratch_and_prints_the_path() {
     let _guard = crate::contract_test_support::lock_test();
