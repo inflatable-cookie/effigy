@@ -476,6 +476,29 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- An admission hook can report custody back (effigy#325). Setting
+  `EFFIGY_ADMISSION_PROTOCOL=2` next to `EFFIGY_ADMISSION_HOOK` opts a
+  launcher in to `effigy.admission-request.v2`; the hook then receives
+  acknowledged `effigy.admission-event.v1` reports on stdin — `custodians`
+  first, one `workload` per group with its real PGID and leader
+  `ProcessIdentity`, and one `terminal` at settle. Effigy writes event n+1
+  only after n is acknowledged, and sends a workload's `go` only after its
+  report is acknowledged, so the acknowledged seqs are a gap-free prefix and a
+  group whose report was not acknowledged never runs; a write failure, EOF, a
+  malformed or out-of-order ack and the ack timeout all stop the workload and
+  fail the run closed with `effigy.admission.v1`; a report that is not
+  delivered also ends the sequence, so the hook is never handed a later `seq`
+  and the acknowledged prefix keeps no gap. Such a run also writes one
+  narrow terminal row to its checkout journal at settle, returned by
+  `run status <run> --json` with `evidence_source:
+  "foreground-terminal-record.v1"`, `checkout_id` and `boot`. The row carries
+  no process identity: it is evidence for the provider's own lease, never
+  authority for Effigy to signal or reclaim, and runs without the opt-in keep
+  Q-010 unchanged (no journal write at all). v2 is the foreground class's
+  protocol: its `custodians` report names the memory guard, so a durable
+  `--run-id` run refuses the opt-in before the hook starts instead of
+  reporting an incomplete custodian set. Contracts 049 and 052 §3.1 define
+  the protocol, the coverage witness, and Tom's 2026-10-24 release ruling.
 - Host processes get resolved environment facts instead of a wrapper script
   (effigy#321). A `[[containers.<env>.host_processes]]` `env` value may embed
   `${...}` references to facts Effigy already resolved: a service's published

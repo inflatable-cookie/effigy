@@ -74,6 +74,11 @@ impl CheckoutId {
     pub fn kind(&self) -> CheckoutKind {
         self.kind
     }
+    /// Stable text form for evidence bodies: the kind tag and the token in
+    /// hex. Never parsed back as authority.
+    pub fn text(&self) -> String {
+        format!("{}:{}", self.kind as u8, hex(&self.token))
+    }
     pub fn resource(&self) -> ResourceId {
         ResourceId::new(
             ResourceKind::Checkout,

@@ -162,6 +162,15 @@ fn status(selector: &str, json: bool) -> Result<String, RunnerError> {
     if let Some(pid) = record.view.pid {
         lines.push(format!("owner    pid {pid}"));
     }
+    if record.is_terminal_record() {
+        lines.push(format!("evidence {}", record.view.evidence_source));
+        if let Some(checkout) = &record.view.checkout_id {
+            lines.push(format!("checkout {checkout}"));
+        }
+        if let Some(boot) = &record.view.boot {
+            lines.push(format!("boot     {boot}"));
+        }
+    }
     if record.view.state == "interrupted" {
         lines.push(format!(
             "next     effigy {}  (or `effigy run stop {}` to settle it now)",
@@ -175,6 +184,12 @@ fn stop(selector: &str, wait: Duration, json: bool) -> Result<String, RunnerErro
     let record = find(selector)?;
     if record.foreground() {
         return stop_foreground(&record, wait, json);
+    }
+    if record.is_terminal_record() {
+        return Err(RunnerError::task_invocation(format!(
+            "run {} is settled ({}) from its foreground terminal record; there is no live owner to stop and its reported identity grants no signal",
+            record.id, record.view.state
+        )));
     }
     let started = Instant::now();
     let how = request_stop(&record)?;
@@ -468,15 +483,21 @@ fn logs(
     json: bool,
 ) -> Result<String, RunnerError> {
     let record = find(selector)?;
-    if record.foreground() {
+    if record.foreground() || record.is_terminal_record() {
         return Ok(if json {
             serde_json::json!({
                 "schema": LOGS_SCHEMA, "schema_version": 1, "run": run_json(&record),
-                "settled": false, "logs_available": false, "reason": "foreground-no-retained-log",
+                "settled": record.closed(), "logs_available": false,
+                "reason": "foreground-no-retained-log",
                 "stdout": StreamJson::new(from.stdout).json(from.stdout),
                 "stderr": StreamJson::new(from.stderr).json(from.stderr),
             })
             .to_string()
+        } else if record.is_terminal_record() {
+            format!(
+                "run {} settled as {} (foreground terminal record); no retained log",
+                record.id, record.view.state
+            )
         } else {
             format!("run {} is foreground; no retained log", record.id)
         });
@@ -670,7 +691,9 @@ fn run_json(record: &RunRecord) -> serde_json::Value {
         map.insert("task".to_owned(), record.task.clone().into());
         map.insert(
             "exit_code".to_owned(),
-            if record.terminal() {
+            if record.is_terminal_record() {
+                record.view.exit_code.into()
+            } else if record.terminal() {
                 record.exit_code().into()
             } else {
                 serde_json::Value::Null
