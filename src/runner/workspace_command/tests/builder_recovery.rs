@@ -610,25 +610,6 @@ esac
     }
 }
 
-/// Drop every v0.14.1 partial receipt below `dir`, as a release upgrade does.
-fn remove_legacy_markers(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            remove_legacy_markers(&path);
-        } else if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".partial.json"))
-        {
-            std::fs::remove_file(&path).unwrap();
-        }
-    }
-}
-
 fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();

@@ -277,24 +277,16 @@ fn retire_removes_every_labelled_resource_and_says_what_it_removed() {
     assert_eq!(
         names(&report["removed"]),
         vec![
-            "db-1".to_owned(),
-            "web-1".to_owned(),
-            "app-web-wt-aaaaaaaaaaaa-target".to_owned(),
-            "app-web-wt-aaaaaaaaaaaa_default".to_owned(),
+            "db-1",
+            "web-1",
+            "app-web-wt-aaaaaaaaaaaa-db-data",
+            "app-web-wt-aaaaaaaaaaaa-target",
+            "app-web-wt-aaaaaaaaaaaa_default",
         ]
     );
-    assert_eq!(
-        names(&report["kept"]),
-        vec!["app-web-wt-aaaaaaaaaaaa-db-data".to_owned()]
-    );
+    assert!(names(&report["kept"]).is_empty(), "{report}");
     assert!(fixture.state_lines("containers").is_empty());
-    assert_eq!(
-        fixture.state_lines("volumes"),
-        vec![format!(
-            "app-web-wt-aaaaaaaaaaaa-db-data|{project}|{}||{scope}|true",
-            fixture.checkout()
-        )]
-    );
+    assert!(fixture.state_lines("volumes").is_empty());
     assert!(fixture.state_lines("networks").is_empty());
     // Repeating it changes nothing and still succeeds.
     let (ok, again) = fixture.retire(&["container", "retire", "--yes"]);
@@ -320,6 +312,8 @@ fn keep_data_keeps_the_named_volumes_and_lists_them() {
     assert!(kept
         .iter()
         .any(|row| row["reason"] == "kept by `--keep-data`"));
+    assert!(kept.iter().any(|row| row["reason"]
+        == "named data volume (`com.effigy.persist=true`), kept by `--keep-data`"));
     assert!(names(&report["removed"]).contains(&"web-1".to_owned()));
     assert_eq!(fixture.state_lines("volumes").len(), 2);
 }

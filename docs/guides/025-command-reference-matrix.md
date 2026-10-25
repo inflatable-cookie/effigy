@@ -302,10 +302,10 @@ runtime metadata allows it. Text and JSON include reclaimable and in-use size
 totals; unknown sizes are counted instead of guessed.
 `effigy container retire` removes every container, volume and network the
 backend labels for this checkout, including Created and stopped containers, then
-releases its routes, ports and loopback addresses by checkout path. Named data
-volumes are kept and listed; `--keep-data` keeps every volume it would otherwise
-remove. Anything it could not delete is named with the runtime's error and the
-command exits non-zero. Call it from worktree teardown. `--dead` retires every
+releases its routes, ports and loopback addresses by checkout path.
+`--keep-data` keeps the volumes instead of removing them and lists what it kept.
+Anything it could not delete is named with the runtime's error and the command
+exits non-zero. Call it from worktree teardown. `--dead` retires every
 labelled stack whose checkout path no longer exists. It rejects `effigy
 container <NAME> retire` before checkout resolution or runtime inventory,
 including when `--scope` or `--yes` is also supplied. Pass `--scope <TOKEN>` to

@@ -789,8 +789,8 @@ effigy container retire --dead --yes` removes
 that stack's containers (running, stopped, or Created), networks, mutable
 volumes, isolated routes and ports, by the backend's own
 `com.docker.compose.project` plus `com.effigy.checkout` and
-`com.effigy.scope` labels. Shared services, named data volumes
-(`com.effigy.persist=true`), external volumes, and shared-identity routes stay.
+`com.effigy.scope` labels. Shared services, external volumes, shared-identity routes and every volume
+retained by `--keep-data` stay.
 Nothing is recorded beside those labels: there is no
 `.effigy/state/runtime-scopes/` journal, no checkout generation and no custody
 fence, so deleting a checkout deletes nothing else and a re-cloned checkout at

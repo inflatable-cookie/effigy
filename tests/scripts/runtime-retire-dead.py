@@ -149,7 +149,7 @@ remaining_ids = set(docker('ps', '-aq', '--no-trunc').stdout.split())
 assert dead_row['Id'] not in remaining_ids
 assert live_ids <= remaining_ids and {unlabelled_id, foreign_id} <= remaining_ids
 volumes = set(docker('volume', 'ls', '-q').stdout.split())
-assert mutable not in volumes and persistent in volumes
+assert mutable not in volumes and persistent not in volumes
 assert alternate_id in docker('--host', alternate, 'ps', '-aq', '--no-trunc').stdout.split()
 assert 'q010-unselected' in docker('--host', alternate, 'volume', 'ls', '-q').stdout.split()
 assert not dead.exists(), 'cleanup recreated deleted checkout'
@@ -187,7 +187,7 @@ value = {'schema': 'effigy.proof.runtime-retire-dead.v1', 'foreground_runs': 24,
          'live_backend_preserved_ids_started_at_and_port_pins': True,
          'labels_only_ownership': True, 'no_scope_journal_or_generation': True,
          'deleted_scope': token, 'preserved_live_containers': len(live_ids),
-         'unlabelled_and_foreign_kept': 2, 'persistent_volume_retained': True,
+         'unlabelled_and_foreign_kept': 2, 'retire_removes_every_labelled_volume': True,
          'keep_data_lists_kept_volumes': True, 'locked_volume_failure_named': True,
          'unselected_engine_preserved': True,
          'report': report}

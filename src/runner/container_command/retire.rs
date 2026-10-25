@@ -33,7 +33,7 @@ const NAMED_CONTAINER_RETIRE_ERROR: &str = "`effigy container <NAME> retire` is 
 
 const UNLABELLED_KEPT: &str =
     "not labelled as this checkout's; `effigy container down` then `up` relabels it";
-const DATA_KEPT: &str = "named data volume (`com.effigy.persist=true`)";
+const DATA_KEPT: &str = "named data volume (`com.effigy.persist=true`), kept by `--keep-data`";
 const REQUESTED_KEPT: &str = "kept by `--keep-data`";
 
 pub(super) fn run_container_retire(
@@ -211,13 +211,10 @@ impl Inventory {
 
     /// The labelled resources of one checkout path, optionally of one scope.
     pub(super) fn owned_by(&self, checkout: &str, scope: Option<&str>) -> Owned {
-        let wanted = trim_path(checkout);
+        let wanted = checkout;
         let mut owned = Owned::default();
-        owned
-            .projects
-            .extend(self.unlabelled.iter().map(|(project, _)| project.clone()));
         for entry in &self.labelled {
-            if trim_path(&entry.checkout) != wanted {
+            if !same_path(&entry.checkout, wanted) {
                 continue;
             }
             if let Some(scope) = scope {
@@ -304,6 +301,22 @@ pub(super) fn query_profiles() -> Vec<String> {
 
 fn trim_path(path: &str) -> String {
     path.trim_end_matches('/').to_owned()
+}
+
+/// Whether two labelled checkout paths name one directory. The label carries
+/// the canonical path Effigy rendered, so a textual match is enough; a path
+/// that only differs by a symlinked prefix (`/var` and `/private/var` on
+/// macOS) still names this checkout and is compared canonically. A path that
+/// no longer exists (a dead checkout) only ever compares textually.
+fn same_path(label: &str, checkout: &str) -> bool {
+    if trim_path(label) == trim_path(checkout) {
+        return true;
+    }
+    let canonical = |value: &str| std::fs::canonicalize(value).ok();
+    matches!(
+        (canonical(label), canonical(checkout)),
+        (Some(left), Some(right)) if left == right
+    )
 }
 
 struct ContainerRow {
@@ -484,8 +497,9 @@ fn is_builtin_network(name: &str) -> bool {
     matches!(name, "bridge" | "host" | "none")
 }
 
-/// Delete every listed resource, keep named data and `--keep-data` volumes, and
-/// re-read the backend so only what is really gone counts as removed.
+/// Delete every listed resource. `--keep-data` keeps the volumes and names
+/// them. The backend is re-read afterwards, so only what is really gone counts
+/// as removed.
 pub(super) fn retire_owned(
     checkout: &Path,
     owned: &[OwnedResource],
@@ -495,21 +509,16 @@ pub(super) fn retire_owned(
     let mut outcome = RetireOutcome::default();
     let mut deleted = Vec::new();
     for resource in owned {
-        if resource.kind == ResourceKind::Volume {
-            if resource.persist {
-                outcome.kept.push(KeptResource {
-                    resource: resource.clone(),
-                    reason: DATA_KEPT,
-                });
-                continue;
-            }
-            if keep_data {
-                outcome.kept.push(KeptResource {
-                    resource: resource.clone(),
-                    reason: REQUESTED_KEPT,
-                });
-                continue;
-            }
+        if resource.kind == ResourceKind::Volume && keep_data {
+            outcome.kept.push(KeptResource {
+                resource: resource.clone(),
+                reason: if resource.persist {
+                    DATA_KEPT
+                } else {
+                    REQUESTED_KEPT
+                },
+            });
+            continue;
         }
         match delete_resource(&cwd, resource) {
             Ok(()) => deleted.push(resource.clone()),
@@ -805,6 +814,37 @@ mod tests {
         });
         assert_eq!(names, vec!["a".to_owned(), "b".to_owned()]);
         assert_eq!(released, names);
+    }
+
+    #[test]
+    fn a_symlinked_prefix_still_names_the_same_checkout() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let real = temp.path().join("checkout");
+        std::fs::create_dir(&real).expect("checkout");
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        assert!(same_path(
+            &real.display().to_string(),
+            &real.display().to_string()
+        ));
+        assert!(same_path(
+            &link.display().to_string(),
+            &real.display().to_string()
+        ));
+        assert!(!same_path(
+            &link.display().to_string(),
+            &temp.path().join("other").display().to_string()
+        ));
+        // A dead checkout only compares textually.
+        let gone = temp.path().join("gone");
+        assert!(same_path(
+            &gone.display().to_string(),
+            &gone.display().to_string()
+        ));
+        assert!(!same_path(
+            &link.display().to_string(),
+            &gone.display().to_string()
+        ));
     }
 
     #[test]

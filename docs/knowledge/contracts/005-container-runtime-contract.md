@@ -1039,11 +1039,12 @@ Created and exited containers retire with running ones. Compose networks carry
 no Effigy label of their own, so they are found by their
 `com.docker.compose.project` label and attributed to the one checkout the
 project's labelled resources name; a project two checkouts share is never
-attributed and its networks stay. Named data volumes
-(`com.effigy.persist=true`) are kept and listed. `retire --keep-data` keeps
-every volume it would otherwise remove and lists the ones kept. Anything that
-could not be deleted is named with the runtime's own error and retirement exits
-non-zero; it never reports a clean result while an owned resource survives.
+attributed and its networks stay. `retire --keep-data` keeps every labelled
+volume, names which ones are named data (`com.effigy.persist=true`) and lists
+them; without it retirement removes them with the rest of the stack. Anything
+that could not be deleted is named with the runtime's own error and retirement
+exits non-zero; it never reports a clean result while an owned resource
+survives.
 Retirement also releases the checkout's gateway routes and their certificates,
 port ranges and loopback addresses by checkout path alone. A second retire with
 nothing left is success and reports `idempotent: true`.

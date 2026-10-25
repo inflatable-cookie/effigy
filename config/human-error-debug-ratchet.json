@@ -42,7 +42,6 @@
     "src/runner/container_command/data/hooks.rs": 1,
     "src/runner/container_command/lifecycle.rs": 2,
     "src/runner/container_command/profile.rs": 1,
-    "src/runner/container_command/retire/dead.rs": 4,
     "src/runner/container_command/support.rs": 5,
     "src/runner/deps_command.rs": 21,
     "src/runner/doctor_ports.rs": 14,

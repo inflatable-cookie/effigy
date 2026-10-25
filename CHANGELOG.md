@@ -1246,11 +1246,12 @@ During v0.x, MINOR bumps may include breaking changes.
   plus Effigy's checkout and scope labels, so `container retire` asks the
   backend what carries them, deletes all of it, then releases the checkout's
   routes, ports and loopback addresses by checkout path. Retirement reports
-  exactly what it removed, what it kept on purpose (named data volumes,
-  `--keep-data`, and resources of one of its projects that carry no Effigy
-  checkout label) and what it could not delete, naming the runtime's error and
-  exiting non-zero; it never reports a clean result while an owned resource
-  survives. `container retire --keep-data` is new. `retire --dead` groups the
+  exactly what it removed, what it kept on purpose (`--keep-data`, and
+  resources of one of its projects that carry no Effigy checkout label) and what
+  it could not delete, naming the runtime's error and exiting non-zero; it never
+  reports a clean result while an owned resource survives. `container retire
+  --keep-data` is new and is now the only way retirement keeps a volume: by
+  default it removes the stack's volumes with everything else. `retire --dead` groups the
   labelled resources by checkout path and retires the groups whose path is
   missing, so a deleted worktree's stack is retired without recording anything
   and a re-cloned checkout at the same path needs no reconciliation.
