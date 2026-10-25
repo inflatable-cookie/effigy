@@ -1267,6 +1267,11 @@ During v0.x, MINOR bumps may include breaking changes.
   warns once, naming the journal and the reason, and runs. Only a proved, live
   predecessor holding the same owner gate refuses. The foreground memory guard
   no longer refuses a rebuilt or missing binary.
+- A store read beside a live writer opens SQLite's write-ahead log with a plain
+  read-only connection, so the index a later writer in the same process reuses
+  stays writable: a Stop or settle after a read no longer reports `attempt to
+  write a readonly database`. A state root whose database does not exist yet
+  still reads as absent, so a fresh checkout's first `container up` works.
 - `effigy run status`, `run logs`, `run stop`, attach and `--run-id` key
   resolution read the journal of the checkout the query runs in, resolved from
   cwd, and nothing else (effigy#339, Q-011). They no longer walk every Git
