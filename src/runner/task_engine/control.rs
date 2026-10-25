@@ -3,7 +3,7 @@
 //! while custody holds a gate. Reads are pure (R2). Foreground stop never
 //! opens a journal or reconstructs signalling authority from old gate bytes.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use effigy_kernel::custody::Stream;
@@ -141,17 +141,20 @@ pub(in crate::runner) enum Lookup {
     Unknown(String),
 }
 
-/// A run id, else a `--run-id` key. A string that is a valid run id is read
-/// as one; a key is read through the id it derives.
-pub(in crate::runner) fn resolve(selector: &str) -> Result<Lookup, RunnerError> {
+/// A run id, else a `--run-id` key, in `checkout`. A string that is a valid
+/// run id is read as one; a key is read through the id it derives.
+pub(in crate::runner) fn resolve_in(
+    checkout: &Path,
+    selector: &str,
+) -> Result<Lookup, RunnerError> {
     if let Ok(id) = selector.parse::<RunId>() {
-        match lookup(id) {
+        match lookup_checkout(checkout, id) {
             Lookup::NotFound => {}
             result => return Ok(result),
         }
     }
     match RunKey::parse(selector) {
-        Ok(key) => Ok(lookup_key(&key)),
+        Ok(key) => Ok(lookup_key_in(checkout, &key)),
         Err(_) => selector
             .parse::<RunId>()
             .map(|_| Lookup::NotFound)
@@ -206,23 +209,26 @@ fn journal_unknown(
     format!("{}: {reason:?}", root.path().display())
 }
 
-fn lookup_key(key: &RunKey) -> Lookup {
+/// A key's run in one checkout. Peer worktrees are never scanned: a lookup
+/// that read every sibling journal held a poll at 90% CPU for 75 minutes
+/// (effigy#339, Q-011). `runs --all` is the cross-checkout view.
+fn lookup_key_in(checkout: &Path, key: &RunKey) -> Lookup {
     let cx = kernel::observe();
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(error) => return Lookup::Unknown(error.to_string()),
-    };
-    let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
-        .map(|resolved| resolved.resolved_root)
-        .unwrap_or(cwd);
-    // A key names a run of this checkout. Peer worktrees are never scanned: a
-    // lookup that read every sibling journal held a poll at 90% CPU for 75
-    // minutes (effigy#339, Q-011). `runs --all` is the cross-checkout view.
-    match kernel::observe_root(&cx, &current) {
+    match kernel::observe_root(&cx, checkout) {
         Observed::Verified(root, _) => lookup_key_at(&cx, &root, key),
         Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", current.display())),
+        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", checkout.display())),
     }
+}
+
+/// The checkout a query with no explicit root runs in.
+fn query_checkout() -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    Ok(
+        effigy_core::resolver::resolve_target_root(cwd.clone(), None)
+            .map(|resolved| resolved.resolved_root)
+            .unwrap_or(cwd),
+    )
 }
 
 /// A caller already resolved the owning checkout. Absence or uncertainty
@@ -248,13 +254,10 @@ pub(in crate::runner) fn lookup_within(
     cx: &effigy_kernel::ctx::ObserveContext,
     id: RunId,
 ) -> Lookup {
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(error) => return Lookup::Unknown(error.to_string()),
+    let current = match query_checkout() {
+        Ok(checkout) => checkout,
+        Err(reason) => return Lookup::Unknown(reason),
     };
-    let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
-        .map(|resolved| resolved.resolved_root)
-        .unwrap_or(cwd);
     match kernel::observe_root(cx, &current) {
         Observed::Verified(root, _) => lookup_at(cx, &root, id),
         Observed::Absent(_) => Lookup::NotFound,

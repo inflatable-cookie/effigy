@@ -113,8 +113,8 @@ fn wait_for(what: &str, mut ready: impl FnMut() -> bool) {
     }
 }
 
-fn found(id: RunId) -> Option<RunRecord> {
-    match lookup_run(id) {
+fn found(root: &Path, id: RunId) -> Option<RunRecord> {
+    match lookup_checkout(root, id) {
         Lookup::Found(record) => Some(*record),
         _ => None,
     }
@@ -247,11 +247,16 @@ fn lose_at(point: &'static str, nth: usize) -> impl FnMut(&'static str) -> std::
 /// reattaches from the delivered offsets. Returns the joined output and the
 /// reattached ending.
 #[cfg(feature = "fault-injection")]
-fn follow_losing_once(id: RunId, point: &'static str, nth: usize) -> (Collected, Ending) {
+fn follow_losing_once(
+    root: &Path,
+    id: RunId,
+    point: &'static str,
+    nth: usize,
+) -> (Collected, Ending) {
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let lost = effigy_kernel::fault_injection::with_hook(lose_at(point, nth), || {
-        follow(id, &mut offsets, true, &mut collected.sink())
+        follow(root, id, &mut offsets, true, &mut collected.sink())
     });
     assert!(
         matches!(lost, Err(FollowError::Lost(_))),
@@ -265,7 +270,7 @@ fn follow_losing_once(id: RunId, point: &'static str, nth: usize) -> (Collected,
         },
         "offsets hold exactly what was delivered"
     );
-    let ending = follow(id, &mut offsets, true, &mut collected.sink()).expect("reattached");
+    let ending = follow(root, id, &mut offsets, true, &mut collected.sink()).expect("reattached");
     (collected, ending)
 }
 
@@ -301,8 +306,8 @@ fn a_follower_lost_mid_run_reattaches_by_exact_offset() {
     let root = tempfile::tempdir().expect("root");
     let key = key(root.path(), "lost-mid-run");
     let run = start(root.path(), "chatty", &key, CHATTY);
-    wait_for("the run", || found(key.id()).is_some());
-    let (collected, ending) = follow_losing_once(key.id(), "FollowRead", 3);
+    wait_for("the run", || found(root.path(), key.id()).is_some());
+    let (collected, ending) = follow_losing_once(root.path(), key.id(), "FollowRead", 3);
     assert_eq!(run.join().expect("run thread"), 3);
     assert_single_settled_run(root.path(), key.id(), &ending, &collected);
 }
@@ -313,8 +318,8 @@ fn a_stream_dropped_at_settle_reattaches_to_the_rest_and_the_outcome() {
     let root = tempfile::tempdir().expect("root");
     let key = key(root.path(), "lost-at-settle");
     let run = start(root.path(), "chatty", &key, CHATTY);
-    wait_for("the run", || found(key.id()).is_some());
-    let (collected, ending) = follow_losing_once(key.id(), "FollowSettled", 1);
+    wait_for("the run", || found(root.path(), key.id()).is_some());
+    let (collected, ending) = follow_losing_once(root.path(), key.id(), "FollowSettled", 1);
     assert_eq!(run.join().expect("run thread"), 3);
     assert_single_settled_run(root.path(), key.id(), &ending, &collected);
 }
@@ -325,15 +330,28 @@ fn a_stream_lost_after_settle_reattaches_to_the_outcome_alone() {
     let root = tempfile::tempdir().expect("root");
     let key = key(root.path(), "lost-after-settle");
     let run = start(root.path(), "chatty", &key, CHATTY);
-    wait_for("the run", || found(key.id()).is_some());
+    wait_for("the run", || found(root.path(), key.id()).is_some());
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
     let lost = effigy_kernel::fault_injection::with_hook(lose_at("FollowDone", 1), || {
-        follow(key.id(), &mut offsets, true, &mut collected.sink())
+        follow(
+            root.path(),
+            key.id(),
+            &mut offsets,
+            true,
+            &mut collected.sink(),
+        )
     });
     assert!(matches!(lost, Err(FollowError::Lost(_))));
     let delivered = collected.stdout.len() + collected.stderr.len();
-    let ending = follow(key.id(), &mut offsets, true, &mut collected.sink()).expect("reattached");
+    let ending = follow(
+        root.path(),
+        key.id(),
+        &mut offsets,
+        true,
+        &mut collected.sink(),
+    )
+    .expect("reattached");
     assert_eq!(
         collected.stdout.len() + collected.stderr.len(),
         delivered,
@@ -361,6 +379,7 @@ fn a_terminal_run_without_logs_still_reports_its_settled_outcome() {
     std::fs::remove_dir_all(&logs).expect("remove the run's logs");
     let mut collected = Collected::default();
     let ending = follow(
+        root.path(),
         key.id(),
         &mut Offsets::default(),
         true,
@@ -392,7 +411,14 @@ fn expired_log_bytes_are_reported_never_skipped_silently() {
     );
     let mut collected = Collected::default();
     let mut offsets = Offsets::default();
-    follow(key.id(), &mut offsets, true, &mut collected.sink()).expect("followed");
+    follow(
+        root.path(),
+        key.id(),
+        &mut offsets,
+        true,
+        &mut collected.sink(),
+    )
+    .expect("followed");
     assert_eq!(
         collected.expired,
         vec![(Stream::Stdout, 0, 2 << 20)],
@@ -526,7 +552,7 @@ fn run_stop_settles_a_running_task_and_its_children() {
         .trim()
         .parse()
         .expect("pid");
-    let record = found(key.id()).expect("live run");
+    let record = found(root.path(), key.id()).expect("live run");
     assert_eq!(record.view.state, "running");
     assert_eq!(
         request_stop(&record).expect("request"),
@@ -537,7 +563,7 @@ fn run_stop_settles_a_running_task_and_its_children() {
         1,
         "a requested stop records `cancelled`, exit 1"
     );
-    let settled = found(key.id()).expect("settled run");
+    let settled = found(root.path(), key.id()).expect("settled run");
     assert_eq!(settled.view.state, "cancelled");
     assert_eq!(settled.view.cleanup, Some("complete"));
     assert!(
