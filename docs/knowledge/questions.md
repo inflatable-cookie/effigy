@@ -411,3 +411,24 @@ hold:
 Tom accepted the risk that a process which escaped its group is still running.
 Effigy itself still claims no closure from that evidence, and gains no
 authority to signal or reclaim from it (052 §3.1).
+
+2026-10-25 (effigy#337): every pre-reboot checkout refused every task run,
+because `state/checkout.json` records the checkout's `st_dev` and macOS assigns
+that number at mount, so a reboot looked like a replaced directory. Tom ruled out
+hardening the comparison: "I thought we had simplified the kernel.db dependency?
+This is exactly the sort of overcomplication and brittleness I wanted to avoid."
+The ruling is the location-only rule, recorded in
+[052 §7.1](contracts/052-runtime-kernel-contract.md#71-location-trust-and-clocks):
+
+- A journal opens by its location, `<checkout>/.effigy/state/`. No recorded
+  device or inode can refuse it.
+- `checkout.json` and an import seal's destination are provenance: a record from
+  an earlier boot, or one that no longer matches, is rewritten to the current
+  values by the next effect and the journal keeps its history.
+- Prior-boot runs are already history through the boot identity their records
+  carry.
+- The refusals that remain are invariants about the current process: a live
+  custodian whose retained checkout, state directory or Git locator was replaced,
+  a Git resolution that disagrees with the checkout's own `.git`, and a database
+  this binary never bound. Custody leases and socket receipts are identified by
+  inode, never by the mount-time device number.

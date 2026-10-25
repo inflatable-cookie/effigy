@@ -167,7 +167,6 @@ pub fn authority(cx: &ObserveContext, root: &StateRoot) -> Observed<Authority> {
 
 fn inspect_authority(cx: &ObserveContext, root: &StateRoot) -> Result<Authority, StoreError> {
     root.verify_binding()?;
-    crate::root::runtime::verify(cx, root)?;
     if !root.requires_adoption() {
         return Ok(Authority::LegacyEvidence);
     }
@@ -275,20 +274,24 @@ pub(crate) fn validate_database(conn: &Connection, access: &Access) -> Result<()
     }
 }
 
+/// The locations a sealed import published: the journal opens by them.
+/// Recorded generations stay in the receipt as provenance, never as a gate
+/// (effigy#337).
 pub(crate) fn checkout_filesystem_facts(
     cx: &ObserveContext,
     root: &StateRoot,
-) -> Result<Option<(DirectoryIdentity, Option<DirectoryIdentity>)>, StoreError> {
+) -> Result<Option<(PathBuf, Option<PathBuf>)>, StoreError> {
     let Some(seal) = optional::<Seal>(cx, root, SEALED)? else {
         return Ok(None);
     };
     verify_seal(root, &seal)?;
-    Ok(seal.destination.checkout.map(|_| {
-        (
-            seal.destination.directory_identity,
-            seal.destination.git_directory_identity,
-        )
-    }))
+    if seal.destination.checkout.is_none() {
+        return Ok(None);
+    }
+    Ok(Some((
+        seal.destination.checkout_root,
+        seal.destination.git_directory,
+    )))
 }
 
 pub(crate) fn check_invocation(
@@ -315,44 +318,13 @@ pub(crate) fn check_invocation(
     Ok(())
 }
 fn verify_seal(root: &StateRoot, seal: &Seal) -> Result<(), StoreError> {
-    if root.owning_directory().identity()? != seal.destination.directory_identity {
-        return Err(StoreError::Corrupt(
-            "runtime checkout directory was replaced after import".into(),
-        ));
-    }
-    match (
-        &seal.destination.git_directory,
-        seal.destination.git_directory_identity,
-    ) {
-        (Some(path), Some(expected)) if crate::fs::DirFd::open(path)?.identity()? == expected => {}
-        (None, None) => {}
-        _ => {
-            return Err(StoreError::Corrupt(
-                "runtime Git directory generation changed after import".into(),
-            ))
-        }
-    }
+    // The seal's recorded directory generations are import provenance, not a
+    // gate: a journal opens by its location, so a checkout whose volume was
+    // renumbered (macOS assigns `st_dev` at every mount) keeps its history
+    // (effigy#337).
     if (root.database_name() == "machine.db") != seal.destination.checkout.is_none() {
         return Err(StoreError::Corrupt(
             "import seal belongs to a different runtime database".into(),
-        ));
-    }
-    Ok(())
-}
-pub(crate) fn check_git_location(
-    cx: &ObserveContext,
-    root: &StateRoot,
-    git: &Option<(PathBuf, DirectoryIdentity)>,
-) -> Result<(), StoreError> {
-    let seal = optional::<Seal>(cx, root, SEALED)?
-        .ok_or_else(|| StoreError::Corrupt("committed checkout has no local seal".into()))?;
-    let expected = seal
-        .destination
-        .git_directory
-        .zip(seal.destination.git_directory_identity);
-    if &expected != git {
-        return Err(StoreError::Corrupt(
-            "resolved Git directory disagrees with imported checkout".into(),
         ));
     }
     Ok(())

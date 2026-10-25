@@ -308,6 +308,31 @@ fn path(label: &str) -> Option<&Path> {
             .all(|part| matches!(part, Component::RootDir | Component::Normal(_))))
     .then_some(p)
 }
+/// Two recorded directory generations name the same directory when their
+/// inodes match: the mount-time device number is reassigned at every mount, so
+/// a reboot must not look like a replacement (effigy#337).
+fn same_generation(
+    left: Option<effigy_kernel::fs::DirectoryIdentity>,
+    right: Option<effigy_kernel::fs::DirectoryIdentity>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.is_same_directory(&right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+/// The same rule for the checkout custody lease, which is identified by its
+/// inode (effigy#337).
+fn same_fence(
+    left: Option<effigy_kernel::gate::CheckoutFenceIdentity>,
+    right: Option<effigy_kernel::gate::CheckoutFenceIdentity>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.is_same_lease(&right),
+        (None, None) => true,
+        _ => false,
+    }
+}
 fn dead_generation(
     checkout: &Path,
     expected: effigy_kernel::fs::DirectoryIdentity,
@@ -319,7 +344,9 @@ fn dead_generation(
             let actual = DirFd::open(checkout)
                 .and_then(|dir| dir.identity())
                 .map_err(|e| e.to_string())?;
-            if actual == expected {
+            // Only the inode identifies the directory: a reboot renumbers the
+            // device of an unchanged checkout (effigy#337).
+            if actual.is_same_directory(&expected) {
                 return Ok(false);
             }
             match effigy_core::worktree_scope::checkout_token(checkout)
@@ -385,10 +412,16 @@ fn discover(
             unknown.push(format!("{token}: project ownership is ambiguous"));
             continue;
         }
+        // One directory, one entry. Labels written in different boots record
+        // different device numbers for the same generation, so the inode
+        // decides; two different inodes are a real ambiguity (effigy#337).
         match generation(node) {
             Some(identity) => {
                 let values = generations.entry(token.into()).or_default();
-                if !values.contains(&identity) {
+                if !values
+                    .iter()
+                    .any(|known| known.is_same_directory(&identity))
+                {
                     values.push(identity);
                 }
             }
@@ -405,7 +438,7 @@ fn discover(
             }) {
             Some(identity) => {
                 let values = fences.entry(token.into()).or_default();
-                if !values.contains(&identity) {
+                if !values.iter().any(|known| known.is_same_lease(&identity)) {
                     values.push(identity);
                 }
             }
@@ -639,8 +672,8 @@ fn retire_inner(
             if !owners.iter().any(|owner| {
                 owner.token == record.token
                     && owner.checkout == record.checkout
-                    && owner.checkout_generation == record.checkout_generation
-                    && owner.checkout_fence == record.checkout_fence
+                    && same_generation(owner.checkout_generation, record.checkout_generation)
+                    && same_fence(owner.checkout_fence, record.checkout_fence)
             }) || !observed(&record, profile, &fresh).iter().any(|current| {
                 current.kind == resource.kind
                     && current.name == resource.name
