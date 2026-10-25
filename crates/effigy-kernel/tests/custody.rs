@@ -1221,6 +1221,7 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             cwd: home.path().into(),
             env: vec![],
             inheritance: SupervisorInheritance::ClientLease,
+            handoff: None,
         },
         &Executable::capture(&fixture()).unwrap(),
         ClientMode::Owning,
@@ -1243,6 +1244,7 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             cwd: home.path().into(),
             env: vec![],
             inheritance: SupervisorInheritance::ClientLease,
+            handoff: None,
         },
         &Executable::capture(&fixture()).unwrap(),
         ClientMode::Owning,
@@ -1884,7 +1886,7 @@ fn inheritance_custody_exports_one_reader_to_sibling_foreground_children() {
         let mut spec = spec(home.path(), "unused");
         spec.argv = vec![fixture().into_os_string(), "inheritance-check".into()];
         children.push(
-            Custody::spawn_foreground_with_lease(&mut run, spec, &cx, &reader, true).unwrap(),
+            Custody::spawn_foreground_with_lease(&mut run, spec, &cx, &reader, true, None).unwrap(),
         );
     }
     for child in &mut children {
@@ -1922,9 +1924,15 @@ fn inheritance_foreground_class_refuses_durable_factories_in_a_native_child() {
         "runtime-open".into(),
         home.path().join("forbidden").into_os_string(),
     ];
-    let mut process =
-        Custody::spawn_foreground_with_lease(&mut run, command, &cx, &lease.capability(), true)
-            .unwrap();
+    let mut process = Custody::spawn_foreground_with_lease(
+        &mut run,
+        command,
+        &cx,
+        &lease.capability(),
+        true,
+        None,
+    )
+    .unwrap();
     let exit = process.wait(cx.operation()).verified().copied().unwrap();
     assert_eq!(exit.code, 0);
     process.complete_foreground(&mut run, exit).unwrap();

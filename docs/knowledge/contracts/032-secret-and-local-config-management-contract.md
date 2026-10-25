@@ -211,12 +211,23 @@ Injection rules:
   in Q-007 "Secrets before the TUI"). With no terminal and no other source it
   refuses before starting anything, naming what is locked and the next
   command: `effigy secrets unlock`, or `EFFIGY_SECRET_PASSPHRASE`
-- everything the session starts then uses that access on the internal env route
-  (052 K12), never this process's global environment: the managed environment
-  `up`, the run's supervisor, every workload, shell and lifecycle tab,
-  host-process supervisors and the processes they restart, and a seeded
-  workspace task. A nested Effigy process that inherits the route uses it
-  whatever its task name, and never prompts
+- the session's access reaches **Effigy's own child processes only**, and only
+  through a one-shot inherited descriptor the child reads once at startup and
+  closes (052 K12, 052 §5.7). Named children: the run's supervisor, the managed
+  environment `up`, and a nested Effigy step Effigy itself launches. It never
+  reaches a command line, a rendered shell string, a spawn environment a
+  workload inherits, or any later child of a workload; a process listing shows
+  neither argv nor an environment value for it (effigy#338)
+- a user workload never receives the passphrase or the local-dev marker: every
+  workload and host-process spawn starts from an ambient environment with the
+  session-access keys removed, and the kernel no longer offers a command-string
+  route for them. A nested `effigy` started from user code (a shell tab, a
+  manifest `run` command, a seeded workspace task) is therefore a top-level
+  invocation: the local-dev key's own rules apply, or it asks once on its own
+  terminal. It does not inherit the session's access
+- a command that runs inside a container never carries session access either:
+  a container command string is not a descriptor handoff, so an Effigy process
+  there resolves its own access
 - the session never writes a sealed credential for itself: sharing is not an
   implicit `secrets unlock`, and no value reaches argv, a rendered shell string
   or a log; a value a child echoes is redacted like any other resolved secret
