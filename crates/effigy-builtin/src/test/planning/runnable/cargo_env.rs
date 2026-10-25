@@ -139,10 +139,15 @@ fn is_shell_executable_token(token: &str) -> bool {
 }
 
 fn is_cargo_executable_token(executable: &str) -> bool {
+    // A detected Rust suite routed through Oxide still runs Cargo, so the
+    // manifest `CARGO_*` entries apply to it exactly as they do to the plain
+    // route. Oxide owns the build directory either way.
     executable == "cargo"
         || executable == "cargo-nextest"
+        || executable == "oxide"
         || executable.ends_with("/cargo")
         || executable.ends_with("/cargo-nextest")
+        || executable.ends_with("/oxide")
 }
 
 fn is_env_assignment_token(token: &&str) -> bool {

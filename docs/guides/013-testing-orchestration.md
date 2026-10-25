@@ -26,6 +26,33 @@ When the root `Cargo.toml` declares `[workspace]`, both Cargo runners add
 `--workspace` automatically. Use `[test.runners]` or `[test.suites]` only when
 the repository intentionally needs a narrower or otherwise custom board.
 
+### Oxide route
+
+When this machine has a usable `oxide`, the detected Rust suite runs through
+Oxide's leased slot, so its build intermediates stay in the shared pool instead
+of landing unmanaged in the checkout's `target`:
+
+- `cargo nextest run …` runs as `oxide nextest run …`
+- the `cargo test` fallback runs as `oxide test …`
+
+`effigy test --plan` shows the chosen command and the evidence for it. The
+gate is `oxide pool describe --json` answering `oxide.pool.describe/1`; an
+`oxide` that is present but cannot answer fails the run and names the escape
+instead of quietly using plain Cargo. Container-runtime targets and
+`[test.runners]` overrides keep their own command.
+
+Escape to plain Cargo for one run when Oxide is broken:
+
+```sh
+EFFIGY_OXIDE_ESCAPE=cargo effigy test
+```
+
+Without `oxide` on PATH the route is plain Cargo, unchanged. A routed suite
+that fails repeats the escape in its results, and Oxide's own diagnostic stays
+in the suite's output. A harness that runs `effigy test` under a temporary
+`HOME` passes `OXIDE_POOL` through from the real environment first, or Oxide
+creates a cold pool under that home.
+
 ### Cargo package scope in passthrough
 
 Passthrough arguments reach the runner command verbatim, and Cargo treats
@@ -129,7 +156,7 @@ Precedence:
 - process env wins over dotenv fallback
 
 Matching behavior:
-- applies to command shapes that resolve to cargo executables (`cargo`, `cargo-nextest`, `/abs/path/cargo`, `/abs/path/cargo-nextest`)
+- applies to command shapes that resolve to cargo executables (`cargo`, `cargo-nextest`, `oxide`, and their absolute paths), so an Oxide-routed suite keeps the same manifest `CARGO_*` entries; Oxide owns the build directory either way
 - supports common wrappers and prefixes before cargo (`env`, `exec`, `command`, leading `KEY=value` assignments)
 - in default `prefix-aware` mode, does not apply to shell-wrapped commands where cargo is inside a shell string (for example `sh -lc "cargo test --workspace"`)
 - does not apply to non-cargo executables

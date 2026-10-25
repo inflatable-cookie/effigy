@@ -1269,6 +1269,17 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A detected Rust suite in `effigy test` runs through Oxide when the host has
+  a usable `oxide`: `oxide pool describe --json` answering
+  `oxide.pool.describe/1` turns `cargo nextest run …` into `oxide nextest
+  run …` and `cargo test …` into `oxide test …`, so the suite's build
+  intermediates stay in Oxide's slot instead of landing unmanaged in
+  `target`. `EFFIGY_OXIDE_ESCAPE=cargo`, or no `oxide` on PATH, keeps the
+  plain-Cargo route; an `oxide` that is present but unusable fails the run and
+  names the escape instead of falling back silently, and a failed routed suite
+  repeats it. Container-runtime targets and `[test.runners]` overrides keep
+  their own command. `effigy test --plan` renders the chosen command and the
+  evidence that chose it.
 - A managed host listener is ready when its reserved loopback port answers its
   readiness request, and it stays published while the supervisor's run is alive
   and that port keeps answering. The supervisor probes the port every five

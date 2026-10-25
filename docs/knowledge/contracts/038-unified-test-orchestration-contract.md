@@ -52,6 +52,29 @@ Suites are on the default board unless a full suite table sets
 `default = false`. On-demand suites remain available through
 `effigy test <suite>` but do not run for bare `effigy test`.
 
+## Host Cargo Route
+
+An auto-detected Rust suite runs through Oxide's leased slot on a host that
+has a usable `oxide`, because Oxide writes the suite's build intermediates to
+the shared pool instead of an unmanaged `target`:
+
+1. `EFFIGY_OXIDE_ESCAPE=cargo` keeps the plain-Cargo route.
+2. No `oxide` on PATH keeps the plain-Cargo route, as it always was.
+3. Otherwise `oxide pool describe --json` decides. It is read-only and creates
+   no pool. `oxide.pool.describe/1` routes the suite unchanged: `cargo nextest
+   run …` becomes `oxide nextest run …`, and the `cargo test` fallback becomes
+   `oxide test …`. Oxide refuses `--target-dir`, `--config` and `+toolchain` on
+   a leased command, so the route never adds them. A nonzero exit, unreadable
+   output or unknown schema fails the run and names
+   `EFFIGY_OXIDE_ESCAPE=cargo`; Effigy never falls back silently.
+4. A container-runtime target keeps its own command: Oxide is a host route. A
+   `[test.runners]` override owns its command and is not routed.
+5. A routed suite that fails names the escape in the results, and Oxide's own
+   diagnostic stays on the suite's stderr.
+
+The route is resolved once per invocation. `effigy test --plan` renders the
+chosen command and the evidence that chose it, in text and in JSON.
+
 `--plan` is a hard no-execution boundary. Future routing or configuration
 changes may enrich its output but may not delegate to an executable task.
 

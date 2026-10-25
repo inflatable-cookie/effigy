@@ -1,7 +1,7 @@
 use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, assert_path_exists,
-    assert_path_missing, fs, install_local_vitest_marker, lock_test, run_builtin_ok,
-    setup_fanout_catalog_repo, temp_workspace, write_multi_suite_cargo_manifest,
+    assert_path_missing, fs, install_local_vitest_marker, lock_test, plain_cargo_route,
+    run_builtin_ok, setup_fanout_catalog_repo, temp_workspace, write_multi_suite_cargo_manifest,
     write_package_json_with_test_script, write_root_manifest,
 };
 
@@ -22,6 +22,7 @@ fn release_preparation_fixture_executes_local_vitest() {
 #[test]
 fn run_manifest_task_builtin_test_executes_js_and_rust_suites_in_same_repo() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-multi-context");
     write_package_json_with_test_script(&root);
     write_multi_suite_cargo_manifest(&root);

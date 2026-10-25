@@ -6,11 +6,14 @@
 
 use std::path::Path;
 
+mod oxide;
 mod rust;
 mod vitest;
 
 use rust::detect_rust;
 use vitest::detect_vitest;
+
+pub use oxide::{route_rust_plan, OxideRouteError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestRunner {
@@ -54,6 +57,8 @@ pub fn detect_test_runner(repo_root: &Path) -> Option<TestRunnerPlan> {
     detect_test_runner_detailed(repo_root).selected
 }
 
+/// Detected runner plans before any route is chosen. Callers that execute a
+/// Rust plan route it with [`route_rust_plan`].
 pub fn detect_test_runner_plans(repo_root: &Path) -> Vec<TestRunnerPlan> {
     let (vitest_plan, _) = detect_vitest(repo_root);
     let (nextest_plan, _, fallback_plan, _) = detect_rust(repo_root);

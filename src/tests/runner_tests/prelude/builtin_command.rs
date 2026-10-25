@@ -5,6 +5,17 @@ use super::harness::{
 use super::output::{assert_output_contains_all, read_file_text};
 use super::runtime::{fs, Path, PathBuf, RunnerError};
 
+/// Force the plain-Cargo route for a detected Rust suite.
+///
+/// Which route a suite takes is a property of the host (`oxide` on PATH),
+/// never of the fixture these tests prove. A fixture workspace is disposable
+/// and outside any Oxide-managed checkout, so the tests that execute a
+/// detected Cargo suite take the documented escape instead of leasing a slot;
+/// the routed command itself is proven by `oxide_route_tests`.
+pub(in crate::runner::tests) fn plain_cargo_route() -> EnvGuard {
+    EnvGuard::set_many(&[("EFFIGY_OXIDE_ESCAPE", Some("cargo".to_owned()))])
+}
+
 pub(in crate::runner::tests) fn setup_fanout_catalog_repo(root: &Path) -> (PathBuf, PathBuf) {
     let catalog_a = root.join("catalog_a");
     let catalog_b = root.join("catalog_b");
