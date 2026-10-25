@@ -12,6 +12,7 @@ use effigy_kernel::ctx::{
     CancelToken, CleanupContext, Deadline, EffectClass, EffectContext, Limits, ObserveContext,
     OpenReason, OperationContext, Placement,
 };
+use effigy_kernel::migration::CheckoutLocation;
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::outcome::Invocation;
 use effigy_kernel::root::StateRoot;
@@ -223,19 +224,22 @@ pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerE
     Ok(RootsView { roots, omitted })
 }
 
-/// Durable checkout state belongs to the checkout that owns `root`, not to a
-/// nested catalog's directory (contract 052 §7.1). Identity and the state root
-/// come from one resolution: the kernel captures the root's own Git locator and
-/// refuses a root whose marker disagrees with the Git directory it was handed,
-/// so a nested catalog with no Git metadata of its own resolves both through the
-/// nearest enclosing `.git` instead of being refused (effigy#328).
-pub(in crate::runner) fn checkout_location(
-    root: &Path,
-) -> std::io::Result<effigy_kernel::migration::CheckoutLocation> {
+/// The kernel location of the checkout an invocation root belongs to.
+///
+/// Durable checkout state belongs to the resolved invocation root, not a
+/// nested catalog's cwd (contract 052 §7.1): Git discovery is lexical and
+/// upward, so a nested directory with no `.git` of its own declares no second
+/// checkout and its state belongs to the nearest enclosing one. Resolving both
+/// halves of the location here keeps the state root and the Git directory the
+/// kernel binds in agreement, which is exactly what
+/// `RetainedCheckout::capture` proves.
+pub(in crate::runner) fn checkout_location(root: &Path) -> Result<CheckoutLocation, RunnerError> {
     let checkout = effigy_core::worktree_scope::checkout_root(root);
-    Ok(effigy_kernel::migration::CheckoutLocation {
-        git_directory: effigy_core::worktree_scope::git_directory(&checkout)?,
+    let git_directory = effigy_core::worktree_scope::git_directory(&checkout)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(CheckoutLocation {
         root: checkout,
+        git_directory,
     })
 }
 
@@ -246,8 +250,7 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let home =
         state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
-    let location = checkout_location(checkout.path())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let location = checkout_location(checkout.path())?;
     // Revalidate before reusing a retained handle: same-path replacement is
     // never permission to write through the previous checkout's descriptor.
     let current = StateRoot::checkout_effects(&effects(), &home, &location)
@@ -256,8 +259,8 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // Keyed by the checkout that owns the state, so two nested catalogs of one
-    // checkout share one retained handle and never look ambiguous to each other.
+    // Keyed by the checkout the root belongs to, so every nested catalog in one
+    // checkout reuses that checkout's single retained handle.
     if let Some(root) = roots.get(&location.root) {
         let identity = |dir: &effigy_kernel::fs::DirFd| {
             dir.identity()
