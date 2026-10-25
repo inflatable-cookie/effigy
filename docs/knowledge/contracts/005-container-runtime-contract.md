@@ -159,11 +159,13 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
-Exec readiness applies the same owned-binding check before any probe. The
-readiness probe and the recovery restart run only after the running primary
-service passes it. An unlabelled, foreign or wrong-checkout primary is neither
-exec'd nor restarted; the up reports not exec-ready. The shell and task exec
-that follow are gated by that readiness boundary.
+Readiness is Running plus the service's own health check. Every service
+without its own `restart:` is rendered with `restart: unless-stopped`, so a
+service that stops after a VM restart, a Colima restart or a crash comes back
+by itself. Effigy never probes exec readiness, hand-starts an exited service or
+restarts one to repair it: an unlabelled, foreign or wrong-checkout primary
+fails the owned-binding check, and a user's own `effigy exec` reports its own
+error (a `working_dir` the image does not have fails that command, not `up`).
 
 No path may stop, restart or recreate an environment's containers while a
 run holds that environment, except that run's own stop. The environment
@@ -177,10 +179,8 @@ exempt only once that run is settling. Gates are host-only (R1): Effigy inside
 a workspace container holds no host gate and requests host authority through
 the channel of contract 052 §8.
 
-The exec-readiness restart is the environment's repair transition, so it
-refuses while any run holds the environment and reports the readiness failure
-instead. A bring-up under live holders keeps the running generation and applies
-a changed render once they end. Lifecycle EXIT traps, including inline-workspace
+A bring-up under live holders keeps the running generation and applies a
+changed render once they end. Lifecycle EXIT traps, including inline-workspace
 traps, only write lifecycle state. Runner finish owns exactly one down per
 managed stop; parent death gives an orphaned lifecycle shell no teardown
 authority over a successor.
@@ -1279,93 +1279,28 @@ profile VM accumulates one `health-check-<id>.pid` file per check under
 `/run/containerd/io.containerd.runtime.v2.task/<namespace>/<container>/`.
 `/run` is a finite-inode tmpfs; once it fills, every exec and container create
 in the profile fails with `no space left on device`. nerdctl 2.4.1 deletes the
-exec process and stops the leak; the VM runs whatever nerdctl its Colima image
-ships (Colima 0.10.3 ships 2.3.1), so the doctor warning names the version
-rather than promising an upgrade. Effigy cannot upgrade a running profile's
-runtime, so it:
-
-- reports `/run` inode use and the total and stale pid-file counts for every
-  running Colima profile in `effigy doctor`, with a warning that names the
-  prune and the fixed nerdctl version when inode use reaches 80% or the stale
-  count reaches 10,000;
-- prunes files matching exactly `health-check-*.pid`, directly inside a
-  containerd runtime-v2 task directory and older than ten minutes, on
-  `container up` (bounded, never failing the bring-up) and on
-  `effigy container profile prune-health-pid-files [--profile <NAME>]`, which
-  reports the counts and inode use before and after.
+exec process and stops the leak. Effigy cannot upgrade a running profile's
+runtime, so it prunes files matching exactly `health-check-*.pid`, directly
+inside a containerd runtime-v2 task directory and older than ten minutes, on
+`container up` (bounded, never failing and never speaking on success) and on
+`effigy container profile prune-health-pid-files [--profile <NAME>]`, which
+reports the counts before and after.
 
 No other path under the task root is read or removed, and a younger file may
 belong to a health check still in flight, so it is kept.
 
-## Owned service start after Colima restart
+## Restarting a stopped service
 
-A running Colima VM can still leave Effigy-owned Compose containers `Exited`
-or `Created` after the VM restarts. `nerdctl compose up` may return success
-in that state; `nerdctl start` of the same owned container is the recovery
-that preserves volumes, including Postgres crash-recovery data.
-
-After Compose up, Effigy inspects owned projects including stopped
-containers. A container is a recovery candidate when its Compose project
-label matches the selected environment or a declared shared-service
-project, its compose service is currently declared in that project's
-compose files, and it is not a one-off `compose run` container
-(`com.docker.compose.oneoff=True`, or a `-{service}-run-` name).
-Undeclared orphans are not started. Matching stopped containers are
-started by name. Effigy does not recreate them, does not delete volumes,
-and does not delete systemd units, including nerdctl health-check timers
-named after container ids.
-
-Start exit 0 is not readiness. Effigy never starts a container that is
-already running or that the backend is still acting on. Immediately before
-each recovery start it observes that one container with its own `inspect`,
-and starts it only when the observation proves a stopped state: `Running`
-false with `State.Status` `created`, `exited` or `dead`. A running container
-needs nothing, and `restarting`, `starting`, `stopping`, `pausing`,
-`unpausing`, `removing`, `paused` or any unproven status is left to the
-readiness wait, so a container Compose started in the meantime is never
-started a second time. An inspect that cannot prove the state fails closed
-with its own bounded error instead of starting blind, and a container the
-backend no longer has is not started.
-
-nerdctl implements a container health check as the transient timer
-`{full_id}.timer`. A container whose process exits on its own leaves that
-unit loaded and active, so the next `start` of the same container reports
-`Unit <id>.timer was already loaded or has a fragment file` and exits
-non-zero even though the container does start. When a start reports that
-collision and the following inventory shows the container running, Effigy
-records the collision line and hands the service to the normal readiness
-and health wait, which proves or fails the health check itself. That is not
-stale backend state, and Effigy does not stop or mutate the now-running
-container or delete its systemd units. This applies to Colima/nerdctl only;
-Docker is unchanged. If the owned
-Colima/nerdctl container stays stopped with that collision, Effigy may
-recover once: inspect the container for a full 64-character hexadecimal ID,
-require stopped status and the selected project/service labels (not one-off,
-orphan, foreign, running, or undeclared), confirm `{full_id}.timer` and
-`{full_id}.service` in the selected profile are transient or already gone,
-then `systemctl stop` only `{full_id}.timer` and `systemctl reset-failed`
-`{full_id}.service` and `{full_id}.timer`. Because operation exit 0 is not
-proof that a stopped transient unit unloaded, Effigy then re-probes the
-exact pair with a bounded wait until both units are unloaded; a late unload
-recovers once, and a pair that never unloads fails with its still-loaded
-load/fragment state and a bounded diagnostic instead of claiming recovery.
-A persistent or otherwise unverified unit appearing after the stop/reset is
-refused without deleting files. The single start retry then proves readiness
-by inspect.
-Stop/reset of already-gone units is idempotent. Persistent fragments,
-mismatched unit identity, unknown status, missing inspect ID, unavailable
-systemctl/Colima authority, or Docker backends are not recovered
-automatically; the failure names the inspected identity, the refusal
-reason, and the exact profile-scoped operator commands. Unit files are
-never deleted, daemon-reloaded, or selected by wildcard. If the owned
-container stays stopped, or inspect/start times out, Effigy fails and
-names the service, its last observed status, the start backend text
-(including that stale-timer warning, a refusal, or a hang timeout), and
-the exact `colima nerdctl --profile <profile> -- start <container>`
-command (or `docker start <container>` on Docker). Inspect and start are
-bounded so a hung nerdctl command cannot present a partial stack as ready.
-`container status` lists those stopped owned rows instead of omitting them
-or reporting success by assumption.
+A running Colima VM can still leave Compose containers stopped after the VM
+restarts, a Colima restart or a crash. The rendered Compose file answers that,
+not Effigy: every service without a `restart:` of its own is rendered with
+`restart: unless-stopped`, and a declared policy (`no`, `always`,
+`on-failure`, …) wins. The runtime restarts the service; Effigy issues no
+hand-start, no recovery start of an exited container by name, and no
+`systemctl` command on nerdctl's health-check units. A stack the runtime has
+not restarted reports the readiness failure that names the service and its own
+health check, and `container status` lists stopped owned rows instead of
+omitting them.
 
 ### Refusal-accounting observation boundary
 
@@ -1413,10 +1348,9 @@ reporting, exact project/service/container ownership and fresh published-port
 evidence. An unavailable inventory cannot authorize a route or be treated as
 an empty or ready stack. A later exposure reconciliation must preserve sibling
 routes and running exec sessions rather than require whole-stack recreation.
-Any newly qualified recreation of a stopped health-checked service must be
-limited to that proven owned service, preserve its data and volume identities,
-and refuse unknown, foreign, shared or changing ownership. Existing retirement
-confirmation does not authorize agents to delete the reported live stack.
+Effigy recreates no service to restart it: the render's `restart:
+unless-stopped` and the runtime do that. Existing retirement confirmation does
+not authorize agents to delete the reported live stack.
 
 Detached publication retains the originally admitted context across probes and
 requires it at the locked route save. A publication refusal does not rewrite
@@ -1425,7 +1359,7 @@ writer limits are owned by
 [the gateway route trust contract](033-gateway-route-table-trust-contract.md#detached-admission-at-publication).
 Detached JSON also reports `activation_stage` from a closed vocabulary:
 `preparation`, `reconciliation_inventory`, `compose_activation`,
-`admission_record`, `stopped_service_recovery`, `readiness`,
+`admission_record`, `readiness`,
 `runtime_integrations`, or `persistent_owner`. This identifies the checked
 caller boundary without exposing backend output, argv or environment. It is
 not a cause attribution, an absent-resource verdict, or readiness proof.
@@ -1445,15 +1379,9 @@ is retained.
 Restore that admitted context before supported reconciliation; unavailable
 context cannot authorize recreation, cleanup or guessed exposure.
 
-The current health-check recovery interface cannot qualify service-only
-recreation. Its inspect snapshot records mount references, but does not bind
-them to an immutable service declaration, prove exclusive volume/data ownership,
-or carry a supported backend preservation plan. A recurring collision therefore
-reports those missing seams and refuses recreation. It performs no volume
-deletion; `container retire --yes` removes owned mutable volumes and is not a
-restart recovery step. The private production-command-adapter fixture
-`recurring_health_collision_refuses_recreation_through_production_adapters`
-proves the refusal after one exact transient unload and one retry. Retained file
+Effigy does not recreate a stopped service to repair it: the render's
+`restart: unless-stopped` is the restart path, and `container retire --yes`
+removes owned mutable volumes only when the operator asks. Retained file
 markers establish only fixture non-mutation, not real engine volume preservation
 or live exec/session continuity.
 

@@ -184,6 +184,11 @@ fn identity_dir(repo_root: &Path) -> io::Result<std::path::PathBuf> {
     })
 }
 
+/// The checkout's identity token, read in one order for every caller: the
+/// runtime-scope file ([`SCOPE_FILE`]) in the checkout's identity directory
+/// first, then a primary checkout's own [`CHECKOUT_TOKEN_FILE`]. A checkout
+/// carrying both resolves to the scope file's token, so the kernel invocation,
+/// containers and environments agree on one identity.
 pub fn checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
     let scope = read_token(&identity_dir(repo_root)?)?;
     if scope.is_some() || resolve(repo_root)?.is_some() {
@@ -239,17 +244,6 @@ pub fn load_scoped(repo_root: &Path) -> io::Result<Option<(ScopeKind, String)>> 
 /// File holding a primary checkout's own identity token, beside the
 /// runtime-scope token in Git's per-checkout directory.
 pub const CHECKOUT_TOKEN_FILE: &str = "effigy-checkout-id";
-
-/// A primary checkout's identity token, created once in its `.git`
-/// directory. `None` when neither `repo_root` nor an ancestor is a Git
-/// checkout.
-pub fn load_or_create_checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
-    let git_dir = checkout_root(repo_root).join(".git");
-    if !git_dir.is_dir() {
-        return Ok(None);
-    }
-    load_or_create_token_file(&git_dir.join(CHECKOUT_TOKEN_FILE)).map(Some)
-}
 
 /// The recorded primary checkout token without creating one.
 pub fn load_checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
@@ -448,6 +442,13 @@ mod tests {
     const MARKED: &str =
         "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n";
 
+    /// A primary checkout token written the way v0.14.1 left it, so an
+    /// existing `effigy-checkout-id` stays readable.
+    pub(super) fn legacy_checkout_token(checkout: &Path, token: &str) -> String {
+        fs::write(checkout.join(".git").join(CHECKOUT_TOKEN_FILE), token).unwrap();
+        token.to_owned()
+    }
+
     #[test]
     fn scope_is_stable_and_changes_when_worktree_is_recreated_at_same_path() {
         let root = tempfile::tempdir().unwrap();
@@ -515,7 +516,7 @@ mod tests {
         fs::write(nested.join("effigy.toml"), "[catalog]\n").unwrap();
 
         assert_eq!(checkout_root(&nested), checkout);
-        let token = load_or_create_checkout_token(&checkout).unwrap().unwrap();
+        let token = legacy_checkout_token(&checkout, "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a");
         assert_eq!(checkout_token(&nested).unwrap(), Some(token.clone()));
         assert_eq!(checkout_token(&checkout).unwrap(), Some(token));
         assert_eq!(git_directory(&nested).unwrap(), Some(checkout.join(".git")));
@@ -550,8 +551,8 @@ mod tests {
         let inner = checkout.join("vendor/library");
         fs::create_dir_all(inner.join(".git")).unwrap();
         assert_eq!(checkout_root(&inner), inner);
-        let outer = load_or_create_checkout_token(&checkout).unwrap().unwrap();
-        let own = load_or_create_checkout_token(&inner).unwrap().unwrap();
+        let outer = legacy_checkout_token(&checkout, "11111111111111111111111111111111");
+        let own = legacy_checkout_token(&inner, "22222222222222222222222222222222");
         assert_ne!(outer, own);
         assert_eq!(checkout_token(&inner).unwrap(), Some(own));
         // A submodule is a file-shaped `.git`; it is still its own checkout.
@@ -690,14 +691,16 @@ mod observation_tests {
         let fixture = tempfile::tempdir().unwrap();
         let root = fixture.path();
         fs::create_dir(root.join(".git")).unwrap();
-        let token = load_or_create_checkout_token(root).unwrap().unwrap();
+        let token = super::tests::legacy_checkout_token(root, "33333333333333333333333333333333");
         assert_eq!(checkout_token(root).unwrap(), Some(token.clone()));
         assert_eq!(prepare_checkout_token(root).unwrap(), token);
         assert!(!root.join(".git").join(SCOPE_FILE).exists());
-        // Already distinct legacy identities remain distinct and valid.
+        // A checkout carrying both files resolves to the scope file's token,
+        // and the legacy token stays readable for migration aliases.
         let other = "01010101010101010101010101010101";
         fs::write(root.join(".git").join(SCOPE_FILE), other).unwrap();
         assert_eq!(checkout_token(root).unwrap().as_deref(), Some(other));
+        assert_eq!(prepare_checkout_token(root).unwrap(), other);
         assert_eq!(load_checkout_token(root).unwrap(), Some(token));
     }
 

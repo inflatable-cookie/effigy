@@ -178,23 +178,3 @@ impl EnvRun<'_> {
         self.kernel(result)
     }
 }
-
-/// One repair of running workloads as its own transition.
-pub fn repair(
-    ctx: &EnvContext<'_>,
-    env: &EnvRef,
-    backend: &BackendSelection,
-    project: &str,
-    effect: impl FnOnce() -> Result<(), BackendError>,
-) -> Result<(), EnvError> {
-    let mut run = EnvRun::begin(
-        ctx,
-        env,
-        Operation::Up,
-        Wait::Until(Instant::now() + GATE_WAIT),
-    )?;
-    let result = run.repair_with(backend, project, effect);
-    let ok = result.is_ok();
-    run.finish(ok)?;
-    result
-}

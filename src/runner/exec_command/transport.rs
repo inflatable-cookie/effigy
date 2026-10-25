@@ -319,16 +319,10 @@ fn run_owned_compose_exec_plan_with_deadline(
     deadline: Option<Instant>,
 ) -> Result<Output, RunnerError> {
     let parsed = parse_compose_exec_args(&plan.args)?;
-    let working_dir = parsed
-        .working_dir
-        .as_deref()
-        .map(Path::new)
-        .unwrap_or(Path::new("/"));
-    let binding = crate::runner::container_runtime_prep::verify_service_exec_ready(
+    let binding = crate::runner::container_runtime_prep::verify_service_binding(
         &plan.repo_root,
         policy,
         &parsed.service,
-        working_dir,
         deadline,
     )?;
     run_verified_compose_exec_plan(policy, plan, &binding, capture, stdin_file, deadline)

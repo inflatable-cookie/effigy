@@ -20,7 +20,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container data seed` targets the default container; `container data dump` exports SQL dumps from generated database services.",
         "`container cache list|prune` manages disposable build caches such as Rust `target` and `node_modules`; use `--kind rust-target` for Rust target pressure rather than orphan volume cleanup.",
         "`container profile status|resize|recreate|purge` manages the Colima profile: `resize` restarts it, `recreate --disk <GiB> --yes` rebuilds it, `purge --yes` deletes it.",
-        "`container profile prune-health-pid-files [--profile <NAME>]` deletes only the stale nerdctl health-check pid files older than 10 minutes under the profile's containerd task directory, and reports `/run` inode use before and after. `container up` runs the same bounded prune; nerdctl 2.3.1 leaks those files and 2.4.1 fixes it.",
+        "`container profile prune-health-pid-files [--profile <NAME>]` deletes only the stale nerdctl health-check pid files older than 10 minutes under the profile's containerd task directory, and reports the counts before and after. `container up` runs the same bounded prune; nerdctl 2.3.1 leaks those files and 2.4.1 fixes it.",
         "`container profile repair` recovers the environment's Colima runtime in place and `profile reset-runtime` stops it without deleting it; both accept `--repo` and `--system`.",
         "`container volume list` is repo-scoped; `--global` lists every runtime, `--dormant` superseded repo volumes, and `--global --orphans` ownerless volumes.",
         "`container hosts` prints this checkout's HTTP and TCP host map (linked worktrees use `<apex>-w<scope>.test`); `container scope` prints its runtime token.",

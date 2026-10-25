@@ -124,23 +124,15 @@ fn run_container_profile_prune_health_pid_files(
         )));
     }
     let deadline = Instant::now() + PROFILE_PRUNE_TIMEOUT;
-    let before =
-        effigy_containers::exec::inspect_run_inode_pressure(&profile, Path::new("."), deadline)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let prune = effigy_containers::exec::prune_stale_health_check_pidfiles(
         &profile,
         Path::new("."),
         deadline,
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let after =
-        effigy_containers::exec::inspect_run_inode_pressure(&profile, Path::new("."), deadline)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(render_profile_prune_health_pid_files(
         &profile,
-        before,
         prune,
-        after,
         output_json,
     ))
 }
@@ -610,9 +602,7 @@ fn render_profile_purge(
 
 fn render_profile_prune_health_pid_files(
     profile: &str,
-    before: effigy_containers::exec::RunInodePressure,
     prune: effigy_containers::exec::HealthCheckPidFilePrune,
-    after: effigy_containers::exec::RunInodePressure,
     output_json: bool,
 ) -> String {
     let json = json!({
@@ -620,13 +610,11 @@ fn render_profile_prune_health_pid_files(
         "schema_version": 1,
         "ok": true,
         "profile": profile,
-        "before": run_inode_pressure_json(&before),
         "prune": {
             "before": prune.before,
             "after": prune.after,
             "deleted": prune.deleted(),
         },
-        "after": run_inode_pressure_json(&after),
         "stale_after_minutes": effigy_containers::exec::HEALTHCHECK_PIDFILE_STALE_MINUTES,
         "task_root": effigy_containers::exec::HEALTHCHECK_TASK_ROOT,
     });
@@ -634,28 +622,11 @@ fn render_profile_prune_health_pid_files(
         return json.to_string();
     }
     format!(
-        "[ok] Colima profile `{profile}`: {}\n/run inodes: {} → {} of {} used ({}% → {}%); {} health-check pid file(s) remain, all younger than {} minutes",
+        "[ok] Colima profile `{profile}`: {}; {} health-check pid file(s) remain, all younger than {} minutes",
         prune.summary(),
-        before.inode_used,
-        after.inode_used,
-        after.inode_total,
-        before.inode_use_percent(),
-        after.inode_use_percent(),
-        after.pid_files,
+        prune.after,
         effigy_containers::exec::HEALTHCHECK_PIDFILE_STALE_MINUTES,
     )
-}
-
-fn run_inode_pressure_json(
-    pressure: &effigy_containers::exec::RunInodePressure,
-) -> serde_json::Value {
-    json!({
-        "inode_total": pressure.inode_total,
-        "inode_used": pressure.inode_used,
-        "inode_use_percent": pressure.inode_use_percent(),
-        "pid_files": pressure.pid_files,
-        "stale_pid_files": pressure.stale_pid_files,
-    })
 }
 
 fn profile_status_json(status: &ProfileStatus) -> serde_json::Value {

@@ -226,14 +226,14 @@
 ] }
 "test:environment:ci:isolated:runner" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
-  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(exec::healthcheck_timer::) | test(exec::restart_recovery::) | test(bounded_exec::tests::) | test(builder_recovery::) | test(host_container_lease::tests::) | test(handover_end_owner_releases_lock_for_reverse_handover)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(bounded_exec::tests::) | test(builder_recovery::) | test(host_container_lease::tests::) | test(handover_end_owner_releases_lock_for_reverse_handover)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
 ] }
 "test:environment:ci:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "effigy test:environment:ci:shared:runner", timeout_ms = 7200000 },
 ] }
 "test:environment:ci:shared:runner" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy -p effigy-containers --lib --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::render::tests:: workspace::tests::host_git_mount_tests:: exec::healthcheck_timer:: exec::restart_recovery:: bounded_exec::tests:: builder_recovery:: host_container_lease::tests:: handover_end_owner_releases_lock_for_reverse_handover", timeout_ms = 1200000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy -p effigy-containers --lib --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::render::tests:: workspace::tests::host_git_mount_tests:: bounded_exec::tests:: builder_recovery:: host_container_lease::tests:: handover_end_owner_releases_lock_for_reverse_handover", timeout_ms = 1200000 },
 ] }
 "test:environment:ci" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { task = "test:environment:ci:isolated" },
@@ -648,21 +648,6 @@
 # reclaim in a private registry, status/dry-run non-mutation, digest-confirmed
 # locked apply, retirement releasing only its own allocation in the isolated
 "test:containers:backend-selection" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-containers manager::tests:: -- --nocapture" }
-# Exact-owned stale nerdctl health-check timer/service recovery: behavioral
-# fixtures plus existing restart-recovery cases, then compile the touched crate.
-"test:containers:healthcheck-timer" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "healthcheck-timer-private", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(healthcheck_timer::) | test(restart_recovery::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  "sh scripts/oxide-selector.sh check -p effigy-containers --lib --tests",
-] }
-# Restart-safe proof for the exact-owned health-check unload: a stop/reset that
-# exits 0 while the transient pair stays loaded must fail bounded with an exact
-# diagnostic, a late unload recovers once, and a running container is never
-# mutated or reported as an unresolved health check: the collision warning hands
-# the service to readiness and health instead.
-"test:containers:healthcheck-unload" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "healthcheck-unload-private", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::failed_start_with_a_timer_collision_on_a_running_container_hands_off_to_readiness)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  "sh scripts/oxide-selector.sh check -p effigy-containers --lib --tests",
-] }
 "test:gateway:registration-loopback" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "gateway-registration-loopback", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
@@ -1674,7 +1659,6 @@
 "qa:architecture:container-exec-readiness" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh test -p effigy-containers status_report_includes_primary_service_exec_ready_state -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy-runtime read::tests::primary_service_exec_readiness_ -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy exec_readiness_recovery_ -- --nocapture",
 ] }
 "qa:architecture" = { visibility = "public", group = "Validation", description = "Guard the kernel ratchet, runtime-container drift and container exec readiness.", run = [
   { task = "qa:kernel-ratchet" },

@@ -394,11 +394,10 @@ esac
     let result = if mode == "expired_binding" {
         let policy = effigy_containers::load_container_policy(&root, Some("builder"))
             .expect("private declared policy");
-        crate::runner::container_runtime_prep::verify_service_exec_ready(
+        crate::runner::container_runtime_prep::verify_service_binding(
             &root,
             &policy,
             "builder",
-            std::path::Path::new("/workspace"),
             Some(std::time::Instant::now() - std::time::Duration::from_secs(1)),
         )
         .map(|_| ())

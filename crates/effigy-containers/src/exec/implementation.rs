@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
@@ -671,7 +671,7 @@ pub fn verify_workspace_artifact_builder_declaration(
             });
         }
     }
-    let services = super::restart_recovery::declared_service_names(policy, &policy.compose_files)?;
+    let services = declared_service_names(policy, &policy.compose_files)?;
     if services.len() != 1 || !services.contains("builder") {
         return Err(ContainerExecError::Failure {
             command: "verify workspace builder declaration".to_owned(),
@@ -813,8 +813,7 @@ pub fn compose_stack_is_running(
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
 ) -> Result<bool, ContainerExecError> {
-    let mut declared =
-        super::restart_recovery::declared_service_names(policy, &policy.compose_files)?;
+    let mut declared = declared_service_names(policy, &policy.compose_files)?;
     declared.insert(policy.primary_service.clone());
     Ok(declared.iter().all(|service| {
         rows.iter().any(|row| {
@@ -887,6 +886,44 @@ fn inspect_owned_binding_args(row: &RunningComposeContainer) -> [OsString; 2] {
     ]
 }
 
+/// The service names the given Compose files declare.
+pub(super) fn declared_service_names(
+    policy: &EffectiveContainerPolicy,
+    compose_files: &[PathBuf],
+) -> Result<BTreeSet<String>, ContainerExecError> {
+    let mut names = BTreeSet::new();
+    for compose_file in compose_files {
+        let content =
+            policy
+                .read_compose(compose_file)
+                .map_err(|error| ContainerExecError::Failure {
+                    command: format!("read compose file {}", compose_file.display()),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: error.to_string(),
+                })?;
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&content).map_err(|error| ContainerExecError::Failure {
+                command: format!("parse compose file {}", compose_file.display()),
+                code: None,
+                stdout: String::new(),
+                stderr: error.to_string(),
+            })?;
+        let Some(services) = parsed
+            .get("services")
+            .and_then(serde_yaml::Value::as_mapping)
+        else {
+            continue;
+        };
+        for key in services.keys() {
+            if let Some(name) = key.as_str() {
+                names.insert(name.to_owned());
+            }
+        }
+    }
+    Ok(names)
+}
+
 /// The selected checkout's identity, resolved once and compared against each
 /// inspected container. Callers that must account every runtime capture (the
 /// bounded command path) run `inspect` themselves and pass its output to
@@ -902,8 +939,7 @@ impl OwnershipContext {
         repo_root: &Path,
         policy: &EffectiveContainerPolicy,
     ) -> Result<Self, ContainerExecError> {
-        let declared =
-            super::restart_recovery::declared_service_names(policy, &policy.compose_files)?;
+        let declared = declared_service_names(policy, &policy.compose_files)?;
         // Ownership is the checkout's, not a nested catalog directory's: the
         // generated labels name the enclosing checkout (contract 052 §7.1).
         let canonical = effigy_core::worktree_scope::checkout_root(repo_root)
@@ -944,7 +980,7 @@ impl OwnershipContext {
         &self,
         policy: &EffectiveContainerPolicy,
         row: &RunningComposeContainer,
-        identity: &super::healthcheck_timer::InspectedContainerIdentity,
+        identity: &super::parse::InspectedContainerIdentity,
         oneoff_label_ok: bool,
         require_running: bool,
     ) -> bool {
@@ -993,7 +1029,7 @@ impl OwnershipContext {
                 fn present(value: &str) -> Option<&str> {
                     (!value.is_empty()).then_some(value)
                 }
-                if super::healthcheck_timer::parse_full_container_id(id).is_some()
+                if super::parse::parse_full_container_id(id).is_some()
                     && project == policy.project_name
                     && self.owns(
                         checkout_label(present(working_dir), present(checkout), present(scope)),
@@ -1080,9 +1116,9 @@ impl OwnershipContext {
                 stdout: String::new(),
                 stderr: "binding unavailable: inspect JSON is invalid".to_owned(),
             })?;
-        let identity = super::healthcheck_timer::parse_inspected_container_identity(
-            &String::from_utf8_lossy(inspect_stdout),
-        )
+        let identity = super::parse::parse_inspected_container_identity(&String::from_utf8_lossy(
+            inspect_stdout,
+        ))
         .map_err(|_| ContainerExecError::Failure {
             command: "inspect owned binding".to_owned(),
             code: None,

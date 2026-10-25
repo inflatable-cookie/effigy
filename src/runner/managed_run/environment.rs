@@ -38,8 +38,8 @@ pub(in crate::runner) struct EnvironmentPlan {
     pub(in crate::runner) up_env: Vec<(String, String)>,
     /// Already running for its own owner before this run: retained at settle.
     pub(in crate::runner) borrowed: bool,
-    /// The service and working directory exec workloads attach to.
-    pub(in crate::runner) exec_probe: Option<(String, PathBuf)>,
+    /// The service exec workloads attach to.
+    pub(in crate::runner) exec_probe: Option<String>,
     /// `health_wait` routes, probed once the workloads have started.
     pub(in crate::runner) route_urls: Vec<String>,
     /// Bounds `up` itself: a cold engine pulls and boots inside it.
@@ -122,8 +122,8 @@ pub(in crate::runner) fn bring_up(
         .applied(&ticket, receipt)
         .map_err(|error| NotReady::Failed(format!("environment receipt: {error}")))?;
     up?;
-    if let Some((service, working_dir)) = &plan.exec_probe {
-        exec_ready(run, plan, service, working_dir, stop)?;
+    if let Some(service) = &plan.exec_probe {
+        exec_ready(run, plan, service, stop)?;
     }
     Ok(())
 }
@@ -297,13 +297,12 @@ fn run_up(
     }
 }
 
-/// Exec readiness of the service exec workloads attach to, observed with
+/// The owned binding of the service exec workloads attach to, observed with
 /// backoff until its own deadline. Each attempt's result is reported.
 fn exec_ready(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
     service: &str,
-    working_dir: &Path,
     stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
 ) -> Result<(), NotReady> {
     let policy = match settlement::policy(&plan.repo, &plan.binding) {
@@ -316,17 +315,14 @@ fn exec_ready(
         &format!("exec into `{service}`"),
         deadline,
         stop,
-        &mut |attempt_deadline| {
-            match crate::runner::container_runtime_prep::verify_service_exec_ready(
-                &plan.repo,
-                &policy,
-                service,
-                working_dir,
-                Some(attempt_deadline),
-            ) {
-                Ok(_) => Ok(()),
-                Err(error) => Err(first_line(&error.to_string())),
-            }
+        &mut |attempt_deadline| match crate::runner::container_runtime_prep::verify_service_binding(
+            &plan.repo,
+            &policy,
+            service,
+            Some(attempt_deadline),
+        ) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(first_line(&error.to_string())),
         },
     )
 }

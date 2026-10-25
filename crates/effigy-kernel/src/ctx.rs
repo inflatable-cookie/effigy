@@ -357,6 +357,12 @@ impl CleanupContext {
     pub fn operation(&self) -> &OperationContext {
         &self.0
     }
+    /// The same cancellation, limits and capability with a window that starts
+    /// now. A cleanup step takes its own window: a context minted when a
+    /// long-lived owner started says nothing about how long the step may take.
+    pub(crate) fn window(&self, window: Duration) -> Self {
+        Self(self.0.patience(window))
+    }
 }
 #[derive(Debug, Clone)]
 pub struct EffectContext(OperationContext);

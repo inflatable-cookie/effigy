@@ -93,26 +93,6 @@ pub(super) fn fmt_runner_error(
         RunnerError::ContainerRuntimePolicy { phase, detail } => {
             write!(f, "container runtime {phase} failed: {detail}")
         }
-        RunnerError::ContainerRuntimeExecNotReady {
-            container,
-            service,
-            profile,
-            working_dir,
-            host_load,
-        } => {
-            write!(
-                f,
-                "container `{container}` is not exec-ready: probe with `-w {}` failed even after restarting service `{service}`. Try `colima nerdctl --profile {profile} -- restart <container>` manually, or `effigy container {container} down`, then `effigy container {container} up`.",
-                working_dir.display(),
-            )?;
-            if let Some(load) = host_load {
-                write!(
-                    f,
-                    " {load}, so no bounded probe answered; the service's health is unproven, and retrying once the host is quieter is the first step."
-                )?;
-            }
-            Ok(())
-        }
         RunnerError::TaskCatalogsMissing { root } => write_catalogs_missing(f, root),
         RunnerError::TaskManifestRead { path, error } => {
             write!(f, "{}", failed_to_read_path(path, error))
