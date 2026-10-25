@@ -2,6 +2,8 @@
 mod downgrade;
 pub(crate) mod import;
 mod reservations;
+
+pub use reservations::{listener_port_key, ListenerPortRequest};
 mod snapshot;
 
 pub use snapshot::{DomainClaim, EndpointSnapshot, Quarantine};

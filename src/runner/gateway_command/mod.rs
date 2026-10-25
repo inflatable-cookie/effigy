@@ -2018,6 +2018,28 @@ pub(in crate::runner) fn remove_gateway_tls_cert(domain: &str) -> Result<(), Run
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
+/// The active gateway's HTTPS port, when its TLS listener is configured.
+/// Host processes read it through `${gateway.https_port}` (effigy#321).
+pub(in crate::runner) fn gateway_https_port() -> Option<u16> {
+    gateway_config()
+        .ok()?
+        .proxy
+        .tls_bind_addr
+        .map(|address| address.port())
+}
+
+/// The CA that signs the active gateway's certificates, for host-side clients
+/// (effigy#321). A private gateway keeps its own CA in its state root; the
+/// shared operator gateway uses mkcert's root CA.
+pub(in crate::runner) fn gateway_ca_file() -> Option<PathBuf> {
+    let config = gateway_config().ok()?;
+    let tls = config.tls.clone()?;
+    if let Some(path) = tls.private_ca_cert_path() {
+        return path.is_file().then_some(path);
+    }
+    effigy_gateway::tls::mkcert_root_ca_pem()
+}
+
 fn gateway_tls_config(config: &GatewayConfig) -> Result<TlsConfig, RunnerError> {
     config.tls.clone().ok_or_else(|| {
         RunnerError::task_invocation("gateway TLS is not configured for this installation")

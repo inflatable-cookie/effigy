@@ -660,6 +660,9 @@ fn build_effective_policy(
             .collect(),
     };
     draft.finish(&mut policy, effective_manifest)?;
+    // A host-process `env` reference to a resolved environment fact fails here,
+    // at policy load, naming the key and the valid names (effigy#321).
+    super::host_process_env::validate_host_process_env(&policy)?;
     if let Some(render) = &mut policy.render {
         render.request = super::render::Request::Named(workspace.cloned());
     }
