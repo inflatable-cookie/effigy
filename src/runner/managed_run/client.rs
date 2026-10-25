@@ -47,6 +47,9 @@ pub(in crate::runner) struct ClientStart<'a> {
 pub(in crate::runner) struct Started {
     pub(in crate::runner) client: SupervisorClient,
     pub(in crate::runner) run: RunId,
+    /// The journal this run writes, bound once: a follower reads this root and
+    /// never re-resolves the run by cwd (effigy#339).
+    pub(in crate::runner) root: effigy_kernel::root::StateRoot,
 }
 
 /// Spawns the run's detached supervisor and waits for its admission. A
@@ -66,24 +69,17 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
         state_home: home.clone(),
         terminal: request.terminal,
     };
-    let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-        .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
-        .collect();
-    // The vault passphrase this client already read travels in the spawn
-    // environment only (K12), so the supervisor never prompts.
-    if let Some(passphrase) = crate::runner::secret_session::session_passphrase() {
-        let key = OsString::from(crate::runner::secret_session::internal_secret_passphrase_env());
-        env.retain(|(existing, _)| existing != &key);
-        env.push((key, OsString::from(passphrase.expose())));
-    }
-    // A dev session's supervisor keeps the local-dev access its client holds,
-    // so the environment `up` it starts resolves container secrets through the
-    // local-dev key instead of delivering nothing.
-    if crate::runner::secret_session::local_dev_secret_access_active() {
-        let key =
-            OsString::from(crate::runner::secret_session::internal_local_dev_secret_access_env());
-        env.retain(|(existing, _)| existing != &key);
-        env.push((key, OsString::from("1")));
+    // The supervisor is Effigy's own process, and it is never a workload's
+    // environment: it starts without session access, then reads the one-shot
+    // grant its spawn hands it on a descriptor (effigy#338, K12).
+    let mut env: Vec<(OsString, OsString)> =
+        crate::runner::secret_session::workload_ambient_environment()
+            .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+            .collect();
+    let grant = crate::runner::secret_session::take_child_grant();
+    if let Some(grant) = &grant {
+        let (key, value) = grant.env_entry();
+        env.push((OsString::from(key), OsString::from(value)));
     }
     let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
@@ -99,13 +95,18 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
             // keeps that client's lease. Its death is the run's stop, and its
             // re-admitted invocation is checked against the same authority.
             inheritance: SupervisorInheritance::ClientLease,
+            handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
         },
         &executable,
         ClientMode::Owning,
     )
     .map_err(|error| refusal(&request.addressed, error))?;
     let run = client.run;
-    Ok(Started { client, run })
+    Ok(Started {
+        client,
+        run,
+        root: root.clone(),
+    })
 }
 
 fn refusal(addressed: &Addressed<'_>, error: RunError) -> RunnerError {
@@ -122,13 +123,15 @@ fn refusal(addressed: &Addressed<'_>, error: RunError) -> RunnerError {
 /// The run's own output, followed by byte offset (complete, unlike the
 /// best-effort event pipe).
 pub(in crate::runner) struct OutputFollower {
+    root: effigy_kernel::root::StateRoot,
     run: RunId,
     offsets: [u64; 2],
 }
 
 impl OutputFollower {
-    pub(in crate::runner) fn new(run: RunId) -> Self {
+    pub(in crate::runner) fn new(root: effigy_kernel::root::StateRoot, run: RunId) -> Self {
         Self {
+            root,
             run,
             offsets: [0, 0],
         }
@@ -139,6 +142,7 @@ impl OutputFollower {
         let mut out = (Vec::new(), Vec::new());
         for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
             if let Observed::Verified(read, _) = read_run_log(
+                &self.root,
                 self.run,
                 OUTPUT_SEQUENCE,
                 stream,
@@ -162,6 +166,7 @@ impl OutputFollower {
 /// Lines are emitted whole; a final relay flushes what is left.
 struct TextFollower {
     output: OutputFollower,
+    root: effigy_kernel::root::StateRoot,
     run: RunId,
     workloads: Vec<FollowedWorkload>,
     /// The environment's host processes: `[name] [host] status` and
@@ -177,9 +182,10 @@ struct FollowedWorkload {
 }
 
 impl TextFollower {
-    fn new(run: RunId, hosts: Vec<HostProcessTab>) -> Self {
+    fn new(root: effigy_kernel::root::StateRoot, run: RunId, hosts: Vec<HostProcessTab>) -> Self {
         Self {
-            output: OutputFollower::new(run),
+            output: OutputFollower::new(root.clone(), run),
+            root,
             run,
             workloads: Vec::new(),
             hosts: hosts.into_iter().map(HostFollower::new).collect(),
@@ -205,7 +211,7 @@ impl TextFollower {
             let _ = stdout.flush();
         }
         // A restart is a new effect: its output follows under the same name.
-        if let Observed::Verified(effects, _) = task_engine::run_effects(self.run) {
+        if let Observed::Verified(effects, _) = task_engine::run_effects(&self.root, self.run) {
             for view in control::processes(&effects, false) {
                 if !self
                     .workloads
@@ -225,6 +231,7 @@ impl TextFollower {
         for workload in &mut self.workloads {
             for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
                 if let Observed::Verified(read, _) = read_run_log(
+                    &self.root,
                     self.run,
                     workload.sequence,
                     stream,
@@ -325,7 +332,11 @@ pub(in crate::runner) fn attach_text(
     hosts: Vec<HostProcessTab>,
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
-    let Started { mut client, run } = started;
+    let Started {
+        mut client,
+        run,
+        root,
+    } = started;
     let _ = writeln!(
         std::io::stdout(),
         "[managed] `{}` (profile `{}`): run {run}; stop with `{}`, or interrupt this client",
@@ -334,7 +345,7 @@ pub(in crate::runner) fn attach_text(
         stop_command(addressed)
     );
     flush();
-    let mut output = TextFollower::new(run, hosts);
+    let mut output = TextFollower::new(root, run, hosts);
     let mut stop = StopSender::new();
     let closed = loop {
         if !task_engine::routed_signals().is_empty() {
@@ -375,8 +386,12 @@ pub(in crate::runner) fn detach(
     addressed: &Addressed<'_>,
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
-    let Started { mut client, run } = started;
-    let mut output = OutputFollower::new(run);
+    let Started {
+        mut client,
+        run,
+        root,
+    } = started;
+    let mut output = OutputFollower::new(root, run);
     let mut stop = StopSender::new();
     loop {
         if !task_engine::routed_signals().is_empty() {
@@ -487,7 +502,9 @@ fn flush() {
 fn supervisor_lost(run: RunId, addressed: &Addressed<'_>, detail: &str) -> Closed {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        if let task_engine::Lookup::Found(record) = task_engine::lookup_run(run) {
+        if let task_engine::Lookup::Found(record) =
+            task_engine::lookup_checkout(&addressed.target.root, run)
+        {
             if record.closed() {
                 return Closed {
                     error: Some(format!(

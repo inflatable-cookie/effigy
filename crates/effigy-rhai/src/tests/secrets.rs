@@ -133,9 +133,12 @@ targets = ["tasks", "rhai"]
     );
 }
 
+/// The hosting binary's adopted session access is what a script resolves
+/// with: it reaches the reader as memory, never as an environment value
+/// (contract 032, 052 K12; effigy#338).
 #[test]
-fn execute_rhai_script_accepts_internal_secret_passphrase_env() {
-    let root = temp_root("rhai-secret-set-internal-passphrase");
+fn execute_rhai_script_resolves_from_the_host_session_access() {
+    let root = temp_root("rhai-secret-set-session-access");
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -152,10 +155,8 @@ targets = ["rhai"]
     )
     .expect("write manifest");
     write_test_vault(&root, "vault-passphrase", &[]);
-    let _env = ScopedTestEnv::set_many(&[(
-        "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
-        "vault-passphrase".to_owned(),
-    )]);
+    let _env = ScopedTestEnv::unset_many(&[TEST_SECRET_PASSPHRASE_ENV]);
+    let _access = SessionAccessScope::install("vault-passphrase");
 
     execute_rhai_script(
         &script_context(&root),
@@ -180,6 +181,81 @@ targets = ["rhai"]
             .expose(),
         "generated_secret"
     );
+}
+
+/// A passphrase left in the old internal environment variable is not a
+/// source: no session access is read from an environment (effigy#338).
+#[test]
+fn execute_rhai_script_ignores_the_internal_passphrase_environment() {
+    let root = temp_root("rhai-secret-set-internal-passphrase");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.api_token]
+required = false
+targets = ["rhai"]
+"#,
+    )
+    .expect("write manifest");
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+
+    let error = execute_rhai_script(
+        &script_context(&root),
+        r#"secrets::set("api_token", "generated_secret");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect_err("an environment value is not session access");
+    assert!(
+        error.to_string().contains("interactive TTY")
+            || error.to_string().contains("unlocked vault passphrase"),
+        "{error}"
+    );
+}
+
+/// This file's own session access provider: a process-wide value a test can
+/// install and clear, standing in for the hosting binary's adopted grant.
+fn test_session_access() -> (Option<effigy_secrets::SecretValue>, bool) {
+    (
+        SESSION_ACCESS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .map(effigy_secrets::SecretValue::new),
+        false,
+    )
+}
+
+static SESSION_ACCESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+struct SessionAccessScope;
+
+impl SessionAccessScope {
+    fn install(passphrase: &str) -> Self {
+        crate::install_session_access_provider(test_session_access);
+        *SESSION_ACCESS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(passphrase.to_owned());
+        Self
+    }
+}
+
+impl Drop for SessionAccessScope {
+    fn drop(&mut self) {
+        *SESSION_ACCESS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
 }
 
 #[test]

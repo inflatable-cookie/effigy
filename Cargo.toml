@@ -156,3 +156,6 @@ tokio = { version = "1", features = ["net"] }
 effigy-containers = { path = "crates/effigy-containers", features = ["test-support"] }
 # The managed gateway auto-start PTY proof uses a real private pseudo-terminal.
 nix = { version = "0.31", default-features = false, features = ["term"] }
+# A run-control proof writes the fixture journal in a loop to show a read
+# beside a continuous writer answers at once (effigy#339).
+rusqlite = { version = "0.40", features = ["bundled"] }

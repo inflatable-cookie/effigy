@@ -493,18 +493,16 @@ keeps the declared name. A listener result looks like this:
 
 Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact loopback address
 (the reserved port for a `:0` declaration), `HOST` and `PORT` to that address
-and port, `EFFIGY_HOST_PROCESS_PUBLIC_URL`
+and port, and `EFFIGY_HOST_PROCESS_PUBLIC_URL`
 and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and reserved
-endpoint, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` to a private report path,
-and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` to the current child generation.
-Any ordinary server that listens on `$HOST`/`$PORT` is a managed listener, with
-no language-specific adapter and no report: Effigy looks for a listening socket
-at exactly the address it reserved among the child generation's process group
-and descendants, proves no other same-user process can also accept on it, and
-then sends the readiness request. `run = 'exec effigy profile:api'` is enough
-(effigy#334).
+endpoint. Any ordinary server that listens on `$HOST`/`$PORT` is a managed
+listener, with no language-specific adapter and nothing to write: Effigy sends
+the readiness request to the address it reserved and publishes the route when
+that address answers. `run = 'exec effigy profile:api'` is enough, and a server
+that compiles for a minute before it serves needs only a long enough declared
+timeout.
 
-`HOST` and `PORT` are the address Effigy reserved and verified, so they replace
+`HOST` and `PORT` are the address Effigy reserved, so they replace
 an ambient `HOST`/`PORT` inherited from the shell Effigy was started in: a
 server that reads them binds the port the gateway route points at. Only a value
 the manifest itself declares outranks them (for example an adapter that must
@@ -514,43 +512,28 @@ The process must bind strictly to the requested address: a wildcard bind
 (`0.0.0.0:<port>`) is a different address and fails startup. Readiness is an
 HTTP `GET` to the configured path with the effective route domain as `Host`;
 only the configured status makes the listener ready. A failed or timed-out
-startup returns an error and leaves a `failed` or held `unavailable` state
-instead of publishing an endpoint, and the diagnostic names the reserved
-address (`expected_address`) and every other address the generation served
-(`observed_addresses`). A reserved address that is held by a process outside
-the child generation is never accepted; startup fails naming that process.
+startup returns an error and leaves a `failed` state instead of publishing an
+endpoint, and the diagnostic names the reserved address, the readiness request
+and the last probe outcome. A reserved port that another process already
+answers fails the start naming that port.
+
+Once published, the route stays published while the supervisor's run is alive
+and the port keeps answering: Effigy probes that port every five seconds, and
+three consecutive misses withdraw the route until it answers again. A miss
+never restarts the child, and a dependency change replaces a dependent only
+when the dependency's supervisor generation changed.
 
 The versioned state file remains the current status source after startup.
 Use `depends_on = ["frontend"]` on another host process to wait for readiness
 and receive `EFFIGY_MANAGED_HOST_FRONTEND_INTERNAL_URL`,
 `EFFIGY_MANAGED_HOST_FRONTEND_PUBLIC_URL`,
 `EFFIGY_MANAGED_HOST_FRONTEND_STATE_FILE`, and
-`EFFIGY_MANAGED_HOST_FRONTEND_GENERATION`. When the listener restarts, the
-dependent process restarts with its new endpoint environment. Effigy checks
-actual process and socket ownership before publishing the gateway route and
-withdraws it before stopping or replacing a child generation.
+`EFFIGY_MANAGED_HOST_FRONTEND_GENERATION`. When the listener's supervisor
+replaces its child generation, the dependent process restarts with its new
+endpoint environment. Effigy withdraws the route before stopping or replacing a
+child generation.
 
-An adapter report is optional. A wrapper that needs to tell Effigy which socket
-it bound can write one to the path in
-`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, echoing the exact supplied
-generation token and the address that is actually bound. Write the complete
-versioned document before exposing readiness to Effigy:
-
-```json
-{
-  "schema": "effigy.managed.host-listener-report.v1",
-  "generation": "child-generation-token",
-  "address": "127.0.0.1:4173"
-}
-```
-
-When a report exists Effigy uses it as a claim it still verifies, and it must
-agree with the reserved address and with the socket the generation is serving.
-A listener that writes no report is verified by observation alone.
-
-Fixed ports must bind exactly and fail on collision. Ownership proof is
-currently supported on Linux and macOS; other platforms refuse when the
-process or socket owner cannot be established. Static `target_host` routes
+Fixed ports must bind exactly and fail on collision. Static `target_host` routes
 keep their existing external-target behavior.
 
 ### Host process environment
@@ -605,12 +588,12 @@ missing or malformed status lines, and other statuses keep the listener not
 ready. A consumer server does not need to keep its read side open or answer in
 one write.
 
-When startup fails, `<name>.listener.json` keeps a `diagnostic` object for the
-failed generation. It records the last observation for each phase: report,
-ownership, HTTP probe status and route. Unobserved phases show `not_reached` or
-`not_attempted`. The diagnostic does not release, signal, or publish anything,
-and the top-level `status` remains the current state. The field list is in
-the managed host listener section of the container runtime contract.
+When startup fails, `<name>.listener.json` keeps a one-line `diagnostic` for
+the failed generation: the reserved address, the readiness path and status, and
+the last probe outcome (or the port that already answered, or the child's exit
+code). The diagnostic does not release, signal, or publish anything, and the
+top-level `status` remains the current state. It is described in the managed
+host listener section of the container runtime contract.
 
 - declare services from the catalog; a service the catalog lacks gets a
   project fragment under `infra/dev/catalog/<name>/`

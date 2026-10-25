@@ -161,7 +161,6 @@ fn a_workload_outcome_says_how_it_ended() {
 #[test]
 fn no_human_rendering_falls_back_to_a_debug_tree() {
     let refusals = [
-        Stream::Store(StoreError::NeedsRecovery),
         Stream::Store(StoreError::UnknownSchema { found: 9 }),
         Stream::Store(StoreError::Corrupt("bad page".into())),
         Stream::Store(StoreError::TooLarge { limit: 42 }),
@@ -172,12 +171,7 @@ fn no_human_rendering_falls_back_to_a_debug_tree() {
     ];
     for refusal in refusals {
         let rendered = refusal.to_string();
-        for debug_only in [
-            "Unknown(",
-            "StoreUnreadable(",
-            "TimedOut {",
-            "NeedsRecovery",
-        ] {
+        for debug_only in ["Unknown(", "StoreUnreadable(", "TimedOut {"] {
             assert!(
                 !rendered.contains(debug_only),
                 "`{rendered}` still carries Debug formatting `{debug_only}`"

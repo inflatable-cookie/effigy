@@ -15,7 +15,11 @@ pub(super) fn render_workspace_seeded_task_command(task_name: &str, args: &[Stri
         rendered.push(' ');
         rendered.push_str(&rendered_args);
     }
-    crate::runner::secret_session::wrap_command_with_secret_passphrase_env(rendered)
+    // A seeded workspace task runs inside a named container, reached by a
+    // command string the container runtime carries. Session access never
+    // travels that way (effigy#338): the nested Effigy run there resolves its
+    // own access, exactly as a top-level invocation does.
+    rendered
 }
 
 pub(super) fn run_workspace_seeded_task_session(
@@ -57,16 +61,19 @@ mod tests {
         );
     }
 
+    /// A container command string never carries session access, even when
+    /// this process holds some (effigy#338).
     #[test]
-    fn secret_passphrase_wrapper_prefixes_command() {
-        let rendered = crate::runner::secret_session::wrap_command_with_secret_passphrase_env_value(
-            "effigy 'dev'".to_owned(),
-            Some("vault-passphrase"),
-        );
-
-        assert_eq!(
-            rendered,
-            "env EFFIGY_INTERNAL_SECRET_PASSPHRASE='vault-passphrase' effigy 'dev'"
-        );
+    fn a_seeded_workspace_command_never_carries_session_access() {
+        let _guard = crate::contract_test_support::lock_test();
+        unsafe {
+            std::env::set_var("EFFIGY_SECRET_PASSPHRASE", "vault-passphrase");
+        }
+        let rendered = render_workspace_seeded_task_command("dev", &[]);
+        unsafe {
+            std::env::remove_var("EFFIGY_SECRET_PASSPHRASE");
+        }
+        assert!(!rendered.contains("vault-passphrase"), "{rendered}");
+        assert!(!rendered.contains("EFFIGY_INTERNAL_SECRET"), "{rendered}");
     }
 }

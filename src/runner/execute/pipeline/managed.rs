@@ -419,7 +419,6 @@ fn displayed_plan(
         &[],
         "<run token>",
         container_repo_root.as_deref(),
-        false,
     )?;
     for process in &mut plan.processes {
         match process.role {
@@ -514,11 +513,11 @@ fn tui_tabs(
             start_after_ms: 0,
             shutdown_on_exit: process.shutdown_on_exit,
             pty: true,
-            // A shell tab is an interactive terminal this session opens: a
-            // nested Effigy run inside it inherits the access the session
-            // resolved before it rendered (K12), so it never asks for the
-            // passphrase in the tab.
-            env: shell_tab_env(),
+            // A shell tab is the operator's own terminal, so it is user code:
+            // no session access reaches it. A nested `effigy` run there is a
+            // top-level invocation and resolves its own access (`dev`'s
+            // local-dev rules, or a prompt).
+            env: BTreeMap::new(),
         });
     }
     Ok(ManagedTabs {
@@ -685,18 +684,12 @@ fn own_managed_run(
         let container_repo_root = context
             .binding_resolution
             .exec_working_dir(context.repo())?;
-        // The environment `up` is itself a child Effigy process. It receives
-        // this session's local-dev access and passphrase on the existing
-        // internal env route (K12) — never in the rendered command, and never
-        // in the plan `--plan` displays, which builds its own
-        // `environment_plan` without this extension.
-        let environment =
-            environment_plan(context, &plan, &token, &role_schema_env)?.map(|mut environment| {
-                environment
-                    .up_env
-                    .extend(crate::runner::secret_session::secret_passphrase_child_env_strings());
-                environment
-            });
+        // The environment `up` is itself a child Effigy process, and it
+        // receives this session's access through the one-shot descriptor
+        // handoff its spawn attaches (effigy#338) — never in the rendered
+        // command, never in its environment, and never in the plan `--plan`
+        // displays.
+        let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
         let target = context.target(&plan.profile);
         refuse_live_legacy_holder(&target)?;
         let owned = OwnedRun {
@@ -764,7 +757,6 @@ fn own_managed_run(
             &secrets,
             &token,
             container_repo_root.as_deref(),
-            true,
         )
     };
     managed_run::own(owner, owned, prepare)
@@ -1117,49 +1109,20 @@ fn managed_environment_up_command(
     command
 }
 
-/// A shell tab runs in this client process, which keeps the passphrase in
-/// memory rather than its global environment (K12). Its spawn environment is
-/// therefore the only route a nested Effigy run inside the shell can inherit,
-/// so the session's access is set here explicitly.
-fn shell_tab_env() -> BTreeMap<String, String> {
-    crate::runner::secret_session::secret_passphrase_child_env_strings()
-        .into_iter()
-        .collect()
-}
-
-/// The session's vault access as workload spawn environment (K12): the
-/// passphrase rides with the other secret values so the run's output redacts
-/// it, and the local-dev marker stays plain.
-fn extend_with_session_access(
-    plain: &mut BTreeMap<String, String>,
-    secret: &mut BTreeMap<String, String>,
-) {
-    let passphrase_key = crate::runner::secret_session::internal_secret_passphrase_env();
-    for (key, value) in crate::runner::secret_session::secret_passphrase_child_env_strings() {
-        if key == passphrase_key {
-            secret.insert(key, value);
-        } else {
-            plain.insert(key, value);
-        }
-    }
-}
-
 /// Every standard entry as a workload of the run. Host entries get the
 /// task's secrets through their spawn environment (K12); exec entries attach
 /// through the environment's exec surface once it is ready, and record the
 /// remote group their leader starts.
 ///
-/// `share_session_access` carries the vault access this session resolved
-/// before it rendered to every child: a host entry receives it on the
-/// internal env route, so a nested Effigy run inside a tab never prompts.
-/// Rendering a plan passes `false`: a displayed plan holds no secret.
+/// A workload never receives the session's vault access: not in its
+/// environment, not in its rendered command, and not on a descriptor
+/// (effigy#338). A nested `effigy` run inside one is a top-level invocation.
 fn managed_workloads(
     context: &ManagedContext<'_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
     secrets: &[(String, SecretString)],
     token: &str,
     container_repo_root: Option<&std::path::Path>,
-    share_session_access: bool,
 ) -> Result<Vec<WorkloadSpec>, RunnerError> {
     let repo = context.repo();
     let binding = context.binding_resolution.binding();
@@ -1175,20 +1138,7 @@ fn managed_workloads(
         .filter(|process| process.role == ManagedProcessRole::Standard)
     {
         let run = process.run.clone();
-        let run = if share_session_access {
-            crate::runner::secret_session::inject_secret_passphrase_into_internal_command(run)
-        } else {
-            run
-        };
-        let setup = process.setup.as_ref().map(|setup| {
-            if share_session_access {
-                crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
-                    setup.clone(),
-                )
-            } else {
-                setup.clone()
-            }
-        });
+        let setup = process.setup.clone();
         let runs_on_host = process.run_on_host
             || context.container_handoff
             || matches!(
@@ -1205,9 +1155,6 @@ fn managed_workloads(
                     .map(|(key, value)| (key.clone(), value.expose().to_owned())),
             );
             secret.extend(process.secret_env.clone());
-            if share_session_access {
-                extend_with_session_access(&mut plain, &mut secret);
-            }
             let command = if context.container_handoff {
                 render_handoff_managed_standard_command(setup.as_deref(), &run)
             } else {
@@ -1543,7 +1490,7 @@ fn default_handoff_managed_shell_run() -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, managed_dns_route_lines, managed_role_schema_env,
-        managed_task_scratch, render_handoff_managed_standard_command, session_tabs, shell_tab_env,
+        managed_task_scratch, render_handoff_managed_standard_command, session_tabs,
         should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
         HostProcessTab, ManagedProcessRole, TabSource,
     };
@@ -1942,43 +1889,5 @@ mod tests {
         assert_eq!(order, vec!["api".to_owned()]);
         assert_eq!(tabs.len(), 1);
         assert!(matches!(tabs[0].source, TabSource::Workload));
-    }
-
-    /// A shell tab is spawned by this client, whose global environment never
-    /// holds the passphrase (K12). Without the explicit spawn environment a
-    /// nested `effigy` run inside the shell would have to ask for it in the
-    /// tab, which is exactly what a managed session promises not to do.
-    #[test]
-    fn shell_tab_env_carries_the_session_vault_access() {
-        let previous = std::env::var_os("EFFIGY_INTERNAL_SECRET_PASSPHRASE");
-        let guard = crate::contract_test_support::lock_test();
-        crate::runner::secret_session::forget_session_passphrase_for_tests();
-        unsafe { std::env::remove_var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") };
-        unsafe { std::env::remove_var("EFFIGY_SECRET_PASSPHRASE") };
-        assert!(
-            shell_tab_env().is_empty(),
-            "a session with no access must not invent one"
-        );
-
-        unsafe { std::env::set_var("EFFIGY_SECRET_PASSPHRASE", "shell-passphrase") };
-        let env = shell_tab_env();
-        assert_eq!(
-            env.get(crate::runner::secret_session::internal_secret_passphrase_env())
-                .map(String::as_str),
-            Some("shell-passphrase"),
-            "the shell tab must receive the session's access on the internal route"
-        );
-        assert!(
-            !env.contains_key("EFFIGY_SECRET_PASSPHRASE"),
-            "the public source name never reaches a child"
-        );
-
-        unsafe { std::env::remove_var("EFFIGY_SECRET_PASSPHRASE") };
-        match previous {
-            Some(value) => unsafe { std::env::set_var("EFFIGY_INTERNAL_SECRET_PASSPHRASE", value) },
-            None => unsafe { std::env::remove_var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") },
-        }
-        crate::runner::secret_session::forget_session_passphrase_for_tests();
-        drop(guard);
     }
 }

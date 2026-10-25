@@ -449,11 +449,6 @@ fn start_host_processes_inner(
                     name: dependency.clone(),
                     owner: managed_host_process_owner(&project_path, policy, dependency_process)?,
                     state_file: state_path,
-                    route_table_file: route_table.clone().ok_or_else(|| {
-                        RunnerError::task_invocation(
-                            "managed host listener dependency has no gateway route table",
-                        )
-                    })?,
                 });
             }
             let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
@@ -483,15 +478,14 @@ fn start_host_processes_inner(
             };
             let payload = serde_json::to_vec(&spec)
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            let mut environment: Vec<(OsString, OsString)> = std::env::vars_os()
-                .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
-                .collect();
-            if let Some(passphrase) = crate::runner::secret_session::session_passphrase() {
-                environment.push((
-                    OsString::from(crate::runner::secret_session::internal_secret_passphrase_env()),
-                    OsString::from(passphrase.expose()),
-                ));
-            }
+            // A host-process supervisor starts users' applications, so it is
+            // never a route for session access: its environment carries no
+            // vault passphrase, and the processes it starts are workloads
+            // (effigy#338, K12).
+            let environment: Vec<(OsString, OsString)> =
+                crate::runner::secret_session::workload_ambient_environment()
+                    .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+                    .collect();
             let client = effigy_kernel::supervise::start_engine_at(
                 &cx,
                 state_root,
@@ -504,6 +498,7 @@ fn start_host_processes_inner(
                     // lease ends with its custody. The environment owns this
                     // run, not the starter's lease (effigy#332).
                     inheritance: effigy_kernel::supervise::SupervisorInheritance::Independent,
+                    handoff: None,
                 },
                 &executable,
                 effigy_kernel::supervise::ClientMode::Owning,
@@ -840,9 +835,14 @@ fn describe_withdrawn_route(route: &effigy_gateway::routes::Route) -> String {
     match route
         .managed_listener
         .as_ref()
-        .and_then(|owner| owner.run.as_deref())
+        .map(|owner| owner.generation.as_str())
     {
-        Some(run) => format!("route `{}` withdrawn (run {run})", route.domain),
+        Some(generation) => {
+            format!(
+                "route `{}` withdrawn (generation {generation})",
+                route.domain
+            )
+        }
         None => format!("route `{}` withdrawn", route.domain),
     }
 }
@@ -914,7 +914,7 @@ fn stop_resource_run(
                     detail: Some(format!(
                         "the live kernel run still holds its gate; no signal was sent ({purpose})"
                     )),
-                }))
+                }));
             }
             Err(error) => {
                 return Ok(Some(HostProcessStop {
@@ -925,7 +925,7 @@ fn stop_resource_run(
                     signal: Some("TERM then KILL after grace".to_owned()),
                     exit: custody_exit(repo_root, run_id),
                     detail: Some(error.to_string()),
-                }))
+                }));
             }
         }
     }
@@ -1004,7 +1004,7 @@ fn latest_open_run(
         Observed::Unknown(reason) => {
             return Err(RunnerError::task_invocation(format!(
                 "the environment journal is unavailable ({reason})"
-            )))
+            )));
         }
     };
     let reader = match Store::read(&observe(), &root) {

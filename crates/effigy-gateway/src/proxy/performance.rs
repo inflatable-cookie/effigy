@@ -1,6 +1,5 @@
 //! Identical loopback workload for the before/after latency proof.
 use super::*;
-use crate::identity::read_live_process_identity;
 use crate::routes::{ManagedListenerRouteOwner, Route, RouteSource};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -100,48 +99,25 @@ async fn loopback_keep_alive_latency_766() {
     let (plain_p50, plain_total) = measure(&mut routed, 766).await;
     let plain_opened = connections.load(Ordering::Relaxed) - plain_connections;
 
-    let identity = read_live_process_identity(std::process::id()).unwrap();
-    let availability = fixture.path().join("listener.json");
-    std::fs::write(&availability, serde_json::to_vec(&serde_json::json!({"schema":"effigy.managed.host-listener-state.v1", "owner":"performance", "runtime_generation":"runtime", "generation":"child", "status":"ready"})).unwrap()).unwrap();
     let owner = ManagedListenerRouteOwner {
-        run: None,
         owner: "performance".into(),
         runtime_generation: "runtime".into(),
         generation: "child".into(),
-        supervisor_pid: std::process::id(),
-        supervisor_boot_identity: identity.boot_identity.clone(),
-        supervisor_start_identity: identity.start_identity.clone(),
-        root_pid: std::process::id(),
-        root_boot_identity: identity.boot_identity.clone(),
-        root_start_identity: identity.start_identity.clone(),
-        listener_pid: std::process::id(),
-        listener_boot_identity: identity.boot_identity,
-        listener_start_identity: identity.start_identity,
         address: upstream_addr.to_string(),
         route_tls: false,
-        availability_file: availability.display().to_string(),
     };
-    crate::managed_listener::verify_managed_listener_owner(&owner).unwrap();
     crate::locks::write_tolerant(&table).upsert(Route {
         managed_listener: Some(owner),
         ..route
     });
     measure(&mut routed, 8).await;
-    let proofs_before = crate::managed_listener::OWNERSHIP_PROOFS.load(Ordering::Relaxed);
     let managed_connections = connections.load(Ordering::Relaxed);
     let (managed_p50, managed_total) = measure(&mut routed, 766).await;
     let managed_opened = connections.load(Ordering::Relaxed) - managed_connections;
-    let managed_proofs =
-        crate::managed_listener::OWNERSHIP_PROOFS.load(Ordering::Relaxed) - proofs_before;
-    eprintln!("managed background ownership proofs during 766 requests: {managed_proofs}");
     eprintln!("gateway-latency requests=766 direct_p50_ms={:.3} plain_p50_ms={:.3} managed_p50_ms={:.3} direct_total_s={:.3} plain_total_s={:.3} managed_total_s={:.3} plain_upstream_connections={} managed_upstream_connections={}",
         direct_p50.as_secs_f64()*1000., plain_p50.as_secs_f64()*1000., managed_p50.as_secs_f64()*1000.,
         direct_total.as_secs_f64(), plain_total.as_secs_f64(), managed_total.as_secs_f64(), plain_opened, managed_opened);
     if std::env::var("EFFIGY_GATEWAY_PERF_BASELINE").as_deref() != Ok("1") {
-        assert!(
-            managed_proofs < 32,
-            "ownership proof ran on the request path"
-        );
         assert!(plain_p50.saturating_sub(direct_p50) < Duration::from_millis(5));
         assert!(managed_p50.saturating_sub(direct_p50) < Duration::from_millis(5));
         assert!(

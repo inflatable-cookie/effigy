@@ -179,6 +179,18 @@ impl TaskRun {
         spec: ProcessSpec,
         auxiliary: bool,
     ) -> Result<OwnedProcess, RunnerError> {
+        self.spawn_with_handoff(spec, auxiliary, None)
+    }
+
+    /// A spawn that hands its child one short-lived reader at the kernel's
+    /// [`effigy_kernel::custody::HANDOFF_FD`] slot. Effigy uses it for its own
+    /// child processes only: a workload never receives one.
+    pub(in crate::runner) fn spawn_with_handoff(
+        &mut self,
+        spec: ProcessSpec,
+        auxiliary: bool,
+        handoff: Option<std::os::fd::OwnedFd>,
+    ) -> Result<OwnedProcess, RunnerError> {
         self.verify_admission()?;
         let cx = kernel::effects();
         let closure = self.runtime_closure()?;
@@ -241,6 +253,7 @@ impl TaskRun {
                         &capability,
                         !auxiliary,
                         gate,
+                        handoff,
                     ),
                     None => Custody::spawn_foreground_with_lease(
                         &mut memory,
@@ -248,12 +261,18 @@ impl TaskRun {
                         &cx,
                         &capability,
                         !auxiliary,
+                        handoff,
                     ),
                 }
             }
-            None => {
-                Custody::spawn_with_lease(&mut *self.run_mut()?, spec, &cx, &capability, !auxiliary)
-            }
+            None => Custody::spawn_with_lease(
+                &mut *self.run_mut()?,
+                spec,
+                &cx,
+                &capability,
+                !auxiliary,
+                handoff,
+            ),
         };
         if let Some(error) = gate.as_mut().and_then(|gate| gate.take_failure()) {
             return Err(error);

@@ -25,7 +25,6 @@ use effigy_containers::{
     borrowed_volume_ensure_commands, load_container_policy, plan_volume_data_handover,
     ContainerAction, EffectiveContainerPolicy,
 };
-use effigy_gateway::managed_listener::observe_managed_listener_owner;
 use effigy_gateway::registration::owned_by;
 use effigy_gateway::routes::RouteTable;
 
@@ -276,17 +275,9 @@ impl SameCheckoutRoutes {
             };
             if managed_listener_owner_environment(&owner.owner).as_deref()
                 == Some(policy.name.as_str())
+                && owner.answers()
             {
-                match observe_managed_listener_owner(owner) {
-                    effigy_kernel::observe::Observed::Verified(true, _) => return Ok(true),
-                    effigy_kernel::observe::Observed::Verified(false, _)
-                    | effigy_kernel::observe::Observed::Absent(_) => {}
-                    effigy_kernel::observe::Observed::Unknown(reason) => {
-                        return Err(RunnerError::task_invocation(format!(
-                            "listener observation unknown before handover: {reason}"
-                        )))
-                    }
-                }
+                return Ok(true);
             }
         }
         Ok(false)
@@ -535,7 +526,6 @@ mod tests {
     use crate::contract_test_support::EnvGuard;
     use crate::runner::gateway_command::{gateway_dir, set_test_gateway_home};
     use effigy_containers::EffectiveDnsRoute;
-    use effigy_gateway::identity::read_live_process_identity;
     use effigy_gateway::registration::{
         register_managed_listener_route, register_route, RouteRegistration,
     };
@@ -676,42 +666,17 @@ domain = "switch.test"
 
     /// Publish a live managed-listener route for the `web` environment on
     /// `switch.test`, owned by this test process with a real loopback socket,
-    /// so the production liveness check verifies it.
+    /// so the production liveness check finds it answering.
     fn register_live_web_listener(fixture: &RouteFixture) -> TcpListener {
         let checkout = fixture.repo_root.display().to_string();
         let listener = TcpListener::bind("127.0.0.1:0").expect("live listener fixture");
         let address = listener.local_addr().expect("live listener address");
-        let identity = read_live_process_identity(std::process::id()).expect("test identity");
-        let availability = fixture.parent.join("web.front.listener.json");
-        fs::write(
-            &availability,
-            serde_json::to_vec(&serde_json::json!({
-                "schema": "effigy.managed.host-listener-state.v1",
-                "owner": format!("{checkout}|web|front"),
-                "runtime_generation": "runtime-1",
-                "generation": "child-live",
-                "status": "ready",
-            }))
-            .expect("availability json"),
-        )
-        .expect("write availability");
         let owner = ManagedListenerRouteOwner {
-            run: None,
             owner: format!("{checkout}|web|front"),
             runtime_generation: "runtime-1".to_owned(),
             generation: "child-live".to_owned(),
-            supervisor_pid: std::process::id(),
-            supervisor_boot_identity: identity.boot_identity.clone(),
-            supervisor_start_identity: identity.start_identity.clone(),
-            root_pid: std::process::id(),
-            root_boot_identity: identity.boot_identity.clone(),
-            root_start_identity: identity.start_identity.clone(),
-            listener_pid: std::process::id(),
-            listener_boot_identity: identity.boot_identity.clone(),
-            listener_start_identity: identity.start_identity.clone(),
             address: address.to_string(),
             route_tls: false,
-            availability_file: availability.display().to_string(),
         };
         register_managed_listener_route(
             &fixture.route_table_path(),
@@ -781,15 +746,16 @@ domain = "switch.test"
             match case {
                 "owned" => assert!(table.lookup("switch.test").is_none()),
                 "live" => {
-                    assert!(table
-                        .lookup("switch.test")
-                        .unwrap()
-                        .managed_listener
-                        .is_some());
+                    // Contract 033 (effigy#335): a stop withdraws every route
+                    // owned by the checkout path, listener routes included. A
+                    // same-checkout listener therefore loses its claim even
+                    // while its process is alive; a *different* checkout's
+                    // live claim is the successor the next case preserves.
+                    assert!(table.lookup("switch.test").is_none());
                     assert!(
                         std::net::TcpStream::connect(listener.unwrap().local_addr().unwrap())
                             .is_ok(),
-                        "live successor survives"
+                        "withdrawing the claim does not stop the listener process"
                     );
                 }
                 "foreign" => assert_eq!(

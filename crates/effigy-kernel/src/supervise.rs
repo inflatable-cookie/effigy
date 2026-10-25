@@ -265,11 +265,33 @@ fn spawn_helper(
 ) -> Result<Child, RunError> {
     let mut busy = 0;
     loop {
+        executable
+            .verify()
+            .map_err(|error| helper_not_started(entry, error))?;
         let mut command = helper(executable, entry).map_err(|e| helper_not_started(entry, e))?;
         if let Some(launch) = launch {
             command
                 .envs(launch.env.iter().map(|(k, v)| (k, v)))
                 .current_dir(&launch.cwd);
+            if let Some(handoff) = &launch.handoff {
+                let raw = handoff.as_raw_fd();
+                // SAFETY: `pre_exec` runs in the forked child before `exec`,
+                // where `dup2` is async-signal-safe. The copy at the reserved
+                // slot is the only one the supervisor keeps.
+                unsafe {
+                    command.pre_exec(move || {
+                        // `dup2` onto the descriptor's own number is a no-op,
+                        // so the flag is cleared on the slot explicitly: the
+                        // supervisor must still find the grant after exec.
+                        if libc::dup2(raw, crate::custody::HANDOFF_FD) < 0
+                            || libc::fcntl(crate::custody::HANDOFF_FD, libc::F_SETFD, 0) < 0
+                        {
+                            return Err(io::Error::last_os_error());
+                        }
+                        Ok(())
+                    });
+                }
+            }
         }
         if entry == SENTINEL
             || launch.is_some_and(|launch| launch.inheritance == SupervisorInheritance::Independent)
@@ -395,8 +417,10 @@ fn nonce() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos())
 }
+/// Builds the command that runs `entry` from `executable`. Image identity is
+/// the caller's business: a durable supervisor verifies the image it records,
+/// while a foreground guard re-execs whatever binary is beside the run (K1).
 pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command> {
-    executable.verify()?;
     let mut command = Command::new(&executable.path);
     command
         .arg(entry)
@@ -487,6 +511,7 @@ fn sentinel_attempt(
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
         env: std::env::vars_os().collect(),
         inheritance: SupervisorInheritance::Independent,
+        handoff: None,
     });
     let mut child = spawn_helper(
         run.operation(),
@@ -1160,10 +1185,15 @@ pub struct EngineLaunch {
     pub cwd: PathBuf,
     pub env: Vec<(OsString, OsString)>,
     pub inheritance: SupervisorInheritance,
+    /// One short-lived reader the supervisor receives at
+    /// [`crate::custody::HANDOFF_FD`] and reads once before it runs anything.
+    /// It is the only route a session secret takes to an engine supervisor: it
+    /// is never in this environment, argv, or any later child's spawn spec.
+    pub handoff: Option<std::sync::Arc<std::os::fd::OwnedFd>>,
 }
 impl std::fmt::Debug for EngineLaunch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("EngineLaunch { payload/cwd/env/inheritance: [REDACTED] }")
+        f.write_str("EngineLaunch { payload/cwd/env/inheritance/handoff: [REDACTED] }")
     }
 }
 /// One detached engine supervisor per run, in its own session. The returned

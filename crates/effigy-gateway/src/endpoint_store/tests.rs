@@ -326,8 +326,8 @@ fn a_pre_v015_snapshot_ignores_withdrawn_claims_and_quarantine() {
         "domains": {"gone.test": {"project": "/gone", "scope": null, "listener": null, "route": null}},
         "quarantined": {"endpoint:port:5432": {"kind": "port", "key": "5432", "boot": "b", "nanos": 1}},
     });
-    let snapshot = super::snapshot::EndpointSnapshot::from_value(value)
-        .expect("a pre-0.15 snapshot decodes");
+    let snapshot =
+        super::snapshot::EndpointSnapshot::from_value(value).expect("a pre-0.15 snapshot decodes");
     assert!(snapshot.claims().unwrap().is_empty());
     let written = serde_json::to_value(&snapshot).unwrap();
     assert!(written.get("domains").is_none());
@@ -421,13 +421,11 @@ fn removing_a_route_frees_its_address_and_port_claims() {
     docs[0]["routes"]["import.test"]["tcp_target"] = json!("127.0.0.1:15432");
     inputs(&store, docs);
     let before = store.import().unwrap();
-    assert!(
-        before
-            .claims()
-            .unwrap()
-            .values()
-            .any(|(_, details)| details["kind"] == "port" && details["key"] == "5432")
-    );
+    assert!(before
+        .claims()
+        .unwrap()
+        .values()
+        .any(|(_, details)| details["kind"] == "port" && details["key"] == "5432"));
     store
         .routes(|table| -> Result<(), GatewayError> {
             table.deregister("import.test")?;

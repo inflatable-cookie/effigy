@@ -62,6 +62,9 @@ struct Follower {
 
 struct Shared {
     client: SupervisorClient,
+    /// The journal this run writes, bound once: log polls read it directly
+    /// (effigy#339).
+    root: effigy_kernel::root::StateRoot,
     run: RunId,
     followers: BTreeMap<String, Follower>,
     /// The environment's host processes: their status and live log come from
@@ -224,6 +227,7 @@ impl Shared {
             .enumerate()
             {
                 let Observed::Verified(read, _) = read_run_log(
+                    &self.root,
                     self.run,
                     follower.sequence,
                     stream,
@@ -454,7 +458,7 @@ pub(in crate::runner) fn attach_tui(
     shells: Vec<ProcessSpec>,
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
-    let Started { client, run } = started;
+    let Started { client, run, root } = started;
     let mut followers = BTreeMap::new();
     let mut hosts = BTreeMap::new();
     let mut queue = VecDeque::new();
@@ -479,6 +483,7 @@ pub(in crate::runner) fn attach_tui(
     }
     let shared = Arc::new(Mutex::new(Shared {
         client,
+        root,
         run,
         followers,
         hosts,

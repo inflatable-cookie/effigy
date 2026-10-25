@@ -150,12 +150,13 @@ pub fn register_managed_listener_route(
     tls: bool,
     owner: ManagedListenerRouteOwner,
 ) -> Result<(), GatewayError> {
-    let parsed_target = target.parse::<SocketAddr>().map_err(|error| {
-        GatewayError::RouteTableReadError {
-            path: route_table_path.to_path_buf(),
-            reason: format!("managed listener target is not a socket address: {error}"),
-        }
-    })?;
+    let parsed_target =
+        target
+            .parse::<SocketAddr>()
+            .map_err(|error| GatewayError::RouteTableReadError {
+                path: route_table_path.to_path_buf(),
+                reason: format!("managed listener target is not a socket address: {error}"),
+            })?;
     if !parsed_target.ip().is_loopback()
         || parsed_target.port() == 0
         || owner.address != parsed_target.to_string()
@@ -171,12 +172,6 @@ pub fn register_managed_listener_route(
         });
     }
     EndpointStore::for_routes(route_table_path).routes(|table| {
-        crate::managed_listener::verify_managed_listener_owner(&owner).map_err(|error| {
-            GatewayError::RouteTableReadError {
-                path: route_table_path.to_path_buf(),
-                reason: format!("managed listener ownership refused publication: {error}"),
-            }
-        })?;
         table.upsert(Route {
             domain: domain.to_owned(),
             target: Some(target.to_owned()),

@@ -11,6 +11,7 @@
 mod migrate;
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -22,8 +23,8 @@ use effigy_kernel::observe::Observed;
 use super::command_context::resolve_active_command_context;
 use super::error::RunnerError;
 use super::task_engine::{
-    list_runs, lookup_run, read_run_log, request_stop, resolve_run, signal_owner, workload_process,
-    Lookup, RunRecord, StopStarted, RUN_POLL,
+    list_runs, lookup_checkout, request_stop, resolve_in, signal_owner, Lookup, RunRecord,
+    StopStarted, RUN_POLL,
 };
 
 const RUN_SCHEMA: &str = "effigy.run.v1";
@@ -41,19 +42,23 @@ const STOP_WAIT_DEFAULT: Duration = Duration::from_secs(30);
 
 pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError> {
     let json = args.output_json;
+    let repo_override = args.repo_override.clone();
     match args.action {
         RunsAction::Migrate { plan } => {
             debug_assert!(plan, "`run migrate` parses only its read-only plan form");
             migrate::run(json)
         }
-        RunsAction::List { limit, all } => list(args.repo_override, limit, all, json),
-        RunsAction::Status { run } => status(&run, json),
+        RunsAction::List { limit, all } => list(repo_override, limit, all, json),
+        // A run lookup reads the journal of the checkout this query belongs
+        // to and nothing else, resolved once here (effigy#339, Q-011).
+        RunsAction::Status { run } => status(&checkout(repo_override)?, &run, json),
         RunsAction::Logs {
             run,
             follow,
             stdout_offset,
             stderr_offset,
         } => logs(
+            &checkout(repo_override)?,
             &run,
             follow,
             Offsets {
@@ -63,11 +68,20 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
             json,
         ),
         RunsAction::Stop { run, wait_ms } => stop(
+            &checkout(repo_override)?,
             &run,
             wait_ms.map_or(STOP_WAIT_DEFAULT, Duration::from_millis),
             json,
         ),
     }
+}
+
+/// The checkout a run query belongs to: its journal is the only one the query
+/// reads (effigy#339, Q-011).
+fn checkout(repo_override: Option<PathBuf>) -> Result<PathBuf, RunnerError> {
+    Ok(resolve_active_command_context(repo_override)?
+        .resolved
+        .resolved_root)
 }
 
 /// A `--run-id` repeat: attach to the named run from its first byte, follow
@@ -76,7 +90,7 @@ pub(in crate::runner) fn attach(run: &str, json: bool) -> Result<String, RunnerE
     if !json {
         eprintln!("effigy: attaching to run {run}; this invocation starts nothing");
     }
-    logs(run, true, Offsets::default(), json)
+    logs(&checkout(None)?, run, true, Offsets::default(), json)
 }
 
 fn list(
@@ -88,11 +102,7 @@ fn list(
     let root = if all {
         None
     } else {
-        Some(
-            resolve_active_command_context(repo_override)?
-                .resolved
-                .resolved_root,
-        )
+        Some(checkout(repo_override)?)
     };
     let listing = list_runs(root.as_deref(), limit)?;
     let runs = &listing.runs;
@@ -138,8 +148,8 @@ fn list(
     Ok(lines.join("\n"))
 }
 
-fn status(selector: &str, json: bool) -> Result<String, RunnerError> {
-    let record = find(selector)?;
+fn status(checkout: &Path, selector: &str, json: bool) -> Result<String, RunnerError> {
+    let record = find(checkout, selector)?;
     if json {
         return Ok(serde_json::json!({
             "schema": RUN_SCHEMA,
@@ -180,8 +190,13 @@ fn status(selector: &str, json: bool) -> Result<String, RunnerError> {
     Ok(lines.join("\n"))
 }
 
-fn stop(selector: &str, wait: Duration, json: bool) -> Result<String, RunnerError> {
-    let record = find(selector)?;
+fn stop(
+    checkout: &Path,
+    selector: &str,
+    wait: Duration,
+    json: bool,
+) -> Result<String, RunnerError> {
+    let record = find(checkout, selector)?;
     if record.foreground() {
         return stop_foreground(&record, wait, json);
     }
@@ -354,6 +369,7 @@ pub(in crate::runner) enum FollowError {
 /// the run is terminal and its logs are drained). `offsets` always holds
 /// what the sink accepted.
 pub(in crate::runner) fn follow(
+    checkout: &Path,
     id: RunId,
     offsets: &mut Offsets,
     keep_following: bool,
@@ -362,7 +378,7 @@ pub(in crate::runner) fn follow(
     let mut unknown_since: Option<Instant> = None;
     let mut truncated = [false, false];
     loop {
-        let record = match lookup_run(id) {
+        let record = match lookup_checkout(checkout, id) {
             Lookup::Found(record) => {
                 unknown_since = None;
                 record
@@ -387,7 +403,7 @@ pub(in crate::runner) fn follow(
         if terminal {
             fault_point("FollowSettled").map_err(FollowError::Lost)?;
         }
-        let process = match workload_process(id) {
+        let process = match record.workload_process() {
             Observed::Verified(process, _) => process,
             Observed::Absent(_) => None,
             Observed::Unknown(_) => {
@@ -401,7 +417,7 @@ pub(in crate::runner) fn follow(
             for (index, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
                 loop {
                     let offset = offsets.get(stream);
-                    let read = match read_run_log(id, sequence, stream, offset, READ_MAX) {
+                    let read = match record.read_log(sequence, stream, offset, READ_MAX) {
                         Observed::Verified(read, _) => read,
                         Observed::Absent(_) => {
                             gone = true;
@@ -477,12 +493,13 @@ fn fault_point(name: &'static str) -> std::io::Result<()> {
 }
 
 fn logs(
+    checkout: &Path,
     selector: &str,
     keep_following: bool,
     from: Offsets,
     json: bool,
 ) -> Result<String, RunnerError> {
-    let record = find(selector)?;
+    let record = find(checkout, selector)?;
     if record.foreground() || record.is_terminal_record() {
         return Ok(if json {
             serde_json::json!({
@@ -507,7 +524,7 @@ fn logs(
     let ending = if json {
         let mut streams = [StreamJson::new(from.stdout), StreamJson::new(from.stderr)];
         let mut logs_gone = false;
-        let ending = follow(id, &mut offsets, keep_following, &mut |event| {
+        let ending = follow(checkout, id, &mut offsets, keep_following, &mut |event| {
             match event {
                 Event::Bytes { stream, bytes, .. } => {
                     streams[stream as usize].bytes.extend_from_slice(bytes)
@@ -551,36 +568,42 @@ fn logs(
     } else {
         let mut stdout = std::io::stdout();
         let mut stderr = std::io::stderr();
-        follow(id, &mut offsets, keep_following, &mut |event| match event {
-            Event::Bytes { stream, bytes, .. } => {
-                let out: &mut dyn Write = match stream {
-                    Stream::Stdout => &mut stdout,
-                    Stream::Stderr => &mut stderr,
-                };
-                out.write_all(bytes).and_then(|()| out.flush())
-            }
-            Event::Expired { stream, from, to } => {
-                eprintln!(
-                    "effigy: run {id} {} bytes {from}..{to} expired before they were read",
-                    stream.name()
-                );
-                Ok(())
-            }
-            Event::Truncated { stream, at } => {
-                eprintln!(
-                    "effigy: run {id} {} log is truncated at byte {at}: a log write failed",
-                    stream.name()
-                );
-                Ok(())
-            }
-            Event::LogsGone => {
-                eprintln!(
-                    "effigy: run {id} kept no output log (it ran without `--run-id`, its \
+        follow(
+            checkout,
+            id,
+            &mut offsets,
+            keep_following,
+            &mut |event| match event {
+                Event::Bytes { stream, bytes, .. } => {
+                    let out: &mut dyn Write = match stream {
+                        Stream::Stdout => &mut stdout,
+                        Stream::Stderr => &mut stderr,
+                    };
+                    out.write_all(bytes).and_then(|()| out.flush())
+                }
+                Event::Expired { stream, from, to } => {
+                    eprintln!(
+                        "effigy: run {id} {} bytes {from}..{to} expired before they were read",
+                        stream.name()
+                    );
+                    Ok(())
+                }
+                Event::Truncated { stream, at } => {
+                    eprintln!(
+                        "effigy: run {id} {} log is truncated at byte {at}: a log write failed",
+                        stream.name()
+                    );
+                    Ok(())
+                }
+                Event::LogsGone => {
+                    eprintln!(
+                        "effigy: run {id} kept no output log (it ran without `--run-id`, its \
                      output went to a terminal, or retention removed it); its outcome is below"
-                );
-                Ok(())
-            }
-        })
+                    );
+                    Ok(())
+                }
+            },
+        )
         .map_err(|error| follow_error(selector, error))?
     };
     match ending {
@@ -627,8 +650,8 @@ impl StreamJson {
     }
 }
 
-fn find(selector: &str) -> Result<RunRecord, RunnerError> {
-    match resolve_run(selector)? {
+fn find(checkout: &Path, selector: &str) -> Result<RunRecord, RunnerError> {
+    match resolve_in(checkout, selector)? {
         Lookup::Found(record) => Ok(*record),
         Lookup::NotFound => Err(not_found(selector)),
         Lookup::Unknown(reason) => Err(unknown(selector, &reason)),

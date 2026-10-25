@@ -940,11 +940,7 @@ fn run_gateway_status_with_config(
             "[warn] found {} duplicate TCP bind tuple(s)",
             conflicts.len()
         ));
-        lines.extend(
-            conflicts
-                .iter()
-                .flat_map(render_gateway_tcp_conflict_lines),
-        );
+        lines.extend(conflicts.iter().flat_map(render_gateway_tcp_conflict_lines));
     }
     if !unbound_aliases.is_empty() {
         lines.push(format!(

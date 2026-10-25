@@ -16,15 +16,14 @@ use std::io::Read;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use effigy_kernel::ctx::{EffectClass, ObserveContext, Placement};
+use effigy_kernel::ctx::{EffectClass, Placement};
 use effigy_kernel::gate::{GateError, HolderDiag, Wait};
 use effigy_kernel::id::{
     Digest, ExecutionTarget, InvocationSpec, ResolvedInvocation, ResourceId, Route, RunId, TaskId,
 };
 use effigy_kernel::ident::ProcessState;
-use effigy_kernel::observe::{Observed, UnknownReason};
+use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
-use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{BeginOpts, Run, RunError};
 use effigy_kernel::store::{Store, StoreError};
 use effigy_kernel::supervise::{LifecyclePlan, Placement as LifecyclePlacement};
@@ -35,11 +34,12 @@ use super::{checkout, holders};
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) const LOCK_WAIT_ENV: &str = "EFFIGY_LOCK_WAIT_MS";
-/// How long a key's pre-check waits for a racing writer's journal to settle.
-/// The writer holds the store's own gate and commits in a moment; a journal
-/// that never settles is refused with its own reason instead.
+/// How long a key's check waits for a racing invocation's row to commit. The
+/// writer holds the store's own gate and commits in a moment; a key that never
+/// appears is absent, not refused. One cheap read per interval, never a tight
+/// spin (effigy#339).
 const KEY_JOURNAL_WAIT: Duration = Duration::from_secs(5);
-const KEY_JOURNAL_POLL: Duration = Duration::from_millis(50);
+const KEY_JOURNAL_POLL: Duration = Duration::from_millis(250);
 /// Marks a built-in's private exclusive scope, distinct from any task's
 /// `lock = "<name>"`.
 pub(in crate::runner) const BUILTIN_LOCK_PREFIX: &str = "@";
@@ -1206,7 +1206,7 @@ fn refuse_bound_key(
         Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason}"))),
     };
-    let reader = match key_journal(&cx, &root) {
+    let reader = match Store::read(&cx, &root) {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason}"))),
@@ -1220,32 +1220,6 @@ fn refuse_bound_key(
         check_bound_key(&candidate, task, &reader, &namespace.aliases)?;
     }
     Ok(())
-}
-
-/// Read the journal a key is checked against, waiting out a racing writer.
-///
-/// Another invocation of this key may be inside its journal transaction when
-/// the pre-check reads, and a hot rollback journal is not evidence either way:
-/// it clears when that writer commits. The wait is bounded by
-/// [`KEY_JOURNAL_WAIT`] and re-reads the same store, so it is a wait for one
-/// specific writer to settle rather than a retry of a failed operation. A
-/// journal that never settles is reported with the refusal it started with.
-fn key_journal(
-    cx: &ObserveContext,
-    root: &StateRoot,
-) -> Observed<effigy_kernel::store::StoreReader> {
-    let deadline = Instant::now() + KEY_JOURNAL_WAIT;
-    loop {
-        let observed = Store::read(cx, root);
-        let racing = matches!(
-            &observed,
-            Observed::Unknown(UnknownReason::StoreNeedsRecovery)
-        );
-        if !racing || Instant::now() >= deadline {
-            return observed;
-        }
-        std::thread::sleep(KEY_JOURNAL_POLL);
-    }
 }
 
 fn check_bound_key(
