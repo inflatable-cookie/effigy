@@ -380,8 +380,13 @@ If the question is instead:
 
 Host processes that serve a browser route can declare the listener they own.
 The language-specific adapter reads Effigy's bind and report variables, binds
-the address itself, and reports the actual socket. Port `0` lets the OS assign
-a port so separate checkouts can run together without fixed-port coordination.
+the address itself, and reports the actual socket. Port `0` asks Effigy for a
+concrete port: before anything launches, Effigy reserves one loopback port in
+the environment's generated range through the gateway endpoint store, keeps
+that reservation across supervisor restarts within the run, and releases it
+when the environment settles (`down`, `reset`, session settle). Separate
+checkouts therefore never coordinate ports by hand and never race the OS for
+one. A fixed port is the manifest's own and is never reserved.
 For disposable profiles, point `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` at an owned
 private root and start that instance with `gateway setup-tls` and `gateway up`
 using the same `--private-state-root`. This keeps trust and route state scoped
@@ -487,9 +492,15 @@ keeps the declared name. A listener result looks like this:
 }
 ```
 
-Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact requested loopback
-address, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` to a private report path,
+Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact loopback address
+(the reserved port for a `:0` declaration), `HOST` and `PORT` to that address
+and port unless the process declares its own, `EFFIGY_HOST_PROCESS_PUBLIC_URL`
+and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and reserved
+endpoint, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` to a private report path,
 and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` to the current child generation.
+Effigy verifies that the reported socket is exactly the address it reserved,
+belongs to the current child generation, and accepts connections before it
+publishes the route.
 The adapter must bind strictly to the requested address and write the report
 after the socket is listening. Readiness is an HTTP `GET` to the configured
 path with the effective route domain as `Host`; only the configured status makes the
@@ -523,6 +534,50 @@ Fixed ports must bind exactly and fail on collision. Ownership proof is
 currently supported on Linux and macOS; other platforms refuse when the
 process or socket owner cannot be established. Static `target_host` routes
 keep their existing external-target behavior.
+
+### Host process environment
+
+A host process `env` value is literal text plus `${...}` references to facts
+Effigy has already resolved for this environment. Effigy validates the names
+when the container policy loads, so a typo fails at load with the offending
+`env` key and the list of valid names. Values resolve when the process starts,
+after Prepare assigned the published ports and after every declared service
+reported ready. `$${` writes a literal `${`.
+
+| Reference | Value |
+| --- | --- |
+| `${service.<name>.host}` | address the service is published on (`127.0.0.1` by default) |
+| `${service.<name>.port}` | the service's published host port |
+| `${route.<domain>.public_url}` | a gateway route's public origin, by declared or scoped domain (container route or managed listener) |
+| `${host_process.<name>.public_url}` | a managed host listener's own public origin (its own name included) |
+| `${host_process.<name>.internal_url}` | a managed host listener's reserved loopback endpoint |
+| `${domains}` | the declared domain set, comma separated |
+| `${apex}` | the shared apex of the declared domains (the cookie domain) |
+| `${gateway.https_port}` | the active gateway's HTTPS port |
+
+```toml
+[[containers.web.host_processes]]
+name = "api"
+run = 'exec ./scripts/api'
+env = { DATABASE_URL = "postgres://app:secret@${service.postgres.host}:${service.postgres.port}/app",
+        COOKIE_DOMAIN = ".${apex}",
+        SELF = "${host_process.api.public_url}" }
+```
+
+A reference whose value is not knowable yet (a service the render publishes no
+host port for, or gateway TLS that is not configured) fails when the process
+starts rather than guessing.
+
+Host processes also receive the active gateway's CA, so a host-side client can
+call its own HTTPS route:
+
+- `EFFIGY_GATEWAY_CA_FILE` is the neutral name, set whenever the CA is known.
+  A private gateway (`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`) contributes
+  `<root>/ca/rootCA.pem`; the shared gateway contributes mkcert's root CA.
+- `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in for Node/Bun and for
+  curl, Python and Ruby respectively. Effigy sets these only when the operator
+  has not already exported them and the process does not declare them, so an
+  operator trust store is never replaced.
 
 ### Readiness failures
 

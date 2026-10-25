@@ -151,3 +151,123 @@ impl EndpointStore {
         })
     }
 }
+
+/// One managed host listener asking for a concrete loopback port (effigy#321).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListenerPortRequest {
+    pub project_name: String,
+    pub project_path: String,
+    pub listener: String,
+}
+
+/// The port registry key a managed host listener owns inside its project's
+/// generated range.
+pub fn listener_port_key(listener: &str) -> String {
+    format!("listener:{listener}")
+}
+
+impl EndpointStore {
+    /// Reserve (or retain) one concrete loopback port for a managed host
+    /// listener. The port comes from the project's generated range, so it
+    /// never collides with a generated Compose binding, and the assignment is
+    /// retained across supervisor restarts until the environment settles.
+    pub fn reserve_listener_port(
+        &self,
+        request: &ListenerPortRequest,
+    ) -> Result<u16, GatewayError> {
+        self.edit(None, |snapshot| {
+            let mut ports = snapshot.ports()?;
+            let unavailable = snapshot.unavailable_ports();
+            if ports
+                .get(&request.project_name)
+                .is_some_and(|a| a.project != request.project_path)
+            {
+                return Err(error(
+                    "port lifetime owner differs; release the old owner explicitly",
+                ));
+            }
+            ports.allocate_avoiding(&request.project_name, &request.project_path, &unavailable)?;
+            let key = listener_port_key(&request.listener);
+            let existing = ports
+                .get(&request.project_name)
+                .and_then(|allocation| allocation.assigned_ports.get(&key).copied());
+            let port = match existing {
+                Some(port) => port,
+                None => {
+                    let allocation = ports
+                        .get(&request.project_name)
+                        .expect("the project range was allocated above");
+                    let port = choose_listener_port(allocation, &unavailable, &request.listener)?;
+                    ports
+                        .allocations
+                        .get_mut(&request.project_name)
+                        .expect("the project range was allocated above")
+                        .assigned_ports
+                        .insert(key, port);
+                    port
+                }
+            };
+            snapshot.set_ports(&ports)?;
+            Ok(port)
+        })
+    }
+
+    /// Release one listener's port. A range that held only listener ports is
+    /// released with the last of them, so a settled environment leaves no
+    /// empty generated range behind.
+    pub fn release_listener_port(
+        &self,
+        project: &str,
+        project_path: &str,
+        listener: &str,
+    ) -> Result<bool, GatewayError> {
+        self.edit(None, |snapshot| {
+            let mut ports = snapshot.ports()?;
+            if ports
+                .get(project)
+                .is_some_and(|a| a.project != project_path)
+            {
+                return Err(error(
+                    "listener port release refused: lifetime owner differs",
+                ));
+            }
+            let Some(allocation) = ports.allocations.get_mut(project) else {
+                return Ok(false);
+            };
+            let removed = allocation
+                .assigned_ports
+                .remove(&listener_port_key(listener))
+                .is_some();
+            if removed && allocation.assigned_ports.is_empty() {
+                ports.deallocate(project);
+            }
+            snapshot.set_ports(&ports)?;
+            Ok(removed)
+        })
+    }
+}
+
+/// The lowest free port of a project's generated range: not an assigned
+/// service binding, not quarantined, and not already listening on loopback.
+fn choose_listener_port(
+    allocation: &PortAllocation,
+    unavailable: &HashSet<u16>,
+    listener: &str,
+) -> Result<u16, GatewayError> {
+    let assigned: HashSet<u16> = allocation.assigned_ports.values().copied().collect();
+    for port in allocation.base..allocation.end() {
+        if assigned.contains(&port) || unavailable.contains(&port) || !loopback_port_is_free(port) {
+            continue;
+        }
+        return Ok(port);
+    }
+    Err(error(format!(
+        "the project's generated port range {}-{} has no free loopback port for host listener `{listener}`",
+        allocation.base,
+        allocation.end()
+    )))
+}
+
+fn loopback_port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok()
+}

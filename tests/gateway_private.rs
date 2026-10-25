@@ -1079,11 +1079,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let old_state = &app_states[0];
     let old_address = addresses[0];
     let state_dir = fixture.path().join("listener-control-0");
-    fs::write(
-        state_dir.join("previous-port"),
-        old_address.port().to_string(),
-    )
-    .expect("record old dynamic port for the neutral adapter");
     fs::write(state_dir.join("restart"), "restart\n").expect("request real child restart");
     wait_for_path_exists(
         &state_dir.join("listener-paused"),
@@ -1094,12 +1089,15 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let unavailable = curl_https_response(https_address, &ca_path, primary_domain, "/");
     assert!(
         unavailable.contains("503 Service Unavailable"),
-        "a foreign listener on a reused port must not receive the managed route: {unavailable}"
+        "a foreign listener on the reserved port must not receive the managed route: {unavailable}"
     );
     assert!(
         !foreign.received_request(),
         "foreign listener received forwarded bytes"
     );
+    // The reserved port stays Effigy's. Release the foreign squatter so the
+    // successor generation can bind the same port again.
+    drop(foreign);
     fs::write(state_dir.join("continue-exit"), "continue\n").expect("allow old generation to exit");
     let new_state = wait_for_listener_generation(
         &listener_state_path(primary_checkout, primary_profile, "app"),
@@ -1113,9 +1111,9 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         .unwrap()
         .parse::<SocketAddr>()
         .unwrap();
-    assert_ne!(
+    assert_eq!(
         new_address, old_address,
-        "restart must publish the successor's dynamic port"
+        "a restart keeps the port the endpoint store reserved for this listener"
     );
     assert_ne!(new_state["generation"], old_state["generation"]);
     // The superseded generation is settled before the successor is accepted:
@@ -1233,7 +1231,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     edit_live_fixture_routes(&route_path, |routes| routes.upsert(sibling_route));
     drop(forged_listener);
-    drop(foreign);
 
     let down = run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
     assert_success(down);
@@ -2091,21 +2088,12 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         "refused foreign claim must not replace the primary's route"
     );
 
-    // Restart one worktree: its scoped endpoint and dependent URL move while
-    // the primary and sibling worktree keep their generations.
+    // Restart one worktree: its scoped generation moves while the reserved
+    // endpoint stays and the primary and sibling worktree keep their
+    // generations.
     let (restart_checkout, restart_profile, restart_body) = &checkouts[1];
     let restart_control = fixture.path().join("scoped-control-1");
     let old_state = read_json_file(&state_path(restart_checkout, restart_profile));
-    fs::write(
-        restart_control.join("previous-port"),
-        old_state["address"]
-            .as_str()
-            .unwrap()
-            .rsplit(':')
-            .next()
-            .unwrap(),
-    )
-    .expect("record old dynamic port for the neutral adapter");
     fs::write(restart_control.join("restart"), "restart\n").expect("request real child restart");
     wait_for_path_exists(
         &restart_control.join("listener-paused"),
@@ -2121,7 +2109,10 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         old_state["generation"].as_str().unwrap(),
         Duration::from_secs(20),
     );
-    assert_ne!(new_state["address"], old_state["address"]);
+    assert_eq!(
+        new_state["address"], old_state["address"],
+        "a restart keeps the reserved listener endpoint"
+    );
     let new_generation = new_state["generation"].as_str().unwrap();
     // The scoped successor keeps the worktree's domain published while the
     // superseded generation's route and endpoint are withdrawn (a841af96).
@@ -2224,7 +2215,10 @@ fn managed_listener_fixture_child() {
         let address = candidate
             .local_addr()
             .expect("read assigned socket address");
-        if previous_port == Some(address.port()) {
+        // Effigy now reserves a concrete port from the endpoint store, so a
+        // restart deliberately reuses it. Only an unstipulated `:0`
+        // preference still asks the OS for a fresh port.
+        if bind_preference.port() == 0 && previous_port == Some(address.port()) {
             drop(candidate);
             continue;
         }
@@ -2912,10 +2906,19 @@ fn assert_generation_withdrawn(
                 .is_none_or(|owner| owner.generation != old_generation),
             "{label}: a published route still records the superseded generation {old_generation}: {route:?}"
         );
-        assert!(
-            route.target.as_deref() != Some(old_address),
-            "{label}: a published route still targets the superseded listener {old_address}: {route:?}"
-        );
+        // The endpoint store retains a listener's reserved port across a
+        // restart, so a route may still target it only when it names the
+        // successor generation.
+        if route.target.as_deref() == Some(old_address) {
+            assert_eq!(
+                route
+                    .managed_listener
+                    .as_ref()
+                    .map(|owner| owner.generation.as_str()),
+                successor["generation"].as_str(),
+                "{label}: a route on the retained listener endpoint must name the successor generation: {route:?}"
+            );
+        }
     }
     let current = table
         .lookup(domain)

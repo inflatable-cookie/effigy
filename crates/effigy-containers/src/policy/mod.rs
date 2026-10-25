@@ -2,6 +2,7 @@ pub mod admission;
 pub mod compose_file;
 pub mod data_from;
 pub mod hosts;
+pub mod host_process_env;
 pub mod inline_workspace;
 pub mod load;
 pub mod model;

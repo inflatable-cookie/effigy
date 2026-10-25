@@ -476,6 +476,27 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Host processes get resolved environment facts instead of a wrapper script
+  (effigy#321). A `[[containers.<env>.host_processes]]` `env` value may embed
+  `${...}` references to facts Effigy already resolved: a service's published
+  host and port (`${service.<name>.host}`, `${service.<name>.port}`), a
+  route's public origin (`${route.<domain>.public_url}`), another managed
+  listener's URLs (`${host_process.<name>.public_url}`,
+  `${host_process.<name>.internal_url}`), the declared domain set and its
+  shared apex (`${domains}`, `${apex}`), and the gateway's HTTPS port
+  (`${gateway.https_port}`). Names are validated when the container policy
+  loads, so a typo fails naming the `env` key and the valid names; values
+  resolve at start, after Prepare assigned published ports and after every
+  declared service reported ready. A listener process now receives its own
+  `EFFIGY_HOST_PROCESS_PUBLIC_URL`/`EFFIGY_HOST_PROCESS_INTERNAL_URL`,
+  `HOST`/`PORT`, and the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`, with
+  `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` filled in only when the operator
+  has not set them. A `bind = "127.0.0.1:0"` listener gets a concrete port
+  reserved through the gateway endpoint store before launch: the port survives
+  supervisor restarts within the run and is released when the environment
+  settles, so a bundle needs no Python glue for ports, URLs or CA trust. A
+  bundle can therefore run its api, jobs, front and admin as declared host
+  processes.
 - Host processes are environment-owned kernel runs (effigy#320).
   `[[containers.<env>.host_processes]]` no longer start a `setsid` supervisor
   with PID and spec files and a blocking lifecycle lock. Each process is one

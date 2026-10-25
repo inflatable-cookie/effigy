@@ -1430,6 +1430,17 @@ fn spawn_generation(
             OsString::from(HOST_LISTENER_GENERATION_ENV),
             EnvValue::Plain(OsString::from(generation)),
         );
+        // Effigy reserved this listener's concrete port, so the process
+        // receives it as `HOST`/`PORT` (effigy#321). A value the manifest
+        // declares is the process's own decision and wins.
+        if let Ok(address) = bind.parse::<SocketAddr>() {
+            environment
+                .entry(OsString::from("HOST"))
+                .or_insert_with(|| EnvValue::Plain(OsString::from(address.ip().to_string())));
+            environment
+                .entry(OsString::from("PORT"))
+                .or_insert_with(|| EnvValue::Plain(OsString::from(address.port().to_string())));
+        }
     }
     let process = ProcessSpec {
         argv: vec![
@@ -3424,6 +3435,66 @@ mod tests {
                 .iter()
                 .all(|process| process.state == "closed")
         });
+    }
+
+    /// A child receives its `env` references resolved against the environment's
+    /// published facts, and a typo'd reference refuses to start the process
+    /// naming the key (effigy#321).
+    #[test]
+    fn host_process_env_references_reach_the_child_and_a_typo_refuses() {
+        let fixture = fixture();
+        fs::write(
+            fixture.checkout.join("compose.yml"),
+            "services:\n  postgres:\n    image: postgres\n    ports:\n      - \"127.0.0.1:8141:5432\"\n",
+        )
+        .expect("compose file");
+        let out = fixture.checkout.join("resolved-env.txt");
+        let mut resolved = host_process(
+            "app",
+            "printf '%s|%s\\n' \"$DATABASE_URL\" \"$COOKIE_DOMAIN\" > \"$HOST_PROCESS_ENV_OUT\"",
+            HostProcessRestart::Never,
+        );
+        resolved.env = vec![
+            (
+                "DATABASE_URL".to_owned(),
+                "postgres://app@${service.postgres.host}:${service.postgres.port}/app".to_owned(),
+            ),
+            ("COOKIE_DOMAIN".to_owned(), ".${apex}".to_owned()),
+            ("HOST_PROCESS_ENV_OUT".to_owned(), out.display().to_string()),
+        ];
+        let mut configured = policy(&fixture.checkout, vec![resolved]);
+        configured.dns_routes = vec![effigy_containers::EffectiveDnsRoute {
+            domain: "api.acme.test".to_owned(),
+            declared_domain: "api.acme.test".to_owned(),
+            tls: true,
+            port: Some(3000),
+            service: Some("app".to_owned()),
+            target_host: None,
+        }];
+        configured.dns_base_domain = Some("acme.test".to_owned());
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &configured)
+            .expect("the host process starts with its resolved environment");
+        wait_until("the child to write its resolved environment", || {
+            out.exists()
+        });
+        let written = fs::read_to_string(&out).expect("resolved environment file");
+        assert_eq!(
+            written.trim(),
+            "postgres://app@127.0.0.1:8141/app|.acme.test"
+        );
+
+        let mut typo = host_process("typo", "/bin/true", HostProcessRestart::Never);
+        typo.env = vec![(
+            "DATABASE_URL".to_owned(),
+            "${service.postgres.prot}".to_owned(),
+        )];
+        let typo_policy = policy(&fixture.checkout, vec![typo]);
+        let error =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &typo_policy)
+                .expect_err("a typo'd reference refuses to start");
+        let message = error.to_string();
+        assert!(message.contains("DATABASE_URL"), "{message}");
+        assert!(message.contains("service.postgres.prot"), "{message}");
     }
 
     /// A legacy PID-file supervisor is stopped by its exact recorded identity

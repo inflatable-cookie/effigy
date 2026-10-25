@@ -217,3 +217,33 @@ for RUSTSEC-2026-0346 through RUSTSEC-2026-0349. This lock-only maintenance
 changes no gateway TLS features, cipher selection, certificate validation or
 client authentication policy. The advisory finding on 0.23.45 does not by
 itself establish exploitability in Effigy's configuration.
+
+## Listener port reservations and host CA trust (effigy#321)
+
+The endpoint store also owns concrete loopback ports for managed host
+listeners. A `bind = "127.0.0.1:0"` declaration reserves one port from the
+environment's generated range before launch, keyed `listener:<name>` in that
+project's allocation; the assignment excludes generated Compose bindings,
+quarantined ports and ports already listening on loopback. The reservation
+survives supervisor restarts within the run and is released when the
+environment settles, so a settled environment holds no listener port. This is
+the same machine authority and the same write path as Compose port ranges: no
+second port allocator exists, and a foreign lifetime owner is refused rather
+than replaced.
+
+Host processes receive the active gateway's CA so a host-side client can call
+its own HTTPS route:
+
+| Variable | Runtime that reads it | Delivery |
+| --- | --- | --- |
+| `EFFIGY_GATEWAY_CA_FILE` | any process that wants the path itself | always, when the CA is known |
+| `NODE_EXTRA_CA_CERTS` | Node, Bun | only when the operator has not exported it and the process does not declare it |
+| `SSL_CERT_FILE` | curl, Python, Ruby (OpenSSL/rustls defaults) | same |
+
+A private gateway (`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`) contributes
+`<root>/ca/rootCA.pem`, the same file its certificates are signed with; the
+shared operator gateway contributes mkcert's root CA. Values are never
+invented: when the CA file is absent, no trust variable is set. The
+runtime-specific names exist because those runtimes do not read a neutral
+variable, and the operator-set rule exists because a host process replacing a
+person's own trust store is a silent security regression.
