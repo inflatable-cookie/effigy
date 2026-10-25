@@ -420,7 +420,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 "#;
 
 fn plain_server(body: &str) -> String {
-    PLAIN_SERVER_PRELUDE.replace("BODY", &format!("{body:?}"))
+    PLAIN_SERVER_PRELUDE.replace("BODY", &format!("b{body:?}"))
 }
 
 /// A child keeps forking and reaping short-lived processes while it compiles,
@@ -606,7 +606,7 @@ fn managed_host_listener_probe_miss_does_not_restart_the_child() {
     fs::write(
         checkout.join("server.py"),
         format!(
-            "{}\nimport threading, time\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    time.sleep(3)\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    time.sleep(6)\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    serve()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\n",
+            "{}\nimport threading, time\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    time.sleep(3)\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    time.sleep(6)\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
             plain_server("steady")
         ),
     )
