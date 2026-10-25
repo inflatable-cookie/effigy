@@ -34,6 +34,19 @@ leak-timeout = { period = "1s", result = "fail" }
 filter = 'binary(cli_output_tests) & test(partial_startup_tests::)'
 threads-required = "num-test-threads"
 
+[[profile.default.overrides]]
+# The §12.3 supervisor matrix keeps its full cross product (3 front ends × 4
+# prior states × 8 stops × 3 attachments) and every cell owns a fresh durable
+# checkout journal. A journal commit fsyncs, and the ruled `[scratch] root` on
+# /Volumes/Builds costs about 26 ms per commit against 0.16 ms on the internal
+# disk. Measured 2026-10-25: 61 s and 53 s with fixtures on the internal disk,
+# 207 s under scratch on a quiet host and about 550 s under competing load.
+# Keep the proof rather than trimming cells for the volume, and run it alone so
+# its own cells do not queue behind other fixture journals in the same binary.
+filter = 'test(run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent)'
+threads-required = "num-test-threads"
+slow-timeout = { period = "900s", terminate-after = 1, grace-period = "2s" }
+
 [profile.doctor-process]
 inherits = "default"
 
@@ -44,3 +57,11 @@ slow-timeout = { period = "45s", terminate-after = 1, grace-period = "2s" }
 [[profile.doctor-process.overrides]]
 filter = 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)'
 slow-timeout = { period = "45s", terminate-after = 1, grace-period = "2s" }
+
+[[profile.default.overrides]]
+# The run fault-boundary proofs replay every journal boundary with kill, ENOSPC
+# and EPERM, and every boundary owns a durable journal: 169.7 s for both under
+# the ruled `[scratch] root` (2026-10-25), close enough to the 360 s cap that a
+# loaded host loses one. Keep the proofs and bound the wait instead.
+filter = 'test(/^run::tests::faults::run_fault_/)'
+slow-timeout = { period = "600s", terminate-after = 1, grace-period = "2s" }

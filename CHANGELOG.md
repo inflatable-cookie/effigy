@@ -1346,6 +1346,16 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A refused heavy run prints the admission hook's own reason and the next
+  command. Human output lifted `cause`/`message` keys that the
+  `effigy.admission.v1` details do not carry, so a deny, a hook crash and a
+  timeout all printed only ``task `<name>` failed``; the refusal's own sentence
+  now names the reason, the run id and the hook variable. The `--json` details
+  are unchanged.
+- A corrupt runtime journal's refusal names its explicit repair: move
+  `kernel.db` and its `-journal`, `-wal` and `-shm` files aside, then retry.
+  Naming only `effigy doctor` left no recovery, because doctor inspects and
+  never repairs.
 - `run stop` treats a run that settled between its status snapshot and the
   request as already closed instead of refusing. The supervisor fault matrix
   crosses this boundary at every journal commit, and a concurrent stop, owner

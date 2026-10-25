@@ -332,12 +332,18 @@ fn store_file_before_its_schema_commits_reads_absent_not_corrupt() {
 #[test]
 fn store_corrupt_db_reads_unknown_refuses_mutate_and_repair_moves_it_aside() {
     let home = home();
+    // The corrupt journal is fixture data, not a HOME a kernel helper runs
+    // under: keep it below the owned fixture's HOME observation path, so
+    // fixture cleanup does not wait on a journal this test made unreadable
+    // (effigy#328).
+    let corrupt_home = home.path().join("corrupt-case");
+    std::fs::create_dir(&corrupt_home).unwrap();
     let cx = effects(EffectClass::Mutate);
-    let root = root(home.path());
+    let root = root(&corrupt_home);
     drop(Store::open(&cx, &root).unwrap());
     std::fs::write(root.path().join(DB_NAME), vec![0x5a; 8192]).unwrap();
     assert!(matches!(
-        reader(home.path()),
+        reader(&corrupt_home),
         Observed::Unknown(UnknownReason::StoreUnreadable(_))
     ));
     let refused = Store::open(&cx, &root).unwrap_err();
