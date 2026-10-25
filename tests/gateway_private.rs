@@ -5385,13 +5385,10 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
 }
 
 /// Regression (effigy#332, Acow #756). `container <env> up --detach` runs as a
-/// step of a task, so the environment-owned supervisor that `up` starts comes
-/// from a process whose revocable admission lease ends with the task's
-/// custody. The supervisor belongs to the environment, not to that `up`: after
-/// the task exits it keeps restarting and publishing its listener generation,
-/// reusing the port Effigy reserved, and `down` settles it and releases the
-/// port. Before the fix, its own endpoint-store open failed with the revoked
-/// parent capability and the run was reported as an invalid request.
+/// step of a task. The environment-owned supervisor belongs to the
+/// environment, not to that `up`: after the task exits it keeps restarting and
+/// publishing its listener generation, reusing the port Effigy reserved, and
+/// `down` settles it and releases the port.
 #[test]
 fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     let fixture = managed_host_fixture();
@@ -5488,10 +5485,9 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         .join("app.listener.json");
     let log_path = state_path.with_file_name("app.log");
 
-    // The task's step is the only thing that starts the environment, so the
-    // supervisor's parent capability is the task's own revocable lease. The
-    // task runs with the same private fixture identity a container command
-    // would, because its step runs one.
+    // The task's step is the only thing that starts the environment. The task
+    // runs with the same private fixture identity a container command would,
+    // because its step runs one.
     let started = fixture_task_command(&checkout, &cleanup, &[task])
         .output_owned()
         .expect("run the starting task");
@@ -5580,11 +5576,7 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     let log = fs::read_to_string(&log_path).unwrap_or_default();
     assert!(
         !log.contains("is not a valid run request"),
-        "a supervisor store or capability failure never reads as an invalid request: {log}"
-    );
-    assert!(
-        !log.contains("parent capability was revoked"),
-        "the environment-owned supervisor never depends on the starting task's lease: {log}"
+        "a supervisor store failure never reads as an invalid request: {log}"
     );
 
     // `down` settles the run through the kernel and releases the reserved port.

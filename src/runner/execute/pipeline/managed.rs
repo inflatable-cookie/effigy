@@ -727,7 +727,7 @@ fn own_managed_run(
     };
     let prepare = |run: &mut TaskRun| -> Result<Vec<WorkloadSpec>, RunnerError> {
         {
-            let _parent = run.enter()?;
+            let _parent = run.enter();
             run_managed_setup_steps(
                 &mut plan,
                 run,

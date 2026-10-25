@@ -69,7 +69,7 @@ pub(super) fn execute_group_run(
 
     // Retained group evidence includes member history and logs. Enter the
     // durable parent before classification so local members cannot downgrade.
-    let scope = run.enter()?;
+    let scope = run.enter();
     let outcome = run_members(root, plan, &mut record);
     drop(scope);
     if let Err(error) = finalize_qa_group_run_record(root, &record) {

@@ -77,10 +77,10 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
             export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2
             export RUSTFLAGS="-C link-arg=-fuse-ld=lld"
             if [ "$KERNEL_PROOF_MODE" != fixtures ]; then
-                env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix --test-threads 2 --no-fail-fast --retries 0 --no-tests fail
+                cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix --test-threads 2 --no-fail-fast --retries 0 --no-tests fail
             fi
             if [ "$KERNEL_PROOF_MODE" != task-engine ]; then
-                env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --test leak_assertion -E "test(unknown_custody_keeps_fixture_files_and_never_signals_a_foreign_generation) | test(unknown_kernel_state_preserves_fixture_files)" --no-fail-fast --retries 0 --no-tests fail
+                cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --test leak_assertion -E "test(unknown_custody_keeps_fixture_files_and_never_signals_a_foreign_generation) | test(unknown_kernel_state_preserves_fixture_files)" --no-fail-fast --retries 0 --no-tests fail
             fi
             exit
         fi
@@ -99,7 +99,7 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
         fi
         if [ "$KERNEL_PROOF_MODE" = qualification ]; then
             chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry
-            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test runtime_routing --test custody --test store --test gate --test probe -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(runtime_routing) | binary(custody) | binary(store) | binary(gate) | binary(probe)" --no-fail-fast --retries 0 --no-tests fail
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test runtime_routing --test custody --test store --test gate --test probe -E "test(/^closure::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(runtime_routing) | binary(custody) | binary(store) | binary(gate) | binary(probe)" --no-fail-fast --retries 0 --no-tests fail
             cargo build --bin effigy
             setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups python3 tests/scripts/runtime-write-budget.py target/debug/effigy
             exit
@@ -107,7 +107,7 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
         if [ "$KERNEL_PROOF_MODE" = runtime-storage ]; then
             # Permission refusals must run as the fixture owner, not root.
             chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry
-            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test runtime_routing --test custody --test store --test gate -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(runtime_routing) | binary(custody) | binary(store) | binary(gate)" --no-fail-fast --retries 0 --no-tests fail
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test runtime_routing --test custody --test store --test gate -E "test(/^closure::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(runtime_routing) | binary(custody) | binary(store) | binary(gate)" --no-fail-fast --retries 0 --no-tests fail
             exit
         fi
         if [ "$KERNEL_PROOF_MODE" = helpers ]; then

@@ -325,6 +325,21 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Parent-capability inheritance. `EFFIGY_PARENT_CAPABILITY`, descriptor 9 and
+  the memory lease behind them are gone, together with the run-class
+  inheritance, the 25 ms grant peek, the "descriptor was closed" notice and
+  every refusal that depended on them: a durable effect inside a foreground
+  tree, a nested durable `--run-id` run, and a nested run behind an
+  intermediary that closed inherited descriptors. A nested `effigy` is an
+  ordinary invocation that classifies its own tree, so closing descriptor 9,
+  killing or sleeping the parent, a dead admission hook or a leaked variable
+  never makes it refuse. Admission nesting is the advisory
+  `EFFIGY_ADMITTED=<admitting run id>` marker, checked without a liveness
+  test; a forged marker only skips the local orchestrator's queue. Foreground
+  custody of a run's own descendants (process groups, the memory guard and its
+  anonymous cleanup pin) is unchanged, and so is #338's session-access
+  handoff at descriptor 11. Contract 052 §3.1 and 049 record the rules;
+  Tom's Q-011 ruling reverses that part of the Q-010 kernel design.
 - The managed listener ownership proof, about 1,100 lines of production code.
   `effigy_gateway::managed_listener` is gone, with the process-identity
   triples, the descendant walk, socket exclusivity, the availability-file

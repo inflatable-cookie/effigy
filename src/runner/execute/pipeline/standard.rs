@@ -117,7 +117,7 @@ pub(in crate::runner) fn run_standard_task(
         // a first local-dev unlock writes the machine vault, and the kernel
         // refuses a durable effect while a foreground parent scope is live.
         let task_secret_pairs = resolve_standard_task_secrets(preflight, selection)?;
-        let _parent = run.enter()?;
+        let _parent = run.enter();
         let env_schema_resolved = {
             let exec = RunExec::new(&mut run);
             resolve_env_schema_if_present(

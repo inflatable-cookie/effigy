@@ -54,7 +54,6 @@ run_selector() { # home env-args... -- selector args...
   home=$1
   shift
   env -u OXIDE_POOL -u GITHUB_ACTIONS -u EFFIGY_OXIDE_ESCAPE \
-    -u EFFIGY_PARENT_CAPABILITY \
     HOME="$home" FAKE_OXIDE_LOG="$log" FAKE_OXIDE_POOL="$pool" \
     PATH="$fx/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     sh "$selector" "$@"
@@ -64,7 +63,7 @@ run_with_pool() { # pool home -- selector args...
   value=$1
   home=$2
   shift 2
-  env -u GITHUB_ACTIONS -u EFFIGY_OXIDE_ESCAPE -u EFFIGY_PARENT_CAPABILITY \
+  env -u GITHUB_ACTIONS -u EFFIGY_OXIDE_ESCAPE \
     OXIDE_POOL="$value" HOME="$home" FAKE_OXIDE_LOG="$log" \
     FAKE_OXIDE_POOL="$pool" PATH="$fx/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     sh "$selector" "$@"

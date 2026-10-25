@@ -173,8 +173,8 @@ fn sequence_durable_stop_request_cancels_active_custody_and_settles_child() {
         .unwrap();
     });
     let exit = {
-        let _parent = parent.enter().expect("parent scope");
-        let _step = child.enter().expect("child scope");
+        let _parent = parent.enter();
+        let _step = child.enter();
         run_plain(
             &mut child,
             PlainCommand {
@@ -222,8 +222,8 @@ fn sequence_pending_stop_starts_no_next_workload() {
     .unwrap();
     let mut child = parent.step(0, "must-not-start").unwrap();
     let exit = {
-        let _parent = parent.enter().expect("parent scope");
-        let _step = child.enter().expect("child scope");
+        let _parent = parent.enter();
+        let _step = child.enter();
         run_plain(
             &mut child,
             PlainCommand {
@@ -897,7 +897,7 @@ fn a_nested_run_that_opts_out_hides_its_parents_scratch() {
             // A nested task reference on this thread: the child declares
             // `scratch = false`, so its host processes see the inherited temp
             // environment, not its parent's directory.
-            let _parent_scope = parent.enter().expect("parent scope");
+            let _parent_scope = parent.enter();
             let mut child = TaskRun::begin(TaskRunRequest {
                 target: &child_target,
                 lock_wait_ms: 0,

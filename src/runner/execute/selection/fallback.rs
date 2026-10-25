@@ -58,7 +58,7 @@ pub(super) fn run_fallback_route<'a>(
             };
             let outcome = match suite_run.as_mut() {
                 Some(run) => {
-                    let _scope = run.enter()?;
+                    let _scope = run.enter();
                     let ports = RunnerBuiltinPorts::with_suite_run(run);
                     try_run_builtin_task(
                         &ports,

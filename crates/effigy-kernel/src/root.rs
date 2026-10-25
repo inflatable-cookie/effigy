@@ -114,8 +114,6 @@ impl StateRoot {
     /// Shared-fact storage under `$HOME/.effigy/state/machine.db`. This never
     /// opens, initializes or repairs the legacy `kernel.db` beside it.
     pub fn machine_effects(cx: &EffectContext, home: &Path) -> Result<Self, FsError> {
-        crate::inheritance::require_durable(cx.operation())
-            .map_err(|error| FsError::io("runtime class", home, &error))?;
         let mut root = Self::effects(cx, home)?;
         root.database = Database::Machine;
         Ok(root)

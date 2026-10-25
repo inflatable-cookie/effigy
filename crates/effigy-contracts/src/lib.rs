@@ -7,11 +7,6 @@ use effigy_json_schema::CompiledSchema;
 use effigy_manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use serde_json::{json, Value};
 
-/// The kernel's inherited-capability variable (`effigy_kernel::inheritance::ENV`).
-/// Contract fixtures model independent invocations, so they never run as
-/// descendants of the invoking task tree's grant (as test suites don't).
-const PARENT_CAPABILITY_ENV: &str = "EFFIGY_PARENT_CAPABILITY";
-
 /// The schema id reported for a selection payload failure, so a caller can tell
 /// a contract violation from a command-payload violation.
 pub const SELECTION_PAYLOAD_SCHEMA: &str = "effigy.json-contract-selection.v1";
@@ -700,8 +695,7 @@ fn run_contract_row(
     let mut command = Command::new(executable);
     command
         .args(args)
-        .current_dir(repo_root)
-        .env_remove(PARENT_CAPABILITY_ENV);
+        .current_dir(repo_root);
     if let Some(home) = isolated_home {
         command.env("HOME", home);
     }
@@ -1074,7 +1068,6 @@ fn build_qa_groups_contract_fixture(
         ])
         .arg(&fixture)
         .env("NO_COLOR", "1")
-        .env_remove(PARENT_CAPABILITY_ENV)
         .output()
         .map_err(|error| format!("failed to execute fixture group run: {error}"))?;
     if !output.status.success() {
@@ -1256,8 +1249,7 @@ fn run_fixture_command(
     let mut command = Command::new(program);
     command
         .args(args)
-        .current_dir(cwd)
-        .env_remove(PARENT_CAPABILITY_ENV);
+        .current_dir(cwd);
     if let Some(home) = home {
         command.env("HOME", home);
     }

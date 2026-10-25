@@ -1325,3 +1325,35 @@ config_keys = []
 allow = [
   "CHANGELOG.md",
 ]
+
+[[retired]]
+id = "parent-capability-inheritance"
+retired = "2026-10-25; v0.15 simplification (Q-011)"
+replacement = "A nested `effigy` is an ordinary invocation: it classifies its own tree, and a durable nested run journals in its own checkout. No process inherits or checks a \"parent capability\", so closing a descriptor, killing or sleeping the parent, a dead admission hook or a leaked variable never makes a nested run refuse. Admission nesting is the advisory `EFFIGY_ADMITTED=<admitting run id>` marker, checked without a liveness test. Foreground descendant custody (process groups, the memory guard and its anonymous cleanup pin at descriptor 10) and #338's session-access handoff at descriptor 11 are unchanged."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "EFFIGY_PARENT_CAPABILITY",
+  "InheritedCapability",
+  "RuntimeParent",
+  "RuntimeParent::inherited",
+  "RunClass",
+  "require_durable",
+  "require_journal_write",
+  "MemoryLease",
+  "CAPABILITY_LOST",
+  "memory-v1:9:",
+  "parent capability",
+]
+paths = [
+  "crates/effigy-kernel/src/inheritance.rs",
+  "crates/effigy-kernel/src/inheritance/",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/contracts/052-runtime-kernel-contract.md",
+  "crates/effigy-kernel/tests/support/custody-fixture.rs",
+  "crates/effigy-kernel/tests/custody.rs",
+  "tests/run_control_cli.rs",
+]

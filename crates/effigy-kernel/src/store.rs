@@ -319,8 +319,6 @@ impl Store {
         root: &StateRoot,
         wait: BusyWait,
     ) -> Result<Self, StoreError> {
-        crate::inheritance::require_durable(cx.operation())
-            .map_err(|error| StoreError::from(FsError::io("runtime class", root.path(), &error)))?;
         if !root.writable() {
             return Err(StoreError::Untrusted {
                 path: root.path().into(),
@@ -484,9 +482,6 @@ impl Store {
         wait: BusyWait,
         f: impl FnOnce(&mut Txn<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
-        crate::inheritance::require_journal_write().map_err(|error| {
-            StoreError::from(FsError::io("runtime class", self.root.path(), &error))
-        })?;
         let window = wait.window(cx);
         // Cancellation still wins; only the deadline is replaced.
         let patient = cx.patience(window);

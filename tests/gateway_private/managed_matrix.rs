@@ -1261,9 +1261,8 @@ if op=='down':
 if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
  payload=args[-1].replace('/usr/local/bin/effigy',str(root/'effigy-wrapper'))
  # A container command receives the explicitly forwarded `-e` variables, never
- # the client's environment: the host's inherited run capability descriptor
- # cannot cross the container boundary, so neither may its selector.
- payload_env={k:v for k,v in os.environ.items() if k!='EFFIGY_PARENT_CAPABILITY'}
+ # the client's environment.
+ payload_env=dict(os.environ)
  with open(root/('remote-'+str(os.getpid())+'.out'),'wb') as log:
   nonce=os.urandom(16).hex()
   payload_env['EFFIGY_CUSTODY_NONCE']=nonce

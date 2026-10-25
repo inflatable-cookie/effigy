@@ -321,7 +321,7 @@ pub struct Run<'a> {
     sentinel: Option<crate::supervise::SentinelLease>,
     machine_startup: Option<machine::Startup>,
     checkout_custody: Option<checkout_custody::CheckoutCustody>,
-    ancestor_closure: Option<crate::inheritance::ClosurePin>,
+    ancestor_closure: Option<crate::closure::ClosurePin>,
     closed_effects: Option<Vec<Effect>>,
     processes: std::collections::BTreeMap<
         i64,
@@ -490,16 +490,7 @@ impl<'a> Run<'a> {
             closed_effects: None,
             machine_startup: planned.map(|_| machine::Startup::default()),
             checkout_custody: None,
-            ancestor_closure: if root.is_machine()
-                || opts
-                    .custody
-                    .as_ref()
-                    .is_some_and(|plan| plan.placement == crate::supervise::Placement::Detached)
-            {
-                None
-            } else {
-                checkout_custody::ancestor_closure(cx.operation())?
-            },
+            ancestor_closure: None,
             processes: Default::default(),
         };
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
@@ -530,9 +521,6 @@ impl<'a> Run<'a> {
             return Ok(None);
         }
         crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits).map(Some)
-    }
-    pub(crate) fn operation(&self) -> &crate::ctx::OperationContext {
-        self.cx.operation()
     }
     /// Capture bounds of the run's own effect context.
     pub(crate) fn limits(&self) -> crate::ctx::Limits {

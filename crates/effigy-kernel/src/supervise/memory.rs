@@ -2,7 +2,7 @@
 use super::*;
 use crate::gate::GateGuard;
 use crate::ident::{self, ProcessIdentity};
-use crate::inheritance::{ClosureIdentity, ClosurePin, RunClass, RuntimeParent};
+use crate::closure::ClosurePin;
 use crate::run::{Effect, EffectState};
 use std::os::fd::{FromRawFd, OwnedFd};
 
@@ -30,25 +30,10 @@ struct Config {
     run: RunId,
     fence: Fence,
     watch: RawFd,
-    ancestor: Option<RawFd>,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
     Register(Effect),
-}
-
-fn ancestor_closure(cx: &OperationContext) -> Result<Option<ClosurePin>, RunError> {
-    match RuntimeParent::inherited(cx)? {
-        Some(parent) if parent.closure.is_some() || parent.class == RunClass::Foreground => {
-            let identity = parent.closure.ok_or_else(|| {
-                RunError::Invalid("foreground parent has no custody closure pin".into())
-            })?;
-            ClosurePin::capture(identity)
-                .map(Some)
-                .map_err(RunError::from)
-        }
-        _ => Ok(None),
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,12 +78,6 @@ impl MemoryGuard {
             return Err(RunError::Invalid("too many foreground gates".into()));
         }
         let (watch, closure) = ClosurePin::new()?;
-        let ancestor = ancestor_closure(cx.operation())?
-            .map(|capability| capability.custody_fd(cx.operation()))
-            .transpose()?;
-        let inherited: Vec<_> = std::iter::once(watch.as_raw_fd())
-            .chain(ancestor.as_ref().map(AsRawFd::as_raw_fd))
-            .collect();
         let config = Config {
             memory: true,
             owner,
@@ -106,7 +85,6 @@ impl MemoryGuard {
             run,
             fence,
             watch: watch.as_raw_fd(),
-            ancestor: ancestor.as_ref().map(AsRawFd::as_raw_fd),
         };
         let mut command = helper(executable, SENTINEL)?;
         command.stdout(Stdio::piped());
@@ -122,12 +100,10 @@ impl MemoryGuard {
                         return Err(io::Error::last_os_error());
                     }
                 }
-                // These live descriptors are already allocated >=128 in the
+                // This live descriptor is already allocated >=128 in the
                 // parent. Clearing CLOEXEC cannot overwrite std's error pipe.
-                for fd in &inherited {
-                    if libc::fcntl(*fd, libc::F_SETFD, 0) < 0 {
-                        return Err(io::Error::last_os_error());
-                    }
+                if libc::fcntl(watch.as_raw_fd(), libc::F_SETFD, 0) < 0 {
+                    return Err(io::Error::last_os_error());
                 }
                 Ok(())
             });
@@ -176,12 +152,6 @@ impl MemoryGuard {
         Ok(guard)
     }
 
-    pub(crate) fn closure_identity(&self) -> Result<ClosureIdentity, RunError> {
-        self.closure
-            .as_ref()
-            .map(ClosurePin::identity)
-            .ok_or_else(|| RunError::Invalid("foreground custody pipe is closed".into()))
-    }
     pub(crate) fn closure_pin(&self) -> Result<ClosurePin, RunError> {
         self.closure
             .as_ref()
@@ -310,20 +280,12 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             "invalid foreground guard owner or gates".into(),
         ));
     }
-    if config.watch < 128
-        || config
-            .ancestor
-            .is_some_and(|fd| fd < 128 || fd == config.watch)
-    {
+    if config.watch < 128 {
         return Err(RunError::Invalid(
             "invalid foreground closure descriptors".into(),
         ));
     }
     let mut watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
-    let ancestor = config
-        .ancestor
-        .map(|fd| inherited_pipe(fd, libc::O_WRONLY))
-        .transpose()?;
     let mut gates: Vec<OwnedFd> = Vec::new();
     for index in 0..config.gates {
         let raw = GATE_FD + index as RawFd;
@@ -435,7 +397,6 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             Err(_) => std::thread::sleep(Duration::from_millis(5)),
         }
     }
-    drop(ancestor);
     drop(gates); // positive delegated closure; no numeric replay
     if residue {
         return Err(RunError::Invalid("foreground guard left residue".into()));

@@ -164,8 +164,6 @@ fn checkout_fence(
     }
     let name = name(token)?;
     root.verify_binding()?;
-    crate::inheritance::require_durable(cx.operation())
-        .map_err(|error| FsError::io("checkout lease authority", root.path(), &error))?;
     let gates = root
         .checkout_lease_gates(!exclusive)?
         .ok_or_else(|| GateError::Untrusted {

@@ -635,7 +635,6 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             &image,
             None,
             None,
-            None,
         )
         .unwrap();
         let anchor = fixture_identity(child.anchor.unwrap());
@@ -847,7 +846,6 @@ fn anchor_spawn_overhead_is_measured() {
                     "overhead",
                     cx.operation(),
                     image.as_ref().unwrap(),
-                    None,
                     None,
                     None,
                 )

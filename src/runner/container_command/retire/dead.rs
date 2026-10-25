@@ -31,7 +31,7 @@ fn environment() -> BTreeMap<std::ffi::OsString, effigy_kernel::custody::EnvValu
         .filter(|(key, _)| {
             !matches!(
                 key.to_str(),
-                Some("EFFIGY_CUSTODY_NONCE" | "EFFIGY_PROBE_NONCE" | "EFFIGY_PARENT_CAPABILITY")
+                Some("EFFIGY_CUSTODY_NONCE" | "EFFIGY_PROBE_NONCE")
             )
         })
         .map(|(key, value)| (key, effigy_kernel::custody::EnvValue::Plain(value)))
