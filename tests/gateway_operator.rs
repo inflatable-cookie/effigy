@@ -135,19 +135,26 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     assert!(!evidence.exists());
     assert!(!config.pid_file_path.exists());
     // A bind collision produces a closed failed run and no advertised identity.
+    //
+    // The diagnosis is the daemon's own words for the collision, never the
+    // Rust variant that carries them: the operator prints `Display` of the
+    // `ProxyBindError` cause, and its account names the endpoint that could
+    // not be taken. Asserting the variant name would only restate an internal
+    // identifier that no operator ever sees.
     let occupied = TcpListener::bind(config.proxy.bind_addr).unwrap();
+    let bind_cause = format!("HTTP proxy failed to bind on {}", config.proxy.bind_addr);
     let failure = operator::up_with_executable(&config, executable)
         .unwrap_err()
         .to_string();
     assert!(failure.contains("exited with code 1"), "{failure}");
-    assert!(failure.contains("ProxyBindError"), "{failure}");
+    assert!(failure.contains(&bind_cause), "{failure}");
     let failed = operator::status(&config).unwrap();
     assert_eq!(failed.status, "stopped");
     assert!(!failed.ready);
     assert!(!failed.control_socket.as_ref().unwrap().exists());
     let reason = failed.reason.as_ref().unwrap();
     assert!(reason.contains("exited with code 1"), "{failed:?}");
-    assert!(reason.contains("ProxyBindError"), "{failed:?}");
+    assert!(reason.contains(&bind_cause), "{failed:?}");
     // A new status caller reads the persisted failure, not client pipe output.
     let op = operator::context(
         Duration::from_secs(1),
