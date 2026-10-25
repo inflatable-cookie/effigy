@@ -247,3 +247,32 @@ invented: when the CA file is absent, no trust variable is set. The
 runtime-specific names exist because those runtimes do not read a neutral
 variable, and the operator-set rule exists because a host process replacing a
 person's own trust store is a silent security regression.
+
+## Managed listener route ownership and withdrawal (effigy#335)
+
+A managed listener route is this checkout generation's route, and its owner
+token (`scope|environment|profile|process`) is stable across runs while the
+recorded run is not. The route therefore records the kernel run that published
+it, and ownership decisions are made against this checkout's journal:
+
+- **Successor reclaim.** A same-checkout, same-scope managed listener route is
+  reclaimed in the publication transaction only when the journal proves the
+  recorded run settled: its run row is `closed`, or its resource gate is free.
+  The gate is held for exactly the supervisor's lifetime, so a free gate with
+  an open row is a dead run, never a live one. The predecessor's domain claim
+  follows the route to the successor listener.
+- **Live owner.** A route whose recorded run is live is refused. The refusal is
+  never `ForeignRoute` for this checkout: it names the stable listener owner,
+  the run, the observed state and the command that settles it
+  (`effigy container <environment> down`). A different checkout remains
+  `ForeignRoute`/`StaleRouteClaim` under the rules above.
+- **Unknown owner.** A route that records no run, or whose journal row or gate
+  cannot be observed, is refused with the same settle command. Absence of a
+  process identity is never treated as a settled run.
+- **Withdrawal on stop.** `down`, `reset` and session settle withdraw every
+  listener route the environment's declared host processes published, matched
+  by this checkout generation and the declaration's stable owner token. The
+  publishing supervisor is not consulted, so a route left by a run that died
+  or was refused is still withdrawn and reported. A process whose own stop
+  failed keeps its route, because its run may still be live. Retire continues
+  to remove every route owned by the retired checkout generation.

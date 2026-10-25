@@ -104,6 +104,7 @@ async fn loopback_keep_alive_latency_766() {
     let availability = fixture.path().join("listener.json");
     std::fs::write(&availability, serde_json::to_vec(&serde_json::json!({"schema":"effigy.managed.host-listener-state.v1", "owner":"performance", "runtime_generation":"runtime", "generation":"child", "status":"ready"})).unwrap()).unwrap();
     let owner = ManagedListenerRouteOwner {
+        run: None,
         owner: "performance".into(),
         runtime_generation: "runtime".into(),
         generation: "child".into(),

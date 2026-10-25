@@ -203,7 +203,15 @@ impl EndpointSnapshot {
             } else if listener.is_some()
                 && current.listener.is_some()
                 && current.listener.as_deref() != listener
+                && !self.routes()?.lookup(&domain).is_some_and(|route| {
+                    route.project == project && route.scope.as_deref() == scope
+                })
             {
+                // A withdrawn claim with no route keeps its listener owner: only
+                // explicit retirement releases it. A route this checkout
+                // generation already owns proves the route-table transaction
+                // authorized the replacement (a settled predecessor or a
+                // container handover), so the claim follows the route.
                 return Err(error(format!(
                     "domain {domain} belongs to another stable listener owner ({}); stop that listener, then retry",
                     current.listener.as_deref().unwrap_or("unnamed")

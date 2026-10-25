@@ -1120,6 +1120,7 @@ fn container_down_after_listener_handover_preserves_the_successor_route() {
         reconcile_gateway_routes(&table_path, &checkout, &[route("clientname.test")]).unwrap();
         let start = GatewayStartIdentity::Linux { start_ticks: 1 };
         let owner = ManagedListenerRouteOwner {
+            run: None,
             owner: "main|web|test|app".to_owned(),
             runtime_generation: "runtime-1".to_owned(),
             generation: "child-1".to_owned(),
