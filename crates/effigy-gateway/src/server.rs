@@ -1711,7 +1711,10 @@ async fn run_gateway_with_cancel(
 }
 
 /// Remove dead routes on a timer until the daemon stops.
-async fn run_dead_route_sweep(path: PathBuf, mut shutdown: watch::Receiver<bool>) -> Result<(), GatewayError> {
+async fn run_dead_route_sweep(
+    path: PathBuf,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<(), GatewayError> {
     loop {
         tokio::select! {
             _ = tokio::time::sleep(DEAD_ROUTE_SWEEP) => {}
@@ -1722,9 +1725,10 @@ async fn run_dead_route_sweep(path: PathBuf, mut shutdown: watch::Receiver<bool>
             }
         }
         let path = path.clone();
-        let swept = tokio::task::spawn_blocking(move || crate::registration::prune_dead_routes(&path))
-            .await
-            .map_err(|error| GatewayError::WatcherError(error.to_string()))?;
+        let swept =
+            tokio::task::spawn_blocking(move || crate::registration::prune_dead_routes(&path))
+                .await
+                .map_err(|error| GatewayError::WatcherError(error.to_string()))?;
         match swept {
             Ok(domains) if !domains.is_empty() => {
                 debug!(domains = ?domains, "released dead gateway routes")

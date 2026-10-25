@@ -335,16 +335,17 @@ pub(super) fn ensure_pinned_host_ports_available(
     if policy.declared_ports.is_empty() {
         return Ok(());
     }
-    let owned = effigy_containers::exec::list_running_compose_containers_for_policy(repo_root, policy)
-        .map(|rows| {
-            rows.iter()
-                .flat_map(|row| row.ports.iter())
-                .filter_map(|published| published.split_once("->").map(|(host, _)| host))
-                .filter_map(|host| host.rsplit(':').next())
-                .filter_map(|port| port.trim().parse::<u16>().ok())
-                .collect::<std::collections::BTreeSet<_>>()
-        })
-        .unwrap_or_default();
+    let owned =
+        effigy_containers::exec::list_running_compose_containers_for_policy(repo_root, policy)
+            .map(|rows| {
+                rows.iter()
+                    .flat_map(|row| row.ports.iter())
+                    .filter_map(|published| published.split_once("->").map(|(host, _)| host))
+                    .filter_map(|host| host.rsplit(':').next())
+                    .filter_map(|port| port.trim().parse::<u16>().ok())
+                    .collect::<std::collections::BTreeSet<_>>()
+            })
+            .unwrap_or_default();
     match effigy_containers::policy::ports::pinned_host_port_conflict(
         &policy.name,
         &policy.declared_ports,

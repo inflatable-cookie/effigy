@@ -103,14 +103,20 @@ fn a_loopback_alias_lives_from_up_to_down_and_is_reused() {
         .allocate_loopback("project:app", &scope)
         .expect("allocate at up");
     assert_eq!(first, crate::loopback::DEFAULT_LOOPBACK_START);
-    assert_eq!(store.allocate_loopback("project:app", &scope).unwrap(), first);
+    assert_eq!(
+        store.allocate_loopback("project:app", &scope).unwrap(),
+        first
+    );
 
     assert!(store.release_loopback("project:app").unwrap());
     assert!(
         store.snapshot().unwrap().loopback().unwrap().is_empty(),
         "down leaves no alias behind"
     );
-    assert_eq!(store.allocate_loopback("project:app", &scope).unwrap(), first);
+    assert_eq!(
+        store.allocate_loopback("project:app", &scope).unwrap(),
+        first
+    );
 }
 
 #[test]

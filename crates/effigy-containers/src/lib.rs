@@ -60,11 +60,11 @@ pub use report::{
     down_noop_report, down_report, hosts_report, logs_report, reset_report, retire_report,
     retire_report_unverified, stats_global_report, status_global_report, status_report,
     up_detached_report, volume_list_report, volume_prune_report,
-    workspace_extra_mount_decision_lines, ContainerCacheGlobalEntry,
-    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
-    ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerServiceHealth, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
-    ContainerStatusService, ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
+    workspace_extra_mount_decision_lines, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
+    ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
+    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerServiceHealth,
+    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 /// The Effigy state home for this process: `~/.effigy`, or the private
 /// fixture home while unit tests run. Callers that touch `ports.json` or other

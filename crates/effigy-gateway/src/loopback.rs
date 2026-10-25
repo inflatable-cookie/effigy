@@ -78,12 +78,12 @@ impl LoopbackRegistry {
             return Ok(&self.assignments[identity]);
         }
 
-        let ip = self.next_available_ip().ok_or(
-            GatewayError::LoopbackPoolExhausted {
+        let ip = self
+            .next_available_ip()
+            .ok_or(GatewayError::LoopbackPoolExhausted {
                 range_start: DEFAULT_LOOPBACK_START,
                 range_end: DEFAULT_LOOPBACK_END,
-            },
-        )?;
+            })?;
         let assignment = LoopbackAssignment {
             ip,
             scope: scope.to_owned(),

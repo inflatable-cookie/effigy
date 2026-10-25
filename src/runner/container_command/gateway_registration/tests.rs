@@ -162,10 +162,12 @@ fn a_container_without_dns_routes_resolves_no_gateway_route() {
     policy.dns_routes.clear();
     let rows = published_rows(&policy, &[(41001, 80)], None);
 
-    assert!(resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
-        .expect("routes")
-        .expect("nothing to wait for")
-        .is_empty());
+    assert!(
+        resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+            .expect("routes")
+            .expect("nothing to wait for")
+            .is_empty()
+    );
 }
 
 #[test]

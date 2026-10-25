@@ -30,9 +30,7 @@ use effigy_containers::{
     EffectiveContainerPolicy, EffectiveHostProcess, EffectiveManagedHostListener,
 };
 use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
-use effigy_gateway::registration::{
-    deregister_managed_listener_route,
-};
+use effigy_gateway::registration::deregister_managed_listener_route;
 use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteTable};
 use effigy_gateway::socket_ownership::{
     process_listening_endpoints, GatewayEndpoint, GatewayTransport,
@@ -432,10 +430,7 @@ fn managed_host_process_owner(
     policy: &EffectiveContainerPolicy,
     process: &EffectiveHostProcess,
 ) -> Result<String, RunnerError> {
-    Ok(format!(
-        "{project_path}|{}|{}",
-        policy.name, process.name
-    ))
+    Ok(format!("{project_path}|{}|{}", policy.name, process.name))
 }
 
 fn order_host_processes(
@@ -1439,11 +1434,11 @@ fn child_environment(
             OsString::from(HOST_LISTENER_GENERATION_ENV),
             EnvValue::Plain(OsString::from(generation)),
         );
-        // Effigy reserved this listener's concrete port, so the process
-        // receives it as `HOST`/`PORT` (effigy#321). The reserved address
-        // outranks an ambient value, because the process must serve the port
-        // Effigy reserved and then verified; only a value the manifest itself
-        // declares is the process's own decision and wins.
+        // Effigy assigned this listener its concrete port (the OS picked it),
+        // so the process receives it as `HOST`/`PORT` (effigy#321, effigy#346).
+        // That address outranks an ambient value, because the process must
+        // serve the port Effigy bound on its behalf; only a value the manifest
+        // itself declares is the process's own decision and wins.
         if let Ok(address) = bind.parse::<SocketAddr>() {
             for (key, value) in [
                 ("HOST", address.ip().to_string()),
@@ -3709,10 +3704,10 @@ server.serve_forever()
             .find(|process| process.listener.is_some())
             .expect("listener declaration");
         let project = fixture.checkout.display().to_string();
-        let first = super::managed_host_process_owner(&project, &policy, process)
-            .expect("owner identity");
-        let second = super::managed_host_process_owner(&project, &policy, process)
-            .expect("owner identity");
+        let first =
+            super::managed_host_process_owner(&project, &policy, process).expect("owner identity");
+        let second =
+            super::managed_host_process_owner(&project, &policy, process).expect("owner identity");
         assert_eq!(first, second);
         assert_eq!(first, format!("{project}|{}|{}", policy.name, process.name));
     }

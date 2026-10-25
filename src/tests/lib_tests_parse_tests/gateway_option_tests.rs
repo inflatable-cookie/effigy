@@ -133,12 +133,16 @@ fn parse_gateway_repair_is_retired_with_its_replacement_named() {
     for args in [
         vec!["gateway", "repair"],
         vec!["gateway", "repair", "--yes"],
-        vec!["gateway", "repair", "--owner-checkout", "/worktrees/deleted"],
+        vec![
+            "gateway",
+            "repair",
+            "--owner-checkout",
+            "/worktrees/deleted",
+        ],
         vec!["gateway", "repair", "--yes", "--expect-plan", "abc123"],
     ] {
         let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
-        let error =
-            parse_command(args).expect_err("`gateway repair` is retired in v0.15");
+        let error = parse_command(args).expect_err("`gateway repair` is retired in v0.15");
         let message = error.to_string();
         assert!(message.contains("retired in v0.15"), "{message}");
         assert!(message.contains("reclaimed automatically"), "{message}");

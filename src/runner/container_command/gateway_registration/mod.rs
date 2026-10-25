@@ -64,8 +64,8 @@ pub(in crate::runner) fn ensure_gateway_running_for_container(
     if !crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(policy) {
         return Ok(());
     }
-    let executable = effigy_containers::session::resolve_effigy_invocation_prefix()
-        .map_err(RunnerError::Cwd)?;
+    let executable =
+        effigy_containers::session::resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let command = effigy_containers::session::managed_gateway_command(&executable);
     crate::runner::gateway_command::gateway_up_for_managed_task(&command)
 }
@@ -241,12 +241,13 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
             Instant::now() + crate::runner::container_runtime_prep::OWNED_EXEC_VERIFICATION_TIMEOUT,
         )?;
     }
-    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
-        gateway_runtime_target_error(format!(
-            "container `{}` published no host port for a declared gateway route",
-            policy.name
-        ))
-    })?;
+    let mut routes =
+        resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
+            gateway_runtime_target_error(format!(
+                "container `{}` published no host port for a declared gateway route",
+                policy.name
+            ))
+        })?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
@@ -431,12 +432,13 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
         Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
         Err(error) => return Err(gateway_runtime_rows_error(error.to_string())),
     };
-    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
-        gateway_runtime_target_error(format!(
-            "container `{}` published no host port for a declared gateway route",
-            policy.name
-        ))
-    })?;
+    let mut routes =
+        resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
+            gateway_runtime_target_error(format!(
+                "container `{}` published no host port for a declared gateway route",
+                policy.name
+            ))
+        })?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, false, Some(&rows))?;
     if project_alias_routes.len() != expected_project_alias_route_count(policy) {

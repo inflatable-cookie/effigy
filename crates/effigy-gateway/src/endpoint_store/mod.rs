@@ -191,11 +191,7 @@ impl EndpointStore {
     /// Assignments whose checkout path is gone are reclaimed first, so a
     /// deleted worktree's address is reused on the next allocation. The
     /// assignment lives until `down` releases it.
-    pub fn allocate_loopback(
-        &self,
-        identity: &str,
-        scope: &str,
-    ) -> Result<Ipv4Addr, GatewayError> {
+    pub fn allocate_loopback(&self, identity: &str, scope: &str) -> Result<Ipv4Addr, GatewayError> {
         self.transaction(|snapshot| {
             let mut registry = snapshot.loopback()?;
             registry.reclaim_absent_paths();

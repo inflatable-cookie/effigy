@@ -1028,9 +1028,11 @@ fn apply_generated_compose_port_policy(
             }
             let host_port = match explicit {
                 Some(explicit) if !scope_explicit_ports => Some(explicit.host),
-                _ if stable_ports => {
-                    Some(stable_host_port(&owner, binding.container, &mut stable_taken))
-                }
+                _ if stable_ports => Some(stable_host_port(
+                    &owner,
+                    binding.container,
+                    &mut stable_taken,
+                )),
                 _ => None,
             };
             rewritten_ports.push(GeneratedComposePort::String(match host_port {
@@ -1774,5 +1776,4 @@ services:
             GeneratedComposeVolume::String(raw) if raw == "/tmp/shared:/var/www/shared"
         ));
     }
-
 }

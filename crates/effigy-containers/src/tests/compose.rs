@@ -926,9 +926,7 @@ variant = "default"
         );
         assert!(!policy.ports_declared_explicitly);
         assert!(
-            policy
-                .declared_ports
-                .contains(&"127.0.0.1::80".to_owned()),
+            policy.declared_ports.contains(&"127.0.0.1::80".to_owned()),
             "{:?}",
             policy.declared_ports
         );
@@ -1273,13 +1271,11 @@ variant = "default"
         let second = load_container_policy(&root, None).expect("second policy");
         assert!(!first.ports_declared_explicitly);
         assert_eq!(first.declared_ports, second.declared_ports);
-        assert!(first
-            .declared_ports
-            .contains(&"127.0.0.1::80".to_owned()));
-        assert!(first
-            .declared_ports
-            .contains(&"127.0.0.1::3306".to_owned()));
-        let compose = first.read_compose(&first.compose_files[0]).expect("compose");
+        assert!(first.declared_ports.contains(&"127.0.0.1::80".to_owned()));
+        assert!(first.declared_ports.contains(&"127.0.0.1::3306".to_owned()));
+        let compose = first
+            .read_compose(&first.compose_files[0])
+            .expect("compose");
         for published in ["127.0.0.1::80", "127.0.0.1::3306"] {
             assert!(compose.contains(published), "{compose}");
         }
@@ -2397,15 +2393,15 @@ catalog = "node"
         assert_eq!(repeated.declared_ports, prepared.declared_ports);
         assert_eq!(
             store.snapshot().unwrap().loopback().unwrap().get(
-                &effigy_gateway::loopback::project_loopback_identity(
-                    &repeated.project_name,
-                    &root,
-                )
+                &effigy_gateway::loopback::project_loopback_identity(&repeated.project_name, &root,)
             ),
             Some(&alias),
             "a repeated Prepare keeps the same alias"
         );
-        assert!(!home.join("ports.json").exists(), "no port registry is written");
+        assert!(
+            !home.join("ports.json").exists(),
+            "no port registry is written"
+        );
     });
 }
 

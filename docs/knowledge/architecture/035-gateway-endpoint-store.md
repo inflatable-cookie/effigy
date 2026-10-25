@@ -27,24 +27,24 @@ longer exists, or its target address does not accept a TCP connection within
 200 ms. The takeover is logged in one line. Otherwise the write is refused with
 one message naming the other checkout and the command that stops it. Removing the
 route frees the domain immediately, so `down` followed by `up` needs no window.
-Address claims cover project loopback identities; numeric port claims cover
-generated host ranges. Multiple DNS aliases can share one address owned by the
-same scope. Conflicting scopes, overlapping ranges and incompatible targets
-on one TCP alias tuple refuse publication.
+Address claims cover project loopback identities; domain claims cover routes.
+Multiple DNS aliases can share one address owned by the same scope. Host ports
+are not claimed at all: the OS or Compose assigns them. Conflicting scopes and
+incompatible targets on one TCP alias tuple refuse publication.
 
 ## Lifetime and release
 
-`reserve_ports`, `read_ports`, `retain_ports` and `release_ports` use an explicit
-project name and owning path. Loopback reservations use their stable identity
-and owning scope. The kernel transfers committed claims from the reserving
-run to the gateway store resource at settle. A Prepare run ending does not
-release its environment's bindings. Releasing a different lifetime owner's
-reservation refuses; missing runtime inventory never releases a reservation.
+`allocate_loopback` takes a stable identity and its owning checkout path;
+`release_loopback` releases one identity and `release_loopback_for_path` every
+identity a checkout path owns. The alias is allocated at `up` and released by
+`down` and retirement, so a Prepare run ending releases nothing. Allocation
+first reclaims assignments whose checkout path is gone. There is no inventory
+probe and no release plan.
 
-Release and removal from the endpoint payload commit together, and a released
-address or port is immediately allocatable: the gateway publishes with no
-reuse quarantine, and its DNS answers carry a one-second TTL. A domain that
-moves between checkouts therefore resolves to its new owner at once.
+Removal and its claims commit together, and a released address is immediately
+allocatable: the gateway publishes with no reuse quarantine, and its DNS
+answers carry a one-second TTL. A domain that moves between checkouts therefore
+resolves to its new owner at once.
 
 ## Observation
 
@@ -62,17 +62,14 @@ store is Unknown; nothing falls back to a legacy file.
 Container Prepare allocates its loopback alias through this API; `down` and
 retirement release it. Pure policy observation remains effect-free.
 Private gateway startup uses the existing 15-second gateway operation budget
-while waiting for verified listener publication, allowing durable import before
-bind/publish. Unverified refusals still fail immediately; the status budget is
-unchanged.
+while waiting for verified listener publication. Unverified refusals still fail
+immediately; the status budget is unchanged.
 Policy reads observe routes and loopback assignments from one snapshot without
-admitting writer runs; before import, the same pure read accepts the original
-legacy mapping. Generated Compose allocates only during Prepare. Certificate preparation creates only its directories and
-certificates; endpoint writers and daemon startup own import/recovery, avoiding
-recursive acquisition of the endpoint Store gate during TLS publication.
-Prepare and route registration use the same persistent loopback allocator; a
-missing container from an inventory never frees its address. The previous shared-service key is
-translated only for its exact recorded owner, retaining the address.
+admitting writer runs. Generated Compose allocates only during Prepare.
+Certificate preparation creates only its directories and certificates; endpoint
+writers and daemon startup own the Store gate, avoiding recursive acquisition
+during TLS publication.
+Prepare and route registration use the same loopback allocator.
 
 Container and managed-listener route edits run under the Store owner gate.
 Managed publication proves process generations, ancestry, readiness and exclusive
@@ -85,15 +82,12 @@ between supervision admission and the listener's declared readiness budget.
 A managed listener route's owner is its checkout path, environment and process
 name. Exact child-generation teardown withdraws the route, and a stale stop
 callback cannot withdraw a successor generation. Retirement and `down` remove
-the checkout's routes by path, listener routes included. Explicit port reclaim
-snapshots its pre-edit document through a journaled kernel file publication,
-then commits the removals; the original imported JSON stays untouched.
+the checkout's routes by path, listener routes included.
 
-The daemon imports before starting, reads Store snapshots and watches the
-kernel database directory for reload. Legacy route-file provenance checks apply
-only before import. After import the kernel's owner and path checks protect the
-Store; modifying a backup has no effect. Unknown observations retain the last
-applied daemon table and report an error instead of falling back to backups.
+The daemon reads Store snapshots and watches the kernel database directory for
+reload. The kernel's owner and path checks protect the Store; there is no
+legacy file to import or verify. Unknown observations retain the last applied
+daemon table and report an error instead of falling back to a file.
 Status uses the same pure snapshot reader.
 
 ## Proxy connection lifetime
@@ -163,35 +157,11 @@ the failure; it does not claim the cause of a past unexplained refusal.
   gateway cases in one libtest process with concurrent threads and
   `--include-ignored`, so none of them can pass by being skipped.
 
-## Explicit downgrade and re-upgrade
+## No downgrade handback
 
-Tom authorized a reversible gateway downgrade on 2026-10-19 (effigy#237).
-Export-on-remove is the narrow gateway exception to the general migration
-policy's unsupported downgrade; it is not a dual-write compatibility period.
-`gateway setup --remove` stops the user daemon under setup ownership, then the
-endpoint Store run verifies it is stopped and records `exporting` before
-journaled replacements of the three legacy documents. The same Store gate
-excludes edits and daemon startup's mandatory import. A daemon admitted after
-the stopped observation cannot import/bind until the export finishes, and then
-refuses the exported authority state.
-
-Every destination must still contain its import digest or the frozen export's
-exact JSON value. All destinations are verified before publication begins.
-`Run::replace_file` provides intent, atomic replacement and positive settlement;
-partial exports keep the frozen payload for retry. Only after all three files
-are published does authority become `legacy`. Ordinary mutations and user
-daemon startup refuse both non-Store authority states. Pure compatible reads
-use current legacy files after completed handoff. Repeated removal preserves
-later old-version edits. Unchanged mappings retain their raw JSON fields and
-unchanged documents retain their original bytes.
-
-Setup's privileged child reads only the explicit legacy files and setup
-receipt through its authenticated operator descriptor; it never opens the
-operator's kernel database. Re-upgrade authenticates/quiesces the v0.14.1 root
-daemon, then re-imports current files under the endpoint gate and legacy locks.
-Existing retained claims fence reconciliation; removed claims release at once.
-A partial export must complete before re-import. Active managed-listener routes
-are refused with their exact domains because v0.14.1 lacks that ownership fence.
-Withdrawn reservations stay inactive during export; re-import reconciles the
-legacy inventory. Interface aliases are retained: setup's boot-job marker does
-not prove that setup created any existing address.
+The v0.14.1 handback is retired. `effigy gateway setup --remove` stops the user
+daemon and removes the platform setup it created; it no longer exports the three
+legacy JSON documents, and nothing re-imports them. The endpoint Store is the
+only source of routes and loopback aliases, so downgrading to v0.14.1 does not
+restore them, and no exported-authority state, legacy writer lock or import
+digest exists to reconcile.

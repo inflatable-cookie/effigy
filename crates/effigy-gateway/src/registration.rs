@@ -148,12 +148,13 @@ pub fn register_managed_listener_route(
     tls: bool,
     owner: ManagedListenerRouteOwner,
 ) -> Result<(), GatewayError> {
-    let parsed_target = target.parse::<SocketAddr>().map_err(|error| {
-        GatewayError::RouteTableReadError {
-            path: route_table_path.to_path_buf(),
-            reason: format!("managed listener target is not a socket address: {error}"),
-        }
-    })?;
+    let parsed_target =
+        target
+            .parse::<SocketAddr>()
+            .map_err(|error| GatewayError::RouteTableReadError {
+                path: route_table_path.to_path_buf(),
+                reason: format!("managed listener target is not a socket address: {error}"),
+            })?;
     if !parsed_target.ip().is_loopback()
         || parsed_target.port() == 0
         || owner.address != parsed_target.to_string()

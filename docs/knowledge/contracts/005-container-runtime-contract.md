@@ -1091,48 +1091,14 @@ initial profile state only if no other active owner appeared. This does not
 permit automatic profile starts, treating stopped resources as absent, broader
 host cleanup, or scheduler activation.
 
-Loopback allocation and reclamation must follow the same ownership boundary.
-An isolated project's loopback key is `project:<project-name>:<absolute-checkout>`
-in both generated Compose preparation and gateway registration. A legacy bare
-project key may move to that qualified key only when its recorded scope equals
-the checkout and its address is not already assigned elsewhere. Retirement
-clears qualified keys and legacy bare keys only when the recorded scope proves
-the same checkout owns them. Shared loopback identities remain retained.
-
-Tom’s 2026-09-30 ruling: Colima-only use must not require starting Docker
-Desktop to permit safe loopback reclamation. Runtime discovery must distinguish
-a proven inactive optional backend from a failed authoritative inventory.
-An executable on PATH or a missing socket alone does not prove ownership.
-The repair must preserve uncertain owners; it does not authorize live registry
-cleanup or pool expansion. Uncertain evidence includes symbolic or dangling
-Colima instance entries and explicit Docker environment overrides that cannot
-be decoded. Neither may be treated as an absent runtime; failed discovery
-must keep their owners protected.
-
-Stale reclamation requires a complete inventory across every participating
-runtime: Docker's default backend when Docker participates, and every running
-Colima profile. A successful empty inventory proves that no running owners
-were found and may release stale isolated assignments. A failed profile
-listing, runtime `ps`, or row parse makes the inventory incomplete;
-reclamation then preserves all uncertain assignments and reports the backend,
-profile, error, and skipped-prune reason. The allocator may use unassigned
-capacity, but a full pool remains a capacity error that includes the discovery
-failure. Increasing the pool cannot substitute for identity and discovery
-correctness.
-
-Both allocation paths — generated Compose preparation and gateway
-registration — reserve every other project's container-route `dns_ip` through
-the one shared routine (`reserved_loopback_ips_for_other_projects`), and a
-stored assignment that collides with another project's route is reallocated
-instead of kept (Tom's 2026-10-15 papercut ruling, effigy#181). Pruning drops
-assignments for stacks that are not running while their routes stay
-registered, so without this reservation generation could publish a stack on
-an IP a stale route's gateway TCP listener still binds while registration
-reallocated elsewhere, hanging the host alias against a dead or wrong
-upstream while mapped localhost ports stayed ready. A stale route for a
-missing checkout is deleted by `effigy container retire --dead` when its scope
-record still exists, and reclaimed automatically on the next route write or on
-loopback exhaustion when it does not.
+Loopback allocation follows the same ownership boundary. An isolated project's
+alias key is `project:<project-name>:<absolute-checkout>` in both generated
+Compose preparation and gateway registration; a shared service uses
+`shared:<project-name>:<absolute-checkout>`. The alias is allocated at `up`,
+released by `down` and retirement, and reclaimed by an allocation whose recorded
+checkout path is definitely missing. Domain ownership is separate: a route is
+the whole claim on a domain, and a dead route's domain is taken over on the next
+route write.
 Status/doctor alias reporting is static route-table analysis (conflicting
 bind tuples, missing/invalid fallbacks); live OS-level listener bind failures
 remain daemon-log-only.
@@ -1560,46 +1526,6 @@ runtime-prep modules are side-effect adapters for that plan: they may start
 the runtime, perform readiness checks, reconcile aliases/routes, and hold the
 environment, but they must not invent a separate activation model.
 
-## Port registry recovery
-
-`effigy container ports` is the only supported way to release generated-port
-allocations outside `container retire`. `status` and `reclaim` without
-`--apply` are read-only. `reclaim --apply --expect-plan <DIGEST>` removes only
-entries whose project path is definitely missing and that no scope record that
-retains project volumes or routes, gateway route, container in any state,
-published port or bound host port still references. A path is definitely
-missing when its leaf is absent and its nearest existing ancestor is a readable
-directory; a missing parent under a readable root proves absence, while a real
-I/O or permission error, a non-directory ancestor and an absent volume root
-(such as an unmounted `/Volumes/...`) stay unknown and hold. Its locked
-recomputation must reproduce the reviewed digest. Reclaim never removes
-runtime resources, data, volumes, routes, certificates, profiles, scheduler
-settings or loopback assignments. Writes use the registry's `ports.lock`, the
-same lock generated-compose allocation takes, and preserve unknown registry
-fields.
-
-A runtime-scope record no longer holds an entry on its own. It holds while it
-retains volumes or routes of its own for the project; an observable profile's
-complete all-states inventory, the route table and the bound-port probe decide
-the rest.
-
-A stopped Colima profile is scoped to the entries it can own rather than
-failing the whole proof (effigy#294). It publishes no host port while stopped,
-so clearing a host-port question never requires starting it. It holds an entry
-when a runtime-scope record names that entry on the stopped profile. An entry
-with no recorded profile is attributed to the configured Effigy profile — the
-profile Prepare would allocate it on — because the registry stores no profile
-and environment records are not enumerable from this seam. That inference
-fails closed where it matters: a stopped configured profile holds every entry
-attributed to it. An inventory failure for a running runtime, an unreadable
-scope store and an unreadable route table still hold every absent-path entry.
-
-Allocation reclaims under pressure. When a Prepare that needs a new range
-finds fewer than ten free ranges, it applies the same rules as
-`reclaim --apply` — same evidence, digest recomputed under the lock, backup
-first — then allocates, and reports one line with the reclaimed count. No read
-path reclaims.
-
 ## Dead-owner collection (loopback pool and domains)
 
 A route is the whole claim on a domain: `domain -> (checkout path, target)`.
@@ -1615,38 +1541,15 @@ so the domain is free immediately and a following `up` from another checkout
 takes it at once. The daemon sweeps the same dead-owner rule on a timer so
 `gateway status` lists domains something still serves.
 
-Loopback assignment collection is allocation-only and runs at allocation time.
-When a Prepare or gateway registration that needs a new address finds the
-bounded pool full, it plans, releases and retries exactly once. Its plan covers
-bounded loopback assignments only: routes and domains are owned by their
-checkout path and never released by it. It releases under the endpoint Store's
-owner gate and keeps a pre-edit copy of the changed endpoint documents with
-SHA-256 evidence. It reports one line with the released count.
-
-A released address is immediately allocatable: the gateway publishes with no
-reuse quarantine and answers DNS with a one-second TTL. Growing the pool beyond
-`127.1.0.50` is not part of this contract; the `lo0` aliases come from
+An alias is allocated at `up`, released by `down` and by retirement, and
+reclaimed by an allocation whose recorded checkout path is definitely missing
+(absent with its nearest existing ancestor a readable directory; an I/O or
+permission error, a non-directory ancestor, or an absent volume root such as an
+unmounted `/Volumes/...` is unknown and holds it). There is no inventory probe,
+no release plan and no reuse quarantine: a released address is immediately
+allocatable, and the gateway answers DNS with a one-second TTL. Growing the pool
+beyond `127.1.0.50` is not part of this contract; the `lo0` aliases come from
 `gateway setup`.
-
-An alias is released by `down` and by retirement. An allocation reclaims an
-assignment whose checkout path is definitely missing (absent with its nearest
-existing ancestor a readable directory); an I/O or permission error, a
-non-directory ancestor, or an absent volume root such as an unmounted
-`/Volumes/...` is unknown and holds it.
-The gateway binds its TCP aliases from the route table and stops a listener when
-its route disappears, so its own alias is not a hold; a same-user process that
-is not the recorded gateway daemon, or a listener probe that cannot answer, is.
-Every path proves ownership from the same inventory — every container state on
-every profile, with a profile whose VM is stopped recorded as stopped rather
-than broken — so no path can release what another holds. A shared-service
-identity is dead only when no consumer project that uses it is live and no
-container carries the shared service's own project name. Incomplete inventory or
-an unreadable scope store holds the plan and names the reason. A stopped Colima
-profile does not hold a loopback entry: it binds no host address and cannot
-start a stack whose checkout is gone, so only a failure that is not a stopped
-profile makes the inventory incomplete. Present paths, running containers and
-unknown path states are never released, so a live project's address never
-changes.
 
 ### Detached activation failures
 
@@ -1722,27 +1625,17 @@ Composer cache mount without creating their directories. Activation calls
 including detached admission and task preparation. Media sources are revalidated
 against the checkout at Prepare; other host mounts remain user-owned.
 
-### Loopback inventory and registry exclusion
+### Loopback allocation at Prepare
 
-Policy resolution reads existing loopback assignments without taking the
-registry lock, allocating, migrating or probing runtime inventory. A missing
-assignment stays absent until Prepare. Project-only legacy keys are read only
-when owned by the same checkout and uncontested; Prepare imports them to the
-checkout-qualified key while keeping the address. Assignments reserved by
-another project's gateway routes are not used.
+Policy resolution reads existing loopback assignments without allocating,
+migrating or probing runtime inventory. A missing assignment stays absent until
+Prepare.
 
-The host Prepare seam prepares loopbacks before ports, including shared
-services and environments with only explicit ports or no published ports.
-Existing activation, task preparation and data-workflow entry points all use
-this seam. No manifest change is required for existing consumers.
-
-Runtime inventory for loopback reclamation runs before the global registry
-lock is acquired (K14). Allocation reloads the registry under that lock and
-only reclaims entries identical to its pre-inventory snapshot. Assignments
-added or changed during inventory are preserved. Missing or incomplete
-inventory permits no reclamation. Existing uncontested assignments require
-no runtime probe. The registry remains the legacy allocation owner until
-the gateway endpoint-store migration.
+The host Prepare seam allocates the environment's alias before rendering,
+including shared services and environments with no published ports. Existing
+activation, task preparation and data-workflow entry points all use this seam.
+No manifest change is required for existing consumers. The alias lives until
+this checkout's `down` or retirement releases it.
 
 ## Container manager contract
 

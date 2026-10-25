@@ -82,12 +82,9 @@ mod tests {
             .expect("reserve a port held by this test");
         let port = listener.local_addr().expect("bound address").port();
 
-        let message = pinned_host_port_conflict(
-            "web",
-            &[format!("127.0.0.1:{port}:80")],
-            &BTreeSet::new(),
-        )
-        .expect("a held pin is a conflict");
+        let message =
+            pinned_host_port_conflict("web", &[format!("127.0.0.1:{port}:80")], &BTreeSet::new())
+                .expect("a held pin is a conflict");
 
         assert!(message.contains(&port.to_string()), "{message}");
         assert!(message.contains("held by"), "{message}");

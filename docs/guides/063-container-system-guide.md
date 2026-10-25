@@ -1544,9 +1544,9 @@ and directs you to `effigy gateway setup`. Setup verifies and stops only the
 recorded live v0.14.1 process generation, transfers the explicit legacy JSON
 registries and leaf certificates to your account without changing their bytes,
 and starts the operator daemon. Unknown process identity prevents migration.
-URLs, loopback IPs and pins remain unchanged.
-The endpoint Store owns their imported state; the legacy JSON files remain
-unchanged until an explicit downgrade export.
+URLs and loopback IPs remain unchanged. The endpoint Store is the only source of
+routes and loopback aliases; the v0.14.1 JSON files are left exactly as they
+were and are never read again.
 
 ### A deleted checkout's domain and address
 
@@ -1565,14 +1565,6 @@ routes included, so `down` frees a domain immediately and `up` from another
 checkout takes it at once. There is no quarantine and no withdrawn claim: the
 previous `effigy gateway repair` and its `--owner-checkout` filter are retired.
 
-For a reversible downgrade, stop dependent consumers first, then use the new
-binary to remove its setup and export its latest endpoint state:
-
-`effigy gateway setup --remove` stops the daemon and removes the platform
-setup it created. The v0.14.1 handback that exported endpoint state as JSON is
-retired: v0.15's endpoint Store is the only source of routes and loopback
-aliases, so a downgrade no longer restores them.
-
 Removal is an administrator action. It removes only verified setup-owned
 resolver entries, the bind broker and boot jobs. Leaf certificates, mkcert CA
 trust and existing interface aliases are preserved. A live alias may predate
@@ -1580,27 +1572,10 @@ setup, so owning the boot job does not authorize deleting that address. The
 v0.14.1 `gateway up` restores its normal resolver/alias behavior and starts the
 root gateway; use that binary's normal administrator prompt.
 
-If export reports a changed legacy file, it preserves the file and names its
-exact path; reconcile it before retrying. An interrupted export freezes v0.15
-edits: rerun `gateway setup --remove` to complete it. Retrying a completed
-export never overwrites edits subsequently made by v0.14.1. Active managed
-listener domains are listed and refused because v0.14.1 cannot enforce their
-generation fences; stop those v0.15 consumers to withdraw their routes first.
-Inactive persistent reservations are not published as active legacy routes.
-
-To return to v0.15, stop v0.14.1 consumers and run the new binary's
-`effigy gateway setup`. Setup authenticates and stops the old root daemon,
-restores its platform setup, and re-imports the current JSON files, including
-changes made while downgraded. Unknown ownership or a remaining PID record
-refuses re-import. Ordinary v0.15 endpoint edits and daemon startup remain
-blocked after export until setup completes this re-import.
-
-`proof:gateway:downgrade` prepares a fresh HOME, performs the Store round trip,
-then runs the checksum-pinned released v0.14.1 Linux root gateway inside a fresh
-Colima VM/container. It checks HTTP routes, a DNS/TCP alias and every exported
-mapping without using the host gateway. Artifacts and the stopped private VM
-remain under the printed temporary directory. This proof does not establish
-macOS launchd activation or cross-boot behavior on Tom's installation.
+`effigy gateway setup --remove` stops the daemon and removes the platform setup
+it created. There is no export and no re-import: downgrading to v0.14.1 leaves
+the endpoint Store in place and the old JSON files untouched, so routes and
+loopback aliases are not restored to it.
 
 Qualification on Tom's Mac remains a separate operator-run check: after setup,
 reboot, run `effigy gateway up`, start the CBS and Acowtancy workflows, and
