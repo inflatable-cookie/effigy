@@ -878,6 +878,76 @@ fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
     assert_eq!(table.read().unwrap().len(), 1);
 }
 
+/// A gateway that starts before anything has published - a fresh machine, and
+/// every `up`/`dev` that starts the gateway first - still serves the first
+/// route: setting up the watcher creates the store directory it watches.
+#[test]
+fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() {
+    let fixture = tempfile::tempdir().expect("fresh home");
+    let home = fixture.path();
+    let routes_path = home.join(".effigy/gateway/routes.json");
+    std::fs::create_dir_all(routes_path.parent().unwrap()).expect("gateway directory");
+    assert!(
+        !home.join(".effigy/state").exists(),
+        "the store directory starts absent"
+    );
+
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+    let _watcher = setup_file_watcher(
+        &routes_path,
+        Arc::clone(&table),
+        Arc::new(DnsCache::new(Duration::from_secs(2))),
+        Arc::new(AtomicU64::new(0)),
+        shutdown_tx,
+        GatewayConfig::standard(routes_path.parent().unwrap().to_path_buf()),
+    )
+    .expect("watcher setup for an unpublished store");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(home.join(".effigy/state"))
+            .expect("the store directory the watcher needs")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700, "store directory is private");
+    }
+
+    crate::endpoint_store::EndpointStore::for_routes(&routes_path)
+        .routes(|routes| {
+            routes.upsert(Route {
+                domain: "late.test".to_owned(),
+                target: Some("127.0.0.1:41004".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                source: RouteSource::Container,
+                project: "/tmp/late".to_owned(),
+                scope: None,
+                managed_listener: None,
+                registered: chrono::Utc::now(),
+            });
+            Ok::<_, crate::GatewayError>(())
+        })
+        .expect("publish the first route");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while table
+        .read()
+        .expect("route table")
+        .lookup("late.test")
+        .is_none()
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a gateway started first never reloaded the route published after it"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 #[test]
 fn scheduled_idle_shutdown_stops_gateway_when_table_stays_empty() {
     let table = Arc::new(RwLock::new(RouteTable::new()));
