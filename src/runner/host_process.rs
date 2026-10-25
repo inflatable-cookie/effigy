@@ -22,15 +22,14 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use effigy_cli::{InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs};
 use effigy_containers::{
     EffectiveContainerPolicy, EffectiveHostProcess, EffectiveManagedHostListener,
+    HostProcessRestart, HostProcessSignal,
 };
 use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
 use effigy_gateway::registration::deregister_managed_listener_route;
 use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteTable};
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
+use nix::sys::signal::Signal;
 
 use super::error::RunnerError;
 
@@ -42,12 +41,11 @@ mod kernel_run;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, start_host_processes_for_container, stop_host_processes_for_container,
-    CustodyStop, HostProcessStop, HostProcessStopReport,
+    CustodyStop, HostProcessStopReport,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
 const HOST_PROCESS_SPEC_SCHEMA: &str = "effigy.managed.host-process-spec.v1";
-const HOST_PROCESS_RECORD_SCHEMA: &str = "effigy.managed.host-process-record.v1";
 const HOST_LISTENER_STATE_SCHEMA: &str = "effigy.managed.host-listener-state.v1";
 const HOST_LISTENER_BIND_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_BIND";
 /// How often a published listener's reserved port is polled, and how many
@@ -55,6 +53,9 @@ const HOST_LISTENER_BIND_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_BIND";
 /// child's own exit does.
 const LISTENER_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const LISTENER_PROBE_MISSES: u32 = 3;
+/// The longest wait between replacement generations: a crash loop backs off to
+/// this and stays there (effigy#341).
+const RESTART_BACKOFF_CAP: Duration = Duration::from_secs(30);
 
 /// Bounded wait for a supervisor to publish its own activation record. This is
 /// a supervision admission bound, not a readiness budget: the listener's
@@ -95,11 +96,11 @@ struct HostProcessRuntimeSpec {
     #[serde(default)]
     log_file: PathBuf,
     #[serde(default)]
-    restart: String,
+    restart: HostProcessRestart,
     #[serde(default)]
     restart_delay_ms: u64,
     #[serde(default)]
-    shutdown_signal: String,
+    shutdown_signal: HostProcessSignal,
     #[serde(default)]
     shutdown_grace_secs: u64,
     #[serde(default)]
@@ -125,15 +126,6 @@ struct HostProcessDependency {
     name: String,
     owner: String,
     state_file: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct HostProcessRecord {
-    schema: String,
-    pid: u32,
-    boot_identity: String,
-    start_identity: GatewayStartIdentity,
 }
 
 /// One supervisor's latest listener observation. Unknown fields stay readable
@@ -224,78 +216,28 @@ fn resolve_host_process_cwd(
 /// Spawn one detached supervisor per entry in `policy.host_processes`.
 ///
 /// Idempotent in the sense that each call writes a fresh `<name>.pid`.
-/// Stale PID files from previous runs are reaped before spawning.
-/// Stops any v0.14.1 PID/spec supervisor this checkout still has, by the
-/// exact identities recorded in its PID file and listener state. Never by a
-/// process-name pattern; an unverifiable identity is residue, not a signal.
-fn stop_legacy_host_processes(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<Vec<HostProcessStop>, RunnerError> {
-    if policy.host_processes.is_empty() {
-        return Ok(Vec::new());
-    }
-    let dir = host_process_dir_for_policy(repo_root, policy);
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut ordered = order_host_processes(&policy.host_processes)
-        .unwrap_or_else(|_| policy.host_processes.iter().collect::<Vec<_>>());
-    ordered.reverse();
-    let mut stopped = Vec::new();
-    for hp in ordered {
-        let pid_path = dir.join(format!("{}.pid", sanitize(&hp.name)));
-        if !pid_path.exists() {
+/// A leftover v0.14.1 PID-file supervisor record (`<name>.pid`) or its input
+/// spec (`<name>.spec.json`) is deleted with one line: those supervisors are
+/// gone, and a record from a dead one must never block a start after a reboot.
+fn remove_legacy_supervisor_records(dir: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut notices = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".pid") && !name.ends_with(".spec.json") {
             continue;
         }
-        let record: HostProcessRecord = read_private_json(&pid_path).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "host process `{}` has an unknown supervisor record at {}: {error}",
-                hp.name,
-                pid_path.display()
-            ))
-        })?;
-        if record.schema != HOST_PROCESS_RECORD_SCHEMA {
-            return Err(RunnerError::task_invocation(format!(
-                "host process `{}` has unsupported supervisor record schema `{}`",
-                hp.name, record.schema
-            )));
+        let path = entry.path();
+        if fs::remove_file(&path).is_ok() {
+            notices.push(format!(
+                "removed a leftover v0.14.1 host-process record at {}",
+                path.display()
+            ));
         }
-        let stopped_ok = stop_recorded_supervisor(
-            &pid_path,
-            &record,
-            parse_signal_name(hp.shutdown_signal.as_str()),
-            hp.shutdown_grace_secs,
-        )?;
-        if !stopped_ok {
-            return Err(RunnerError::task_invocation(format!(
-                "host process `{}` supervisor record is held because its exact process generation is absent",
-                hp.name
-            )));
-        }
-        cleanup_stopped_listener_routes(&pid_path, &record)?;
-        remove_host_process_record_if_matches(&pid_path, &record)?;
-        // The spec file was the legacy supervisor's input, never new state.
-        let spec_path = pid_path.with_extension("spec.json");
-        match fs::remove_file(&spec_path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(RunnerError::task_invocation_failed_write(&spec_path, error)),
-        }
-        stopped.push(HostProcessStop {
-            name: hp.name.clone(),
-            run: None,
-            state: "legacy".to_owned(),
-            pid: Some(record.pid),
-            signal: Some(format!(
-                "{} to the recorded supervisor",
-                hp.shutdown_signal.as_str()
-            )),
-            exit: None,
-            detail: Some("v0.14.1 PID-file supervisor stopped by its recorded identity".to_owned()),
-        });
     }
-    Ok(stopped)
+    notices
 }
 
 fn host_process_dir(repo_root: &Path, container_name: &str) -> PathBuf {
@@ -820,18 +762,6 @@ fn sanitize(value: &str) -> String {
         .collect()
 }
 
-// ---------- Internal subcommand entrypoints ----------
-
-/// The retired pre-052 supervisor entry. Host processes are kernel runs now;
-/// a stale invocation refuses rather than running an unowned process group.
-pub(in crate::runner) fn run_internal_host_process_supervise(
-    _args: InternalHostProcessSuperviseArgs,
-) -> Result<String, RunnerError> {
-    Err(RunnerError::task_invocation(
-        "managed host processes are environment-owned kernel runs; this internal entry is retired",
-    ))
-}
-
 /// The settlement budget for one host-process run.
 const HOST_PROCESS_SETTLE_BUDGET: Duration = Duration::from_secs(120);
 
@@ -938,7 +868,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         }
     };
     session.admitted(&mut run)?;
-    let record = supervisor_record().map_err(|error| step_failed("supervisor identity", error))?;
+    let supervisor_pid = std::process::id();
     redirect_supervisor_output(&spec.log_file)
         .map_err(|error| step_failed("supervisor output redirection", error))?;
     let watch = session.owner_watch().ok();
@@ -948,7 +878,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         &cleanup,
         &session,
         &spec,
-        &record,
+        supervisor_pid,
         watch.as_ref(),
     );
     let (workload, custody) = match started {
@@ -993,18 +923,6 @@ fn stop_workload() -> effigy_kernel::outcome::WorkloadOutcome {
         cause: effigy_kernel::ctx::StopCause::Requested,
         signal: None,
     }
-}
-
-fn supervisor_record() -> Result<HostProcessRecord, RunnerError> {
-    let identity = read_live_process_identity(std::process::id()).map_err(|error| {
-        RunnerError::task_invocation(format!("cannot record supervisor identity: {error}"))
-    })?;
-    Ok(HostProcessRecord {
-        schema: HOST_PROCESS_RECORD_SCHEMA.to_owned(),
-        pid: std::process::id(),
-        boot_identity: identity.boot_identity,
-        start_identity: identity.start_identity,
-    })
 }
 
 fn write_stop_report(
@@ -1069,7 +987,7 @@ fn supervise_generations(
     cleanup: &effigy_kernel::ctx::CleanupContext,
     session: &EngineSession,
     spec: &HostProcessRuntimeSpec,
-    record: &HostProcessRecord,
+    supervisor_pid: u32,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
 ) -> Result<
     (
@@ -1084,11 +1002,15 @@ fn supervise_generations(
     let mut active = false;
     let mut outcome = None;
     let mut last = None;
+    // A crash-looping child waits longer after each replacement generation, so
+    // no restart limit is needed to keep it from spinning (effigy#341).
+    let mut backoff = Duration::ZERO;
     loop {
         if stop_requested(run, watch) {
             shutdown.store(true, Ordering::SeqCst);
             break;
         }
+        let generation_started = Instant::now();
         let end = if spec.listener.is_some() {
             supervise_managed_host_listener(
                 run,
@@ -1096,7 +1018,7 @@ fn supervise_generations(
                 session,
                 cleanup,
                 spec,
-                record,
+                supervisor_pid,
                 watch,
                 &mut active,
                 &shutdown,
@@ -1118,16 +1040,20 @@ fn supervise_generations(
         if shutdown.load(Ordering::SeqCst) {
             break;
         }
+        // A generation that ran for longer than the backoff cap was healthy:
+        // the next replacement starts from the declared delay again.
+        if generation_started.elapsed() >= RESTART_BACKOFF_CAP {
+            backoff = Duration::ZERO;
+        }
         match end {
             GenerationEnd::Stopped => break,
             GenerationEnd::DependencyChanged => {
                 wait_or_break(&shutdown, Duration::from_millis(spec.restart_delay_ms));
             }
             GenerationEnd::Exited(code) => {
-                let should_restart = parse_restart_policy(&spec.restart).restarts_after(code);
-                if !should_restart {
+                if !spec.restart.restarts_after(code) {
                     if spec.listener.is_some() {
-                        write_terminal_listener_state(spec, record)?;
+                        write_terminal_listener_state(spec, supervisor_pid)?;
                     }
                     outcome = Some(if code == 0 {
                         effigy_kernel::outcome::WorkloadOutcome::Succeeded
@@ -1136,11 +1062,27 @@ fn supervise_generations(
                     });
                     break;
                 }
-                wait_or_break(&shutdown, Duration::from_millis(spec.restart_delay_ms));
+                wait_or_break(
+                    &shutdown,
+                    restart_backoff(&mut backoff, spec.restart_delay_ms),
+                );
             }
         }
     }
     Ok((outcome, last))
+}
+
+/// The replacement wait after one ended generation: `restart_delay_ms` for the
+/// first, then doubled, capped at [`RESTART_BACKOFF_CAP`].
+fn restart_backoff(backoff: &mut Duration, restart_delay_ms: u64) -> Duration {
+    let base = Duration::from_millis(restart_delay_ms);
+    let delay = if backoff.is_zero() {
+        base
+    } else {
+        (*backoff * 2).min(RESTART_BACKOFF_CAP)
+    };
+    *backoff = delay.max(Duration::from_millis(1));
+    delay
 }
 
 /// Emits the run's `Active` phase once the first generation is spawned, so
@@ -1261,6 +1203,15 @@ fn supervise_plain_host_process(
     })
 }
 
+fn signal_for(kind: HostProcessSignal) -> Signal {
+    match kind {
+        HostProcessSignal::Sigterm => Signal::SIGTERM,
+        HostProcessSignal::Sigint => Signal::SIGINT,
+        HostProcessSignal::Sighup => Signal::SIGHUP,
+        HostProcessSignal::Sigkill => Signal::SIGKILL,
+    }
+}
+
 /// Stops one generation through kernel custody and returns its `StopReport`
 /// projection. `shutdown_signal` is delivered first; the kernel's own TERM,
 /// grace and KILL escalation follow it.
@@ -1274,7 +1225,7 @@ fn stop_generation(
     let receipt = child.identity();
     let pid = receipt.identity.pid;
     if stopping {
-        let signal = parse_signal_name(&spec.shutdown_signal);
+        let signal = signal_for(spec.shutdown_signal);
         if signal != Signal::SIGTERM {
             let _ = child.forward(signal as i32);
         }
@@ -1426,7 +1377,7 @@ fn hold_start_publication() {
 /// drift apart between writes.
 struct ListenerGeneration<'a> {
     spec: &'a HostProcessRuntimeSpec,
-    supervisor: &'a HostProcessRecord,
+    supervisor_pid: u32,
     generation: String,
     child: Option<ChildProcessIdentity>,
     address: Option<SocketAddr>,
@@ -1435,14 +1386,10 @@ struct ListenerGeneration<'a> {
 }
 
 impl<'a> ListenerGeneration<'a> {
-    fn new(
-        spec: &'a HostProcessRuntimeSpec,
-        supervisor: &'a HostProcessRecord,
-        generation: &str,
-    ) -> Self {
+    fn new(spec: &'a HostProcessRuntimeSpec, supervisor_pid: u32, generation: &str) -> Self {
         Self {
             spec,
-            supervisor,
+            supervisor_pid,
             generation: generation.to_owned(),
             child: None,
             address: None,
@@ -1478,7 +1425,7 @@ impl<'a> ListenerGeneration<'a> {
             internal_url: self.address.map(|address| format!("http://{address}")),
             public_url,
             route_domain,
-            supervisor_pid: self.supervisor.pid,
+            supervisor_pid: self.supervisor_pid,
             child_pid: self.child.as_ref().map(|child| child.pid),
             child_boot_identity: self.child.as_ref().map(|child| child.boot_identity.clone()),
             child_start_identity: self
@@ -1501,7 +1448,7 @@ impl<'a> ListenerGeneration<'a> {
 /// must not retain a generation an explicit start would have to reconcile.
 fn write_terminal_listener_state(
     spec: &HostProcessRuntimeSpec,
-    supervisor: &HostProcessRecord,
+    supervisor_pid: u32,
 ) -> Result<(), RunnerError> {
     // A generation that failed keeps the one line that explains it. Only this
     // supervisor's own last generation counts: a later activation writes its
@@ -1509,11 +1456,11 @@ fn write_terminal_listener_state(
     if fs::read(&spec.listener_state_file)
         .ok()
         .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
-        .is_some_and(|state| state.status == "failed" && state.supervisor_pid == supervisor.pid)
+        .is_some_and(|state| state.status == "failed" && state.supervisor_pid == supervisor_pid)
     {
         return Ok(());
     }
-    ListenerGeneration::new(spec, supervisor, "").write("stopped")
+    ListenerGeneration::new(spec, supervisor_pid, "").write("stopped")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1523,7 +1470,7 @@ fn supervise_managed_host_listener(
     session: &EngineSession,
     cleanup: &effigy_kernel::ctx::CleanupContext,
     spec: &HostProcessRuntimeSpec,
-    supervisor: &HostProcessRecord,
+    supervisor_pid: u32,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
     active: &mut bool,
     shutdown: &std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1541,14 +1488,14 @@ fn supervise_managed_host_listener(
 
     if stop_requested(run, watch) || shutdown.load(Ordering::SeqCst) {
         shutdown.store(true, Ordering::SeqCst);
-        ListenerGeneration::new(spec, supervisor, "").write("stopped")?;
+        ListenerGeneration::new(spec, supervisor_pid, "").write("stopped")?;
         return Ok(GenerationEnd::Stopped);
     }
     // Publish this activation's record before waiting on dependencies or
     // spawning a child. Callers wait for it as the barrier between supervision
     // admission and readiness, so the dependency wait is not charged to it.
     let generation = random_token()?;
-    let mut state = ListenerGeneration::new(spec, supervisor, &generation);
+    let mut state = ListenerGeneration::new(spec, supervisor_pid, &generation);
     state.write("starting")?;
     let dependencies = {
         let mut stop = || stop_requested(run, watch);
@@ -1627,7 +1574,7 @@ fn supervise_managed_host_listener(
         );
         if stopped {
             shutdown.store(true, Ordering::SeqCst);
-            write_terminal_listener_state(spec, supervisor)?;
+            write_terminal_listener_state(spec, supervisor_pid)?;
             return Ok(GenerationEnd::Stopped);
         }
         state.diagnostic = Some(error.to_string());
@@ -1644,7 +1591,7 @@ fn supervise_managed_host_listener(
         }
         state.child = None;
         if stop_requested(run, watch) {
-            write_terminal_listener_state(spec, supervisor)?;
+            write_terminal_listener_state(spec, supervisor_pid)?;
             shutdown.store(true, Ordering::SeqCst);
             return Ok(GenerationEnd::Stopped);
         }
@@ -1765,7 +1712,7 @@ fn supervise_managed_host_listener(
     }
     state.child = None;
     if stopping {
-        write_terminal_listener_state(spec, supervisor)?;
+        write_terminal_listener_state(spec, supervisor_pid)?;
         return Ok(GenerationEnd::Stopped);
     }
 
@@ -1785,7 +1732,7 @@ fn supervise_managed_host_listener(
         )));
     }
     if shutdown.load(Ordering::SeqCst) {
-        write_terminal_listener_state(spec, supervisor)?;
+        write_terminal_listener_state(spec, supervisor_pid)?;
         return Ok(GenerationEnd::Stopped);
     }
     // A generation that may be replaced leaves `unavailable`; the supervisor
@@ -1963,24 +1910,6 @@ fn withdraw_managed_listener_route(
     .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
-fn verify_child_identity(
-    pid: u32,
-    boot_identity: &str,
-    start_identity: &GatewayStartIdentity,
-) -> Result<(), RunnerError> {
-    let current = read_live_process_identity(pid).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "managed host child identity is unavailable: {error}"
-        ))
-    })?;
-    if current.boot_identity != boot_identity || &current.start_identity != start_identity {
-        return Err(RunnerError::task_invocation(
-            "managed host child PID was reused; refusing to signal its process group",
-        ));
-    }
-    Ok(())
-}
-
 fn publish_managed_listener_route(
     spec: &HostProcessRuntimeSpec,
     listener: &EffectiveManagedHostListener,
@@ -2048,374 +1977,6 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Run
         .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))
 }
 
-fn signal_owned_child_group(
-    pid: u32,
-    boot_identity: &str,
-    start_identity: &GatewayStartIdentity,
-    signal: Signal,
-) -> Result<(), RunnerError> {
-    verify_child_identity(pid, boot_identity, start_identity)?;
-    kill(Pid::from_raw(-(pid as i32)), signal).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to signal owned managed host child process group: {error}"
-        ))
-    })
-}
-
-fn signal_owned_child_generation(
-    identity: &ChildProcessIdentity,
-    signal: Signal,
-) -> Result<(), RunnerError> {
-    match read_live_process_identity(identity.pid) {
-        Ok(current)
-            if current.boot_identity == identity.boot_identity
-                && current.start_identity == identity.start_identity =>
-        {
-            return signal_owned_child_group(
-                identity.pid,
-                &identity.boot_identity,
-                &identity.start_identity,
-                signal,
-            );
-        }
-        Ok(_) => {
-            return Err(RunnerError::task_invocation(
-                "managed host child PID was reused; refusing to signal its process group",
-            ));
-        }
-        Err(error) if process_identity_is_absent(&error) => {}
-        Err(error) => {
-            return Err(RunnerError::task_invocation(format!(
-                "managed host child identity is uncertain; refusing to signal its process group: {error}"
-            )));
-        }
-    }
-    let members = effigy_process::surviving_group_member_ids(identity.pid).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "managed host child process group is uncertain; refusing to signal: {error}"
-        ))
-    })?;
-    if !members.is_empty() {
-        return Err(RunnerError::task_invocation(format!(
-            "managed host child leader is absent while process group {} still has surviving members {members:?}; refusing to signal an unverified group",
-            identity.pid
-        )));
-    }
-    Ok(())
-}
-
-fn process_identity_is_absent(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
-}
-
-pub(in crate::runner) fn run_internal_host_process_stop(
-    args: InternalHostProcessStopArgs,
-) -> Result<String, RunnerError> {
-    match fs::symlink_metadata(&args.pid_file) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(error) => {
-            return Err(RunnerError::task_invocation_failed_read(
-                &args.pid_file,
-                error,
-            ));
-        }
-    }
-    let record: HostProcessRecord = read_private_json(&args.pid_file)?;
-    if record.schema != HOST_PROCESS_RECORD_SCHEMA {
-        return Err(RunnerError::task_invocation(format!(
-            "unsupported host process supervisor record schema `{}`",
-            record.schema
-        )));
-    }
-    let stopped = stop_recorded_supervisor(
-        &args.pid_file,
-        &record,
-        parse_signal_name(&args.signal),
-        args.grace_secs,
-    )?;
-    if !stopped {
-        return Err(RunnerError::task_invocation(
-            "recorded host process supervisor is absent; retaining its route and identity records",
-        ));
-    }
-    cleanup_stopped_listener_routes(&args.pid_file, &record)?;
-    remove_host_process_record_if_matches(&args.pid_file, &record)?;
-    Ok(String::new())
-}
-
-fn cleanup_stopped_listener_routes(
-    pid_file: &Path,
-    record: &HostProcessRecord,
-) -> Result<(), RunnerError> {
-    let spec_path = pid_file.with_extension("spec.json");
-    match fs::symlink_metadata(&spec_path) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(RunnerError::task_invocation_failed_read(&spec_path, error)),
-    }
-    let spec: HostProcessRuntimeSpec = read_private_json(&spec_path)?;
-    let Some(listener) = spec.listener.as_ref() else {
-        return Ok(());
-    };
-    let state_path_exists = match fs::symlink_metadata(&spec.listener_state_file) {
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => {
-            return Err(RunnerError::task_invocation_failed_read(
-                &spec.listener_state_file,
-                error,
-            ));
-        }
-    };
-    let state = if state_path_exists {
-        let state: HostListenerState = read_private_json(&spec.listener_state_file)?;
-        if state.schema == HOST_LISTENER_STATE_SCHEMA
-            && state.owner == spec.owner
-            && state.runtime_generation == spec.runtime_generation
-            && state.supervisor_pid == record.pid
-        {
-            let mut unavailable = state.clone();
-            unavailable.status = "unavailable".to_owned();
-            unavailable.address = None;
-            unavailable.internal_url = None;
-            unavailable.public_url = None;
-            write_listener_state(&spec.listener_state_file, unavailable)?;
-            Some(state)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    if let (Some(pid), Some(boot_identity), Some(start_identity)) =
-        state.as_ref().map_or((None, None, None), |state| {
-            (
-                state.child_pid,
-                state.child_boot_identity.clone(),
-                state.child_start_identity.clone(),
-            )
-        })
-    {
-        stop_recorded_child_group(
-            &ChildProcessIdentity {
-                pid,
-                boot_identity,
-                start_identity,
-            },
-            Duration::from_secs(2),
-        )?;
-    }
-    let route_table_path = listener_route_table_path(&spec)?;
-    let table = RouteTable::load(&route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if let Some(route) = table.lookup(&listener.route_domain) {
-        if let Some(owner) = route
-            .managed_listener
-            .as_ref()
-            .filter(|owner| owner.owner == spec.owner)
-        {
-            let _ = deregister_managed_listener_route(
-                &route_table_path,
-                &spec.project_path,
-                &listener.route_domain,
-                &spec.owner,
-                &owner.generation,
-            )
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        }
-    }
-    if let Some(mut state) = state {
-        state.status = if state.status == "failed" {
-            "failed"
-        } else {
-            "stopped"
-        }
-        .to_owned();
-        state.address = None;
-        state.internal_url = None;
-        state.public_url = None;
-        state.route_owner = None;
-        state.child_pid = None;
-        state.child_boot_identity = None;
-        state.child_start_identity = None;
-        write_listener_state(&spec.listener_state_file, state)?;
-    }
-    Ok(())
-}
-
-fn stop_recorded_child_group(
-    identity: &ChildProcessIdentity,
-    grace: Duration,
-) -> Result<(), RunnerError> {
-    let mut deadline = Instant::now() + grace.max(Duration::from_millis(100));
-    let mut forced = false;
-    let mut signaled = false;
-    loop {
-        let members = effigy_process::process_group_member_ids(identity.pid).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "managed child process group is uncertain; leaving its generation held: {error}"
-            ))
-        })?;
-        if members.is_empty() {
-            return Ok(());
-        }
-        if !signaled {
-            signal_owned_child_generation(identity, Signal::SIGTERM)?;
-            signaled = true;
-        }
-        if Instant::now() >= deadline {
-            if forced {
-                return Err(RunnerError::task_invocation(
-                    "managed child group did not exit; retaining its identity record",
-                ));
-            }
-            signal_owned_child_generation(identity, Signal::SIGKILL)?;
-            forced = true;
-            deadline = Instant::now() + Duration::from_secs(2);
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn stop_recorded_supervisor(
-    _pid_path: &Path,
-    record: &HostProcessRecord,
-    signal: Signal,
-    grace_secs: u64,
-) -> Result<bool, RunnerError> {
-    let pid = record.pid;
-    if pid == 0 {
-        return Err(RunnerError::task_invocation(
-            "host process supervisor record has PID zero",
-        ));
-    }
-    let live = match read_live_process_identity(pid) {
-        Ok(live) => live,
-        Err(error) if process_identity_is_absent(&error) => return Ok(false),
-        Err(error) => {
-            return Err(RunnerError::task_invocation(format!(
-                "host process supervisor identity is unavailable; leaving its record held: {error}"
-            )));
-        }
-    };
-    if live.boot_identity != record.boot_identity || live.start_identity != record.start_identity {
-        return Err(RunnerError::task_invocation(
-            "host process supervisor PID was reused; refusing to signal or remove its record",
-        ));
-    }
-    let nix_pid = Pid::from_raw(pid as i32);
-    kill(nix_pid, signal).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to signal owned host process supervisor: {error}"
-        ))
-    })?;
-    let mut deadline = Instant::now() + Duration::from_secs(grace_secs.max(1));
-    let mut forced = false;
-    loop {
-        match read_live_process_identity(record.pid) {
-            Ok(current)
-                if current.boot_identity == record.boot_identity
-                    && current.start_identity == record.start_identity => {}
-            Ok(_) => {
-                return Err(RunnerError::task_invocation(
-                    "host process supervisor PID changed during shutdown; leaving its record held",
-                ));
-            }
-            Err(error) if process_identity_is_absent(&error) => break,
-            Err(error) => {
-                return Err(RunnerError::task_invocation(format!(
-                    "host process supervisor identity became unknown during shutdown: {error}"
-                )));
-            }
-        }
-        if Instant::now() >= deadline {
-            if forced {
-                return Err(RunnerError::task_invocation(
-                    "host process supervisor did not exit after its recorded generation was force-stopped; leaving its record held",
-                ));
-            }
-            let current = match read_live_process_identity(record.pid) {
-                Ok(current) => current,
-                Err(error) if process_identity_is_absent(&error) => break,
-                Err(error) => {
-                    return Err(RunnerError::task_invocation(format!(
-                        "host process supervisor identity became unknown during shutdown: {error}"
-                    )));
-                }
-            };
-            if current.boot_identity != record.boot_identity
-                || current.start_identity != record.start_identity
-            {
-                return Err(RunnerError::task_invocation(
-                    "host process supervisor PID changed during shutdown; leaving its record held",
-                ));
-            }
-            kill(nix_pid, Signal::SIGKILL).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "failed to force stop owned host process supervisor: {error}"
-                ))
-            })?;
-            forced = true;
-            deadline = Instant::now() + Duration::from_secs(2);
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    Ok(true)
-}
-
-fn remove_host_process_record_if_matches(
-    pid_path: &Path,
-    expected: &HostProcessRecord,
-) -> Result<(), RunnerError> {
-    match read_private_json::<HostProcessRecord>(pid_path) {
-        Ok(current) if current == *expected => fs::remove_file(pid_path)
-            .map_err(|error| RunnerError::task_invocation_failed_write(pid_path, error)),
-        Ok(_) => Err(RunnerError::task_invocation(
-            "host process supervisor record changed during cleanup; retaining the successor record",
-        )),
-        Err(error) => Err(error),
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum RestartPolicy {
-    OnFailure,
-    Always,
-    Never,
-}
-
-fn parse_restart_policy(value: &str) -> RestartPolicy {
-    match value {
-        "always" => RestartPolicy::Always,
-        "never" => RestartPolicy::Never,
-        _ => RestartPolicy::OnFailure,
-    }
-}
-
-impl RestartPolicy {
-    /// Whether one completed generation is replaced under this policy. A child
-    /// that took a signal is reported as `128 + signal`, so it counts as a
-    /// failure under `on-failure`; `always` replaces a clean exit too, and
-    /// `never` settles whatever the code.
-    fn restarts_after(self, code: i32) -> bool {
-        match self {
-            RestartPolicy::Always => true,
-            RestartPolicy::OnFailure => code != 0,
-            RestartPolicy::Never => false,
-        }
-    }
-}
-
-fn parse_signal_name(name: &str) -> Signal {
-    match name.to_ascii_uppercase().as_str() {
-        "SIGINT" => Signal::SIGINT,
-        "SIGHUP" => Signal::SIGHUP,
-        "SIGKILL" => Signal::SIGKILL,
-        _ => Signal::SIGTERM,
-    }
-}
-
 fn open_log(path: &Path) -> Result<std::fs::File, RunnerError> {
     use std::os::unix::fs::OpenOptionsExt;
     fs::OpenOptions::new()
@@ -2453,6 +2014,8 @@ fn wait_or_break(shutdown: &Arc<std::sync::atomic::AtomicBool>, delay: Duration)
 mod tests {
     use super::*;
     use effigy_containers::{HostProcessRestart, HostProcessSignal};
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
 
     fn published_listener_state(runtime_generation: &str, status: &str) -> serde_json::Value {
         serde_json::json!({
@@ -2522,26 +2085,25 @@ mod tests {
         assert_eq!(sanitize("app/../x"), "app-..-x");
     }
 
+    /// A declared restart policy and shutdown signal reach the supervisor as
+    /// the values the manifest validated, so an unknown value fails at load and
+    /// is never coerced here (effigy#341).
     #[test]
-    fn parse_signal_name_defaults_to_sigterm() {
-        assert_eq!(parse_signal_name("sigint"), Signal::SIGINT);
-        assert_eq!(parse_signal_name("nonsense"), Signal::SIGTERM);
-    }
+    fn the_run_spec_carries_the_declared_restart_policy_and_signal() {
+        let mut declared = serde_json::to_value(runtime_spec(&[])).expect("spec json");
+        declared["restart"] = serde_json::json!("always");
+        declared["shutdown_signal"] = serde_json::json!("SIGINT");
+        let spec: HostProcessRuntimeSpec =
+            serde_json::from_value(declared).expect("a declared policy and signal load");
+        assert_eq!(spec.restart, HostProcessRestart::Always);
+        assert_eq!(signal_for(spec.shutdown_signal), Signal::SIGINT);
 
-    #[test]
-    fn parse_restart_policy_falls_back_to_on_failure() {
-        assert!(matches!(
-            parse_restart_policy("always"),
-            RestartPolicy::Always
-        ));
-        assert!(matches!(
-            parse_restart_policy("never"),
-            RestartPolicy::Never
-        ));
-        assert!(matches!(
-            parse_restart_policy("nonsense"),
-            RestartPolicy::OnFailure
-        ));
+        let mut unknown = serde_json::to_value(runtime_spec(&[])).expect("spec json");
+        unknown["shutdown_signal"] = serde_json::json!("SIGUSR2");
+        assert!(
+            serde_json::from_value::<HostProcessRuntimeSpec>(unknown).is_err(),
+            "an unknown signal is refused, never read as SIGTERM"
+        );
     }
 
     #[test]
@@ -2554,18 +2116,6 @@ mod tests {
     fn managed_host_process_dir_is_profile_scoped() {
         let dir = managed_host_process_dir(Path::new("/repo"), "web", "dev");
         assert!(dir.ends_with(".effigy/runtime/host-processes/web/dev"));
-    }
-
-    #[test]
-    fn host_process_signal_names_match_parser() {
-        for (name, signal) in [
-            ("sigterm", Signal::SIGTERM),
-            ("sigint", Signal::SIGINT),
-            ("sighup", Signal::SIGHUP),
-            ("sigkill", Signal::SIGKILL),
-        ] {
-            assert_eq!(parse_signal_name(name), signal);
-        }
     }
 
     /// One checkout with real Git metadata: the environment journal is bound
@@ -3176,9 +2726,9 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             container_name: "web".to_owned(),
             run: "/bin/true".to_owned(),
             log_file: PathBuf::from("/checkout/app.log"),
-            restart: "never".to_owned(),
+            restart: HostProcessRestart::Never,
             restart_delay_ms: 10,
-            shutdown_signal: "sigterm".to_owned(),
+            shutdown_signal: HostProcessSignal::Sigterm,
             shutdown_grace_secs: 1,
             checkout: None,
             state_home: PathBuf::from("/home"),
@@ -3363,8 +2913,9 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         assert_eq!(plain_env(environment, "PORT").as_deref(), Some("9999"));
     }
 
-    /// A legacy PID-file supervisor is stopped by its exact recorded identity
-    /// on the next lifecycle command, and its record is removed.
+    /// A leftover v0.14.1 PID record from a supervisor that died with the
+    /// reboot never blocks `up`: it is deleted with one line, and its spec with
+    /// it (effigy#341).
     #[test]
     fn host_process_owned_stop_removes_a_legacy_pid_supervisor() {
         let fixture = fixture();
@@ -3372,35 +2923,84 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             &fixture.checkout,
             vec![host_process(
                 "app",
-                "/bin/sleep 120",
+                "exec /bin/sleep 120",
                 HostProcessRestart::Never,
             )],
         );
         let dir = host_process_dir_for_policy(&fixture.checkout, &policy);
         super::create_host_process_dir(&fixture.checkout, &dir).expect("runtime dir");
-        let mut command = std::process::Command::new("/bin/sleep");
-        command.arg("120");
-        let mut child = command.spawn().expect("legacy supervisor fixture");
-        let identity = read_live_process_identity(child.id()).expect("fixture identity");
-        let record = HostProcessRecord {
-            schema: HOST_PROCESS_RECORD_SCHEMA.to_owned(),
-            pid: child.id(),
-            boot_identity: identity.boot_identity,
-            start_identity: identity.start_identity,
-        };
-        write_private_json(&dir.join("app.pid"), &record).expect("legacy record");
+        fs::write(
+            dir.join("app.pid"),
+            r#"{"pid":999999999,"boot_identity":"boot"}"#,
+        )
+        .expect("legacy record");
+        fs::write(dir.join("app.spec.json"), r#"{"schema":"legacy"}"#).expect("legacy spec");
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("a dead legacy record never blocks `up`");
+        assert!(!dir.join("app.pid").exists(), "the legacy record is gone");
+        assert!(
+            !dir.join("app.spec.json").exists(),
+            "the legacy spec is gone"
+        );
+        let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        assert_eq!(status[0].state, "running", "{status:?}");
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
         assert!(report.complete(), "{report:?}");
-        assert!(
-            report
-                .processes
-                .iter()
-                .any(|process| process.name == "app" && process.state == "legacy"),
-            "the legacy supervisor is reported: {report:?}"
+    }
+
+    /// A host process is a workload too: no internal marker this supervisor was
+    /// started with reaches the application it starts, and the container
+    /// handoff a consumer reads still does (effigy#341).
+    #[test]
+    fn host_process_environment_carries_no_internal_marker() {
+        let _markers = crate::contract_test_support::EnvGuard::set_many(&[
+            ("EFFIGY_INTERNAL_SUPPRESS_HEADER", Some("1".to_owned())),
+            ("EFFIGY_INTERNAL_ENVIRONMENT_HOLDER", Some("run".to_owned())),
+            ("EFFIGY_MANAGED_RUN_TOKEN", Some("token".to_owned())),
+            ("EFFIGY_SECRETS_REQUIRED", Some("1".to_owned())),
+            ("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned())),
+        ]);
+        let environment = child_environment(
+            crate::runner::secret_session::workload_ambient_environment(),
+            &runtime_spec(&[]),
+            &[],
+            None,
         );
-        child.wait().expect("legacy fixture exits");
-        assert!(!dir.join("app.pid").exists(), "the legacy record is gone");
+        let keys = environment
+            .keys()
+            .map(|key| key.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        for key in [
+            "EFFIGY_INTERNAL_SUPPRESS_HEADER",
+            "EFFIGY_INTERNAL_ENVIRONMENT_HOLDER",
+            "EFFIGY_MANAGED_RUN_TOKEN",
+            "EFFIGY_SECRETS_REQUIRED",
+        ] {
+            assert!(
+                !keys.iter().any(|present| present == key),
+                "`{key}` reached a host process environment: {keys:?}"
+            );
+        }
+        assert!(
+            keys.iter()
+                .any(|present| present == "EFFIGY_INTERNAL_CONTAINER_HANDOFF"),
+            "a consumer reads the container handoff marker: {keys:?}"
+        );
+    }
+
+    /// A crash-looping child backs off: the declared delay, then doubled, to a
+    /// 30 s cap, and never a restart limit (effigy#341).
+    #[test]
+    fn host_process_restart_backoff_doubles_to_its_cap() {
+        let mut backoff = Duration::ZERO;
+        let delays: Vec<u64> = (0..8)
+            .map(|_| restart_backoff(&mut backoff, 1_000).as_millis() as u64)
+            .collect();
+        assert_eq!(
+            delays,
+            vec![1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000]
+        );
     }
 
     /// `on-failure` replaces a leader that exited non-zero or took a signal
@@ -3408,12 +3008,12 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
     /// settles whatever the code (effigy#336).
     #[test]
     fn host_process_restart_policy_decides_a_signalled_leader() {
-        assert!(RestartPolicy::OnFailure.restarts_after(143));
-        assert!(RestartPolicy::OnFailure.restarts_after(1));
-        assert!(!RestartPolicy::OnFailure.restarts_after(0));
-        assert!(RestartPolicy::Always.restarts_after(0));
-        assert!(!RestartPolicy::Never.restarts_after(143));
-        assert!(!RestartPolicy::Never.restarts_after(0));
+        assert!(HostProcessRestart::OnFailure.restarts_after(143));
+        assert!(HostProcessRestart::OnFailure.restarts_after(1));
+        assert!(!HostProcessRestart::OnFailure.restarts_after(0));
+        assert!(HostProcessRestart::Always.restarts_after(0));
+        assert!(!HostProcessRestart::Never.restarts_after(143));
+        assert!(!HostProcessRestart::Never.restarts_after(0));
     }
 
     /// An unreaped zombie is not a group member: the process table still lists
@@ -3509,77 +3109,6 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         wait_until("the fixture group to close", || {
             group_members(pid).is_empty()
         });
-    }
-
-    /// A stop of an absent leader still refuses an unverified group: a live
-    /// grandchild blocks the signal, while an empty group (with only the
-    /// exited leader behind) is not an error (effigy#336).
-    #[test]
-    fn host_process_signal_refuses_a_surviving_member_of_an_absent_leader() {
-        use std::os::unix::process::CommandExt;
-
-        let dir = tempfile::tempdir().expect("fixture dir");
-        let grandchild_file = dir.path().join("grandchild.pid");
-        let mut leader = std::process::Command::new("/bin/sh")
-            // The leader stays live (`wait`) so the observation sees both a
-            // running leader and a real grandchild before it exits.
-            .args([
-                "-c",
-                "sleep 300 & printf '%s\\n' \"$!\" > \"$1\"; wait",
-                "sh",
-            ])
-            .arg(&grandchild_file)
-            .process_group(0)
-            .spawn()
-            .expect("leader in its own group");
-        let pid = leader.id();
-        let live = read_live_process_identity(pid).expect("leader identity");
-        let identity = ChildProcessIdentity {
-            pid,
-            boot_identity: live.boot_identity,
-            start_identity: live.start_identity,
-        };
-        wait_until("the grandchild to record its pid", || {
-            grandchild_file.exists()
-        });
-        let grandchild = fs::read_to_string(&grandchild_file)
-            .expect("grandchild pid file")
-            .trim()
-            .parse::<u32>()
-            .expect("grandchild pid");
-        kill(Pid::from_raw(pid as i32), Signal::SIGKILL).expect("stop the fixture leader");
-        leader.wait().expect("reap the fixture leader");
-        let error = signal_owned_child_generation(&identity, Signal::SIGTERM)
-            .expect_err("a live grandchild keeps the group unverified");
-        let message = error.to_string();
-        assert!(message.contains("surviving members"), "{message}");
-        assert!(message.contains(&grandchild.to_string()), "{message}");
-        assert!(
-            effigy_process::process_is_running(grandchild),
-            "nothing is signalled on guesswork"
-        );
-        kill(Pid::from_raw(grandchild as i32), Signal::SIGKILL).expect("stop the grandchild");
-        wait_until("the fixture group to close", || {
-            group_members(pid).is_empty()
-        });
-
-        // The same absent leader with nothing but its own exited shell behind it
-        // is a closed group, so a recorded stop of it settles.
-        let mut empty = std::process::Command::new("/bin/sh")
-            .args(["-c", "exit 0"])
-            .process_group(0)
-            .spawn()
-            .expect("leader in its own group");
-        let empty_pid = empty.id();
-        let empty_live = read_live_process_identity(empty_pid).expect("leader identity");
-        let empty_identity = ChildProcessIdentity {
-            pid: empty_pid,
-            boot_identity: empty_live.boot_identity,
-            start_identity: empty_live.start_identity,
-        };
-        empty.wait().expect("reap the empty leader");
-        signal_owned_child_generation(&empty_identity, Signal::SIGTERM)
-            .expect("an absent leader with an empty group needs no signal");
     }
 
     /// A leader terminated by a signal closes a `never` host process with its

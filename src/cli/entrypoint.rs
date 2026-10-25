@@ -231,8 +231,6 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::InternalGatewayIdentity(_)
         | Command::InternalScriptRun(_)
         | Command::InternalContainerLeaseReaper(_)
-        | Command::InternalHostProcessSupervise(_)
-        | Command::InternalHostProcessStop(_)
         | Command::Task(_)) => run_and_render_command(&context, command),
     }
 }

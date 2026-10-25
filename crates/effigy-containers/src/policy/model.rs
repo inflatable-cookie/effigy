@@ -5,6 +5,7 @@ use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerSecretDelivery,
     ManifestContainerShutdownMode, ManifestContainerStartup, ManifestError,
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectiveAttachMode {
@@ -97,40 +98,43 @@ pub struct EffectiveManagedHostListener {
     pub route_tls: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How the supervisor replaces a generation that ended by itself. The value is
+/// the manifest's own spelling, so a run spec carries it as it was declared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum HostProcessRestart {
+    #[default]
     OnFailure,
     Always,
     Never,
 }
 
 impl HostProcessRestart {
-    pub fn as_str(self) -> &'static str {
+    /// Whether one completed generation is replaced under this policy. A child
+    /// that took a signal is reported as `128 + signal`, so it counts as a
+    /// failure under `on-failure`; `always` replaces a clean exit too, and
+    /// `never` settles whatever the code.
+    pub fn restarts_after(self, code: i32) -> bool {
         match self {
-            Self::OnFailure => "on-failure",
-            Self::Always => "always",
-            Self::Never => "never",
+            Self::Always => true,
+            Self::OnFailure => code != 0,
+            Self::Never => false,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The signal a supervisor delivers before the kernel's own TERM and grace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum HostProcessSignal {
+    #[default]
+    #[serde(rename = "SIGTERM")]
     Sigterm,
+    #[serde(rename = "SIGINT")]
     Sigint,
+    #[serde(rename = "SIGHUP")]
     Sighup,
+    #[serde(rename = "SIGKILL")]
     Sigkill,
-}
-
-impl HostProcessSignal {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Sigterm => "SIGTERM",
-            Self::Sigint => "SIGINT",
-            Self::Sighup => "SIGHUP",
-            Self::Sigkill => "SIGKILL",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

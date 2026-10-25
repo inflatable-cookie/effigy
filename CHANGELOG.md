@@ -297,6 +297,29 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Effigy's own control markers in a workload's environment (effigy#341). One
+  spawn helper now starts every task child, host process, managed workload and
+  supervisor from the user's environment minus every `EFFIGY_INTERNAL_*`
+  marker, `EFFIGY_MANAGED_RUN_TOKEN` and `EFFIGY_SECRETS_REQUIRED`, so a
+  workload sees the user's own variables plus the documented Effigy ones
+  (`HOST`/`PORT`, the `EFFIGY_HOST_PROCESS_*` facts, `TMPDIR`).
+  Three markers stay, each because a child depends on it: the container
+  handoff, which a consumer's Rhai task reads to detect the workspace
+  container; the vault generate guard, which stops a
+  `[secrets.vault].generate` hook's own child Effigy from running the hook
+  again; and the external task source boundary, which makes a nested Effigy
+  resolve no consumer secrets. `EFFIGY_ADMITTED` and `EFFIGY_DEFER_DEPTH` stay
+  because they are the designed nesting markers a nested Effigy step reads.
+- The v0.14.1 PID-file host-process supervisor path (effigy#341): the
+  `__host-process-supervise` and `__host-process-stop` internal entries, the
+  recorded-identity stop of `<name>.pid` records with its listener-route
+  reconciliation, and the `legacy` stop and status states. A leftover
+  `<name>.pid` or `<name>.spec.json` is deleted with one line when the
+  environment next starts or stops, so a record from a supervisor that died
+  with a reboot never blocks `up`.
+- `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` (effigy#341). Nothing set it, so it was
+  a forgeable dead input; a run settling in this process exempts its own hold
+  by id.
 - The managed listener ownership proof, about 1,100 lines of production code.
   `effigy_gateway::managed_listener` is gone, with the process-identity
   triples, the descendant walk, socket exclusivity, the availability-file
@@ -1241,6 +1264,20 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A host process is replaced with a growing wait instead of a fixed one: the
+  first replacement waits `restart_delay_ms`, each further one doubles it, and
+  the wait is capped at 30 s. A generation that ran for 30 s or longer resets
+  the wait, and there is still no restart limit. `restart` and `shutdown_signal`
+  reach the supervisor as the values the manifest validated, so an unknown
+  value now fails at load naming the key instead of becoming `on-failure` or
+  SIGTERM (effigy#341).
+- A run cancelled before it starts reports its cancellation. When `run stop` or
+  Ctrl-C stops the parent's admission hook before a nested child reads its
+  parent capability, the child reports `the run was cancelled before it
+  started (…)` with nothing started, instead of `the parent run capability
+  refused this child (cancelled by SIGTERM)`. A capability that really refuses
+  a child still names its reason and the top-level command that grants one
+  (effigy#341).
 - A managed host listener is ready when its reserved loopback port answers its
   readiness request, and it stays published while the supervisor's run is alive
   and that port keeps answering. The supervisor probes the port every five

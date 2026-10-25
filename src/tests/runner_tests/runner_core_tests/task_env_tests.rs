@@ -1,3 +1,4 @@
+use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
 use crate::runner::tests::prelude::{
     assert_file_text_equals, assert_run_task_ok_empty, assert_task_invocation_error_contains, fs,
     parse_json_output_with_schema_version, run_task, temp_workspace, write_root_manifest, EnvGuard,
@@ -6,6 +7,50 @@ use effigy_secrets::{
     local_dev_unlock_key_path, LocalDevUnlockKey, SecretValue, VaultPlaintextPayload,
     VaultSecretRecord,
 };
+
+/// A task child starts with the user's environment plus Effigy's documented
+/// variables: an internal marker this process was started with never rides
+/// along, while the one marker a consumer reads does (effigy#341).
+#[test]
+fn run_manifest_task_environment_carries_no_internal_marker() {
+    let root = temp_workspace("task-env-no-internal-marker");
+    let marker = root.join("task-env-internal.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"[tasks.dump]
+run = "sh -lc 'env > \"{}\"'"
+"#,
+            marker.display()
+        ),
+    );
+    let _env = EnvGuard::set_many(&[
+        ("EFFIGY_INTERNAL_SUPPRESS_HEADER", Some("1".to_owned())),
+        ("EFFIGY_INTERNAL_ENVIRONMENT_HOLDER", Some("1".to_owned())),
+        ("EFFIGY_MANAGED_RUN_TOKEN", Some("token".to_owned())),
+        ("EFFIGY_SECRETS_REQUIRED", Some("1".to_owned())),
+        (CONTAINER_HANDOFF_ENV_NAME, Some("1".to_owned())),
+    ]);
+
+    assert_run_task_ok_empty(&root, "dump", &[]);
+
+    let dumped = fs::read_to_string(&marker).expect("dumped environment");
+    for key in [
+        "EFFIGY_INTERNAL_SUPPRESS_HEADER",
+        "EFFIGY_INTERNAL_ENVIRONMENT_HOLDER",
+        "EFFIGY_MANAGED_RUN_TOKEN",
+        "EFFIGY_SECRETS_REQUIRED",
+    ] {
+        assert!(
+            !dumped.contains(&format!("{key}=")),
+            "`{key}` reached a workload environment"
+        );
+    }
+    assert!(
+        dumped.contains(&format!("{CONTAINER_HANDOFF_ENV_NAME}=")),
+        "a consumer reads the container handoff marker from its own workload"
+    );
+}
 
 #[test]
 fn run_manifest_task_applies_task_env_with_project_substitution() {

@@ -221,7 +221,17 @@ Injection rules:
 - a user workload never receives the passphrase or the local-dev marker: every
   workload and host-process spawn starts from an ambient environment with the
   session-access keys removed, and the kernel no longer offers a command-string
-  route for them. A nested `effigy` started from user code (a shell tab, a
+  route for them. That one spawn helper also removes every other Effigy control
+  marker: no `EFFIGY_INTERNAL_*` key, `EFFIGY_MANAGED_RUN_TOKEN` or
+  `EFFIGY_SECRETS_REQUIRED` is inherited from ambient, so a workload sees the
+  user's environment plus the documented Effigy variables. Three exceptions
+  stand, each because a child depends on it: `EFFIGY_INTERNAL_CONTAINER_HANDOFF`,
+  which a consumer's Rhai task reads to detect the workspace container;
+  `EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE`, which stops a
+  `[secrets.vault].generate` hook's own child Effigy from running the hook
+  again; and `EFFIGY_INTERNAL_EXTERNAL_TASK_SOURCE_ISOLATION`, which makes a
+  nested Effigy under an isolated external task source resolve no consumer
+  secrets (effigy#341). A nested `effigy` started from user code (a shell tab, a
   manifest `run` command, a seeded workspace task) is therefore a top-level
   invocation: the local-dev key's own rules apply, or it asks once on its own
   terminal. It does not inherit the session's access

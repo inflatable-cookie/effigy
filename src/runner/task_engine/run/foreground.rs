@@ -7,8 +7,28 @@ use effigy_kernel::run::ForegroundRun;
 
 pub(in crate::runner::task_engine) fn inherited_class() -> Result<Option<RuntimeParent>, RunnerError>
 {
-    RuntimeParent::inherited(kernel::effects().operation())
-        .map_err(|error| capability_error(&error.to_string()))
+    match RuntimeParent::inherited(kernel::effects().operation()) {
+        Ok(grant) => Ok(grant),
+        Err(error) => Err(start_refusal(
+            &error.to_string(),
+            super::super::pending_stop("a nested run's start").is_some(),
+        )),
+    }
+}
+/// A start that could not read its parent's capability reports what actually
+/// happened: a stop cancelled this process, or the capability refused it.
+///
+/// An ordinary `run stop` or Ctrl-C stops the parent's admission hook before
+/// the child reads it, so the capability's own sentence is `cancelled by
+/// SIGTERM`. That is this run's cancellation, not a refusal to act on
+/// (effigy#341).
+fn start_refusal(reason: &str, cancelled: bool) -> RunnerError {
+    if cancelled {
+        return RunnerError::task_invocation(format!(
+            "the run was cancelled before it started ({reason}); nothing was started"
+        ));
+    }
+    capability_error(reason)
 }
 /// The parent run's capability refused this child, or could not be read.
 ///
@@ -431,5 +451,34 @@ pub(super) fn close_memory(
             warnings.push(format!("foreground settle: {error}"));
             (None, warnings)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stop that cancelled this process while it read its parent's
+    /// capability reports cancellation: an ordinary `run stop` or Ctrl-C never
+    /// prints a capability refusal (effigy#341).
+    #[test]
+    fn a_cancelled_start_reports_cancellation_not_a_refusal() {
+        let error = start_refusal("cancelled by SIGTERM", true);
+        let text = error.to_string();
+        assert!(text.contains("cancelled before it started"), "{text}");
+        assert!(!text.contains("capability"), "{text}");
+        assert_eq!(error.task_exit_status(), None);
+    }
+
+    /// A capability that really refused the child still says so, with the
+    /// command that grants it its own.
+    #[test]
+    fn a_refused_capability_still_names_its_reason() {
+        let text = start_refusal("unsupported runtime parent grant", false).to_string();
+        assert!(
+            text.contains("the parent run capability refused this child"),
+            "{text}"
+        );
+        assert!(text.contains("unsupported runtime parent grant"), "{text}");
     }
 }

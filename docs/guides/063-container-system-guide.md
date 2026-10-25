@@ -463,10 +463,10 @@ exits is recorded with its exit code and its last log lines under
 (and `status --json` under `host_processes`) shows each host process's run,
 state, PID, last exit and listener state.
 
-An environment started by a pre-v0.15 build still has a PID-file supervisor.
-The next `container up` or `container down` stops it by the exact identities in
-its PID and listener records (never by a process-name pattern), withdraws its
-route and removes the record before starting the kernel-run generation.
+An environment started by a pre-v0.15 build can leave a `<name>.pid` record or
+its `<name>.spec.json` input behind. The next `container up` or `container down`
+deletes it with one line and carries on: those supervisors are gone, so a
+record from one that died with a reboot never blocks an `up`.
 
 `container up --detach --json` returns each ready listener's actual address,
 internal URL, public URL, generation and state-file path. A linked worktree
