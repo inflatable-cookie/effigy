@@ -33,6 +33,43 @@ pub fn select_concurrent_profile<'a>(
     ))
 }
 
+/// The empty profile a managed task bound to a container environment runs
+/// when it declares no `concurrent` entries: the session is the environment
+/// (its host processes and their status) plus the task's own `run` when it
+/// has one (effigy#322).
+pub fn environment_only_profile<'a>(
+    task: &'a ManifestTask,
+    runtime_args: &TaskRuntimeArgs,
+) -> Option<ResolvedConcurrentProfile<'a>> {
+    environment_only_profile_for(task, requested_profile_name(runtime_args))
+}
+
+/// [`environment_only_profile`] by profile name, for the control surfaces.
+pub fn environment_only_profile_for<'a>(
+    task: &'a ManifestTask,
+    profile_name: &str,
+) -> Option<ResolvedConcurrentProfile<'a>> {
+    if has_concurrent_schema(task) || profile_name != DEFAULT_MANAGED_PROFILE {
+        return None;
+    }
+    Some(ResolvedConcurrentProfile {
+        profile_name: DEFAULT_MANAGED_PROFILE.to_owned(),
+        entries: &[],
+    })
+}
+
+/// Whether `task` runs `profile_name`: an explicit profile, or the
+/// environment-only session of a task bound to a container environment that
+/// declares no `concurrent` entries (effigy#322).
+pub fn has_managed_profile(
+    task: &ManifestTask,
+    profile_name: &str,
+    environment_bound: bool,
+) -> bool {
+    resolve_concurrent_profile(task, profile_name).is_some()
+        || (environment_bound && environment_only_profile_for(task, profile_name).is_some())
+}
+
 pub fn resolve_concurrent_profile<'a>(
     task: &'a ManifestTask,
     profile_name: &str,

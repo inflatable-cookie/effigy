@@ -2,8 +2,10 @@
 //! the client here, its detached supervisor the re-executed test binary.
 //! The run journal and its logs are the only record (effigy#235).
 use crate::runner::tests::prelude::{
-    lock_test, run_dev, temp_workspace, write_root_manifest, EnvGuard,
+    install_fake_container_runtime, lock_test, run_dev, temp_workspace, write_root_manifest,
+    EnvGuard,
 };
+use effigy_core::shell::shell_quote as toml_quote;
 use std::fs;
 use std::time::{Duration, Instant};
 
@@ -307,4 +309,126 @@ fn retirement_stream_mode_refuses_before_effects_even_with_headless() {
         );
         assert!(!root.join("started").exists());
     }
+}
+
+/// A plain managed task bound to a container environment, with two
+/// environment host processes. Nothing in it lists a `concurrent` entry per
+/// process: the session is the environment, and the task's own `run` is the
+/// one workload (effigy#322).
+fn write_plain_bound_environment_manifest(root: &std::path::Path) {
+    let api_pid = root.join("api.pid");
+    let worker_pid = root.join("worker.pid");
+    write_root_manifest(
+        root,
+        &format!(
+            r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+run = "printf 'service up\n'; echo $$ > service.pid; while true; do sleep 1; done"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "plain-env-dev"
+primary_service = "app"
+working_dir = "/workspace"
+
+[[containers.web.host_processes]]
+name = "api"
+run = "printf 'api serving\n'; echo $$ > \"$API_PID_FILE\"; exec sleep 3600"
+restart = "never"
+
+[containers.web.host_processes.env]
+API_PID_FILE = {api_pid}
+
+[[containers.web.host_processes]]
+name = "worker"
+run = "printf 'worker up\n'; echo $$ > \"$WORKER_PID_FILE\"; exec sleep 3600"
+restart = "never"
+
+[containers.web.host_processes.env]
+WORKER_PID_FILE = {worker_pid}
+"#,
+            api_pid = toml_quote(&api_pid.display().to_string()),
+            worker_pid = toml_quote(&worker_pid.display().to_string()),
+        ),
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
+/// A container environment's machine store lives beside the fixture, never
+/// inside the checkout's own `.effigy`: a checkout journal there reads as the
+/// retired central store to the endpoint store's cutover check.
+fn private_containers_home(root: &std::path::Path) -> EnvGuard {
+    let home = root.join("effigy-home/.effigy");
+    fs::create_dir_all(&home).expect("private containers home");
+    EnvGuard::set_many(&[(
+        "EFFIGY_TEST_CONTAINERS_HOME",
+        Some(home.display().to_string()),
+    )])
+}
+
+fn wait_for_file(root: &std::path::Path, name: &str) {
+    let path = root.join(name);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "`{name}` never appeared");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// effigy#322 acceptance: a session bound to a hybrid environment shows the
+/// environment's host processes and its workload in `--headless`, and closing
+/// it stops everything the session started.
+#[test]
+fn managed_headless_plain_environment_shows_host_processes_and_its_workload() {
+    let _guard = lock_test();
+    let root = temp_workspace("managed-headless-plain-environment");
+    // Owning a container environment resolves the port registry under the
+    // Effigy home, so this session gets a private one.
+    let home = root.join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let _home = EnvGuard::set_many(&[("HOME", Some(home.display().to_string()))]);
+    write_plain_bound_environment_manifest(&root);
+    let _runtime = install_fake_container_runtime(&root);
+    let _containers_home = private_containers_home(&root);
+
+    let run_root = root.clone();
+    let run = std::thread::spawn(move || run_dev(&run_root, &["--headless"]));
+    wait_for_file(&root, "api.pid");
+    wait_for_file(&root, "worker.pid");
+    wait_for_file(&root, "service.pid");
+
+    let stop = run_dev(&root, &["stop"]).expect("stop settles the session");
+    assert!(stop.contains("settled managed task `dev`"), "got: {stop}");
+    run.join()
+        .expect("headless thread join")
+        .expect("an explicit stop ends the session cleanly");
+
+    // The stop took the whole environment with it: both host processes and
+    // the environment the session started.
+    let status = run_dev(&root, &["status"]).expect("status after the stop");
+    assert!(status.contains("cleanup complete"), "got: {status}");
+    assert!(
+        status.contains("environment") && status.contains("down (owned)"),
+        "the session brought its environment down: {status}"
+    );
+    assert_gone(&root, &["api.pid", "worker.pid", "service.pid"]);
 }

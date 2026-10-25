@@ -325,7 +325,44 @@ pub fn load_task_manifest(manifest_path: &Path) -> Result<TaskManifest, Manifest
     Ok(load_task_manifest_with_inspection(manifest_path)?.manifest)
 }
 
+/// The profile label the default `concurrent` list runs under.
+const DEFAULT_PROFILE_LABEL: &str = "default";
+
 impl TaskManifest {
+    /// Every `start_after_ms` still declared in this manifest's tasks, as
+    /// `(task, profile, entry)`. The key still delays its entry for the v0.15
+    /// line but no longer orders a managed session (effigy#322).
+    pub fn retired_start_after_entries(&self) -> Vec<(String, String, String)> {
+        let mut retired = Vec::new();
+        for (task_name, task) in &self.tasks {
+            let profiles =
+                std::iter::once((DEFAULT_PROFILE_LABEL.to_owned(), task.concurrent.as_slice()))
+                    .chain(task.profiles.iter().filter_map(|(name, profile)| {
+                        profile
+                            .concurrent_entries()
+                            .map(|entries| (name.clone(), entries))
+                    }));
+            for (profile, entries) in profiles {
+                for entry in entries {
+                    if entry.start_after_ms.is_none() {
+                        continue;
+                    }
+                    let entry_name = entry
+                        .name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                        .or_else(|| entry.task.clone())
+                        .or_else(|| entry.run.clone())
+                        .unwrap_or_else(|| "<unnamed>".to_owned());
+                    retired.push((task_name.clone(), profile.clone(), entry_name));
+                }
+            }
+        }
+        retired
+    }
+
     pub fn task_run_in(&self, task: &ManifestTask) -> ManifestTaskRunIn {
         task.effective_run_in(
             self.task_defaults

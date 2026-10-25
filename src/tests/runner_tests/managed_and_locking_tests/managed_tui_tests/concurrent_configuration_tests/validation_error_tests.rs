@@ -167,7 +167,7 @@ health_wait = true
             ),
         },
         ManagedInvalidDefinitionCase {
-            workspace: "managed-health-wait-missing-lifecycle",
+            workspace: "managed-health-wait-missing-environment",
             manifest: container_session_manifest!(
                 r#"concurrent = [{ name = "api", run = "printf api" }]
 health_wait = true
@@ -176,7 +176,7 @@ health_wait = true
             expected_task: "dev",
             expected_process: "managed",
             expected_detail_substring: Some(
-                "requires one `concurrent` entry with `role = \"lifecycle\"`",
+                "`health_wait = true` requires a session that owns its environment",
             ),
         },
         ManagedInvalidDefinitionCase {
@@ -205,7 +205,7 @@ gateway = true
             ),
         },
         ManagedInvalidDefinitionCase {
-            workspace: "managed-gateway-missing-lifecycle",
+            workspace: "managed-gateway-missing-environment",
             manifest: container_session_manifest!(
                 r#"concurrent = [{ name = "api", run = "printf api" }]
 gateway = true
@@ -214,7 +214,7 @@ gateway = true
             expected_task: "dev",
             expected_process: "managed",
             expected_detail_substring: Some(
-                "`gateway = true` requires one `concurrent` entry with `role = \"lifecycle\"`",
+                "`gateway = true` requires a session that owns its environment",
             ),
         },
     ];

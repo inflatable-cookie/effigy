@@ -24,6 +24,7 @@ use effigy_kernel::supervise::{
 };
 
 use super::control::{self, Addressed};
+use super::host_tabs::{HostFollower, HostProcessTab};
 use super::wire::{self, EngineEvent, Front, Payload};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, read_run_log};
@@ -158,6 +159,9 @@ struct TextFollower {
     output: OutputFollower,
     run: RunId,
     workloads: Vec<FollowedWorkload>,
+    /// The environment's host processes: `[name] [host] status` and
+    /// `[name] line`, from the logs their own supervisors write.
+    hosts: Vec<HostFollower>,
 }
 
 struct FollowedWorkload {
@@ -168,16 +172,33 @@ struct FollowedWorkload {
 }
 
 impl TextFollower {
-    fn new(run: RunId) -> Self {
+    fn new(run: RunId, hosts: Vec<HostProcessTab>) -> Self {
         Self {
             output: OutputFollower::new(run),
             run,
             workloads: Vec::new(),
+            hosts: hosts.into_iter().map(HostFollower::new).collect(),
         }
     }
 
     fn relay(&mut self, finish: bool) {
         relay(&mut self.output);
+        let mut host_lines = String::new();
+        for host in &mut self.hosts {
+            let name = host.tab.name.clone();
+            let poll = host.poll();
+            for status in poll.statuses {
+                host_lines.push_str(&format!("[{name}] [host] {}\n", status.line()));
+            }
+            for line in poll.lines {
+                host_lines.push_str(&format!("[{name}] {line}\n"));
+            }
+        }
+        if !host_lines.is_empty() {
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(host_lines.as_bytes());
+            let _ = stdout.flush();
+        }
         // A restart is a new effect: its output follows under the same name.
         if let Observed::Verified(effects, _) = task_engine::run_effects(self.run) {
             for view in control::processes(&effects, false) {
@@ -296,6 +317,7 @@ impl StopSender {
 pub(in crate::runner) fn attach_text(
     started: Started,
     addressed: &Addressed<'_>,
+    hosts: Vec<HostProcessTab>,
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
     let Started { mut client, run } = started;
@@ -307,7 +329,7 @@ pub(in crate::runner) fn attach_text(
         stop_command(addressed)
     );
     flush();
-    let mut output = TextFollower::new(run);
+    let mut output = TextFollower::new(run, hosts);
     let mut stop = StopSender::new();
     let closed = loop {
         if !task_engine::routed_signals().is_empty() {

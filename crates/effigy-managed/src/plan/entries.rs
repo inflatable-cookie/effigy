@@ -2,15 +2,17 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
-    resolve_task_execution_binding, LoadedCatalog, ManifestManagedConcurrentEntry, ManifestTask,
-    ManifestTaskRunIn, ResolvedTaskExecutionBinding, TaskResolverFn,
+    LoadedCatalog, ManifestManagedConcurrentEntry, ManifestTask, ManifestTaskRunIn, TaskResolverFn,
 };
 use effigy_tasks::TaskSelector;
 
 use super::{invalid_managed_process_definition, select_run_or_task};
 use crate::references;
 use crate::run_spec::{render_run_step_sequence, wrap_reference_command_in_cwd};
-use crate::{ManagedProcessRole, ManagedProcessSpec, DEFAULT_MANAGED_SHELL_RUN};
+use crate::{
+    resolve_catalog_env_schema_with_ancestors, ManagedProcessRole, ManagedProcessSpec,
+    DEFAULT_MANAGED_SHELL_RUN,
+};
 
 #[derive(Clone, Copy)]
 struct EntryResolutionContext<'a> {
@@ -65,6 +67,7 @@ pub fn resolve_concurrent_process_entries<'a>(
                 cwd,
                 service: normalized.service,
                 start_after_ms: normalized.start_after_ms,
+                after: normalized.after,
                 shutdown_on_exit: normalized.shutdown_on_exit,
                 run_on_host: normalized.run_on_host,
             },
@@ -74,6 +77,72 @@ pub fn resolve_concurrent_process_entries<'a>(
         });
     }
     Ok(resolved)
+}
+
+/// The task's own `run`, as the managed session's one workload, for a task
+/// bound to a container environment with no `concurrent` entries. It renders
+/// exactly as the task's standard execution would, and keeps the passthrough
+/// arguments the operator typed after the profile.
+pub fn resolve_own_task_run_process(
+    selector: &TaskSelector,
+    task: &ManifestTask,
+    catalog: &LoadedCatalog,
+    catalogs: &[LoadedCatalog],
+    task_scope_cwd: &Path,
+    passthrough: &[String],
+    resolver: TaskResolverFn<'_>,
+) -> Result<Option<super::ConcurrentResolvedProcess>, crate::ManagedError> {
+    let Some(run_spec) = task.run.as_ref() else {
+        return Ok(None);
+    };
+    let args = passthrough.get(1..).unwrap_or_default();
+    let env_schema_resolved =
+        resolve_catalog_env_schema_with_ancestors(catalogs, task_scope_cwd, None)?;
+    let mut task_env = env_schema_resolved
+        .as_ref()
+        .map(|resolved| resolved.plain_env())
+        .unwrap_or_default();
+    for (key, value) in &task.env {
+        task_env.insert(key.clone(), value.clone());
+    }
+    let command = crate::run_spec::render_task_run_spec(
+        run_spec,
+        crate::run_spec::RunSpecContext {
+            task_name: &selector.task_name,
+            task_env: &task_env,
+            task_env_file: task.env_file.as_ref(),
+            env_profiles: &catalog.manifest.env,
+            args_rendered: &effigy_tasks::render_passthrough_args(args),
+            args_raw: args,
+            repo_root: task_scope_cwd,
+            bundle_root: catalog.bundle_root.as_deref(),
+            catalogs,
+            task_scope_cwd,
+            invocation_cwd: task_scope_cwd,
+            runtime_env_schema_override: None,
+            depth: 0,
+            resolver,
+        },
+    )?;
+    Ok(Some(super::ConcurrentResolvedProcess {
+        spec: ManagedProcessSpec {
+            name: selector.task_name.clone(),
+            role: ManagedProcessRole::Standard,
+            run: command,
+            secret_env: Default::default(),
+            setup: None,
+            setup_steps: Vec::new(),
+            cwd: task_scope_cwd.to_path_buf(),
+            service: None,
+            start_after_ms: 0,
+            shutdown_on_exit: false,
+            run_on_host: matches!(task.run_in, Some(ManifestTaskRunIn::Host)),
+            after: Vec::new(),
+        },
+        start_rank: 1,
+        tab_rank: 1,
+        index: 0,
+    }))
 }
 
 fn resolve_process_setup<'a>(
@@ -125,6 +194,7 @@ struct NormalizedConcurrentEntry {
     start_rank: usize,
     tab_rank: usize,
     start_after_ms: u64,
+    after: Vec<String>,
     shutdown_on_exit: bool,
     run_on_host: bool,
 }
@@ -169,6 +239,7 @@ fn normalize_entry(
         }
         _ => false,
     };
+    let after = normalize_after(selector, &process_name, entry)?;
     Ok(NormalizedConcurrentEntry {
         process_name,
         role,
@@ -181,9 +252,47 @@ fn normalize_entry(
         start_rank,
         tab_rank,
         start_after_ms: entry.start_after_ms.unwrap_or(0),
+        after,
         shutdown_on_exit: lifecycle_shutdown_on_exit(selector, entry, role)?,
         run_on_host,
     })
+}
+
+/// `after` names a dependency the session must observe before this entry
+/// starts. Today only the environment phase is available: it always precedes
+/// every workload, so declaring it states the relationship rather than
+/// changing the order. Ordering between environment host processes is their
+/// own `depends_on`.
+fn normalize_after(
+    selector: &TaskSelector,
+    process_name: &str,
+    entry: &ManifestManagedConcurrentEntry,
+) -> Result<Vec<String>, crate::ManagedError> {
+    let mut after = Vec::new();
+    for value in &entry.after {
+        let dependency = value.trim();
+        if dependency.is_empty() {
+            return Err(invalid_managed_process_definition(
+                selector,
+                process_name,
+                "`after` entries must name a dependency",
+            ));
+        }
+        if dependency != crate::MANAGED_ENTRY_AFTER_ENVIRONMENT {
+            return Err(invalid_managed_process_definition(
+                selector,
+                process_name,
+                &format!(
+                    "unsupported `after = \"{dependency}\"`; the one supported dependency is \
+                     `\"environment\"` (host processes order by `depends_on`)"
+                ),
+            ));
+        }
+        if !after.iter().any(|existing| existing == dependency) {
+            after.push(dependency.to_owned());
+        }
+    }
+    Ok(after)
 }
 
 fn resolve_process_run_and_cwd<'a>(
@@ -357,12 +466,7 @@ fn task_has_container_backed_execution_binding(
     selector: &TaskSelector,
     task: &ManifestTask,
 ) -> Result<bool, crate::ManagedError> {
-    let binding = resolve_task_execution_binding(&catalog.manifest, &selector.task_name, task)
-        .map_err(|error| crate::ManagedError::task_invocation(error.to_string()))?;
-    Ok(matches!(
-        binding,
-        Some(ResolvedTaskExecutionBinding::Workspace(_))
-    ))
+    super::task_has_container_backed_execution_binding(catalog, selector, task)
 }
 
 fn lifecycle_shutdown_on_exit(

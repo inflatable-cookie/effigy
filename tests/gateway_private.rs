@@ -2798,6 +2798,29 @@ fn container_command_for_env(
     cleanup: &ManagedContainerCleanup,
     environment: &str,
 ) -> Command {
+    let mut command = fixture_task_command_for_env(checkout, cleanup, environment, &[]);
+    command.args(["container", environment]);
+    command
+}
+
+/// One private fixture environment command with the caller's own arguments.
+/// A container command and a managed task start from the same identity: the
+/// private home, the fake backend, the effect sentinels and the exact-owned
+/// proof the fake adapter reports.
+fn fixture_task_command(
+    checkout: &Path,
+    cleanup: &ManagedContainerCleanup,
+    args: &[&str],
+) -> Command {
+    fixture_task_command_for_env(checkout, cleanup, "web", args)
+}
+
+fn fixture_task_command_for_env(
+    checkout: &Path,
+    cleanup: &ManagedContainerCleanup,
+    environment: &str,
+    args: &[&str],
+) -> Command {
     // These are fixture setup effects, before writing exact-owned backend proofs.
     fs::create_dir_all(checkout.join(".effigy")).expect("private fake runtime state");
     effigy_core::worktree_scope::prepare_checkout_token(checkout).expect("fixture identity");
@@ -2824,14 +2847,23 @@ fn container_command_for_env(
         "State": {"Status": "running", "Running": true},
         "Config": {"Labels": labels}, "NetworkSettings": {"Ports": {}},
     });
-    let mut command = Command::new(EFFIGY);
+    let mut command = fixture_environment_command(checkout, cleanup);
     command
         .env("FAKE_OWNED_CONTAINER", proof.to_string())
         .env(
             "FAKE_OWNED_ACTIVE",
             checkout.join(".effigy/private-fake-active"),
         )
-        .args(["container", environment])
+        .args(args)
+        .env_remove("EFFIGY_MANAGED_HEADLESS");
+    command
+}
+
+/// One private fixture environment: a home, backend, effect sentinels and
+/// gateway root, with the caller's own arguments.
+fn fixture_environment_command(checkout: &Path, cleanup: &ManagedContainerCleanup) -> Command {
+    let mut command = Command::new(EFFIGY);
+    command
         .current_dir(checkout)
         .env("HOME", &cleanup.home)
         .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
@@ -3893,6 +3925,350 @@ fn container_up_waits_for_slow_service_health_before_host_processes() {
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
     assert_success(down);
     cleanup.checkouts.clear();
+}
+
+/// The fixture effigy#322 needs in both placements: one container service and
+/// two environment host processes, and a plain `[tasks.dev]` bound to that
+/// environment that lists no `concurrent` entry per process.
+struct PlainEnvironmentFixture {
+    checkout: PathBuf,
+    home: PathBuf,
+    private_gateway: PathBuf,
+    foreign_ca: PathBuf,
+    effects_path: OsString,
+    mkcert: PathBuf,
+    effect_log: PathBuf,
+    mkcert_calls: PathBuf,
+    docker_log: PathBuf,
+    healthy: PathBuf,
+    api_pid: PathBuf,
+    worker_pid: PathBuf,
+}
+
+impl PlainEnvironmentFixture {
+    fn build(
+        fixture: &Path,
+        effects: &HostEffectSentinels,
+        private_gateway: &Path,
+        foreign_ca: &Path,
+    ) -> Self {
+        let docker_dir = std::env::split_paths(&effects.env_path)
+            .next()
+            .expect("sentinel PATH directory");
+        let docker_log = fixture.join("docker-fixture.log");
+        write_slow_health_fake_docker(&docker_dir.join("docker"));
+
+        let home = fixture.join("home");
+        fs::create_dir(&home).expect("fixture home");
+        let checkout = fixture.join("plain-environment");
+        fs::create_dir(&checkout).expect("plain environment checkout");
+        fs::write(
+            checkout.join("compose.yml"),
+            "services:\n  app:\n    image: fixture\n    ports:\n      - \"127.0.0.1:48092:80\"\n",
+        )
+        .expect("write fixture compose file");
+        fs::write(
+            checkout.join("effigy.toml"),
+            "[containers]\ndefault = \"web\"\n",
+        )
+        .expect("seed manifest before git commit");
+        git(&checkout, &["init", "--initial-branch=main"]);
+        git(
+            &checkout,
+            &["config", "user.name", "Plain Environment Fixture"],
+        );
+        git(
+            &checkout,
+            &[
+                "config",
+                "user.email",
+                "plain-environment-fixture@example.invalid",
+            ],
+        );
+        git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+        git(&checkout, &["commit", "-m", "fixture base"]);
+        let checkout = checkout.canonicalize().expect("canonical checkout");
+
+        // The fixture adapter reports the service healthy only once this exists.
+        let healthy = fixture.join("service-healthy");
+        fs::write(&healthy, "healthy\n").expect("report the service healthy");
+        let api_pid = fixture.join("api.pid");
+        let worker_pid = fixture.join("worker.pid");
+        let manifest = format!(
+            "[tasks.dev]\nmode = \"tui\"\nworkspace = \"app\"\nrun = \"printf 'service up\\n'; echo $$ > service.pid; while true; do sleep 1; done\"\n\n\
+[systems]\ndefault = \"dev\"\n\n\
+[systems.dev]\ndefault_workspace = \"app\"\n\n\
+[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n\n\
+[containers]\ndefault = \"web\"\n\n\
+[containers.web]\ndriver = \"colima\"\nprofile = \"plain-environment\"\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n\
+[[containers.web.host_processes]]\nname = \"api\"\nrun = {api_run}\nrestart = \"never\"\n\n\
+[containers.web.host_processes.env]\nAPI_PID_FILE = {api_pid}\n\n\
+[[containers.web.host_processes]]\nname = \"worker\"\nrun = {worker_run}\nrestart = \"never\"\n\n\
+[containers.web.host_processes.env]\nWORKER_PID_FILE = {worker_pid}\n",
+            api_run = toml_quote("printf 'api serving\\n'; echo $$ > \"$API_PID_FILE\"; exec sleep 60"),
+            worker_run =
+                toml_quote("printf 'worker up\\n'; echo $$ > \"$WORKER_PID_FILE\"; exec sleep 60"),
+            api_pid = toml_quote(&api_pid.display().to_string()),
+            worker_pid = toml_quote(&worker_pid.display().to_string()),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("write session manifest");
+        Self {
+            checkout,
+            home,
+            private_gateway: private_gateway.to_path_buf(),
+            foreign_ca: foreign_ca.to_path_buf(),
+            effects_path: effects.env_path.clone(),
+            mkcert: effects.private_mkcert.clone(),
+            effect_log: effects.log.clone(),
+            mkcert_calls: effects.mkcert_calls.clone(),
+            docker_log,
+            healthy,
+            api_pid,
+            worker_pid,
+        }
+    }
+
+    fn cleanup(&self) -> ManagedContainerCleanup {
+        ManagedContainerCleanup {
+            checkouts: vec![self.checkout.clone()],
+            home: self.home.clone(),
+            private_gateway: self.private_gateway.clone(),
+            foreign_ca: self.foreign_ca.clone(),
+            effects_path: self.effects_path.clone(),
+            mkcert: self.mkcert.clone(),
+            effect_log: self.effect_log.clone(),
+            mkcert_calls: self.mkcert_calls.clone(),
+            docker_log: self.docker_log.clone(),
+        }
+    }
+
+    /// The headless session, logged where the test reads what it showed.
+    fn session(&self, cleanup: &ManagedContainerCleanup, log: &Path) -> Command {
+        let mut command = fixture_task_command(&self.checkout, cleanup, &["dev", "--headless"]);
+        command
+            .env("FAKE_HEALTHY", &self.healthy)
+            .stdout(Stdio::from(
+                fs::File::create(log).expect("headless session log"),
+            ))
+            .stderr(Stdio::from(
+                fs::File::create(log.with_extension("err")).expect("headless session errors"),
+            ));
+        command
+    }
+}
+
+fn assert_host_process_stopped(pid_file: &Path, report: &dyn Fn() -> String) {
+    let pid: u32 = fs::read_to_string(pid_file)
+        .expect("recorded host process pid")
+        .trim()
+        .parse()
+        .expect("host process pid");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        !effigy_process::process_is_running(pid),
+        "host process {pid} outlived its session: {}",
+        report()
+    );
+}
+
+/// effigy#322 acceptance, through the real binary: a plain `[tasks.dev]`
+/// bound to a hybrid environment (one container service, two host processes)
+/// shows both host processes and its workload in `--headless`, and closing it
+/// stops everything the session started. No `*:tui` selector, no `concurrent`
+/// entry per process, no wrapper task.
+#[test]
+fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let plain =
+        PlainEnvironmentFixture::build(fixture.path(), &effects, &private_gateway, &foreign_ca);
+    let mut cleanup = plain.cleanup();
+    let output_path = fixture.path().join("dev-headless.log");
+    let report = || {
+        format!(
+            "stdout={} stderr={} docker={}",
+            fs::read_to_string(&output_path).unwrap_or_default(),
+            fs::read_to_string(output_path.with_extension("err")).unwrap_or_default(),
+            fs::read_to_string(&plain.docker_log).unwrap_or_default()
+        )
+    };
+
+    let dev = plain
+        .session(&cleanup, &output_path)
+        .spawn_owned()
+        .expect("spawn managed session");
+
+    // The session shows the environment's host processes, with their status
+    // and their live output, and its own workload starts beside them. The
+    // fake backend does not run the workload's command, so the workload is
+    // proven by its start line.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let shown = fs::read_to_string(&output_path).unwrap_or_default();
+        let complete = ["[api] [host] running", "[worker] [host] running"]
+            .iter()
+            .all(|needle| shown.contains(needle))
+            && shown.contains("api serving")
+            && shown.contains("worker up")
+            && shown.contains("[managed] started `dev`");
+        if complete {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the session never showed its host processes and workload: {}",
+            report()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let stop = fixture_task_command(&plain.checkout, &cleanup, &["dev", "stop"])
+        .output_owned()
+        .expect("stop the managed session");
+    assert_success(stop);
+    let status = dev.wait_with_output().expect("wait for the session client");
+    assert!(
+        status.status.success(),
+        "the stopped session did not exit cleanly: {}",
+        report()
+    );
+
+    for pid_file in [&plain.api_pid, &plain.worker_pid] {
+        assert_host_process_stopped(pid_file, &report);
+    }
+    let status_json = run_container_cli(&plain.checkout, &cleanup, &["status", "--json"]);
+    assert!(
+        status_json.status.success(),
+        "container status failed: {}",
+        String::from_utf8_lossy(&status_json.stderr)
+    );
+    let stopped: Value =
+        serde_json::from_slice(&status_json.stdout).expect("container status json");
+    assert_eq!(
+        stopped["result"]["environment"]["record"]["state"].as_str(),
+        Some("stopped"),
+        "the environment the session started was not brought down: {stopped}"
+    );
+    for process in stopped["result"]["host_processes"]
+        .as_array()
+        .expect("host process rows")
+    {
+        assert_eq!(
+            process["state"].as_str(),
+            Some("closed"),
+            "the environment's host processes are stopped: {process}"
+        );
+    }
+    cleanup.checkouts.clear();
+}
+
+/// The same session over an environment an explicit `container up` already
+/// started: it borrows it, and closing the session leaves the environment and
+/// its host processes running (contract 053 §5). Placement is the
+/// environment's property, so a container placement behaves the same way.
+#[test]
+fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let plain =
+        PlainEnvironmentFixture::build(fixture.path(), &effects, &private_gateway, &foreign_ca);
+    let cleanup = plain.cleanup();
+    let report = || {
+        format!(
+            "docker={} api={}",
+            fs::read_to_string(&plain.docker_log).unwrap_or_default(),
+            fs::read_to_string(&plain.api_pid).unwrap_or_default()
+        )
+    };
+
+    let up = fixture_task_command(&plain.checkout, &cleanup, &["container", "up", "--detach"])
+        .env("FAKE_HEALTHY", &plain.healthy)
+        .output_owned()
+        .expect("explicit container up");
+    assert_success(up);
+    wait_for_path_exists(&plain.api_pid, Duration::from_secs(60), "the host process");
+
+    let output_path = fixture.path().join("borrowed-headless.log");
+    let dev = plain
+        .session(&cleanup, &output_path)
+        .spawn_owned()
+        .expect("spawn managed session");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !fs::read_to_string(&output_path)
+        .unwrap_or_default()
+        .contains("[managed] started `dev`")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the session never started: {}",
+            fs::read_to_string(&output_path).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+    let stop = fixture_task_command(&plain.checkout, &cleanup, &["dev", "stop"])
+        .output_owned()
+        .expect("stop the managed session");
+    assert_success(stop);
+    let status = dev.wait_with_output().expect("wait for the session client");
+    assert!(
+        status.status.success(),
+        "the stopped session did not exit cleanly: {}",
+        fs::read_to_string(&output_path).unwrap_or_default()
+    );
+
+    let api: u32 = fs::read_to_string(&plain.api_pid)
+        .expect("recorded host process pid")
+        .trim()
+        .parse()
+        .expect("host process pid");
+    assert!(
+        effigy_process::process_is_running(api),
+        "a borrowed environment's host process survived the session's stop: {}",
+        report()
+    );
+    let status_json = run_container_cli(&plain.checkout, &cleanup, &["status", "--json"]);
+    assert!(
+        status_json.status.success(),
+        "container status failed: {}",
+        String::from_utf8_lossy(&status_json.stderr)
+    );
+    let borrowed: Value =
+        serde_json::from_slice(&status_json.stdout).expect("container status json");
+    assert_eq!(
+        borrowed["result"]["runtime_running"].as_bool(),
+        Some(true),
+        "the borrowed environment is left running: {borrowed}"
+    );
+    assert_eq!(
+        borrowed["result"]["environment"]["record"]["state"].as_str(),
+        Some("active"),
+        "the borrowed environment keeps its active record: {borrowed}"
+    );
+    for process in borrowed["result"]["host_processes"]
+        .as_array()
+        .expect("host process rows")
+    {
+        assert_eq!(
+            process["state"].as_str(),
+            Some("running"),
+            "a borrowed environment's host process keeps running: {process}"
+        );
+    }
+    let down = run_container_cli(&plain.checkout, &cleanup, &["down", "--json"]);
+    assert_success(down);
 }
 
 /// A foreign route owner still refuses before any effect.

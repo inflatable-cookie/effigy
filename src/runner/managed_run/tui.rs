@@ -29,17 +29,19 @@ use effigy_tui::multiprocess::{
 use super::client::{Closed, Started, StopSender};
 use super::control::Addressed;
 use super::engine::SETTLE_BUDGET;
+use super::host_tabs::{HostFollower, HostProcessTab};
 use super::wire::{self, ClientFrame, EngineEvent};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{self, read_run_log};
 
 const READ_MAX: usize = 64 * 1024;
 
-/// One tab's source: the run's own output, a workload's log, or a local
-/// interactive shell.
+/// One tab's source: the run's own output, an environment host process's
+/// status and log, a workload's log, or a local interactive shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) enum TabSource {
     Output,
+    HostProcess(HostProcessTab),
     Workload,
     Shell,
 }
@@ -62,6 +64,9 @@ struct Shared {
     client: SupervisorClient,
     run: RunId,
     followers: BTreeMap<String, Follower>,
+    /// The environment's host processes: their status and live log come from
+    /// the files their own supervisors write, not from the run's journal.
+    hosts: BTreeMap<String, HostFollower>,
     queue: VecDeque<ProcessEvent>,
     exits: BTreeMap<String, String>,
     startup_finished: bool,
@@ -166,6 +171,39 @@ impl Shared {
             }
         }
         self.read_logs();
+        self.poll_host_processes();
+    }
+
+    /// One status/log poll per environment host process. A tab starts with its
+    /// current status, then receives every transition and new log line.
+    fn poll_host_processes(&mut self) {
+        let names = self.hosts.keys().cloned().collect::<Vec<_>>();
+        for name in names {
+            let Some(host) = self.hosts.get_mut(&name) else {
+                continue;
+            };
+            if !host.announce_started() {
+                self.queue
+                    .push_back(event(&name, ProcessEventKind::Started, ""));
+            }
+            let poll = host.poll();
+            for status in poll.statuses {
+                self.queue.push_back(ProcessEvent {
+                    process: name.clone(),
+                    kind: ProcessEventKind::Stdout,
+                    payload: format!("[effigy] {}", status.line()),
+                    chunk: None,
+                });
+            }
+            for line in poll.lines {
+                self.queue.push_back(ProcessEvent {
+                    process: name.clone(),
+                    kind: ProcessEventKind::Stdout,
+                    payload: line,
+                    chunk: None,
+                });
+            }
+        }
     }
 
     fn read_logs(&mut self) {
@@ -418,22 +456,32 @@ pub(in crate::runner) fn attach_tui(
     task_engine::install_client_router()?;
     let Started { client, run } = started;
     let mut followers = BTreeMap::new();
+    let mut hosts = BTreeMap::new();
     let mut queue = VecDeque::new();
-    if let Some(output) = tabs.iter().find(|tab| tab.source == TabSource::Output) {
-        followers.insert(
-            output.name.clone(),
-            Follower {
-                sequence: OUTPUT_SEQUENCE,
-                offsets: [0, 0],
-                lines: [Vec::new(), Vec::new()],
-            },
-        );
-        queue.push_back(event(&output.name, ProcessEventKind::Started, ""));
+    for tab in &tabs {
+        match &tab.source {
+            TabSource::Output => {
+                followers.insert(
+                    tab.name.clone(),
+                    Follower {
+                        sequence: OUTPUT_SEQUENCE,
+                        offsets: [0, 0],
+                        lines: [Vec::new(), Vec::new()],
+                    },
+                );
+                queue.push_back(event(&tab.name, ProcessEventKind::Started, ""));
+            }
+            TabSource::HostProcess(host) => {
+                hosts.insert(tab.name.clone(), HostFollower::new(host.clone()));
+            }
+            TabSource::Workload | TabSource::Shell => {}
+        }
     }
     let shared = Arc::new(Mutex::new(Shared {
         client,
         run,
         followers,
+        hosts,
         queue,
         exits: BTreeMap::new(),
         startup_finished: false,
