@@ -386,6 +386,53 @@ fn sync_commits_validated_bytes_and_dev_plan_never_moves_the_pin() {
     assert!(output.contains("changed"), "{output}");
 }
 
+/// Each Prepare writes a new source generation. Only the generation the lock
+/// pins survives, so repeated syncs do not accumulate copies of every source.
+#[test]
+fn repeated_syncs_prune_every_generation_the_lock_does_not_pin() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(ok, "{output}");
+
+    // An unchanged sync leaves the lock alone and still removes its predecessor.
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(ok, "{output}");
+    assert!(
+        output.contains("pruned 1 source generation nothing pins"),
+        "{output}"
+    );
+    fs::write(
+        fixture.repo.join("bundle/effigy.toml"),
+        "[tasks.dev]\nrun = \"echo changed\"\n",
+    )
+    .unwrap();
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(ok, "{output}");
+
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap())
+            .unwrap();
+    let object = PathBuf::from(lock["sources"]["bundle"]["object"].as_str().unwrap());
+    let generation = object
+        .strip_prefix("cache/sources")
+        .unwrap()
+        .components()
+        .next()
+        .unwrap()
+        .as_os_str()
+        .to_os_string();
+    let generations = fs::read_dir(fixture.repo.join(".effigy/cache/sources"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(generations, vec![generation], "{generations:?}");
+
+    let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
+    assert!(ok, "{output}");
+    assert!(output.contains("changed"), "{output}");
+}
+
 #[test]
 fn git_acquisition_uses_main_sentinel_and_checkout_pins_are_independent() {
     let fixture = Fixture::new();

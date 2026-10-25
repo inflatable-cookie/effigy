@@ -43,6 +43,9 @@ const REMOTE_CHECK_BUDGET: Duration = Duration::from_secs(5);
 const UPDATE_STATE_FILE: &str = "sources.update.json";
 const UPDATE_STATE_MAX: u64 = 64 * 1024;
 const UPDATE_STATE_KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// A snapshot tree is bounded to depth 32 (contract 020), so pruning a
+/// generation at a deeper bound never stops inside a removable tree.
+const GENERATION_TREE_DEPTH: usize = 40;
 
 #[derive(Default)]
 struct SnapshotUsage {
@@ -970,6 +973,7 @@ fn acquire_and_publish(
             run,
         )?;
     }
+    prune_unpinned_generations(manifest, &objects, &pins, cx, run)?;
     for note in &notes {
         eprintln!("[bundle] {note}");
     }
@@ -989,6 +993,69 @@ fn acquire_and_publish(
         notes,
         warnings,
     })
+}
+
+/// Remove the source generations the published lock does not pin. Every
+/// Prepare writes a new generation, so without this the predecessor of each
+/// sync stays on disk for good. Runs after the lock is published, so the
+/// generations it selects are never removed.
+///
+/// Cleanup is maintenance: an unlistable or undeletable generation warns and
+/// the successful Prepare stands.
+fn prune_unpinned_generations(
+    manifest: &Path,
+    objects: &DirFd,
+    pins: &BTreeMap<String, SourcePin>,
+    cx: &EffectContext,
+    run: &mut Run<'_>,
+) -> Result<(), ManifestError> {
+    if pins.is_empty() {
+        return Ok(());
+    }
+    let listed = cx
+        .operation()
+        .observe()
+        .ok()
+        .and_then(|observe| objects.observe_entries(&observe, 4096).ok());
+    let Some(entries) = listed else {
+        warn("source pruning skipped: the source cache could not be listed");
+        return Ok(());
+    };
+    let mut pruned = 0usize;
+    for entry in entries {
+        let Some(name) = entry.to_str() else {
+            continue;
+        };
+        let prefix = Path::new("cache/sources").join(name);
+        if pins.values().any(|pin| pin.object.starts_with(&prefix)) {
+            continue;
+        }
+        let name = FileName::new(name).map_err(|err| error(manifest, err.to_string()))?;
+        let ticket = retained_intent(
+            run,
+            "sources:prune",
+            &objects.path().join(name.as_str()),
+            manifest,
+        )?;
+        match objects.remove_prepared_tree(cx, &name, GENERATION_TREE_DEPTH) {
+            Ok(()) => {
+                run.applied(&ticket, serde_json::json!({ "pruned": name.as_str() }))
+                    .map_err(|err| error(manifest, err.to_string()))?;
+                pruned += 1;
+            }
+            Err(error) => warn(&format!(
+                "source generation {} was not pruned: {error}",
+                name.as_str()
+            )),
+        }
+    }
+    if pruned > 0 {
+        eprintln!(
+            "[bundle] pruned {pruned} source generation{} nothing pins",
+            if pruned == 1 { "" } else { "s" }
+        );
+    }
+    Ok(())
 }
 
 /// Acquire one source into its generation directory and return the recorded

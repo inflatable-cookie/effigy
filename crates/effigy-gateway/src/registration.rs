@@ -43,11 +43,18 @@ pub fn owned_by(route: &Route, project_path: &str) -> bool {
     route.project == project_path
 }
 
+/// Whether the checkout that recorded a route is gone from disk. The route
+/// table is the whole record, so a route of a deleted worktree is dropped by
+/// the next write rather than kept and guarded.
+pub fn checkout_is_gone(project: &str) -> bool {
+    std::fs::metadata(project).is_err()
+}
+
 /// Why a recorded owner is gone: its checkout path does not exist, or its
 /// target address does not accept a connection. `None` means the owner is
 /// still there and keeps the domain.
 pub fn dead_claim_reason(route: &Route) -> Option<String> {
-    if std::fs::metadata(&route.project).is_err() {
+    if checkout_is_gone(&route.project) {
         return Some(format!("checkout path {} no longer exists", route.project));
     }
     let target = route.target.as_deref().or(route.tcp_target.as_deref())?;

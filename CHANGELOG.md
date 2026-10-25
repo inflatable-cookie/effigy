@@ -29,15 +29,23 @@ During v0.x, MINOR bumps may include breaking changes.
   stable, probed port per published container port from the checkout path
   instead, and never records it. Shared backing services derive their port the
   same way.
-- **One endpoint table and one transaction.** The gateway keeps its routes and
-  loopback aliases in one committed snapshot written by one plain transaction.
+- **One endpoint table and one transaction.** The gateway keeps its route table
+  in one committed snapshot written by one plain transaction.
   The second commit path, the endpoint quarantine, the v0.14.1 handback and the
   legacy `routes.json`/`loopback-ips.json`/`ports.json` import are gone; the
   Store is the only source and the route file is no longer a privilege boundary
   the daemon re-verifies.
-- **A loopback alias lives from `up` to `down`.** `down` releases it, and the
-  next allocation reclaims one whose checkout path is gone, so a deleted
-  worktree's address is reused without a repair command.
+- **The route table is the only record of loopback ownership.** An address is
+  in use exactly when some route references it, as its `dns_ip` or as its
+  target, and a checkout's aliased routes share one address in the
+  `127.1.0.1`-`127.1.0.50` pool. `up` takes the address the checkout's routes
+  already answer with, or the lowest address no route references; `down` and
+  retirement free it by removing the routes. The separate loopback assignment
+  record, its `loopback-ips.json` file and the Prepare step that allocated one
+  are gone, so a new checkout's `up` never collides with another checkout's
+  address. Any route write also drops routes whose recorded checkout path is
+  gone, for every domain, so a deleted worktree keeps neither a domain nor an
+  address.
 - **`container up` starts the gateway** when it is not running, and `up`
   reconciles a gateway whose cleanup an interruption left incomplete. One line
   names it.
@@ -340,6 +348,20 @@ During v0.x, MINOR bumps may include breaking changes.
   anonymous cleanup pin) is unchanged, and so is #338's session-access
   handoff at descriptor 11. Contract 052 §3.1 and 049 record the rules;
   Tom's Q-011 ruling reverses that part of the Q-010 kernel design.
+- The `<selector>:cargo` escape tasks (489 of them), the internal
+  `effigy cargo` task and the `install:local:cargo` and
+  `test:install:local:cargo` escapes. Every selector builds through
+  `scripts/oxide-selector.sh` and Oxide; the only escape is
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`, or running `cargo` by hand
+  (effigy#356).
+- `doctor`'s advice to delete `.effigy/cache` as a whole. That directory is
+  live: `cache/sources` holds the pinned bundle sources and `cache/bundles`
+  holds unimported bundles, so following the old advice broke the next run with
+  "pinned source … is unavailable; run effigy bundle sync". Doctor now names
+  only the retired v0.14 files (`cache/task-cache-v1.json`,
+  `cache/catalog-discovery-v1.json`, `cache/implicit-deferral-v1.json`), and
+  says that `.effigy/reports/tasks` can be deleted because nothing reads it
+  (effigy#355).
 - Effigy's own control markers in a workload's environment (effigy#341). One
   spawn helper now starts every task child, host process, managed workload and
   supervisor from the user's environment minus every `EFFIGY_INTERNAL_*`
@@ -943,7 +965,7 @@ During v0.x, MINOR bumps may include breaking changes.
   single-identity shorthand is unchanged, so the 11 projects already declaring
   `[release]` keep working.
 - `test:release:platform`, `check:release:platform` and
-  `lint:release:platform` selectors, with their `:cargo` escapes.
+  `lint:release:platform` selectors.
 - `tests/fixtures/release_platform/` holds one project per `[release]` shape
   from contract 054 §4 plus Longhorn's, Poodle's and Underlay's real tables.
 - Optional task `description` (effigy#271). Every task-definition shape — a
@@ -1330,6 +1352,16 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- `scripts/check-cargo-routes.py` (`qa:docs:cargo-routes`) no longer skips
+  `:cargo` escape siblings, because the catalog has none. It still fails on a
+  plain-`cargo` route that
+  [cargo routes](docs/knowledge/cargo-routes.md) does not record, and on a
+  record row whose route no longer runs plain Cargo (effigy#356).
+- `bundle sync` and the Prepare paths keep exactly the source generations that
+  `.effigy/sources.lock.json` pins: after a successful prepare, generations
+  under `.effigy/cache/sources/` that nothing references are removed and one
+  line says `pruned N source generations nothing pins`. Repeated syncs no
+  longer leave a copy of every source behind (effigy#355).
 - A host process is replaced with a growing wait instead of a fixed one: the
   first replacement waits `restart_delay_ms`, each further one doubles it, and
   the wait is capped at 30 s. A generation that ran for 30 s or longer resets
@@ -1495,9 +1527,8 @@ During v0.x, MINOR bumps may include breaking changes.
   disposition, rollback and version receipts.
 - `effigy install:local` builds this checkout through Oxide, so the local binary
   comes from Oxide's shared slot instead of a private `target/bootstrap-local/`
-  directory. The plain-Cargo escape is `effigy install:local:cargo`, and a
-  machine without Oxide needs `oxide` on `PATH` (or that escape) to install this
-  checkout.
+  directory. A machine without Oxide installs this checkout with
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`.
 - Every Effigy route that runs Cargo is now either routed through `oxide` or
   recorded with its rule and reason in
   [cargo routes](docs/knowledge/cargo-routes.md): the fixture-hygiene and
@@ -1569,10 +1600,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The contributor task that builds this checkout and installs it as the machine's `effigy` is renamed `bootstrap:local` → `install:local`, so it no longer reads as the `effigy bootstrap` feature (clone and start a project). `bootstrap:local` now fails with the new name.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
-  intermediates stay off the internal SSD. Every routed selector keeps a
-  named `<selector>:cargo` escape with the plain-Cargo command it replaced;
-  `EFFIGY_OXIDE_ESCAPE=cargo`, `effigy cargo <args>` and `cargo run --bin
-  effigy --` keep the rest. The `cargo qa*` and `prepush-ci` aliases are
+  intermediates stay off the internal SSD. The one escape is
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`. The `cargo qa*` and
+  `prepush-ci` aliases are
   removed, because a Cargo alias either needs unsupported `!sh` syntax or
   compiles Effigy's dependency graph with plain Cargo; their tasks are
   `qa:gates`, `qa:docs`, `qa:json`, `qa:json:ci`, `release gates` and

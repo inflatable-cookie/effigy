@@ -341,7 +341,7 @@ After manifest resolution, host policy rendering builds one in-memory kernel
 Original and effective declarations, Compose inputs, generated Dockerfiles/configs,
 shared-service Compose, workspace
 and DNS rewrites, and inline workspaces. It writes no files, Git exclusions,
-scope tokens, ports or loopback assignments. The render's digest determines its
+scope tokens, ports or loopback addresses. The render's digest determines its
 prospective `~/.effigy/state/objects/<digest>` path. An unprepared scoped checkout
 uses an explicit `-wt-unprepared` or `-ec-unprepared` project suffix and never
 queries its primary checkout's project. Prepare establishes its persistent token
@@ -583,8 +583,8 @@ environment or credentials, and it is evidence, never authority: read the
 top-level `status` for current state.
 
 The gateway's process and socket interfaces (`socket_ownership`, `macos_socket`
-and `linux_net`) stay for the container loopback reclaim and the gateway's
-listener handoff. A managed listener no longer reads them.
+and `linux_net`) stay for the gateway's listener handoff. A managed listener no
+longer reads them.
 Existing container defaults and non-listener host-process behavior are
 unchanged; core does not select a framework or add a built-in dev verb.
 
@@ -838,7 +838,7 @@ A checkout may switch between its container environment and hybrid managed
 listener mode in either direction, and between any two of its environments,
 as one preflighted handover. Before any effect, `container up` of the
 incoming environment evaluates everything that could refuse: route claims,
-loopback allocation, manifest, policy, ownership and backend validation. A
+loopback pool capacity, manifest, policy, ownership and backend validation. A
 route held by another checkout, scope or a non-container source refuses with
 no effects. When another environment of the same checkout and scope is live
 and conflicts — the pair shares data volumes through `data_from`, or the
@@ -998,9 +998,9 @@ them; without it retirement removes them with the rest of the stack. Anything
 that could not be deleted is named with the runtime's own error and retirement
 exits non-zero; it never reports a clean result while an owned resource
 survives.
-Retirement also releases the checkout's gateway routes and their certificates,
-port ranges and loopback addresses by checkout path alone. A second retire with
-nothing left is success and reports `idempotent: true`.
+Retirement also releases the checkout's gateway routes and their certificates
+by checkout path alone, which frees its loopback address with them. A second
+retire with nothing left is success and reports `idempotent: true`.
 
 A container, volume or network of one of this checkout's Compose projects that
 carries no Effigy checkout label is reported under `kept` and left alone, never
@@ -1473,15 +1473,18 @@ so the domain is free immediately and a following `up` from another checkout
 takes it at once. The daemon sweeps the same dead-owner rule on a timer so
 `gateway status` lists domains something still serves.
 
-An alias is allocated at `up`, released by `down` and by retirement, and
-reclaimed by an allocation whose recorded checkout path is definitely missing
-(absent with its nearest existing ancestor a readable directory; an I/O or
-permission error, a non-directory ancestor, or an absent volume root such as an
-unmounted `/Volumes/...` is unknown and holds it). There is no inventory probe,
-no release plan and no reuse quarantine: a released address is immediately
-allocatable, and the gateway answers DNS with a one-second TTL. Growing the pool
-beyond `127.1.0.50` is not part of this contract; the `lo0` aliases come from
-`gateway setup`.
+The route table is the whole record of loopback ownership: an address is in
+use exactly when some route references it, as its `dns_ip` or as its target. A
+checkout's aliased routes share the address they already answer with, or the
+lowest pool address no route references, and the route write decides it. `down`
+and retirement free it by removing those routes, so there is no separate
+assignment to allocate, reclaim or release, and removal and its claims commit
+together. Every route write also drops routes whose recorded checkout path is
+gone, for every domain, so a deleted worktree keeps neither a domain nor an
+address. There is no inventory probe, no release plan and no reuse quarantine: a
+released address is immediately allocatable, and the gateway answers DNS with a
+one-second TTL. Growing the pool beyond `127.1.0.50` is not part of this
+contract; the `lo0` aliases come from `gateway setup`.
 
 ### Detached activation failures
 
@@ -1546,8 +1549,8 @@ derived from the checkout path and the published container port, probed at
 because the environment variables an app render injects need its port before
 the app starts.
 
-Prepare's only port effect is the loopback alias: it allocates one for an
-environment whose routes need it, and that alias lives until `down`.
+Prepare allocates no port and no loopback alias: a generated environment's
+alias address belongs to the routes registered at `up`.
 
 ### Bind-source preparation
 
@@ -1557,17 +1560,17 @@ Composer cache mount without creating their directories. Activation calls
 including detached admission and task preparation. Media sources are revalidated
 against the checkout at Prepare; other host mounts remain user-owned.
 
-### Loopback allocation at Prepare
+### Loopback alias addresses
 
-Policy resolution reads existing loopback assignments without allocating,
-migrating or probing runtime inventory. A missing assignment stays absent until
-Prepare.
+Policy resolution reads the route table without writing it. An aliased route's
+address is the checkout's recorded one, or the lowest pool address no route
+references, and the registration transaction decides it; shared services and
+environments without published ports use the same checkout address.
 
-The host Prepare seam allocates the environment's alias before rendering,
-including shared services and environments with no published ports. Existing
-activation, task preparation and data-workflow entry points all use this seam.
-No manifest change is required for existing consumers. The alias lives until
-this checkout's `down` or retirement releases it.
+Nothing is allocated before rendering and nothing lives until `down`: the
+checkout's routes are the record, they are written after the environment starts,
+and `down` or retirement frees the address by removing them. No manifest change
+is required for existing consumers.
 
 ## Container manager contract
 

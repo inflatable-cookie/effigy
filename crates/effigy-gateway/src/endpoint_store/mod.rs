@@ -7,7 +7,6 @@ mod snapshot;
 
 pub use snapshot::EndpointSnapshot;
 
-use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -140,8 +139,7 @@ impl EndpointStore {
         }
     }
 
-    /// The committed snapshot, or the empty one before the first write.
-    /// Unreadable state is reported, never replaced.
+    /// The committed snapshot, or the empty one before the first write.    /// Unreadable state is reported, never replaced.
     pub fn snapshot(&self) -> Result<EndpointSnapshot, GatewayError> {
         match self.read() {
             Observed::Verified(snapshot, _) => Ok(snapshot),
@@ -197,41 +195,6 @@ impl EndpointStore {
             )
             .map_err(error)?;
         Ok(value)
-    }
-
-    /// Allocate the alias IP for `identity` when its environment comes up.
-    ///
-    /// Assignments whose checkout path is gone are reclaimed first, so a
-    /// deleted worktree's address is reused on the next allocation. The
-    /// assignment lives until `down` releases it.
-    pub fn allocate_loopback(&self, identity: &str, scope: &str) -> Result<Ipv4Addr, GatewayError> {
-        self.transaction(|snapshot| {
-            let mut registry = snapshot.loopback()?;
-            registry.reclaim_absent_paths();
-            let ip = registry.allocate(identity, scope)?.ip;
-            snapshot.set_loopback(&registry)?;
-            Ok(ip)
-        })
-    }
-
-    /// Release one alias when its environment goes down.
-    pub fn release_loopback(&self, identity: &str) -> Result<bool, GatewayError> {
-        self.transaction(|snapshot| {
-            let mut registry = snapshot.loopback()?;
-            let removed = registry.deallocate(identity).is_some();
-            snapshot.set_loopback(&registry)?;
-            Ok(removed)
-        })
-    }
-
-    /// Release every alias owned by one checkout path.
-    pub fn release_loopback_for_path(&self, scope: &str) -> Result<usize, GatewayError> {
-        self.transaction(|snapshot| {
-            let mut registry = snapshot.loopback()?;
-            let released = registry.release_scope(scope);
-            snapshot.set_loopback(&registry)?;
-            Ok(released)
-        })
     }
 }
 

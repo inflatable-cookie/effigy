@@ -423,9 +423,8 @@ When the target releases keep their dependency lists identical, keep the graph
 still:
 
 1. Name the exact crates and versions the change is for.
-2. Run the precise update once:
-   `cargo update -p <crate> --precise <version>`
-   (through Effigy: `effigy cargo update -p <crate> --precise <version>`).
+2. Run the precise update once, by hand:
+   `cargo update -p <crate> --precise <version>`.
 3. Copy the new `version` and `checksum` values for those entries out of the
    resulting `Cargo.lock`, then restore the lockfile from your last commit.
 4. Apply the update surgically: edit only those `[[package]]` entries, changing

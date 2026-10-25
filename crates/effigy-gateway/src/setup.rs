@@ -699,11 +699,14 @@ pub fn adopt_legacy_files(home: &Path, uid: u32) -> io::Result<()> {
     else {
         return Ok(());
     };
-    for name in ["routes.json", "loopback-ips.json"] {
-        gateway
-            .adopt_setup_entry(&cx, &FileName::new(name).map_err(error)?, false, MAX_FILE)
-            .map_err(error)?;
-    }
+    gateway
+        .adopt_setup_entry(
+            &cx,
+            &FileName::new("routes.json").map_err(error)?,
+            false,
+            MAX_FILE,
+        )
+        .map_err(error)?;
     let certs_name = FileName::new("certs").map_err(error)?;
     if let Some(certs) = gateway.setup_child(&certs_name).map_err(error)? {
         for name in certs.setup_entries(4096).map_err(error)? {
@@ -1181,7 +1184,7 @@ mod tests {
         let gateway = home.path().join(".effigy/gateway");
         std::fs::create_dir_all(&gateway).unwrap();
         let config = GatewayConfig::standard(gateway.clone());
-        let fixtures=[(gateway.join("routes.json"),br#"{"_managed_by":"effigy-gateway-route-table-v1","routes":{"cbs.legacy.test":{"domain":"cbs.legacy.test","target":"127.0.0.1:8100","source":"manual","project":"/redacted/site","tls":true,"registered":"2026-01-01T00:00:00Z"},"ui.acowtancy.test":{"domain":"ui.acowtancy.test","target":"127.0.0.1:8300","source":"manual","project":"/redacted/ui","registered":"2026-01-01T00:00:00Z"}}}"#.as_slice()),(gateway.join("loopback-ips.json"),br#"{"assignments":{"site":{"ip":"127.1.0.7","scope":"/redacted/site"}}}"#.as_slice()),(home.path().join(".effigy/ports.json"),br#"{"allocations":{"site":{"base":8100,"range":100,"project":"/redacted/site","assigned_ports":{"mysql:3306":8106}}}}"#.as_slice())];
+        let fixtures=[(gateway.join("routes.json"),br#"{"_managed_by":"effigy-gateway-route-table-v1","routes":{"cbs.legacy.test":{"domain":"cbs.legacy.test","target":"127.0.0.1:8100","source":"manual","project":"/redacted/site","tls":true,"registered":"2026-01-01T00:00:00Z"},"ui.acowtancy.test":{"domain":"ui.acowtancy.test","target":"127.0.0.1:8300","source":"manual","project":"/redacted/ui","registered":"2026-01-01T00:00:00Z"}}}"#.as_slice()),(home.path().join(".effigy/ports.json"),br#"{"allocations":{"site":{"base":8100,"range":100,"project":"/redacted/site","assigned_ports":{"mysql:3306":8106}}}}"#.as_slice())];
         for (path, bytes) in &fixtures {
             std::fs::write(path, bytes).unwrap();
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -1253,7 +1256,6 @@ mod tests {
         let mut originals = Vec::new();
         for (name, target) in [
             ("routes.json", gateway.join("routes.json")),
-            ("loopback-ips.json", gateway.join("loopback-ips.json")),
             ("ports.json", home.path().join(".effigy/ports.json")),
         ] {
             let bytes = std::fs::read(source.join(name)).unwrap();

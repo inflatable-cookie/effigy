@@ -12,7 +12,6 @@
 #
 # Escapes, in one place:
 #   EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>   plain Cargo for that run
-#   effigy cargo <cargo args>                     plain Cargo, one command
 # Hosted runners have no Oxide, so `GITHUB_ACTIONS=true` also runs plain
 # Cargo; `.github/workflows` keep calling Cargo and these selectors unchanged.
 #

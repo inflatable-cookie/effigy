@@ -77,8 +77,6 @@ pub struct FailedResource {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GatewayRelease {
     pub routes: Vec<String>,
-    /// Loopback aliases released for the checkout path.
-    pub loopbacks: usize,
 }
 
 /// Everything one retirement did.
