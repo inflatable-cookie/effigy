@@ -576,10 +576,7 @@ pub enum BundleSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewaySubcommand {
-    Setup {
-        suffixes: Vec<String>,
-        remove: bool,
-    },
+    Setup { suffixes: Vec<String>, remove: bool },
     Up,
     Down,
     Status,

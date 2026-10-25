@@ -470,12 +470,12 @@ mod legacy_admission_tests {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
+    use super::OwnershipContext;
+    use crate::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerSecretDelivery,
         ManifestContainerShutdownMode, ManifestContainerStartup,
     };
-    use super::OwnershipContext;
-    use crate::{EffectiveComposeSource, EffectiveContainerPolicy};
 
     fn policy(project: &str) -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
@@ -577,7 +577,6 @@ mod legacy_admission_tests {
             .verify_shutdown_listing(&policy, row.as_bytes())
             .expect("matching scoped ownership");
     }
-
 }
 
 /// An inspected binding. Fields are private so only strict inspection can mint it.

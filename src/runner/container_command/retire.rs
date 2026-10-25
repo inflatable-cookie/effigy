@@ -52,7 +52,8 @@ pub(super) fn run_container_retire(
     let checkout = retire_checkout(repo_override)?;
     let checkout_label = checkout.display().to_string();
     let inventory = Inventory::read(&checkout)?;
-    let owned = inventory.owned_by(&checkout_label, scope);
+    let declared = checkout_projects(&checkout);
+    let owned = inventory.owned_by(&checkout_label, scope, &declared);
     let mut kept = inventory.unlabelled_kept(&owned.projects);
     if owned.resources.is_empty() && kept.is_empty() {
         let outcome = RetireOutcome::default();
@@ -108,9 +109,13 @@ pub(super) struct Labelled {
 #[derive(Debug, Default)]
 pub(super) struct Inventory {
     pub labelled: Vec<Labelled>,
-    /// Containers and volumes of a labelled project that carry no Effigy
-    /// checkout label of their own. Reported, never adopted.
+    /// Containers of a labelled project that carry no Effigy checkout label of
+    /// their own. Reported, never adopted.
     pub unlabelled: Vec<(String, OwnedResource)>,
+    /// Volumes that carry only their Compose project label, with the project
+    /// they name. `nerdctl compose` leaves a named volume with nothing else, so
+    /// the project plus the `<project>-<volume>` name is its ownership proof.
+    pub by_project: Vec<(String, OwnedResource)>,
 }
 
 /// The resources this checkout owns, and every project name they name.
@@ -128,6 +133,7 @@ impl Inventory {
         let profiles = query_profiles();
         let mut labelled = Vec::new();
         let mut unlabelled = Vec::new();
+        let mut by_project = Vec::new();
         let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for profile in &profiles {
             for row in list_containers(&cwd, profile)? {
@@ -148,10 +154,8 @@ impl Inventory {
                     }
                     None => {
                         if let Some(project) = row.project.clone() {
-                            unlabelled.push((
-                                project,
-                                row.resource(ResourceKind::Container, profile),
-                            ));
+                            unlabelled
+                                .push((project, row.resource(ResourceKind::Container, profile)));
                         }
                     }
                 }
@@ -174,7 +178,7 @@ impl Inventory {
                     }
                     None => {
                         if let Some(project) = row.project.clone() {
-                            unlabelled.push((project, row.resource(profile)));
+                            by_project.push((project, row.resource(profile)));
                         }
                     }
                 }
@@ -206,11 +210,24 @@ impl Inventory {
                 });
             }
         }
-        Ok(Self { labelled, unlabelled })
+        Ok(Self {
+            labelled,
+            unlabelled,
+            by_project,
+        })
     }
 
-    /// The labelled resources of one checkout path, optionally of one scope.
-    pub(super) fn owned_by(&self, checkout: &str, scope: Option<&str>) -> Owned {
+    /// The resources of one checkout path, optionally of one scope.
+    ///
+    /// `declared` are the checkout's own Compose project names, resolved from
+    /// its manifest, so a stack whose containers are already gone still gives
+    /// up its project-labelled volumes and networks.
+    pub(super) fn owned_by(
+        &self,
+        checkout: &str,
+        scope: Option<&str>,
+        declared: &[String],
+    ) -> Owned {
         let wanted = checkout;
         let mut owned = Owned::default();
         for entry in &self.labelled {
@@ -220,8 +237,10 @@ impl Inventory {
             if let Some(scope) = scope {
                 // A network carries no scope label; it is owned through the
                 // project its labelled containers and volumes name.
-                if matches!(entry.resource.kind, ResourceKind::Container | ResourceKind::Volume)
-                    && entry.scope.as_deref().map(str::trim) != Some(scope.trim())
+                if matches!(
+                    entry.resource.kind,
+                    ResourceKind::Container | ResourceKind::Volume
+                ) && entry.scope.as_deref().map(str::trim) != Some(scope.trim())
                 {
                     continue;
                 }
@@ -231,12 +250,31 @@ impl Inventory {
             }
             owned.resources.push(entry.resource.clone());
         }
+        owned.projects.extend(declared.iter().cloned());
+        self.claim_named_volumes(&mut owned);
         owned.resources = effigy_containers::unique_resources(owned.resources);
         owned
     }
 
-    /// Unlabelled objects of the given projects, which retirement reports and
-    /// keeps so the caller knows to relabel them.
+    /// Volumes whose only label is their Compose project, claimed by the name
+    /// Compose gave them.
+    fn claim_named_volumes(&self, owned: &mut Owned) {
+        let projects = owned.projects.iter().cloned().collect::<Vec<_>>();
+        for (project, resource) in &self.by_project {
+            if !owned.projects.contains(project)
+                || !effigy_containers::named_volume_belongs_to(&resource.name, project)
+            {
+                continue;
+            }
+            if owns_longest_project(&resource.name, &projects) != Some(project.as_str()) {
+                continue;
+            }
+            owned.resources.push(resource.clone());
+        }
+    }
+
+    /// Unlabelled containers of the given projects, which retirement reports
+    /// and keeps so the caller knows to relabel them.
     pub(super) fn unlabelled_kept(&self, projects: &BTreeSet<String>) -> Vec<KeptResource> {
         self.unlabelled
             .iter()
@@ -261,6 +299,23 @@ impl Inventory {
             group.resources.push(entry.resource.clone());
             if let Some(project) = &entry.project {
                 group.projects.insert(project.clone());
+            }
+        }
+        // A project-labelled volume joins the one group that names its project.
+        for (project, resource) in &self.by_project {
+            let naming = groups
+                .values()
+                .filter(|group| group.projects.contains(project))
+                .map(|group| trim_path(&group.checkout))
+                .collect::<Vec<_>>();
+            let [owner] = naming.as_slice() else {
+                continue;
+            };
+            if !effigy_containers::named_volume_belongs_to(&resource.name, project) {
+                continue;
+            }
+            if let Some(group) = groups.get_mut(owner) {
+                group.resources.push(resource.clone());
             }
         }
         for group in groups.values_mut() {
@@ -452,7 +507,11 @@ fn list_volumes(cwd: &Path, profile: &str) -> Result<Vec<VolumeRow>, RunnerError
 
 /// The backend's networks of the given projects. A Compose network carries no
 /// Effigy label of its own, so the project label is the ownership proof.
-fn list_networks(cwd: &Path, profile: &str, projects: &[String]) -> Result<Vec<String>, RunnerError> {
+fn list_networks(
+    cwd: &Path,
+    profile: &str,
+    projects: &[String],
+) -> Result<Vec<String>, RunnerError> {
     let mut found = BTreeSet::new();
     for project in projects {
         let command = DockerCommand {
@@ -491,6 +550,35 @@ fn network_project(name: &str, projects: &[String]) -> Option<String> {
         })
         .max_by_key(|project| project.len())
         .cloned()
+}
+
+/// The checkout's own Compose project names, resolved from its manifest. A
+/// manifest that cannot be resolved is a warning: the labels still identify
+/// everything except a Compose network or a project-labelled volume of a stack
+/// whose containers are already gone.
+pub(super) fn checkout_projects(checkout: &Path) -> Vec<String> {
+    match effigy_containers::load_all_container_policies(checkout) {
+        Ok(policies) => policies
+            .into_iter()
+            .map(|policy| policy.project_name)
+            .collect(),
+        Err(error) => {
+            eprintln!(
+                "[warn] cannot resolve this checkout's container projects ({error}); a project-labelled volume or network of a stack with no containers left cannot be retired"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// The project a named volume is built for, from its `<project>-<volume>` name.
+/// Only a project the caller already knows can match.
+fn owns_longest_project<'a>(name: &str, projects: &'a [String]) -> Option<&'a str> {
+    projects
+        .iter()
+        .filter(|project| effigy_containers::named_volume_belongs_to(name, project))
+        .max_by_key(|project| project.len())
+        .map(String::as_str)
 }
 
 fn is_builtin_network(name: &str) -> bool {
@@ -591,17 +679,17 @@ fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
         ResourceKind::Volume => remove_volume_command(&resource.name),
         ResourceKind::Network => DockerCommand {
             program: "docker".to_owned(),
-            args: vec![
-                "network".to_owned(),
-                "rm".to_owned(),
-                resource.name.clone(),
-            ],
+            args: vec!["network".to_owned(), "rm".to_owned(), resource.name.clone()],
             description: format!("remove owned network {}", resource.name),
         },
     };
     let runtime_error = |error: &str| {
         let reason = runtime_reason(error).unwrap_or_else(|| {
-            format!("could not remove {} {}", resource.kind.label(), resource.name)
+            format!(
+                "could not remove {} {}",
+                resource.kind.label(),
+                resource.name
+            )
         });
         if reason.contains(&resource.name) {
             reason
@@ -627,22 +715,25 @@ pub(super) fn release_gateway(checkout: &str) -> Result<GatewayRelease, RunnerEr
     let Some(home) = effigy_containers::effigy_home() else {
         return Ok(release);
     };
-    EndpointStore::for_effigy_home(&home).transaction(None, |snapshot| -> Result<_, RunnerError> {
-        let mut registry = snapshot.ports()?;
-        release.ports = release_names(
-            registry
-                .allocations
-                .iter()
-                .filter(|(_, allocation)| allocation.project == checkout)
-                .map(|(name, _)| name.clone())
-                .collect(),
-            |name| {
-                registry.deallocate(name);
-            },
-        );
-        snapshot.set_ports(&registry)?;
-        Ok(())
-    })?;
+    EndpointStore::for_effigy_home(&home).transaction(
+        None,
+        |snapshot| -> Result<_, RunnerError> {
+            let mut registry = snapshot.ports()?;
+            release.ports = release_names(
+                registry
+                    .allocations
+                    .iter()
+                    .filter(|(_, allocation)| allocation.project == checkout)
+                    .map(|(name, _)| name.clone())
+                    .collect(),
+                |name| {
+                    registry.deallocate(name);
+                },
+            );
+            snapshot.set_ports(&registry)?;
+            Ok(())
+        },
+    )?;
     EndpointStore::for_routes(&path).transaction(None, |snapshot| -> Result<_, RunnerError> {
         let mut registry = snapshot.loopback()?;
         release.loopbacks = release_names(
@@ -767,23 +858,28 @@ mod tests {
                 labelled("/w/two", "aaaa", "app-two", "web"),
             ],
             unlabelled: Vec::new(),
+            by_project: Vec::new(),
         };
-        let owned = inventory.owned_by("/w/one", None);
+        let owned = inventory.owned_by("/w/one", None, &[]);
         assert_eq!(owned.resources.len(), 2);
         assert_eq!(
             owned.projects,
             BTreeSet::from(["app-one".to_owned(), "app-one-b".to_owned()])
         );
-        let scoped = inventory.owned_by("/w/one/", Some("bbbb"));
+        let scoped = inventory.owned_by("/w/one/", Some("bbbb"), &[]);
         assert_eq!(scoped.resources.len(), 1);
         assert_eq!(scoped.resources[0].name, "jobs");
-        assert!(inventory.owned_by("/w/three", None).resources.is_empty());
+        assert!(inventory
+            .owned_by("/w/three", None, &[])
+            .resources
+            .is_empty());
     }
 
     #[test]
     fn unlabelled_lookalikes_are_reported_not_owned() {
         let inventory = Inventory {
             labelled: vec![labelled("/w/one", "aaaa", "app-one", "web")],
+            by_project: Vec::new(),
             unlabelled: vec![(
                 "app-one".to_owned(),
                 OwnedResource {
@@ -794,12 +890,112 @@ mod tests {
                 },
             )],
         };
-        let owned = inventory.owned_by("/w/one", None);
+        let owned = inventory.owned_by("/w/one", None, &[]);
         assert_eq!(owned.resources.len(), 1);
         let kept = inventory.unlabelled_kept(&owned.projects);
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].resource.name, "legacy");
         assert_eq!(kept[0].reason, UNLABELLED_KEPT);
+    }
+
+    fn project_volume(project: &str, name: &str) -> (String, OwnedResource) {
+        (
+            project.to_owned(),
+            OwnedResource {
+                kind: ResourceKind::Volume,
+                name: name.to_owned(),
+                profile: "effigy".to_owned(),
+                persist: false,
+            },
+        )
+    }
+
+    #[test]
+    fn a_volume_labelled_only_by_its_compose_project_is_owned_by_its_name() {
+        // Exactly what `nerdctl compose` leaves behind: the named volume has
+        // its Compose project label and the name `<project>-<volume>`.
+        let inventory = Inventory {
+            labelled: vec![labelled("/w/one", "aaaa", "c2raed464", "web-1")],
+            unlabelled: Vec::new(),
+            by_project: vec![
+                project_volume("c2raed464", "c2raed464-cache-data"),
+                project_volume("c2raed464", "efv-1234"),
+                project_volume("other", "other-cache-data"),
+            ],
+        };
+        let owned = inventory.owned_by("/w/one", None, &[]);
+        let volumes = owned
+            .resources
+            .iter()
+            .filter(|resource| resource.kind == ResourceKind::Volume)
+            .map(|resource| resource.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(volumes, vec!["c2raed464-cache-data"]);
+        // It is owned, not "kept as unlabelled".
+        assert!(inventory.unlabelled_kept(&owned.projects).is_empty());
+    }
+
+    #[test]
+    fn a_declared_project_claims_its_volumes_when_no_container_is_left() {
+        let inventory = Inventory {
+            labelled: Vec::new(),
+            unlabelled: Vec::new(),
+            by_project: vec![project_volume("c2raed464", "c2raed464-cache-data")],
+        };
+        assert!(inventory.owned_by("/w/one", None, &[]).resources.is_empty());
+        let owned = inventory.owned_by("/w/one", None, &["c2raed464".to_owned()]);
+        assert_eq!(owned.resources.len(), 1);
+        assert_eq!(owned.resources[0].name, "c2raed464-cache-data");
+    }
+
+    #[test]
+    fn a_project_two_checkouts_share_claims_no_project_labelled_volume() {
+        let inventory = Inventory {
+            labelled: vec![
+                labelled("/w/one", "aaaa", "shared", "web-1"),
+                labelled("/w/two", "bbbb", "shared", "web-2"),
+            ],
+            unlabelled: Vec::new(),
+            by_project: vec![project_volume("shared", "shared-cache-data")],
+        };
+        for group in inventory.groups() {
+            assert!(
+                !group
+                    .resources
+                    .iter()
+                    .any(|resource| resource.name == "shared-cache-data"),
+                "{group:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dead_group_claims_the_project_labelled_volume_of_its_stack() {
+        let inventory = Inventory {
+            labelled: vec![labelled(
+                "/w/gone",
+                "aaaa",
+                "app-dev-wt-aaaaaaaaaaaa",
+                "web-1",
+            )],
+            unlabelled: Vec::new(),
+            by_project: vec![
+                project_volume(
+                    "app-dev-wt-aaaaaaaaaaaa",
+                    "app-dev-wt-aaaaaaaaaaaa-cache-data",
+                ),
+                project_volume("app-dev-wt-aaaaaaaaaaaa", "efv-9999"),
+            ],
+        };
+        let groups = inventory.groups();
+        assert_eq!(groups.len(), 1);
+        let names = groups[0]
+            .resources
+            .iter()
+            .filter(|resource| resource.kind == ResourceKind::Volume)
+            .map(|resource| resource.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["app-dev-wt-aaaaaaaaaaaa-cache-data"]);
     }
 
     #[test]
@@ -811,6 +1007,7 @@ mod tests {
                 labelled("/w/two", "bbbb", "app-two", "web"),
             ],
             unlabelled: Vec::new(),
+            by_project: Vec::new(),
         };
         let groups = inventory.groups();
         assert_eq!(groups.len(), 2);
@@ -825,7 +1022,10 @@ mod tests {
             network_project("app-dev_wt_default", &projects),
             Some("app-dev".to_owned())
         );
-        assert_eq!(network_project("app_default", &projects), Some("app".to_owned()));
+        assert_eq!(
+            network_project("app_default", &projects),
+            Some("app".to_owned())
+        );
         assert_eq!(network_project("other_default", &projects), None);
         assert_eq!(network_project("app_", &projects), None);
     }
@@ -900,8 +1100,14 @@ mod tests {
 
         let after = effigy_gateway::ports::PortRegistry::load(&home.join("ports.json"))
             .expect("registry after release");
-        assert!(after.get(owned).is_none(), "the checkout's range is released");
-        assert!(after.get(kept).is_some(), "another checkout keeps its range");
+        assert!(
+            after.get(owned).is_none(),
+            "the checkout's range is released"
+        );
+        assert!(
+            after.get(kept).is_some(),
+            "another checkout keeps its range"
+        );
     }
 
     #[test]

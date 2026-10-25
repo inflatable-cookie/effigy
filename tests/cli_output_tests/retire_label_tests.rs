@@ -32,11 +32,7 @@ impl Fixture {
         fs::create_dir_all(&state).expect("state dir");
         write_executable(&bin.join("docker"), &fake_runtime_script("docker"));
         write_executable(&bin.join("colima"), &fake_runtime_script("colima"));
-        let path = format!(
-            "{}:{}",
-            bin.display(),
-            std::env::var("PATH").expect("PATH")
-        );
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
         Self {
             owned,
             root,
@@ -51,7 +47,11 @@ impl Fixture {
     }
 
     fn checkout(&self) -> String {
-        self.root.canonicalize().expect("canonical checkout").display().to_string()
+        self.root
+            .canonicalize()
+            .expect("canonical checkout")
+            .display()
+            .to_string()
     }
 
     fn container(&self, name: &str, project: &str, scope: &str) {
@@ -71,10 +71,16 @@ impl Fixture {
     fn volume(&self, name: &str, project: &str, scope: &str, persist: bool) {
         append(
             &self.state.join("volumes"),
-            &format!(
-                "{name}|{project}|{}||{scope}|{persist}",
-                self.checkout()
-            ),
+            &format!("{name}|{project}|{}||{scope}|{persist}", self.checkout()),
+        );
+    }
+
+    /// A volume exactly as `nerdctl compose` leaves one: its Compose project
+    /// label and the name Compose gave it, with no Effigy label at all.
+    fn project_volume(&self, name: &str, project: &str) {
+        append(
+            &self.state.join("volumes"),
+            &format!("{name}|{project}|||false"),
         );
     }
 
@@ -336,9 +342,10 @@ fn a_volume_the_runtime_refuses_to_remove_is_named_and_retire_fails() {
     );
     let remaining = report["remaining"].as_array().expect("remaining rows");
     assert!(
-        remaining[0]["error"].as_str().is_some_and(|error| error
-            .contains("app-web-wt-cccccccccccc-stuck")
-            && error.contains("volume is in use")),
+        remaining[0]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("app-web-wt-cccccccccccc-stuck")
+                && error.contains("volume is in use")),
         "{remaining:?}"
     );
     assert_eq!(
@@ -368,7 +375,9 @@ fn dead_retire_removes_only_the_stacks_whose_checkout_is_gone() {
     );
     append(
         &fixture.state.join("volumes"),
-        &format!("app-dead-wt-dddddddddddd-target|app-dead-wt-dddddddddddd|{dead}||{dead_scope}|false"),
+        &format!(
+            "app-dead-wt-dddddddddddd-target|app-dead-wt-dddddddddddd|{dead}||{dead_scope}|false"
+        ),
     );
     append(
         &fixture.state.join("networks"),
@@ -393,7 +402,10 @@ fn dead_retire_removes_only_the_stacks_whose_checkout_is_gone() {
     );
     assert!(fixture.state_lines("volumes").is_empty());
     assert!(fixture.state_lines("networks").is_empty());
-    assert!(!dead_checkout.exists(), "retirement never recreates a checkout");
+    assert!(
+        !dead_checkout.exists(),
+        "retirement never recreates a checkout"
+    );
 
     // A checkout that exists again is not dead, and its stack is left alone.
     fs::create_dir_all(&dead_checkout).expect("re-cloned checkout");
@@ -401,6 +413,38 @@ fn dead_retire_removes_only_the_stacks_whose_checkout_is_gone() {
     assert!(ok, "{report}");
     assert!(report["scopes"].as_array().expect("scope rows").is_empty());
     fs::remove_dir_all(&dead_checkout).ok();
+}
+
+#[test]
+fn a_volume_carrying_only_its_compose_project_label_is_retired_by_name() {
+    // What nerdctl compose actually leaves on a named volume: the project label
+    // and no Effigy label. The name Compose gave it is the ownership proof.
+    let fixture = Fixture::new("effigy-retire-project-volume-");
+    let scope = "22222222222222222222222222222222";
+    let project = "c2raed464";
+    fixture.container("c2raed464-web-1", project, scope);
+    fixture.project_volume("c2raed464-cache-data", project);
+    // Another project's volume is not this checkout's.
+    fixture.project_volume("c2raed464-elsewhere", "c2raed464-other");
+    // A look-alike that does not carry the project's name form is left alone.
+    fixture.project_volume("efv-51bb06807c269fec", project);
+
+    let (ok, report) = fixture.retire(&["container", "retire", "--yes"]);
+    assert!(ok, "{report}");
+    assert_eq!(
+        names(&report["removed"]),
+        vec![
+            "c2raed464-web-1".to_owned(),
+            "c2raed464-cache-data".to_owned()
+        ]
+    );
+    assert_eq!(
+        fixture.state_lines("volumes"),
+        vec![
+            format!("c2raed464-elsewhere|c2raed464-other|||false"),
+            format!("efv-51bb06807c269fec|{project}|||false"),
+        ]
+    );
 }
 
 #[test]
@@ -442,14 +486,14 @@ fn retire_of_a_checkout_with_no_labelled_resources_is_a_no_op() {
     assert!(ok, "{report}");
     assert_eq!(report["ok"], true);
     assert_eq!(report["idempotent"], true);
-    assert!(report["removed"].as_array().expect("removed rows").is_empty());
+    assert!(report["removed"]
+        .as_array()
+        .expect("removed rows")
+        .is_empty());
     // No ownership record is written by reading or retiring.
     assert!(!fixture.root().join(".effigy/state/runtime-scopes").exists());
     assert!(!fixture.home.join(".effigy/runtime-scopes").exists());
     // Nothing reached a mutating backend command.
     let calls = fixture.state_lines("calls.log");
-    assert!(
-        calls.iter().all(|call| !call.contains(" rm ")),
-        "{calls:?}"
-    );
+    assert!(calls.iter().all(|call| !call.contains(" rm ")), "{calls:?}");
 }

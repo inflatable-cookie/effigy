@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
 use crate::exec::RunningComposeContainerInventory;
-use crate::runtime::scope::{
-    CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL,
-};
+use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
     ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
@@ -1702,7 +1700,9 @@ mod tests {
 
             assert_eq!(probes, 1, "an exhausted pool probes ownership once");
             assert!(
-                allocated.expect("the released addresses are reusable").is_some(),
+                allocated
+                    .expect("the released addresses are reusable")
+                    .is_some(),
                 "the new project takes a released address"
             );
             let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());

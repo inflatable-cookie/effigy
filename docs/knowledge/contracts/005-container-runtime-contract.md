@@ -1039,7 +1039,16 @@ Created and exited containers retire with running ones. Compose networks carry
 no Effigy label of their own, so they are found by their
 `com.docker.compose.project` label and attributed to the one checkout the
 project's labelled resources name; a project two checkouts share is never
-attributed and its networks stay. `retire --keep-data` keeps every labelled
+attributed and its networks stay.
+
+`nerdctl compose` copies neither Compose's per-volume `labels:` nor Effigy's
+labels onto a named volume: it leaves `com.docker.compose.project` and the name
+Compose gave the volume, `<project>-<volume>` (`<project>_<volume>` on Docker
+Compose). That name, found through the checkout's own project names, is the
+volume's ownership proof, so `retire --yes` removes those volumes instead of
+reporting them as unlabelled. A volume of a project whose containers are
+already gone is still found, because the checkout's manifest names its
+projects. `retire --keep-data` keeps every labelled
 volume, names which ones are named data (`com.effigy.persist=true`) and lists
 them; without it retirement removes them with the rest of the stack. Anything
 that could not be deleted is named with the runtime's own error and retirement

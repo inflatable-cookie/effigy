@@ -1258,7 +1258,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `container up` decides whether a stack runs from one labelled `ps` instead of
   inspecting each container, and a profile Effigy creates or restarts is
   repaired by the apply that follows, with no stale-container sweep
-  (contracts 005, 052).
+  (contracts 005, 052). `nerdctl compose` gives a named volume only its Compose
+  project label and the `<project>-<volume>` name it created, so a volume of one
+  of this checkout's projects is owned by that name as well as by Effigy's
+  labels; `retire --yes` removes it rather than reporting it as unlabelled.
 - Kernel object closures are published with Effigy's ordinary private modes —
   files 0600, directories 0700 — instead of 0400 and 0500, and the post-rename
   root seal is gone. The digest already proves integrity, and a read-only tree

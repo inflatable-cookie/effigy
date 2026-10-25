@@ -57,13 +57,13 @@ pub use report::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
     cache_prune_report, data_list_report, data_pull_production_report, data_transfer_report,
     down_noop_report, down_report, hosts_report, logs_report, reset_report, retire_report,
-    stats_global_report, status_global_report, status_report,
-    up_detached_report, volume_list_report, volume_prune_report,
-    workspace_extra_mount_decision_lines, AllocatedPortsSummary, ContainerCacheGlobalEntry,
-    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
-    ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerServiceHealth, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
-    ContainerStatusService, ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
+    stats_global_report, status_global_report, status_report, up_detached_report,
+    volume_list_report, volume_prune_report, workspace_extra_mount_decision_lines,
+    AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
+    ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
+    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerServiceHealth,
+    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 pub use runtime::loopback::{
     prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,
@@ -90,7 +90,7 @@ pub use runtime::retire::{
     RetireOutcome,
 };
 pub use runtime::scope::{
-    CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL,
+    named_volume_belongs_to, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL,
     MOUNT_TARGET_LABEL, PERSIST_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL, SCOPE_LABEL, SERVICE_LABEL,
     VOLUME_NAME_LABEL,
 };

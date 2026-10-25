@@ -1557,7 +1557,10 @@ pub fn hosts_report(
     }
 }
 
-pub fn retire_report(checkout: Option<&str>, outcome: &crate::RetireOutcome) -> ContainerCommandReport {
+pub fn retire_report(
+    checkout: Option<&str>,
+    outcome: &crate::RetireOutcome,
+) -> ContainerCommandReport {
     let ok = outcome.ok();
     let json = json!({
         "schema": "effigy.container.retire.v1",
@@ -1782,7 +1785,9 @@ mod retire_tests {
         assert_eq!(report.json["gateway"]["ports"][0], "app-dev");
         assert!(report.success_text.contains("released 1 route(s)"));
         assert!(report.success_text.contains("released 1 port range(s)"));
-        assert!(report.success_text.contains("released 1 loopback address(es)"));
+        assert!(report
+            .success_text
+            .contains("released 1 loopback address(es)"));
     }
 }
 

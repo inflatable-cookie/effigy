@@ -133,7 +133,10 @@ fn an_existing_owner_path_keeps_its_address() {
 
     let plan = plan_recovery(&registry, &routes, &clean_facts(), present, no_listener);
 
-    assert_eq!(assignment_row(&plan, "127.1.0.4").decision, Decision::Retain);
+    assert_eq!(
+        assignment_row(&plan, "127.1.0.4").decision,
+        Decision::Retain
+    );
 }
 
 #[test]
@@ -337,9 +340,15 @@ fn a_route_on_a_live_assignment_address_is_held() {
     // offered to the allocator even though another dead owner names it.
     let other = registry_with(&[("project:dead:/dead", "127.1.0.5", MISSING)]);
     let plan = plan_recovery(&registry, &routes, &clean_facts(), probe, no_listener);
-    assert_eq!(assignment_row(&plan, "127.1.0.4").decision, Decision::Retain);
+    assert_eq!(
+        assignment_row(&plan, "127.1.0.4").decision,
+        Decision::Retain
+    );
     let dead = plan_recovery(&other, &routes, &clean_facts(), missing, no_listener);
-    assert_eq!(assignment_row(&dead, "127.1.0.5").decision, Decision::Reclaim);
+    assert_eq!(
+        assignment_row(&dead, "127.1.0.5").decision,
+        Decision::Reclaim
+    );
 }
 
 #[test]

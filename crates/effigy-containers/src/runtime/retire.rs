@@ -23,7 +23,6 @@ impl ResourceKind {
             Self::Network => "network",
         }
     }
-
 }
 
 /// One labelled runtime object this checkout owns.
@@ -141,7 +140,9 @@ mod tests {
     #[test]
     fn a_failed_deletion_is_never_reported_clean() {
         let mut outcome = RetireOutcome::default();
-        outcome.removed.push(resource(ResourceKind::Volume, "data", false));
+        outcome
+            .removed
+            .push(resource(ResourceKind::Volume, "data", false));
         outcome.failed.push(FailedResource {
             resource: resource(ResourceKind::Volume, "kept-by-runtime", false),
             error: "volume is in use".to_owned(),

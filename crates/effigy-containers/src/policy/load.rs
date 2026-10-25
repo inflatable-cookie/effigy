@@ -9,9 +9,7 @@ use effigy_manifest::{
 };
 
 use crate::mount_spec::resolve_host_mounts;
-use crate::policy::hosts::{
-    apply_scope_to_routes, host_key, rewrite_declared_host, scope_token,
-};
+use crate::policy::hosts::{apply_scope_to_routes, host_key, rewrite_declared_host, scope_token};
 use crate::policy::project::{
     default_project_name_base, resolve_project_name, validate_unique_project_names,
 };

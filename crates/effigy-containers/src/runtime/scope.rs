@@ -16,3 +16,40 @@ pub const REPO_ROOT_LABEL: &str = "com.effigy.repo-root";
 /// Canonical checkout path a generated Compose resource was created for.
 pub const CHECKOUT_LABEL: &str = "com.effigy.checkout";
 pub const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
+
+/// Whether a named volume is one of a project's volumes, by the name Compose
+/// gives it. `nerdctl compose` copies neither Compose's per-volume `labels:`
+/// nor Effigy's labels onto a named volume: it creates
+/// `<project>-<volume>` and leaves only `com.docker.compose.project` behind.
+/// Docker Compose uses `<project>_<volume>` for the same volume when Effigy
+/// does not name it, so both separators are accepted. The name is then the
+/// ownership proof, exactly as the Compose project label is for a network.
+pub fn named_volume_belongs_to(name: &str, project: &str) -> bool {
+    name.strip_prefix(project)
+        .and_then(|rest| rest.strip_prefix(['-', '_']))
+        .is_some_and(|volume| !volume.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_project_owns_the_volumes_named_after_it() {
+        assert!(named_volume_belongs_to("c2raed464-cache-data", "c2raed464"));
+        assert!(named_volume_belongs_to(
+            "app-web-wt-abcdef012345_db-data",
+            "app-web-wt-abcdef012345"
+        ));
+        assert!(!named_volume_belongs_to(
+            "app-web-wt-abcdef012345",
+            "app-web-wt-abcdef012345"
+        ));
+        assert!(!named_volume_belongs_to(
+            "app-web-wt-abcdef012345-",
+            "app-web-wt-abcdef012345"
+        ));
+        assert!(!named_volume_belongs_to("app-webx-data", "app-web"));
+        assert!(!named_volume_belongs_to("efv-1234", "c2raed464"));
+    }
+}
