@@ -505,33 +505,18 @@ pub(in crate::runner) fn list(
     })
 }
 
-fn root_for_run(id: RunId) -> Observed<effigy_kernel::root::StateRoot> {
-    match lookup(id) {
-        Lookup::Found(record) => Observed::Verified(
-            record.root,
-            effigy_kernel::observe::Evidence::new("bound checkout journal".into(), None)
-                .expect("fixed source"),
-        ),
-        Lookup::NotFound => Observed::Absent(effigy_kernel::observe::AbsenceProof::NoStateRoot),
-        Lookup::Unknown(reason) => Observed::Unknown(
-            effigy_kernel::observe::UnknownReason::StoreUnreadable(reason),
-        ),
-    }
-}
-
 fn unreadable(reason: &str) -> RunnerError {
     RunnerError::task_invocation(format!("the run journal is unreadable: {reason}"))
 }
 
-/// A run's effects as its journal records them: a pure read (R2).
-pub(in crate::runner) fn effects(id: RunId) -> Observed<Vec<effigy_kernel::run::Effect>> {
-    let cx = kernel::observe();
-    let root = match root_for_run(id) {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(proof) => return Observed::Absent(proof),
-        Observed::Unknown(reason) => return Observed::Unknown(reason),
-    };
-    match Store::read(&cx, &root) {
+/// A run's effects from one checkout's journal: a pure read (R2). A follower
+/// binds the root once and keeps reading it, so a poll never re-resolves the
+/// run (effigy#339).
+pub(in crate::runner) fn effects_in(
+    root: &effigy_kernel::root::StateRoot,
+    id: RunId,
+) -> Observed<Vec<effigy_kernel::run::Effect>> {
+    match Store::read(&kernel::observe(), root) {
         Observed::Verified(reader, _) => effigy_kernel::run::effects(&reader, id),
         Observed::Absent(proof) => Observed::Absent(proof),
         Observed::Unknown(reason) => Observed::Unknown(reason),
@@ -570,20 +555,14 @@ fn workload_process_in(
 
 /// Reads one stream of the run's workload process from an exact offset.
 pub(in crate::runner) fn read_log(
+    root: &effigy_kernel::root::StateRoot,
     id: RunId,
     sequence: i64,
     stream: Stream,
     offset: u64,
     max: usize,
 ) -> Observed<LogRead> {
-    let cx = kernel::observe();
-    match root_for_run(id) {
-        Observed::Verified(root, _) => {
-            effigy_kernel::run::read_log(&cx, &root, id, sequence, stream, offset, max)
-        }
-        Observed::Absent(proof) => Observed::Absent(proof),
-        Observed::Unknown(reason) => Observed::Unknown(reason),
-    }
+    effigy_kernel::run::read_log(&kernel::observe(), root, id, sequence, stream, offset, max)
 }
 
 /// What `stop` did to reach the run's owner.

@@ -1446,6 +1446,36 @@ fn store_damaged_journal_reads_unknown_without_a_crash() {
     std::fs::remove_file(root.path().join(DB_NAME)).unwrap();
 }
 
+/// A killed writer can leave a zero-length log with no index beside an already
+/// checkpointed store: nothing is hot, and the read must still answer (K1).
+#[test]
+fn store_read_of_a_leftover_empty_log_succeeds() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("kept"), "task").map(|_| ()))
+        .unwrap();
+    drop(store);
+    let state = root.path().to_path_buf();
+    // Exactly the pair `shard 0: ... unable to open database file` left behind
+    // in the supervisor fault matrix: an empty log, and no index beside it.
+    let _ = std::fs::remove_file(state.join(format!("{DB_NAME}-shm")));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(state.join(format!("{DB_NAME}-wal")))
+        .unwrap();
+    let reader = match reader(home.path()) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("an empty leftover log hid the store: {other:?}"),
+    };
+    assert!(reader.resource(&task("kept")).verified().is_some());
+}
+
 #[test]
 fn store_read_of_a_crashed_writers_log_succeeds() {
     let home = home();

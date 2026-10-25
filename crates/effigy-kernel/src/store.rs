@@ -1305,17 +1305,17 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
 /// no file created and nothing repaired. WAL already gives one consistent
 /// snapshot, so a writer beside this read is not an obstacle.
 ///
-/// A store with write-ahead side files is read through SQLite's own WAL with a
-/// read-only shared-memory index, so its committed frames are visible and a
-/// crashed writer's are not. A checkpointed store without them is an immutable
-/// open: no lock, no index and no file (K1, Q-011).
+/// A store with a hot write-ahead log, or the index beside it, is read through
+/// SQLite's own WAL with a read-only shared-memory index: its committed frames
+/// are visible and a crashed writer's are not. A checkpointed store is an
+/// immutable open — no lock, no index and no file — which also covers the
+/// zero-length log a closed writer can leave behind (K1, Q-011).
 fn open_reading(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
-    let mut side_file = false;
-    for suffix in ["-wal", "-shm"] {
-        let name = FileName::new(&format!("{}{suffix}", root.database_name()))?;
-        side_file |= root.dir().entry(&name)?.is_some();
-    }
-    let query = if side_file {
+    let wal = FileName::new(&format!("{}-wal", root.database_name()))?;
+    let index = FileName::new(&format!("{}-shm", root.database_name()))?;
+    let hot = root.dir().entry(&index)?.is_some()
+        || root.dir().entry(&wal)?.is_some_and(|stat| stat.st_size > 0);
+    let query = if hot {
         "mode=ro&readonly_shm=1"
     } else {
         "immutable=1"
