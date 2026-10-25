@@ -392,7 +392,7 @@ fn create_host_process_dir(repo_root: &Path, dir: &Path) -> Result<(), RunnerErr
                 return Err(RunnerError::task_invocation(format!(
                     "managed host process runtime path {} is not a real directory",
                     current.display()
-                )))
+                )));
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1420,7 +1420,15 @@ fn spawn_generation(
     listener: Option<(&str, &Path, &str)>,
 ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
     use effigy_kernel::custody::{Custody, Lifetime, ProcessSpec, Terminal};
-    let environment = child_environment(std::env::vars_os(), spec, dependency_env, listener);
+    // A user application is a workload: the ambient environment it inherits
+    // carries no session vault access, whatever this supervisor was started
+    // with (effigy#338, K12).
+    let environment = child_environment(
+        crate::runner::secret_session::workload_ambient_environment(),
+        spec,
+        dependency_env,
+        listener,
+    );
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -1712,12 +1720,12 @@ fn supervise_managed_host_listener(
         ),
     )?;
     append_log_line(
-            &log_path,
-            &format!(
-                "[effigy host-process] started managed listener `{}` generation {generation} (pid {pid})",
-                spec.process_name
-            ),
-        );
+        &log_path,
+        &format!(
+            "[effigy host-process] started managed listener `{}` generation {generation} (pid {pid})",
+            spec.process_name
+        ),
+    );
 
     let owned = {
         let mut stop = || stop_requested(run, watch) || shutdown.load(Ordering::SeqCst);
@@ -1967,12 +1975,12 @@ fn supervise_managed_host_listener(
     match publish_managed_listener_route(spec, listener, &owner) {
         Ok(ManagedListenerRoutePublication::HandedOverFromContainer) => {
             append_log_line(
-                    &log_path,
-                    &format!(
-                        "[effigy host-process] gateway route for `{}` handed over from this checkout's container environment; the container environment is still running",
-                        listener.route_domain
-                    ),
-                );
+                &log_path,
+                &format!(
+                    "[effigy host-process] gateway route for `{}` handed over from this checkout's container environment; the container environment is still running",
+                    listener.route_domain
+                ),
+            );
         }
         Ok(ManagedListenerRoutePublication::ReclaimedPredecessor) => {
             append_log_line(
@@ -2161,8 +2169,8 @@ fn supervise_managed_host_listener(
         )?;
     if !remaining_group_members.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-                "managed child leader exited while process group {pid} still has members {remaining_group_members:?}; route withdrawn and generation retained"
-            )));
+            "managed child leader exited while process group {pid} still has members {remaining_group_members:?}; route withdrawn and generation retained"
+        )));
     }
 
     if shutdown.load(Ordering::SeqCst) {
@@ -2991,7 +2999,7 @@ pub(in crate::runner) fn run_internal_host_process_stop(
             return Err(RunnerError::task_invocation_failed_read(
                 &args.pid_file,
                 error,
-            ))
+            ));
         }
     }
     let record: HostProcessRecord = read_private_json(&args.pid_file)?;
@@ -3038,7 +3046,7 @@ fn cleanup_stopped_listener_routes(
             return Err(RunnerError::task_invocation_failed_read(
                 &spec.listener_state_file,
                 error,
-            ))
+            ));
         }
     };
     let state = if state_path_exists {
@@ -3180,7 +3188,7 @@ fn stop_recorded_supervisor(
         Err(error) => {
             return Err(RunnerError::task_invocation(format!(
                 "host process supervisor identity is unavailable; leaving its record held: {error}"
-            )))
+            )));
         }
     };
     if live.boot_identity != record.boot_identity || live.start_identity != record.start_identity {
@@ -3225,7 +3233,7 @@ fn stop_recorded_supervisor(
                 Err(error) => {
                     return Err(RunnerError::task_invocation(format!(
                         "host process supervisor identity became unknown during shutdown: {error}"
-                    )))
+                    )));
                 }
             };
             if current.boot_identity != record.boot_identity

@@ -2486,6 +2486,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `f5d597db`); an unindented paragraph after a blank line is still release
   prose.
 
+### Security
+- The vault passphrase a managed session resolves now reaches only Effigy's own
+  child processes, and only through a one-shot inherited descriptor the child
+  reads once at startup and closes: never a command line, a rendered shell
+  string, or a persistent environment value. `ps -ww` shows nothing, and every
+  user workload and host process starts from an ambient environment with
+  `EFFIGY_INTERNAL_SECRET_PASSPHRASE`,
+  `EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS` and the caller's
+  `EFFIGY_SECRET_PASSPHRASE` removed. A nested `effigy` started from user code
+  (a shell tab, a manifest command, a seeded workspace task) is a top-level
+  invocation and resolves its own access. The internal environment route and
+  both command-string rewrites are gone (effigy#338; contract 032).
+
 ## [0.14.1] - 2026-10-08
 
 ### Added

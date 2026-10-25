@@ -22,6 +22,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub(crate) const KIND: &str = "kernel:process";
+/// The descriptor slot a spawn hands its optional one-shot reader to (K12).
+/// It sits above the capability reader (9) and cleanup pin (10) slots, so a
+/// caller can hand one short-lived payload to its own child without either
+/// showing in argv or outliving the read. The child owns the copy; the parent
+/// keeps its own descriptor and closes it when the spawn returns.
+pub const HANDOFF_FD: i32 = 11;
 #[derive(Clone)]
 pub struct SecretValue(Vec<u8>);
 impl std::fmt::Debug for SecretValue {
@@ -476,6 +482,7 @@ impl Custody {
             true,
             None,
             None,
+            None,
         )
     }
 
@@ -495,6 +502,7 @@ impl Custody {
             false,
             None,
             None,
+            None,
         )
     }
 
@@ -510,6 +518,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
             None,
             None,
         )
@@ -531,6 +540,7 @@ impl Custody {
             false,
             None,
             None,
+            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -550,6 +560,7 @@ impl Custody {
             true,
             None,
             None,
+            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -567,16 +578,20 @@ impl Custody {
             true,
             None,
             None,
+            None,
         )
     }
     /// The caller owns this memory lease; only its reading descriptor reaches
     /// the workload. `required` distinguishes workload and auxiliary custody.
+    /// `handoff` is one short-lived reader the caller hands the child at
+    /// [`HANDOFF_FD`]; the caller keeps no copy after this returns.
     pub fn spawn_with_lease(
         run: &mut Run<'_>,
         spec: ProcessSpec,
         cx: &EffectContext,
         lease: &crate::inheritance::InheritedCapability,
         required: bool,
+        handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
         Self::spawn_inner(
             run,
@@ -587,6 +602,7 @@ impl Custody {
             required,
             Some(lease),
             None,
+            handoff,
         )
     }
     pub fn spawn_foreground_with_lease(
@@ -595,6 +611,7 @@ impl Custody {
         cx: &EffectContext,
         lease: &crate::inheritance::InheritedCapability,
         required: bool,
+        handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
         Self::spawn_inner(
             run,
@@ -605,6 +622,7 @@ impl Custody {
             required,
             Some(lease),
             None,
+            handoff,
         )
     }
     /// `spawn_foreground_with_lease` with a gate between the recorded receipt
@@ -616,6 +634,7 @@ impl Custody {
         lease: &crate::inheritance::InheritedCapability,
         required: bool,
         gate: &mut dyn SpawnGate,
+        handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
         Self::spawn_inner(
             run,
@@ -626,6 +645,7 @@ impl Custody {
             required,
             Some(lease),
             Some(gate),
+            handoff,
         )
     }
     // Every parameter is a distinct spawn knob the public entry points set;
@@ -640,6 +660,7 @@ impl Custody {
         required: bool,
         lease: Option<&crate::inheritance::InheritedCapability>,
         gate: Option<&mut dyn SpawnGate>,
+        handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -666,7 +687,11 @@ impl Custody {
             &image,
             lease,
             closure.as_ref(),
+            handoff.as_ref(),
         )?;
+        // The child holds its own copy of the handoff reader: this process's
+        // copy closes now, so the payload never outlives the spawn.
+        drop(handoff);
         drop(closure);
         drop(image); // helper verified the image before acknowledging the barrier
         let result = (|| {

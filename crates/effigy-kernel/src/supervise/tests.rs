@@ -486,6 +486,7 @@ fn an_environment_owned_supervisor_never_inherits_a_parent_capability() {
             ("FIXTURE_CAPABILITY".into(), out.as_os_str().into()),
         ],
         inheritance,
+        handoff: None,
     };
     let log = helper_log(&root).unwrap();
     let mut child = spawn_helper(

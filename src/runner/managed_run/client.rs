@@ -66,24 +66,17 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
         state_home: home.clone(),
         terminal: request.terminal,
     };
-    let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-        .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
-        .collect();
-    // The vault passphrase this client already read travels in the spawn
-    // environment only (K12), so the supervisor never prompts.
-    if let Some(passphrase) = crate::runner::secret_session::session_passphrase() {
-        let key = OsString::from(crate::runner::secret_session::internal_secret_passphrase_env());
-        env.retain(|(existing, _)| existing != &key);
-        env.push((key, OsString::from(passphrase.expose())));
-    }
-    // A dev session's supervisor keeps the local-dev access its client holds,
-    // so the environment `up` it starts resolves container secrets through the
-    // local-dev key instead of delivering nothing.
-    if crate::runner::secret_session::local_dev_secret_access_active() {
-        let key =
-            OsString::from(crate::runner::secret_session::internal_local_dev_secret_access_env());
-        env.retain(|(existing, _)| existing != &key);
-        env.push((key, OsString::from("1")));
+    // The supervisor is Effigy's own process, and it is never a workload's
+    // environment: it starts without session access, then reads the one-shot
+    // grant its spawn hands it on a descriptor (effigy#338, K12).
+    let mut env: Vec<(OsString, OsString)> =
+        crate::runner::secret_session::workload_ambient_environment()
+            .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+            .collect();
+    let grant = crate::runner::secret_session::take_child_grant();
+    if let Some(grant) = &grant {
+        let (key, value) = grant.env_entry();
+        env.push((OsString::from(key), OsString::from(value)));
     }
     let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
@@ -99,6 +92,7 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
             // keeps that client's lease. Its death is the run's stop, and its
             // re-admitted invocation is checked against the same authority.
             inheritance: SupervisorInheritance::ClientLease,
+            handoff: grant.map(|grant| std::sync::Arc::new(grant.into_reader())),
         },
         &executable,
         ClientMode::Owning,

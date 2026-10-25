@@ -1,8 +1,9 @@
 use crate::runner::error::RunnerError;
-use effigy_core::shell::shell_quote;
 use effigy_secrets::SecretValue;
-use std::ffi::OsString;
-use std::io::IsTerminal;
+use std::ffi::{OsStr, OsString};
+use std::io::{IsTerminal, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -10,11 +11,34 @@ use std::sync::{Mutex, OnceLock};
 const INTERNAL_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_INTERNAL_SECRET_PASSPHRASE";
 const TEST_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_TEST_SECRETS_PASSPHRASE";
 const LOCAL_DEV_SECRET_ACCESS_ENV: &str = "EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS";
+/// Marks a child as the reader of one session grant at the kernel's handoff
+/// slot. It names a channel, never a value (contract 032, 052 K12).
+const SECRET_GRANT_ENV: &str = "EFFIGY_INTERNAL_SECRET_GRANT";
 /// The passphrase a caller (an operator at a shell, or an agent driving a
 /// headless session) supplies for one invocation instead of typing it on a
 /// terminal. It is a source, not a credential: nothing is sealed or written
 /// (contract 032).
 const SESSION_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_SECRET_PASSPHRASE";
+
+/// One session grant frame: a fixed header, then the passphrase bytes.
+const GRANT_MAGIC: &[u8; 8] = b"EFFGRNT1";
+const GRANT_VERSION: u8 = 1;
+const GRANT_FLAG_LOCAL_DEV: u8 = 1;
+const GRANT_HEADER_BYTES: usize = 14;
+/// The largest passphrase a grant carries. A longer frame is refused rather
+/// than read: a malformed channel is not a secret.
+const GRANT_MAX_BYTES: usize = 8 * 1024;
+
+/// Every environment key that carries session access. A user workload never
+/// receives one: the session's vault access travels to Effigy's own children
+/// through the handoff descriptor, never through a workload environment.
+const SESSION_ACCESS_KEYS: [&str; 5] = [
+    INTERNAL_SECRET_PASSPHRASE_ENV,
+    LOCAL_DEV_SECRET_ACCESS_ENV,
+    SECRET_GRANT_ENV,
+    SESSION_SECRET_PASSPHRASE_ENV,
+    TEST_SECRET_PASSPHRASE_ENV,
+];
 
 static SECRET_PASSPHRASE_CACHE: OnceLock<Mutex<Option<SecretValue>>> = OnceLock::new();
 
@@ -31,8 +55,8 @@ fn cached_secret_passphrase() -> Option<SecretValue> {
 
 /// The passphrase stays in this process's memory, never in its global
 /// environment (contract 052 K12). Same-process readers use
-/// [`session_passphrase`]; a child receives it only through its own spawn
-/// environment.
+/// [`session_passphrase`]; a child receives it only through a one-shot
+/// descriptor handoff ([`take_child_grant`]).
 fn cache_secret_passphrase(value: &SecretValue) {
     if let Ok(mut guard) = secret_passphrase_cache().lock() {
         *guard = Some(value.clone());
@@ -40,11 +64,12 @@ fn cache_secret_passphrase(value: &SecretValue) {
 }
 
 /// The passphrase this invocation already holds: read once in this process,
-/// handed to it by its parent's spawn environment, or supplied for this one
-/// invocation by the caller.
+/// adopted from the grant its parent handed it, or supplied for this one
+/// invocation by the caller. The internal environment route is not read: a
+/// passphrase that was ever in an environment is not this session's access.
 pub(in crate::runner) fn session_passphrase() -> Option<SecretValue> {
     cached_secret_passphrase()
-        .or_else(|| env_secret_passphrase(INTERNAL_SECRET_PASSPHRASE_ENV))
+        .or_else(|| env_secret_passphrase(TEST_SECRET_PASSPHRASE_ENV))
         .or_else(|| env_secret_passphrase(SESSION_SECRET_PASSPHRASE_ENV))
 }
 
@@ -66,19 +91,26 @@ pub(in crate::runner) fn forget_session_passphrase_for_tests() {
     }
 }
 
+/// The retired internal environment key, named only by the proofs that assert
+/// it never reaches a workload environment.
+#[cfg(test)]
 pub(in crate::runner) const fn internal_secret_passphrase_env() -> &'static str {
     INTERNAL_SECRET_PASSPHRASE_ENV
 }
 
+#[cfg(test)]
+pub(in crate::runner) const fn internal_local_dev_secret_access_env() -> &'static str {
+    LOCAL_DEV_SECRET_ACCESS_ENV
+}
+
 /// Active local-dev secret access scopes in this process. The marker lives
-/// here, not in the global environment (K12); a child learns it from the
-/// explicit `env` prefix its command line is given.
+/// here, not in the global environment (K12); a child learns it from its own
+/// adopted grant, never from its spawn environment.
 static LOCAL_DEV_SECRET_ACCESS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 pub(in crate::runner) fn local_dev_secret_access_active() -> bool {
     LOCAL_DEV_SECRET_ACCESS.load(std::sync::atomic::Ordering::Acquire) > 0
-        || std::env::var_os(LOCAL_DEV_SECRET_ACCESS_ENV).is_some()
 }
 
 pub(in crate::runner) fn activate_local_dev_secret_access(
@@ -88,6 +120,12 @@ pub(in crate::runner) fn activate_local_dev_secret_access(
         LOCAL_DEV_SECRET_ACCESS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
     LocalDevSecretAccessGuard { active }
+}
+
+/// The local-dev access an adopted grant carried stays active for this
+/// process's whole life: it is this process's own factor, not a scope.
+fn adopt_local_dev_secret_access() {
+    LOCAL_DEV_SECRET_ACCESS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 
 pub(in crate::runner) struct LocalDevSecretAccessGuard {
@@ -108,11 +146,6 @@ pub(in crate::runner) fn read_secret_passphrase(
     missing_tty_error: &str,
 ) -> Result<Option<SecretValue>, RunnerError> {
     if let Ok(value) = std::env::var(TEST_SECRET_PASSPHRASE_ENV) {
-        let secret = SecretValue::new(value);
-        cache_secret_passphrase(&secret);
-        return Ok(Some(secret));
-    }
-    if let Ok(value) = std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV) {
         let secret = SecretValue::new(value);
         cache_secret_passphrase(&secret);
         return Ok(Some(secret));
@@ -190,114 +223,214 @@ pub(in crate::runner) fn read_local_dev_upgrade_passphrase(
     Ok(Some(secret))
 }
 
-pub(in crate::runner) fn apply_secret_passphrase_to_child(command: &mut Command) {
-    for (key, value) in secret_passphrase_child_env() {
-        command.env(key, value);
-    }
+// ---- One-shot session grants -----------------------------------------------
+//
+// A session's vault access reaches Effigy's own child processes through one
+// inherited descriptor the child reads once at startup and closes: never argv,
+// never a shell string, and never a persistent environment value (brief
+// effigy#338; 032 Runtime Injection; 052 K12). The kernel reserves the slot
+// (`custody::HANDOFF_FD`), so the same channel serves a custody spawn, an
+// engine supervisor and a plain `Command`.
+
+/// Whether `key` carries session access that a workload environment must not
+/// keep.
+pub(in crate::runner) fn is_session_access_key(key: &OsStr) -> bool {
+    SESSION_ACCESS_KEYS
+        .iter()
+        .any(|reserved| key == OsStr::new(reserved))
 }
 
-pub(in crate::runner) fn secret_passphrase_child_env() -> Vec<(OsString, OsString)> {
-    let mut env = Vec::new();
-    if let Ok(value) = std::env::var(TEST_SECRET_PASSPHRASE_ENV) {
-        env.push((
-            OsString::from(TEST_SECRET_PASSPHRASE_ENV),
-            OsString::from(value),
-        ));
-    }
-    // One route for every way this invocation holds the passphrase - read
-    // here, inherited from a parent, or supplied by the caller - so a child
-    // never has to know which source answered.
-    if let Some(secret) = session_passphrase() {
-        env.push((
-            OsString::from(INTERNAL_SECRET_PASSPHRASE_ENV),
-            OsString::from(secret.expose()),
-        ));
-    }
-    if local_dev_secret_access_active() {
-        env.push((
-            OsString::from(LOCAL_DEV_SECRET_ACCESS_ENV),
-            OsString::from("1"),
-        ));
-    }
-    env
+/// The ambient environment every workload and host-process spawn starts from,
+/// with session access removed: whatever this process was started with, a
+/// workload it starts never inherits the vault passphrase.
+pub(in crate::runner) fn workload_ambient_environment() -> impl Iterator<Item = (OsString, OsString)>
+{
+    std::env::vars_os().filter(|(key, _)| !is_session_access_key(key))
 }
 
-/// The name of the internal marker a dev session's children receive, so a
-/// child Effigy process resolves container secrets through the local-dev key.
-pub(in crate::runner) const fn internal_local_dev_secret_access_env() -> &'static str {
-    LOCAL_DEV_SECRET_ACCESS_ENV
+/// What one session hands its own child: the factor this process resolves
+/// with, and nothing a workload may see.
+struct Grant {
+    passphrase: Option<SecretValue>,
+    local_dev: bool,
 }
 
-/// [`secret_passphrase_child_env`] as the plain strings a spawn environment
-/// plan carries. Same internal route: the passphrase never enters this
-/// process's global environment (contract 052 K12).
-pub(in crate::runner) fn secret_passphrase_child_env_strings() -> Vec<(String, String)> {
-    secret_passphrase_child_env()
-        .into_iter()
-        .map(|(key, value)| {
-            (
-                key.to_string_lossy().into_owned(),
-                value.to_string_lossy().into_owned(),
-            )
+impl Grant {
+    fn current() -> Option<Self> {
+        let passphrase = session_passphrase();
+        let local_dev = local_dev_secret_access_active();
+        (passphrase.is_some() || local_dev).then_some(Self {
+            passphrase,
+            local_dev,
         })
-        .collect()
+    }
+
+    fn frame(&self) -> Vec<u8> {
+        let passphrase = self
+            .passphrase
+            .as_ref()
+            .map_or(&[][..], |value| value.expose().as_bytes());
+        let mut frame = Vec::with_capacity(GRANT_HEADER_BYTES + passphrase.len());
+        frame.extend_from_slice(GRANT_MAGIC);
+        frame.push(GRANT_VERSION);
+        frame.push(if self.local_dev {
+            GRANT_FLAG_LOCAL_DEV
+        } else {
+            0
+        });
+        frame.extend_from_slice(&(passphrase.len() as u32).to_be_bytes());
+        frame.extend_from_slice(passphrase);
+        frame
+    }
 }
 
-pub(in crate::runner) fn inject_secret_passphrase_into_internal_command(command: String) -> String {
-    let secret = session_passphrase();
-    let original = "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1";
-    let mut prefix = String::from("env");
-    if let Some(secret) = secret {
-        prefix.push_str(&format!(
-            " {key}={value}",
-            key = INTERNAL_SECRET_PASSPHRASE_ENV,
-            value = shell_quote(secret.expose()),
-        ));
-    }
-    if local_dev_secret_access_active() {
-        prefix.push_str(&format!(" {LOCAL_DEV_SECRET_ACCESS_ENV}=1"));
-    }
-    if prefix == "env" {
-        return command;
-    }
-    let replacement = format!("{prefix} EFFIGY_INTERNAL_SUPPRESS_HEADER=1");
-    command.replacen(original, &replacement, 1)
+/// A grant written into a pipe whose read end the child receives at the
+/// kernel's handoff slot. The writer closes before the spawn, so the child
+/// reads one complete frame and stops at the end of it.
+pub(in crate::runner) struct ChildGrant {
+    reader: OwnedFd,
 }
 
-pub(in crate::runner) fn wrap_command_with_secret_passphrase_env(command: String) -> String {
-    let passphrase = session_passphrase().map(|value| value.expose().to_owned());
-    wrap_command_with_secret_passphrase_env_value(command, passphrase.as_deref())
+impl ChildGrant {
+    /// The descriptor the child reads, consumed by the spawn.
+    pub(in crate::runner) fn into_reader(self) -> OwnedFd {
+        self.reader
+    }
+
+    /// The spawn-environment entry that tells the child it owns a grant.
+    pub(in crate::runner) fn env_entry(&self) -> (&'static str, &'static str) {
+        (SECRET_GRANT_ENV, "1")
+    }
 }
 
-pub(in crate::runner) fn wrap_command_with_secret_passphrase_env_value(
-    command: String,
-    passphrase: Option<&str>,
-) -> String {
-    if passphrase.is_none() && !local_dev_secret_access_active() {
-        return command;
+fn cloexec_pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
+    let mut fds = [-1; 2];
+    // SAFETY: writable storage for exactly two descriptors.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
     }
-    let mut prefix = String::from("env");
-    if let Some(passphrase) = passphrase {
-        prefix.push_str(&format!(
-            " {key}={value}",
-            key = INTERNAL_SECRET_PASSPHRASE_ENV,
-            value = shell_quote(passphrase),
-        ));
+    // SAFETY: a successful pipe initialized two fresh, owned descriptors.
+    let pair = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    for fd in [&pair.0, &pair.1] {
+        // SAFETY: live descriptor and a valid flag request.
+        if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
     }
-    if local_dev_secret_access_active() {
-        prefix.push_str(&format!(" {LOCAL_DEV_SECRET_ACCESS_ENV}=1"));
+    Ok(pair)
+}
+
+/// This process's grant for one Effigy child, or `None` when it holds no
+/// session access. Used by every place Effigy starts its own child process.
+pub(in crate::runner) fn take_child_grant() -> Option<ChildGrant> {
+    let grant = Grant::current()?;
+    let (reader, writer) = cloexec_pipe().ok()?;
+    {
+        let mut writer = std::fs::File::from(writer);
+        writer.write_all(&grant.frame()).ok()?;
+        writer.flush().ok()?;
     }
-    format!("{prefix} {command}")
+    // The write end closes here: a child that reads a partial frame sees EOF
+    // rather than waiting on a descriptor this process still holds.
+    Some(ChildGrant { reader })
+}
+
+/// Hand a grant to a plain `Command` child. The descriptor stays open until
+/// the `Command` drops, so the child always finds it at spawn time.
+pub(in crate::runner) fn grant_command(command: &mut Command) {
+    let Some(grant) = take_child_grant() else {
+        return;
+    };
+    let (key, value) = grant.env_entry();
+    let reader = grant.into_reader();
+    let slot = reader.as_raw_fd();
+    command.env(key, value);
+    // SAFETY: `pre_exec` runs in the forked child before `exec`, where `dup2`
+    // is async-signal-safe. The closure owns the reader, so the parent's copy
+    // closes when the `Command` drops after the spawn.
+    unsafe {
+        command.pre_exec(move || {
+            let _owns_reader = &reader;
+            if libc::dup2(slot, effigy_kernel::custody::HANDOFF_FD) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Read and close the grant this process was handed, before anything else
+/// runs. Called once from the binary's entry, so every Effigy child process -
+/// the engine supervisor, the environment `up`, a nested step - resolves with
+/// the session's access without it ever entering an environment or argv.
+pub fn adopt_secret_grant() {
+    if std::env::var_os(SECRET_GRANT_ENV).is_none() {
+        return;
+    }
+    // SAFETY: startup, before threads or signal handlers exist. The marker is
+    // not a secret; removing it keeps this process's own children from
+    // inheriting a claim to a descriptor they do not own.
+    unsafe { std::env::remove_var(SECRET_GRANT_ENV) };
+    // SAFETY: the parent duplicated this reader into this process at the
+    // kernel's reserved slot; adopting it takes that single copy.
+    let reader = unsafe { OwnedFd::from_raw_fd(effigy_kernel::custody::HANDOFF_FD) };
+    let Some(grant) = read_grant(reader) else {
+        return;
+    };
+    if let Some(passphrase) = grant.passphrase {
+        cache_secret_passphrase(&passphrase);
+    }
+    if grant.local_dev {
+        adopt_local_dev_secret_access();
+    }
+}
+
+/// Adopt this process's session access once, at binary startup: read the
+/// grant if a parent handed one over, then register the same access with the
+/// in-process script host. Both routes read memory, never the environment.
+pub fn adopt_session_secret_access() {
+    adopt_secret_grant();
+    effigy_rhai::install_session_access_provider(|| {
+        (session_passphrase(), local_dev_secret_access_active())
+    });
+}
+
+fn read_grant(reader: OwnedFd) -> Option<Grant> {
+    let mut file = std::fs::File::from(reader);
+    let mut header = [0u8; GRANT_HEADER_BYTES];
+    file.read_exact(&mut header).ok()?;
+    if &header[..8] != GRANT_MAGIC || header[8] != GRANT_VERSION {
+        return None;
+    }
+    let local_dev = header[9] & GRANT_FLAG_LOCAL_DEV != 0;
+    let len = u32::from_be_bytes([header[10], header[11], header[12], header[13]]) as usize;
+    if len > GRANT_MAX_BYTES {
+        return None;
+    }
+    let mut bytes = vec![0u8; len];
+    file.read_exact(&mut bytes).ok()?;
+    let passphrase = if bytes.is_empty() {
+        None
+    } else {
+        Some(SecretValue::new(String::from_utf8(bytes).ok()?))
+    };
+    Some(Grant {
+        passphrase,
+        local_dev,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_local_dev_secret_access, forget_session_passphrase_for_tests,
-        internal_local_dev_secret_access_env, internal_secret_passphrase_env,
-        read_local_dev_upgrade_passphrase, secret_passphrase_child_env,
-        secret_passphrase_child_env_strings, session_passphrase,
+        activate_local_dev_secret_access, adopt_local_dev_secret_access,
+        forget_session_passphrase_for_tests, internal_local_dev_secret_access_env,
+        internal_secret_passphrase_env, is_session_access_key, local_dev_secret_access_active,
+        read_secret_passphrase, session_passphrase, take_child_grant, workload_ambient_environment,
+        ChildGrant,
     };
+    use std::ffi::OsStr;
+    use std::io::Read;
 
     struct ScopedEnv {
         key: &'static str,
@@ -332,61 +465,165 @@ mod tests {
         }
     }
 
-    /// The one-time local-dev upgrade passphrase is still this session's
-    /// passphrase, and a child Effigy process receives both it and the
-    /// local-dev marker on the existing internal env route.
-    #[test]
-    fn the_upgrade_passphrase_becomes_the_session_passphrase_for_children() {
-        let _test_passphrase =
-            ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
-        let _internal_passphrase = ScopedEnv::set("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None);
-        forget_session_passphrase_for_tests();
-        let _local_dev = activate_local_dev_secret_access(true);
-
-        let passphrase = read_local_dev_upgrade_passphrase(
-            false,
-            "Vault passphrase (one-time local-dev setup): ",
-            "secret input requires an interactive TTY",
-        )
-        .expect("read the upgrade passphrase")
-        .expect("a passphrase was read");
-
-        assert_eq!(passphrase.expose(), "vault-passphrase");
-        assert_eq!(
-            session_passphrase().map(|value| value.expose().to_owned()),
-            Some("vault-passphrase".to_owned())
-        );
-        let child_env = secret_passphrase_child_env_strings();
-        assert!(child_env.iter().any(|(key, value)| {
-            key == internal_secret_passphrase_env() && value == "vault-passphrase"
-        }));
-        assert!(child_env
-            .iter()
-            .any(|(key, value)| { key == internal_local_dev_secret_access_env() && value == "1" }));
-
-        forget_session_passphrase_for_tests();
+    fn read_frame(grant: ChildGrant) -> Vec<u8> {
+        let mut file = std::fs::File::from(grant.into_reader());
+        let mut frame = Vec::new();
+        file.read_to_end(&mut frame).expect("read the grant frame");
+        frame
     }
 
-    /// A session without a passphrase still tells its children they have
-    /// local-dev access, which is what makes the local-dev key usable there.
+    /// A session's own child receives the passphrase and the local-dev marker
+    /// over the descriptor, and the frame carries nothing else.
     #[test]
-    fn local_dev_access_reaches_children_without_a_passphrase() {
-        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
-        let _internal_passphrase = ScopedEnv::set("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None);
+    fn a_child_grant_carries_the_session_access() {
+        let _test_passphrase =
+            ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
         forget_session_passphrase_for_tests();
         let local_dev = activate_local_dev_secret_access(true);
 
-        let child_env = secret_passphrase_child_env();
-        assert!(child_env
-            .iter()
-            .any(|(key, value)| { key == internal_local_dev_secret_access_env() && value == "1" }));
-        assert!(
-            child_env
-                .iter()
-                .all(|(key, _)| key != internal_secret_passphrase_env()),
+        // `session_passphrase` reads the test source without caching, so the
+        // grant is written from what this process resolves with.
+        let grant = take_child_grant().expect("a session with access grants it");
+        assert_eq!(grant.env_entry(), (super::SECRET_GRANT_ENV, "1"));
+        let frame = read_frame(grant);
+        assert!(frame.starts_with(b"EFFGRNT1"));
+        assert!(frame.ends_with(b"vault-passphrase"));
+        assert_eq!(
+            frame[9] & super::GRANT_FLAG_LOCAL_DEV,
+            super::GRANT_FLAG_LOCAL_DEV
+        );
+
+        drop(local_dev);
+        forget_session_passphrase_for_tests();
+    }
+
+    /// A session that holds nothing hands nothing: a child never receives an
+    /// invented grant.
+    #[test]
+    fn a_session_without_access_grants_nothing() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        assert!(take_child_grant().is_none());
+    }
+
+    /// The local-dev marker alone is enough for a `dev` session's children to
+    /// resolve through the local-dev key without a prompt.
+    #[test]
+    fn local_dev_access_grants_without_a_passphrase() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        let local_dev = activate_local_dev_secret_access(true);
+
+        let frame = read_frame(take_child_grant().expect("the marker is access"));
+        assert_eq!(
+            frame[9] & super::GRANT_FLAG_LOCAL_DEV,
+            super::GRANT_FLAG_LOCAL_DEV
+        );
+        assert_eq!(
+            u32::from_be_bytes([frame[10], frame[11], frame[12], frame[13]]),
+            0,
             "an absent passphrase is not invented"
         );
 
         drop(local_dev);
+    }
+
+    /// The frame a session writes is the frame this process would adopt: one
+    /// channel, one encoding, and no passphrase outside it.
+    #[test]
+    fn a_grant_frame_round_trips_through_the_reader() {
+        let _test_passphrase =
+            ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        let local_dev = activate_local_dev_secret_access(true);
+
+        let grant = take_child_grant().expect("a session with access grants it");
+        let reader = grant.into_reader();
+        let adopted = super::read_grant(reader).expect("the frame decodes");
+        assert_eq!(
+            adopted
+                .passphrase
+                .map(|value| value.expose().to_owned())
+                .as_deref(),
+            Some("vault-passphrase")
+        );
+        assert!(adopted.local_dev);
+
+        drop(local_dev);
+        forget_session_passphrase_for_tests();
+    }
+
+    /// Every session-access key is refused to a workload environment, and a
+    /// workload's ambient environment never carries one.
+    #[test]
+    fn no_session_access_key_reaches_a_workload_environment() {
+        let _test_passphrase =
+            ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
+        for key in [
+            internal_secret_passphrase_env(),
+            internal_local_dev_secret_access_env(),
+            super::SECRET_GRANT_ENV,
+            super::SESSION_SECRET_PASSPHRASE_ENV,
+            "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        ] {
+            assert!(is_session_access_key(OsStr::new(key)), "{key}");
+        }
+        assert!(!is_session_access_key(OsStr::new("PATH")));
+        let ambient: Vec<_> = workload_ambient_environment().collect();
+        assert!(ambient
+            .iter()
+            .all(|(key, _)| !is_session_access_key(key.as_os_str())));
+
+        forget_session_passphrase_for_tests();
+    }
+
+    /// The internal passphrase variable is no longer a source: a value left in
+    /// the environment is not this invocation's access.
+    #[test]
+    fn the_internal_passphrase_environment_is_not_a_source() {
+        let _internal = ScopedEnv::set(
+            "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
+            Some("stale-passphrase"),
+        );
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        assert!(session_passphrase().is_none());
+        assert!(take_child_grant().is_none());
+    }
+
+    /// A grant's local-dev marker is process-wide once adopted: a supervisor
+    /// that adopted one keeps resolving through the local-dev key.
+    #[test]
+    fn adopting_a_grant_activates_local_dev_access() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        if !local_dev_secret_access_active() {
+            adopt_local_dev_secret_access();
+        }
+        assert!(local_dev_secret_access_active());
+    }
+
+    /// A read passphrase is cached, so everything after it resolves with the
+    /// same access and no second prompt.
+    #[test]
+    fn a_read_passphrase_becomes_this_processs_access() {
+        let _test_passphrase =
+            ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        read_secret_passphrase(false, "Vault passphrase: ", "needs a TTY")
+            .expect("the test source answers")
+            .expect("a passphrase was read");
+        assert_eq!(
+            session_passphrase().map(|value| value.expose().to_owned()),
+            Some("vault-passphrase".to_owned())
+        );
+        forget_session_passphrase_for_tests();
     }
 }

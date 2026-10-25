@@ -933,10 +933,18 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
         BoundedCommandPhase::WorkspacePreparation,
         "workspace_preparation_failed",
         match (built, target) {
-            (true, LinuxWorkspaceTarget::X86_64Gnu) => "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact",
-            (true, LinuxWorkspaceTarget::Aarch64Gnu) => "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact",
-            (false, LinuxWorkspaceTarget::X86_64Gnu) => "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact",
-            (false, LinuxWorkspaceTarget::Aarch64Gnu) => "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact",
+            (true, LinuxWorkspaceTarget::X86_64Gnu) => {
+                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"
+            }
+            (true, LinuxWorkspaceTarget::Aarch64Gnu) => {
+                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact"
+            }
+            (false, LinuxWorkspaceTarget::X86_64Gnu) => {
+                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"
+            }
+            (false, LinuxWorkspaceTarget::Aarch64Gnu) => {
+                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact"
+            }
         },
         None,
     ))
@@ -1885,7 +1893,9 @@ pub(super) fn run_linux_workspace_effigy_artifact_build(
         .arg("workspace:linux:artifact")
         .env("EFFIGY_LINUX_RELEASE_TRIPLE", target.release_triple())
         .current_dir(effigy_repo_root);
-    crate::runner::secret_session::apply_secret_passphrase_to_child(&mut command);
+    // The artifact build is Effigy's own child: it reads the session grant
+    // from a descriptor, never from its environment or argv (effigy#338).
+    crate::runner::secret_session::grant_command(&mut command);
     let status = command.status().map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to launch linux workspace artifact build in `{}`: {error}",
@@ -1910,11 +1920,13 @@ fn run_linux_workspace_effigy_artifact_build_bounded(
     budget: &mut BoundedCommandBudget,
 ) -> Result<bool, RunnerError> {
     let args = [OsString::from("workspace:linux:artifact")];
-    let mut env = crate::runner::secret_session::secret_passphrase_child_env();
-    env.push((
+    // This bounded release build is Effigy's own child invocation. It inherits
+    // no session access and no passphrase: it resolves its own access exactly
+    // as a top-level invocation does (effigy#338).
+    let env = vec![(
         OsString::from("EFFIGY_LINUX_RELEASE_TRIPLE"),
         OsString::from(target.release_triple()),
-    ));
+    )];
     let output = budget
         .run_command(
             effigy_repo_root,

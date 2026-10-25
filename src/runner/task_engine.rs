@@ -33,7 +33,9 @@ pub(in crate::runner) use kernel::observe_context as observe_within;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
 pub(in crate::runner) use process::environment as process_environment;
-pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, PlainExit, RunExec};
+pub(in crate::runner) use process::{
+    run_effigy_child, run_plain, EnvOverride, PlainCommand, PlainExit, RunExec,
+};
 pub(in crate::runner) use remote::{remote_tty, run_remote, RemoteTask};
 pub(in crate::runner) use run::{resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest};
 pub(in crate::runner) use status::{

@@ -74,6 +74,25 @@ pub(in crate::runner) fn run_plain(
     run: &mut TaskRun,
     command: PlainCommand<'_>,
 ) -> Result<PlainExit, RunnerError> {
+    run_plain_inner(run, command, false)
+}
+
+/// A plain command that is Effigy's own child process (a builtin or a script
+/// host). It receives this session's vault access through the one-shot
+/// descriptor handoff, so a nested Effigy step resolves without a prompt and
+/// without the passphrase in its environment (effigy#338).
+pub(in crate::runner) fn run_effigy_child(
+    run: &mut TaskRun,
+    command: PlainCommand<'_>,
+) -> Result<PlainExit, RunnerError> {
+    run_plain_inner(run, command, true)
+}
+
+fn run_plain_inner(
+    run: &mut TaskRun,
+    command: PlainCommand<'_>,
+    effigy_child: bool,
+) -> Result<PlainExit, RunnerError> {
     let _waiting = CustodyWait::enter();
     if let Some((code, workload)) = super::pending_stop(&run.target().label) {
         return Ok(PlainExit {
@@ -86,6 +105,16 @@ pub(in crate::runner) fn run_plain(
     let relay = !command.capture
         && run.keyed()
         && !(std::io::stdout().is_terminal() && std::io::stderr().is_terminal());
+    let mut env = environment(command.cwd, command.env)?;
+    let grant = if effigy_child {
+        crate::runner::secret_session::take_child_grant()
+    } else {
+        None
+    };
+    if let Some(grant) = &grant {
+        let (key, value) = grant.env_entry();
+        env.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
+    }
     let spec = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -93,7 +122,7 @@ pub(in crate::runner) fn run_plain(
             OsString::from(command.command),
         ],
         cwd: command.cwd.to_path_buf(),
-        env: environment(command.cwd, command.env)?,
+        env,
         grace: GRACE,
         lifetime: match (
             command.timeout_ms.map(Duration::from_millis),
@@ -108,7 +137,7 @@ pub(in crate::runner) fn run_plain(
         },
         label: run.target().label.clone(),
     };
-    let spawned = run.spawn(spec, false);
+    let spawned = run.spawn_with_handoff(spec, false, grant.map(|grant| grant.into_reader()));
     let mut process = match spawned {
         Ok(process) => process,
         Err(error) => {
@@ -403,11 +432,15 @@ pub(in crate::runner) fn environment(
     cwd: &Path,
     overrides: Vec<(String, EnvOverride)>,
 ) -> Result<BTreeMap<OsString, EnvValue>, RunnerError> {
-    let mut env: BTreeMap<OsString, EnvValue> = std::env::vars_os()
-        // Each custody spawn carries its own run's nonce.
-        .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
-        .map(|(key, value)| (key, EnvValue::Plain(value)))
-        .collect();
+    // A workload's ambient environment never carries session vault access:
+    // the passphrase, its local-dev marker and the caller's source stay with
+    // Effigy's own processes (effigy#338, K12).
+    let mut env: BTreeMap<OsString, EnvValue> =
+        crate::runner::secret_session::workload_ambient_environment()
+            // Each custody spawn carries its own run's nonce.
+            .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+            .map(|(key, value)| (key, EnvValue::Plain(value)))
+            .collect();
     // A child of an admitted run never queues for admission again.
     if let Some(marker) = super::admission::child_marker() {
         env.insert(
@@ -462,6 +495,9 @@ pub(in crate::runner) fn environment(
         };
         env.insert(OsString::from(key), value);
     }
+    // A declared override cannot hand session access back to a workload
+    // either: the route is Effigy's own descriptor, not a name.
+    env.retain(|key, _| !crate::runner::secret_session::is_session_access_key(key));
     Ok(env)
 }
 

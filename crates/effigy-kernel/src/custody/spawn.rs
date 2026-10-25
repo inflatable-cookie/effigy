@@ -180,6 +180,7 @@ impl Blocked {
         image: &crate::supervise::anchor::Image<'_>,
         lease: Option<&crate::inheritance::InheritedCapability>,
         closure: Option<&crate::inheritance::ClosurePin>,
+        handoff: Option<&OwnedFd>,
     ) -> io::Result<Self> {
         Self::fork_inner(
             spec,
@@ -189,6 +190,7 @@ impl Blocked {
             Some(image),
             lease,
             closure,
+            handoff,
         )
     }
     pub(crate) fn fork_with_nonce(
@@ -197,8 +199,9 @@ impl Blocked {
         nonce: &str,
         cx: &OperationContext,
     ) -> io::Result<Self> {
-        Self::fork_inner(spec, key, nonce, cx, None, None, None)
+        Self::fork_inner(spec, key, nonce, cx, None, None, None, None)
     }
+    #[allow(clippy::too_many_arguments)]
     fn fork_inner(
         spec: &ProcessSpec,
         key: &str,
@@ -207,6 +210,7 @@ impl Blocked {
         image: Option<&crate::supervise::anchor::Image<'_>>,
         lease: Option<&crate::inheritance::InheritedCapability>,
         closure: Option<&crate::inheritance::ClosurePin>,
+        handoff: Option<&OwnedFd>,
     ) -> io::Result<Self> {
         if !["EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE"].contains(&key) {
             return Err(io::Error::new(
@@ -273,6 +277,8 @@ impl Blocked {
             .transpose()?;
         let closure_fd_raw = closure_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         let inherited_fd = inherited.as_ref().map_or(-1, AsRawFd::as_raw_fd);
+        // The parent's one-shot descriptor, handed over at its reserved slot.
+        let handoff_fd = handoff.map_or(-1, AsRawFd::as_raw_fd);
         env.push(
             CString::new(format!("{key}={nonce}"))
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid nonce"))?,
@@ -392,24 +398,31 @@ impl Blocked {
                 {
                     libc::_exit(125);
                 }
+                if handoff_fd >= 0 && libc::dup2(handoff_fd, HANDOFF_FD) < 0 {
+                    libc::_exit(125);
+                }
                 let close_from = if anchor_fd >= 0 { 6 } else { 5 };
-                // Keep only the class reader and write-only cleanup pin in
-                // slots 9/10. Grant writers and sibling barriers always close;
-                // the group anchor closes these two workload slots too.
+                // Keep only the class reader, the write-only cleanup pin and
+                // the parent's one-shot handoff in slots 9/10/11. Grant writers
+                // and sibling barriers always close; the group anchor closes
+                // these workload slots too.
                 #[cfg(target_os = "linux")]
-                let closed = if closure_fd_raw >= 0 {
-                    libc::syscall(
+                let closed = {
+                    let mut ok = libc::syscall(
                         libc::SYS_close_range,
                         close_from as u32,
                         if inherited_fd >= 0 { 8u32 } else { 9u32 },
                         0u32,
+                    ) == 0;
+                    if ok && closure_fd_raw < 0 {
+                        ok = libc::syscall(libc::SYS_close_range, 10u32, 10u32, 0u32) == 0;
+                    }
+                    ok && libc::syscall(
+                        libc::SYS_close_range,
+                        if handoff_fd >= 0 { 12u32 } else { 11u32 },
+                        u32::MAX,
+                        0u32,
                     ) == 0
-                        && libc::syscall(libc::SYS_close_range, 11u32, u32::MAX, 0u32) == 0
-                } else if inherited_fd >= 0 {
-                    libc::syscall(libc::SYS_close_range, close_from as u32, 8u32, 0u32) == 0
-                        && libc::syscall(libc::SYS_close_range, 10u32, u32::MAX, 0u32) == 0
-                } else {
-                    libc::syscall(libc::SYS_close_range, close_from as u32, u32::MAX, 0u32) == 0
                 };
                 #[cfg(target_os = "macos")]
                 let closed = false;
@@ -417,7 +430,8 @@ impl Blocked {
                     let mut fd = close_from;
                     while fd < fd_limit {
                         if !(inherited_fd >= 0 && fd == crate::inheritance::CHILD_FD
-                            || closure_fd_raw >= 0 && fd == crate::inheritance::CLOSURE_FD)
+                            || closure_fd_raw >= 0 && fd == crate::inheritance::CLOSURE_FD
+                            || handoff_fd >= 0 && fd == HANDOFF_FD)
                         {
                             libc::close(fd);
                         }
@@ -478,6 +492,11 @@ impl Blocked {
                         while fd <= end {
                             libc::close(fd);
                             fd += 1;
+                        }
+                        if handoff_fd >= 0 {
+                            // The anchor is not the reader: only the workload
+                            // keeps the parent's handoff.
+                            libc::close(HANDOFF_FD);
                         }
                         #[cfg(target_os = "linux")]
                         if anchor_fd >= 0 {
