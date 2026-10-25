@@ -673,6 +673,28 @@ impl TaskRun {
         }
     }
 
+    /// The run's own identity and its memory guard's, the two custodians a
+    /// v2 admission reports before any workload spawns. In-process work runs
+    /// inside the owner and dies with it, so the owner covers it.
+    pub(in crate::runner) fn custodian_identities(
+        &self,
+    ) -> (
+        Option<effigy_kernel::ident::ProcessIdentity>,
+        Option<effigy_kernel::ident::ProcessIdentity>,
+    ) {
+        let owner = effigy_kernel::ident::process_identity(std::process::id())
+            .verified()
+            .cloned();
+        let guard = self.memory.as_ref().and_then(|memory| {
+            memory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .guard_identity()
+                .cloned()
+        });
+        (owner, guard)
+    }
+
     /// How long the admission hook took to admit this run, when one did.
     pub(in crate::runner) fn admission_wait_ms(&self) -> Option<u64> {
         self.admission
@@ -844,21 +866,36 @@ impl TaskRun {
         Vec<String>,
     ) {
         let admission = self.admission.take();
+        let target = self.target.clone();
+        let run_id = self.id().to_string();
         self.leave_programs();
         let scratch = self.conclude_scratch(&workload);
         let result = match self.memory.take() {
-            Some(memory) => {
-                foreground::close_memory(owned(memory), workload, &kernel::cleanup_context(budget))
-            }
+            Some(memory) => foreground::close_memory(
+                owned(memory),
+                workload.clone(),
+                &kernel::cleanup_context(budget),
+                &mut |_| {},
+            ),
             None => match self.run.take() {
-                Some(run) => {
-                    close_run_settled(owned(run), workload, kernel::cleanup_context(budget))
-                }
+                Some(run) => close_run_settled(
+                    owned(run),
+                    workload.clone(),
+                    kernel::cleanup_context(budget),
+                ),
                 None => (None, Vec::new()),
             },
         };
-        drop(admission);
         let (outcome, mut warnings) = result;
+        if let Some(admission) = admission {
+            warnings.extend(super::admission::finish(
+                admission,
+                &target,
+                &run_id,
+                &workload,
+                outcome.as_ref(),
+            ));
+        }
         warnings.extend(scratch);
         (outcome, warnings)
     }
@@ -867,30 +904,83 @@ impl TaskRun {
     /// gates. Returns warnings only: the task's result is already decided.
     pub(in crate::runner) fn close(mut self, workload: WorkloadOutcome) -> Vec<String> {
         let mut warnings = Vec::new();
-        // Settle stops the admission hook; the marker goes with it.
+        // Settle stops the admission hook; the marker goes with it, and a v2
+        // admission reports its terminal result before that happens.
         let admission = self.admission.take();
+        let target = self.target.clone();
+        let run_id = self.id().to_string();
         self.leave_programs();
         warnings.extend(self.conclude_scratch(&workload));
+        let mut settled = None;
+        let mut terminal = admission;
+        let mut terminal_groups = 0u64;
+        let mut terminal_reported = false;
         if let Some(memory) = self.memory.take() {
             match kernel::cleanup() {
-                Ok(cleanup) => warnings
-                    .extend(foreground::close_memory(owned(memory), workload.clone(), &cleanup).1),
+                Ok(cleanup) => {
+                    let mut report_warnings = Vec::new();
+                    let (outcome, close_warnings) = foreground::close_memory(
+                        owned(memory),
+                        workload.clone(),
+                        &cleanup,
+                        &mut |preview| {
+                            // A v1 admission reports nothing and keeps its
+                            // marker until the settle has stopped the hook.
+                            if !terminal
+                                .as_ref()
+                                .is_some_and(|admission| admission.reporting())
+                            {
+                                return;
+                            }
+                            let admission = terminal.take().expect("checked above");
+                            terminal_groups = admission.workload_groups();
+                            terminal_reported = true;
+                            report_warnings.extend(super::admission::report_terminal(
+                                &admission, &workload, preview,
+                            ));
+                        },
+                    );
+                    settled = outcome;
+                    warnings.extend(report_warnings);
+                    warnings.extend(close_warnings);
+                }
                 Err(error) => warnings.push(error.to_string()),
             }
         }
         if let Some(run) = self.run.take() {
-            warnings.extend(close_run(owned(run), workload.clone()));
+            let (outcome, close_warnings) = close_run(owned(run), workload.clone());
+            settled = settled.or(outcome);
+            warnings.extend(close_warnings);
         }
         if let Some(shared) = self.shared.take() {
-            let mirrored = match workload {
+            let mirrored = match &workload {
                 WorkloadOutcome::Failed { .. } | WorkloadOutcome::Unknown(_) => {
                     WorkloadOutcome::Succeeded
                 }
-                other => other,
+                other => other.clone(),
             };
-            warnings.extend(close_run(shared, mirrored));
+            warnings.extend(close_run(shared, mirrored).1);
         }
-        drop(admission);
+        if let Some(admission) = terminal {
+            // No settle reported through it (a run with nothing to settle):
+            // report and record after the fact, best effort.
+            warnings.extend(super::admission::finish(
+                admission,
+                &target,
+                &run_id,
+                &workload,
+                settled.as_ref(),
+            ));
+        } else if terminal_reported {
+            if let Some(settled) = &settled {
+                warnings.extend(super::admission::record_terminal(
+                    &target,
+                    &run_id,
+                    settled,
+                    terminal_groups,
+                ));
+            }
+        }
         warnings
     }
 
@@ -1015,10 +1105,16 @@ fn record_outcome(run: &mut Run<'static>, workload: WorkloadOutcome) -> Result<(
     }
 }
 
-fn close_run(run: Run<'static>, workload: WorkloadOutcome) -> Vec<String> {
+fn close_run(
+    run: Run<'static>,
+    workload: WorkloadOutcome,
+) -> (
+    Option<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>>,
+    Vec<String>,
+) {
     match kernel::cleanup() {
-        Ok(cleanup) => close_run_settled(run, workload, cleanup).1,
-        Err(error) => vec![error.to_string()],
+        Ok(cleanup) => close_run_settled(run, workload, cleanup),
+        Err(error) => (None, vec![error.to_string()]),
     }
 }
 

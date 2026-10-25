@@ -69,6 +69,8 @@ pub struct RetentionReport {
     pub resources: usize,
     pub checkouts: usize,
     pub gates: usize,
+    /// Expired foreground terminal records (effigy#325).
+    pub terminal_records: usize,
     /// Tombstoned scopes skipped because a guard in them still exists.
     pub busy_scopes: usize,
     /// The pass used its whole budget: a backlog remains.
@@ -171,6 +173,17 @@ pub fn retain(
         return Ok(report);
     }
     let now = wall_ms();
+    // A v2 foreground terminal record is evidence for a recent run only
+    // (effigy#325). One age-bounded, indexed delete per pass; the rows hold no
+    // run row and no reference, so this never races a settle.
+    report.terminal_records = in_batch(store, cx, |txn| {
+        txn.conn()
+            .execute(
+                "DELETE FROM foreground_terminals WHERE closed_at < ?1",
+                [now - crate::run::TERMINAL_RECORD_KEEP_MS],
+            )
+            .map_err(StoreError::from)
+    })?;
     let mut left = budget.max_removals;
     let runs_dir = root.family(Family::Runs)?.expect("created directory");
     let objects_dir = root.family(Family::Objects)?.expect("created directory");

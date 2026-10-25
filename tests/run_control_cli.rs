@@ -36,6 +36,23 @@ run = [{ task = "inner" }, { task = "heavy" }]
 [tasks.light]
 run = "touch light.txt"
 
+[tasks.report]
+admission = "heavy"
+run = "echo $$ > leader.pid; touch ran.txt"
+
+[tasks.step1]
+run = "echo $$ > step1.pid; touch step1.txt"
+
+[tasks.step2]
+run = "echo $$ > step2.pid; touch step2.txt"
+
+[tasks.step3]
+run = "echo $$ > step3.pid; touch step3.txt"
+
+[tasks.chain]
+admission = "heavy"
+run = [{ task = "step1" }, { task = "step2" }, { task = "step3" }]
+
 [tasks.qa]
 run = "touch qa.txt"
 
@@ -129,6 +146,33 @@ impl Fixture {
             .env("EFFIGY_ADMISSION_HOOK", hook)
             .output_owned()
             .expect("effigy runs")
+    }
+
+    /// The same run under the reported custody protocol (v2).
+    fn with_v2_hook(&self, hook: &str, args: &[&str]) -> Output {
+        self.effigy(args)
+            .env("EFFIGY_ADMISSION_HOOK", hook)
+            .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+            .output_owned()
+            .expect("effigy runs")
+    }
+
+    fn has_journal(&self) -> bool {
+        self.repo.join(".effigy/state/kernel.db").exists()
+    }
+
+    fn events(&self) -> Vec<serde_json::Value> {
+        self.read("hook.log")
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    fn acks(&self) -> Vec<u64> {
+        self.read("hook.log.acks")
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect()
     }
 
     fn read(&self, name: &str) -> String {
@@ -776,4 +820,402 @@ fn equal_keys_are_checkout_scoped_and_peer_discovery_refuses_ambiguity() {
             && message.contains(second.to_str().unwrap()),
         "{message}"
     );
+}
+
+/// Admission protocol v2 (effigy#325): a hook that implements it receives the
+/// acknowledged custody reports. `before_ack` runs in the hook after an event
+/// is received and before it is acknowledged, so a test can act on exactly the
+/// evidence Effigy holds, or refuse to acknowledge at all.
+fn v2_hook(fixture: &Fixture, name: &str, before_ack: &str, after_ack: &str) -> String {
+    let body = format!(
+        r#"#!/bin/sh
+printf '%s' "$EFFIGY_ADMISSION_REQUEST" > "$HOOK_LOG.request"
+echo admit
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$HOOK_LOG"
+  seq=$(printf '%s\n' "$line" | sed 's/.*"seq":\([0-9]*\).*/\1/')
+  case "$seq" in
+    2) expect=step1.txt ;;
+    3) expect=step2.txt ;;
+    4) expect=step3.txt ;;
+    *) expect= ;;
+  esac
+  if [ -n "$expect" ] && [ -e "$expect" ]; then
+    printf 'first-effect-before-ack %s\n' "$seq" >> "$HOOK_LOG"
+  fi
+  if [ "$seq" = "2" ] && [ -e ran.txt ]; then
+    printf 'first-effect-before-ack 2\n' >> "$HOOK_LOG"
+  fi
+{before_ack}
+  echo "ack $seq"
+  printf '%s\n' "$seq" >> "$HOOK_LOG.acks"
+{after_ack}
+done
+"#
+    );
+    fixture.hook(name, &body)
+}
+
+fn json_of(text: &str) -> serde_json::Value {
+    serde_json::from_str(text).unwrap_or_else(|error| panic!("json ({error}): {text}"))
+}
+
+/// A strict v1 consumer keeps its exact request: no new schema, no `protocol`
+/// field, and its stdin at EOF. Nothing durable is written for the run.
+#[test]
+fn admission_protocol_v1_stays_byte_identical_without_the_opt_in() {
+    let fixture = Fixture::new();
+    let hook = fixture.hook(
+        "strict-v1.sh",
+        r#"#!/bin/sh
+printf '%s' "$EFFIGY_ADMISSION_REQUEST" > "$HOOK_LOG"
+cat > "$HOOK_LOG.stdin"
+trap 'echo released >> "$HOOK_LOG.release"; exit 0' TERM
+echo admit
+while :; do sleep 0.1; done
+"#,
+    );
+    let output = fixture.with_hook(&hook, &["heavy"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("ran.txt"), "the workload ran");
+
+    let request = json_of(&fixture.read("hook.log"));
+    assert_eq!(request["schema"], "effigy.admission-request.v1");
+    let keys: Vec<&str> = request
+        .as_object()
+        .expect("request object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["class", "cwd", "root", "run_id", "schema", "task"],
+        "the v1 request is unchanged: {request}"
+    );
+    assert_eq!(fixture.read("hook.log.stdin"), "", "v1 stdin stays at EOF");
+    assert!(
+        !fixture.has_journal(),
+        "a v1 foreground run writes no journal"
+    );
+    let status = fixture.run(&[
+        "--json",
+        "run",
+        "status",
+        request["run_id"].as_str().expect("run id"),
+    ]);
+    assert!(!status.status.success(), "{}", text(&status));
+    let envelope = json_of(&String::from_utf8_lossy(&status.stdout));
+    assert_eq!(envelope["error"]["details"]["state"], "not-found");
+    assert_eq!(envelope["error"]["details"]["recording"], "not-recorded");
+}
+
+/// The happy path: one acknowledged `workload` report per group with the real
+/// PGID and leader, the group's first effect only after its ack, then one
+/// `terminal` report and one durable terminal record.
+#[test]
+fn admission_protocol_v2_reports_every_workload_group_and_the_terminal_result() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(&fixture, "v2.sh", "", "");
+    let output = fixture.with_v2_hook(&hook, &["chain"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("step1.txt") && fixture.exists("step3.txt"));
+
+    let request = json_of(&fixture.read("hook.log.request"));
+    assert_eq!(request["schema"], "effigy.admission-request.v2");
+    assert_eq!(request["protocol"], 2);
+    let run_id = request["run_id"].as_str().expect("run id").to_owned();
+
+    let events = fixture.events();
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|event| event["event"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["custodians", "workload", "workload", "workload", "terminal"],
+        "{events:?}"
+    );
+    assert_eq!(fixture.acks(), vec![1, 2, 3, 4, 5], "a gap-free prefix");
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(event["seq"], index as u64 + 1);
+        assert_eq!(event["schema"], "effigy.admission-event.v1");
+        assert_eq!(event["run_id"], run_id.as_str());
+    }
+    // The owner is this Effigy process; the guard is a live second custodian.
+    let custodians = &events[0];
+    assert!(custodians["owner"]["pid"].is_u64());
+    assert!(custodians["guard"]["pid"].is_u64());
+    assert_ne!(custodians["owner"]["pid"], custodians["guard"]["pid"]);
+    assert_eq!(custodians["owner"]["boot"], custodians["guard"]["boot"]);
+
+    // Each reported group is the process that actually ran its step.
+    for (event, step) in events[1..4].iter().zip(["step1", "step2", "step3"]) {
+        let leader = fixture.read(&format!("{step}.pid"));
+        let leader = leader.trim().parse::<u64>().expect("step pid");
+        assert_eq!(event["leader"]["pid"], leader, "{event}");
+        assert_eq!(event["pgid"], leader, "the group is the leader's");
+    }
+    assert!(
+        !fixture.read("hook.log").contains("first-effect-before-ack"),
+        "no workload group's first effect precedes its ack: {}",
+        fixture.read("hook.log")
+    );
+
+    let terminal = &events[4];
+    assert_eq!(terminal["outcome"], "succeeded");
+    assert_eq!(terminal["exit_code"], 0);
+    assert_eq!(terminal["cleanup"], "complete");
+    assert_eq!(terminal["workload_groups"], 3);
+    assert!(terminal["signal"].is_null());
+
+    // The narrow Q-010 exception: one durable row, bound to the run, the
+    // checkout and the boot.
+    let status = fixture.status_json(&run_id);
+    assert_eq!(status["evidence_source"], "foreground-terminal-record.v1");
+    assert_eq!(status["state"], "succeeded");
+    assert_eq!(status["phase"], "closed");
+    assert_eq!(status["cleanup"], "complete");
+    assert_eq!(status["exit_code"], 0);
+    assert!(status["checkout_id"].is_string(), "{status}");
+    assert!(status["boot"].is_string(), "{status}");
+    assert!(
+        status["pid"].is_null(),
+        "a terminal record carries no process identity: {status}"
+    );
+
+    let listing = fixture.run(&["--json", "runs"]);
+    let listing = json_of(&String::from_utf8_lossy(&listing.stdout));
+    let rows = listing["result"]["runs"].as_array().expect("runs");
+    assert_eq!(rows.len(), 1, "{listing}");
+    assert_eq!(rows[0]["run_id"], run_id.as_str());
+    assert_eq!(rows[0]["evidence_source"], "foreground-terminal-record.v1");
+    assert_eq!(rows[0]["task"], "chain");
+}
+
+/// Delivery is acknowledged, never assumed: a missing ack, hook EOF, a
+/// malformed ack and a write failure each stop the workload before `go` and
+/// fail the run closed with the admission's own error.
+#[test]
+fn admission_protocol_v2_fails_closed_when_a_report_is_not_acknowledged() {
+    // (hook body, expected reason fragment, the report it failed on)
+    let cases: [(&str, &str, &str); 4] = [
+        (
+            r#"#!/bin/sh
+echo admit
+while IFS= read -r line; do :; done
+"#,
+            "no acknowledgement for seq 1",
+            "custodians",
+        ),
+        (
+            r#"#!/bin/sh
+echo admit
+exit 0
+"#,
+            "the hook exited instead of retaining admission",
+            "custodians",
+        ),
+        (
+            r#"#!/bin/sh
+echo admit
+IFS= read -r line
+echo "ok 1"
+sleep 2
+"#,
+            "an acknowledgement is `ack <seq>`",
+            "custodians",
+        ),
+        (
+            r#"#!/bin/sh
+exec 0<&-
+echo admit
+trap 'exit 0' TERM
+while :; do sleep 0.1; done
+"#,
+            "did not accept the `custodians` report",
+            "custodians",
+        ),
+    ];
+    for (index, (body, reason, report)) in cases.into_iter().enumerate() {
+        let fixture = Fixture::new();
+        let hook = fixture.hook(&format!("fail-{index}.sh"), body);
+        let output = fixture
+            .effigy(&["--json", "heavy"])
+            .env("EFFIGY_ADMISSION_HOOK", hook)
+            .env("EFFIGY_ADMISSION_PROTOCOL", "2")
+            .env("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS", "60000")
+            .output_owned()
+            .expect("effigy runs");
+        assert!(!output.status.success(), "case {index}: {}", text(&output));
+        let envelope = json_of(&String::from_utf8_lossy(&output.stdout));
+        let details = &envelope["error"]["details"];
+        assert_eq!(details["schema"], "effigy.admission.v1", "case {index}");
+        assert_eq!(details["decision"], "failed", "case {index}");
+        assert!(
+            details["reason"]
+                .as_str()
+                .is_some_and(|text| text.contains(reason)),
+            "case {index} ({report}): {details}"
+        );
+        assert!(!fixture.exists("ran.txt"), "case {index}: nothing ran");
+    }
+
+    // A workload report that is not acknowledged fails the same way, after
+    // `custodians` was acknowledged, and that group never executes.
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "no-workload-ack.sh",
+        r#"  if [ "$seq" = "2" ]; then exit 0; fi"#,
+        "",
+    );
+    let output = fixture.with_v2_hook(&hook, &["--json", "report"]);
+    assert!(!output.status.success(), "{}", text(&output));
+    let envelope = json_of(&String::from_utf8_lossy(&output.stdout));
+    let details = &envelope["error"]["details"];
+    assert_eq!(details["schema"], "effigy.admission.v1");
+    assert_eq!(details["decision"], "failed");
+    assert!(
+        details["reason"]
+            .as_str()
+            .is_some_and(|text| text.contains("seq 2")),
+        "{details}"
+    );
+    assert!(!fixture.exists("ran.txt"), "the unreported group never ran");
+    assert_eq!(
+        fixture.acks(),
+        vec![1],
+        "only `custodians` was acknowledged"
+    );
+}
+
+/// The ack sequence is the coverage witness. A hook that kills Effigy and its
+/// guard after two acknowledged groups leaves `custodians` plus exactly those
+/// two in the acknowledged prefix, and the third group never executes: it is
+/// still held at the spawn barrier when the owner dies.
+#[test]
+fn admission_protocol_v2_coverage_witness_survives_losing_both_custodians() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "kill-after-two.sh",
+        r#"  if [ "$seq" = "4" ]; then
+    owner=$(sed -n '1s/.*"owner":{"boot":"[^"]*","pid":\([0-9]*\).*/\1/p' "$HOOK_LOG")
+    guard=$(sed -n '1s/.*"guard":{"boot":"[^"]*","pid":\([0-9]*\).*/\1/p' "$HOOK_LOG")
+    kill -9 "$owner" "$guard" 2>/dev/null
+    exit 0
+  fi"#,
+        "",
+    );
+    let output = fixture.with_v2_hook(&hook, &["chain"]);
+    assert!(
+        !output.status.success(),
+        "the owner was killed: {}",
+        text(&output)
+    );
+
+    let events = fixture.events();
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|event| event["event"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["custodians", "workload", "workload", "workload"],
+        "{events:?}"
+    );
+    assert_eq!(
+        fixture.acks(),
+        vec![1, 2, 3],
+        "custodians plus two groups, no gaps"
+    );
+    assert!(
+        !fixture.exists("step3.txt") && !fixture.exists("step3.pid"),
+        "the unacknowledged group never ran"
+    );
+    let run_id = events[0]["run_id"].as_str().expect("run id");
+    assert!(!fixture.has_journal(), "no settle means no terminal record");
+    let status = fixture.run(&["--json", "run", "status", run_id]);
+    assert!(!status.status.success(), "{}", text(&status));
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("not-recorded"),
+        "{}",
+        text(&status)
+    );
+}
+
+/// A run killed after `custodians` alone proves no group ever started: a
+/// legitimate zero, and the release rule's other bound.
+#[test]
+fn admission_protocol_v2_coverage_witness_of_zero_workload_groups() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(
+        &fixture,
+        "kill-after-custodians.sh",
+        "",
+        r#"  if [ "$seq" = "1" ]; then
+    owner=$(sed -n '1s/.*"owner":{"boot":"[^"]*","pid":\([0-9]*\).*/\1/p' "$HOOK_LOG")
+    guard=$(sed -n '1s/.*"guard":{"boot":"[^"]*","pid":\([0-9]*\).*/\1/p' "$HOOK_LOG")
+    kill -9 "$owner" "$guard" 2>/dev/null
+    exit 0
+  fi"#,
+    );
+    let output = fixture.with_v2_hook(&hook, &["chain"]);
+    assert!(!output.status.success(), "{}", text(&output));
+    let kinds: Vec<String> = fixture
+        .events()
+        .iter()
+        .map(|event| event["event"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(kinds, ["custodians"], "no workload group was reported");
+    assert_eq!(fixture.acks(), vec![1]);
+    assert!(
+        !fixture.exists("step1.txt") && !fixture.exists("step1.pid"),
+        "no step ran"
+    );
+}
+
+/// Reported identity is evidence for a provider's own lease, never authority
+/// inside Effigy: the terminal record carries no PID, and `run stop` refuses
+/// without signalling the reported group.
+#[test]
+fn admission_protocol_v2_reported_identity_grants_no_signal_or_reclaim() {
+    let fixture = Fixture::new();
+    let hook = v2_hook(&fixture, "identity.sh", "", "");
+    let output = fixture.with_v2_hook(&hook, &["report"]);
+    assert!(output.status.success(), "{}", text(&output));
+    let events = fixture.events();
+    let reported = events[1]["pgid"].as_u64().expect("reported pgid");
+    let run_id = events[1]["run_id"].as_str().expect("run id").to_owned();
+
+    // The reported group is gone, and the record exposes no identity at all.
+    assert!(
+        !alive(reported as u32),
+        "the reported group is not live after settle"
+    );
+    let status = fixture.status_json(&run_id);
+    assert!(status.get("pid").is_none(), "{status}");
+    assert!(status.get("pgid").is_none(), "{status}");
+
+    // A fresh process in the fixture is untouched by reading the record or by
+    // a stop that has no live owner to address.
+    let mut child = Command::new("sleep")
+        .arg("30")
+        .current_dir(&fixture.repo)
+        .spawn()
+        .expect("fixture process");
+    let stop = fixture.run(&["run", "stop", &run_id]);
+    assert!(!stop.status.success(), "{}", text(&stop));
+    assert!(
+        String::from_utf8_lossy(&stop.stderr).contains("no live owner")
+            || String::from_utf8_lossy(&stop.stderr).contains("terminal record"),
+        "{}",
+        text(&stop)
+    );
+    assert!(
+        child.try_wait().expect("wait").is_none(),
+        "no signal reached an unrelated process"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
 }

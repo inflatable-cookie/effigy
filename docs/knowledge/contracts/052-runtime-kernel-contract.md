@@ -314,6 +314,30 @@ blocks the affected owner until positively absent or explicitly acknowledged;
 acknowledgement for a foreground run lasts only in the current custodian.
 Guaranteed restartable recovery requires a durable class.
 
+**The narrow terminal-record exception (effigy#325).** One deliberate,
+bounded exception to "a foreground run leaves no durable record" (Tom,
+2026-10-24; Queue decision b3538091, chosen option verbatim: "the admission
+hook reports the workload's real process group and start identity, and Effigy
+records a terminal result for foreground runs. Then Queue can settle dead runs
+as lost and free slots on its own."). An orchestrator that opts in to
+`effigy.admission-request.v2` (contract [049](049-heavy-validation-admission-contract.md))
+makes Effigy write exactly one row to the owning checkout journal at settle,
+in an additive schema-1 `foreground_terminals` table. An older reader selects
+the columns it knows, so the addition needs no schema-version bump.
+
+The row holds the run id, the `CheckoutId`, the boot identity, the task, the
+outcome, the exit code or signal, `cleanup`, the acknowledged workload-group
+count and the closed time. It is **evidence, never authority**: it carries no
+PID, PGID or start identity, so no run, provider or built-in may signal,
+reclaim, recover or settle from it. `run status <id>` reports it with
+`evidence_source: "foreground-terminal-record.v1"`; `run logs` reports no
+retained log and `run stop` refuses. The only closure Effigy asserts from it is
+a terminal result with `cleanup: "complete"` (R5/I-R7). A run whose custodians
+all died before settle writes nothing and stays `not-recorded`; there is no
+replay. Every other foreground run keeps Q-010 unchanged, including no journal
+write at all. The provider-side release rule this evidence supports is
+contract 049's, and it is not an Effigy authority.
+
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
 incarnation fence containing that id; persistent resource generations are not
 incremented. No persisted request can address a foreground incarnation.

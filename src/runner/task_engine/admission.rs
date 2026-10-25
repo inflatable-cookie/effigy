@@ -13,15 +13,40 @@
 //! `EFFIGY_ADMITTED` names an admission for diagnostics. Nested authority
 //! requires the anonymous parent capability and a verified live hook; no
 //! journal liveness or unreadable state grants admission. Failure, a crash and a timeout all fail closed.
+//!
+//! ## Admission protocol v2 (effigy#325)
+//!
+//! Setting `EFFIGY_ADMISSION_PROTOCOL=2` opts a launcher in to the reported
+//! custody protocol. Effigy then sends `effigy.admission-request.v2` and
+//! writes newline-delimited `effigy.admission-event.v1` reports to the
+//! hook's stdin, each acknowledged by `ack <seq>` on its stdout:
+//!
+//! - seq 1 is always `custodians`, acknowledged before any workload spawns;
+//! - every workload group reports its real PGID and leader
+//!   `ProcessIdentity` between the spawn receipt and its `go`, so a group
+//!   never runs unreported;
+//! - events are strictly sequential: n+1 is written only after n is acked,
+//!   so the acknowledged seqs are a gap-free prefix;
+//! - a `terminal` report is sent at settle, before the hook is stopped.
+//!
+//! The reports are **evidence**. Effigy claims no closure from them and
+//! gains no signalling or reclaim authority (052 §3.1). The one durable
+//! custody fact is the narrow terminal record written to the owning checkout
+//! journal at settle; see [`finish`].
 
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io::Write;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::OpenReason;
-use effigy_kernel::custody::{EnvValue, Lifetime, OwnedProcess, ProcessSpec, Terminal};
+use effigy_kernel::custody::{
+    EnvValue, Lifetime, OwnedProcess, ProcessReceipt, ProcessSpec, SpawnError, SpawnGate, Terminal,
+};
+use effigy_kernel::ident::ProcessIdentity;
 use effigy_kernel::observe::Observed;
+use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_manifest::ManifestTaskAdmission;
 
 use super::identity::TaskTarget;
@@ -32,15 +57,23 @@ pub(in crate::runner) const HOOK_ENV: &str = "EFFIGY_ADMISSION_HOOK";
 pub(in crate::runner) const TIMEOUT_ENV: &str = "EFFIGY_ADMISSION_HOOK_TIMEOUT_MS";
 pub(in crate::runner) const REQUEST_ENV: &str = "EFFIGY_ADMISSION_REQUEST";
 pub(in crate::runner) const ADMITTED_ENV: &str = "EFFIGY_ADMITTED";
+/// The opt-in to the reported custody protocol. Unset or empty keeps v1.
+pub(in crate::runner) const PROTOCOL_ENV: &str = "EFFIGY_ADMISSION_PROTOCOL";
 /// The hook's process label in the run journal; `run logs` never shows it.
 pub(in crate::runner) const HOOK_LABEL: &str = "admission hook";
 const REQUEST_SCHEMA: &str = "effigy.admission-request.v1";
+const REQUEST_SCHEMA_V2: &str = "effigy.admission-request.v2";
+const EVENT_SCHEMA: &str = "effigy.admission-event.v1";
 const DETAILS_SCHEMA: &str = "effigy.admission.v1";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// How long a report waits for its `ack <seq>` before the run fails closed.
+const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const GRACE: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_millis(20);
 /// The decision line is short; a hook that writes more is malformed.
 const DECISION_MAX: usize = 4096;
+/// Ack lines are short too, and a hook that floods stdout is malformed.
+const ACK_MAX: usize = 64 * 1024;
 
 // Admission markers this thread holds, innermost last. A nested in-process
 // run (a sequence step or a QA member) runs on the thread that admitted its
@@ -51,7 +84,11 @@ const DECISION_MAX: usize = 4096;
 // `PARENTS` stack that nests runs, so admission nesting and run nesting
 // cannot disagree.
 thread_local! {
-    static HELD: RefCell<Vec<(String, effigy_kernel::ident::ProcessIdentity)>> = const { RefCell::new(Vec::new()) };
+    static HELD: RefCell<Vec<(String, ProcessIdentity)>> = const { RefCell::new(Vec::new()) };
+    /// The v2 reporting channel of the admission this thread is inside.
+    /// In-process nested runs (sequence steps, QA members) spawn workload
+    /// groups of the admitting run, so they report through the same channel.
+    static CHANNELS: RefCell<Vec<Weak<AdmissionCore>>> = const { RefCell::new(Vec::new()) };
 }
 
 fn held_marker() -> Option<String> {
@@ -128,6 +165,29 @@ fn decide(
     Ok(Plan::Hook { command, timeout })
 }
 
+/// The protocol the launcher opted in to. An unset or empty variable keeps
+/// v1 byte for byte; any other value must be the documented `2`, so a typo
+/// fails closed instead of silently running unreported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    V1,
+    V2,
+}
+
+fn protocol() -> Result<Protocol, String> {
+    match std::env::var(PROTOCOL_ENV) {
+        Ok(raw) if raw.trim().is_empty() => Ok(Protocol::V1),
+        Ok(raw) if raw.trim() == "2" => Ok(Protocol::V2),
+        Ok(other) => Err(format!(
+            "`{PROTOCOL_ENV}` was `{other}`; set it to `2` for the reported custody protocol, or unset it for v1"
+        )),
+        Err(std::env::VarError::NotPresent) => Ok(Protocol::V1),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "`{PROTOCOL_ENV}` is not valid UTF-8; set it to `2`, or unset it for v1"
+        )),
+    }
+}
+
 /// The marker a child of this process inherits, if it runs inside an
 /// admission: the innermost held one, else the one this process inherited.
 pub(in crate::runner) fn child_marker() -> Option<String> {
@@ -141,7 +201,7 @@ pub(in crate::runner) fn child_marker() -> Option<String> {
 /// The stack a held admission pushed to, innermost last. Only the thread
 /// that holds it can read it, which is the point: no other thread's run may
 /// treat this admission as its own.
-fn push_marker(marker: String, hook: effigy_kernel::ident::ProcessIdentity) {
+fn push_marker(marker: String, hook: ProcessIdentity) {
     HELD.with(|held| held.borrow_mut().push((marker, hook)));
 }
 
@@ -154,12 +214,34 @@ fn pop_marker(marker: &str) {
     });
 }
 
+fn push_channel(core: &Arc<AdmissionCore>) {
+    CHANNELS.with(|channels| channels.borrow_mut().push(Arc::downgrade(core)));
+}
+
+fn pop_channel(core: &Arc<AdmissionCore>) {
+    CHANNELS.with(|channels| {
+        let mut channels = channels.borrow_mut();
+        if let Some(index) = channels.iter().rposition(|held| {
+            held.strong_count() > 0 && std::ptr::eq(held.as_ptr(), Arc::as_ptr(core))
+        }) {
+            channels.remove(index);
+        }
+        channels.retain(|held| held.strong_count() > 0);
+    });
+}
+
+/// The innermost live v2 channel on this thread, if any. A nested in-process
+/// run reports through it: it spawns workload groups of the admitting run.
+fn active_core() -> Option<Arc<AdmissionCore>> {
+    CHANNELS.with(|channels| channels.borrow().iter().rev().find_map(Weak::upgrade))
+}
+
 /// Explicitly lends a verified parent hook to a bounded suite worker. Unrelated
 /// threads still have no ambient access to another thread's admission.
 #[derive(Debug)]
 pub(in crate::runner) struct AdmissionInheritance {
     marker: String,
-    hook: Option<effigy_kernel::ident::ProcessIdentity>,
+    hook: Option<ProcessIdentity>,
 }
 
 #[derive(Debug)]
@@ -200,8 +282,7 @@ impl Drop for AdmissionScope {
 
 /// A journal row or environment marker never grants nested admission.
 /// The native capability's peer and the hook it names must both remain live.
-pub(super) fn inherited_hook() -> Result<Option<effigy_kernel::ident::ProcessIdentity>, RunnerError>
-{
+pub(super) fn inherited_hook() -> Result<Option<ProcessIdentity>, RunnerError> {
     let grant = super::run::foreground::inherited_class()?;
     if grant.is_none() && std::env::var_os(ADMITTED_ENV).is_some() {
         return Err(RunnerError::task_invocation(
@@ -214,14 +295,14 @@ pub(super) fn inherited_hook() -> Result<Option<effigy_kernel::ident::ProcessIde
     }
     Ok(hook)
 }
-pub(super) fn current_hook() -> Result<Option<effigy_kernel::ident::ProcessIdentity>, RunnerError> {
+pub(super) fn current_hook() -> Result<Option<ProcessIdentity>, RunnerError> {
     verify_held()?;
     match HELD.with(|held| held.borrow().last().map(|(_, hook)| hook.clone())) {
         Some(hook) => Ok(Some(hook)),
         None => inherited_hook(),
     }
 }
-fn verify_hook(hook: &effigy_kernel::ident::ProcessIdentity) -> Result<(), RunnerError> {
+fn verify_hook(hook: &ProcessIdentity) -> Result<(), RunnerError> {
     if matches!(effigy_kernel::ident::process_identity(hook.pid), Observed::Verified(ref current, _) if current == hook)
         && matches!(
             effigy_kernel::ident::process_state(hook.pid),
@@ -247,33 +328,241 @@ pub(super) fn verify_held() -> Result<(), RunnerError> {
     Ok(())
 }
 
+/// The v2 report channel: the hook process both sides address, and the
+/// sequence the acknowledged prefix has reached.
+#[derive(Debug)]
+struct AdmissionCore {
+    hook: Mutex<OwnedProcess>,
+    delivery: Mutex<Delivery>,
+}
+
+#[derive(Debug)]
+struct Delivery {
+    protocol: Protocol,
+    run_id: String,
+    /// The last acknowledged event sequence.
+    seq: u64,
+    /// Acknowledged `workload` reports, the terminal report's cross-check.
+    groups: u64,
+    /// Hook stdout not yet consumed: the decision line's remainder, then acks.
+    stdout: Vec<u8>,
+    ack_timeout: Duration,
+}
+
+impl Delivery {
+    /// The next complete line, or `None` when the hook has written only part
+    /// of one.
+    fn next_line(&mut self) -> Option<String> {
+        let end = self.stdout.iter().position(|byte| *byte == b'\n')?;
+        let line = String::from_utf8_lossy(&self.stdout[..end])
+            .trim()
+            .to_owned();
+        self.stdout.drain(..=end);
+        Some(line)
+    }
+    /// The next non-blank line: an empty line is not an acknowledgement.
+    fn next_ack_line(&mut self) -> Option<String> {
+        while let Some(line) = self.next_line() {
+            if !line.is_empty() {
+                return Some(line);
+            }
+        }
+        None
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// A held admission: the hook process, which the run's settle stops, and
 /// this process's marker for nested runs.
 #[derive(Debug)]
 pub(super) struct Admission {
-    hook: OwnedProcess,
+    core: Arc<AdmissionCore>,
     marker: String,
     pub(super) waited: Duration,
 }
 
 impl Admission {
-    pub(super) fn identity(&self) -> effigy_kernel::ident::ProcessIdentity {
-        self.hook.identity().identity
+    pub(super) fn identity(&self) -> ProcessIdentity {
+        lock(&self.core.hook).identity().identity
     }
     pub(super) fn verify(&mut self) -> Result<(), RunnerError> {
-        if matches!(self.hook.poll(), Observed::Verified(..)) {
+        let mut hook = lock(&self.core.hook);
+        if matches!(hook.poll(), Observed::Verified(..)) {
             return Err(RunnerError::task_invocation(
                 "admission hook exited; workload stopped because admission fails closed",
             ));
         }
-        verify_hook(&self.identity())
+        let identity = hook.identity().identity;
+        drop(hook);
+        verify_hook(&identity)
+    }
+    /// Whether this admission reports its custody to the hook.
+    pub(super) fn reporting(&self) -> bool {
+        lock(&self.core.delivery).protocol == Protocol::V2
+    }
+    /// The acknowledged workload-group count.
+    pub(super) fn workload_groups(&self) -> u64 {
+        lock(&self.core.delivery).groups
     }
 }
 
 impl Drop for Admission {
     fn drop(&mut self) {
+        pop_channel(&self.core);
         pop_marker(&self.marker);
     }
+}
+
+/// One workload spawn's report: the event goes out between the recorded
+/// receipt and the child's `go`. A delivery failure refuses the spawn, so
+/// the child exits unexecuted and the run fails closed.
+#[derive(Debug)]
+pub(in crate::runner) struct WorkloadGate {
+    core: Arc<AdmissionCore>,
+    target: TaskTarget,
+    failure: Option<RunnerError>,
+}
+
+impl WorkloadGate {
+    /// The gate for this run's next workload spawn, when the admission (or
+    /// the admission this thread is inside) reports custody.
+    pub(in crate::runner) fn for_spawn(
+        admission: Option<&Admission>,
+        target: &TaskTarget,
+    ) -> Option<Self> {
+        let core = match admission {
+            Some(admission) => {
+                if !admission.reporting() {
+                    return None;
+                }
+                admission.core.clone()
+            }
+            // A nested in-process run spawns groups of the admitting run.
+            None => active_core()?,
+        };
+        Some(Self {
+            core,
+            target: target.clone(),
+            failure: None,
+        })
+    }
+
+    /// The refusal this gate produced, once, so the caller can fail the run
+    /// closed with the admission's own error shape.
+    pub(in crate::runner) fn take_failure(&mut self) -> Option<RunnerError> {
+        self.failure.take()
+    }
+}
+
+impl SpawnGate for WorkloadGate {
+    fn before_go(&mut self, receipt: &ProcessReceipt) -> Result<(), SpawnError> {
+        let run_id = lock(&self.core.delivery).run_id.clone();
+        let event = serde_json::json!({
+            "schema": EVENT_SCHEMA,
+            "event": "workload",
+            "pgid": receipt.pgid,
+            "leader": serde_json::to_value(&receipt.identity)
+                .unwrap_or(serde_json::Value::Null),
+        });
+        match deliver(&self.core, event) {
+            Ok(()) => {
+                lock(&self.core.delivery).groups += 1;
+                Ok(())
+            }
+            Err(reason) => {
+                let error = refusal(&self.target, &run_id, "failed", reason);
+                self.failure = Some(error);
+                Err(SpawnError::Refused(
+                    "the workload was not reported to the admission hook".into(),
+                ))
+            }
+        }
+    }
+}
+
+/// Sends one report and waits for its acknowledgement. Reports are strictly
+/// sequential: `seq` only advances on an ack, so the acknowledged sequences
+/// are always a gap-free prefix. Any write failure, EOF, malformed or
+/// out-of-order ack and timeout is a delivery failure.
+fn deliver(core: &AdmissionCore, event: serde_json::Value) -> Result<(), String> {
+    let mut hook = lock(&core.hook);
+    let mut delivery = lock(&core.delivery);
+    delivery.seq += 1;
+    let seq = delivery.seq;
+    let name = event
+        .get("event")
+        .and_then(|value| value.as_str())
+        .unwrap_or("report")
+        .to_owned();
+    let mut event = event;
+    if let Some(object) = event.as_object_mut() {
+        object.insert("seq".into(), seq.into());
+        object.insert("run_id".into(), delivery.run_id.clone().into());
+    }
+    let mut line = serde_json::to_vec(&event)
+        .map_err(|error| format!("the `{name}` report could not be encoded: {error}"))?;
+    line.push(b'\n');
+    let started = Instant::now();
+    hook.write_stdin(&line, started + delivery.ack_timeout)
+        .map_err(|error| {
+            format!("the hook did not accept the `{name}` report (seq {seq}): {error}")
+        })?;
+    loop {
+        if let Some(line) = delivery.next_ack_line() {
+            return acknowledgement(&line, seq, &name);
+        }
+        let exited = hook.poll();
+        let (out, err) = hook.take_stream_output();
+        if !err.is_empty() {
+            let _ = std::io::stderr().write_all(&err);
+        }
+        delivery.stdout.extend_from_slice(&out);
+        // A hook may acknowledge and then exit: the acknowledgement is the
+        // answer, so it is read before the exit is treated as a failure.
+        if let Some(line) = delivery.next_ack_line() {
+            return acknowledgement(&line, seq, &name);
+        }
+        if matches!(exited, Observed::Verified(..)) {
+            return Err(format!(
+                "the hook exited before acknowledging seq {seq} (`{name}`); the workload never ran"
+            ));
+        }
+        if delivery.stdout.len() > ACK_MAX {
+            return Err(format!(
+                "the hook wrote more than an acknowledgement while seq {seq} (`{name}`) was waiting"
+            ));
+        }
+        if started.elapsed() >= delivery.ack_timeout {
+            return Err(format!(
+                "the hook gave no acknowledgement for seq {seq} (`{name}`) within {} ms",
+                delivery.ack_timeout.as_millis()
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+fn acknowledgement(line: &str, seq: u64, name: &str) -> Result<(), String> {
+    match parse_ack(line) {
+        Some(acked) if acked == seq => Ok(()),
+        Some(acked) => Err(format!(
+            "the hook acknowledged seq {acked} while seq {seq} (`{name}`) was waiting; reports are strictly sequential"
+        )),
+        None => Err(format!(
+            "the hook answered `{line}`; an acknowledgement is `ack <seq>`"
+        )),
+    }
+}
+
+fn parse_ack(line: &str) -> Option<u64> {
+    let (word, rest) = line.split_once(char::is_whitespace)?;
+    if word != "ack" {
+        return None;
+    }
+    rest.trim().parse::<u64>().ok()
 }
 
 /// Calls the hook for an admitted run and waits for its decision. Runs
@@ -288,15 +577,30 @@ pub(super) fn admit(
 ) -> Result<Admission, RunnerError> {
     let run_id = run.id().to_string();
     let cwd = cwd.to_path_buf();
-    let request = serde_json::json!({
+    let refused = |decision: &str, reason: String| refusal(target, &run_id, decision, reason);
+    let protocol = match protocol() {
+        Ok(protocol) => protocol,
+        Err(reason) => {
+            effigy_ui::steps::step(&admission_wait_label(&target.label, None)).fail(&format!(
+                "heavy admission for `{}` was refused: {reason}",
+                target.label
+            ));
+            return Err(refused("failed", reason));
+        }
+    };
+    let mut request = serde_json::json!({
         "schema": REQUEST_SCHEMA,
         "run_id": run_id,
         "task": target.label,
         "class": class.as_str(),
         "cwd": cwd.display().to_string(),
         "root": target.root.display().to_string(),
-    })
-    .to_string();
+    });
+    if protocol == Protocol::V2 {
+        request["schema"] = REQUEST_SCHEMA_V2.into();
+        request["protocol"] = 2.into();
+    }
+    let request = request.to_string();
     let mut env = super::process::environment(&cwd, Vec::new())?;
     env.insert(
         OsString::from(REQUEST_ENV),
@@ -312,10 +616,13 @@ pub(super) fn admit(
         env,
         grace: GRACE,
         lifetime: Lifetime::Open(OpenReason::Shell),
-        terminal: Terminal::None,
+        terminal: match protocol {
+            Protocol::V1 => Terminal::None,
+            // v2 reports go to the hook's stdin; v1's stays at EOF.
+            Protocol::V2 => Terminal::Pipe,
+        },
         label: HOOK_LABEL.to_owned(),
     };
-    let refused = |decision: &str, reason: String| refusal(target, &run_id, decision, reason);
     // A heavy run can queue for minutes behind the machine's other heavy work.
     // The step says so, and the hook's own progress line becomes its label.
     let step = effigy_ui::steps::step(&admission_wait_label(&target.label, None));
@@ -373,18 +680,52 @@ pub(super) fn admit(
                             "the hook exited instead of retaining admission".into(),
                         ));
                     }
-                    verify_hook(&hook.identity().identity)?;
-                    push_marker(run_id.clone(), hook.identity().identity);
-                    step.succeed(&format!(
-                        "admitted heavy task `{}` after {}",
-                        target.label,
-                        effigy_kernel::human::human_duration(started.elapsed())
-                    ));
-                    Ok(Admission {
+                    if verify_hook(&hook.identity().identity).is_err() {
+                        step.fail(&format!(
+                            "heavy admission for `{}` was withdrawn: the hook is no longer verified live",
+                            target.label
+                        ));
+                        return Err(refused(
+                            "failed",
+                            "the hook is no longer verified live; the workload never ran".into(),
+                        ));
+                    }
+                    let identity = hook.identity().identity;
+                    // Everything after the decision line is the hook's first
+                    // acknowledgements; nothing is lost between v1 and v2.
+                    let consumed = stdout
+                        .iter()
+                        .position(|byte| *byte == b'\n')
+                        .map_or(stdout.len(), |end| end + 1);
+                    let handled = finish_admission(
                         hook,
-                        marker: run_id,
-                        waited: started.elapsed(),
-                    })
+                        identity.clone(),
+                        run,
+                        target,
+                        &run_id,
+                        protocol,
+                        &stdout[consumed..],
+                    );
+                    match handled {
+                        Ok(mut admission) => {
+                            push_marker(run_id.clone(), identity);
+                            admission.marker = run_id;
+                            admission.waited = started.elapsed();
+                            step.succeed(&format!(
+                                "admitted heavy task `{}` after {}",
+                                target.label,
+                                effigy_kernel::human::human_duration(started.elapsed())
+                            ));
+                            Ok(admission)
+                        }
+                        Err(error) => {
+                            step.fail(&format!(
+                                "heavy task `{}` was not admitted: {error}",
+                                target.label
+                            ));
+                            Err(error)
+                        }
+                    }
                 }
                 Decision::Deny(reason) => {
                     let reason = if reason.is_empty() {
@@ -451,6 +792,260 @@ pub(super) fn admit(
             ));
         }
         std::thread::sleep(POLL);
+    }
+}
+
+/// Assembles the admitted channel. Under v2 the `custodians` report is the
+/// coverage witness's first line: it must be acknowledged before any
+/// workload spawns, so a run killed later still proves which custodians
+/// existed.
+#[allow(clippy::too_many_arguments)]
+fn finish_admission(
+    hook: OwnedProcess,
+    identity: ProcessIdentity,
+    run: &mut super::run::TaskRun,
+    target: &TaskTarget,
+    run_id: &str,
+    protocol: Protocol,
+    pending_stdout: &[u8],
+) -> Result<Admission, RunnerError> {
+    let core = Arc::new(AdmissionCore {
+        hook: Mutex::new(hook),
+        delivery: Mutex::new(Delivery {
+            protocol,
+            run_id: run_id.to_owned(),
+            seq: 0,
+            groups: 0,
+            stdout: pending_stdout.to_vec(),
+            ack_timeout: ACK_TIMEOUT,
+        }),
+    });
+    let admission = Admission {
+        core: core.clone(),
+        marker: String::new(),
+        waited: Duration::ZERO,
+    };
+    if protocol == Protocol::V1 {
+        return Ok(admission);
+    }
+    let (owner, guard) = run.custodian_identities();
+    let Some(owner) = owner else {
+        return Err(refusal(
+            target,
+            run_id,
+            "failed",
+            "the run's own process identity is unreadable, so its custodians cannot be reported"
+                .into(),
+        ));
+    };
+    let Some(guard) = guard else {
+        return Err(refusal(
+            target,
+            run_id,
+            "failed",
+            "the foreground run has no guard identity to report as a custodian".into(),
+        ));
+    };
+    let event = serde_json::json!({
+        "schema": EVENT_SCHEMA,
+        "event": "custodians",
+        "owner": serde_json::to_value(&owner).unwrap_or(serde_json::Value::Null),
+        "guard": serde_json::to_value(&guard).unwrap_or(serde_json::Value::Null),
+    });
+    deliver(&core, event).map_err(|reason| {
+        refusal(
+            target,
+            run_id,
+            "failed",
+            format!("the custodians were not reported: {reason}"),
+        )
+    })?;
+    push_channel(&core);
+    // Keep `identity` verified: a hook that answered and then died cannot
+    // witness this run.
+    verify_hook(&identity)?;
+    Ok(admission)
+}
+
+/// The terminal half of the protocol, part one: one `terminal` report,
+/// delivered while the hook is still live. The kernel calls this from inside
+/// the run's settle, immediately before the hook — the first effect, so the
+/// last one settled — is stopped, so `cleanup` is the outcome of every other
+/// effect. Failures are warnings: the workload's own result is already
+/// decided (K10).
+pub(super) fn report_terminal(
+    admission: &Admission,
+    workload: &WorkloadOutcome,
+    cleanup: CleanupOutcome,
+) -> Vec<String> {
+    if !admission.reporting() {
+        return Vec::new();
+    }
+    let (exit_code, signal) = outcome_code(workload);
+    let event = serde_json::json!({
+        "schema": EVENT_SCHEMA,
+        "event": "terminal",
+        "outcome": outcome_name(workload),
+        "exit_code": exit_code,
+        "signal": signal,
+        "cleanup": cleanup_name(cleanup),
+        "workload_groups": admission.workload_groups(),
+    });
+    match deliver(&admission.core, event) {
+        Ok(()) => Vec::new(),
+        Err(reason) => vec![format!(
+            "the terminal admission report was not delivered: {reason}"
+        )],
+    }
+}
+
+/// The terminal half, part two: the narrow Q-010 exception's one journal
+/// row, written once the run has settled. The settled outcome is the source
+/// of truth for the record: a run that did not settle writes nothing, and a
+/// write failure leaves Q-010 exactly as it was.
+pub(super) fn record_terminal(
+    target: &TaskTarget,
+    run_id: &str,
+    settled: &effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>,
+    groups: u64,
+) -> Vec<String> {
+    let workload = settled.workload();
+    let (exit_code, signal) = outcome_code(workload);
+    match write_record(
+        target,
+        run_id,
+        outcome_name(workload),
+        (exit_code, signal),
+        cleanup_name(settled.cleanup()),
+        groups,
+    ) {
+        Ok(()) => Vec::new(),
+        Err(warning) => vec![warning],
+    }
+}
+
+/// The whole terminal half, for a close path whose settle has already run
+/// (a detached supervisor's). The report can no longer precede the hook's
+/// stop there; the hook is durable custody in that class, and a missing ack
+/// leaves the record as the source of truth.
+pub(super) fn finish(
+    admission: Admission,
+    target: &TaskTarget,
+    run_id: &str,
+    workload: &WorkloadOutcome,
+    settled: Option<&effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>>,
+) -> Vec<String> {
+    if !admission.reporting() {
+        return Vec::new();
+    }
+    let mut warnings = report_terminal(
+        &admission,
+        settled
+            .map(|outcome| outcome.workload())
+            .unwrap_or(workload),
+        settled.map_or(CleanupOutcome::Incomplete, |outcome| outcome.cleanup()),
+    );
+    let groups = admission.workload_groups();
+    if let Some(settled) = settled {
+        warnings.extend(record_terminal(target, run_id, settled, groups));
+    }
+    warnings
+}
+
+fn cleanup_name(cleanup: CleanupOutcome) -> &'static str {
+    match cleanup {
+        CleanupOutcome::NotNeeded | CleanupOutcome::Complete => "complete",
+        CleanupOutcome::Incomplete => "incomplete",
+    }
+}
+
+/// The narrow Q-010 exception: one row in the owning checkout journal,
+/// bound to the run, the checkout and the boot. The row carries no process
+/// identity, so nothing can be signalled or reclaimed from it.
+fn write_record(
+    target: &TaskTarget,
+    run_id: &str,
+    outcome: &'static str,
+    (exit_code, signal): (Option<i32>, Option<i32>),
+    cleanup: &'static str,
+    groups: u64,
+) -> Result<(), String> {
+    let location = kernel::checkout_location(&target.root).map_err(|error| error.to_string())?;
+    let cx = kernel::effects();
+    let boot = effigy_kernel::ident::boot_identity();
+    let boot = boot
+        .verified()
+        .ok_or_else(|| "the boot identity is unreadable".to_owned())?;
+    // The persisted checkout token when the checkout has one; otherwise the
+    // same filesystem identity the journal's own binding records. No token is
+    // minted: this exception adds one row, not a durable run identity.
+    let checkout = match super::checkout::read(&target.root)
+        .map_err(|error| format!("the checkout identity is unreadable: {error}"))?
+    {
+        Some(checkout) => checkout,
+        None => {
+            let observe = kernel::observe();
+            effigy_kernel::root::StateRoot::filesystem_checkout(&observe, &location)
+                .map_err(|error| format!("the checkout identity is unreadable: {error}"))?
+        }
+    };
+    let root = kernel::effects_root(&target.root).map_err(|error| {
+        format!(
+            "the checkout journal at {} cannot be opened: {error}",
+            target.root.display()
+        )
+    })?;
+    effigy_kernel::run::record_terminal(
+        &cx,
+        root,
+        &effigy_kernel::run::TerminalRecord {
+            run_id: run_id.to_owned(),
+            checkout: checkout.text(),
+            boot: boot.as_str().to_owned(),
+            task: target.label.clone(),
+            outcome: outcome.to_owned(),
+            exit_code,
+            signal,
+            cleanup: cleanup.to_owned(),
+            workload_groups: groups,
+            closed_at_ms: closed_at_ms(),
+        },
+    )
+    .map_err(|error| {
+        format!("the terminal record could not be written to the checkout journal: {error}")
+    })
+}
+
+fn closed_at_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+        })
+}
+
+fn outcome_name(outcome: &WorkloadOutcome) -> &'static str {
+    match outcome {
+        WorkloadOutcome::Succeeded => "succeeded",
+        WorkloadOutcome::Failed { .. } => "failed",
+        WorkloadOutcome::Cancelled { .. } => "cancelled",
+        WorkloadOutcome::TimedOut { .. } => "timed-out",
+        WorkloadOutcome::NotStarted => "not-started",
+        WorkloadOutcome::Interrupted => "interrupted",
+        WorkloadOutcome::Unknown(_) => "unknown",
+    }
+}
+
+fn outcome_code(outcome: &WorkloadOutcome) -> (Option<i32>, Option<i32>) {
+    match outcome {
+        WorkloadOutcome::Succeeded => (Some(0), None),
+        WorkloadOutcome::Failed { code } => (Some(*code), None),
+        WorkloadOutcome::Cancelled {
+            signal: Some(signal),
+            ..
+        } => (Some(128 + signal), Some(*signal)),
+        WorkloadOutcome::TimedOut { .. } => (Some(124), None),
+        _ => (None, None),
     }
 }
 
@@ -599,6 +1194,16 @@ mod tests {
         assert_eq!(parse_decision("admitted"), Decision::Invalid);
         assert_eq!(parse_decision("admit please"), Decision::Invalid);
         assert_eq!(parse_decision(""), Decision::Invalid);
+    }
+
+    #[test]
+    fn acknowledgements_parse_strictly() {
+        assert_eq!(parse_ack("ack 1"), Some(1));
+        assert_eq!(parse_ack("ack 27\n"), Some(27));
+        assert_eq!(parse_ack("ack"), None);
+        assert_eq!(parse_ack("ok 1"), None);
+        assert_eq!(parse_ack("ack one"), None);
+        assert_eq!(parse_ack("ack 1 2"), None);
     }
 
     #[test]

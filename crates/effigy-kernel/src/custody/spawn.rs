@@ -165,6 +165,8 @@ impl Drop for TerminalLease {
 pub(crate) struct Blocked {
     pub pid: u32,
     pub anchor: Option<u32>,
+    /// The owner's write end of a `Terminal::Pipe` child's stdin.
+    input: Option<OwnedFd>,
     barrier: Option<OwnedFd>,
     status: OwnedFd,
     streams: Option<(OwnedFd, OwnedFd, Option<TerminalLease>)>,
@@ -307,9 +309,16 @@ impl Blocked {
         let mut err_write = high(err_write)?;
         let (input_read, input_write) = pipe()?;
         let mut input_read = high(input_read)?;
-        drop(input_write);
+        // `Pipe` keeps the owner's write end; every other terminal closes it
+        // before the fork so the child reads EOF (or its own terminal).
+        let mut input_keep = None;
         match spec.terminal {
-            Terminal::None => {}
+            Terminal::None => drop(input_write),
+            Terminal::Pipe => {
+                // High, so the child's descriptor sweep closes it: a child
+                // holding its own stdin write end would never see EOF.
+                input_keep = Some(high(input_write)?);
+            }
             Terminal::Inherit { capture } => {
                 // A closed owner descriptor keeps the EOF pipe or capture pipe.
                 if let Ok(fd) = duplicate(libc::STDIN_FILENO) {
@@ -567,11 +576,15 @@ impl Blocked {
         let mut child = Self {
             pid: pid as u32,
             anchor: None,
+            input: input_keep,
             barrier: Some(barrier_write),
             status: status_read,
             streams: Some((out_read, err_read, None)),
             released: false,
         };
+        if let Some(input) = &child.input {
+            nonblock(input)?;
+        }
         nonblock(&child.status)?;
         if let Some((stdout, stderr, _)) = &child.streams {
             nonblock(stdout)?;
@@ -660,6 +673,9 @@ impl Blocked {
     }
     pub fn take_streams(&mut self) -> (OwnedFd, OwnedFd, Option<TerminalLease>) {
         self.streams.take().expect("streams transferred once")
+    }
+    pub fn take_input(&mut self) -> Option<OwnedFd> {
+        self.input.take()
     }
     pub fn go(&mut self) -> io::Result<()> {
         let mut pipe = std::fs::File::from(self.barrier.take().expect("barrier released once"));

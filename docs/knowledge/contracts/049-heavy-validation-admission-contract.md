@@ -1,7 +1,7 @@
 # 049 - Heavy Task Admission and Run Control Contract
 
 Owner: Platform
-Last Updated: 2026-10-22
+Last Updated: 2026-10-25
 
 Q-010 follows the storage and custody model approved by planner and Tom
 (2026-10-22: "Approve") in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
@@ -103,6 +103,143 @@ one thread is always gated by its own hook. A nested run that moved to
 another thread is not inside this thread's admission and queues again,
 which fails closed.
 
+
+## Reported custody protocol (v2)
+
+An orchestrator that needs its own evidence can opt in to a second protocol
+(effigy#325). The two protocols coexist: **v1 is unchanged byte for byte**
+unless the launcher opts in, because today's `effigy.admission-request.v1`
+consumers parse strictly.
+
+### Opt-in and rollout
+
+`EFFIGY_ADMISSION_PROTOCOL=2`, set next to the hook, selects v2. Unset or
+empty keeps v1 exactly: the v1 request, no stdin events, no terminal record.
+Any other value fails closed with the existing `effigy.admission.v1` `failed`
+error naming the variable, so a typo cannot silently run unreported.
+
+The answer grammar does not change: the hook still prints `admit` or
+`deny <reason>`. A v2-capable hook that answers in v1 form is fine.
+
+Rollout: the provider ships a v2-capable hook first, then sets the variable.
+Downgrade means unsetting it; nothing else changes.
+
+Under v2 the request is `effigy.admission-request.v2`, carrying every v1 field
+plus `"protocol": 2`.
+
+### Reports and acknowledgements
+
+Under v2 Effigy writes newline-delimited `effigy.admission-event.v1` JSON
+reports to the hook's **stdin**, each with a per-run `seq`. The hook
+acknowledges each one with `ack <seq>` on its stdout.
+
+| Report | Shape | When |
+| --- | --- | --- |
+| `custodians` | `{schema, event:"custodians", seq:1, run_id, owner:{boot,pid,start}, guard:{boot,pid,start}}` | after `admit`, before any workload spawns |
+| `workload` | `{schema, event:"workload", seq, run_id, pgid, leader:{boot,pid,start}}` | inside the spawn receipt/ack barrier, before that group's `go` |
+| `terminal` | `{schema, event:"terminal", seq, run_id, outcome, exit_code, signal, cleanup, workload_groups}` | at settle, before the hook is stopped |
+
+`owner`, `guard` and `leader` are the kernel's `ProcessIdentity`; `pgid` is
+the group the leader owns.
+
+Delivery is acknowledged, never assumed. Effigy waits `ack <seq>` within a
+bounded timeout (10 s per report). A write failure, EOF, a malformed or
+out-of-order ack, or a timeout **stops the workload before `go`**: the child is
+still behind the spawn barrier, so it exits without exec, and the run settles
+with the existing admission failure (`effigy.admission.v1`, decision
+`failed`). A workload therefore never runs unreported under v2. Writes are
+bounded too: a hook that stops reading causes ack timeouts, so a broken hook
+fails the run closed instead of stalling it.
+
+A missing acknowledgement for the `terminal` report does not change the run's
+result: the durable terminal record is the source of truth.
+
+### Coverage witness
+
+The acknowledged sequence itself is the coverage witness, and it works without
+any terminal report:
+
+- **Custodians first.** Seq 1 is always `custodians`, acknowledged before any
+  workload is spawned. In-process work — built-ins, in-process sequence steps —
+  runs inside the owner process and dies with it, so the owner's identity
+  covers it.
+- **Strictly sequential.** Event n+1 is never written until n is
+  acknowledged, so the acknowledged seqs are always a gap-free prefix `1..n`.
+- **No unacknowledged `go`.** A workload group receives `go` only after its
+  own `workload` report is acknowledged. A spawned child held at the barrier
+  whose report was never acknowledged never execs its workload: on barrier
+  failure or owner death it exits without running.
+- **An ack means recorded.** `ack <seq>` is the hook's statement that it has
+  durably recorded that event. A provider that acknowledges before recording
+  breaks its own coverage.
+- **Zero vs unknown.** An acknowledged `custodians` with zero `workload`
+  events means no workload group ever started: a legitimate zero. No
+  acknowledged `custodians` event means nothing is known, and the release rule
+  below does not apply.
+- **Pending events.** An event the provider received but did not acknowledge
+  belongs to a group that never got `go`. A provider may still include its
+  identity in liveness checks; doing so is harmless.
+- **The terminal count is only a cross-check.** `workload_groups` adds nothing
+  to the witness. Missing, partial or unacknowledged events still mean
+  unknown, never "empty".
+
+An out-of-process nested invocation (a child Effigy process) is one workload
+group of its parent's run and reports through its parent's hook only as that
+process. Its own workload groups are its own admission's concern.
+
+### The terminal record
+
+Only v2 hook-admitted heavy foreground runs write it: **one row** to the
+owning checkout journal at settle, in the additive schema-1
+`foreground_terminals` table (Q-010 storage; additive, so an older reader
+selects the columns it knows and needs no version bump). The row holds the run
+ID, the `CheckoutId`, the boot identity, the task, the outcome, the exit code
+or signal, `cleanup`, the acknowledged `workload_groups` count and the closed
+time. It is retained for seven days.
+
+It is **evidence, never authority**, and carries no PID, PGID or start
+identity: nothing in it can be signalled, reclaimed or recovered from.
+
+`effigy run status <run_id> --json` (`effigy.run.v1`) returns it with
+`evidence_source: "foreground-terminal-record.v1"`, plus `checkout_id` and
+`boot`, so a consumer can bind it to the run, the checkout and the runtime.
+`effigy runs` lists it beside durable runs. `run logs` reports that a
+foreground run kept no log, and `run stop` refuses: there is no live owner and
+the reported identity grants no signal.
+
+The only custody closure Effigy asserts from this is a terminal result with
+`cleanup: "complete"` (052 R5/I-R7: Retained and Irreversible count as
+resolved; Residue and Unknown do not). There is no replay or recovery for
+foreground runs: if every custodian dies before settle, nothing is recorded and
+`run status` keeps saying `not-recorded`. A checkout that has never recorded
+runtime state gets its journal binding at settle, which is the same additive
+write the row needs; no run identity is minted for a foreground run.
+
+Runs without v2 keep Q-010 exactly, including no journal write at all.
+
+### Release policy (Tom, decision d3bad004 v2)
+
+Tom on 2026-10-24: "Yes: accept the escaped-process risk, and Queue releases
+automatically on the evidence." A provider **may release its own capacity** on
+v2 evidence once all four of these hold:
+
+- full coverage, meaning an acknowledged `custodians` event plus the gap-free
+  acknowledged prefix, with no terminal count needed;
+- every reported identity (owner, guard and each workload leader) no longer
+  matches a live process;
+- every reported group is empty (`killpg(pgid, 0)` → ESRCH);
+- there is no terminal result.
+
+The accepted risk is named: a process that escaped its group may still be
+running. The limits are named too:
+
+- **Coverage must be complete.** Missing, partial or unacknowledged events mean
+  unknown, and the rule does not apply.
+- **Effigy asserts no closure.** It never claims closure from this evidence and
+  gains no signal or reclaim authority (052 §3.1).
+- **`run status` never reports a provider-side release.** A release on this
+  evidence is never shown as `cleanup: "complete"`.
+
 ## Run control
 
 Every task run is a kernel `Run`. Only durable runs have a journal. The
@@ -201,6 +338,11 @@ Queue's migration to the hook is described in
 | Guarantee | Proof |
 | --- | --- |
 | Hook admit, hold, release; deny; timeout; crash; nested marker; no-hook default; `qa`/`ci` | `test:run-control:cli` |
+| v1 stays byte for byte: unchanged request, stdin at EOF, no journal | `test:run-control:cli` (`admission_protocol_v1_stays_byte_identical_without_the_opt_in`) |
+| v2 reports every workload group with its real PGID and leader, the group's first effect only after its ack, one terminal report, and the `run status`/`runs` terminal record | `test:run-control:cli` (`admission_protocol_v2_reports_every_workload_group_and_the_terminal_result`) |
+| v2 fails closed for a missing ack, hook EOF, a malformed ack and a write failure | `test:run-control:cli` (`admission_protocol_v2_fails_closed_when_a_report_is_not_acknowledged`) |
+| The coverage witness without a terminal report: two acknowledged groups, a third held at the barrier; and custodians alone | `test:run-control:cli` (`admission_protocol_v2_coverage_witness_survives_losing_both_custodians`, `..._of_zero_workload_groups`) |
+| A reported identity grants no signal or reclaim | `test:run-control:cli` (`admission_protocol_v2_reported_identity_grants_no_signal_or_reclaim`); `test:kernel:run` (`run_terminal_record_round_trips_and_an_older_journal_reads_absent`) |
 | The in-process marker is per thread: a heavy run on another thread of the same process still takes the hook | `test:run-control` (`admission::tests::a_held_admission_marker_belongs_to_the_thread_that_holds_it`) |
 | `--run-id` racing invocations and repeats | `test:run-control:cli`; `test:run-control` |
 | `run stop` settles a running task and its children | `test:run-control`; `test:run-control:cli` |

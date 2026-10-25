@@ -391,7 +391,12 @@ exception is narrow:
   authority inside Effigy.
 - Runs without a hook keep Q-010 unchanged.
 
-effigy#325 implements it and amends 049 and 052.
+effigy#325 implemented it: contract 049 owns the opt-in protocol
+(`EFFIGY_ADMISSION_PROTOCOL=2`), the acknowledged reports and the coverage
+witness, and 052 §3.1 records this note's narrow exception. The row lives in an
+additive schema-1 `foreground_terminals` table in the owning checkout journal,
+is retained for seven days, carries no process identity, and surfaces through
+`run status` as `foreground-terminal-record.v1`.
 
 Follow-up ruling, same day (Queue decision d3bad004 v2, Tom on the board):
 "Yes: accept the escaped-process risk, and Queue releases automatically on the

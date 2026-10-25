@@ -122,10 +122,16 @@ pub(in crate::runner) fn run_plain(
                     stderr: Vec::new(),
                 });
             }
-            return Err(RunnerError::TaskCommandLaunch {
-                command: command.command.to_owned(),
-                error: std::io::Error::other(format!("{error:?}")),
-            });
+            // An admission refusal keeps its own error shape: the workload
+            // was stopped before `go` because its report was not
+            // acknowledged, and the caller must see `effigy.admission.v1`.
+            return match error {
+                refusal @ RunnerError::AdmissionRefused { .. } => Err(refusal),
+                other => Err(RunnerError::TaskCommandLaunch {
+                    command: command.command.to_owned(),
+                    error: std::io::Error::other(format!("{other:?}")),
+                }),
+            };
         }
     };
     let mut stdout = Tail::default();
