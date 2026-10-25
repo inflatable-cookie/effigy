@@ -1347,7 +1347,7 @@ catalog = "phpmyadmin"
 
 #[test]
 fn generated_compose_keeps_runtime_ports_for_tcp_alias_services() {
-    with_temp_effigy_home("catalog-loopback-tcp-aliases", |home| {
+    with_temp_effigy_home("catalog-loopback-tcp-aliases", |_home| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-loopback-tcp-aliases");
         fs::write(
@@ -1411,34 +1411,8 @@ catalog = "minio"
             .declared_ports
             .iter()
             .any(|value| value.ends_with(":9000")));
-        let loopback_path = home.join("gateway").join("loopback-ips.json");
-        let registry = effigy_gateway::loopback::LoopbackRegistry::load(&loopback_path)
-            .expect("loopback registry");
-        let identity = effigy_gateway::loopback::project_loopback_identity(
-            &policy.project_name,
-            &policy.repo_root,
-        );
-        let first_assignment = registry
-            .get(&identity)
-            .expect("qualified project assignment");
-        assert_eq!(
-            first_assignment.scope,
-            policy.repo_root.display().to_string()
-        );
-        assert!(registry.get(&policy.project_name).is_none());
-        assert_eq!(registry.len(), 1, "one project allocation: {registry:?}");
-
         let regenerated = load_prepared_policy(&root, None).expect("regenerated policy");
         assert_eq!(regenerated.project_name, policy.project_name);
-        let regenerated_registry = effigy_gateway::loopback::LoopbackRegistry::load(&loopback_path)
-            .expect("regenerated registry");
-        assert_eq!(regenerated_registry.len(), 1);
-        assert_eq!(
-            regenerated_registry
-                .get(&identity)
-                .map(|assignment| assignment.ip),
-            Some(first_assignment.ip)
-        );
     });
 }
 
@@ -1886,7 +1860,7 @@ shared = true
 
 #[test]
 fn shared_service_compose_keeps_runtime_host_port_and_adds_loopback_binding() {
-    with_temp_effigy_home("catalog-shared-loopback-binding", |home| {
+    with_temp_effigy_home("catalog-shared-loopback-binding", |_home| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("catalog-shared-loopback-binding");
         fs::write(
@@ -1927,14 +1901,6 @@ variant = "default"
         assert!(
             shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
             "shared compose should bind the runtime host port to loopback: {shared_compose}"
-        );
-        assert!(
-            !effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
-                .snapshot()
-                .unwrap()
-                .loopback()
-                .unwrap()
-                .is_empty()
         );
     });
 }
@@ -2344,67 +2310,6 @@ working_dir = "/var/www/html"
         rewritten.contains(":/var/www/html/node_modules:ro"),
         "rewritten compose should keep the nginx read-only node_modules mirror mount: {rewritten}"
     );
-}
-
-/// Reads never allocate a host port; Prepare publishes only the loopback
-/// alias the environment's routes need. Nothing is recorded that a later run
-/// would have to release.
-#[test]
-fn port_reads_never_allocate_and_prepare_publishes_the_loopback_alias() {
-    with_temp_effigy_home("port-read-prepare", |home| {
-        let _lock = crate::test_env_lock();
-        let fixture = tempfile::tempdir().expect("private checkout");
-        let root = fixture.path().canonicalize().expect("canonical checkout");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-[containers.web]
-primary_service = "app"
-[containers.web.services.app]
-catalog = "node"
-"#,
-        )
-        .expect("manifest");
-
-        let read = load_container_policy(&root, None).expect("read policy");
-        assert_eq!(read.declared_ports, vec!["127.0.0.1::3000".to_owned()]);
-        let compose = read.read_compose(&read.compose_files[0]).expect("render");
-        assert!(compose.contains("127.0.0.1::3000"), "{compose}");
-        let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
-        assert!(store.snapshot().unwrap().loopback().unwrap().is_empty());
-        assert!(!home.join("ports.json").exists());
-
-        let prepared = load_prepared_policy(&root, None).expect("prepare");
-        assert_eq!(prepared.declared_ports, read.declared_ports);
-        let alias = store
-            .snapshot()
-            .unwrap()
-            .loopback()
-            .unwrap()
-            .get(&effigy_gateway::loopback::project_loopback_identity(
-                &prepared.project_name,
-                &root,
-            ))
-            .cloned()
-            .expect("Prepare publishes the project alias");
-        assert_eq!(alias.scope, root.display().to_string());
-
-        let repeated = load_prepared_policy(&root, None).expect("repeat prepare");
-        assert_eq!(repeated.declared_ports, prepared.declared_ports);
-        assert_eq!(
-            store.snapshot().unwrap().loopback().unwrap().get(
-                &effigy_gateway::loopback::project_loopback_identity(&repeated.project_name, &root,)
-            ),
-            Some(&alias),
-            "a repeated Prepare keeps the same alias"
-        );
-        assert!(
-            !home.join("ports.json").exists(),
-            "no port registry is written"
-        );
-    });
 }
 
 /// An environment that opts into `stable_ports` gets one concrete host port

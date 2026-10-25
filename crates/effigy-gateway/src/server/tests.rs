@@ -1,7 +1,7 @@
 use super::*;
 use crate::dns::DnsCache;
 #[cfg(test)]
-use crate::gateway_legacy_fixture::LegacyRegistryFixture;
+use crate::route_table_fixture::RouteTableFixture;
 use crate::routes::{Route, RouteSource, RouteTable};
 use std::sync::{Arc, RwLock};
 use tokio::sync::watch;
@@ -914,6 +914,8 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
         assert_eq!(mode & 0o777, 0o700, "store directory is private");
     }
 
+    let checkout = home.join("late-checkout");
+    std::fs::create_dir_all(&checkout).expect("late checkout");
     crate::endpoint_store::EndpointStore::for_routes(&routes_path)
         .routes(|routes| {
             routes.upsert(Route {
@@ -924,7 +926,7 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
                 tcp_target: None,
                 tls: false,
                 source: RouteSource::Container,
-                project: "/tmp/late".to_owned(),
+                project: checkout.display().to_string(),
                 scope: None,
                 managed_listener: None,
                 registered: chrono::Utc::now(),

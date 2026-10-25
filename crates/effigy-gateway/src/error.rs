@@ -21,18 +21,6 @@ pub enum GatewayError {
     #[error("failed to write route table at {path}: {reason}")]
     RouteTableWriteError { path: PathBuf, reason: String },
 
-    /// The loopback registry file could not be read.
-    #[error("failed to read loopback registry at {path}: {reason}")]
-    LoopbackRegistryRead { path: PathBuf, reason: String },
-
-    /// The loopback registry file contains invalid JSON.
-    #[error("invalid loopback registry JSON at {path}: {reason}")]
-    LoopbackRegistryParse { path: PathBuf, reason: String },
-
-    /// The loopback registry file could not be written.
-    #[error("failed to write loopback registry at {path}: {reason}")]
-    LoopbackRegistryWrite { path: PathBuf, reason: String },
-
     /// A route for the given domain already exists.
     #[error("route already registered for domain '{domain}'")]
     DuplicateRoute { domain: String },

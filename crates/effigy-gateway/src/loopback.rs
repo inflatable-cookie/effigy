@@ -1,27 +1,15 @@
-//! Loopback alias allocation for gateway-owned route groups.
+//! Loopback alias addresses for gateway-served TCP service aliases.
 //!
-//! One alias IP names one environment's services in the bounded
-//! `127.1.0.x` pool. It is allocated when the environment comes up, released
-//! when it goes down, and reclaimed on the next allocation when the checkout
-//! path it recorded no longer exists.
+//! The route table is the only record of loopback ownership: an address is in
+//! use exactly when a route references it, as its DNS answer or as a target.
+//! A checkout's routes share one address, and `down` frees it by removing
+//! them, so there is no separate assignment to record, reclaim or release.
 
-use std::collections::HashMap;
-use std::net::Ipv4Addr;
-use std::path::Path;
-
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::net::{Ipv4Addr, SocketAddr};
 
 use crate::error::GatewayError;
-
-/// Build the stable registry identity for one isolated project checkout.
-pub fn project_loopback_identity(project_name: &str, checkout: &Path) -> String {
-    format!("project:{project_name}:{}", checkout.display())
-}
-
-/// Build the stable registry identity for one shared service checkout.
-pub fn shared_loopback_identity(project_name: &str, checkout: &Path) -> String {
-    format!("shared:{project_name}:{}", checkout.display())
-}
+use crate::routes::RouteTable;
 
 /// First assignable loopback IP in the bounded pool.
 pub const DEFAULT_LOOPBACK_START: Ipv4Addr = Ipv4Addr::new(127, 1, 0, 1);
@@ -29,108 +17,56 @@ pub const DEFAULT_LOOPBACK_START: Ipv4Addr = Ipv4Addr::new(127, 1, 0, 1);
 /// Last assignable loopback IP in the bounded pool.
 pub const DEFAULT_LOOPBACK_END: Ipv4Addr = Ipv4Addr::new(127, 1, 0, 50);
 
-/// One persisted loopback-IP assignment.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LoopbackAssignment {
-    /// Stable IP reserved for the identity.
-    pub ip: Ipv4Addr,
-
-    /// Checkout path that owns the assignment.
-    pub scope: String,
+/// The bounded pool, lowest address first.
+pub fn pool() -> impl Iterator<Item = Ipv4Addr> {
+    let [a, b, c, _] = DEFAULT_LOOPBACK_START.octets();
+    (DEFAULT_LOOPBACK_START.octets()[3]..=DEFAULT_LOOPBACK_END.octets()[3])
+        .map(move |octet| Ipv4Addr::new(a, b, c, octet))
 }
 
-/// Loopback-IP assignments keyed by project or shared-service identity.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LoopbackRegistry {
-    /// Assignments keyed by stable route-group identity.
-    pub assignments: HashMap<String, LoopbackAssignment>,
+/// Every address some route already references, as a DNS answer or a target.
+pub fn addresses_in_use(table: &RouteTable) -> BTreeSet<Ipv4Addr> {
+    let mut in_use = BTreeSet::new();
+    for route in table.all_routes() {
+        if let Some(ip) = route.dns_ip {
+            in_use.insert(ip);
+        }
+        for target in [route.target.as_deref(), route.tcp_target.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if let Ok(SocketAddr::V4(address)) = target.parse::<SocketAddr>() {
+                in_use.insert(*address.ip());
+            }
+        }
+    }
+    in_use
 }
 
-impl LoopbackRegistry {
-    /// Create an empty registry.
-    pub fn new() -> Self {
-        Self {
-            assignments: HashMap::new(),
-        }
-    }
+/// The pool address this checkout's routes already answer with, if any.
+pub fn checkout_address(table: &RouteTable, checkout: &str) -> Option<Ipv4Addr> {
+    table
+        .all_routes()
+        .into_iter()
+        .filter(|route| route.project == checkout)
+        .filter_map(|route| route.dns_ip)
+        .filter(|ip| pool().any(|candidate| candidate == *ip))
+        .min()
+}
 
-    /// Load the registry from the gateway endpoint store.
-    pub fn load(path: &Path) -> Result<Self, GatewayError> {
-        crate::endpoint_store::EndpointStore::for_routes(&path.with_file_name("routes.json"))
-            .snapshot()?
-            .loopback()
+/// The address this checkout's routes use, or the lowest pool address no
+/// route references.
+pub fn claim_address(table: &RouteTable, checkout: &str) -> Result<Ipv4Addr, GatewayError> {
+    if let Some(address) = checkout_address(table, checkout) {
+        return Ok(address);
     }
-
-    /// Get the assignment for an identity.
-    pub fn get(&self, identity: &str) -> Option<&LoopbackAssignment> {
-        self.assignments.get(identity)
-    }
-
-    /// Allocate the lowest free loopback IP for an identity.
-    ///
-    /// If the identity already has an assignment, returns it unchanged.
-    pub fn allocate(
-        &mut self,
-        identity: &str,
-        scope: &str,
-    ) -> Result<&LoopbackAssignment, GatewayError> {
-        if self.assignments.contains_key(identity) {
-            return Ok(&self.assignments[identity]);
-        }
-
-        let ip = self
-            .next_available_ip()
-            .ok_or(GatewayError::LoopbackPoolExhausted {
-                range_start: DEFAULT_LOOPBACK_START,
-                range_end: DEFAULT_LOOPBACK_END,
-            })?;
-        let assignment = LoopbackAssignment {
-            ip,
-            scope: scope.to_owned(),
-        };
-        self.assignments.insert(identity.to_owned(), assignment);
-        Ok(&self.assignments[identity])
-    }
-
-    /// Remove an identity assignment.
-    pub fn deallocate(&mut self, identity: &str) -> Option<LoopbackAssignment> {
-        self.assignments.remove(identity)
-    }
-
-    /// Remove every assignment owned by one checkout path.
-    pub fn release_scope(&mut self, scope: &str) -> usize {
-        let before = self.assignments.len();
-        self.assignments
-            .retain(|_, assignment| assignment.scope != scope);
-        before - self.assignments.len()
-    }
-
-    /// Drop assignments whose checkout path is gone, so a deleted worktree's
-    /// address is available to the next allocation. A path that is still
-    /// there keeps its assignment, whether or not it is running.
-    pub fn reclaim_absent_paths(&mut self) {
-        self.assignments
-            .retain(|_, assignment| Path::new(&assignment.scope).exists());
-    }
-
-    /// Number of registered assignments.
-    pub fn len(&self) -> usize {
-        self.assignments.len()
-    }
-
-    /// Whether the registry is empty.
-    pub fn is_empty(&self) -> bool {
-        self.assignments.is_empty()
-    }
-
-    fn next_available_ip(&self) -> Option<Ipv4Addr> {
-        let assigned: std::collections::HashSet<Ipv4Addr> =
-            self.assignments.values().map(|entry| entry.ip).collect();
-        let [a, b, c, _] = DEFAULT_LOOPBACK_START.octets();
-        (DEFAULT_LOOPBACK_START.octets()[3]..=DEFAULT_LOOPBACK_END.octets()[3])
-            .map(|octet| Ipv4Addr::new(a, b, c, octet))
-            .find(|candidate| !assigned.contains(candidate))
-    }
+    let in_use = addresses_in_use(table);
+    pool().find(|candidate| !in_use.contains(candidate)).ok_or(
+        GatewayError::LoopbackPoolExhausted {
+            range_start: DEFAULT_LOOPBACK_START,
+            range_end: DEFAULT_LOOPBACK_END,
+        },
+    )
 }
 
 #[cfg(test)]

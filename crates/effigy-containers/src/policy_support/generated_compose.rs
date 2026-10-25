@@ -2,7 +2,6 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler};
-use effigy_gateway::loopback::project_loopback_identity;
 use effigy_gateway::ports::stable_host_port;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
@@ -998,64 +997,6 @@ fn apply_generated_compose_port_policy(
 struct PortBinding {
     host: u16,
     container: u16,
-}
-
-/// Allocate each alias IP at the host Prepare seam. An environment that
-/// declares aliases gets one when it comes up and keeps it until `down`;
-/// an allocation reclaims assignments whose checkout path is gone.
-pub(crate) fn prepare_container_policy_loopbacks(
-    policy: &crate::EffectiveContainerPolicy,
-) -> Result<bool, ContainerPolicyError> {
-    if policy.compose_source != crate::EffectiveComposeSource::Generated {
-        return Ok(false);
-    }
-    let mut changed = false;
-    for shared in &policy.shared_services {
-        let fragment = catalog_resolver(None)?.resolve(&shared.catalog)?;
-        if fragment.schema.capabilities.loopback_alias_port.is_none() {
-            continue;
-        }
-        let root = shared_service_output_dir(&shared.project_name)?;
-        changed |= allocate_loopback(
-            &format!("shared:{}", shared.project_name),
-            &root.display().to_string(),
-        )?;
-    }
-    let identity = project_loopback_identity(&policy.project_name, &policy.repo_root);
-    let source = policy.repo_root.display().to_string();
-    changed |= allocate_loopback(&identity, &source)?;
-    Ok(changed)
-}
-
-fn allocate_loopback(identity: &str, source: &str) -> Result<bool, ContainerPolicyError> {
-    let Some(home) = effigy_home_dir() else {
-        return Ok(false);
-    };
-    let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
-    let before = read_loopback_ip(identity, source)?;
-    let ip = store
-        .allocate_loopback(identity, source)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    Ok(before != Some(ip))
-}
-
-/// Policy reads never allocate. The assignment is written by the Prepare seam.
-fn read_loopback_ip(
-    identity: &str,
-    source: &str,
-) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
-    let Some(home) = effigy_home_dir() else {
-        return Ok(None);
-    };
-    let registry = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
-        .snapshot()
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
-        .loopback()
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
-    Ok(registry
-        .get(identity)
-        .filter(|assignment| assignment.scope == source)
-        .map(|assignment| assignment.ip))
 }
 
 fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {

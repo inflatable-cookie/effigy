@@ -1,10 +1,9 @@
 //! Bounded runtime participation detection used before container inventory.
 //!
-//! Inventory completeness is what licenses stale loopback reclamation, so a
-//! runtime may be skipped only when it is *proven* unable to own running
-//! containers. A runtime that is running, reachable, or whose state cannot be
-//! established keeps its inventory authoritative: a later probe failure stays
-//! actionable and prevents uncertain reclamation.
+//! A runtime may be skipped only when it is *proven* unable to own running
+//! containers, so a listing never silently drops an environment that is up. A
+//! runtime that is running, reachable, or whose state cannot be established
+//! keeps its inventory authoritative: a later probe failure stays actionable.
 //!
 //! Detection never launches Docker, Colima, or a container. Docker
 //! participation is resolved from every endpoint it could be using —

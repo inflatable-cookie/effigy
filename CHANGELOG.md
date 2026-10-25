@@ -29,15 +29,23 @@ During v0.x, MINOR bumps may include breaking changes.
   stable, probed port per published container port from the checkout path
   instead, and never records it. Shared backing services derive their port the
   same way.
-- **One endpoint table and one transaction.** The gateway keeps its routes and
-  loopback aliases in one committed snapshot written by one plain transaction.
+- **One endpoint table and one transaction.** The gateway keeps its route table
+  in one committed snapshot written by one plain transaction.
   The second commit path, the endpoint quarantine, the v0.14.1 handback and the
   legacy `routes.json`/`loopback-ips.json`/`ports.json` import are gone; the
   Store is the only source and the route file is no longer a privilege boundary
   the daemon re-verifies.
-- **A loopback alias lives from `up` to `down`.** `down` releases it, and the
-  next allocation reclaims one whose checkout path is gone, so a deleted
-  worktree's address is reused without a repair command.
+- **The route table is the only record of loopback ownership.** An address is
+  in use exactly when some route references it, as its `dns_ip` or as its
+  target, and a checkout's aliased routes share one address in the
+  `127.1.0.1`-`127.1.0.50` pool. `up` takes the address the checkout's routes
+  already answer with, or the lowest address no route references; `down` and
+  retirement free it by removing the routes. The separate loopback assignment
+  record, its `loopback-ips.json` file and the Prepare step that allocated one
+  are gone, so a new checkout's `up` never collides with another checkout's
+  address. Any route write also drops routes whose recorded checkout path is
+  gone, for every domain, so a deleted worktree keeps neither a domain nor an
+  address.
 - **`container up` starts the gateway** when it is not running, and `up`
   reconciles a gateway whose cleanup an interruption left incomplete. One line
   names it.

@@ -9,9 +9,9 @@ use effigy_containers::exec::{
     list_running_compose_containers_for_policy_with_timeout, ContainerExecError,
     RunningComposeContainer,
 };
-use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
+use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::endpoint_store::EndpointStore;
-use effigy_gateway::loopback::{project_loopback_identity, shared_loopback_identity};
+use effigy_gateway::loopback;
 use effigy_gateway::registration::{dead_claim_reason, owned_by, project_scope};
 #[cfg(test)]
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
@@ -163,8 +163,8 @@ pub(in crate::runner) struct LiveListenerConflict {
 /// - a route held by a live managed listener of this same checkout is returned
 ///   as a handover conflict, because the container environment takes the
 ///   domain over and the sibling environment should stop;
-/// - the alias and shared-service loopback addresses are allocated here, so
-///   an exhausted pool refuses before either environment changes.
+/// - the alias and shared-service loopback addresses are resolved here, so an
+///   exhausted pool refuses before either environment changes.
 pub(in crate::runner) fn preflight_route_claims(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -206,8 +206,9 @@ pub(in crate::runner) fn preflight_route_claims(
             }
         }
     }
-    // Allocate alias and shared-service loopback addresses now: an exhausted
-    // pool must refuse before a handover stops anything.
+    // Resolve the alias and shared-service addresses now: an exhausted pool
+    // must refuse before a handover stops anything. Nothing is written here;
+    // the route write decides and records the address.
     let alias_routes = resolve_gateway_service_alias_routes(repo_root, policy, true, None)?;
     resolve_gateway_shared_service_alias_routes(repo_root, policy, true, &alias_routes)?;
     Ok(conflicts)
@@ -489,13 +490,9 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
 pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
-    // `down` releases this checkout's alias IP too, so `up` can take it again
-    // at once and a deleted worktree's address is reusable.
+    // Removing the routes frees this checkout's alias address too: the route
+    // table is the only record of loopback ownership.
     let route_table_path = gateway_route_table_path()?;
-    let project_path = policy.repo_root.display().to_string();
-    EndpointStore::for_routes(&route_table_path)
-        .release_loopback_for_path(&project_path)
-        .map_err(|error| gateway_loopback_error("release", error.to_string()))?;
     // Withdrawal needs declared domain identities and the current ownership
     // predicate, never a reconstructed target or a newly assigned host port.
     let mut domains = policy
@@ -557,6 +554,27 @@ fn reconcile_gateway_routes_guarded(
     EndpointStore::for_routes(path).routes(|table| {
         let project_path = repo_root.display().to_string();
         let scope = gateway_project_scope(&project_path)?;
+        // The write owns the alias address. Another checkout may have recorded
+        // an address between resolution and this transaction, so the lowest
+        // free address is chosen here, under the same lock as the write.
+        let desired = match desired.iter().any(|route| route.dns_ip.is_some()) {
+            true => {
+                let address = loopback::claim_address(table, &project_path)
+                    .map_err(|error| gateway_loopback_error("allocation", error.to_string()))?;
+                desired
+                    .iter()
+                    .cloned()
+                    .map(|mut route| {
+                        if route.dns_ip.is_some() {
+                            route.dns_ip = Some(address);
+                        }
+                        route
+                    })
+                    .collect::<Vec<_>>()
+            }
+            false => desired.to_vec(),
+        };
+        let desired = desired.as_slice();
         validate_gateway_tcp_alias_bindings_in_table(table, repo_root, desired)?;
         for route in desired.iter().filter(|route| route.tls) {
             ensure_gateway_tls_cert(&route.domain)?;
@@ -760,9 +778,7 @@ fn resolve_gateway_service_alias_routes(
     let Some(base_domain) = project_base_domain(policy) else {
         return Ok(Vec::new());
     };
-    let Some(loopback_ip) =
-        load_or_allocate_project_loopback_ip(repo_root, policy, allocate_if_missing)?
-    else {
+    let Some(loopback_ip) = checkout_loopback_ip(repo_root, allocate_if_missing)? else {
         return Ok(Vec::new());
     };
     let explicit_domains = policy
@@ -818,9 +834,7 @@ fn resolve_gateway_shared_service_alias_routes(
         if occupied_domains.contains(domain.as_str()) {
             continue;
         }
-        let Some(loopback_ip) =
-            load_or_allocate_shared_loopback_ip(repo_root, shared, allocate_if_missing)?
-        else {
+        let Some(loopback_ip) = checkout_loopback_ip(repo_root, allocate_if_missing)? else {
             continue;
         };
         routes.push(RegisteredGatewayRoute {
@@ -1195,48 +1209,27 @@ fn project_base_domain(policy: &EffectiveContainerPolicy) -> Option<String> {
     policy.dns_effective_base_domain()
 }
 
-fn load_or_allocate_project_loopback_ip(
+/// The alias address this checkout's routes already answer with, or the
+/// lowest pool address no route references. The route table is the only
+/// record: nothing is written here, and the route write decides the address
+/// that is actually registered.
+fn checkout_loopback_ip(
     repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
     allocate_if_missing: bool,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
-    load_or_allocate_loopback_ip(
-        &project_loopback_identity(&policy.project_name, repo_root),
-        &repo_root.display().to_string(),
-        allocate_if_missing,
-    )
-}
-
-fn load_or_allocate_shared_loopback_ip(
-    repo_root: &Path,
-    shared: &SharedServiceBinding,
-    allocate_if_missing: bool,
-) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
-    load_or_allocate_loopback_ip(
-        &shared_loopback_identity(&shared.project_name, repo_root),
-        &repo_root.display().to_string(),
-        allocate_if_missing,
-    )
-}
-
-fn load_or_allocate_loopback_ip(
-    identity: &str,
-    scope: &str,
-    allocate_if_missing: bool,
-) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
-    let store = EndpointStore::for_routes(&gateway_route_table_path()?);
-    if allocate_if_missing {
-        return store
-            .allocate_loopback(identity, scope)
-            .map(Some)
-            .map_err(|error| gateway_loopback_error("registry load", error.to_string()));
-    }
-    Ok(store
+    let table = EndpointStore::for_routes(&gateway_route_table_path()?)
         .snapshot()?
-        .loopback()?
-        .get(identity)
-        .filter(|assignment| assignment.scope == scope)
-        .map(|assignment| assignment.ip))
+        .routes()?;
+    let project_path = repo_root.display().to_string();
+    if let Some(address) = loopback::checkout_address(&table, &project_path) {
+        return Ok(Some(address));
+    }
+    if !allocate_if_missing {
+        return Ok(None);
+    }
+    loopback::claim_address(&table, &project_path)
+        .map(Some)
+        .map_err(|error| gateway_loopback_error("allocation", error.to_string()))
 }
 
 fn occupied_service_alias_domains<'a>(

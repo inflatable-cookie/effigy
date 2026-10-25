@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::error;
-use crate::loopback::LoopbackRegistry;
+use crate::registration::checkout_is_gone;
 use crate::routes::RouteTable;
 use crate::GatewayError;
 
@@ -38,7 +38,6 @@ impl Default for EndpointSnapshot {
     fn default() -> Self {
         let mut documents = BTreeMap::new();
         documents.insert("routes".into(), json!({"routes":{}}));
-        documents.insert("loopback".into(), json!({"assignments":{}}));
         Self {
             schema: 1,
             revision: 0,
@@ -61,9 +60,11 @@ impl EndpointSnapshot {
         if snapshot.schema != 1 {
             return Err(error("unsupported endpoint store schema; update Effigy"));
         }
-        // The 100-port ranges are gone. A record written by an older build
-        // keeps its document until the next write drops it.
+        // The 100-port ranges and the separate loopback assignment document
+        // are gone. A record written by an older build keeps them until the
+        // next write drops them.
         snapshot.documents.remove("ports");
+        snapshot.documents.remove("loopback");
         Ok(snapshot)
     }
 
@@ -80,14 +81,14 @@ impl EndpointSnapshot {
         Ok(table)
     }
 
-    pub fn loopback(&self) -> Result<LoopbackRegistry, GatewayError> {
-        serde_json::from_value(self.document("loopback")?.clone()).map_err(error)
-    }
-
     /// Last writer wins for the same checkout path. A different checkout path
     /// takes the domain over only when the recorded owner is dead: its checkout
-    /// path is gone, or its target is not listening.
+    /// path is gone, or its target is not listening. Every write also drops
+    /// routes whose recorded checkout path is gone, so a deleted worktree
+    /// never keeps a domain or a loopback address anywhere in the table.
     pub fn set_routes(&mut self, table: &RouteTable) -> Result<(), GatewayError> {
+        let mut table = table.clone();
+        prune_gone_checkouts(&mut table);
         let current = self.routes()?;
         for route in table.all_routes() {
             if current.lookup(&route.domain) == Some(route) {
@@ -113,7 +114,7 @@ impl EndpointSnapshot {
         self.replace(
             "routes",
             "routes",
-            serde_json::to_value(table).map_err(error)?,
+            serde_json::to_value(&table).map_err(error)?,
             &[
                 "domain",
                 "target",
@@ -130,15 +131,6 @@ impl EndpointSnapshot {
         )
     }
 
-    pub fn set_loopback(&mut self, registry: &LoopbackRegistry) -> Result<(), GatewayError> {
-        self.replace(
-            "loopback",
-            "assignments",
-            serde_json::to_value(registry).map_err(error)?,
-            &["ip", "scope"],
-        )
-    }
-
     fn replace(
         &mut self,
         family: &str,
@@ -148,12 +140,7 @@ impl EndpointSnapshot {
     ) -> Result<(), GatewayError> {
         // Do not expand absent optional fields or discard legacy spellings in
         // an unchanged mapping merely because another mapping was edited.
-        let normalized = match family {
-            "routes" => serde_json::to_value(self.routes()?),
-            "loopback" => serde_json::to_value(self.loopback()?),
-            _ => return Err(error("unknown endpoint family")),
-        }
-        .map_err(error)?;
+        let normalized = serde_json::to_value(self.routes()?).map_err(error)?;
         let root = self
             .documents
             .get_mut(family)
@@ -190,21 +177,6 @@ impl EndpointSnapshot {
 
     pub(super) fn claims(&self) -> Result<ClaimSet, GatewayError> {
         let mut claims = ClaimSet::new();
-        let mut assigned = BTreeMap::new();
-        for (identity, assignment) in self.loopback()?.assignments {
-            if assigned.insert(assignment.ip, identity.clone()).is_some() {
-                return Err(error(
-                    "two loopback assignments own the same IP; release the conflicting owner",
-                ));
-            }
-            add(
-                &mut claims,
-                EndpointKind::Address,
-                &assignment.ip.to_string(),
-                &assignment.scope,
-                &identity,
-            )?;
-        }
         let mut listeners = BTreeMap::new();
         for (key, route) in self.routes()?.routes {
             if !key.eq_ignore_ascii_case(&route.domain) {
@@ -248,6 +220,22 @@ impl EndpointSnapshot {
             }
         }
         Ok(claims)
+    }
+}
+
+/// Drop every route whose recorded checkout path is gone. Called on every
+/// route write so the whole table, not only the domains this write touches,
+/// stops claiming deleted worktrees.
+fn prune_gone_checkouts(table: &mut RouteTable) {
+    let gone = table
+        .all_routes()
+        .into_iter()
+        .filter(|route| checkout_is_gone(&route.project))
+        .map(|route| route.domain.clone())
+        .collect::<Vec<_>>();
+    for domain in gone {
+        let _ = table.deregister(&domain);
+        eprintln!("[info] gateway route `{domain}` dropped: its checkout path is gone");
     }
 }
 
