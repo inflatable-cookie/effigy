@@ -168,37 +168,30 @@ fn oxide_route_honours_the_plain_cargo_escape() {
 }
 
 #[test]
-fn oxide_route_fails_loudly_when_pool_describe_fails() {
-    let workspace = fixture("pool-failure");
-    let bin = fake_oxide(
-        workspace.path(),
-        "  printf '%s\\n' 'oxide: unknown_accounting: the pool ledger is unreadable' >&2\n  exit 1",
-    );
-    let _env = with_path(&bin, &[(ESCAPE_ENV, None)]);
+fn oxide_route_fails_loudly_when_pool_describe_is_unusable() {
+    for (name, body, expected) in [
+        (
+            "pool-failure",
+            "  printf '%s\\n' 'oxide: unknown_accounting: the pool ledger is unreadable' >&2\n  exit 1",
+            "unknown_accounting",
+        ),
+        (
+            "unknown-schema",
+            "  printf '%s\\n' '{\"schema\":\"oxide.pool.describe/9\"}'\n  exit 0",
+            "oxide.pool.describe/9",
+        ),
+    ] {
+        let workspace = fixture(name);
+        let bin = fake_oxide(workspace.path(), body);
+        let _env = with_path(&bin, &[(ESCAPE_ENV, None)]);
 
-    let error = route_rust_plan(plan(TestRunner::CargoNextest, "cargo nextest run"))
-        .expect_err("an unusable oxide must not fall back silently");
+        let error = route_rust_plan(plan(TestRunner::CargoNextest, "cargo nextest run"))
+            .expect_err("an unusable oxide must not fall back silently");
 
-    let message = error.to_string();
-    assert!(message.contains("unknown_accounting"), "{message}");
-    assert!(message.contains(ESCAPE_COMMAND), "{message}");
-}
-
-#[test]
-fn oxide_route_fails_loudly_on_an_unknown_pool_schema() {
-    let workspace = fixture("unknown-schema");
-    let bin = fake_oxide(
-        workspace.path(),
-        "  printf '%s\\n' '{\"schema\":\"oxide.pool.describe/9\"}'\n  exit 0",
-    );
-    let _env = with_path(&bin, &[(ESCAPE_ENV, None)]);
-
-    let error = route_rust_plan(plan(TestRunner::CargoNextest, "cargo nextest run"))
-        .expect_err("an unknown schema must not fall back silently");
-
-    let message = error.to_string();
-    assert!(message.contains("oxide.pool.describe/9"), "{message}");
-    assert!(message.contains(ESCAPE_COMMAND), "{message}");
+        let message = error.to_string();
+        assert!(message.contains(expected), "{message}");
+        assert!(message.contains(ESCAPE_COMMAND), "{message}");
+    }
 }
 
 #[test]
