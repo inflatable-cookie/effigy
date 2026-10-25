@@ -781,15 +781,16 @@ domain = "switch.test"
             match case {
                 "owned" => assert!(table.lookup("switch.test").is_none()),
                 "live" => {
-                    assert!(table
-                        .lookup("switch.test")
-                        .unwrap()
-                        .managed_listener
-                        .is_some());
+                    // Contract 033 (effigy#335): a stop withdraws every route
+                    // owned by the checkout path, listener routes included. A
+                    // same-checkout listener therefore loses its claim even
+                    // while its process is alive; a *different* checkout's
+                    // live claim is the successor the next case preserves.
+                    assert!(table.lookup("switch.test").is_none());
                     assert!(
                         std::net::TcpStream::connect(listener.unwrap().local_addr().unwrap())
                             .is_ok(),
-                        "live successor survives"
+                        "withdrawing the claim does not stop the listener process"
                     );
                 }
                 "foreign" => assert_eq!(
