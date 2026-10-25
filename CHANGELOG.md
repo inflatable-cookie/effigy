@@ -359,6 +359,12 @@ During v0.x, MINOR bumps may include breaking changes.
   nerdctl `health-check-*.pid` files stays, on `container up` (silent, warns
   only when it cannot run) and on the explicit command, which now reports the
   before/after pid-file counts and no longer reports inode use.
+- The `<selector>:cargo` escape tasks (489 of them), the internal
+  `effigy cargo` task and the `install:local:cargo` and
+  `test:install:local:cargo` escapes. Every selector builds through
+  `scripts/oxide-selector.sh` and Oxide; the only escape is
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`, or running `cargo` by hand
+  (effigy#356).
 - `doctor`'s advice to delete `.effigy/cache` as a whole. That directory is
   live: `cache/sources` holds the pinned bundle sources and `cache/bundles`
   holds unimported bundles, so following the old advice broke the next run with
@@ -970,7 +976,7 @@ During v0.x, MINOR bumps may include breaking changes.
   single-identity shorthand is unchanged, so the 11 projects already declaring
   `[release]` keep working.
 - `test:release:platform`, `check:release:platform` and
-  `lint:release:platform` selectors, with their `:cargo` escapes.
+  `lint:release:platform` selectors.
 - `tests/fixtures/release_platform/` holds one project per `[release]` shape
   from contract 054 §4 plus Longhorn's, Poodle's and Underlay's real tables.
 - Optional task `description` (effigy#271). Every task-definition shape — a
@@ -1357,6 +1363,11 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- `scripts/check-cargo-routes.py` (`qa:docs:cargo-routes`) no longer skips
+  `:cargo` escape siblings, because the catalog has none. It still fails on a
+  plain-`cargo` route that
+  [cargo routes](docs/knowledge/cargo-routes.md) does not record, and on a
+  record row whose route no longer runs plain Cargo (effigy#356).
 - `bundle sync` and the Prepare paths keep exactly the source generations that
   `.effigy/sources.lock.json` pins: after a successful prepare, generations
   under `.effigy/cache/sources/` that nothing references are removed and one
@@ -1527,9 +1538,8 @@ During v0.x, MINOR bumps may include breaking changes.
   disposition, rollback and version receipts.
 - `effigy install:local` builds this checkout through Oxide, so the local binary
   comes from Oxide's shared slot instead of a private `target/bootstrap-local/`
-  directory. The plain-Cargo escape is `effigy install:local:cargo`, and a
-  machine without Oxide needs `oxide` on `PATH` (or that escape) to install this
-  checkout.
+  directory. A machine without Oxide installs this checkout with
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`.
 - Every Effigy route that runs Cargo is now either routed through `oxide` or
   recorded with its rule and reason in
   [cargo routes](docs/knowledge/cargo-routes.md): the fixture-hygiene and
@@ -1601,10 +1611,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The contributor task that builds this checkout and installs it as the machine's `effigy` is renamed `bootstrap:local` → `install:local`, so it no longer reads as the `effigy bootstrap` feature (clone and start a project). `bootstrap:local` now fails with the new name.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
-  intermediates stay off the internal SSD. Every routed selector keeps a
-  named `<selector>:cargo` escape with the plain-Cargo command it replaced;
-  `EFFIGY_OXIDE_ESCAPE=cargo`, `effigy cargo <args>` and `cargo run --bin
-  effigy --` keep the rest. The `cargo qa*` and `prepush-ci` aliases are
+  intermediates stay off the internal SSD. The one escape is
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`. The `cargo qa*` and
+  `prepush-ci` aliases are
   removed, because a Cargo alias either needs unsupported `!sh` syntax or
   compiles Effigy's dependency graph with plain Cargo; their tasks are
   `qa:gates`, `qa:docs`, `qa:json`, `qa:json:ci`, `release gates` and

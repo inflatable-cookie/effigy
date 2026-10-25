@@ -5,8 +5,8 @@
 // keeps the Rust intermediates in its shared slot pool and uplifts the final
 // binary to `<workspace>/target/release/effigy`. Only that exact artifact is
 // installed: a missing release output fails instead of falling back to another
-// profile or to plain Cargo. `effigy install:local:cargo` is the documented
-// plain-Cargo escape and produces the same path.
+// profile or to plain Cargo. `EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`
+// is the documented plain-Cargo escape and produces the same path.
 //
 // Activation is staged and ordered so a failure cannot destroy the active
 // binary or its version receipt:
@@ -231,7 +231,7 @@ require_unsupported_artifact_free(source);
 if !fs::exists(source) || !fs::is_file(source) {
     throw "[error] missing built effigy release binary: " + source
         + "\n[error] expected the release binary Oxide uplifts to target/release/effigy"
-        + "\n[error] run `effigy install:local:cargo` for the plain-Cargo escape";
+        + "\n[error] run `EFFIGY_OXIDE_ESCAPE=cargo effigy install:local` for the plain-Cargo escape";
 }
 
 fs::create_dir(install_dir);

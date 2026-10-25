@@ -11,11 +11,10 @@ Not counted, by design:
 
 * comments in the catalog files;
 * `cargo-*` binaries, `$CARGO` and `${CARGO_*}`;
-* `:cargo` / `-cargo` escape siblings and the internal `cargo` escape task;
 * a route whose command is `scripts/oxide-selector.sh exec -- <tool>`, because
   the nested `cargo` word belongs to the tool that Oxide already leases;
 * a line naming `EFFIGY_OXIDE_ESCAPE=cargo`, the documented whole-selector
-  escape.
+  escape, in a catalog route or a route script.
 
 Usage: scripts/check-cargo-routes.py   (exit 1 on any unrecorded or stale route)
 """
@@ -101,8 +100,6 @@ def cargo_routes_in_catalog(path):
         if not CARGO_WORD.search(code):
             continue
         route = key or path
-        if route == "cargo" or route.endswith(":cargo") or route.endswith("-cargo"):
-            continue
         if "oxide-selector.sh exec --" in code:
             continue
         if "EFFIGY_OXIDE_ESCAPE=cargo" in code:
@@ -116,6 +113,8 @@ def cargo_routes_in_script(path):
     routes = []
     for number, raw in enumerate(open(os.path.join(ROOT, path), encoding="utf-8"), 1):
         code = strip_comment(raw)
+        if "EFFIGY_OXIDE_ESCAPE=cargo" in code:
+            continue
         if CARGO_WORD.search(code):
             routes.append((path, "%s:%d: %s" % (path, number, code.strip())))
     return routes

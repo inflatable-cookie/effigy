@@ -32,10 +32,10 @@ effigy install:local
 (`oxide build --release --bin effigy`) and activates the exact release binary
 Oxide uplifts to `target/release/effigy`. It never falls back to another profile
 or to plain Cargo: a missing release output fails and names the escape. Without
-Oxide on `PATH`, run the plain-Cargo escape, which produces the same path:
+Oxide on `PATH`, run the one escape, which produces the same path:
 
 ```bash
-effigy install:local:cargo
+EFFIGY_OXIDE_ESCAPE=cargo effigy install:local
 ```
 
 Then run directly:

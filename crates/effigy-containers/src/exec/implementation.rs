@@ -1225,7 +1225,7 @@ fn retry_inventory_once(
                     code,
                     stdout,
                     stderr: format!(
-                        "{stderr}\n[effigy] runtime inventory admission timed out twice; the runtime did not answer an observation, so the task did not run. Check `effigy container status` and retry, or run this task through its host route (`effigy <selector>:cargo`) where the repository defines one. First timeout: {error}"
+                        "{stderr}\n[effigy] runtime inventory admission timed out twice; the runtime did not answer an observation, so the task did not run. Check `effigy container status` and retry, or run the task's host route with `cargo` by hand where the repository defines one. First timeout: {error}"
                     ),
                 },
                 other => other,
@@ -2029,7 +2029,7 @@ mod inventory_tests {
         let text = error.to_string();
         assert!(text.contains("timed out twice"), "{text}");
         assert!(text.contains("the task did not run"), "{text}");
-        assert!(text.contains(":cargo"), "{text}");
+        assert!(text.contains("by hand"), "{text}");
     }
 
     #[test]
