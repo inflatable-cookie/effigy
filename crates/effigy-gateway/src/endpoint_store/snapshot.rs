@@ -37,9 +37,9 @@ pub struct EndpointSnapshot {
     /// Pre-0.15 store records kept withdrawn domain owners and released
     /// endpoints. Both are read and dropped; the route table is the whole
     /// claim on a domain.
-    #[serde(default, skip_serializing)]
+    #[serde(rename = "domains", default, skip_serializing)]
     legacy_domains: Value,
-    #[serde(default, skip_serializing)]
+    #[serde(rename = "quarantined", default, skip_serializing)]
     legacy_quarantined: Value,
 }
 impl EndpointSnapshot {

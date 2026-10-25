@@ -310,6 +310,30 @@ fn redacted_operator_files_preserve_every_mapping() {
     );
 }
 
+/// A store written before v0.15 still decodes: its withdrawn domain owners and
+/// released-endpoint quarantine are read and dropped.
+#[test]
+fn a_pre_v015_snapshot_ignores_withdrawn_claims_and_quarantine() {
+    let value = json!({
+        "schema": 1,
+        "revision": 3,
+        "documents": {
+            "routes": {"routes": {}},
+            "loopback": {"assignments": {}},
+            "ports": {"allocations": {}},
+        },
+        "imported_sha256": {},
+        "domains": {"gone.test": {"project": "/gone", "scope": null, "listener": null, "route": null}},
+        "quarantined": {"endpoint:port:5432": {"kind": "port", "key": "5432", "boot": "b", "nanos": 1}},
+    });
+    let snapshot = super::snapshot::EndpointSnapshot::from_value(value)
+        .expect("a pre-0.15 snapshot decodes");
+    assert!(snapshot.claims().unwrap().is_empty());
+    let written = serde_json::to_value(&snapshot).unwrap();
+    assert!(written.get("domains").is_none());
+    assert!(written.get("quarantined").is_none());
+}
+
 #[test]
 fn a_route_is_the_whole_claim_and_removing_it_frees_the_domain() {
     let (_dir, store) = fixture();
