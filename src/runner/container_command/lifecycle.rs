@@ -371,14 +371,18 @@ fn run_container_up_inner(
                     render_container_up_interrupted(repo_root, &plan)
                 }
                 Some(AttachedComposeEnd::Failed(status)) => {
+                    let startup_error = RunnerError::task_invocation(format!(
+                        "docker compose up exited with status {status}"
+                    ));
+                    // A detached activation withholds teardown, exactly as an
+                    // interrupted one does: the operator inspects what started
+                    // and the reconcile rerun never recreates it.
+                    if plan.attach_mode == EffectiveAttachMode::Detached {
+                        return Err(startup_error);
+                    }
                     let cleanup_result =
                         lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
-                    Err(finish_container_up_failure(
-                        RunnerError::task_invocation(format!(
-                            "docker compose up exited with status {status}"
-                        )),
-                        cleanup_result,
-                    ))
+                    Err(finish_container_up_failure(startup_error, cleanup_result))
                 }
                 None => Err(detached_failure.into_inner().unwrap_or(error)),
             };

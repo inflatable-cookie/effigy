@@ -376,3 +376,33 @@ only on his machine and accepted removing the importer before v0.15. §11.1 is
 now a retired note: a machine which committed that cutover ignores `kernel.db`
 and never deletes it, and one still holding it without a manifest is refused
 once with the Effigy main `7b82d26` upgrade path.
+
+2026-10-24, foreground custody reports. Queue host runs whose Effigy process
+died stayed `running` and held capacity, because Q-010 keeps foreground runs in
+memory and losing every custodian leaves nothing to read (052 §3.1, 049 step 5).
+Asked through Queue (decision b3538091), Tom chose the producer change: "the
+admission hook reports the workload's real process group and start identity,
+and Effigy records a terminal result for foreground runs." The resulting
+exception is narrow:
+- Hook-admitted heavy foreground runs report each workload group's PGID and
+  leader `ProcessIdentity`, plus a terminal event, on the hook channel.
+- Those runs alone write one terminal row to their checkout journal at settle.
+- Reported identity is evidence for the provider's own lease, never recovery
+  authority inside Effigy.
+- Runs without a hook keep Q-010 unchanged.
+
+effigy#325 implements it and amends 049 and 052.
+
+Follow-up ruling, same day (Queue decision d3bad004 v2, Tom on the board):
+"Yes: accept the escaped-process risk, and Queue releases automatically on the
+evidence." A provider may therefore release its own capacity once all of these
+hold:
+- every reported workload group leader's `ProcessIdentity` no longer matches a
+  live process;
+- every reported group is empty;
+- coverage is complete;
+- no terminal result exists.
+
+Tom accepted the risk that a process which escaped its group is still running.
+Effigy itself still claims no closure from that evidence, and gains no
+authority to signal or reclaim from it (052 §3.1).

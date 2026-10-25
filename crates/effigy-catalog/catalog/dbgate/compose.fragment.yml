@@ -43,7 +43,19 @@ services:
     ports:
       - "3000:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      # The image is built on node:bookworm-slim, which drops wget and curl;
+      # Node is always present, so the probe speaks HTTP with it. Its failure
+      # message is left on stderr so a readiness diagnostic can quote it.
+      #
+      # The check is shell form with the JavaScript single-quoted, because
+      # `nerdctl compose` joins a `CMD` exec form into one unquoted shell
+      # command: the parentheses and semicolons below then fail to parse
+      # (effigy#324).
+      test:
+        [
+          "CMD-SHELL",
+          "node -e 'require(\"http\").get(\"http://127.0.0.1:3000/\",r=>{r.resume();process.exit(r.statusCode<500?0:1)}).on(\"error\",e=>{console.error(\"dbgate UI not ready: \"+e.message);process.exit(1)})'",
+        ]
       interval: 5s
       timeout: 3s
       retries: 3
