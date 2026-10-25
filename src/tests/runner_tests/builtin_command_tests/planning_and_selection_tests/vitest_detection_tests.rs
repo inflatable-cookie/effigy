@@ -1,13 +1,14 @@
 use super::suite_selection_tests::run_builtin_ok_with_child_evidence;
 use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, assert_path_exists,
-    assert_path_missing, fs, install_local_vitest, install_local_vitest_marker, run_builtin_ok,
-    temp_workspace, write_isolated_cargo_package_manifest,
+    assert_path_missing, fs, install_local_vitest, install_local_vitest_marker, plain_cargo_route,
+    run_builtin_ok, temp_workspace, write_isolated_cargo_package_manifest,
     write_package_json_with_vitest_dev_dependency, write_root_manifest,
 };
 
 #[test]
 fn run_manifest_task_builtin_test_skips_vitest_when_only_a_transitive_binary_exists() {
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-skip-transitive-vitest");
     write_isolated_cargo_package_manifest(
         &root,

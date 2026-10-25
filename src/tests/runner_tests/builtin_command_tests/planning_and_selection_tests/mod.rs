@@ -1,4 +1,5 @@
 mod fallback_and_deferral_tests;
+mod oxide_route_tests;
 mod package_scope_tests;
 mod plan_output_tests;
 mod suite_selection_tests;

@@ -5,7 +5,7 @@ use crate::test::planning::BuiltinResolvedPlan;
 use crate::BuiltinError;
 use effigy_manifest::LoadedCatalog;
 use effigy_manifest::ManifestCargoEnvMatchMode;
-use effigy_tasks::testing::detect_test_runner_plans;
+use effigy_tasks::testing::{detect_test_runner_plans, route_rust_plan};
 
 use super::apply_builtin_test_runner_config;
 use super::target_config::{
@@ -22,6 +22,7 @@ type ResolvedTargetTestPlans = (
 pub(super) fn resolve_target_test_plans(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
+    host_runtime: bool,
 ) -> Result<ResolvedTargetTestPlans, BuiltinError> {
     let BuiltinTestTargetConfig {
         configured_suites,
@@ -87,27 +88,46 @@ pub(super) fn resolve_target_test_plans(
                 let overridden = runner_overrides.contains_key(plan.runner.label());
                 let plan =
                     apply_builtin_test_runner_config(plan, package_manager, &runner_overrides);
-                (plan, detected_workspace_scope && !overridden)
+                (plan, detected_workspace_scope && !overridden, overridden)
             })
-            .map(|(plan, auto_workspace_scope)| BuiltinResolvedPlan {
-                suite: plan.runner.label().to_owned(),
-                command: plan.command,
-                auto_workspace_scope,
-                env: BTreeMap::new(),
-                suite_env: None,
-                suite_env_files: Vec::new(),
-                setup_command: None,
-                setup_steps: 0,
-                teardown_command: None,
-                teardown_steps: 0,
-                teardown_policy: effigy_manifest::ManifestTestSuiteTeardownPolicy::OnSuccess,
-                is_default: true,
-                evidence: plan.evidence,
-                nested_invocation: false,
+            .map(|(plan, auto_workspace_scope, overridden)| {
+                // A detected Rust suite runs through Oxide's leased slot when
+                // this machine has a usable `oxide`; a configured override or
+                // a container target keeps its own command. An unusable oxide
+                // fails here, naming `EFFIGY_OXIDE_ESCAPE=cargo`.
+                let plan = if host_runtime && !overridden {
+                    route_rust_plan(plan).map_err(|error| {
+                        BuiltinError::task_invocation(format!(
+                            "builtin test could not route the Rust suite: {error}"
+                        ))
+                    })?
+                } else {
+                    plan
+                };
+                Ok(BuiltinResolvedPlan {
+                    suite: plan.runner.label().to_owned(),
+                    command: plan.command,
+                    auto_workspace_scope,
+                    env: BTreeMap::new(),
+                    suite_env: None,
+                    suite_env_files: Vec::new(),
+                    setup_command: None,
+                    setup_steps: 0,
+                    teardown_command: None,
+                    teardown_steps: 0,
+                    teardown_policy: effigy_manifest::ManifestTestSuiteTeardownPolicy::OnSuccess,
+                    is_default: true,
+                    evidence: plan.evidence,
+                    nested_invocation: false,
+                })
             })
-            .collect::<Vec<BuiltinResolvedPlan>>(),
+            .collect::<Result<Vec<BuiltinResolvedPlan>, BuiltinError>>()?,
         "auto-detected".to_owned(),
         cargo_env,
         cargo_env_match,
     ))
 }
+
+#[cfg(test)]
+#[path = "plan_resolution/tests.rs"]
+mod tests;

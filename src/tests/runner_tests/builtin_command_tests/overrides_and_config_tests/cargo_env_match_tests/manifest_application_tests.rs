@@ -1,5 +1,5 @@
 use crate::runner::tests::prelude::{
-    assert_cargo_env_applied, fs, lock_test, read_file_text, run_builtin_ok,
+    assert_cargo_env_applied, fs, lock_test, plain_cargo_route, read_file_text, run_builtin_ok,
     setup_path_with_probes, temp_workspace, write_executable, write_multi_suite_cargo_manifest,
     write_root_manifest, EnvGuard, CARGO_ENV_PROBE_SCRIPT,
 };
@@ -45,6 +45,7 @@ fn assert_suite_env_only_matches(
 #[test]
 fn run_manifest_task_builtin_test_applies_grouped_manifest_cargo_env() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-cargo-env-grouped");
     write_root_manifest(
         &root,
@@ -73,6 +74,7 @@ cargo = [
 #[test]
 fn run_manifest_task_builtin_test_prefers_direct_manifest_cargo_env_over_grouped_entries() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-cargo-env-direct-precedence");
     write_root_manifest(
         &root,

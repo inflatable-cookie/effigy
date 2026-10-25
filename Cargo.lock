@@ -1269,6 +1269,7 @@ dependencies = [
  "effigy-core",
  "effigy-manifest",
  "effigy-routing",
+ "effigy-test-support",
  "effigy-ui",
  "serde",
  "serde_json",
