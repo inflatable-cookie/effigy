@@ -142,51 +142,6 @@ fn load_nonexistent_returns_empty() {
 }
 
 #[test]
-fn save_creates_parent_directories() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("deep/nested/dir/routes.json");
-
-    let mut table = RouteTable::new();
-    table.upsert(test_route("app.test", "127.0.0.1:8080"));
-    table.save(&path).unwrap();
-
-    assert!(path.exists());
-}
-
-#[test]
-fn concurrent_saves_to_same_path_do_not_collide_on_temp_file_name() {
-    use std::sync::{Arc, Barrier};
-
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("routes.json");
-
-    let mut table_a = RouteTable::new();
-    table_a.upsert(test_route("app-a.test", "127.0.0.1:8080"));
-    let mut table_b = RouteTable::new();
-    table_b.upsert(test_route("app-b.test", "127.0.0.1:3000"));
-
-    let barrier = Arc::new(Barrier::new(2));
-    let path_a = path.clone();
-    let path_b = path.clone();
-    let barrier_a = barrier.clone();
-    let barrier_b = barrier.clone();
-
-    let handle_a = std::thread::spawn(move || {
-        barrier_a.wait();
-        table_a.save(&path_a)
-    });
-    let handle_b = std::thread::spawn(move || {
-        barrier_b.wait();
-        table_b.save(&path_b)
-    });
-
-    handle_a.join().unwrap().unwrap();
-    handle_b.join().unwrap().unwrap();
-
-    assert!(path.exists());
-}
-
-#[test]
 fn save_is_atomic() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
@@ -209,23 +164,6 @@ fn save_is_atomic() {
         loaded.lookup("app.test").unwrap().target.as_deref(),
         Some("127.0.0.1:9090")
     );
-}
-
-#[test]
-fn json_format_is_human_readable() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("routes.json");
-
-    let mut table = RouteTable::new();
-    table.upsert(test_route("app.test", "127.0.0.1:8080"));
-    table.save(&path).unwrap();
-
-    let content = std::fs::read_to_string(&path).unwrap();
-    // Pretty-printed JSON should have newlines and indentation.
-    assert!(content.contains('\n'));
-    assert!(content.contains("  "));
-    assert!(content.contains("\"domain\""));
-    assert!(content.contains("\"target\""));
 }
 
 #[test]

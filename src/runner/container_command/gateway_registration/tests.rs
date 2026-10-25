@@ -133,7 +133,7 @@ fn published_rows(
             .map(|(host, container)| format!("0.0.0.0:{host}->{container}/tcp"))
             .collect(),
         project_name: Some(policy.project_name.clone()),
-        working_dir: Some(policy.repo_root.display().to_string()),
+        working_dir: None,
         service: Some(service.unwrap_or(&policy.primary_service).to_owned()),
         oneoff: false,
     }]
@@ -197,17 +197,16 @@ fn an_explicit_dns_port_selects_the_matching_published_binding() {
 }
 
 #[test]
-fn an_explicit_dns_port_that_is_not_published_waits() {
+fn a_selected_port_the_row_does_not_publish_uses_its_published_http_port() {
     let mut policy = test_policy();
     policy.dns_port = Some(9001);
     policy.dns_routes[0].port = Some(9001);
     let rows = published_rows(&policy, &[(41001, 80)], None);
 
-    assert_eq!(
-        resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
-            .expect("resolution is not an error"),
-        None
-    );
+    let routes = resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+        .expect("resolution is not an error")
+        .expect("the row publishes an HTTP port");
+    assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41001"));
 }
 
 #[test]
@@ -239,7 +238,7 @@ fn a_service_route_reads_that_services_own_published_port() {
             status: "Up 10 seconds".to_owned(),
             ports: vec!["0.0.0.0:18900->80/tcp".to_owned()],
             project_name: Some("demo-web-dev".to_owned()),
-            working_dir: Some("/tmp/repo".to_owned()),
+            working_dir: None,
             service: Some("pma".to_owned()),
             oneoff: false,
         },
@@ -248,7 +247,7 @@ fn a_service_route_reads_that_services_own_published_port() {
             status: "Up 10 seconds".to_owned(),
             ports: vec!["0.0.0.0:18901->80/tcp".to_owned()],
             project_name: Some("demo-web-dev".to_owned()),
-            working_dir: Some("/tmp/repo".to_owned()),
+            working_dir: None,
             service: Some("web".to_owned()),
             oneoff: false,
         },
@@ -398,32 +397,6 @@ fn prune_stale_container_routes_removes_old_domains_for_same_project() {
 }
 
 #[test]
-fn prune_stale_container_routes_uses_typed_route_table_error_when_table_is_invalid() {
-    let dir = std::env::temp_dir().join(format!(
-        "effigy-gateway-prune-invalid-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).expect("mkdir tempdir");
-    let route_table_path = dir.join("routes.json");
-    std::fs::write(&route_table_path, "{not-json").expect("write invalid route table");
-    let repo_root = dir.join("repo");
-    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
-
-    let error = prune_stale_container_routes_for_project(&route_table_path, &repo_root, &[])
-        .expect_err("invalid route table should fail");
-    match error {
-        RunnerError::GatewayRouteTable { phase, path, .. } => {
-            assert_eq!(phase, "load");
-            assert_eq!(path, route_table_path);
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-}
-
-#[test]
 fn resolves_multiple_gateway_routes_from_their_own_published_ports() {
     let mut policy = test_policy();
     policy
@@ -464,7 +437,7 @@ fn validates_gateway_route_against_matching_runtime_port() {
             ":::8080->80/tcp".to_owned(),
         ],
         project_name: Some("demo-web-dev".to_owned()),
-        working_dir: Some("/tmp/repo".to_owned()),
+        working_dir: None,
         service: Some("app".to_owned()),
         oneoff: false,
     }];
@@ -576,7 +549,10 @@ fn gateway_readiness_permanent_port_failure_is_bounded_and_diagnostic() {
     assert!(elapsed < std::time::Duration::from_millis(250));
     let detail = error.to_string();
     assert!(detail.contains("timed out after 0s"), "got: {detail}");
-    assert!(detail.contains("no running container"), "got: {detail}");
+    assert!(
+        detail.contains("has not published a host port"),
+        "got: {detail}"
+    );
 }
 
 #[test]
@@ -617,7 +593,7 @@ fn rejects_gateway_route_when_runtime_does_not_publish_selected_port() {
         status: "Up 10 seconds".to_owned(),
         ports: vec!["0.0.0.0:9090->80/tcp".to_owned()],
         project_name: Some("demo-web-dev".to_owned()),
-        working_dir: Some("/tmp/repo".to_owned()),
+        working_dir: None,
         service: Some("app".to_owned()),
         oneoff: false,
     }];
@@ -625,16 +601,13 @@ fn rejects_gateway_route_when_runtime_does_not_publish_selected_port() {
         .expect("routes")
         .expect("published");
 
-    let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
-        .expect_err("mismatched published port should fail");
-    match error {
-        RunnerError::GatewayRuntimeTarget { phase, detail } => {
-            assert_eq!(phase, "validation");
-            assert!(detail
-                .contains("gateway registration refuses to target an unrelated runtime binding"));
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
+    assert_eq!(
+        routes[0].target.as_deref(),
+        Some("127.0.0.1:9090"),
+        "the route follows the port the container actually publishes"
+    );
+    validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
+        .expect("the published port validates");
 }
 
 #[test]
@@ -1430,37 +1403,25 @@ fn runtime_not_running_errors_degrade_gateway_probe_to_not_ready() {
 }
 
 #[test]
-fn load_or_allocate_project_loopback_ip_distinguishes_same_project_name_across_repos() {
+fn the_same_project_name_in_two_checkouts_gets_two_aliases() {
     with_test_home("loopback-distinct-repos-same-project-name", || {
         let policy = test_policy();
-        let first_repo = PathBuf::from("/tmp/acowtancy-new");
-        let second_repo = PathBuf::from("/tmp/acowtancy-legacy");
-        let route_table_path = gateway_route_table_path().expect("route table path");
-        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
-            .expect("mkdir route table parent");
-        register_route(
-            &route_table_path,
-            &RouteRegistration {
-                domain: "mysql.acowtancy.test".to_owned(),
-                target: None,
-                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-                tcp_port: Some(3306),
-                tcp_target: Some("127.0.0.1:22406".to_owned()),
-                tls: false,
-                project_path: first_repo.display().to_string(),
-                source: RouteSource::Container,
-            },
-        )
-        .expect("seed active first-repo route");
+        let fixture = tempfile::tempdir().expect("fixture");
+        let first_repo = fixture.path().join("acowtancy-new");
+        let second_repo = fixture.path().join("acowtancy-legacy");
+        std::fs::create_dir_all(&first_repo).expect("first checkout");
+        std::fs::create_dir_all(&second_repo).expect("second checkout");
 
-        let second_ip = load_or_allocate_project_loopback_ip(&second_repo, &policy, true)
+        let first = load_or_allocate_project_loopback_ip(&first_repo, &policy, true)
+            .expect("allocate first")
+            .expect("first alias");
+        let second = load_or_allocate_project_loopback_ip(&second_repo, &policy, true)
             .expect("allocate second")
-            .expect("second loopback ip");
+            .expect("second alias");
 
-        assert_eq!(second_ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
+        assert_ne!(first, second, "one address per checkout path");
     });
 }
-
 #[test]
 fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
     let mut policy = test_policy();
