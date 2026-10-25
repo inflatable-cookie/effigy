@@ -411,3 +411,5 @@ hold:
 Tom accepted the risk that a process which escaped its group is still running.
 Effigy itself still claims no closure from that evidence, and gains no
 authority to signal or reclaim from it (052 §3.1).
+
+2026-10-25, checkout journal identity. After a reboot, macOS gave the Data volume a new device number, and every pre-reboot checkout journal refused every task (`checkout directory generation changed`). Tom: "What's going on here? I thought we had simplified the kernel.db dependency? This is exactly the sort of overcomplication and brittleness I wanted to avoid." The ruling: a checkout journal opens by its location. The directory-generation pin (device and inode) is removed, not hardened, and a stale binding is rewritten in place. effigy#337 implements this and simplifies contract 052 §7.
