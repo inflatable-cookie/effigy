@@ -30,7 +30,7 @@ impl Drop for ChildGuard {
 }
 fn home() -> tempfile::TempDir {
     // Short: the run's control socket path is bounded (`sun_path`).
-    effigy_test_support::short_tempdir("kernel-custody-").unwrap()
+    effigy_test_support::short_tempdir("kcustody-").unwrap()
 }
 fn fixture() -> PathBuf {
     std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")

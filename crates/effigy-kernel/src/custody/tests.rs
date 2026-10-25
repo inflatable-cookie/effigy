@@ -72,7 +72,7 @@ impl SettlementAdapter for Strict {
 }
 fn home() -> tempfile::TempDir {
     // Short: the run's control socket path is bounded (`sun_path`).
-    effigy_test_support::short_tempdir("kernel-fault-").unwrap()
+    effigy_test_support::short_tempdir("kfault-").unwrap()
 }
 fn executable_path() -> PathBuf {
     crate::fixture::custody_fixture()

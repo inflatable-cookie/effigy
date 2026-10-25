@@ -72,7 +72,7 @@ pub(super) fn state_home() -> Option<PathBuf> {
         Some(
             TEST_HOME
                 .get_or_init(|| {
-                    effigy_test_support::Fixture::process_lifetime_short("effigy-te-")
+                    effigy_test_support::Fixture::process_lifetime_short("ef-te-")
                         .expect("private test home")
                 })
                 .clone(),

@@ -13,7 +13,12 @@ socket, and the platform's `/tmp` otherwise; `short_tempdir` does the same for
 a bare `TempDir`. With `[scratch]` configured the temp directory is the run's
 directory on that volume, so those fixtures land there; macOS's default
 `/private/var/folders/.../T/` is too long once the socket's directory and run
-id are appended, so `/tmp` remains the fallback. The operator-daemon fixture
+id are appended, so `/tmp` remains the fallback. The kernel fault-injection
+sweep is the one deliberate exception: its home stays on the internal `/tmp`
+because it injects faults at the n-th crossing of a code path and its
+environment handover scenario races a concurrent attach, so the slower fsync
+timing of an external volume changes which crossing is reached (effigy#326).
+The operator-daemon fixture
 keeps its daemon and the existing kernel run and `operator::down` guard. It no
 longer discards the directory guard on a failed startup.
 

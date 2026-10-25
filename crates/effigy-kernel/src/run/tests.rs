@@ -81,8 +81,13 @@ fn begin<'a>(
 ) -> Run<'a> {
     Run::begin(cx, root, &inv(owner), opts(n), &cleanup(cx), fake).unwrap()
 }
+/// A fresh fixture home on the internal disk. These runs fsync at every journal
+/// crossing and this suite's budget is calibrated to the internal disk's speed;
+/// on a configured `[scratch]` volume the same work takes about twice as long
+/// and the supervision matrix exceeds its per-test bound (effigy#326). The run's
+/// own scratch directory is still exercised by the tests that name it.
 pub(super) fn home() -> effigy_test_support::Fixture {
-    effigy_test_support::Fixture::new("effigy-run-").unwrap()
+    effigy_test_support::Fixture::in_parent("effigy-run-", Path::new("/tmp")).unwrap()
 }
 
 /// A strict external-effect adapter: durable objects and a call log, no

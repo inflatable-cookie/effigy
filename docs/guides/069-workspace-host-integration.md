@@ -349,6 +349,12 @@ What does not follow the scratch directory:
 - The checkout's `.effigy/runtime` and `.effigy/state`, which belong to the
   checkout rather than to one run.
 - Container workloads, which keep the container's own temp directory (above).
+- The kernel fault-injection sweep (`crates/effigy-kernel/src/faults`): each
+  fault is injected at the n-th crossing of a code path, and its environment
+  handover scenario races a concurrent attach, so a slower external volume
+  changes which crossing is reached and the planned fault is never delivered.
+  Those fixtures deliberately stay on the internal temp directory; the harness
+  documents that choice where its home is created.
 - A host path that must fit a bounded Unix socket and is deliberately pinned
   to a short fixed directory, such as the gateway bind broker's
   `/private/var/run` socket.

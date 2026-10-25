@@ -2,7 +2,13 @@
 # The caller's Effigy selector owns admission. Every VM, socket, checkout and
 # backend resource belongs to this fresh fixture; no user backend is contacted.
 set -eu
-proof_dir=$(mktemp -d "${TMPDIR:-/tmp}/q276.XXXXXX")
+# This fixture hosts a Lima VM, and a Lima instance socket path must stay under
+# the platform's 104-byte limit, so a long platform temp directory (macOS
+# `/private/var/folders/.../T`) cannot hold it. A run's `[scratch]` TMPDIR is
+# short and is used when it fits; the platform's `/tmp` is the fallback.
+temp_root=${TMPDIR:-/tmp}
+[ ${#temp_root} -le 40 ] || temp_root=/tmp
+proof_dir=$(mktemp -d "$temp_root/q276.XXXXXX")
 printf 'Private retirement proof: %s\n' "$proof_dir"
 export COLIMA_HOME="$proof_dir/colima" COLIMA_CACHE_HOME="$proof_dir/cache" LIMA_HOME="$proof_dir/lima"
 export DOCKER_CONFIG="$proof_dir/docker" XDG_CONFIG_HOME="$proof_dir/config" XDG_CACHE_HOME="$proof_dir/xdg-cache"

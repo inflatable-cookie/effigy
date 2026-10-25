@@ -2,7 +2,13 @@
 # All changes, including the VM and executable xattr, live in fresh fixtures.
 # Run through proof:gateway:operator:linux for host-wide admission.
 set -eu
-proof_dir=$(mktemp -d "${TMPDIR:-/tmp}/g219-linux.XXXXXX")
+# This fixture hosts a Lima VM, and a Lima instance socket path must stay under
+# the platform's 104-byte limit, so a long platform temp directory (macOS
+# `/private/var/folders/.../T`) cannot hold it. A run's `[scratch]` TMPDIR is
+# short and is used when it fits; the platform's `/tmp` is the fallback.
+temp_root=${TMPDIR:-/tmp}
+[ ${#temp_root} -le 40 ] || temp_root=/tmp
+proof_dir=$(mktemp -d "$temp_root/g219-linux.XXXXXX")
 printf 'Linux gateway adapter artifacts: %s\n' "$proof_dir"
 export COLIMA_HOME="$proof_dir/c" COLIMA_CACHE_HOME="$proof_dir/cache" LIMA_HOME="$proof_dir/l"
 export DOCKER_CONFIG="$proof_dir/docker" XDG_CONFIG_HOME="$proof_dir/config" XDG_CACHE_HOME="$proof_dir/xdg-cache"
@@ -21,7 +27,7 @@ docker run --rm --init --cpus 2 --memory 3g --sysctl net.ipv4.ip_unprivileged_po
         apt-get install -y -qq curl util-linux libcap2-bin > /dev/null
         curl --fail --location --proto "=https" --tlsv1.2 https://get.nexte.st/latest/linux-arm | tar xz -C /usr/local/cargo/bin
         # Guest-side temp: this runs inside the container, whose own /tmp is
-        # not the host's, so it deliberately leaves TMPDIR alone.
+        # not the host temp, so it deliberately leaves TMPDIR alone.
         native_dir=$(mktemp -d)  # mktemp-exempt: container guest temp
         export CARGO_TARGET_DIR="$native_dir/target"
         cargo build -p effigy-gateway --example linux-adapter-proof
