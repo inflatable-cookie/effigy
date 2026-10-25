@@ -296,7 +296,37 @@ During v0.x, MINOR bumps may include breaking changes.
   passphrase; nested commands that need the vault use the local unlock
   credential or prompt.
 
+### Changed
+- A managed host listener is ready when its reserved loopback port answers its
+  readiness request, and it stays published while the supervisor's run is alive
+  and that port keeps answering. The supervisor probes the port every five
+  seconds; three consecutive misses withdraw the route and a later answer
+  republishes it, while the child process itself is never killed or restarted
+  on a probe miss. A restart, a watch-mode respawn that replaces the serving
+  process, a double fork and a long compile therefore all leave the route
+  served. A dependent host process is replaced only when its dependency's
+  supervisor generation changes, so a momentary probe miss restarts nothing.
+  A reserved port another process already answers fails the start naming the
+  port; a child that never answers names the reserved address, the readiness
+  path and the status it asked for in one line.
+- A managed listener child receives `HOST`, `PORT` and
+  `EFFIGY_MANAGED_HOST_LISTENER_BIND` and nothing else Effigy-specific about its
+  listener: there is no adapter report file, report schema or generation
+  variable to write. The proxy forwards a managed listener route to its
+  published target exactly as it forwards any other route.
+
 ### Removed
+- The managed listener ownership proof, about 1,100 lines of production code.
+  `effigy_gateway::managed_listener` is gone, with the process-identity
+  triples, the descendant walk, socket exclusivity, the availability-file
+  recheck, the adapter report (`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`,
+  `effigy.managed.host-listener-report.v1`) and the gateway's per-connection
+  ownership recheck. A `ManagedListenerRouteOwner` is now the checkout,
+  environment and process name it always represented, its generations and its
+  reserved address; a record written by an earlier build is read once and
+  rewritten without the identity fields. `listener.json` keeps its start,
+  ready, unavailable, failed and stopped observations only, and its diagnostic
+  is one line instead of the ten-field observation record.
 - Withdrawn gateway domain claims and the endpoint reuse quarantine.
   `effigy gateway repair`, the domain and route parts of its dead-owner plan,
   the `effigy.gateway.loopback-reclaim.v1` JSON payload, the owner-checkout

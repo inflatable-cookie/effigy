@@ -449,11 +449,6 @@ fn start_host_processes_inner(
                     name: dependency.clone(),
                     owner: managed_host_process_owner(&project_path, policy, dependency_process)?,
                     state_file: state_path,
-                    route_table_file: route_table.clone().ok_or_else(|| {
-                        RunnerError::task_invocation(
-                            "managed host listener dependency has no gateway route table",
-                        )
-                    })?,
                 });
             }
             let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
@@ -840,9 +835,14 @@ fn describe_withdrawn_route(route: &effigy_gateway::routes::Route) -> String {
     match route
         .managed_listener
         .as_ref()
-        .and_then(|owner| owner.run.as_deref())
+        .map(|owner| owner.generation.as_str())
     {
-        Some(run) => format!("route `{}` withdrawn (run {run})", route.domain),
+        Some(generation) => {
+            format!(
+                "route `{}` withdrawn (generation {generation})",
+                route.domain
+            )
+        }
         None => format!("route `{}` withdrawn", route.domain),
     }
 }
