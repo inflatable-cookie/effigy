@@ -48,6 +48,12 @@ const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
 const HOST_PROCESS_SPEC_SCHEMA: &str = "effigy.managed.host-process-spec.v1";
 const HOST_LISTENER_STATE_SCHEMA: &str = "effigy.managed.host-listener-state.v1";
 const HOST_LISTENER_BIND_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_BIND";
+/// A shipped listener adapter reads these two and may write the report file.
+/// Effigy only supplies them: it never reads the report, and readiness stays
+/// the reserved port answering its probe. Planned removal is tracked in the
+/// lane's lead backlog, once the Underlay bundle drops its adapters.
+const HOST_LISTENER_REPORT_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE";
+const HOST_LISTENER_GENERATION_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_GENERATION";
 /// How often a published listener's reserved port is polled, and how many
 /// consecutive misses withdraw its route. A miss never restarts the child; the
 /// child's own exit does.
@@ -1265,7 +1271,7 @@ fn spawn_generation(
     cx: &effigy_kernel::ctx::EffectContext,
     spec: &HostProcessRuntimeSpec,
     dependency_env: &[(String, String)],
-    listener_bind: Option<&str>,
+    listener: Option<(&str, &Path, &str)>,
 ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
     use effigy_kernel::custody::{Custody, Lifetime, ProcessSpec, Terminal};
     // A user application is a workload: the ambient environment it inherits
@@ -1275,7 +1281,7 @@ fn spawn_generation(
         crate::runner::secret_session::workload_ambient_environment(),
         spec,
         dependency_env,
-        listener_bind,
+        listener,
     );
     let process = ProcessSpec {
         argv: vec![
@@ -1307,7 +1313,7 @@ fn child_environment(
     ambient: impl Iterator<Item = (OsString, OsString)>,
     spec: &HostProcessRuntimeSpec,
     dependency_env: &[(String, String)],
-    listener_bind: Option<&str>,
+    listener: Option<(&str, &Path, &str)>,
 ) -> BTreeMap<OsString, effigy_kernel::custody::EnvValue> {
     use effigy_kernel::custody::EnvValue;
     let mut environment: BTreeMap<OsString, EnvValue> = ambient
@@ -1327,10 +1333,20 @@ fn child_environment(
         OsString::from("EFFIGY_HOST_PROCESS_NAME"),
         EnvValue::Plain(OsString::from(spec.process_name.clone())),
     );
-    if let Some(bind) = listener_bind {
+    if let Some((bind, report_path, generation)) = listener {
         environment.insert(
             OsString::from(HOST_LISTENER_BIND_ENV),
             EnvValue::Plain(OsString::from(bind)),
+        );
+        // A shipped adapter reads these two. Effigy never reads the report
+        // back: it is a write-only courtesy path for existing adapters.
+        environment.insert(
+            OsString::from(HOST_LISTENER_REPORT_ENV),
+            EnvValue::Plain(report_path.as_os_str().to_owned()),
+        );
+        environment.insert(
+            OsString::from(HOST_LISTENER_GENERATION_ENV),
+            EnvValue::Plain(OsString::from(generation)),
         );
         // Effigy assigned this listener its concrete port (the OS picked it),
         // so the process receives it as `HOST`/`PORT` (effigy#321, effigy#346).
@@ -1444,6 +1460,38 @@ impl<'a> ListenerGeneration<'a> {
     }
 }
 
+/// The report path one generation's shipped adapter is handed: in the
+/// process's runtime directory, beside its log. Effigy never reads the file; it
+/// is removed with the generation.
+struct ListenerReportPath(PathBuf);
+
+impl ListenerReportPath {
+    fn for_generation(
+        spec: &HostProcessRuntimeSpec,
+        generation: &str,
+    ) -> Result<Self, RunnerError> {
+        let dir = spec
+            .log_file
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .or_else(|| spec.listener_state_file.parent())
+            .ok_or_else(|| {
+                RunnerError::task_invocation("managed listener runtime path has no directory")
+            })?;
+        Ok(Self(dir.join(format!(
+            "{}.{}.listener-report.json",
+            sanitize(&spec.process_name),
+            generation
+        ))))
+    }
+}
+
+impl Drop for ListenerReportPath {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 /// A completed teardown makes no endpoint or child claim: the terminal record
 /// must not retain a generation an explicit start would have to reconcile.
 fn write_terminal_listener_state(
@@ -1495,6 +1543,7 @@ fn supervise_managed_host_listener(
     // spawning a child. Callers wait for it as the barrier between supervision
     // admission and readiness, so the dependency wait is not charged to it.
     let generation = random_token()?;
+    let report = ListenerReportPath::for_generation(spec, &generation)?;
     let mut state = ListenerGeneration::new(spec, supervisor_pid, &generation);
     state.write("starting")?;
     let dependencies = {
@@ -1517,18 +1566,23 @@ fn supervise_managed_host_listener(
             error.to_string(),
         );
     }
-    let mut child =
-        match spawn_generation(run, cx, spec, &dependency_env, Some(listener.bind.as_str())) {
-            Ok(child) => child,
-            Err(error) => {
-                return finish_failed_generation(
-                    &mut state,
-                    &log_path,
-                    spec.process_name.as_str(),
-                    format!("managed listener could not start: {error}"),
-                )
-            }
-        };
+    let mut child = match spawn_generation(
+        run,
+        cx,
+        spec,
+        &dependency_env,
+        Some((listener.bind.as_str(), &report.0, generation.as_str())),
+    ) {
+        Ok(child) => child,
+        Err(error) => {
+            return finish_failed_generation(
+                &mut state,
+                &log_path,
+                spec.process_name.as_str(),
+                format!("managed listener could not start: {error}"),
+            )
+        }
+    };
     activate_once(active, run, session)?;
     let pid = child.identity().identity.pid;
     // The leader's exact identity lets a stop that outlives this supervisor
@@ -2862,16 +2916,20 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 
     /// The reserved listener port reaches the child as `HOST`/`PORT` even when
     /// the supervisor's own environment exports a value for them; only a value
-    /// the manifest declares outranks the reserved address (effigy#321).
+    /// the manifest declares outranks the reserved address (effigy#321). A
+    /// shipped adapter's report path and generation token are supplied too
+    /// (effigy#349), and Effigy never reads the report back.
     #[test]
     fn reserved_listener_host_and_port_outrank_an_ambient_value() {
         let bind = "127.0.0.1:8311";
+        let report = Path::new("/checkout/api.gen.listener-report.json");
+        let adapter = |bind: &'static str| Some((bind, report, "gen"));
         let ambient = vec![
             (OsString::from("HOST"), OsString::from("0.0.0.0")),
             (OsString::from("PORT"), OsString::from("9999")),
         ];
         let spec = runtime_spec(&[]);
-        let environment = child_environment(ambient.clone().into_iter(), &spec, &[], Some(bind));
+        let environment = child_environment(ambient.clone().into_iter(), &spec, &[], adapter(bind));
         assert_eq!(
             plain_env(environment.clone(), "HOST").as_deref(),
             Some("127.0.0.1")
@@ -2880,15 +2938,24 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             plain_env(environment.clone(), "PORT").as_deref(),
             Some("8311")
         );
-        // The adapter contract is still absolute.
+        // The adapter contract is still absolute: the reserved address, the
+        // report path and this generation's token.
         assert_eq!(
-            plain_env(environment, HOST_LISTENER_BIND_ENV).as_deref(),
+            plain_env(environment.clone(), HOST_LISTENER_BIND_ENV).as_deref(),
             Some(bind)
+        );
+        assert_eq!(
+            plain_env(environment.clone(), HOST_LISTENER_REPORT_ENV).as_deref(),
+            Some("/checkout/api.gen.listener-report.json")
+        );
+        assert_eq!(
+            plain_env(environment, HOST_LISTENER_GENERATION_ENV).as_deref(),
+            Some("gen")
         );
 
         // A declared value is the process's own decision and wins.
         let declared = runtime_spec(&[("HOST", "0.0.0.0"), ("PORT", "3000")]);
-        let environment = child_environment(ambient.into_iter(), &declared, &[], Some(bind));
+        let environment = child_environment(ambient.into_iter(), &declared, &[], adapter(bind));
         assert_eq!(
             plain_env(environment.clone(), "HOST").as_deref(),
             Some("0.0.0.0")

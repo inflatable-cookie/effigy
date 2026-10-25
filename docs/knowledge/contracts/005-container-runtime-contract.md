@@ -270,7 +270,10 @@ tls = true
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
-`EFFIGY_HOST_PROCESS_INTERNAL_URL`. `HOST`/`PORT` are the reserved address:
+`EFFIGY_HOST_PROCESS_INTERNAL_URL`, plus the `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`
+and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` that shipped adapter scripts
+read. Those two are only for existing adapter scripts; a new host process needs
+no adapter. `HOST`/`PORT` are the reserved address:
 they replace an ambient value inherited from the caller's environment, because
 a process reading them must bind the port the published route targets. Only a
 value the manifest declares outranks them. Port
@@ -300,8 +303,9 @@ Each process also receives the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`.
 `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in only when the operator
 has not exported them and the process does not declare them, so an operator
 trust store is never replaced. The gateway contract records which runtimes read
-which variable and why. There is no adapter report, report schema or generation
-variable: only the reserved address answering publishes the route. A child that
+which variable and why. Effigy reads no adapter report: only the reserved
+address answering publishes the route, and the report path is a write-only
+courtesy for shipped adapters, removed when the generation stops. A child that
 binds a different address fails startup, naming the reserved address and the
 readiness request it never answered.
 

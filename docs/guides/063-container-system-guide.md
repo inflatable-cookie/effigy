@@ -495,10 +495,15 @@ Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact loopback address
 (the reserved port for a `:0` declaration), `HOST` and `PORT` to that address
 and port, and `EFFIGY_HOST_PROCESS_PUBLIC_URL`
 and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and reserved
-endpoint. Any ordinary server that listens on `$HOST`/`$PORT` is a managed
-listener, with no language-specific adapter and nothing to write: Effigy sends
-the readiness request to the address it reserved and publishes the route when
-that address answers. `run = 'exec effigy profile:api'` is enough, and a server
+endpoint. It supplies `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, a private path
+in the process's runtime directory beside its log, and
+`EFFIGY_MANAGED_HOST_LISTENER_GENERATION`, the current child generation token,
+only for the adapter scripts shipped bundles already carry. Effigy never reads
+that report and removes the file when the generation stops, so a new host
+process needs no adapter. Any ordinary server that listens on `$HOST`/`$PORT`
+is a managed listener: Effigy sends the readiness request to the address it
+reserved and publishes the route when that address answers.
+`run = 'exec effigy profile:api'` is enough, and a server
 that compiles for a minute before it serves needs only a long enough declared
 timeout.
 

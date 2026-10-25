@@ -1327,13 +1327,9 @@ allow = [
 [[retired]]
 id = "managed-listener-ownership-proof"
 retired = "2026-10-25; v0.15 simplification (Q-011)"
-replacement = "A managed host listener is ready when its reserved loopback port answers the declared readiness request, and its route stays published while the supervisor's run is alive and that port keeps answering. The supervisor probes the port every five seconds, withdraws the route after three consecutive misses and republishes it when the port answers again; a probe miss never restarts the child. A child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, so an ordinary server on those values is the whole contract: there is nothing to report, no generation token to echo and no listener identity to prove, because the gateway forwards a managed route to its published target like any other route. Delete a report writer, a report file path, a generation variable, a process-identity or ancestry proof and an exclusive-socket check; nothing replaces them."
+replacement = "A managed host listener is ready when its reserved loopback port answers the declared readiness request, and its route stays published while the supervisor's run is alive and that port keeps answering. The supervisor probes the port every five seconds, withdraws the route after three consecutive misses and republishes it when the port answers again; a probe miss never restarts the child. A child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, so an ordinary server on those values is the whole contract: there is no listener identity to prove, because the gateway forwards a managed route to its published target like any other route. The report path and generation token are still supplied for the adapter scripts shipped bundles carry, but Effigy never reads that report and removes it with the generation. Delete a report reader, a process-identity or ancestry proof and an exclusive-socket check; nothing replaces them."
 owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
 terms = [
-  "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE",
-  "EFFIGY_MANAGED_HOST_LISTENER_GENERATION",
-  "effigy.managed.host-listener-report.v1",
-  ".listener-report.json",
   "verify_managed_listener_owner",
   "observe_managed_listener_owner",
   "availability_file",
