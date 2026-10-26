@@ -22,8 +22,9 @@ pub(crate) fn drain_process_fixtures() {
 /// 26-character run id and `.sock`; a gateway's is 5 bytes longer, under
 /// `.effigy/gateway/runtime/`. A short fixture path therefore stays at or
 /// below this length, which leaves room for either socket. Under an Effigy run
-/// the temp root is the run's scratch on the Builds drive and its parent is the
-/// shorter scratch root, so a short fixture never needs the internal `/tmp`.
+/// the temp root is the run's scratch (under `<root>/effigy/` on the Builds
+/// drive) and its parent is the shorter namespace directory there, so a short
+/// fixture never needs the internal `/tmp`.
 pub const SHORT_PATH_MAX: usize = 47;
 
 /// The configured fixture root: the run's temporary directory, which a
@@ -34,9 +35,10 @@ fn configured_root() -> PathBuf {
 
 /// The parent a short fixture belongs under: the run's temp root when the
 /// resulting path leaves room for a Unix control socket, else that root's
-/// parent (the scratch root, where sibling names are shorter). A harness whose
-/// temp root cannot bound a socket needs `[scratch]` or a short `TMPDIR`; it is
-/// named rather than quietly falling back to the internal `/tmp`.
+/// parent (the `effigy/` namespace inside the scratch root, where sibling names
+/// are shorter). A harness whose temp root cannot bound a socket needs
+/// `[scratch]` or a short `TMPDIR`; it is named rather than quietly falling back
+/// to the internal `/tmp`.
 fn short_parent(configured: PathBuf, prefix: &str) -> io::Result<PathBuf> {
     // `tempfile` appends six random characters to the prefix.
     let fits = |parent: &Path| parent.as_os_str().len() + prefix.len() + 6 <= SHORT_PATH_MAX;

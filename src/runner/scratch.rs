@@ -1,9 +1,16 @@
 //! Per-run scratch on a configured directory (user config `[scratch]`).
 //!
 //! With `[scratch] root` set in the Effigy user config, every host-placed run
-//! gets `<root>/<8-char run id>/` as its own temporary directory, exposed as
-//! `TMPDIR`, `TMP` and `TEMP` to the run's host processes. Unset, nothing
-//! changes: Effigy never touches the temp environment.
+//! gets `<root>/effigy/<8-char run id>/` as its own temporary directory,
+//! exposed as `TMPDIR`, `TMP` and `TEMP` to the run's host processes. The
+//! `effigy/` child is the only entry Effigy names at the top of the operator's
+//! directory, so no sibling folder has to be told apart from a run: what Effigy
+//! owns is a directory carrying its own marker, wherever it sits. Unset,
+//! nothing changes: Effigy never touches the temp environment.
+//!
+//! Earlier builds placed runs directly under the root. Those are left exactly
+//! where they are and retire in place by the same marker rules, so the layout
+//! moved without moving or bulk-cleaning anything.
 //!
 //! The directory is a plain directory Effigy names and marks, not a kernel
 //! effect: no journal record, no settle hook and no second record of run state.
@@ -18,6 +25,7 @@
 //! than failing or refusing the run.
 
 use std::cell::RefCell;
+use std::ffi::OsStr;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,6 +39,11 @@ use crate::runner::task_engine::TaskRun;
 
 /// Set to `0` or `false` to keep every run out of the configured scratch root.
 pub(in crate::runner) const DISABLE_ENV: &str = "EFFIGY_SCRATCH";
+/// The child of the configured root that holds this build's run directories.
+/// Keeping runs out of the root itself leaves the operator's own folders there
+/// out of the question; a legacy run left directly under the root is still
+/// swept by its marker.
+const NAMESPACE: &str = "effigy";
 /// Marker inside a scratch directory: who created it and whether to keep it.
 const MARKER: &str = ".effigy-scratch.json";
 /// A concluded failure is kept this long for inspection.
@@ -290,8 +303,9 @@ pub(in crate::runner) fn with_test_scope<T>(dir: &Path, f: impl FnOnce() -> T) -
     f()
 }
 
-/// Opens this run's directory under `root`: the root when missing, a bounded
-/// sweep of what earlier runs left, then `<root>/<run name>/` with its marker.
+/// Opens this run's directory under `root`: the root and its `effigy/`
+/// namespace when missing, a bounded sweep of what earlier runs left, then
+/// `<root>/effigy/<run name>/` with its marker.
 fn open(root: &Path, run: &TaskRun) -> Result<Arc<RunScratch>, String> {
     open_for(root, &run.id(), &run.target().label, &run.target().root)
 }
@@ -302,19 +316,16 @@ fn open_for(
     task: &str,
     checkout: &Path,
 ) -> Result<Arc<RunScratch>, String> {
-    let missing = !root.exists();
-    std::fs::create_dir_all(root)
-        .map_err(|error| format!("`{}` cannot be created ({error})", root.display()))?;
-    if missing {
-        // Private to the account running Effigy, whatever the operator's umask
-        // is: another local account must not read a run's temp files.
-        let _ = std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700));
-    }
+    private_dir(root)?;
+    // The sweep reaches both this build's namespace and a legacy run left
+    // directly under the root, so a later run retires either.
     sweep(root);
     let Some(name) = scratch_name(id) else {
         return Err("the run id has no directory name".to_owned());
     };
-    let dir = root.join(name);
+    let namespace = root.join(NAMESPACE);
+    private_dir(&namespace)?;
+    let dir = namespace.join(name);
     let marker = Marker {
         run: id.to_string(),
         task: task.to_owned(),
@@ -349,6 +360,19 @@ fn open_for(
         dir,
         run: marker.run,
     }))
+}
+
+/// Creates `dir` when it is missing, private to the account running Effigy when
+/// Effigy made it, whatever the operator's umask is: another local account must
+/// not read a run's temp files. An existing directory keeps its own mode.
+fn private_dir(dir: &Path) -> Result<(), String> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("`{}` cannot be created ({error})", dir.display()))?;
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    Ok(())
 }
 
 /// The boot-scoped start identity text a marker records, or empty when the
@@ -388,6 +412,18 @@ const RUN_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 #[cfg(test)]
 pub(in crate::runner) fn name_for_tests(id: &effigy_kernel::id::RunId) -> String {
     scratch_name(id).expect("scratch name")
+}
+
+/// The namespace directory this build places runs under, for tests.
+#[cfg(test)]
+pub(in crate::runner) fn namespace_for_tests(root: &Path) -> PathBuf {
+    root.join(NAMESPACE)
+}
+
+/// The directory a run owns under `root`, for tests that assert the layout.
+#[cfg(test)]
+pub(in crate::runner) fn path_for_tests(root: &Path, id: &effigy_kernel::id::RunId) -> PathBuf {
+    namespace_for_tests(root).join(name_for_tests(id))
 }
 
 /// Whether `dir` is Effigy's directory for `run`: a real directory (never a
@@ -757,7 +793,9 @@ pub(in crate::runner) struct SweepReport {
 }
 
 /// Removes this root's own expired directories, bounded in time, count and
-/// liveness checks, and only ever inside the configured root.
+/// liveness checks, and only ever inside the configured root: this build's runs
+/// inside `<root>/effigy/`, and a legacy run an earlier build left directly
+/// under the root, swept where it stands.
 ///
 /// A marked directory goes when its conclusion is older than [`RETENTION`], or
 /// when it has no conclusion and the process that created it is gone, or when
@@ -768,15 +806,24 @@ pub(in crate::runner) struct SweepReport {
 pub(in crate::runner) fn sweep_at(root: &Path, now_ms: i64, within: Duration) -> SweepReport {
     let deadline = Instant::now() + within;
     let mut report = SweepReport::default();
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return report;
+    sweep_entries(root, true, now_ms, &mut report, deadline);
+    report
+}
+
+/// Sweeps the marked run directories in `dir`, descending once from the root
+/// into this build's namespace. Both locations share one report, so the time,
+/// scan, removal and liveness bounds cover the two together.
+///
+/// The namespace carries no marker of its own and is never judged as a run: it
+/// is Effigy's directory, holding runs one level down. A symlink is not
+/// descended into, and an entry with no marker is left alone.
+fn sweep_entries(dir: &Path, top: bool, now_ms: i64, report: &mut SweepReport, deadline: Instant) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
     };
     for entry in entries.flatten() {
-        if report.scanned >= SWEEP_SCAN_MAX
-            || report.removed >= SWEEP_REMOVE_MAX
-            || Instant::now() >= deadline
-        {
-            break;
+        if report.spent(deadline) {
+            return;
         }
         report.scanned += 1;
         let path = entry.path();
@@ -786,10 +833,14 @@ pub(in crate::runner) fn sweep_at(root: &Path, now_ms: i64, within: Duration) ->
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             continue;
         }
+        if top && path.file_name() == Some(OsStr::new(NAMESPACE)) {
+            sweep_entries(&path, false, now_ms, report, deadline);
+            continue;
+        }
         let Some(marker) = read_marker(&path) else {
             continue;
         };
-        if !expired(&marker, now_ms, &mut report, deadline) {
+        if !expired(&marker, now_ms, report, deadline) {
             continue;
         }
         match remove(&path) {
@@ -801,7 +852,16 @@ pub(in crate::runner) fn sweep_at(root: &Path, now_ms: i64, within: Duration) ->
             }
         }
     }
-    report
+}
+
+impl SweepReport {
+    /// Whether this sweep has spent its bounds: what it has not reached is a
+    /// later run's.
+    fn spent(&self, deadline: Instant) -> bool {
+        self.scanned >= SWEEP_SCAN_MAX
+            || self.removed >= SWEEP_REMOVE_MAX
+            || Instant::now() >= deadline
+    }
 }
 
 /// Whether a marked directory is past its life. A live run keeps its
@@ -945,6 +1005,20 @@ mod tests {
         dir
     }
 
+    /// A run directory this build placed under the root, with its marker.
+    fn hold_namespaced_marker(
+        root: &Path,
+        id: &effigy_kernel::id::RunId,
+        marker: Marker,
+    ) -> PathBuf {
+        std::fs::create_dir_all(namespace_for_tests(root)).expect("namespace");
+        let dir = path_for_tests(root, id);
+        std::fs::create_dir(&dir).expect("dir");
+        write_marker(&dir, &marker).expect("marker");
+        dir
+    }
+
+    /// The directory a legacy top-level run owns, with a marker for that run.
     fn hold(root: &Path, id: &effigy_kernel::id::RunId) -> PathBuf {
         hold_marker(root, id, marker(id, now_ms()))
     }
@@ -1444,6 +1518,216 @@ mod tests {
         assert_eq!(
             scratch.dir.file_name().and_then(|name| name.to_str()),
             Some(name_of(&id).as_str())
+        );
+    }
+
+    #[test]
+    fn a_new_run_lives_under_the_namespace_and_passes_it_as_temp() {
+        let root = tempfile::tempdir().expect("root");
+        let id = run_id(30);
+        let scratch = open_for(root.path(), &id, "build", root.path()).expect("scratch opened");
+        assert_eq!(
+            scratch.dir,
+            root.path().join(NAMESPACE).join(name_of(&id)),
+            "a new run is one level below the operator's root"
+        );
+        // The marker keeps its fields: the layout moved, the record did not.
+        let opened = read_marker(&scratch.dir).expect("marker");
+        assert_eq!(opened.run, id.to_string());
+        assert_eq!(opened.task, "build");
+        assert_eq!(opened.keep, None);
+        assert_eq!(opened.concluded_ms, None);
+        // Its host processes get exactly that directory as their temp.
+        let env = with_test_scope(&scratch.dir, temp_env);
+        assert_eq!(
+            env.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+            ["TMPDIR", "TMP", "TEMP"]
+        );
+        assert!(env.iter().all(|(_, value)| *value == scratch.dir));
+        // The namespace Effigy made is private to this account.
+        let mode = std::fs::metadata(namespace_for_tests(root.path()))
+            .expect("namespace")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "the namespace is Effigy's own directory");
+
+        // A failure keeps the namespaced directory on the same terms, and a
+        // sweep retires it in place a day after the run ended.
+        let handle = Handle {
+            run: Some(scratch.clone()),
+            owns_scope: true,
+        };
+        let warning = conclude(&handle, false).expect("a kept directory is named");
+        assert!(warning.contains("scratch kept at"), "{warning}");
+        let concluded = read_marker(&scratch.dir)
+            .expect("marker")
+            .concluded_ms
+            .expect("conclusion recorded");
+        assert_eq!(
+            sweep_at(root.path(), concluded + 60_000, SWEEP_BUDGET).removed,
+            0
+        );
+        assert_eq!(
+            sweep_at(root.path(), concluded + retention_ms() + 1, SWEEP_BUDGET).removed,
+            1
+        );
+        assert!(
+            !scratch.dir.exists(),
+            "the namespaced tree expired in place"
+        );
+        assert!(
+            namespace_for_tests(root.path()).exists(),
+            "the empty namespace stays: nothing repairs it"
+        );
+    }
+
+    #[test]
+    fn an_interrupted_namespaced_run_is_adopted_but_a_foreign_directory_is_not() {
+        let root = tempfile::tempdir().expect("root");
+        let id = run_id(31);
+        // A keyed run reuses its id: its own interrupted attempt is adopted.
+        let first = open_for(root.path(), &id, "build", root.path()).expect("opened");
+        std::fs::write(first.dir.join("work.txt"), b"payload").expect("file");
+        let second = open_for(root.path(), &id, "build", root.path()).expect("reopened");
+        assert_eq!(first.dir, second.dir);
+        assert!(second.dir.join("work.txt").exists());
+
+        // A directory of that name with no marker of ours is refused.
+        let unmarked = run_id(32);
+        std::fs::create_dir(path_for_tests(root.path(), &unmarked)).expect("unmarked");
+        let reason = open_for(root.path(), &unmarked, "build", root.path()).expect_err("refused");
+        assert!(reason.contains("already exists"), "{reason}");
+
+        // So is a symlink: a link is never a scratch directory.
+        let linked = run_id(33);
+        let outside = tempfile::tempdir().expect("outside");
+        std::os::unix::fs::symlink(outside.path(), path_for_tests(root.path(), &linked))
+            .expect("symlink");
+        let reason = open_for(root.path(), &linked, "build", root.path()).expect_err("refused");
+        assert!(reason.contains("already exists"), "{reason}");
+        assert!(outside.path().is_dir(), "the link's target is untouched");
+    }
+
+    #[test]
+    fn a_legacy_run_and_a_namespaced_run_of_the_same_name_coexist_until_each_expires() {
+        let root = tempfile::tempdir().expect("root");
+        let id = run_id(34);
+        let concluded = now_ms() - 60_000;
+        let retained = || Marker {
+            keep: Some(true),
+            concluded_ms: Some(concluded),
+            ..marker(&id, concluded)
+        };
+        // An earlier build left this run directly under the root.
+        let legacy = hold_marker(root.path(), &id, retained());
+        // This build places the same run name in the namespace.
+        let namespaced = hold_namespaced_marker(root.path(), &id, retained());
+        assert_ne!(legacy, namespaced);
+        assert!(legacy.exists() && namespaced.exists());
+
+        // Nothing is moved or bulk-cleaned: both are still retained.
+        assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 0);
+        assert!(legacy.exists(), "a legacy run is swept where it stands");
+        assert!(namespaced.exists());
+
+        // Both expire by the same rule, in place.
+        assert_eq!(
+            sweep_at(root.path(), now_ms() + retention_ms(), SWEEP_BUDGET).removed,
+            2
+        );
+        assert!(!legacy.exists());
+        assert!(!namespaced.exists());
+    }
+
+    #[test]
+    fn the_namespace_is_never_a_run_and_what_it_did_not_mark_is_untouched() {
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("work.txt"), b"keep me").expect("file");
+        let namespace = namespace_for_tests(root.path());
+        std::fs::create_dir_all(&namespace).expect("namespace");
+        // Even a marker at the namespace's own top level does not make it a
+        // run: the namespace is Effigy's directory, descended into.
+        let old = now_ms() - retention_ms() - 1;
+        write_marker(
+            &namespace,
+            &Marker {
+                keep: Some(true),
+                concluded_ms: Some(old),
+                ..marker(&run_id(35), old)
+            },
+        )
+        .expect("marker");
+        // An unrelated project folder, a foreign file and a symlink inside the
+        // namespace are all left alone.
+        let project = namespace.join("my-project");
+        std::fs::create_dir(&project).expect("project");
+        std::fs::write(project.join("Cargo.toml"), b"keep me").expect("file");
+        std::fs::write(namespace.join("notes.txt"), b"keep me").expect("file");
+        std::os::unix::fs::symlink(outside.path(), namespace.join("linked")).expect("symlink");
+
+        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        assert_eq!(report.removed, 0, "{report:?}");
+        assert!(
+            namespace.exists(),
+            "the namespace is never removed as a run"
+        );
+        assert!(namespace.join(MARKER).exists());
+        assert!(project.join("Cargo.toml").exists());
+        assert!(namespace.join("notes.txt").exists());
+        assert!(outside.path().join("work.txt").exists());
+    }
+
+    #[test]
+    fn the_sweep_bounds_hold_across_the_namespace_and_the_root() {
+        let root = tempfile::tempdir().expect("root");
+        let old = now_ms() - retention_ms() - 1;
+        let expired = |id: &effigy_kernel::id::RunId| Marker {
+            keep: Some(true),
+            concluded_ms: Some(old),
+            ..marker(id, old)
+        };
+        // Alternating locations, beyond the removal bound.
+        for n in 0..SWEEP_REMOVE_MAX + 2 {
+            let id = run_id_at(2000 + n);
+            if n % 2 == 0 {
+                hold_namespaced_marker(root.path(), &id, expired(&id));
+            } else {
+                hold_marker(root.path(), &id, expired(&id));
+            }
+        }
+        let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
+        assert_eq!(report.removed, SWEEP_REMOVE_MAX, "{report:?}");
+        let left = std::fs::read_dir(namespace_for_tests(root.path()))
+            .expect("namespace")
+            .count()
+            + std::fs::read_dir(root.path()).expect("root").count()
+            - 1; // the namespace entry itself
+        assert_eq!(left, 2, "what the sweep did not reach is a later run's");
+
+        // A namespace full of retained directories stays within the scan and
+        // time bounds, and the namespace itself is one of the examined entries.
+        let many = tempfile::tempdir().expect("many");
+        for n in 0..300 {
+            let id = run_id_at(3000 + n);
+            hold_namespaced_marker(
+                many.path(),
+                &id,
+                Marker {
+                    keep: Some(true),
+                    concluded_ms: Some(now_ms() - 60_000),
+                    ..marker(&id, now_ms() - 60_000)
+                },
+            );
+        }
+        let started = Instant::now();
+        let report = sweep_at(many.path(), now_ms(), SWEEP_BUDGET);
+        assert_eq!(report.scanned, 301, "the namespace and each of its entries");
+        assert_eq!(report.removed, 0, "every directory is still retained");
+        assert!(
+            started.elapsed() < SWEEP_BUDGET + Duration::from_millis(300),
+            "the sweep stayed within its budget"
         );
     }
 
