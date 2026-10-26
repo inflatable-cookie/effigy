@@ -22,37 +22,45 @@ use chrono::Utc;
 use crate::endpoint_store::EndpointStore;
 use crate::error::GatewayError;
 use crate::routes::{ManagedListenerRouteOwner, Route, RouteSource};
-use effigy_core::worktree_scope;
 
-/// How long a recorded target has to accept a TCP connection before its owner
-/// counts as gone.
+/// How long a recorded target has to accept a TCP connection before another
+/// checkout may treat it as gone and take its domain over.
 const TARGET_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
-
-/// Resolve the generation that owns container gateway routes.
-pub fn project_scope(project_path: &str) -> Result<Option<String>, GatewayError> {
-    worktree_scope::load_or_create(Path::new(project_path)).map_err(|error| {
-        GatewayError::RouteTableReadError {
-            path: Path::new(project_path).to_path_buf(),
-            reason: format!("cannot establish route owner generation: {error}"),
-        }
-    })
-}
 
 /// Whether a route belongs to this checkout path.
 pub fn owned_by(route: &Route, project_path: &str) -> bool {
     route.project == project_path
 }
 
-/// Whether the checkout that recorded a route is gone from disk. The route
-/// table is the whole record, so a route of a deleted worktree is dropped by
-/// the next write rather than kept and guarded.
+/// Whether the checkout that recorded a route is gone from disk.
+///
+/// Only a missing path is gone. An unreadable path (EACCES, a stale network
+/// handle) is unknown, and so is a path whose own parent is missing: an
+/// unmounted `/Volumes/...` root looks exactly like a deleted checkout, and
+/// dropping its routes would leave a running stack unroutable after its
+/// remount. Keeping a route of a checkout that really is gone only delays its
+/// release; an ordinary event that deletes a worktree still frees its domains,
+/// because the parent of a deleted worktree stays.
+///
+/// The route table is the whole record, so a route of a deleted worktree is
+/// dropped by the next write rather than kept and guarded.
 pub fn checkout_is_gone(project: &str) -> bool {
-    std::fs::metadata(project).is_err()
+    let path = Path::new(project);
+    match std::fs::metadata(path) {
+        Ok(_) => false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            path.parent().is_some_and(Path::is_dir)
+        }
+        Err(_) => false,
+    }
 }
 
-/// Why a recorded owner is gone: its checkout path does not exist, or its
-/// target address does not accept a connection. `None` means the owner is
-/// still there and keeps the domain.
+/// Why another checkout may take a recorded owner's domain over: its checkout
+/// path does not exist, or its target address does not accept a connection.
+/// This is the tradeover decision only. Nothing prunes a route because its
+/// target is briefly down, so a container restart, a Colima restart or a
+/// listening process that has not bound yet keeps its route. `None` means the
+/// owner is still there and keeps the domain.
 pub fn dead_claim_reason(route: &Route) -> Option<String> {
     if checkout_is_gone(&route.project) {
         return Some(format!("checkout path {} no longer exists", route.project));
@@ -62,12 +70,6 @@ pub fn dead_claim_reason(route: &Route) -> Option<String> {
         return None;
     }
     Some(format!("target {target} is not accepting connections"))
-}
-
-/// Whether a recorded owner is gone. A route without an upstream target (a
-/// DNS-only alias) is dead only when its checkout path is gone.
-pub fn claim_is_dead(route: &Route) -> bool {
-    dead_claim_reason(route).is_some()
 }
 
 fn target_accepts_connection(target: &str) -> bool {
@@ -106,7 +108,6 @@ pub fn register_route(
             source: registration.source,
             project: registration.project_path.clone(),
             tls: registration.tls,
-            scope: project_scope(&registration.project_path)?,
             managed_listener: None,
             registered: Utc::now(),
         });
@@ -185,7 +186,6 @@ pub fn register_managed_listener_route(
             tcp_target: None,
             source: RouteSource::Task,
             project: project_path.to_owned(),
-            scope: project_scope(project_path)?,
             tls,
             managed_listener: Some(owner),
             registered: Utc::now(),
@@ -279,88 +279,33 @@ pub fn deregister_route(
     })
 }
 
-/// Remove owned routes and leftover TLS certificates under the route lock.
+/// Withdraw every route one checkout path owns.
 ///
-/// `remove_cert` runs only when the domain is still owned by this checkout or
-/// is unclaimed. A live foreign owner keeps its certificate and route. Owned
-/// routes are deregistered after their certificates are removed; a callback
-/// error leaves the table unchanged on disk.
-pub fn cleanup_owned_routes_and_certs<F>(
+/// The route table is the whole record of the checkout's claims, so this
+/// withdraws the route of a domain the manifest has since renamed, a listener
+/// route an earlier generation published, and any route this checkout's
+/// environment left behind. A route another checkout owns stays, and a domain
+/// that has no route is simply not in the result: withdrawing a route that is
+/// already gone is not an error.
+///
+/// Certificates are a cache keyed by domain and outlive their route, so
+/// nothing here removes one; the gateway daemon prunes the ones no route
+/// names once they are old enough to be worth nothing.
+pub fn withdraw_owned_routes(
     route_table_path: &Path,
     project_path: &str,
-    route_domains: Option<&[String]>,
-    cert_domains: &[String],
-    mut remove_cert: F,
-) -> Result<Vec<Route>, GatewayError>
-where
-    F: FnMut(&str) -> Result<(), GatewayError>,
-{
+) -> Result<Vec<Route>, GatewayError> {
     EndpointStore::for_routes(route_table_path).routes(|table| {
-        let mut removed = Vec::new();
-        let mut domains = cert_domains.to_vec();
-        match route_domains {
-            Some(allowed) => {
-                for domain in allowed {
-                    if !domains.iter().any(|existing| existing == domain) {
-                        domains.push(domain.clone());
-                    }
-                }
-            }
-            None => {
-                for route in table.all_routes() {
-                    if owned_by(route, project_path)
-                        && !domains.iter().any(|existing| existing == &route.domain)
-                    {
-                        domains.push(route.domain.clone());
-                    }
-                }
-            }
-        }
-        for domain in &domains {
-            match table.lookup(domain).cloned() {
-                Some(route) if owned_by(&route, project_path) => {
-                    let remove_route = route_domains
-                        .map(|allowed| allowed.iter().any(|allowed| allowed == domain))
-                        .unwrap_or(true);
-                    if route.tls || cert_domains.iter().any(|pending| pending == domain) {
-                        remove_cert(domain)?;
-                    }
-                    if remove_route {
-                        let _ = table.deregister(domain);
-                        removed.push(route);
-                    }
-                }
-                Some(_) => {}
-                None => {
-                    if cert_domains.iter().any(|pending| pending == domain) {
-                        remove_cert(domain)?;
-                    }
-                }
-            }
-        }
-        Ok(removed)
-    })
-}
-
-/// Remove every route whose recorded owner is gone. The daemon runs this on a
-/// timer so `gateway status` lists domains that something still serves.
-pub fn prune_dead_routes(route_table_path: &Path) -> Result<Vec<String>, GatewayError> {
-    EndpointStore::for_routes(route_table_path).routes(|table| {
-        let dead = table
+        let removed = table
             .all_routes()
             .into_iter()
-            .filter(|route| claim_is_dead(route))
+            .filter(|route| owned_by(route, project_path))
             .cloned()
             .collect::<Vec<_>>();
-        for route in &dead {
-            eprintln!(
-                "[info] gateway domain `{}` released: {}",
-                route.domain,
-                dead_claim_reason(route).unwrap_or_else(|| "owner is gone".to_owned())
-            );
+        for route in &removed {
             let _ = table.deregister(&route.domain);
         }
-        Ok(dead.into_iter().map(|route| route.domain).collect())
+        Ok(removed)
     })
 }
 

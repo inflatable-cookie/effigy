@@ -112,7 +112,6 @@ async fn faults_engine_gateway_endpoint_commit() {
                         tcp_target: None,
                         source: RouteSource::Task,
                         project: home.path().display().to_string(),
-                        scope: None,
                         managed_listener: None,
                         tls: false,
                         registered: chrono::Utc::now(),

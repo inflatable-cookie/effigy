@@ -12,15 +12,13 @@ use effigy_containers::exec::{
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback;
-use effigy_gateway::registration::{dead_claim_reason, owned_by, project_scope};
+use effigy_gateway::registration::{dead_claim_reason, owned_by, withdraw_owned_routes};
 #[cfg(test)]
-use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
+use effigy_gateway::registration::{register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
 
 use crate::runner::error::RunnerError;
-use crate::runner::gateway_command::{
-    ensure_gateway_tls_cert, gateway_dir, remove_gateway_tls_cert,
-};
+use crate::runner::gateway_command::{ensure_gateway_tls_cert, gateway_dir};
 
 const GATEWAY_SERVICE_PORT_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const GATEWAY_SERVICE_PORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -487,54 +485,23 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
     Ok(project_alias_routes)
 }
 
+/// Withdraw every gateway route this checkout's path owns.
+///
+/// The route table is the whole record of the checkout's claims, so a domain
+/// the manifest has since renamed, a listener route an earlier generation
+/// published, and a route an environment left behind all go with the
+/// environment. A route another checkout owns stays, and a domain that has no
+/// route is not an error. Certificates are a cache keyed by domain: they stay,
+/// and the gateway daemon prunes the ones no route names.
 pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
-    // Removing the routes frees this checkout's alias address too: the route
-    // table is the only record of loopback ownership.
     let route_table_path = gateway_route_table_path()?;
-    // Withdrawal needs declared domain identities and the current ownership
-    // predicate, never a reconstructed target or a newly assigned host port.
-    let mut domains = policy
-        .dns_routes
-        .iter()
-        .map(|route| route.domain.clone())
-        .collect::<Vec<_>>();
-    let project_alias_domains = declared_gateway_service_alias_domains(policy);
-    let shared_alias_domains =
-        declared_gateway_shared_service_alias_domains(policy, &project_alias_domains);
-    domains.extend(project_alias_domains);
-    domains.extend(shared_alias_domains);
-    domains.sort();
-    domains.dedup();
-    if domains.is_empty() {
-        return Ok(Vec::new());
-    }
-    EndpointStore::for_routes(&route_table_path).routes(|table| {
-        let project_path = policy.repo_root.display().to_string();
-        let removed = domains
-            .into_iter()
-            .filter_map(|domain| {
-                table
-                    .lookup(&domain)
-                    .filter(|route| owned_by(route, &project_path))
-                    .cloned()
-            })
-            .collect::<Vec<_>>();
-        for route in &removed {
-            let _ = table.deregister(&route.domain);
-        }
-        for route in &removed {
-            if route.tls {
-                remove_gateway_tls_cert(&route.domain)?;
-            }
-        }
-        Ok(removed.into_iter().map(|route| route.domain).collect())
-    })
-}
-
-fn gateway_project_scope(project_path: &str) -> Result<Option<String>, RunnerError> {
-    project_scope(project_path).map_err(|error| RunnerError::task_invocation(error.to_string()))
+    let project_path = policy.repo_root.display().to_string();
+    let removed = withdraw_owned_routes(&route_table_path, &project_path).map_err(|error| {
+        RunnerError::gateway_route_table("withdraw", &route_table_path, error.to_string())
+    })?;
+    Ok(removed.into_iter().map(|route| route.domain).collect())
 }
 
 #[cfg(test)]
@@ -553,7 +520,6 @@ fn reconcile_gateway_routes_guarded(
 ) -> Result<(), RunnerError> {
     EndpointStore::for_routes(path).routes(|table| {
         let project_path = repo_root.display().to_string();
-        let scope = gateway_project_scope(&project_path)?;
         // The write owns the alias address. Another checkout may have recorded
         // an address between resolution and this transaction, so the lowest
         // free address is chosen here, under the same lock as the write.
@@ -583,13 +549,6 @@ fn reconcile_gateway_routes_guarded(
             .iter()
             .map(|route| route.domain.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        let replaced_tls = desired
-            .iter()
-            .filter(|route| !route.tls)
-            .filter_map(|route| table.lookup(&route.domain))
-            .filter(|route| route.tls)
-            .map(|route| route.domain.clone())
-            .collect::<Vec<_>>();
         let stale = table
             .all_routes()
             .into_iter()
@@ -610,22 +569,10 @@ fn reconcile_gateway_routes_guarded(
                 tcp_target: route.tcp_target.clone(),
                 source: RouteSource::Container,
                 project: project_path.clone(),
-                scope: scope.clone(),
                 tls: route.tls,
                 managed_listener: None,
                 registered: chrono::Utc::now(),
             });
-        }
-        if stale.is_empty() && desired.is_empty() {
-            return Ok(());
-        }
-        for route in &stale {
-            if route.tls {
-                remove_gateway_tls_cert(&route.domain)?;
-            }
-        }
-        for domain in &replaced_tls {
-            remove_gateway_tls_cert(domain)?;
         }
         Ok(())
     })
@@ -637,91 +584,15 @@ fn load_gateway_route_table(route_table_path: &Path) -> Result<RouteTable, Runne
     })
 }
 
-#[cfg(test)]
-fn register_gateway_route_at(
-    route_table_path: &Path,
-    repo_root: &Path,
-    route: &RegisteredGatewayRoute,
-) -> Result<(), RunnerError> {
-    register_route(
-        route_table_path,
-        &RouteRegistration {
-            domain: route.domain.clone(),
-            target: route.target.clone(),
-            dns_ip: route.dns_ip,
-            tcp_port: route.tcp_port,
-            tcp_target: route.tcp_target.clone(),
-            tls: route.tls,
-            project_path: repo_root.display().to_string(),
-            source: effigy_gateway::routes::RouteSource::Container,
-        },
-    )
-    .map_err(|error| {
-        RunnerError::gateway_route_registration("register", &route.domain, error.to_string())
-    })
-}
-
-#[cfg(test)]
-fn deregister_gateway_route_at(
-    route_table_path: &Path,
-    repo_root: &Path,
-    domain: &str,
-) -> Result<bool, RunnerError> {
-    deregister_route(route_table_path, domain, &repo_root.display().to_string()).map_err(|error| {
-        RunnerError::gateway_route_registration("deregister", domain, error.to_string())
-    })
-}
-
-#[cfg(test)]
-fn prune_stale_container_routes_for_project(
-    route_table_path: &Path,
-    repo_root: &Path,
-    desired_routes: &[RegisteredGatewayRoute],
-) -> Result<(), RunnerError> {
-    EndpointStore::for_routes(route_table_path)
-        .routes(|table| {
-            let project_path = repo_root.display().to_string();
-            let desired_domains = desired_routes
-                .iter()
-                .map(|route| route.domain.as_str())
-                .collect::<std::collections::BTreeSet<_>>();
-            let stale = table
-                .all_routes()
-                .into_iter()
-                .filter(|route| owned_by(route, &project_path))
-                .filter(|route| route.source == RouteSource::Container)
-                .filter(|route| !desired_domains.contains(route.domain.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
-            if stale.is_empty() {
-                return Ok(());
-            }
-            for route in &stale {
-                let _ = table.deregister(&route.domain);
-            }
-            for route in &stale {
-                if route.tls {
-                    remove_gateway_tls_cert(&route.domain)?;
-                }
-            }
-            Ok(())
-        })
-        .map_err(|error: RunnerError| {
-            RunnerError::gateway_route_table("load", route_table_path, error.to_string())
-        })
-}
-
 fn registered_gateway_routes_match_project(
     route_table: &RouteTable,
     repo_root: &Path,
     desired_routes: &[RegisteredGatewayRoute],
 ) -> Result<bool, RunnerError> {
     let project_path = repo_root.display().to_string();
-    let scope = gateway_project_scope(&project_path)?;
     Ok(desired_routes.iter().all(|route| {
         route_table.lookup(&route.domain).is_some_and(|registered| {
             registered.project == project_path
-                && registered.scope == scope
                 && registered.source == RouteSource::Container
                 && registered.target == route.target
                 && registered.dns_ip == route.dns_ip
@@ -853,54 +724,6 @@ fn resolve_gateway_shared_service_alias_routes(
         });
     }
     Ok(routes)
-}
-
-fn declared_gateway_service_alias_domains(policy: &EffectiveContainerPolicy) -> Vec<String> {
-    if policy.service_aliases.is_empty() {
-        return Vec::new();
-    }
-    let Some(base_domain) = project_base_domain(policy) else {
-        return Vec::new();
-    };
-    let explicit_domains = policy
-        .dns_routes
-        .iter()
-        .map(|route| route.domain.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    policy
-        .service_aliases
-        .iter()
-        .filter_map(|alias| {
-            let domain = format!("{}.{}", alias.domain_label, base_domain);
-            (!explicit_domains.contains(domain.as_str())).then_some(domain)
-        })
-        .collect()
-}
-
-fn declared_gateway_shared_service_alias_domains(
-    policy: &EffectiveContainerPolicy,
-    project_alias_domains: &[String],
-) -> Vec<String> {
-    if policy.shared_services.is_empty() {
-        return Vec::new();
-    }
-    let Some(base_domain) = project_base_domain(policy) else {
-        return Vec::new();
-    };
-    let mut occupied = policy
-        .dns_routes
-        .iter()
-        .map(|route| route.domain.as_str().to_owned())
-        .collect::<std::collections::BTreeSet<_>>();
-    occupied.extend(project_alias_domains.iter().cloned());
-    policy
-        .shared_services
-        .iter()
-        .filter_map(|shared| {
-            let domain = format!("{}.{}", shared.domain_label, base_domain);
-            (!occupied.contains(domain.as_str())).then_some(domain)
-        })
-        .collect()
 }
 
 fn runtime_host_port_for_route(

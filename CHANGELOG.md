@@ -27,12 +27,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - A gateway route is one claim: `domain -> (checkout path, target)`. The same
   checkout path always replaces its own route, covering a new run, a new
   generation and a container-to-listener handover. A different checkout takes
-  the domain over automatically when the recorded checkout path no longer
-  exists or its target does not accept a TCP connection within 200 ms, logging
-  the takeover in one line; otherwise the write is refused with one message
-  naming the other checkout and the command that stops it. `down`, `retire` and
-  settle remove the checkout's routes by path, listener routes included, so a
-  domain is free immediately and `down` followed by `up` elsewhere works at
+  the domain over automatically when the recorded checkout path is missing or
+  its target does not accept a TCP connection within 200 ms, logging the
+  takeover in one line; otherwise the write is refused with one message naming
+  the other checkout and the command that stops it. An unreadable or unmounted
+  checkout path is unknown, not missing, so its routes stay. `down`, `retire`
+  and settle remove the checkout's routes by path, listener routes included, so
+  a domain is free immediately and `down` followed by `up` elsewhere works at
   once. A managed listener route's owner is its checkout path, environment and
   process name; no run id is recorded.
 - `effigy gateway repair` (with `--owner-checkout`, `--yes` and `--expect-plan`)
@@ -350,6 +351,22 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- **The gateway's dead-route sweep.** The daemon no longer drops a route
+  because its target does not answer a 200 ms TCP probe. The timer, the target
+  probe inside it and its `prune_dead_routes` removal path are gone, so a
+  container restart, a Colima restart and a listener that has not bound yet all
+  keep their route. A route whose target is briefly down survives, proved over
+  60 seconds on a private gateway.
+- **Certificate deletion on `down` and `retire`.** A TLS certificate is a cache
+  keyed by domain: withdrawal keeps it, so a stack that comes back finds it
+  ready, and the daemon removes the ones no route names once they are seven
+  days old. The certificate-removal callback, the replaced-TLS cleanup and the
+  pending-cert removal are gone with it.
+- **The route-table lock and the route's scope token.** The endpoint store's
+  one transaction is the whole write path, so `RouteTableLock`, the per-route
+  `scope` field and the worktree token minted inside a store transaction are
+  gone. A record that still carries `scope` decodes, and its next write drops
+  it.
 - **The v0.14 managed-session refusal.** `session.json`, stop markers and exec
   group markers are neither read nor adopted, so a recorded supervisor PID that
   a reboot has reused can no longer refuse or block a managed task. The
@@ -1442,6 +1459,17 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **A checkout path that cannot be read is not a deleted checkout.** Only a
+  missing path counts as gone, and a path whose own parent is missing, as after
+  a reboot before the volume mounts, is unknown, so an ejected or unreadable
+  checkout keeps its routes and domains instead of losing them until its next
+  `up`. `container down` withdraws every route the checkout's path owns, so a
+  domain the manifest has since renamed is freed with the environment, and a
+  route that is already gone is not an error. A store row another checkout
+  cannot describe now warns and skips that row instead of refusing every write
+  to the machine-wide store. A store this build writes carries the empty
+  `imported_sha256` and `quarantined` maps a pinned build requires, so the
+  `efc1478` binary Queue and Oxide run reads it again.
 - **A slow host listener reports progress and can be stopped.** While a
   managed listener's reserved port is still closed and its child runs, `up`
   prints a progress line every 30 s to the console as well as to the log, and a

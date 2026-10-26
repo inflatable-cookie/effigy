@@ -836,10 +836,9 @@ Nothing is recorded beside those labels: there is no
 fence, so deleting a checkout deletes nothing else and a re-cloned checkout at
 the same path needs no reconciliation. A backend that cannot list resources, or
 that returns malformed inspect output, fails instead of reporting an empty
-stack. TLS certificates for isolated routes are removed
-under the route lock after an owner check; failure leaves the route and a
-pending-cert list on the record. A pending certificate whose domain now has
-a foreign owner stays.
+stack. TLS certificates for isolated routes are a cache keyed by domain:
+`down` and retirement keep them, and the gateway daemon removes a certificate
+no route names once it is seven days old.
 
 Archive callers that need the identity before the checkout disappears should
 run `effigy container scope --json`. It reports the absolute checkout path,
@@ -1575,8 +1574,11 @@ way. The takeover is logged in one line. Only a checkout that still exists and
 still serves the domain refuses the write, and that message names it and the
 command that stops it (`effigy container down` there).
 
-Any route write also drops routes whose recorded checkout path is gone, for
+Any route write also drops routes whose recorded checkout path is missing, for
 every domain, so a deleted worktree never keeps a domain or a loopback address.
+A path that is only unreadable, or that sits on a volume which is not mounted
+yet, is unknown rather than missing, so its routes stay. Nothing withdraws a
+route because its target is briefly down.
 The same checkout path always replaces its own route, so a new run, a new
 generation or a container-to-listener handover needs no repair command.
 `down`, `retire` and settle remove the checkout's routes by path, listener

@@ -305,7 +305,6 @@ shell = "/bin/sh"
         tcp_target: None,
         source: effigy_gateway::routes::RouteSource::Container,
         project: sibling_root.display().to_string(),
-        scope: None,
         tls: false,
         managed_listener: None,
         registered: chrono::Utc::now(),

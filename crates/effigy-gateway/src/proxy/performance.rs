@@ -72,7 +72,6 @@ async fn loopback_keep_alive_latency_766() {
         tcp_target: None,
         source: RouteSource::Task,
         project: fixture.path().display().to_string(),
-        scope: None,
         managed_listener: None,
         tls: false,
         registered: chrono::Utc::now(),
