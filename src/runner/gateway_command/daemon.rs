@@ -105,17 +105,12 @@ fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
         OpenOptions::new()
             .create(true)
             .append(true)
-            .write(true)
             .mode(0o600)
             .open(path)
     }
     #[cfg(not(unix))]
     {
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .write(true)
-            .open(path)
+        OpenOptions::new().create(true).append(true).open(path)
     }
 }
 

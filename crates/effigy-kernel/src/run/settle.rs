@@ -63,7 +63,7 @@ impl Run<'_> {
             if let Some(effigy_home) = self.root.path().parent() {
                 record_gateway_stop(
                     &effigy_home.join("gateway"),
-                    &format!("custody settlement: {workload:?}"),
+                    &format!("custody settlement: {workload}"),
                 );
             }
         }

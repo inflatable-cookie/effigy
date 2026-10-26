@@ -1121,7 +1121,10 @@ fn gateway_custody_settlement_logs_caller_and_owner_loss() {
     assert!(record["argv"]
         .as_array()
         .is_some_and(|args| !args.is_empty()));
-    assert!(record["cause"].as_str().unwrap().contains("OwnerLost"));
+    assert!(record["cause"]
+        .as_str()
+        .unwrap()
+        .contains("the owning process exiting"));
 }
 
 #[test]
