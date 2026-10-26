@@ -86,7 +86,8 @@ An unobservable identity observation (for example a kernel `EPERM` on a recorded
 process) is an unknown refusal, never an absence proof: it can never license
 another owner to replace the listener, and it never waives the live-foreign
 refusal. The supervisor's activation record, not a caller clock, is the barrier
-between supervision admission and the listener's declared readiness budget.
+between supervision admission and readiness; readiness itself has two phases,
+and the declared budget starts when the reserved port first answers.
 A managed listener route's owner is its checkout path, environment and process
 name. Exact child-generation teardown withdraws the route, and a stale stop
 callback cannot withdraw a successor generation. Retirement and `down` remove

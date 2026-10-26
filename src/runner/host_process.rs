@@ -59,19 +59,17 @@ const HOST_LISTENER_GENERATION_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_GENERAT
 /// child's own exit does.
 const LISTENER_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const LISTENER_PROBE_MISSES: u32 = 3;
+/// How often a listener whose port has not opened yet reports progress. A cold
+/// build can take minutes, and no deadline applies while it runs.
+const LISTENER_START_PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 /// The longest wait between replacement generations: a crash loop backs off to
 /// this and stays there (effigy#341).
 const RESTART_BACKOFF_CAP: Duration = Duration::from_secs(30);
 
 /// Bounded wait for a supervisor to publish its own activation record. This is
-/// a supervision admission bound, not a readiness budget: the listener's
-/// declared readiness budget starts once this record exists (papercut
-/// b1bf877f).
+/// a supervision admission bound, never a readiness budget: readiness starts
+/// when the listener's reserved port first answers (papercut b1bf877f).
 pub(super) const SUPERVISOR_ACTIVATION_PUBLICATION_BOUND: Duration = Duration::from_secs(10);
-/// Bounded allowance for a supervisor to publish the terminal state it observed
-/// after its own declared readiness deadline expired. It covers publication
-/// only; readiness was already measured from the activation record.
-pub(super) const TERMINAL_PUBLICATION_ALLOWANCE: Duration = Duration::from_secs(2);
 #[cfg(debug_assertions)]
 const START_PUBLICATION_DELAY_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_START_PUBLICATION_DELAY_MS";
 
@@ -460,9 +458,10 @@ fn write_private_json(path: &Path, value: &impl Serialize) -> Result<(), RunnerE
 }
 
 /// Wait until the supervisor publishes the activation record for this spec.
-/// That record is the barrier between supervision admission and the listener's
-/// declared readiness budget. A previous activation of the same process keeps
-/// its own `runtime_generation`, so a stale record never satisfies the wait.
+/// That record is the barrier between supervision admission and readiness, so
+/// the wait below starts from a record that belongs to this activation. A
+/// previous activation of the same process keeps its own
+/// `runtime_generation`, so a stale record never satisfies the wait.
 fn wait_for_listener_activation(
     path: &Path,
     process_name: &str,
@@ -490,14 +489,19 @@ fn wait_for_listener_activation(
     }
 }
 
+/// Wait until the listener's supervisor publishes this generation's declared
+/// state: `ready`, or the failure it observed. There is no deadline of the
+/// caller's: a child that is still building has not opened its port, and the
+/// supervisor's own readiness budget starts when it does. The supervisor is
+/// what ends the wait, so a supervisor that exited without publishing is the
+/// failure this wait names.
 fn wait_for_listener_state(
     path: &Path,
     process_name: &str,
     owner: &str,
-    timeout: Duration,
     route_table_path: &Path,
 ) -> Result<HostListenerState, RunnerError> {
-    let deadline = Instant::now() + timeout;
+    let mut next_liveness_check = Instant::now();
     loop {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -557,14 +561,25 @@ fn wait_for_listener_state(
                         diagnostic: state.diagnostic.clone().unwrap_or_default(),
                     });
                 }
-                _ => {}
+                _ => {
+                    if Instant::now() >= next_liveness_check {
+                        next_liveness_check = Instant::now() + Duration::from_secs(1);
+                        if let Err(error) = read_live_process_identity(state.supervisor_pid) {
+                            // Only a vanished supervisor proves nothing more
+                            // will be published. An identity this user cannot
+                            // read leaves the wait running.
+                            if error.kind() == std::io::ErrorKind::NotFound
+                                || error.raw_os_error() == Some(libc::ESRCH)
+                            {
+                                return Err(RunnerError::task_invocation(format!(
+                                    "managed host listener `{process_name}` stopped starting: its supervisor (pid {}) exited before publishing readiness; its log names what it did",
+                                    state.supervisor_pid
+                                )));
+                            }
+                        }
+                    }
+                }
             }
-        }
-        if Instant::now() >= deadline {
-            return Err(RunnerError::task_invocation(format!(
-                "timed out after {}s waiting for managed host listener `{process_name}`",
-                timeout.as_secs()
-            )));
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -771,8 +786,16 @@ fn sanitize(value: &str) -> String {
 /// The budget for one cleanup step of a host-process run: admission, a stop or
 /// the settle. Each step takes its own, so a supervisor that has been up for
 /// hours still has a whole budget when its workload needs stopping or its run
-/// needs closing (effigy#357).
+/// needs closing (effigy#357), and a long compile never spends the settle's
+/// clock (effigy#358).
 const HOST_PROCESS_CLEANUP_BUDGET: Duration = Duration::from_secs(120);
+
+/// One cleanup step, with its own budget, minted when that step runs: Effigy
+/// journals, stops and settles by the operation in front of it, never against a
+/// clock a long-lived child has already spent.
+fn cleanup_budget() -> effigy_kernel::ctx::CleanupContext {
+    crate::runner::task_engine::cleanup_context(HOST_PROCESS_CLEANUP_BUDGET)
+}
 
 /// A supervisor step failed for a store, file, identity or capability reason.
 /// The request is well formed, so the outcome names the failing step and the
@@ -837,7 +860,6 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
                 return Err(RunError::Invalid(error.to_string()));
             }
         };
-    let cleanup = crate::runner::task_engine::cleanup_context(HOST_PROCESS_CLEANUP_BUDGET);
     let invocation = match kernel_run::invocation(checkout, &resource, &spec) {
         Ok(invocation) => invocation,
         Err(error) => {
@@ -866,7 +888,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         &root,
         &invocation,
         options,
-        &cleanup,
+        &cleanup_budget(),
         &mut adapter,
     ) {
         Ok(run) => run,
@@ -884,21 +906,16 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     let started = supervise_generations(
         &mut run,
         &cx,
-        &cleanup,
         &session,
         &spec,
         supervisor_pid,
         watch.as_ref(),
     );
-    // Closing the run takes its own budget. The one above was minted when the
-    // run began, so a workload that outlived it would otherwise leave the run
-    // open and force the environment to settle it (effigy#357).
-    let settle = crate::runner::task_engine::cleanup_context(HOST_PROCESS_CLEANUP_BUDGET);
     let (workload, custody) = match started {
         Ok(result) => result,
         Err(error) => {
             let _ = run.interrupt(
-                &settle,
+                &cleanup_budget(),
                 effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
             );
             let _ = write_stop_report(&spec, &run, None);
@@ -920,11 +937,11 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     let outcome = match workload {
         Some(outcome) => {
             run.finish(outcome)?;
-            run.settle(&settle, &mut adapter)?
+            run.settle(&cleanup_budget(), &mut adapter)?
         }
         None => {
-            run.interrupt(&settle, stop_workload())?;
-            run.settle(&settle, &mut adapter)?
+            run.interrupt(&cleanup_budget(), stop_workload())?;
+            run.settle(&cleanup_budget(), &mut adapter)?
         }
     };
     session.closed(&outcome);
@@ -997,7 +1014,6 @@ enum GenerationEnd {
 fn supervise_generations(
     run: &mut effigy_kernel::run::Run<'_>,
     cx: &effigy_kernel::ctx::EffectContext,
-    cleanup: &effigy_kernel::ctx::CleanupContext,
     session: &EngineSession,
     spec: &HostProcessRuntimeSpec,
     supervisor_pid: u32,
@@ -1029,7 +1045,6 @@ fn supervise_generations(
                 run,
                 cx,
                 session,
-                cleanup,
                 spec,
                 supervisor_pid,
                 watch,
@@ -1042,7 +1057,6 @@ fn supervise_generations(
                 run,
                 cx,
                 session,
-                cleanup,
                 spec,
                 watch,
                 &mut active,
@@ -1147,7 +1161,6 @@ fn supervise_plain_host_process(
     run: &mut effigy_kernel::run::Run<'_>,
     cx: &effigy_kernel::ctx::EffectContext,
     session: &EngineSession,
-    cleanup: &effigy_kernel::ctx::CleanupContext,
     spec: &HostProcessRuntimeSpec,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
     active: &mut bool,
@@ -1197,7 +1210,7 @@ fn supervise_plain_host_process(
     if stopping {
         shutdown.store(true, Ordering::SeqCst);
     }
-    if let Some(report) = stop_generation(run, cleanup, spec, &mut child, stopping) {
+    if let Some(report) = stop_generation(run, spec, &mut child, stopping) {
         *last = Some(report.clone());
         append_log_line(
             &spec.log_file,
@@ -1230,7 +1243,6 @@ fn signal_for(kind: HostProcessSignal) -> Signal {
 /// grace and KILL escalation follow it.
 fn stop_generation(
     run: &mut effigy_kernel::run::Run<'_>,
-    cleanup: &effigy_kernel::ctx::CleanupContext,
     spec: &HostProcessRuntimeSpec,
     child: &mut effigy_kernel::custody::OwnedProcess,
     stopping: bool,
@@ -1243,7 +1255,7 @@ fn stop_generation(
             let _ = child.forward(signal as i32);
         }
     }
-    let report = child.stop(cleanup);
+    let report = child.stop(&cleanup_budget());
     let exit = report.leader.verified().map(|exit| exit.code);
     let group_closed = matches!(
         report.group,
@@ -1523,7 +1535,6 @@ fn supervise_managed_host_listener(
     run: &mut effigy_kernel::run::Run<'_>,
     cx: &effigy_kernel::ctx::EffectContext,
     session: &EngineSession,
-    cleanup: &effigy_kernel::ctx::CleanupContext,
     spec: &HostProcessRuntimeSpec,
     supervisor_pid: u32,
     watch: Option<&effigy_kernel::supervise::OwnerWatch>,
@@ -1621,11 +1632,11 @@ fn supervise_managed_host_listener(
 
     let ready = {
         let mut stop = || stop_requested(run, watch) || shutdown.load(Ordering::SeqCst);
-        wait_for_ready_listener(address, listener, &mut stop, &mut child)
+        wait_for_ready_listener(address, listener, &log_path, &mut stop, &mut child)
     };
     if let Err(error) = ready {
         let stopped = matches!(error, ListenerStartupFailure::Stopped);
-        if let Some(report) = stop_generation(run, cleanup, spec, &mut child, true) {
+        if let Some(report) = stop_generation(run, spec, &mut child, true) {
             *last = Some(report);
         }
         state.child = None;
@@ -1647,7 +1658,7 @@ fn supervise_managed_host_listener(
     // ready; the dependent is replaced before it publishes.
     if dependency_transition(spec, &dependency_generations)? {
         state.write("unavailable")?;
-        if let Some(report) = stop_generation(run, cleanup, spec, &mut child, true) {
+        if let Some(report) = stop_generation(run, spec, &mut child, true) {
             *last = Some(report);
         }
         state.child = None;
@@ -1659,7 +1670,7 @@ fn supervise_managed_host_listener(
         return Ok(GenerationEnd::DependencyChanged);
     }
     if let Err(error) = prepare_managed_listener_route(spec, listener) {
-        let _ = stop_generation(run, cleanup, spec, &mut child, true);
+        let _ = stop_generation(run, spec, &mut child, true);
         state.child = None;
         return finish_failed_generation(
             &mut state,
@@ -1678,7 +1689,7 @@ fn supervise_managed_host_listener(
     state.address = Some(address);
     state.route_owner = Some(owner.clone());
     if let Err(error) = publish_managed_listener_route(spec, listener, &owner) {
-        let _ = stop_generation(run, cleanup, spec, &mut child, true);
+        let _ = stop_generation(run, spec, &mut child, true);
         state.child = None;
         state.route_owner = None;
         return finish_failed_generation(
@@ -1768,7 +1779,7 @@ fn supervise_managed_host_listener(
     withdraw_managed_listener_route(spec, listener, &owner)?;
     state.route_owner = None;
     state.write("unavailable")?;
-    if let Some(report) = stop_generation(run, cleanup, spec, &mut child, stopping) {
+    if let Some(report) = stop_generation(run, spec, &mut child, stopping) {
         *last = Some(report);
     }
     state.child = None;
@@ -1840,16 +1851,23 @@ fn reserved_port_is_free(bind: &str) -> Result<(), RunnerError> {
 }
 
 /// Wait until the reserved address answers the declared readiness request.
-/// A closed port is not a failure while the child is alive: an app that
-/// compiles before it serves takes as long as the declared timeout allows.
+///
+/// Two phases, because a port that has not opened yet is a build, not a
+/// failure. While the port is closed and the child is alive the wait has no
+/// deadline and reports progress every [`LISTENER_START_PROGRESS_INTERVAL`];
+/// the child exiting is the failure. Once the port first accepts a connection,
+/// `readiness_timeout_secs` bounds reaching the declared status.
 fn wait_for_ready_listener(
     address: SocketAddr,
     config: &EffectiveManagedHostListener,
+    log_path: &Path,
     stop: &mut dyn FnMut() -> bool,
     child: &mut effigy_kernel::custody::OwnedProcess,
 ) -> Result<(), ListenerStartupFailure> {
     let timeout = Duration::from_secs(config.readiness_timeout_secs);
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let mut answered_at = None;
+    let mut next_progress = started + LISTENER_START_PROGRESS_INTERVAL;
     loop {
         if stop() {
             return Err(ListenerStartupFailure::Stopped);
@@ -1865,7 +1883,20 @@ fn wait_for_ready_listener(
         if probe.outcome == HttpReadinessOutcome::Ready {
             return Ok(());
         }
-        if Instant::now() >= deadline {
+        let now = Instant::now();
+        if probe.outcome == HttpReadinessOutcome::ConnectFailed {
+            if now >= next_progress {
+                next_progress = now + LISTENER_START_PROGRESS_INTERVAL;
+                append_log_line(
+                    log_path,
+                    &format!(
+                        "[effigy host-process] listener at {address} is still starting after {}s: the port is closed and the child is running, so the {}s readiness timeout has not started",
+                        started.elapsed().as_secs(),
+                        timeout.as_secs()
+                    ),
+                );
+            }
+        } else if now.duration_since(*answered_at.get_or_insert(now)) >= timeout {
             return Err(listener_readiness_timeout(address, config, timeout, probe.outcome).into());
         }
         thread::sleep(Duration::from_millis(50));
@@ -1879,7 +1910,7 @@ fn listener_readiness_timeout(
     last: HttpReadinessOutcome,
 ) -> RunnerError {
     RunnerError::task_invocation(format!(
-        "timed out after {}s waiting for the managed listener at {address} to answer {} with {} ({})",
+        "timed out after {}s waiting for the managed listener at {address} to answer {} with {} once its port opened ({})",
         timeout.as_secs(),
         config.readiness_path,
         config.readiness_status,
@@ -2459,18 +2490,26 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         panic!("no free fixture listener port outside the ephemeral range");
     }
 
-    /// One declared host process with a managed listener route on `domain`.
-    fn listener_host_process(name: &str, domain: &str, bind: &str) -> EffectiveHostProcess {
+    /// One declared host process with a managed listener route on `domain`,
+    /// running `child` (Python source) with `timeout_secs` as its declared
+    /// readiness budget.
+    fn listener_host_process_running(
+        name: &str,
+        domain: &str,
+        bind: &str,
+        child: &str,
+        timeout_secs: u64,
+    ) -> EffectiveHostProcess {
         let mut process = host_process(
             name,
-            &format!("exec python3 -c '{}'", LISTENER_CHILD.trim()),
+            &format!("exec python3 -c '{}'", child.trim()),
             HostProcessRestart::Never,
         );
         process.listener = Some(EffectiveManagedHostListener {
             bind: bind.to_owned(),
             readiness_path: "/health".to_owned(),
             readiness_status: 200,
-            readiness_timeout_secs: 30,
+            readiness_timeout_secs: timeout_secs,
             declared_route_domain: domain.to_owned(),
             route_domain: domain.to_owned(),
             route_tls: false,
@@ -2485,6 +2524,21 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         checkout: &Path,
         domain: &str,
         name: &str,
+    ) -> (
+        super::super::gateway_command::TestGatewayHomeGuard,
+        EffectiveContainerPolicy,
+    ) {
+        listener_policy_running(checkout, domain, name, LISTENER_CHILD, 30)
+    }
+
+    /// [`listener_policy`] with the listener's own child and declared readiness
+    /// budget, for the proofs about a child that has not opened its port yet.
+    fn listener_policy_running(
+        checkout: &Path,
+        domain: &str,
+        name: &str,
+        child: &str,
+        timeout_secs: u64,
     ) -> (
         super::super::gateway_command::TestGatewayHomeGuard,
         EffectiveContainerPolicy,
@@ -2506,7 +2560,16 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         }
         let guard = super::super::gateway_command::set_test_gateway_home(&gateway_home);
         let bind = fixture_listener_bind(&format!("{}|{domain}|{name}", checkout.display()));
-        let mut policy = policy(checkout, vec![listener_host_process("app", domain, &bind)]);
+        let mut policy = policy(
+            checkout,
+            vec![listener_host_process_running(
+                "app",
+                domain,
+                &bind,
+                child,
+                timeout_secs,
+            )],
+        );
         policy.project_name = format!("reclaim-{name}");
         (guard, policy)
     }
@@ -2555,6 +2618,161 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         wait_until("the killed listener group to close", || {
             group_members(leader).is_empty()
         });
+    }
+
+    /// A child that answers every request with the wrong status opens its port
+    /// and never becomes ready.
+    const REFUSING_LISTENER_CHILD: &str = r#"
+import http.server, os
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(503)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+
+    /// A cold build is phase (a): the port is closed and the child is alive.
+    /// That phase has no deadline, so an app that opens its port long after its
+    /// declared readiness budget still becomes ready, and the `up` that waits
+    /// for it does not substitute a deadline of its own (Acow #756).
+    #[test]
+    fn host_process_listener_waits_for_a_port_that_opens_after_its_readiness_budget() {
+        let fixture = fixture();
+        let domain = "slow-build.host.test";
+        let slow_build = format!("import time\ntime.sleep(8)\n{}", LISTENER_CHILD.trim());
+        let (_gateway_home, policy) =
+            listener_policy_running(&fixture.checkout, domain, "slow-build", &slow_build, 1);
+        let started = Instant::now();
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("a child that opens its port after its readiness budget still becomes ready");
+        assert!(
+            started.elapsed() >= Duration::from_secs(8),
+            "the fixture child must compile for longer than its declared budget: {:?}",
+            started.elapsed()
+        );
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "ready", "{state}");
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+        assert_eq!(read_json(&listener_state(&policy))["status"], "stopped");
+    }
+
+    /// The declared budget starts when the port first accepts a connection: a
+    /// listener that answers with the wrong status fails after it, naming the
+    /// budget and the probe outcome.
+    #[test]
+    fn host_process_listener_readiness_budget_starts_when_the_port_opens() {
+        let fixture = fixture();
+        let domain = "refusing.host.test";
+        let (_gateway_home, policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "refusing",
+            REFUSING_LISTENER_CHILD,
+            1,
+        );
+        let started = Instant::now();
+        let error =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+                .expect_err(
+                    "a listener that never answers the declared status fails before readiness",
+                )
+                .to_string();
+        let elapsed = started.elapsed();
+        assert!(error.contains("timed out after 1s"), "{error}");
+        assert!(
+            elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(20),
+            "the budget starts when the port opens, so the start fails just after it: {elapsed:?}"
+        );
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "failed", "{state}");
+        assert!(
+            state["diagnostic"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("status_mismatch"),
+            "{state}"
+        );
+    }
+
+    /// The child exiting is the failure signal of phase (a): a child that dies
+    /// before it ever binds fails the start at once, naming its exit code, and
+    /// the declared readiness budget never comes into it.
+    #[test]
+    fn host_process_listener_child_exit_before_binding_names_the_exit_code() {
+        let fixture = fixture();
+        let domain = "died-before-binding.host.test";
+        let (_gateway_home, policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "died-before-binding",
+            "import sys\nsys.exit(3)",
+            60,
+        );
+        let started = Instant::now();
+        let error =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+                .expect_err("a listener child that exits before binding fails the start")
+                .to_string();
+        assert!(error.contains("exited with code 3"), "{error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the child's exit, not the readiness budget, ends the wait: {:?}",
+            started.elapsed()
+        );
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "failed", "{state}");
+        assert!(
+            state["diagnostic"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("exited with code 3"),
+            "{state}"
+        );
+    }
+
+    /// A stop requested while a child is still in phase (a) ends the wait and
+    /// settles the run: the phase has no deadline, the stop does.
+    #[test]
+    fn host_process_listener_stop_during_a_starting_child_settles() {
+        let fixture = fixture();
+        let domain = "stopped-while-starting.host.test";
+        let (_gateway_home, policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "stopped-while-starting",
+            "import time\ntime.sleep(120)",
+            60,
+        );
+        let state_path = listener_state(&policy);
+        let checkout = fixture.checkout.clone();
+        let up_policy = policy.clone();
+        let up = std::thread::spawn(move || {
+            super::kernel_run::start_host_processes_for_container(&checkout, &up_policy)
+        });
+        wait_until("the listener to publish its starting generation", || {
+            fs::read(&state_path)
+                .ok()
+                .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
+                .is_some_and(|state| state["status"] == "starting")
+        });
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+        let stopped = up
+            .join()
+            .expect("the up waiting on a starting child returns");
+        assert!(
+            stopped.is_err(),
+            "an up whose listener was stopped before readiness does not report a start"
+        );
+        assert_eq!(read_json(&state_path)["status"], "stopped");
     }
 
     /// A listener route's owner is its checkout path, environment and process

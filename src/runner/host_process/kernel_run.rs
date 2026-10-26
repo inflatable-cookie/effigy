@@ -431,11 +431,6 @@ fn start_host_processes_inner(
                     &state_path,
                     dependency,
                     &managed_host_process_owner(&project_path, policy, dependency_process)?,
-                    dependency_process
-                        .listener
-                        .as_ref()
-                        .map(|listener| Duration::from_secs(listener.readiness_timeout_secs))
-                        .unwrap_or(Duration::from_secs(60)),
                     route_table.as_deref().ok_or_else(|| {
                         RunnerError::task_invocation(
                             "managed host listener dependency has no gateway route table",
@@ -520,8 +515,6 @@ fn start_host_processes_inner(
                     &state_path,
                     &hp.name,
                     &owner,
-                    Duration::from_secs(listener.readiness_timeout_secs)
-                        .saturating_add(super::TERMINAL_PUBLICATION_ALLOWANCE),
                     route_table.as_deref().ok_or_else(|| {
                         RunnerError::task_invocation(
                             "managed host listener has no gateway route table",
