@@ -753,8 +753,10 @@ prints their exact paths under `~/.effigy/state/objects/<digest>`. Prepare
 publishes that complete immutable generation; a generated asset is named
 relatively inside it, and Compose resolves that against the project directory,
 so neither a container environment nor the Compose command line carries an
-Effigy interpolation value. The former mutable output under
-`.effigy/runtime/compose` is replaced automatically on the next Prepare.
+Effigy interpolation value. A catalog service's Dockerfile is rendered inline
+(`dockerfile_inline`) from that content instead of a path, because Compose
+reads `build.dockerfile` against the build context. The former mutable output
+under `.effigy/runtime/compose` is replaced automatically on the next Prepare.
 
 A shared service is rendered the same way into its own generation, so every
 checkout that shares it hands Compose the same configuration. An unchanged

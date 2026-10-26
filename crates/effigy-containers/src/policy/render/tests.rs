@@ -211,27 +211,42 @@ fn internal_path_consumers_resolve_generated_asset_mounts() {
         );
         let rendered: serde_yaml::Value =
             serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
-        let mut dockerfiles = rendered["services"]
+        let mut inline = Vec::new();
+        for service in rendered["services"]
             .as_mapping()
             .expect("services")
             .values()
-            .filter_map(|service| {
-                service
-                    .get("build")?
-                    .get("dockerfile")?
-                    .as_str()
-                    .map(str::to_owned)
-            })
-            .collect::<Vec<_>>();
-        dockerfiles.sort();
-        assert!(!dockerfiles.is_empty(), "GENERATED_DOCKERFILES_MISSING");
-        for dockerfile in &dockerfiles {
+        {
+            let Some(build) = service.get("build").and_then(serde_yaml::Value::as_mapping) else {
+                continue;
+            };
             assert!(
-                dockerfile.starts_with("./")
-                    && !dockerfile.contains(&render.path.display().to_string()),
-                "the generation names its own files relatively: {dockerfile}"
+                !build.contains_key("dockerfile"),
+                "Compose resolves a build dockerfile against the context, so the render names its content instead: {build:?}"
+            );
+            inline.push(
+                build["dockerfile_inline"]
+                    .as_str()
+                    .expect("inline Dockerfile"),
             );
         }
+        inline.sort();
+        assert!(!inline.is_empty(), "GENERATED_DOCKERFILES_MISSING");
+        for dockerfile in &inline {
+            assert!(
+                dockerfile.contains("FROM "),
+                "the generation renders the Dockerfile content itself: {dockerfile}"
+            );
+        }
+        assert!(
+            !render
+                .closure
+                .files()
+                .keys()
+                .any(|name| name.contains(".effigy-catalog")),
+            "the Dockerfile is inlined, so no path copy is published: {:?}",
+            render.closure.files().keys().collect::<Vec<_>>()
+        );
         let plan = crate::load_workspace_ownership_plan(&policy).unwrap();
         let config = plan
             .targets
@@ -381,4 +396,68 @@ fn healthcheck_tests(document: &str) -> BTreeMap<String, Vec<String>> {
             ))
         })
         .collect()
+}
+
+/// A catalog service with a `build:` section builds from the Dockerfile the
+/// generation holds. Compose resolves `build.dockerfile` against the build
+/// context, not the project directory, so the render names the content instead
+/// of a path that would point outside the generation (effigy#364).
+#[test]
+fn a_catalog_build_service_renders_its_dockerfile_content() {
+    let (_fixture, checkout, home) = fixture();
+    std::fs::write(
+        checkout.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+[containers.stack]
+primary_service = "workspace"
+working_dir = "/workspace-root/app"
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+"#,
+    )
+    .unwrap();
+    crate::with_test_effigy_home(&home, || {
+        let policy = load_container_policy(&checkout, None).unwrap();
+        let render = policy.render.as_ref().unwrap();
+        let rendered: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
+        let build = rendered["services"]["workspace"]["build"]
+            .as_mapping()
+            .expect("the workspace service builds an image");
+        assert!(
+            !build.contains_key("dockerfile"),
+            "a dockerfile path would resolve against the build context, not the generation: {build:?}"
+        );
+        let inline = build["dockerfile_inline"]
+            .as_str()
+            .expect("the Dockerfile content is rendered");
+        assert!(
+            inline.contains("FROM ") && inline.contains("BUN_VERSION"),
+            "the rendered content is the catalog Dockerfile: {inline}"
+        );
+        assert_eq!(
+            build["args"][serde_yaml::Value::String("RUST_VERSION".into())].as_str(),
+            Some("1.91"),
+            "the build arguments are still rendered beside the content"
+        );
+        assert!(
+            !render
+                .closure
+                .files()
+                .keys()
+                .any(|name| name.contains(".effigy-catalog")),
+            "no Dockerfile path is published: {:?}",
+            render.closure.files().keys().collect::<Vec<_>>()
+        );
+        // The build context stays the checkout, which is where the
+        // Dockerfile's own COPY inputs live.
+        let context = Path::new(build["context"].as_str().expect("build context"));
+        assert_eq!(
+            context.canonicalize().unwrap(),
+            checkout.canonicalize().unwrap(),
+            "the build context is the checkout"
+        );
+    });
 }

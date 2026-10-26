@@ -1874,6 +1874,18 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A catalog service with a `build:` section builds from the Dockerfile in the
+  rendered generation again. Compose resolves `build.dockerfile` against the
+  build context (the checkout), not the project directory, so the generation's
+  relative path pointed at a missing file and `container up` failed with
+  `lstat …/.effigy-catalog/<service>/Containerfile: no such file or directory`.
+  The Dockerfile is now rendered as `dockerfile_inline` from the generation's
+  own content, so no path is resolved at all and no copy of it is published
+  (effigy#364).
+- A failed detached backend keeps the lines it ended with. Folding a long
+  evidence list keeps the first lines and the newest ones instead of only the
+  first, so the backend's `level=fatal` line reaches stderr and the JSON
+  `cause` after a teardown has removed `.effigy/runtime/logs` (effigy#364).
 - A task run in a fresh checkout or worktree acquires the bundle and catalog
   sources this checkout has never pinned, then runs the task, instead of
   refusing with `source `bundle` is not prepared`. It fills that gap only: an

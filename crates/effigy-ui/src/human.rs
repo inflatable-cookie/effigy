@@ -21,12 +21,22 @@ use std::fmt::Write as _;
 pub const MAX_EVIDENCE_BYTES: usize = 512;
 /// Most evidence lines kept; the rest are summarised, never silently dropped.
 pub const MAX_EVIDENCE_LINES: usize = 12;
+/// Lines always kept from the start of a folded evidence list: what failed.
+pub const EVIDENCE_HEAD_LINES: usize = 3;
 /// Lines kept from the start of a command's output: the first failure.
 pub const OUTPUT_HEAD_LINES: usize = 3;
 /// Lines kept from its end: how it finished.
 pub const OUTPUT_TAIL_LINES: usize = 2;
 /// What replaces a redacted value.
 pub const REDACTED: &str = "<redacted>";
+
+/// The count an existing fold marker carries, if the line is one.
+fn omitted_count(line: &str) -> Option<usize> {
+    line.strip_prefix('(')?
+        .strip_suffix(" lines omitted)")?
+        .parse()
+        .ok()
+}
 
 /// An error a person reads: what failed, the evidence, the next action.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,18 +57,34 @@ impl HumanError {
         }
     }
 
-    /// Add one bounded, redacted piece of evidence. A seventh line is folded
-    /// into a count so the message stays readable without hiding that more
-    /// was observed.
+    /// Add one bounded, redacted piece of evidence. Beyond the line budget the
+    /// middle folds into a count: the first lines say what failed and the last
+    /// lines say how it ended, so a backend's final `level=fatal` line always
+    /// reaches the reader (effigy#364).
     pub fn evidence(mut self, evidence: impl Into<String>) -> Self {
-        let evidence = bound(&redact(&evidence.into()));
-        if self.evidence.len() < MAX_EVIDENCE_LINES {
-            self.evidence.push(evidence);
-        } else if self.evidence.len() == MAX_EVIDENCE_LINES {
-            self.evidence
-                .push("(further evidence withheld; see verbose output)".to_owned());
-        }
+        self.evidence.push(bound(&redact(&evidence.into())));
+        self.fold_evidence();
         self
+    }
+
+    /// Keep the first [`EVIDENCE_HEAD_LINES`] and the newest lines, with one
+    /// marker counting what the fold dropped.
+    fn fold_evidence(&mut self) {
+        const TAIL: usize = MAX_EVIDENCE_LINES - EVIDENCE_HEAD_LINES - 1;
+        if self.evidence.len() <= MAX_EVIDENCE_LINES {
+            return;
+        }
+        let previous = self
+            .evidence
+            .get(EVIDENCE_HEAD_LINES)
+            .and_then(|line| omitted_count(line))
+            .unwrap_or(0);
+        let counted = self.evidence.len() - usize::from(previous > 0);
+        let omitted = previous + counted - EVIDENCE_HEAD_LINES - TAIL;
+        let tail = self.evidence.split_off(self.evidence.len() - TAIL);
+        self.evidence.truncate(EVIDENCE_HEAD_LINES);
+        self.evidence.push(format!("({omitted} lines omitted)"));
+        self.evidence.extend(tail);
     }
 
     /// Add the output of a failed command: its first lines name the failure,
@@ -340,17 +366,40 @@ mod tests {
     }
 
     #[test]
-    fn evidence_keeps_its_line_budget_then_says_so() {
+    fn evidence_keeps_its_line_budget_and_the_lines_that_ended_it() {
         let mut error = HumanError::new("startup failed");
         for index in 0..=MAX_EVIDENCE_LINES + 2 {
             error = error.evidence(format!("line {index}"));
         }
-        assert_eq!(error.evidence_lines().len(), MAX_EVIDENCE_LINES + 1);
-        assert_eq!(error.evidence_lines()[0], "line 0");
+        let lines = error.evidence_lines();
+        assert_eq!(lines.len(), MAX_EVIDENCE_LINES);
         assert_eq!(
-            error.evidence_lines()[MAX_EVIDENCE_LINES],
-            "(further evidence withheld; see verbose output)"
+            &lines[..EVIDENCE_HEAD_LINES],
+            ["line 0", "line 1", "line 2"]
         );
+        assert_eq!(lines[EVIDENCE_HEAD_LINES], "(4 lines omitted)");
+        assert_eq!(
+            lines.last().unwrap(),
+            &format!("line {}", MAX_EVIDENCE_LINES + 2),
+            "the newest line survives the fold"
+        );
+    }
+
+    #[test]
+    fn a_folded_evidence_list_still_ends_with_the_backend_fatal_line() {
+        let mut error = HumanError::new("detached activation did not complete")
+            .evidence("[effigy] detached backend failed (code Some(1))")
+            .evidence("[effigy] backend output tail:");
+        for index in 0..58 {
+            error = error.evidence(format!("build step {index}"));
+        }
+        let error = error.evidence("level=fatal msg=\"X\"");
+        assert!(
+            error.render_text().contains("level=fatal msg=\"X\""),
+            "{}",
+            error.render_text()
+        );
+        assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
     }
 
     #[test]

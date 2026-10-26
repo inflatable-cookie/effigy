@@ -224,24 +224,44 @@ def prove_consumers():
                 if isinstance(value, dict):
                     return {key: relative(item, project) for key, item in value.items()}
                 return value
-            def compose(content, project):
+            def compose(content, project, files):
                 value = relative(yaml.safe_load(content), project)
-                # Compose resolves dockerfile relative to its build context.
+                # Compose resolves dockerfile relative to its build context. A
+                # generation inlines its own Dockerfile content, so compare the
+                # content it names instead of the path it used to publish.
                 for service in value.get("services", {}).values():
                     build = service.get("build")
-                    if isinstance(build, dict) and "dockerfile" in build:
-                        path = build["dockerfile"]
-                        if not Path(path).is_absolute() and not path.startswith("${"):
-                            build["dockerfile"] = str(Path(build["context"]) / path)
+                    if not isinstance(build, dict) or "dockerfile" not in build:
+                        continue
+                    path = build["dockerfile"]
+                    if path.startswith("${"):
+                        continue
+                    resolved = Path(path)
+                    if not resolved.is_absolute():
+                        resolved = Path(build["context"]) / resolved
+                    published = files.get(str(resolved))
+                    if published is None:
+                        build["dockerfile"] = str(resolved)
+                    else:
+                        del build["dockerfile"]
+                        build["dockerfile_inline"] = published
                 return normalize(value)
             pairs = list(zip(old["compose_files"], new["compose_files"]))
             for old_path in old["files"]:
-                if old_path not in old["compose_files"]:
-                    logical = "shared/" + str(Path(old_path).relative_to(home / ".effigy"))
-                    pairs.append((old_path, str(Path(new["path"]) / logical)))
+                if old_path in old["compose_files"]:
+                    continue
+                logical = "shared/" + str(Path(old_path).relative_to(home / ".effigy"))
+                counterpart = str(Path(new["path"]) / logical)
+                if counterpart not in new_files:
+                    # The new render inlines a catalog Dockerfile instead of
+                    # publishing a copy of the file; its Compose document is
+                    # compared by content above.
+                    assert Path(old_path).name == "Dockerfile", old_path
+                    continue
+                pairs.append((old_path, counterpart))
             for i, (old_path, new_path) in enumerate(pairs):
-                old_value = compose(old["files"][old_path], None)
-                new_value = compose(new_files[new_path], project_of(new_path))
+                old_value = compose(old["files"][old_path], None, old["files"])
+                new_value = compose(new_files[new_path], project_of(new_path), new_files)
                 if old_value != new_value:
                     import difflib
                     diff = ''.join(difflib.unified_diff(
