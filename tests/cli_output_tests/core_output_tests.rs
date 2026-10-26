@@ -95,7 +95,8 @@ fn cli_parse_error_json_mode_emits_machine_readable_payload() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "cli");
     assert_eq!(parsed["command"]["name"], "parse");
-    assert_eq!(parsed["error"]["kind"], "CliParseError");
+    assert_eq!(parsed["error"]["kind"], "refused");
+    assert_eq!(parsed["error"]["type"], "CliParseError");
     assert!(parsed["error"]["message"]
         .as_str()
         .is_some_and(|msg| msg.contains("--repo requires a value")));
@@ -136,7 +137,7 @@ fn cli_runner_error_json_mode_emits_machine_readable_payload() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "missing-task");
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "refused");
     assert!(parsed["error"]["message"]
         .as_str()
         .is_some_and(|msg| msg.contains("missing-task")));

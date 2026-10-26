@@ -374,7 +374,7 @@ fn assert_json_lock_conflict_is_held(
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], command_name);
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "refused");
     let message = parsed["error"]["message"]
         .as_str()
         .expect("lock conflict error message");
@@ -440,7 +440,8 @@ fn cli_json_mode_parse_error_wraps_error_payload() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "cli");
     assert_eq!(parsed["command"]["name"], "parse");
-    assert_eq!(parsed["error"]["kind"], "CliParseError");
+    assert_eq!(parsed["error"]["kind"], "refused");
+    assert_eq!(parsed["error"]["type"], "CliParseError");
 }
 
 #[test]
@@ -468,7 +469,7 @@ fn cli_json_mode_runner_error_wraps_runner_failure() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "missing-task");
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "refused");
     assert!(parsed["error"]["message"]
         .as_str()
         .is_some_and(|msg| msg.contains("missing-task")));
@@ -761,7 +762,7 @@ fn cli_json_mode_failing_rhai_task_preserves_script_output_in_error_details() {
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "fail-rhai");
     assert_eq!(parsed["result"], Value::Null);
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "unavailable");
     let details = &parsed["error"]["details"];
     assert_eq!(details["schema"], "effigy.task.run.v1");
     assert_eq!(details["ok"], false);
@@ -901,7 +902,7 @@ fn cli_json_mode_missing_task_wraps_runner_failure() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "does-not-exist");
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "refused");
 }
 
 #[test]

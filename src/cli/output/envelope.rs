@@ -30,11 +30,13 @@ pub fn emit_json_envelope_error(
     exit_code: i32,
     kind: &str,
     name: &str,
-    error_kind: &str,
+    error_type: &str,
+    category: &str,
     message: &str,
     details: Option<serde_json::Value>,
 ) -> ! {
-    let payload = build_json_envelope_error(kind, name, error_kind, message, details);
+    let payload =
+        build_json_envelope_error(kind, name, error_type, category, message, details);
     print_json_payload(&payload);
     std::process::exit(exit_code);
 }
@@ -46,13 +48,15 @@ pub fn emit_json_envelope_error_with_human(
     exit_code: i32,
     kind: &str,
     name: &str,
-    error_kind: &str,
+    error_type: &str,
+    category: &str,
     message: &str,
     details: Option<serde_json::Value>,
     human: serde_json::Value,
 ) -> ! {
-    let payload =
-        build_json_envelope_error_with_human(kind, name, error_kind, message, details, human);
+    let payload = build_json_envelope_error_with_human(
+        kind, name, error_type, category, message, details, human,
+    );
     print_json_payload(&payload);
     std::process::exit(exit_code);
 }
@@ -60,12 +64,13 @@ pub fn emit_json_envelope_error_with_human(
 pub fn build_json_envelope_error_with_human(
     kind: &str,
     name: &str,
-    error_kind: &str,
+    error_type: &str,
+    category: &str,
     message: &str,
     details: Option<serde_json::Value>,
     human: serde_json::Value,
 ) -> serde_json::Value {
-    let mut payload = build_json_envelope_error(kind, name, error_kind, message, details);
+    let mut payload = build_json_envelope_error(kind, name, error_type, category, message, details);
     if let Some(error) = payload
         .get_mut("error")
         .and_then(|error| error.as_object_mut())
@@ -118,7 +123,8 @@ fn retired_config_warnings() -> serde_json::Value {
 pub fn build_json_envelope_error(
     kind: &str,
     name: &str,
-    error_kind: &str,
+    error_type: &str,
+    category: &str,
     message: &str,
     details: Option<serde_json::Value>,
 ) -> serde_json::Value {
@@ -134,7 +140,11 @@ pub fn build_json_envelope_error(
         "result": serde_json::Value::Null,
         "warnings": retired_config_warnings(),
         "error": {
-            "kind": error_kind,
+            // The three kinds a person reads (K4): `kind` is the category and
+            // `type` names the error's own type, so a machine reader gets the
+            // classification as well as the identity.
+            "kind": category,
+            "type": error_type,
             "message": message,
             "details": details.unwrap_or(serde_json::Value::Null),
         }

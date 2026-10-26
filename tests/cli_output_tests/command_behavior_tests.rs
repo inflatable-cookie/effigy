@@ -1964,7 +1964,7 @@ fn cli_catalog_task_json_mode_failure_emits_json_and_non_zero_exit() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "fail");
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "unavailable");
     assert_eq!(parsed["error"]["details"]["schema"], "effigy.task.run.v1");
     assert_eq!(parsed["error"]["details"]["task"], "fail");
     assert_eq!(parsed["error"]["details"]["exit_code"], 7);
@@ -1994,7 +1994,7 @@ run = "printf should-not-run"
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "capture");
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "refused");
     let message = parsed["error"]["message"].as_str().expect("error message");
     assert!(
         message.contains("env schema validation failed"),
@@ -2296,7 +2296,7 @@ fn cli_release_status_json_mode_surfaces_gate_failures_in_error_details() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "release");
     assert_eq!(parsed["command"]["name"], "release");
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "refused");
     assert_eq!(
         parsed["error"]["details"]["schema"],
         "effigy.release.status.v1"
@@ -3677,7 +3677,8 @@ fn cli_container_retire_named_environment_refuses_before_effects() {
     let parsed = parse_stdout_json(&json);
     assert_eq!(parsed["schema"], "effigy.command.v1");
     assert_eq!(parsed["ok"], false);
-    assert_eq!(parsed["error"]["kind"], "CliParseError");
+    assert_eq!(parsed["error"]["kind"], "refused");
+    assert_eq!(parsed["error"]["type"], "CliParseError");
     assert_eq!(parsed["error"]["message"], refusal);
     assert!(fs::read_dir(root)
         .expect("read fixture after JSON invocation")

@@ -275,13 +275,74 @@ impl RunnerError {
         }
     }
 
-    /// The kernel's category a person reads for this failure. The runner's own
-    /// errors refuse the request; an admission refusal keeps the category the
-    /// kernel read for the run it could not start.
+    /// The kernel's category a person reads for this failure. An admission
+    /// refusal keeps the category the kernel read for the run it could not
+    /// start; every other failure belongs to one of the three kinds (K4, F16):
+    /// a refusal is the request, its wiring or a holder; unavailable is a step
+    /// or a service that did not answer; broken is Effigy's own invariant.
     pub fn category(&self) -> effigy_kernel::human::Category {
+        use effigy_kernel::human::Category;
         match self {
             RunnerError::RunAdmission { category, .. } => *category,
-            _ => effigy_kernel::human::Category::Refused,
+            // A request, its manifest or catalog wiring, a holder, a policy or
+            // a placement said no.
+            RunnerError::Resolve(_)
+            | RunnerError::Task(_)
+            | RunnerError::Ui(_)
+            | RunnerError::TaskInvocation(_)
+            | RunnerError::ContainerSurfaceRegistryMissing
+            | RunnerError::ContainerSurfaceDefaultTargetMissing
+            | RunnerError::ContainerSurfaceNotDefined { .. }
+            | RunnerError::ContainerSurfaceNotRunning { .. }
+            | RunnerError::ContainerSurfacePolicy { .. }
+            | RunnerError::ContainerRuntimePolicy { .. }
+            | RunnerError::GatewayRouteShape { .. }
+            | RunnerError::RunSettled { .. }
+            | RunnerError::RunKeyExists { .. }
+            | RunnerError::AdmissionRefused { .. }
+            | RunnerError::EnvironmentBusy { .. }
+            | RunnerError::TaskLockConflict(_)
+            | RunnerError::TaskCatalogsMissing { .. }
+            | RunnerError::TaskManifestParse { .. }
+            | RunnerError::TaskManifestCompose { .. }
+            | RunnerError::TaskCatalogAliasConflict { .. }
+            | RunnerError::TaskCatalogPrefixNotFound { .. }
+            | RunnerError::TaskNotFound { .. }
+            | RunnerError::TaskNotFoundAny { .. }
+            | RunnerError::TaskAmbiguous { .. }
+            | RunnerError::TaskMissingRunCommand { .. }
+            | RunnerError::TaskManagedUnsupportedMode { .. }
+            | RunnerError::TaskManagedProfileNotFound { .. }
+            | RunnerError::TaskManagedProfileEmpty { .. }
+            | RunnerError::TaskManagedProcessNotFound { .. }
+            | RunnerError::TaskManagedProcessInvalidDefinition { .. }
+            | RunnerError::TaskManagedProfileTabOrderInvalid { .. }
+            | RunnerError::TaskManagedTaskReferenceInvalid { .. }
+            | RunnerError::DeferLoopDetected { .. }
+            // A command that reported its own outcome carries the next step in
+            // its own document.
+            | RunnerError::CommandJsonFailure { .. }
+            | RunnerError::EnvSchema(_) => Category::Refused,
+            // A step, a backend, a file, a service or a supervisor did not
+            // answer, or the work it ran failed.
+            RunnerError::Cwd(_)
+            | RunnerError::ManagedHostReadiness { .. }
+            | RunnerError::WorkspaceSessionCleanup { .. }
+            | RunnerError::RunControl { .. }
+            | RunnerError::GatewayRouteTable { .. }
+            | RunnerError::GatewayRouteRegistration { .. }
+            | RunnerError::GatewayLoopback { .. }
+            | RunnerError::GatewayRuntimeTarget { .. }
+            | RunnerError::TaskManifestRead { .. }
+            | RunnerError::TaskCommandLaunch { .. }
+            | RunnerError::TaskCommandFailure { .. }
+            | RunnerError::BoundedExecFailure { .. }
+            | RunnerError::DepsOperationNonZero { .. }
+            | RunnerError::ManagedProcess(_)
+            | RunnerError::TaskManagedNonZeroExit { .. }
+            | RunnerError::BuiltinTestNonZero { .. }
+            | RunnerError::BuiltinScanNonZero { .. }
+            | RunnerError::DoctorNonZero { .. } => Category::Unavailable,
         }
     }
 

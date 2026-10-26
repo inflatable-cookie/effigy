@@ -206,7 +206,7 @@ fn journal_unknown(
     root: &effigy_kernel::root::StateRoot,
     reason: &effigy_kernel::observe::UnknownReason,
 ) -> String {
-    format!("{}: {reason:?}", root.path().display())
+    format!("{}: {reason}", root.path().display())
 }
 
 /// A key's run in one checkout. Peer worktrees are never scanned: a lookup
@@ -217,7 +217,7 @@ fn lookup_key_in(checkout: &Path, key: &RunKey) -> Lookup {
     match kernel::observe_root(&cx, checkout) {
         Observed::Verified(root, _) => lookup_key_at(&cx, &root, key),
         Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", checkout.display())),
+        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason}", checkout.display())),
     }
 }
 
@@ -238,7 +238,7 @@ pub(in crate::runner) fn lookup_checkout(checkout: &Path, id: RunId) -> Lookup {
     match kernel::observe_root(&cx, checkout) {
         Observed::Verified(root, _) => lookup_at(&cx, &root, id),
         Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", checkout.display())),
+        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason}", checkout.display())),
     }
 }
 
@@ -261,7 +261,7 @@ pub(in crate::runner) fn lookup_within(
     match kernel::observe_root(cx, &current) {
         Observed::Verified(root, _) => lookup_at(cx, &root, id),
         Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", current.display())),
+        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason}", current.display())),
     }
 }
 
@@ -327,7 +327,7 @@ fn foreground_records(
         Observed::Absent(_) => return Ok(Vec::new()),
         Observed::Unknown(reason) => {
             return Err(format!(
-                "{}: foreground custody unavailable: {reason:?}",
+                "{}: foreground custody unavailable: {reason}",
                 root.path().display()
             ))
         }
@@ -418,7 +418,7 @@ pub(in crate::runner) fn list(
         Some(path) => match kernel::observe_root(&cx, path) {
             Observed::Verified(root, _) => vec![root],
             Observed::Absent(_) => Vec::new(),
-            Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
+            Observed::Unknown(reason) => return Err(unreadable(&format!("{reason}"))),
         },
         None => {
             let view = kernel::known_roots_view(&cx)?;
@@ -443,7 +443,7 @@ pub(in crate::runner) fn list(
             Observed::Absent(_) => continue,
             Observed::Unknown(reason) => {
                 omitted.push(format!(
-                    "{}: journal unavailable: {reason:?}",
+                    "{}: journal unavailable: {reason}",
                     state.path().display()
                 ));
                 continue;
@@ -455,7 +455,7 @@ pub(in crate::runner) fn list(
             Observed::Absent(_) => Vec::new(),
             Observed::Unknown(reason) => {
                 omitted.push(format!(
-                    "{}: journal unavailable: {reason:?}",
+                    "{}: journal unavailable: {reason}",
                     state.path().display()
                 ));
                 continue;

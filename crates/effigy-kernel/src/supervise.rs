@@ -81,9 +81,25 @@ fn check_protocol(version: u32) -> Result<(), RunError> {
         return Ok(());
     }
     Err(RunError::refused(format!(
-        "this helper speaks protocol {version} and this binary speaks {HELPER_PROTOCOL}, so the \
-         command has to be run again"
+        "Effigy was updated: this helper speaks protocol {version} and this binary speaks \
+         {HELPER_PROTOCOL}, so rerun the command"
     )))
+}
+
+/// The version a helper frame declares, read before the rest of the frame is
+/// deserialised. A frame whose shape changed in an update still reads as a
+/// version mismatch instead of as a broken store value (F8).
+fn frame_protocol(frame: &[u8]) -> Result<u32, RunError> {
+    #[derive(serde::Deserialize)]
+    struct Declared {
+        protocol: Option<u32>,
+    }
+    let declared: Declared = serde_json::from_slice(frame)?;
+    let version = declared.protocol.ok_or_else(|| {
+        RunError::refused("this helper frame declares no protocol, so rerun the command")
+    })?;
+    check_protocol(version)?;
+    Ok(version)
 }
 #[derive(Debug, Clone)]
 pub struct LifecyclePlan {
@@ -605,8 +621,10 @@ fn read_supervisor_config() -> Result<SupervisorConfig, RunError> {
     let mut input = std::fs::File::from(private_dup(libc::STDIN_FILENO)?);
     nonblocking(input.as_raw_fd())?;
     nonblocking(libc::STDOUT_FILENO)?;
-    let config: SupervisorConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
-    check_protocol(config.protocol)?;
+    let frame = read_frame(&mut input)?;
+    // The version first: a frame an update changed still names the mismatch.
+    frame_protocol(&frame)?;
+    let config: SupervisorConfig = serde_json::from_slice(&frame)?;
     Ok(config)
 }
 const SENTINEL: &str = "__kernel-sentinel";
@@ -621,8 +639,16 @@ fn sentinel(
     if config.get("memory").and_then(serde_json::Value::as_bool) == Some(true) {
         return memory::serve(config, &mut input);
     }
+    // The version before the shape: an update that changed this frame still
+    // reads as a version mismatch, not as a broken store value (F8).
+    let declared = config
+        .get("protocol")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            RunError::refused("this helper frame declares no protocol, so rerun the command")
+        })?;
+    check_protocol(u32::try_from(declared).unwrap_or(u32::MAX))?;
     let config: SentinelConfig = serde_json::from_value(config)?;
-    check_protocol(config.protocol)?;
     let next = Invocation::validated(
         config.next.into_iter().map(OsString::from_vec).collect(),
         validate_next,

@@ -71,14 +71,17 @@ pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunErro
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take();
     if let Some(owner) = unclaimed {
-        let reason = match result {
-            Err(error) => error.to_string(),
-            Ok(_) => "the invocation did not resolve to a managed run".to_owned(),
+        // The category the failure already has: a supervisor never relabels an
+        // I/O failure as a refusal (K4, F16).
+        let (category, reason) = match result {
+            Err(error) => (error.category(), error.to_string()),
+            Ok(_) => (
+                Category::Refused,
+                "the invocation did not resolve to a managed run".to_owned(),
+            ),
         };
-        owner
-            .session
-            .refused_message(Category::Refused, reason.clone());
-        return Err(RunError::refused(reason));
+        owner.session.refused_message(category, reason.clone());
+        return Err(RunError::reported(category, reason));
     }
     Ok(())
 }

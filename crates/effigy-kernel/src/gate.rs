@@ -105,15 +105,15 @@ impl From<FsError> for GateError {
 impl GateError {
     pub fn category(&self) -> Category {
         match self {
+            // A cancellation is not a rule refusing the request.
+            Self::Interrupted(_) => Category::Unavailable,
             Self::Busy { .. }
             | Self::HostAuthorityRequired
-            | Self::ClassRefused { .. }
-            | Self::Interrupted(Interrupt::Cancelled { .. }) => Category::Refused,
+            | Self::ClassRefused { .. } => Category::Refused,
             Self::TimedOut { .. }
             | Self::UnsupportedFilesystem { .. }
             | Self::Untrusted { .. }
-            | Self::Io(_)
-            | Self::Interrupted(Interrupt::TimedOut { .. }) => Category::Unavailable,
+            | Self::Io(_) => Category::Unavailable,
             // K14: a gate inside a store transaction is Effigy's own ordering.
             Self::InTransaction => Category::Broken,
         }
@@ -121,6 +121,10 @@ impl GateError {
 }
 impl std::fmt::Display for GateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A cancellation says what ended the wait and asks nothing else (F7).
+        if let Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) = self {
+            return write!(f, "the gate was {interrupt}");
+        }
         let detail = match self {
             Self::Busy { id, holder } => {
                 format!("`{}` is held{}", id.label(), holder_note(holder))
@@ -162,9 +166,8 @@ impl std::fmt::Display for GateError {
                     .to_owned()
             }
             Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => interrupt.to_string(),
-            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
-                format!("it was {interrupt}")
-            }
+            // Cancellation rendered above.
+            Self::Interrupted(Interrupt::Cancelled { .. }) => unreachable!(),
         };
         f.write_str(&self.category().render("the gate", &detail))
     }

@@ -263,8 +263,16 @@ fn memory_frame(
 }
 
 pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<(), RunError> {
+    // The version before the shape: an update that changed this frame still
+    // reads as a version mismatch, not as a broken store value (F8).
+    let declared = config
+        .get("protocol")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            RunError::refused("this helper frame declares no protocol, so rerun the command")
+        })?;
+    super::check_protocol(u32::try_from(declared).unwrap_or(u32::MAX))?;
     let config: Config = serde_json::from_value(config)?;
-    super::check_protocol(config.protocol)?;
     if !config.memory
         || config.gates == 0
         || config.gates > GATE_MAX

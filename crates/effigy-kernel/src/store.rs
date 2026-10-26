@@ -126,10 +126,13 @@ pub enum StoreError {
 impl StoreError {
     pub fn category(&self) -> Category {
         match self {
+            // A newer journal is version skew, not damage: the newer Effigy
+            // reads it, and nothing here is corrupt.
+            Self::UnknownSchema { found } if *found > SCHEMA_VERSION => Category::Unavailable,
             Self::Corrupt(_) | Self::UnknownSchema { .. } | Self::Broken(_) => Category::Broken,
             Self::InTransaction => Category::Broken,
-            Self::Interrupted(Interrupt::TimedOut { .. }) => Category::Unavailable,
-            Self::Interrupted(_) => Category::Refused,
+            // A cancellation is not a rule refusing the request.
+            Self::Interrupted(_) => Category::Unavailable,
             Self::HostAuthorityRequired
             | Self::Refused(_)
             | Self::ClassRefused(_)
@@ -165,12 +168,25 @@ impl std::fmt::Display for StoreError {
                      {CORRUPT_REPAIR}"
                 )
             }
+            Self::UnknownSchema { found } if *found > SCHEMA_VERSION => {
+                return write!(
+                    f,
+                    "Effigy was updated: kernel.db was written by a newer Effigy at schema version \
+                     {found}, which this binary cannot read; nothing was changed, and running the \
+                     newer Effigy works"
+                )
+            }
             Self::UnknownSchema { found } => {
                 return write!(
                     f,
                     "Effigy is broken: kernel.db is corrupt (it records schema version {found}, \
                      which this Effigy cannot read); nothing was changed, and {CORRUPT_REPAIR}"
                 )
+            }
+            // A cancellation says what ended the work and asks nothing else of
+            // the reader (F7).
+            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
+                return write!(f, "the state store was {interrupt}")
             }
             Self::Gate(error) => return error.fmt(f),
             _ => {}
@@ -218,9 +234,6 @@ impl std::fmt::Display for StoreError {
                     .to_owned()
             }
             Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => interrupt.to_string(),
-            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
-                format!("it was {interrupt}")
-            }
             Self::Refused(rule) => rule.clone(),
             Self::TooLarge { limit } => {
                 format!("the store refused a value above its {limit}-byte limit")
@@ -235,9 +248,10 @@ impl std::fmt::Display for StoreError {
                  removed"
                     .to_owned()
             }
-            Self::Corrupt(_) | Self::UnknownSchema { .. } | Self::Gate(_) => {
-                unreachable!("rendered above")
-            }
+            Self::Corrupt(_)
+            | Self::UnknownSchema { .. }
+            | Self::Gate(_)
+            | Self::Interrupted(Interrupt::Cancelled { .. }) => unreachable!("rendered above"),
         };
         f.write_str(&self.category().render("the state store", &detail))
     }

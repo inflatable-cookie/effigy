@@ -77,7 +77,7 @@ fn assert_scan_failure(parsed: &Value, schema: &str) {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "scan");
-    assert_eq!(parsed["error"]["kind"], "RunnerError");
+    assert_eq!(parsed["error"]["kind"], "unavailable");
     assert_eq!(parsed["error"]["details"]["schema"], schema);
 }
 
