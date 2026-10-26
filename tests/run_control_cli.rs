@@ -242,6 +242,38 @@ fn wait_child(child: &mut OwnedChild) -> std::process::ExitStatus {
     }
 }
 
+/// Q-012 §3 (Tom 2026-10-26): v0.14's `.effigy/locks/*.lock` records are
+/// ignored, never read for liveness. A lock naming a live, unrelated pid used
+/// to refuse the task after a reboot reused the pid; it must now refuse
+/// nothing, and the record itself is never changed.
+#[test]
+fn a_v014_lock_naming_a_live_unrelated_pid_refuses_nothing() {
+    let fixture = Fixture::new();
+    let locks = fixture.repo.join(".effigy/locks");
+    fs::create_dir_all(&locks).expect("locks");
+    let lock = locks.join("task-light.lock");
+    let mut live = Command::new("sleep")
+        .arg("120")
+        .spawn()
+        .expect("live fixture process");
+    fs::write(
+        &lock,
+        format!(
+            r#"{{"scope":"task:light","pid":{},"started_at_epoch_ms":1}}"#,
+            live.id()
+        ),
+    )
+    .expect("v0.14 lock record");
+    assert!(alive(live.id()), "the fixture pid is live");
+
+    let output = fixture.run(&["light"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("light.txt"), "the task ran");
+    assert!(lock.is_file(), "a v0.14 lock record is never changed");
+    let _ = live.kill();
+    let _ = live.wait();
+}
+
 /// Papercut 9e5134a4: v0.14 `effigy state` left `.effigy/state/` at the process
 /// umask, and Q-010 made that the kernel's private root. Both effect paths —
 /// the foreground tree (`foreground_effects`) and a retained run

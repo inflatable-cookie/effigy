@@ -33,8 +33,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     host_process_dir_for_policy, host_process_state_path, listener_gateway_root,
-    managed_host_process_owner, order_host_processes, read_private_json,
-    remove_legacy_supervisor_records, HostListenerState, HostProcessRestartReport,
+    managed_host_process_owner, order_host_processes, read_private_json, HostListenerState,
+    HostProcessRestartReport,
     HostProcessRuntimeSpec, ManagedHostListenerResult, RestartedHostProcess,
     HOST_LISTENER_STATE_SCHEMA,
 };
@@ -520,12 +520,6 @@ fn start_host_processes_inner(
         .map(|root| root.join("routes.json"));
     let dir = host_process_dir_for_policy(&checkout_root, policy);
     super::create_host_process_dir(&checkout_root, &dir)?;
-    // A leftover v0.14.1 PID-file supervisor record is deleted, with one line:
-    // those supervisors are gone, and a record from a dead one must never
-    // block a start after a reboot (effigy#341).
-    for notice in remove_legacy_supervisor_records(&dir) {
-        eprintln!("[host process] {notice}");
-    }
     let cx = effects()?;
     let state_root = journal_root(&checkout_root)?;
     let state_home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
@@ -896,12 +890,6 @@ fn stop_host_processes(
     };
     if policy.host_processes.is_empty() {
         return report;
-    }
-    // A leftover v0.14.1 PID-file supervisor record is deleted, with one line:
-    // it names a supervisor that no longer exists (effigy#341).
-    let dir = host_process_dir_for_policy(repo_root, policy);
-    for notice in remove_legacy_supervisor_records(&dir) {
-        eprintln!("[host process] {notice}");
     }
     let mut ordered = order_host_processes(&policy.host_processes)
         .unwrap_or_else(|_| policy.host_processes.iter().collect::<Vec<_>>());

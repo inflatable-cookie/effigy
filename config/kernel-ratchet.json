@@ -429,9 +429,6 @@
       "std.process.Command.new": 1,
       "std::fs::write": 3
     },
-    "crates/effigy-containers/src/environment/tests/importer.rs": {
-      "std::fs::write": 1
-    },
     "crates/effigy-containers/src/exec/colima_runtime.rs": {
       "std::fs::write": 3
     },

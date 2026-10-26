@@ -1381,7 +1381,7 @@ allow = [
 [[retired]]
 id = "v014-host-process-pid-supervisor"
 retired = "2026-10-25; v0.15 simplification (Q-011)"
-replacement = "A host process is one environment-owned kernel run (effigy#320). There is no PID-file supervisor: `up` starts a detached kernel run per declared process, and `down`, `reset` and settle stop it through a fenced kernel stop. A leftover `<name>.pid` or `<name>.spec.json` from v0.14.1 is deleted with one line the next time the environment starts or stops; it is never signalled and never read as authority, so a record from a supervisor that died with a reboot cannot block `up`. The `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` input is gone with it: a run settling in this process exempts its own hold by task-run id, and no environment value names an exemption."
+replacement = "A host process is one environment-owned kernel run (effigy#320). There is no PID-file supervisor: `up` starts a detached kernel run per declared process, and `down`, `reset` and settle stop it through a fenced kernel stop. A leftover `<name>.pid` or `<name>.spec.json` from v0.14.1 is ignored and left alone: nothing reads it, deletes it or signals it, so a record from a supervisor that died with a reboot cannot block `up`. The `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` input is gone with it: a run settling in this process exempts its own hold by task-run id, and no environment value names an exemption."
 owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
 terms = [
   "__host-process-supervise",
@@ -1390,6 +1390,7 @@ terms = [
   "stop_recorded_supervisor",
   "cleanup_stopped_listener_routes",
   "remove_host_process_record_if_matches",
+  "remove_legacy_supervisor_records",
   "InternalHostProcessSuperviseArgs",
   "InternalHostProcessStopArgs",
   "stop_legacy_host_processes",
@@ -1551,4 +1552,65 @@ config_keys = []
 allow = [
   "CHANGELOG.md",
   "docs/knowledge/retired.toml",
+]
+
+[[retired]]
+id = "effigy-run-migrate"
+retired = "2026-10-26; v0.15 simplification (Q-012 §3, effigy#373)"
+replacement = "There is no migration command and no migration report. v0.15 imports nothing from an earlier release: a retired `~/.effigy/state/kernel.db`, a cutover manifest and any old import record are ignored — never read, never changed, never deleted, never a refusal — and a v0.14.1 stack is reconciled by its next `up`. `effigy run` takes `status`, `logs` or `stop`."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "run migrate",
+  "runs migrate",
+  "runtime-migration.v1",
+  "run_migration",
+]
+paths = [
+  "src/runner/run_control/migrate.rs",
+  "crates/effigy-cli/src/command_parsing_run_migration.rs",
+  "docs/knowledge/contracts/payload-schemas/effigy.runtime-migration.v1.json",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/questions.md",
+]
+
+[[retired]]
+id = "v0141-environment-importer"
+retired = "2026-10-26; v0.15 simplification (Q-012 §3, effigy#373)"
+replacement = "An environment's record is written by its own transitions; nothing is imported. A running v0.14.1 stack is reconciled by the next `up` through the ordinary apply, which recreates each service whose render or labels changed, once, on the same `<project>-<service>-data` named volumes — volume and project names did not change, so the data stays and the upgrade needs no command. Lifecycle markers, the persistent owner and an unexpired idle-stop lease under `~/.effigy/runtime/host-container-leases/` are ignored: never read, never waited for, never changed, never deleted. Proof: a v0.14.1 stack's row read back after `down` and after a direct `up` over the running stack (2026-10-26)."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = [
+  "LegacyMarkers",
+  "ImportRequest",
+  "import_legacy",
+  "legacy_marker_dir",
+  "ImportedMarker",
+  "sanitize_marker_component",
+  "label_evidence",
+  "lease_pending",
+]
+paths = [
+  "crates/effigy-containers/src/environment/import.rs",
+  "crates/effigy-containers/src/environment/tests/importer.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/retired.toml",
+]
+
+[[retired]]
+id = "v014-legacy-task-refusals"
+retired = "2026-10-26; v0.15 simplification (Q-012 §3, effigy#373)"
+replacement = "Task locks are kernel gates: a run holds its task's gate exactly while it lives. A v0.14 `.effigy/locks/*.lock` record is never read, so it refuses nothing, and a pid reused after a reboot cannot block a task. `effigy doctor` lists the leftover directory so an operator can delete it."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "refuse_live_legacy_holder",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
 ]

@@ -249,14 +249,6 @@
       "command": "effigy --json release status --repo <fixture_release_platform>",
       "surface": "release pipeline status (contract 054 \u00a75)",
       "status": "active"
-    },
-    {
-      "schema": "effigy.runtime-migration.v1",
-      "schema_version": 1,
-      "command": "effigy run migrate --plan --json",
-      "surface": "read-only runtime migration report",
-      "status": "active",
-      "isolated_home": true
     }
   ]
 }

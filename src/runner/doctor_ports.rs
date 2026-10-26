@@ -246,20 +246,6 @@ fn collect_runtime_diagnostics(
                 .evidence
                 .push(format!("environment `{}` {line}", policy.name));
         }
-        let markers = crate::runner::environment::legacy_marker_dir(resolved_root, policy);
-        if view
-            .record
-            .verified()
-            .is_none_or(|record| record.engine.is_none())
-            && !effigy_containers::environment::LegacyMarkers::read(&markers, &policy.name)
-                .is_empty()
-        {
-            diagnostics.evidence.push(format!(
-                "environment `{}`: v0.14.1 lifecycle markers in {} are imported by its next bring-up or stop; they are never changed",
-                policy.name,
-                markers.display()
-            ));
-        }
     }
 
     let user_backend = user_global_backend_preference();

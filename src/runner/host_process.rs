@@ -239,33 +239,6 @@ fn resolve_host_process_cwd(
     Ok(cwd)
 }
 
-/// Spawn one detached supervisor per entry in `policy.host_processes`.
-///
-/// Idempotent in the sense that each call writes a fresh `<name>.pid`.
-/// A leftover v0.14.1 PID-file supervisor record (`<name>.pid`) or its input
-/// spec (`<name>.spec.json`) is deleted with one line: those supervisors are
-/// gone, and a record from a dead one must never block a start after a reboot.
-fn remove_legacy_supervisor_records(dir: &Path) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut notices = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.ends_with(".pid") && !name.ends_with(".spec.json") {
-            continue;
-        }
-        let path = entry.path();
-        if fs::remove_file(&path).is_ok() {
-            notices.push(format!(
-                "removed a leftover v0.14.1 host-process record at {}",
-                path.display()
-            ));
-        }
-    }
-    notices
-}
-
 fn host_process_dir(repo_root: &Path, container_name: &str) -> PathBuf {
     repo_root
         .join(HOST_PROCESS_DIR)

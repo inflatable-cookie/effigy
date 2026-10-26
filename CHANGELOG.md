@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- **Upgrading from v0.14.1 recreates each stack's containers once** (Q-012 §3,
+  effigy#373). Nothing is imported from an earlier release: the first `up`
+  reconciles a running v0.14.1 stack through the ordinary apply, so Compose
+  recreates each service whose render or labels changed. Named volumes and
+  Compose project names are unchanged between v0.14.1 and v0.15, so the data
+  stays; shared services are reused in place. Proven live with the released
+  v0.14.1 binary against a local plus shared `mariadb` stack. See
+  [guide 085](docs/guides/085-v0.15.0-consumer-migration.md#upgrading-from-v0141).
 - **The runtime restarts a stopped service.** Every rendered Compose service
   without a `restart:` of its own now carries `restart: unless-stopped`, so a
   service comes back by itself after a VM restart, a Colima restart or a crash.
@@ -224,11 +232,6 @@ During v0.x, MINOR bumps may include breaking changes.
 - A failed managed run's environment is no longer torn down by its
   successor's start; the kernel settles the failed run and the successor's
   bring-up reconciles the stack.
-- Existing v0.14.1 stacks are imported automatically on their first bring-up
-  or stop: lifecycle markers and labels become the environment record, running
-  containers are adopted without a restart, and the marker files are never
-  changed. A stack whose ownership cannot be proven is not adopted and needs an
-  explicit `container down`.
 - Heavy tasks no longer go through the Queue/Nucleus host-run client
   (Q-006). `admission = "heavy"` is metadata only: with no hook set a heavy
   task runs like any other, CI runners included. When the launcher sets
@@ -461,7 +464,6 @@ During v0.x, MINOR bumps may include breaking changes.
   `migration-committed.json` and `migration-prepared.json` are ignored: never
   read on a durable open, never changed, never deleted and never a refusal. A
   checkout database with no `checkout.json` binding is bound in place.
-  `effigy run migrate --plan` only reports `no-legacy-state` or `committed`.
 - The `up`-side readiness deadline for a starting managed listener
   (`TERMINAL_PUBLICATION_ALLOWANCE` and the per-listener timeout argument to the
   listener-state wait). The supervisor's own terminal record ends the wait, and
@@ -598,15 +600,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - The importer for the current-main central `~/.effigy/state/kernel.db`
   (contract 052 §11.1, effigy#307). That schema existed only on unreleased main
   between 2026-10-18 and #276, so no released version ever wrote it, and v0.15
-  ships one migration path: the v0.14.1 importers, which read legacy files on
-  first use. A machine which committed the cutover ignores `kernel.db` and
-  never deletes it; one still holding it without a committed manifest is
-  refused once with its exact upgrade path (migrate with Effigy main
-  `7b82d26`, then upgrade). `effigy run migrate --plan` is now a read-only
-  report of that state: it stages, imports, stops and deletes nothing, and its
-  busy-writer preflight, stop controls and `--legacy-launchers-stopped` import
-  mode are gone. The importer's `actual-copy` acceptance proof and its selectors
-  are removed with it.
+  imports nothing (effigy#373). `kernel.db`, any cutover manifest and any old
+  per-checkout import record are ignored: never read, never changed, never
+  deleted and never a refusal. Its busy-writer preflight, stop controls,
+  `--legacy-launchers-stopped` import mode and `actual-copy` acceptance proof
+  are gone with it.
 - The distribution surface (Q-009), contract 054 §4.4 and §13. Effigy's own
   release is now one `[release]` declaration in `config/release.toml`: the
   `effigy` `semver` identity, a `preflight` pre gate and the `ci`, `format`,
@@ -787,6 +785,21 @@ During v0.x, MINOR bumps may include breaking changes.
   which shows the whole pipeline instead of only the version, tag and gate
   preview; `release --plan --version <SEMVER>` covers the old
   `simulate --version`. The refusal names the replacement.
+- `effigy run migrate` and its `effigy.runtime-migration.v1` report
+  (effigy#373). There is no migration command: legacy state is ignored and a
+  v0.14.1 stack is reconciled by its next `up`.
+- The v0.14.1 environment importer (effigy#373): `environment/import.rs` and
+  the up-to-ten-minute wait for an unexpired v0.14.1 idle-stop lease inside
+  `up`. Lifecycle markers, the persistent owner and a lease are now ignored
+  rather than read, and the environment record drops its `imported` field
+  (`container status --json` drops it too).
+- The PID-only v0.14 task refusals in `task_engine/legacy.rs` (effigy#373). A
+  `.effigy/locks/*.lock` record is never read for liveness, so a pid reused
+  after a reboot no longer refuses a task. `effigy doctor` still lists the
+  leftover directory.
+- The deletion of leftover v0.14.1 host-process `<name>.pid` and
+  `<name>.spec.json` records on the next `up` or `down` (effigy#373). Those
+  files are now ignored and left alone like any other legacy file.
 
 ### Added
 - **`effigy container <NAME> restart <process>...` replaces only the named host
@@ -922,8 +935,7 @@ During v0.x, MINOR bumps may include breaking changes.
   and `gateway up`, `gateway down`, `gateway repair` and `gateway status`
   report what they are reading, stopping, planning and applying. `effigy
   container ports` names the registry it reads, the facts it gathers and the
-  allocations it decides, and `effigy run migrate` shows each read of the
-  runtime state. Kernel, store, gateway, container port/loopback and runner
+  allocations it decides. Kernel, store, gateway, container port/loopback and runner
   refusals now name the object (the checkout path rather than a token, the
   domain, the stale and successor owners, the recorded project path), the
   evidence, and the exact next command: a stale domain reservation names both
@@ -1014,11 +1026,7 @@ During v0.x, MINOR bumps may include breaking changes.
   checkout journal; an unavailable journal refuses backend effects. Source
   preparation also journals per checkout. Gateway lifecycle and endpoint/port
   facts route to `machine.db`; unmigrated central state is reported explicitly.
-- `effigy run migrate --plan` is a read-only report of runtime migration
-  state: `no-legacy-state`, `committed`, or a refused `unreleased-main-state`
-  naming the Effigy main `7b82d26` upgrade path. v0.15 imports v0.14.1 legacy
-  state on first use, so an upgrade from v0.14.1 needs no migration command.
-  User-config `[runtime].checkout_roots` locates existing checkout identities
+- User-config `[runtime].checkout_roots` locates existing checkout identities
   without a central registration index.
 - `effigy skill run ... --repo <DIR>` accepts a bare target directory with no
   repository marker, so an isolated fixture can be the consumer target of an
@@ -2384,13 +2392,6 @@ During v0.x, MINOR bumps may include breaking changes.
   skill's footguns record the rule for harnesses that call `oxide` directly,
   and `effigy test:oxide:selector-pool` proves the resolution against a stub
   `oxide` that answers `status`.
-- `effigy run migrate` no longer refuses the whole Q-010 cutover because one
-  recorded checkout no longer exists. A deleted checkout that holds only
-  completed history (no unreleased claim, release owner or run that could still
-  be live; runs from an earlier boot don't count) is dropped and counted in the
-  plan and the receipt's `dropped_history`. Deleted checkouts that still hold
-  live state are all listed at once with their remedy, and a broken worktree
-  among the discovery roots no longer fails every lookup.
 - A managed listener's declared readiness budget now starts at the supervisor's
   own activation record instead of at supervision admission, and the supervisor
   publishes that record before it waits on dependencies or spawns a child. A

@@ -32,8 +32,7 @@ use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
 use crate::runner::task_engine::{
-    refuse_live_legacy_holder, resolve_lock_wait_ms, RunExec, RunKey, TaskRun, TaskRunRequest,
-    TaskTarget,
+    resolve_lock_wait_ms, RunExec, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_containers::{load_container_policy, ContainerAction, ContainerComposeInvocationPlan};
@@ -66,7 +65,6 @@ pub(in crate::runner) fn run_standard_task(
         &preflight.selector.task_name,
         selection,
     );
-    refuse_live_legacy_holder(&target)?;
     let inherited_managed_run = std::env::var(effigy_managed::RUN_TOKEN_ENV)
         .ok()
         .filter(|token| !token.is_empty());

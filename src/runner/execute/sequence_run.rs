@@ -295,10 +295,7 @@ fn classify_builtin(
         ),
         Command::Runs(args) => matches!(
             args.action,
-            RunsAction::List { .. }
-                | RunsAction::Status { .. }
-                | RunsAction::Logs { .. }
-                | RunsAction::Migrate { .. }
+            RunsAction::List { .. } | RunsAction::Status { .. } | RunsAction::Logs { .. }
         ),
         Command::Gateway(args) => matches!(args.subcommand, effigy_cli::GatewaySubcommand::Status),
         Command::Deps(args) => matches!(args.subcommand, effigy_cli::DepsSubcommand::Status { .. }),
