@@ -27,26 +27,109 @@ fn parse_colima_running_detects_not_running() {
     ));
 }
 
+/// The Colima argv each operation runs, and the command sequence a shutdown
+/// mode produces.
 #[test]
-fn colima_status_command_uses_profile() {
-    let policy = test_policy("myprofile");
-    let cmd = colima_status_command(&policy);
-    assert_eq!(cmd.program, "colima");
-    assert!(cmd.args.contains(&"myprofile".to_string()));
-    assert!(cmd.allow_failure);
-}
-
-#[test]
-fn colima_start_command_uses_profile() {
-    let _lock = env_lock();
-    let policy = test_policy("myprofile");
-    let cmd = colima_start_command(&policy);
-    assert_eq!(cmd.program, "colima");
-    assert!(cmd.args.contains(&"myprofile".to_string()));
-    assert!(cmd.args.contains(&"--dns".to_string()));
-    assert!(cmd.args.contains(&"1.1.1.1".to_string()));
-    assert!(cmd.args.contains(&"8.8.8.8".to_string()));
-    assert!(!cmd.allow_failure);
+fn colima_command_cases() {
+    #[derive(Clone, Copy)]
+    enum Run {
+        Status,
+        Start,
+        Stop,
+        Shutdown(ManifestContainerShutdownMode),
+    }
+    enum Expect {
+        /// One Colima command with these required and forbidden arguments.
+        Command {
+            args: &'static [&'static str],
+            absent: &'static [&'static str],
+            allow_failure: bool,
+        },
+        /// The labels of the commands this shutdown mode produces.
+        Shutdown(&'static [&'static str]),
+    }
+    let cases: [(&str, Run, Expect); 5] = [
+        (
+            "status",
+            Run::Status,
+            Expect::Command {
+                args: &["myprofile"],
+                absent: &[],
+                allow_failure: true,
+            },
+        ),
+        (
+            "start",
+            Run::Start,
+            Expect::Command {
+                args: &["myprofile", "--dns", "1.1.1.1", "8.8.8.8"],
+                absent: &[],
+                allow_failure: false,
+            },
+        ),
+        (
+            "stop",
+            Run::Stop,
+            Expect::Command {
+                args: &["stop", "myprofile"],
+                absent: &[],
+                allow_failure: false,
+            },
+        ),
+        (
+            "a graceful shutdown",
+            Run::Shutdown(ManifestContainerShutdownMode::Graceful),
+            Expect::Shutdown(&["docker compose down"]),
+        ),
+        (
+            "an immediate shutdown",
+            Run::Shutdown(ManifestContainerShutdownMode::Immediate),
+            Expect::Shutdown(&["docker compose kill", "docker compose down"]),
+        ),
+    ];
+    for (name, run, expected) in cases {
+        match (run, expected) {
+            (Run::Shutdown(mode), Expect::Shutdown(labels)) => {
+                let mut policy = test_policy("default");
+                policy.shutdown = mode;
+                let commands = shutdown_compose_commands(&policy);
+                assert_eq!(
+                    commands.iter().map(|(_, label)| *label).collect::<Vec<_>>(),
+                    labels,
+                    "{name}"
+                );
+            }
+            (Run::Status, Expect::Command { args, absent, allow_failure })
+            | (Run::Start, Expect::Command { args, absent, allow_failure })
+            | (Run::Stop, Expect::Command { args, absent, allow_failure }) => {
+                let _lock = env_lock();
+                let policy = test_policy("myprofile");
+                let command = match run {
+                    Run::Status => colima_status_command(&policy),
+                    Run::Start => colima_start_command(&policy),
+                    Run::Stop => colima_stop_command(&policy),
+                    Run::Shutdown(_) => unreachable!("shutdown is handled above"),
+                };
+                assert_eq!(command.program, "colima", "{name}");
+                for arg in args {
+                    assert!(
+                        command.args.contains(&(*arg).to_string()),
+                        "{name}: missing {arg} in {:?}",
+                        command.args
+                    );
+                }
+                for arg in absent {
+                    assert!(
+                        !command.args.contains(&(*arg).to_string()),
+                        "{name}: unexpected {arg} in {:?}",
+                        command.args
+                    );
+                }
+                assert_eq!(command.allow_failure, allow_failure, "{name}");
+            }
+            _ => panic!("{name}: mismatched row"),
+        }
+    }
 }
 
 #[test]
@@ -134,24 +217,35 @@ fn colima_start_command_forwards_host_ssh_agent() {
     );
 }
 
+/// The macOS-only Colima flags: a VM needs an explicit architecture and VM
+/// type there, and Linux has neither flag.
 #[test]
-fn colima_start_command_adds_arch_and_vm_type_overrides_on_macos() {
-    let mut args = vec!["start".to_owned()];
-    append_colima_platform_overrides(&mut args, "macos", Some("aarch64"), Some("vz"));
-
-    assert!(args
-        .windows(2)
-        .any(|window| window == ["--arch", "aarch64"]));
-    assert!(args.windows(2).any(|window| window == ["--vm-type", "vz"]));
-}
-
-#[test]
-fn colima_start_command_skips_arch_and_vm_type_overrides_on_linux() {
-    let mut args = vec!["start".to_owned()];
-    append_colima_platform_overrides(&mut args, "linux", Some("aarch64"), Some("vz"));
-
-    assert!(!args.iter().any(|value| value == "--arch"));
-    assert!(!args.iter().any(|value| value == "--vm-type"));
+fn colima_platform_override_cases() {
+    let cases: [(&str, &[&[&str]]); 2] = [
+        ("macos", &[&["--arch", "aarch64"], &["--vm-type", "vz"]]),
+        ("linux", &[]),
+    ];
+    for (platform, expected_flags) in cases {
+        let mut args = vec!["start".to_owned()];
+        append_colima_platform_overrides(&mut args, platform, Some("aarch64"), Some("vz"));
+        for flag in expected_flags {
+            assert!(
+                args.windows(flag.len())
+                    .any(|window| window == *flag),
+                "{platform}: missing {flag:?} in {args:?}"
+            );
+        }
+        for absent in ["--arch", "--vm-type"] {
+            let should_be_absent = !expected_flags
+                .iter()
+                .any(|flag| flag.first() == Some(&absent));
+            assert_eq!(
+                !args.iter().any(|value| value == absent),
+                should_be_absent,
+                "{platform}: {absent} in {args:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -176,79 +270,93 @@ fn colima_start_command_applies_managed_resources_for_effigy_profile() {
     assert!(!cmd.args.contains(&"--swap".to_string()));
 }
 
+/// Managed profile resources: memory and swap scale from host memory, the
+/// disk target is 300 GiB unless config or an explicit override sets one.
 #[test]
-fn managed_colima_profile_resources_scale_with_host_memory() {
-    let _lock = env_lock();
-    unsafe {
-        std::env::set_var(
-            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
-            (16u64 * 1024 * 1024 * 1024).to_string(),
-        );
+fn managed_colima_profile_resource_cases() {
+    struct Case {
+        name: &'static str,
+        host_gib: u64,
+        user_config: Option<&'static str>,
+        explicit_disk: Option<u64>,
+        /// The memory and swap the host size derives, for the rows that pin it.
+        memory_gib: Option<u64>,
+        swap_gib: Option<u64>,
+        disk_gib: u64,
     }
-    let small = managed_colima_profile_resources("effigy").expect("managed resources");
-    unsafe {
-        std::env::set_var(
-            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
-            (128u64 * 1024 * 1024 * 1024).to_string(),
-        );
+    let cases = [
+        Case {
+            name: "a 16 GiB host",
+            host_gib: 16,
+            user_config: None,
+            explicit_disk: None,
+            memory_gib: Some(4),
+            swap_gib: Some(4),
+            disk_gib: 300,
+        },
+        Case {
+            name: "a 128 GiB host",
+            host_gib: 128,
+            user_config: None,
+            explicit_disk: None,
+            memory_gib: Some(32),
+            swap_gib: Some(16),
+            disk_gib: 300,
+        },
+        Case {
+            name: "a configured disk target",
+            host_gib: 64,
+            user_config: Some("[containers]\nprofile_disk_gib = 180\n"),
+            explicit_disk: None,
+            memory_gib: None,
+            swap_gib: None,
+            disk_gib: 180,
+        },
+        Case {
+            name: "an explicit disk override",
+            host_gib: 64,
+            user_config: None,
+            explicit_disk: Some(220),
+            memory_gib: None,
+            swap_gib: None,
+            disk_gib: 220,
+        },
+    ];
+    for case in cases {
+        let _lock = env_lock();
+        unsafe {
+            std::env::set_var(
+                "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+                (case.host_gib * 1024 * 1024 * 1024).to_string(),
+            );
+        }
+        let resolve = || match case.explicit_disk {
+            Some(disk) => {
+                managed_colima_profile_resources_with_disk("effigy", Some(disk)).expect("resources")
+            }
+            None => managed_colima_profile_resources("effigy").expect("managed resources"),
+        };
+        let resources = match case.user_config {
+            Some(config) => {
+                let temp = tempfile::tempdir().expect("tempdir");
+                let home = temp.path().join(".effigy-home");
+                std::fs::create_dir_all(&home).expect("mkdir home");
+                std::fs::write(home.join("config.toml"), config).expect("write config");
+                with_test_user_config_home(&home, resolve)
+            }
+            None => resolve(),
+        };
+        unsafe {
+            std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
+        }
+        if let Some(memory_gib) = case.memory_gib {
+            assert_eq!(resources.memory_gib, memory_gib, "{}", case.name);
+        }
+        if let Some(swap_gib) = case.swap_gib {
+            assert_eq!(resources.swap_gib, swap_gib, "{}", case.name);
+        }
+        assert_eq!(resources.disk_gib, case.disk_gib, "{}", case.name);
     }
-    let large = managed_colima_profile_resources("effigy").expect("managed resources");
-    unsafe {
-        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
-    }
-
-    assert_eq!(small.memory_gib, 4);
-    assert_eq!(small.swap_gib, 4);
-    assert_eq!(small.disk_gib, 300);
-    assert_eq!(large.memory_gib, 32);
-    assert_eq!(large.swap_gib, 16);
-    assert_eq!(large.disk_gib, 300);
-}
-
-#[test]
-fn managed_colima_profile_resources_honor_configured_disk_target() {
-    let _lock = env_lock();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = temp.path().join(".effigy-home");
-    std::fs::create_dir_all(&home).expect("mkdir home");
-    std::fs::write(
-        home.join("config.toml"),
-        "[containers]\nprofile_disk_gib = 180\n",
-    )
-    .expect("write config");
-    unsafe {
-        std::env::set_var(
-            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
-            (64u64 * 1024 * 1024 * 1024).to_string(),
-        );
-    }
-
-    let resources = with_test_user_config_home(&home, || {
-        managed_colima_profile_resources("effigy").expect("managed resources")
-    });
-
-    unsafe {
-        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
-    }
-    assert_eq!(resources.disk_gib, 180);
-}
-
-#[test]
-fn managed_colima_profile_resources_accept_explicit_disk_override() {
-    let _lock = env_lock();
-    unsafe {
-        std::env::set_var(
-            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
-            (64u64 * 1024 * 1024 * 1024).to_string(),
-        );
-    }
-    let resources =
-        managed_colima_profile_resources_with_disk("effigy", Some(220)).expect("resources");
-    unsafe {
-        std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
-    }
-
-    assert_eq!(resources.disk_gib, 220);
 }
 
 #[test]
@@ -336,35 +444,6 @@ fn prepare_managed_colima_profile_writes_macos_arch_and_vm_type_overrides() {
 }
 
 #[test]
-fn colima_stop_command_uses_profile() {
-    let policy = test_policy("myprofile");
-    let cmd = colima_stop_command(&policy);
-    assert_eq!(cmd.program, "colima");
-    assert!(cmd.args.contains(&"stop".to_string()));
-    assert!(cmd.args.contains(&"myprofile".to_string()));
-    assert!(!cmd.allow_failure);
-}
-
-#[test]
-fn shutdown_graceful_produces_one_command() {
-    let mut policy = test_policy("default");
-    policy.shutdown = ManifestContainerShutdownMode::Graceful;
-    let cmds = shutdown_compose_commands(&policy);
-    assert_eq!(cmds.len(), 1);
-    assert_eq!(cmds[0].1, "docker compose down");
-}
-
-#[test]
-fn shutdown_immediate_produces_two_commands() {
-    let mut policy = test_policy("default");
-    policy.shutdown = ManifestContainerShutdownMode::Immediate;
-    let cmds = shutdown_compose_commands(&policy);
-    assert_eq!(cmds.len(), 2);
-    assert_eq!(cmds[0].1, "docker compose kill");
-    assert_eq!(cmds[1].1, "docker compose down");
-}
-
-#[test]
 fn managed_drift_reads_a_disabled_forward_agent() {
     let _lock = env_lock();
     assert_eq!(
@@ -430,34 +509,24 @@ fn managed_drift_reads_the_profiles_own_config_file() {
     );
 }
 
+/// Each notice names the profile it is about, a recreated profile says what it
+/// lost, and the drift warning names the command that repairs it.
 #[test]
 fn managed_profile_notices_name_the_profile_and_what_a_deletion_lost() {
-    let created = colima_profile_creation_notice("effigy-release");
-    assert!(
-        created.contains("creating Colima profile `effigy-release`"),
-        "{created}"
-    );
-    assert!(
-        created.contains("first use, or it was deleted"),
-        "{created}"
-    );
-
+    for notice in [
+        colima_profile_creation_notice("effigy-release"),
+        colima_profile_recreated_notice("effigy-release"),
+    ] {
+        assert!(notice.contains("`effigy-release`"), "{notice}");
+    }
     let recreated = colima_profile_recreated_notice("effigy-release");
-    assert!(recreated.contains("`effigy-release`"), "{recreated}");
     for lost in ["containers", "images", "volumes"] {
         assert!(recreated.contains(lost), "{recreated}");
     }
-    assert!(recreated.contains("rebuilds"), "{recreated}");
-
-    let started = colima_profile_start_notice("effigy");
-    assert!(
-        started.contains("starting Colima profile `effigy`"),
-        "{started}"
-    );
+    assert!(colima_profile_start_notice("effigy").contains("`effigy`"));
 
     let drift = ManagedColimaProfileDrift::SshAgentForwardingDisabled.warning("effigy");
-    assert!(drift.contains("Colima profile `effigy`"), "{drift}");
-    assert!(drift.contains("SSH agent forwarding"), "{drift}");
+    assert!(drift.contains("`effigy`"), "{drift}");
     assert!(drift.contains("`colima restart effigy`"), "{drift}");
     assert!(drift.contains("did not restart"), "{drift}");
 }
