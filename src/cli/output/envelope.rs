@@ -43,7 +43,10 @@ pub fn emit_json_envelope_error(
 
 /// The same refusal, carried in both forms: `message` and `details` stay the
 /// machine contract, and `error.human` adds the three facts a person reads
-/// (what failed, the evidence, the next action).
+/// (what failed, the evidence, the next action). The arguments are the
+/// envelope's own fields: kind, name, error type, category, message, details
+/// and the human three.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_json_envelope_error_with_human(
     exit_code: i32,
     kind: &str,

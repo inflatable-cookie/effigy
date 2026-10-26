@@ -137,7 +137,7 @@ impl StateRoot {
     /// Marks a handle reopened by path as the checkout journal it belongs to.
     /// A helper has no record to read, and every gate it takes must use the
     /// same spelling its owner did (F22).
-    pub(crate) fn as_checkout(mut self) -> Self {
+    pub(crate) fn into_checkout(mut self) -> Self {
         self.checkout = true;
         self
     }

@@ -322,7 +322,7 @@ fn helper_root(
         // A helper reopens the owner's checkout by path, so it must take the
         // owner's gate spelling or its recovery would not meet the owner's
         // locks (and any blocker on them).
-        root = root.as_checkout();
+        root = root.into_checkout();
     }
     if let Some(address) = gates {
         let observe = cx
