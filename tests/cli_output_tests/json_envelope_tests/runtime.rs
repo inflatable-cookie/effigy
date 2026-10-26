@@ -762,7 +762,7 @@ fn cli_json_mode_failing_rhai_task_preserves_script_output_in_error_details() {
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "fail-rhai");
     assert_eq!(parsed["result"], Value::Null);
-    assert_eq!(parsed["error"]["kind"], "unavailable");
+    assert_eq!(parsed["error"]["kind"], "refused");
     let details = &parsed["error"]["details"];
     assert_eq!(details["schema"], "effigy.task.run.v1");
     assert_eq!(details["ok"], false);

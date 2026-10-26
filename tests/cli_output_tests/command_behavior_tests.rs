@@ -1964,7 +1964,7 @@ fn cli_catalog_task_json_mode_failure_emits_json_and_non_zero_exit() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["command"]["kind"], "task");
     assert_eq!(parsed["command"]["name"], "fail");
-    assert_eq!(parsed["error"]["kind"], "unavailable");
+    assert_eq!(parsed["error"]["kind"], "refused");
     assert_eq!(parsed["error"]["details"]["schema"], "effigy.task.run.v1");
     assert_eq!(parsed["error"]["details"]["task"], "fail");
     assert_eq!(parsed["error"]["details"]["exit_code"], 7);
