@@ -588,7 +588,7 @@ async fn handle_request(
 }
 
 /// Extract the host from a request (stripping port if present).
-fn extract_host(req: &Request<Incoming>) -> Option<String> {
+fn extract_host<B>(req: &Request<B>) -> Option<String> {
     req.headers()
         .get(HOST)
         .and_then(|v| v.to_str().ok())
@@ -907,7 +907,18 @@ fn error_response(status: StatusCode, message: &str) -> Response<ProxyBody> {
 
 /// Generate a response for domains with no registered route.
 fn no_route_response(host: &str) -> Response<ProxyBody> {
-    let body = format!(
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("x-effigy-gateway", "true")
+        .body(full_body(Bytes::from(no_route_body(host))))
+        .expect("static HTML gateway response builds from a valid status, literal headers, and an owned body")
+}
+
+/// The refusal page for a domain no project has claimed. It names the domain
+/// and the manifest entry that would claim it.
+fn no_route_body(host: &str) -> String {
+    format!(
         "<!DOCTYPE html><html><head><title>Effigy Gateway - No Route</title>\
          <style>body{{font-family:system-ui,sans-serif;margin:2em;color:#333}}\
          h1{{color:#e90}}code{{background:#f0f0f0;padding:2px 6px;border-radius:3px}}\
@@ -918,13 +929,7 @@ fn no_route_response(host: &str) -> Response<ProxyBody> {
          <p>To register a route, add a DNS route to your \
          container manifest and run <code>effigy container up</code>.</p>\
          <pre>[containers.web.dns]\nroutes = [{{ domain = \"{host}\" }}]</pre></body></html>"
-    );
-    Response::builder()
-        .status(StatusCode::SERVICE_UNAVAILABLE)
-        .header("content-type", "text/html; charset=utf-8")
-        .header("x-effigy-gateway", "true")
-        .body(full_body(Bytes::from(body)))
-        .expect("static HTML gateway response builds from a valid status, literal headers, and an owned body")
+    )
 }
 
 #[cfg(test)]

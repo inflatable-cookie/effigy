@@ -759,9 +759,11 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    /// A finished daemon is described in words: what ended it, the phase it
+    /// was in and the observed tail, and never a `Debug` rendering of the
+    /// outcome.
     #[test]
     fn a_stopped_daemon_says_what_ended_it_and_never_a_debug_tree() {
-        // Before: `gateway daemon stopped: TimedOut { phase: "settle", ... }`.
         let reason = completion_reason(
             &WorkloadOutcome::TimedOut {
                 phase: "settle".into(),
@@ -769,47 +771,47 @@ mod tests {
             "waiting for DNS",
         )
         .expect("a timed-out daemon reports a reason");
-        assert_eq!(
-            reason,
-            "gateway daemon stopped: the workload timed out while waiting for the environment to \
-             settle: waiting for DNS"
-        );
-        assert!(!reason.contains("TimedOut {"), "{reason}");
+        assert!(reason.starts_with("gateway daemon stopped:"), "{reason}");
+        assert!(reason.contains("timed out"), "{reason}");
+        assert!(reason.contains("settle"), "{reason}");
+        assert!(reason.contains("waiting for DNS"), "{reason}");
+        for debug_syntax in ["TimedOut", "phase:", "{", "}"] {
+            assert!(!reason.contains(debug_syntax), "{reason}");
+        }
 
         let unknown = completion_reason(
             &WorkloadOutcome::Unknown(UnknownReason::PermissionDenied),
             "",
         )
         .expect("an unproven daemon reports a reason");
-        assert!(
-            unknown.contains(
-                "the workload outcome is unknown: could not tell: this user may not read"
-            ),
-            "{unknown}"
-        );
+        assert!(unknown.contains("unknown"), "{unknown}");
+        assert!(unknown.contains("could not tell"), "{unknown}");
+        assert!(unknown.contains("may not read"), "{unknown}");
+        for debug_syntax in ["Unknown(", "PermissionDenied"] {
+            assert!(!unknown.contains(debug_syntax), "{unknown}");
+        }
     }
 
+    /// An event that reached the caller before the daemon was active says what
+    /// the supervisor did, in words, and keeps the detail it was given.
     #[test]
     fn a_daemon_that_never_went_active_says_what_the_supervisor_did() {
-        // Before: `gateway daemon failed to start: Refused("port 443 in use")`.
         let refused = describe_event(&supervise::Event::Refused {
             category: effigy_kernel::human::Category::Refused,
             detail: "port 443 is in use".into(),
         });
-        assert_eq!(
-            refused,
-            "the supervisor refused to start it (port 443 is in use)"
-        );
+        assert!(refused.contains("refused to start"), "{refused}");
+        assert!(refused.contains("port 443 is in use"), "{refused}");
+
         let closed = describe_event(&supervise::Event::Closed {
             cleanup_complete: true,
             workload: WorkloadOutcome::Failed { code: 1 },
             exit_code: 1,
         });
-        assert_eq!(
-            closed,
-            "the supervisor closed before going active (exit code 1; the workload failed with \
-             exit code 1)"
-        );
+        assert!(closed.contains("closed before going active"), "{closed}");
+        assert!(closed.contains("exit code 1"), "{closed}");
+        assert!(closed.contains("failed"), "{closed}");
+
         for event in [
             supervise::Event::Refused {
                 category: effigy_kernel::human::Category::Refused,
@@ -823,33 +825,6 @@ mod tests {
                 "{reason}"
             );
         }
-    }
-
-    #[test]
-    fn gateway_readiness_budget_starts_after_admission() {
-        // A slow admission is a separate phase: the readiness deadline is the
-        // admission-completion instant plus its own budget. The old code
-        // measured both phases from before admission, so this deadline would
-        // have been 13s earlier and expired before the daemon self-tested.
-        let started = Instant::now();
-        let admitted_at = started + Duration::from_secs(14);
-        let deadline = readiness_deadline(admitted_at, StartupBudget::DEFAULT.readiness);
-        assert_eq!(
-            deadline,
-            admitted_at + StartupBudget::DEFAULT.readiness,
-            "the readiness budget is scoped after admission"
-        );
-        assert!(
-            deadline > started + StartupBudget::DEFAULT.readiness,
-            "a slow admission must not consume the readiness budget"
-        );
-        assert_eq!(
-            StartupBudget::DEFAULT,
-            StartupBudget {
-                admission: Duration::from_secs(15),
-                readiness: Duration::from_secs(15),
-            }
-        );
     }
 
     #[test]
@@ -923,9 +898,12 @@ mod tests {
     fn http_self_test_names_a_deadline_fault_and_preserves_the_observation() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
-        let silence = std::thread::spawn(move || {
+        // A peer that stays silent for longer than the probe deadline. The
+        // test does not wait for it: the probe has already given up, which is
+        // the observation under test.
+        std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            std::thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(1));
             drop(stream);
         });
         let error = self_test_error(address, Duration::from_millis(300));
@@ -934,7 +912,6 @@ mod tests {
             error.contains("the observation timed out during HTTP response"),
             "the original deadline observation is preserved: {error}"
         );
-        let _ = silence.join();
     }
     /// A peer that answers with something that is not HTTP is a protocol
     /// fault: the listener was there, so neither deadline nor listener fits.

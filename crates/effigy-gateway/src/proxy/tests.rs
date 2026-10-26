@@ -2,23 +2,25 @@ use super::*;
 use crate::routes::{Route, RouteSource};
 use chrono::Utc;
 
+/// The route key a request names: its `Host` header without the port, folded
+/// to lower case, and nothing when the request carries no usable header.
 #[test]
-fn extract_host_strips_port() {
-    let _req = Request::builder()
-        .header("host", "myapp.test:8080")
-        .body(Empty::<Bytes>::new())
-        .unwrap();
-    // Test the extraction logic directly (extract_host takes Incoming).
-    let host = "myapp.test:8080";
-    let extracted = host.split(':').next().unwrap_or(host).to_lowercase();
-    assert_eq!(extracted, "myapp.test");
-}
-
-#[test]
-fn extract_host_lowercases() {
-    let host = "MyApp.TEST";
-    let extracted = host.split(':').next().unwrap_or(host).to_lowercase();
-    assert_eq!(extracted, "myapp.test");
+fn extract_host_takes_the_lowercased_name_without_its_port() {
+    let cases = [
+        ("myapp.test:8080", Some("myapp.test")),
+        ("MyApp.TEST", Some("myapp.test")),
+        ("myapp.test", Some("myapp.test")),
+        ("API.myapp.test:443", Some("api.myapp.test")),
+    ];
+    for (host, expected) in cases {
+        let req = Request::builder()
+            .header("host", host)
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+        assert_eq!(extract_host(&req).as_deref(), expected, "header {host}");
+    }
+    let req = Request::builder().body(Empty::<Bytes>::new()).unwrap();
+    assert_eq!(extract_host(&req), None);
 }
 
 #[test]
@@ -170,8 +172,16 @@ fn error_response_has_correct_headers() {
     assert!(resp.headers().contains_key("x-effigy-gateway"));
 }
 
+/// The refusal page names the unclaimed domain and the manifest entry that
+/// would claim it, so an operator reads what to add instead of a blank 503.
 #[test]
-fn no_route_response_contains_domain() {
+fn no_route_response_names_the_domain_and_its_manifest_entry() {
+    let body = no_route_body("myapp.test");
+    assert!(body.contains("myapp.test"), "body names the domain: {body}");
+    assert!(
+        body.contains("[containers.web.dns]"),
+        "body names the manifest section: {body}"
+    );
     let resp = no_route_response("myapp.test");
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
