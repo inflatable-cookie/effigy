@@ -139,12 +139,16 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
 /// it is run metadata, not Effigy state, and the state root's trust policy does
 /// not describe a directory on a volume the operator configured. The scanner's
 /// `.effigy` heuristic therefore reads that file as a state writer, so its exact
-/// writes are listed here. A construct that is not listed for a tracked file, or
-/// a count above its ceiling, fails the inventory — regenerating the baseline
-/// cannot widen it.
+/// writes and its one file removal are listed here. Removing an entry is what a
+/// scratch run's own conclusion and the sweep do inside a tree Effigy marked, on
+/// the operator's directory rather than the state root (papercut aa4471e9). A
+/// construct that is not listed for a tracked file, or a count above its
+/// ceiling, fails the inventory — regenerating the baseline cannot widen it.
 pub fn external_ceilings(relative: &str) -> Option<&'static [(&'static str, usize)]> {
     match relative {
-        "src/runner/scratch.rs" => Some(&[("std::fs::File::create", 1)]),
+        "src/runner/scratch.rs" => {
+            Some(&[("std::fs::File::create", 1), ("std::fs::remove_file", 1)])
+        }
         _ => None,
     }
 }
