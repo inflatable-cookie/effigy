@@ -14,7 +14,6 @@ mod vm;
 pub use vm::compose_invocation_args;
 
 pub(crate) mod healthcheck;
-pub(crate) mod restart;
 
 fn error(error: impl std::fmt::Display) -> ContainerPolicyError {
     ContainerPolicyError::TaskInvocation(format!("container render: {error}"))
@@ -286,8 +285,6 @@ impl Draft {
                 if backend == crate::compose::ComposeBackend::ColimaNerdctl {
                     healthcheck::normalize_exec_form(&mut value);
                 }
-                // The runtime restarts a stopped service; Effigy never does.
-                restart::apply(&mut value);
                 serde_yaml::to_string(&value).map_err(error)?.into_bytes()
             } else {
                 bytes
@@ -356,7 +353,6 @@ fn finish_shared_render(
     if backend == crate::compose::ComposeBackend::ColimaNerdctl {
         healthcheck::normalize_exec_form(&mut document);
     }
-    restart::apply(&mut document);
     let mut content = serde_yaml::to_string(&document)
         .map_err(error)?
         .into_bytes();

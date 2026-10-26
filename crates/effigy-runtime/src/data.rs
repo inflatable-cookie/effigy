@@ -623,6 +623,14 @@ where
         "docker compose up",
     )?;
     crate::signals::run_compose_plan_capture(&plan)?;
+    // The stack is started, so the runtime can be told to keep it up without
+    // racing Compose's create/start (effigy#383).
+    effigy_containers::policy::restart::apply_after_start(
+        repo_root,
+        &policy,
+        &policy.project_name,
+        &policy.compose_files,
+    );
     let health = wait_for_container_ready(&policy)?;
     let gateway_routes = register_gateway_routes(repo_root, &policy)?;
     execute_pull_production_hook(repo_root, &policy, &hook)?;

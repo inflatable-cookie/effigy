@@ -392,6 +392,14 @@ pub(in crate::runner) fn ensure_shared_services_running(
             &shared_compose_args(service, ["up", "-d", "--remove-orphans"]),
             &format!("docker compose up (shared {})", service.service_name),
         )?;
+        // The shared stack is started, so it gets the restart policy here too
+        // (effigy#383).
+        effigy_containers::policy::restart::apply_after_start(
+            &policy.repo_root,
+            policy,
+            &service.project_name,
+            std::slice::from_ref(&service.compose_file),
+        );
         notes.push(match replaced {
             true => format!("replaced shared {} (render changed)", service.service_name),
             false => format!(
@@ -450,7 +458,7 @@ fn replace_stale_shared_render(
 
 /// Stop a container, then remove it (effigy#376). A forced remove of a running
 /// container is a kill the runtime's restart manager undoes for the
-/// `restart: unless-stopped` policy every render declares; an explicit stop is
+/// `restart: unless-stopped` policy `up` asked the runtime for; an explicit stop is
 /// recorded as a user stop, so the removal holds. A stop that finds nothing
 /// running is not a failure.
 pub(super) fn stop_and_remove_container(

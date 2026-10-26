@@ -9,4 +9,5 @@ pub mod mounts;
 pub mod ports;
 pub(crate) mod project;
 pub mod render;
+pub mod restart;
 pub mod validation;

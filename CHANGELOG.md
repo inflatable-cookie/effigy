@@ -7,12 +7,15 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
-- **The runtime restarts a stopped service.** Every rendered Compose service
-  without a `restart:` of its own now carries `restart: unless-stopped`, so a
-  service comes back by itself after a VM restart, a Colima restart or a crash.
-  A declared policy (`no`, `always`, `on-failure`, …) is kept. Effigy no longer
-  hand-starts exited containers by name and no longer runs `systemctl stop` /
-  `reset-failed` on nerdctl's health-check timer units
+- **The runtime restarts a stopped service.** Effigy asks the runtime for
+  `restart: unless-stopped` on every container `up` started whose stack declares
+  no policy, with the runtime's own `update` after the stack is up, so a service
+  comes back by itself after a VM restart, a Colima restart or a crash. A
+  declared policy (`no`, `always`, `on-failure`, …) is kept. The rendered Compose
+  file names no restart policy, because a policy there let nerdctl's restart
+  manager settle a container between Compose's create and start (see Fixed).
+  Effigy no longer hand-starts exited containers by name and no longer runs
+  `systemctl stop` / `reset-failed` on nerdctl's health-check timer units
   (`exec::restart_recovery`, `exec::healthcheck_timer`).
 - **Readiness is Running plus the service's own health check.** The
   `exec -w <working_dir> true` readiness probe and the service restart it
@@ -2042,6 +2045,14 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- `container up` no longer fails with nerdctl's `cannot start a container that
+  has stopped`. The rendered Compose file names no `restart:` policy, so the
+  runtime's restart manager has nothing to settle on a container Compose has
+  created but not yet started; `up` applies `restart: unless-stopped` with the
+  runtime's own `update` once the stack is started, for every service whose
+  stack declares none, and a second `up` recreates nothing because the render
+  and its Compose config-hash are unchanged. A shared service gets the same
+  post-start update.
 - A shared backing service renders identically from every checkout, and a real
   change replaces it in one attempt. A shared service's Compose input and the
   files its fragment binds are published at one machine-wide, content-addressed
