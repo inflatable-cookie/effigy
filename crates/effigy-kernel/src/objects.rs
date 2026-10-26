@@ -155,8 +155,10 @@ impl Objects {
         }
     }
 }
+/// An object store this Effigy wrote no longer matches its own invariants: a
+/// broken record, never a corrupt `kernel.db`, so it never suggests the repair.
 pub(crate) fn invalid(reason: &str) -> StoreError {
-    StoreError::Corrupt(reason.into())
+    StoreError::Broken(format!("the object store: {reason}"))
 }
 fn components(path: &str) -> Result<Vec<&str>, StoreError> {
     let parts: Vec<_> = path.split('/').collect();

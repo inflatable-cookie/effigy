@@ -356,6 +356,17 @@ During v0.x, MINOR bumps may include breaking changes.
   Effigy value is interpolated into a stack and no container environment
   carries one. `policy::render::apply_environment` and `ROOT_VARIABLE` are gone;
   the interpolation file now carries only the plan's forwarded secret values.
+- **The kernel's invalid-request error and its per-site variants.** Every kernel
+  and run error is now exactly one of three categories, and each category has
+  one rendering and one next step: `Refused` (a rule said no), `Unavailable`
+  (something did not answer; retrying is safe) and `Broken` (Effigy's own
+  record is wrong). `RunError::Invalid`, `HostAuthorityRequired`, `StepFailed`,
+  `Conflict` and `HelperExited` are gone, and `RunError` has ten variants where
+  it had twelve (contract 052 §6.1). The ``… is not a valid run request; run
+  `effigy tasks` `` message now comes only from resolving a name this checkout
+  does not route, so an unknown task still names `effigy tasks` while a revoked
+  capability, a held run or a pin mismatch no longer does (effigy#332,
+  effigy#360).
 - The startup image pin and executable identity. `Executable` is the binary's
   path, and a helper execs whatever binary is there, so rebuilding or
   reinstalling Effigy during a long run is no longer a refusal. The helper
@@ -1412,6 +1423,26 @@ During v0.x, MINOR bumps may include breaking changes.
   replaced, and if nerdctl's own name store refuses the create because it still
   holds a container from this project, Effigy removes that container and
   retries the create once (effigy#362).
+- **A busy store, a locked database, `SQLITE_CANTOPEN` and a permission
+  refusal read as `Unavailable` naming the path, never as `Corrupt`.** Only
+  verified corruption — SQLite `NotADatabase`/`DatabaseCorrupt`, an integrity or
+  foreign-key failure, an unreadable schema version or an unknown schema — says
+  `Corrupt` and suggests the one repair, which moves `kernel.db` and its
+  `-journal`, `-wal` and `-shm` files aside. A journal-mode, binary, token or
+  binding mismatch is `Broken` and never suggests repair, so the Underlay
+  checkout-token split that offered to move `kernel.db` aside and the #337
+  reboot pin can no longer do that (effigy#360).
+- **A helper's refusal crosses the process boundary with its category.** The
+  helper renders its category's sentence, sends it with the category, and the
+  client prints it verbatim, so a refusal is framed once, by the process that
+  read it: a busy store at a managed run's start stays `Unavailable` instead of
+  being wrapped in a refusal, and a supervisor that cannot admit its run carries
+  the kernel's own category (`RunnerError::RunAdmission`). A helper that dies
+  before acknowledging is `Unavailable`, naming the helper, how it ended, the
+  handshake cause and its stderr tail.
+- **A journal mode that is not Effigy's write-ahead log is `Broken`, not
+  `Corrupt`.** The file is readable, so an invariant failure never suggests
+  moving `kernel.db` aside.
 - **A racing first open of a checkout journal no longer refuses.** A held
   `checkout-binding` gate now defers: the binding is provenance, not a gate, so
   the journal opens by its location and the next effect writes the binding. A

@@ -33,9 +33,13 @@ impl<'a> MachineFacts<'a> {
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
         cx.require(crate::ctx::Capability::AdapterEffect)
-            .map_err(|_| RunError::Invalid("machine facts require Mutate".into()))?;
+            .map_err(|_| RunError::refused("machine facts require Mutate"))?;
         cx.require(crate::ctx::Capability::HostAuthority)
-            .map_err(|_| RunError::HostAuthorityRequired)?;
+            .map_err(|_| {
+                RunError::refused(
+                    "a managed run needs host authority, and this placement is a guest",
+                )
+            })?;
         if !root.is_machine()
             || !root.writable()
             || !["gateway-endpoints", "ports"].iter().any(|name| {
@@ -45,8 +49,8 @@ impl<'a> MachineFacts<'a> {
                     == Some(&options.owner)
             })
         {
-            return Err(RunError::Invalid(
-                "machine facts require an explicit shared-fact root and owner".into(),
+            return Err(RunError::refused(
+                "machine facts require an explicit shared-fact root and owner",
             ));
         }
         let mut guard =
@@ -128,7 +132,7 @@ impl<'a> MachineFacts<'a> {
             .unwrap_or(0);
         Generation::new(current as u64)
             .next()
-            .ok_or_else(|| RunError::Invalid("machine fact generation overflow".into()))
+            .ok_or_else(|| RunError::broken("machine fact generation overflow"))
     }
     /// The complete snapshot, retained endpoint claims and omitted-claim
     /// quarantine commit together. A refusal leaves every old value intact.
@@ -149,8 +153,8 @@ impl<'a> MachineFacts<'a> {
                     || id.scope() != crate::id::Scope::Machine
             })
         {
-            return Err(RunError::Invalid(
-                "machine fact conflicts require unique machine endpoints".into(),
+            return Err(RunError::refused(
+                "machine fact conflicts require unique machine endpoints",
             ));
         }
         let clock = ident::boot_clock();
@@ -159,11 +163,11 @@ impl<'a> MachineFacts<'a> {
         self.store.transaction(&self.cx.child(Duration::from_secs(30)), |txn| {
             let current = txn.resource(&owner, "machine-facts")?.generation;
             let expected = generation.get().checked_sub(1).map(Generation::new)
-                .ok_or_else(|| RunError::Invalid("machine fact generation must advance".into()))?;
+                .ok_or_else(|| RunError::broken("machine fact generation must advance"))?;
             if current != expected { return Err(RunError::StaleGeneration {
                 expected: Fence { resource: owner.clone(), generation: expected }, current: Some(current) }); }
             txn.next_generation(&owner)?;
-            let revision = i64::try_from(generation.get()).map_err(|_| RunError::Invalid("machine fact generation overflow".into()))?;
+            let revision = i64::try_from(generation.get()).map_err(|_| RunError::broken("machine fact generation overflow"))?;
             crate::fault_point!(ClaimReserveBefore)?;
             for (resource, details) in desired {
                 let row = txn.conn().query_row("SELECT holder,run_id,state,quarantine_boot,quarantine_nanos FROM claims WHERE resource=?1",
@@ -174,7 +178,7 @@ impl<'a> MachineFacts<'a> {
                         (Some(boot),Some(nanos)) => matches!((BootDeadline { boot,nanos:nanos as u64 }).passed(&clock),Observed::Verified(true,_)),
                         _ => false,
                     };
-                    if !retained && state != "released" && !(state == "quarantined" && expired) { return Err(RunError::Conflict(resource.clone())); }
+                    if !retained && state != "released" && !(state == "quarantined" && expired) { return Err(RunError::refused(format!("resource `{}` is already claimed by another run", resource.label()))); }
                 }
                 txn.resource(resource, "claims")?;
                 txn.conn().execute("INSERT INTO claims(resource,holder,run_id,reservation_token,state,generation,revision,details) VALUES (?1,?2,NULL,NULL,'live',?3,?3,?4) ON CONFLICT(resource) DO UPDATE SET holder=excluded.holder,run_id=NULL,reservation_token=NULL,state='live',generation=excluded.generation,revision=excluded.revision,details=excluded.details,quarantine_boot=NULL,quarantine_nanos=NULL",
@@ -186,9 +190,9 @@ impl<'a> MachineFacts<'a> {
             let retained = query.query_map([owner.name().to_string()], |row| row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             drop(query);
             for resource in retained.into_iter().filter(|name| !wanted.contains(name)) {
-                let Observed::Verified(now, _) = &clock else { return Err(RunError::Invalid("unknown quarantine clock".into())); };
+                let Observed::Verified(now, _) = &clock else { return Err(RunError::unavailable("unknown quarantine clock")); };
                 let deadline = BootDeadline::after(now, quarantine);
-                let nanos = i64::try_from(deadline.nanos).map_err(|_| RunError::Invalid("quarantine overflow".into()))?;
+                let nanos = i64::try_from(deadline.nanos).map_err(|_| RunError::broken("quarantine overflow"))?;
                 txn.conn().execute("UPDATE claims SET state='quarantined',revision=?2,quarantine_boot=?3,quarantine_nanos=?4 WHERE resource=?1",
                     params![resource,revision,deadline.boot,nanos])?;
             }
@@ -233,7 +237,7 @@ mod tests {
         let mut adapter = Fake::new(home.path());
         assert!(matches!(
             MachineFacts::begin(&guest, &root, options("ports"), &cleanup(&cx), &mut adapter),
-            Err(RunError::HostAuthorityRequired)
+            Err(RunError::Refused(rule)) if rule.contains("host authority")
         ));
         let read = StateRoot::machine_observe(&cx.operation().observe().unwrap(), home.path())
             .verified()
@@ -291,7 +295,7 @@ mod tests {
                 &json!({"state":"second"}),
                 Duration::from_secs(70)
             ),
-            Err(RunError::Conflict(_))
+            Err(RunError::Refused(_))
         ));
         assert_eq!(second.state().unwrap(), None);
         assert_eq!(second.next_generation().unwrap(), Generation::new(1));

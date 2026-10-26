@@ -32,7 +32,7 @@ impl Claims {
         run.can_effect()?;
         run.cx
             .require(crate::ctx::Capability::AdapterEffect)
-            .map_err(|_| RunError::Invalid("claims require Mutate".into()))?;
+            .map_err(|_| RunError::refused("claims require Mutate"))?;
         if wanted.is_empty()
             || wanted.iter().any(|id| {
                 !matches!(
@@ -41,8 +41,8 @@ impl Claims {
                 )
             })
         {
-            return Err(RunError::Invalid(
-                "claims require data or endpoint resources".into(),
+            return Err(RunError::refused(
+                "claims require data or endpoint resources",
             ));
         }
         let mut resources = wanted.to_vec();
@@ -66,7 +66,7 @@ impl Claims {
                             (Some(boot),Some(nanos)) => matches!((BootDeadline { boot,nanos: nanos as u64 }).passed(&clock),Observed::Verified(true,_)),
                             _ => false,
                         };
-                        if state!="released" && !(state=="quarantined" && expired) { return Err(RunError::Conflict(resource.clone())); }
+                        if state!="released" && !(state=="quarantined" && expired) { return Err(RunError::refused(format!("resource `{}` is already claimed by another run", resource.label()))); }
                     }
                 }
                 let spec=EffectSpec { target:run.owner.clone(),kind:KIND.into(),payload:serde_json::to_value(&reservation)?,settlement:Settlement::Release(Value::Null),required:true };
@@ -104,8 +104,8 @@ impl Claims {
     ) -> Result<(), RunError> {
         run.can_effect()?;
         check_token(run, token)?;
-        let revision = i64::try_from(revision)
-            .map_err(|_| RunError::Invalid("claim revision overflow".into()))?;
+        let revision =
+            i64::try_from(revision).map_err(|_| RunError::broken("claim revision overflow"))?;
         run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)),|txn| {
             journal::check_fence(txn.conn(),&run.owner)?;
             let effect=journal::effect(txn.conn(),run.id,token.effect.sequence)?;
@@ -114,7 +114,7 @@ impl Claims {
             for resource in reservation.resources {
                 let changed=txn.conn().execute("UPDATE claims SET state='live',revision=?2 WHERE resource=?1 AND reservation_token=?3 AND state IN ('reserved','live')",
                     params![resource.name().to_string(),revision,name])?;
-                if changed!=1 { return Err(RunError::Conflict(resource)); }
+                if changed!=1 { return Err(RunError::refused(format!("resource `{}` is already claimed by another run", resource.label()))); }
             }
             Ok::<_,RunError>(())
         })
@@ -137,7 +137,7 @@ impl Claims {
         run.can_effect()?;
         run.cx
             .require(crate::ctx::Capability::AdapterEffect)
-            .map_err(|_| RunError::Invalid("persistent claims require Mutate".into()))?;
+            .map_err(|_| RunError::refused("persistent claims require Mutate"))?;
         if let Some(token) = token {
             check_token(run, token)?;
         }
@@ -150,8 +150,8 @@ impl Claims {
                 .iter()
                 .any(|(id, _)| id.kind() != crate::id::ResourceKind::Endpoint)
         {
-            return Err(RunError::Invalid(
-                "persistent conflict set requires unique endpoints".into(),
+            return Err(RunError::refused(
+                "persistent conflict set requires unique endpoints",
             ));
         }
         let clock = ident::boot_clock();
@@ -171,7 +171,7 @@ impl Claims {
                             (id.is_none() && state == "live") ||
                             (reservation_name.is_some() && name == reservation_name && id.as_deref() == Some(&run.id.to_string()) && matches!(state.as_str(), "reserved" | "live")))
                     });
-                    if !valid { return Err(RunError::Conflict(resource.clone())); }
+                    if !valid { return Err(RunError::refused(format!("resource `{}` is already claimed by another run", resource.label()))); }
                     txn.conn().execute("UPDATE claims SET state='live',revision=?2,details=?3 WHERE resource=?1",
                         params![resource.name().to_string(),revision,serde_json::to_string(details)?])?;
                 }
@@ -180,10 +180,10 @@ impl Claims {
                 drop(stmt);
                 for resource in omitted.into_iter().filter(|name| !wanted.contains(name)) {
                     let Observed::Verified(now, _) = &clock else {
-                        return Err(RunError::Invalid("unknown quarantine clock".into()));
+                        return Err(RunError::unavailable("unknown quarantine clock"));
                     };
                     let deadline = BootDeadline::after(now, quarantine);
-                    let nanos = i64::try_from(deadline.nanos).map_err(|_| RunError::Invalid("quarantine overflow".into()))?;
+                    let nanos = i64::try_from(deadline.nanos).map_err(|_| RunError::broken("quarantine overflow"))?;
                     txn.conn().execute("UPDATE claims SET state='quarantined',run_id=NULL,revision=?2,quarantine_boot=?3,quarantine_nanos=?4 WHERE resource=?1",
                         params![resource,revision,deadline.boot,nanos])?;
                 }
@@ -191,7 +191,7 @@ impl Claims {
                     let mut effect = journal::effect(txn.conn(), run.id, token.effect.sequence)?;
                     let mut reservation: Reservation = serde_json::from_value(effect.spec.payload.clone())?;
                     if reservation.resources.iter().any(|r| !wanted.contains(&r.name().to_string())) {
-                        return Err(RunError::Invalid("publication omits a reserved endpoint".into()));
+                        return Err(RunError::broken("publication omits a reserved endpoint"));
                     }
                     reservation.retained = true;
                     effect.spec.payload = serde_json::to_value(reservation)?;
@@ -228,7 +228,7 @@ impl Claims {
     ) -> Result<(), RunError> {
         check_token(run, token)?;
         if !matches!(run.phase()?, Phase::Stopping | Phase::Closed) {
-            return Err(RunError::Invalid("claim release requires settle".into()));
+            return Err(RunError::broken("claim release requires settle"));
         }
         let effect = journal::effect(run.store.conn(), run.id, token.effect.sequence)?;
         run.settle_claims(&effect, &settle::cleanup_effects(cleanup)?)
@@ -236,7 +236,7 @@ impl Claims {
 }
 fn check_token(run: &Run<'_>, token: &ReservationToken) -> Result<(), RunError> {
     if token.effect.run != run.id || token.effect.owner != run.owner {
-        return Err(RunError::Invalid("foreign reservation token".into()));
+        return Err(RunError::broken("foreign reservation token"));
     }
     Ok(())
 }
@@ -327,7 +327,7 @@ fn release_rows(
         // makes a release retry after a crash a no-op (O5).
         txn.conn().execute("UPDATE claims SET state=?3,quarantine_boot=?4,quarantine_nanos=?5 WHERE resource=?1 AND reservation_token=?2 AND state IN ('reserved','live')",
             params![resource.name().to_string(),format!("{run}:{seq}"),if deadline.is_some(){"quarantined"}else{"released"},
-                deadline.map(|d|&d.boot),deadline.map(|d|i64::try_from(d.nanos)).transpose().map_err(|_|RunError::Invalid("quarantine overflow".into()))?])?;
+                deadline.map(|d|&d.boot),deadline.map(|d|i64::try_from(d.nanos)).transpose().map_err(|_|RunError::broken("quarantine overflow"))?])?;
     }
     Ok(())
 }

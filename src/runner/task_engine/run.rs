@@ -1040,12 +1040,13 @@ fn settle_warning(error: &RunError) -> String {
             "run settle did not record its outcome: {busy}. The run stays unsettled for its \
              sentinel or the next run of this task to reconcile; the task's own result stands"
         ),
-        other => format!("run settle failed: {}", run_error(other)),
+        other => format!("run settle failed: {other}"),
     }
 }
 
 fn record_outcome(run: &mut Run<'static>, workload: WorkloadOutcome) -> Result<(), RunError> {
-    let cleanup = kernel::cleanup().map_err(|error| RunError::Invalid(error.to_string()))?;
+    let cleanup = kernel::cleanup()
+        .map_err(|error| RunError::unavailable(format!("the cleanup budget: {error}")))?;
     match workload {
         WorkloadOutcome::Cancelled { .. }
         | WorkloadOutcome::TimedOut { .. }
@@ -1078,10 +1079,7 @@ fn close_run_settled(
 ) {
     let mut warnings = Vec::new();
     if let Err(error) = record_outcome(&mut run, workload) {
-        warnings.push(format!(
-            "run outcome was not recorded: {}",
-            run_error(&error)
-        ));
+        warnings.push(format!("run outcome was not recorded: {error}"));
     }
     match run.settle(&cleanup, &mut TaskSettlement::default()) {
         Ok(outcome) => {
@@ -1253,56 +1251,34 @@ fn new_run_id() -> Result<RunId, RunnerError> {
         .map_err(|error| RunnerError::task_invocation(format!("run id: {error}")))
 }
 
-fn run_error(error: &RunError) -> String {
-    match error {
-        RunError::Store(error) => format!("state store: {error}"),
-        RunError::Gate(error) => format!("gate: {error}"),
-        RunError::HelperExited { .. } => error.to_string(),
-        other => format!("{other}"),
-    }
-}
-
+/// The message a person reads for a run that could not be admitted, with the
+/// kernel's own category beside it: a supervisor that relays it never calls a
+/// busy store a refusal (K4, effigy#360).
 fn begin_error(
     error: RunError,
     target: &TaskTarget,
     lock_wait_ms: u64,
     started: Instant,
 ) -> RunnerError {
-    match error {
+    // A held gate keeps its structured conflict details, which already name
+    // the holder and every command that inspects or stops it.
+    let category = error.category();
+    let message = match error {
         RunError::Gate(GateError::Busy { id, holder }) => {
-            conflict(target, &id, *holder, None, started)
+            return conflict(target, &id, *holder, None, started)
         }
-        RunError::Gate(GateError::TimedOut { id, holder, waited }) => conflict(
-            target,
-            &id,
-            *holder,
-            Some((lock_wait_ms, waited.as_millis() as u64)),
-            started,
-        ),
-        RunError::Store(error @ StoreError::Busy { .. }) => RunnerError::task_invocation(format!(
-            "`{}` could not be admitted: {error}.\nnext: nothing was started and no task failed; \
-             another Effigy process was writing the run journal. Rerun when it finishes.",
-            target.label
-        )),
-        RunError::PredecessorUnsettled { run, effects } => RunnerError::task_invocation(format!(
-            "`{}` cannot start: its previous run {run} left {} unsettled effect(s) that could not \
-             be proven stopped. Inspect with `effigy tasks status {}`; nothing was started",
-            target.label,
-            effects.len(),
-            target.label
-        )),
-        RunError::HostAuthorityRequired | RunError::Gate(GateError::HostAuthorityRequired) => {
-            RunnerError::task_invocation(format!(
-                "`{}` needs host authority; run it on the host",
-                target.label
-            ))
+        RunError::Gate(GateError::TimedOut { id, holder, waited }) => {
+            return conflict(
+                target,
+                &id,
+                *holder,
+                Some((lock_wait_ms, waited.as_millis() as u64)),
+                started,
+            )
         }
-        other => RunnerError::task_invocation(format!(
-            "`{}` could not be admitted: {}",
-            target.label,
-            run_error(&other)
-        )),
-    }
+        other => format!("`{}` could not be admitted: {other}", target.label),
+    };
+    RunnerError::RunAdmission { category, message }
 }
 
 /// The run-inventory command this repository actually reaches, if any.

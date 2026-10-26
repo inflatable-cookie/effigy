@@ -232,6 +232,8 @@ fn observation(cx: &EffectContext) -> Result<ObserveContext, StoreError> {
         .map_err(|_| StoreError::Unbounded)
 }
 
+/// A record Effigy wrote that no longer matches what it records: a broken
+/// binding, never a corrupt `kernel.db` (effigy#337).
 fn unreadable(reason: impl Into<String>) -> StoreError {
-    StoreError::Corrupt(reason.into())
+    StoreError::Broken(format!("the checkout's state binding: {}", reason.into()))
 }

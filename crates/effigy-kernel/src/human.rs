@@ -8,6 +8,57 @@
 
 use std::time::Duration;
 
+/// How a kernel or run error reads to a person (K4).
+///
+/// There are three, and every error is exactly one of them. The category owns
+/// the single next step that is true for every error in it; the error's own
+/// text names the rule, what was waited on or the check that failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    /// The request was well formed and a rule said no: another run holds it, a
+    /// conflict, an inactive environment, a stale generation or a placement
+    /// that needs the host.
+    Refused,
+    /// Something environmental did not answer in time or could not be reached:
+    /// a busy store, a timed-out gate, a helper that exited, I/O, a failed step.
+    Unavailable,
+    /// Effigy's own data or an invariant is wrong. A verified corruption is the
+    /// one case that also suggests the explicit repair.
+    Broken,
+}
+
+impl Category {
+    /// The one next step this category carries.
+    pub fn next_step(self) -> &'static str {
+        match self {
+            Self::Refused => "nothing ran; stop what holds it or change the request, then retry",
+            Self::Unavailable => "nothing is broken, and retrying once it answers is safe",
+            Self::Broken => {
+                "this is an Effigy bug, not your request; report it with the check this names"
+            }
+        }
+    }
+
+    /// The one rendering every error in this category goes through: what it is
+    /// about, what happened, and this category's next step. `subject` is the
+    /// thing that could not run (`the run`, `the state store`); `detail` names
+    /// the rule, what was waited on or the check that failed.
+    pub fn render(self, subject: &str, detail: &str) -> String {
+        let detail = detail.trim_end_matches(['.', ';']);
+        match self {
+            Self::Refused => format!("{subject} was refused: {detail}; {}", self.next_step()),
+            Self::Unavailable => {
+                format!(
+                    "{subject} could not proceed: {detail}; {}",
+                    self.next_step()
+                )
+            }
+            Self::Broken => format!("Effigy is broken: {detail}; {}", self.next_step()),
+        }
+    }
+}
+
 /// A duration a person reads: `800ms`, `12s`, `4m08s`, `1h02m`.
 pub fn human_duration(elapsed: Duration) -> String {
     let millis = elapsed.as_millis();
@@ -61,6 +112,24 @@ mod tests {
         assert_eq!(human_duration(Duration::from_millis(247_800)), "4m08s");
         assert_eq!(human_duration(Duration::from_secs(248)), "4m08s");
         assert_eq!(human_duration(Duration::from_secs(3_720)), "1h02m");
+    }
+
+    #[test]
+    fn every_category_carries_one_next_step() {
+        for category in [Category::Refused, Category::Unavailable, Category::Broken] {
+            assert!(!category.next_step().is_empty());
+        }
+        assert!(Category::Unavailable.next_step().contains("retrying"));
+        assert!(Category::Broken
+            .render("the run", "a check")
+            .contains("Effigy bug"));
+        assert_eq!(
+            Category::Refused.render("the run", "a rule;"),
+            format!(
+                "the run was refused: a rule; {}",
+                Category::Refused.next_step()
+            )
+        );
     }
 
     #[test]

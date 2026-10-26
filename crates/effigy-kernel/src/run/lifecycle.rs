@@ -25,7 +25,7 @@ impl<'a> Run<'a> {
         let lease = self
             .sentinel
             .as_ref()
-            .ok_or_else(|| RunError::Invalid("custody needs its sentinel".into()))?;
+            .ok_or_else(|| RunError::broken("custody needs its sentinel"))?;
         crate::supervise::anchor::Image::prepare(&lease.executable)
     }
 }
@@ -40,15 +40,15 @@ impl Run<'_> {
     ) -> Result<(), RunError> {
         self.can_effect()?;
         if self.sentinel.is_some() {
-            return Err(RunError::Invalid("sentinel already registered".into()));
+            return Err(RunError::broken("sentinel already registered"));
         }
         if !self.guard.covers(&self.owner.resource) {
-            return Err(RunError::Invalid("registration needs owner gate".into()));
+            return Err(RunError::broken("registration needs owner gate"));
         }
         let identity = ident::process_identity(std::process::id())
             .verified()
             .cloned()
-            .ok_or_else(|| RunError::Invalid("owner identity unavailable".into()))?;
+            .ok_or_else(|| RunError::unavailable("owner identity unavailable"))?;
         if let Some(startup) = self.machine_startup.as_mut() {
             startup.lifecycle = Some((identity, lease.identity.clone(), plan.placement));
             self.sentinel = Some(lease);
@@ -78,7 +78,7 @@ impl Run<'_> {
                     .cx
                     .operation()
                     .cleanup(std::time::Duration::from_secs(30))
-                    .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;
+                    .map_err(|_| RunError::broken("cleanup overflow"))?;
                 lease.close(&cleanup)?;
             }
         }

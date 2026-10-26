@@ -96,12 +96,16 @@ impl std::fmt::Display for RoutingError {
                 "task catalog prefix `{prefix}` not found (available: {})",
                 available.join(", ")
             ),
-            RoutingError::TaskNotFound { name, path } => {
-                write!(f, "task `{name}` is not defined in {}", path.display())
-            }
+            RoutingError::TaskNotFound { name, path } => write!(
+                f,
+                "task `{name}` is not defined in {}; run `effigy tasks` to see the task names this \
+                 checkout routes",
+                path.display()
+            ),
             RoutingError::TaskNotFoundAny { name, catalogs } => write!(
                 f,
-                "task `{name}` is not defined in effective catalogs: {}",
+                "task `{name}` is not defined in effective catalogs: {}; run `effigy tasks` to see \
+                 the task names this checkout routes",
                 catalogs.join(", ")
             ),
             RoutingError::TaskAmbiguous { name, candidates } => write!(

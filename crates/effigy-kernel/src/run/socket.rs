@@ -30,19 +30,19 @@ impl Run<'_> {
             crate::fault_point!(SocketBind)?;
             let dir = directory(self.root, &self.owner.resource)
                 .map_err(StoreError::from)?
-                .ok_or_else(|| RunError::Invalid("socket directory missing".into()))?;
+                .ok_or_else(|| RunError::unavailable("socket directory missing"))?;
             let name = FileName::new(&format!("{}.sock", self.id)).map_err(StoreError::from)?;
             if dir.entry(&name).map_err(StoreError::from)?.is_some() {
-                return Err(RunError::Invalid("socket path already exists".into()));
+                return Err(RunError::unavailable("socket path already exists"));
             }
             let listener =
                 crate::socket_at::in_directory(&dir, &name, |name| UnixListener::bind(name))??;
             let stat = dir
                 .entry(&name)
                 .map_err(StoreError::from)?
-                .ok_or_else(|| RunError::Invalid("socket vanished".into()))?;
+                .ok_or_else(|| RunError::unavailable("socket vanished"))?;
             let cname = std::ffi::CString::new(name.as_str())
-                .map_err(|_| RunError::Invalid("socket name".into()))?;
+                .map_err(|_| RunError::broken("socket name"))?;
             // SAFETY: live verified private directory and a single NUL-terminated
             // component. NOFOLLOW refuses a substituted symlink; no global umask.
             if unsafe {
@@ -73,7 +73,7 @@ impl Run<'_> {
             if stat.st_uid != crate::fs::operator_uid()
                 || stat.st_mode & libc::S_IFMT != libc::S_IFSOCK
             {
-                return Err(RunError::Invalid("socket generation unverified".into()));
+                return Err(RunError::broken("socket generation unverified"));
             }
             // An owner killed between bind and receipt leaves its socket
             // unrecorded. Only this run binds its run-unique name in the
@@ -81,7 +81,7 @@ impl Run<'_> {
             if let Some(receipt) = effect.receipt.clone() {
                 let receipt: Receipt = serde_json::from_value(receipt)?;
                 if stat.st_ino != receipt.inode {
-                    return Err(RunError::Invalid("socket generation unverified".into()));
+                    return Err(RunError::broken("socket generation unverified"));
                 }
             }
             dir.remove(&name, false).map_err(StoreError::from)?;

@@ -550,8 +550,7 @@ fn engine_launch(home: &Path) -> EngineLaunch {
 /// runs one workload, echoes client frames and stops on its owner channel.
 fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Result<(), RunError> {
     let home = std::path::PathBuf::from(
-        std::str::from_utf8(session.payload())
-            .map_err(|_| RunError::Invalid("fixture payload".into()))?,
+        std::str::from_utf8(session.payload()).map_err(|_| RunError::broken("fixture payload"))?,
     );
     let op = OperationContext::new(
         Deadline::Open(OpenReason::DevServer),
@@ -582,7 +581,7 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
     ) {
         Ok(run) => run,
         Err(error) => {
-            session.refused(&error.to_string());
+            session.refused_message(error.category(), error.to_string());
             return Err(error);
         }
     };
@@ -607,7 +606,7 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
         },
         &cx,
     )
-    .map_err(|error| RunError::Invalid(format!("{error:?}")))?;
+    .map_err(|error| RunError::unavailable(format!("the fixture workload spawn: {error:?}")))?;
     run.advance(Phase::Active)?;
     session.active();
     let cause = loop {

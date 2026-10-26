@@ -55,7 +55,9 @@ pub fn atomic_replace(
     opts: ReplaceOpts,
 ) -> Result<Replaced, StoreError> {
     if !guard.ids().any(|id| id.kind() == ResourceKind::Store) {
-        return Err(StoreError::WrongGuard);
+        return Err(StoreError::Refused(
+            "this record change needs the write guard for its resource".into(),
+        ));
     }
     if opts.mode & !0o777 != 0 || opts.mode & 0o022 != 0 {
         return Err(StoreError::Untrusted {
@@ -135,7 +137,9 @@ pub fn open_output(
     record_effect(cx, guard)?;
     let (file, stat) = dir
         .open_file(name, libc::O_WRONLY, Some(fs::FILE_MODE), Trust::Operator)?
-        .ok_or_else(|| StoreError::Corrupt("created output record is missing".into()))?;
+        .ok_or_else(|| {
+            StoreError::Broken("an output record Effigy just created is missing".into())
+        })?;
     if stat.st_nlink != 1 {
         return Err(StoreError::Untrusted {
             path: dir.path().join(name.as_str()),
@@ -194,7 +198,9 @@ fn record_effect(cx: &EffectContext, guard: &GateGuard) -> Result<(), StoreError
         .check("record effect")
         .map_err(StoreError::Interrupted)?;
     if !guard.ids().any(|id| id.kind() == ResourceKind::Store) {
-        return Err(StoreError::WrongGuard);
+        return Err(StoreError::Refused(
+            "this record effect needs the write guard for its resource".into(),
+        ));
     }
     Ok(())
 }
