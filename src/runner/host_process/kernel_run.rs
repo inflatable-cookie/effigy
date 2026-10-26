@@ -34,9 +34,8 @@ use serde::{Deserialize, Serialize};
 use super::{
     host_process_dir_for_policy, host_process_state_path, listener_gateway_root,
     managed_host_process_owner, order_host_processes, read_private_json, HostListenerState,
-    HostProcessRestartReport,
-    HostProcessRuntimeSpec, ManagedHostListenerResult, RestartedHostProcess,
-    HOST_LISTENER_STATE_SCHEMA,
+    HostProcessRestartReport, HostProcessRuntimeSpec, ManagedHostListenerResult,
+    RestartedHostProcess, HOST_LISTENER_STATE_SCHEMA,
 };
 use crate::runner::error::RunnerError;
 
