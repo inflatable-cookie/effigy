@@ -21,14 +21,12 @@ pub const MODULE_SCAN: &str = "scan";
 pub const MODULE_DOCS: &str = "docs";
 pub const MODULE_DEPLOY: &str = "deploy";
 pub const MODULE_CHANGELOG: &str = "changelog";
-pub const MODULE_CACHE: &str = "cache";
 pub const MODULE_GATEWAY: &str = "gateway";
 pub const MODULE_BUNDLE: &str = "bundle";
 pub const MODULE_SERVICE: &str = "service";
 pub const MODULE_CATALOG: &str = "catalog";
 pub const MODULE_DOCTOR: &str = "doctor";
 pub const MODULE_CONTRACTS: &str = "contracts";
-pub const MODULE_UNLOCK: &str = "unlock";
 pub const MODULE_TEST: &str = "test";
 pub const MODULE_EFFIGY: &str = "effigy";
 pub const MODULE_SECRETS: &str = "secrets";
@@ -61,14 +59,12 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_DOCS,
     MODULE_DEPLOY,
     MODULE_CHANGELOG,
-    MODULE_CACHE,
     MODULE_GATEWAY,
     MODULE_BUNDLE,
     MODULE_SERVICE,
     MODULE_CATALOG,
     MODULE_DOCTOR,
     MODULE_CONTRACTS,
-    MODULE_UNLOCK,
     MODULE_TEST,
     MODULE_EFFIGY,
     MODULE_SECRETS,
@@ -131,8 +127,6 @@ pub const FEATURE_GATEWAY_DOWN: &str = "gateway.down";
 pub const FEATURE_DOCTOR_RUN: &str = "doctor.run";
 pub const FEATURE_SCAN_GOD_FILES: &str = "scan.god_files";
 pub const FEATURE_SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate_blocks";
-pub const FEATURE_CACHE_INSPECT: &str = "cache.inspect";
-pub const FEATURE_CACHE_INVALIDATE: &str = "cache.invalidate";
 pub const FEATURE_CONTRACTS_CHECK_JSON: &str = "contracts.check_json";
 pub const FEATURE_DEPLOY_MODEL: &str = "deploy.model";
 pub const FEATURE_DEPLOY_EMIT: &str = "deploy.emit";
@@ -143,7 +137,6 @@ pub const FEATURE_DEPLOY_HISTORY: &str = "deploy.history";
 pub const FEATURE_DEPLOY_REDEPLOY: &str = "deploy.redeploy";
 pub const FEATURE_CHANGELOG_VALIDATE: &str = "changelog.validate";
 pub const FEATURE_CHANGELOG_EXTRACT: &str = "changelog.extract";
-pub const FEATURE_UNLOCK_SCOPES: &str = "unlock.scopes";
 pub const FEATURE_TEST_PLAN: &str = "test.plan";
 
 pub const FEATURE_NAMES: &[&str] = &[
@@ -200,8 +193,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_DOCTOR_RUN,
     FEATURE_SCAN_GOD_FILES,
     FEATURE_SCAN_DUPLICATE_BLOCKS,
-    FEATURE_CACHE_INSPECT,
-    FEATURE_CACHE_INVALIDATE,
     FEATURE_CONTRACTS_CHECK_JSON,
     FEATURE_DEPLOY_MODEL,
     FEATURE_DEPLOY_EMIT,
@@ -212,7 +203,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_DEPLOY_REDEPLOY,
     FEATURE_CHANGELOG_VALIDATE,
     FEATURE_CHANGELOG_EXTRACT,
-    FEATURE_UNLOCK_SCOPES,
     FEATURE_TEST_PLAN,
 ];
 
@@ -318,8 +308,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_DOCTOR_RUN),
     runner_feature(FEATURE_SCAN_GOD_FILES),
     runner_feature(FEATURE_SCAN_DUPLICATE_BLOCKS),
-    runner_feature(FEATURE_CACHE_INSPECT),
-    runner_feature(FEATURE_CACHE_INVALIDATE),
     runner_feature(FEATURE_CONTRACTS_CHECK_JSON),
     runner_feature(FEATURE_DEPLOY_MODEL),
     runner_feature(FEATURE_DEPLOY_EMIT),
@@ -330,7 +318,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_DEPLOY_REDEPLOY),
     runner_feature(FEATURE_CHANGELOG_VALIDATE),
     runner_feature(FEATURE_CHANGELOG_EXTRACT),
-    runner_feature(FEATURE_UNLOCK_SCOPES),
     runner_feature(FEATURE_TEST_PLAN),
 ];
 

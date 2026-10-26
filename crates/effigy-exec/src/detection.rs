@@ -118,3 +118,125 @@ pub fn determine_strategy(
         }
     }
 }
+
+/// Probe specification for detecting container capabilities.
+///
+/// This struct describes what to probe and how. The actual probing
+/// (running docker compose exec) is performed by the caller — this
+/// crate provides the logic, not the I/O.
+#[derive(Debug, Clone)]
+pub struct ProbeSpec {
+    /// Commands to run to detect capabilities. Each entry is
+    /// (description, command_args, what_it_detects).
+    pub checks: Vec<ProbeCheck>,
+}
+
+/// A single probe check.
+#[derive(Debug, Clone)]
+pub struct ProbeCheck {
+    /// What this check detects.
+    pub description: String,
+
+    /// Command to run inside the container (via docker compose exec).
+    pub command: Vec<String>,
+
+    /// How to interpret the result.
+    pub interpreter: ProbeInterpreter,
+}
+
+/// How to interpret a probe check result.
+#[derive(Debug, Clone)]
+pub enum ProbeInterpreter {
+    /// Check exits 0 → capability present.
+    ExitCode,
+
+    /// Check outputs a version string → parse it.
+    VersionOutput,
+}
+
+/// Build the standard probe spec for a container.
+///
+/// Returns the set of checks needed to determine capabilities. The
+/// caller runs these checks and feeds the results back to
+/// `build_capabilities_from_results`.
+pub fn standard_probe_spec() -> ProbeSpec {
+    ProbeSpec {
+        checks: vec![
+            ProbeCheck {
+                description: "effigy installation".to_string(),
+                command: vec!["which".to_string(), "effigy".to_string()],
+                interpreter: ProbeInterpreter::ExitCode,
+            },
+            ProbeCheck {
+                description: "effigy version".to_string(),
+                command: vec!["effigy".to_string(), "version".to_string()],
+                interpreter: ProbeInterpreter::VersionOutput,
+            },
+            ProbeCheck {
+                description: "bash availability".to_string(),
+                command: vec!["which".to_string(), "bash".to_string()],
+                interpreter: ProbeInterpreter::ExitCode,
+            },
+            ProbeCheck {
+                description: "sh availability".to_string(),
+                command: vec!["which".to_string(), "sh".to_string()],
+                interpreter: ProbeInterpreter::ExitCode,
+            },
+        ],
+    }
+}
+
+/// Result of running a single probe check.
+#[derive(Debug, Clone)]
+pub struct ProbeResult {
+    /// Whether the command exited successfully (exit code 0).
+    pub success: bool,
+
+    /// Stdout output (trimmed).
+    pub output: String,
+}
+
+/// Build container capabilities from probe results.
+///
+/// `results` is a map of check description → probe result, matching the
+/// checks from `standard_probe_spec()`.
+pub fn build_capabilities_from_results(
+    results: &HashMap<String, ProbeResult>,
+) -> ContainerCapabilities {
+    let has_effigy = results
+        .get("effigy installation")
+        .map(|r| r.success)
+        .unwrap_or(false);
+
+    let effigy_version = results
+        .get("effigy version")
+        .filter(|r| r.success)
+        .map(|r| r.output.clone());
+
+    let has_bash = results
+        .get("bash availability")
+        .map(|r| r.success)
+        .unwrap_or(false);
+
+    let shell = if has_bash {
+        "/bin/bash".to_string()
+    } else {
+        "/bin/sh".to_string()
+    };
+
+    let mut tools = HashMap::new();
+    tools.insert("effigy".to_string(), has_effigy);
+    tools.insert("bash".to_string(), has_bash);
+
+    ContainerCapabilities {
+        has_effigy,
+        effigy_version,
+        shell,
+        tools,
+        probed_at: Instant::now(),
+    }
+}
+
+#[cfg(test)]
+#[path = "detection/tests.rs"]
+mod tests;

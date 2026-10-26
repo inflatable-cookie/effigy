@@ -61,10 +61,6 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if gateway["feature"] != "gateway.status" { throw("gateway"); }
             let scan = scan::god_files(#{ threshold: 900 });
             if scan["feature"] != "scan.god_files" { throw("scan"); }
-            let cache = cache::inspect(#{ selector: "build" });
-            if cache["options"]["selector"] != "build" { throw("cache"); }
-            let unlock = unlock::scopes(#{ "all": true });
-            if unlock["feature"] != "unlock.scopes" || unlock["options"]["all"] != true { throw("unlock scopes"); }
             let config = config::effective();
             if config["feature"] != "config.effective" { throw("config effective"); }
             let raw = config::raw();
@@ -216,4 +212,42 @@ if paths[4] != invocation_cwd { throw("invocation_cwd differs"); }
 "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+/// The retired `cache::` and `unlock::` modules are gone from the script
+/// surface, and the descriptor inventory is the single source of truth for it.
+#[test]
+fn retired_cache_and_unlock_modules_are_absent_from_the_surface() {
+    for descriptor in rhai_feature_descriptors() {
+        assert!(
+            !descriptor.id.starts_with("cache.") && !descriptor.id.starts_with("unlock."),
+            "`{}` is retired and must not be dispatched",
+            descriptor.id
+        );
+    }
+    for module in MODULE_NAMES {
+        assert!(
+            *module != "cache" && *module != "unlock",
+            "`{module}::` is retired and must not be registered"
+        );
+    }
+
+    let root = temp_root("retired-cache-unlock");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    for script in [
+        "cache::inspect(#{ selector: \"build\" });",
+        "unlock::scopes(#{ \"all\": true });",
+    ] {
+        let error = execute_rhai_script(&context, script, &[], &callbacks())
+            .expect_err("a retired module must not resolve");
+        assert!(
+            error.to_string().contains("not found") || error.to_string().contains("unknown"),
+            "a retired module must fail as unknown, got: {error}"
+        );
+    }
 }
