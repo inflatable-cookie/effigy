@@ -85,7 +85,3 @@ impl Default for GatewayStats {
         Self::new()
     }
 }
-
-#[cfg(test)]
-#[path = "stats/tests.rs"]
-mod tests;

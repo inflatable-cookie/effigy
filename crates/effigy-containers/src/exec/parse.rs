@@ -457,49 +457,77 @@ fn json_string_field(object: &serde_json::Map<String, JsonValue>, keys: &[&str])
 mod tests {
     use super::*;
 
+    /// `docker compose ps` output shapes: tab-separated fields with ports, an
+    /// oneoff row, a header alone and a plain table row.
     #[test]
-    fn parse_running_compose_containers_splits_tab_fields() {
-        let parsed = parse_running_compose_containers(
-            "demo-app-1\tUp 2 minutes\t0.0.0.0:18080->80/tcp, :::18080->80/tcp\tdemo-web-dev\t/tmp/demo\tapp\n",
-        )
-        .expect("parse");
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].container_name, "demo-app-1");
-        assert_eq!(parsed[0].project_name.as_deref(), Some("demo-web-dev"));
-        assert_eq!(parsed[0].working_dir.as_deref(), Some("/tmp/demo"));
-        assert_eq!(parsed[0].service.as_deref(), Some("app"));
-        assert!(!parsed[0].oneoff);
-        assert_eq!(parsed[0].ports.len(), 2);
-    }
-
-    #[test]
-    fn parse_running_compose_containers_reads_oneoff_label() {
-        let parsed = parse_running_compose_containers(
-            "demo-app-run-deadbeef\tExited (0) 1 second ago\t\tdemo-web-dev\t/tmp/demo\tapp\tTrue\n",
-        )
-        .expect("parse");
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].container_name, "demo-app-run-deadbeef");
-        assert_eq!(parsed[0].service.as_deref(), Some("app"));
-        assert!(parsed[0].oneoff);
-    }
-
-    #[test]
-    fn parse_running_compose_containers_skips_plain_table_header() {
-        let parsed = parse_running_compose_containers("NAME STATUS\n").expect("parse");
-        assert!(parsed.is_empty());
-    }
-
-    #[test]
-    fn parse_running_compose_containers_accepts_plain_table_rows() {
-        let parsed = parse_running_compose_containers("NAME STATUS\napp running\n").expect("parse");
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].container_name, "app");
-        assert_eq!(parsed[0].status, "running");
-        assert!(parsed[0].ports.is_empty());
-        assert_eq!(parsed[0].project_name, None);
-        assert_eq!(parsed[0].working_dir, None);
-        assert_eq!(parsed[0].service, None);
+    fn parse_running_compose_containers_cases() {
+        struct Expect {
+            container_name: &'static str,
+            status: &'static str,
+            project: Option<&'static str>,
+            working_dir: Option<&'static str>,
+            service: Option<&'static str>,
+            ports: usize,
+            oneoff: bool,
+        }
+        let cases: [(&str, &str, Option<Expect>); 4] = [
+            (
+                "a tab-separated row",
+                "demo-app-1\tUp 2 minutes\t0.0.0.0:18080->80/tcp, :::18080->80/tcp\tdemo-web-dev\t/tmp/demo\tapp\n",
+                Some(Expect {
+                    container_name: "demo-app-1",
+                    status: "Up 2 minutes",
+                    project: Some("demo-web-dev"),
+                    working_dir: Some("/tmp/demo"),
+                    service: Some("app"),
+                    ports: 2,
+                    oneoff: false,
+                }),
+            ),
+            (
+                "an oneoff container",
+                "demo-app-run-deadbeef\tExited (0) 1 second ago\t\tdemo-web-dev\t/tmp/demo\tapp\tTrue\n",
+                Some(Expect {
+                    container_name: "demo-app-run-deadbeef",
+                    status: "Exited (0) 1 second ago",
+                    project: Some("demo-web-dev"),
+                    working_dir: Some("/tmp/demo"),
+                    service: Some("app"),
+                    ports: 0,
+                    oneoff: true,
+                }),
+            ),
+            ("a header alone", "NAME STATUS\n", None),
+            (
+                "a plain table row",
+                "NAME STATUS\napp running\n",
+                Some(Expect {
+                    container_name: "app",
+                    status: "running",
+                    project: None,
+                    working_dir: None,
+                    service: None,
+                    ports: 0,
+                    oneoff: false,
+                }),
+            ),
+        ];
+        for (name, input, expected) in cases {
+            let parsed = parse_running_compose_containers(input).expect(name);
+            let Some(expected) = expected else {
+                assert!(parsed.is_empty(), "{name}");
+                continue;
+            };
+            assert_eq!(parsed.len(), 1, "{name}");
+            let row = &parsed[0];
+            assert_eq!(row.container_name, expected.container_name, "{name}");
+            assert_eq!(row.status, expected.status, "{name}");
+            assert_eq!(row.project_name.as_deref(), expected.project, "{name}");
+            assert_eq!(row.working_dir.as_deref(), expected.working_dir, "{name}");
+            assert_eq!(row.service.as_deref(), expected.service, "{name}");
+            assert_eq!(row.ports.len(), expected.ports, "{name}");
+            assert_eq!(row.oneoff, expected.oneoff, "{name}");
+        }
     }
 
     #[test]
@@ -572,28 +600,35 @@ mod tests {
         assert_eq!(parsed[0].memory_percent.as_deref(), Some("0.15%"));
     }
 
+    /// The Colima runtime-state-loss heuristic, still live for an explicit
+    /// `profile recover`: its fatal is recognised and an unrelated Compose
+    /// error is not.
     #[test]
-    fn docker_failure_detection_matches_colima_runtime_state_loss() {
-        assert!(docker_failure_looks_like_colima_runtime_state_loss(
-            "",
-            r#"time="2026-04-20T00:09:46+01:00" level=fatal msg="error retrieving current runtime: empty value""#
-        ));
-    }
-
-    #[test]
-    fn runtime_state_loss_detection_ignores_unrelated_errors() {
-        assert!(!docker_failure_looks_like_colima_runtime_state_loss(
-            "",
-            "service workspace depends on undefined service redis"
-        ));
-    }
-
-    #[test]
-    fn runtime_state_loss_detection_matches_colima_status_failure() {
-        assert!(docker_failure_looks_like_colima_runtime_state_loss(
-            "",
-            r#"time="2026-04-20T00:14:42+01:00" level=fatal msg="error retrieving current runtime: empty value""#
-        ));
+    fn colima_runtime_state_loss_cases() {
+        let cases: [(&str, &str, bool); 3] = [
+            (
+                "a fatal empty runtime value",
+                r#"time="2026-04-20T00:09:46+01:00" level=fatal msg="error retrieving current runtime: empty value""#,
+                true,
+            ),
+            (
+                "the same fatal from a status command",
+                r#"time="2026-04-20T00:14:42+01:00" level=fatal msg="error retrieving current runtime: empty value""#,
+                true,
+            ),
+            (
+                "an undefined service",
+                "service workspace depends on undefined service redis",
+                false,
+            ),
+        ];
+        for (name, stderr, expected) in cases {
+            assert_eq!(
+                docker_failure_looks_like_colima_runtime_state_loss("", stderr),
+                expected,
+                "{name}"
+            );
+        }
     }
 
     #[test]

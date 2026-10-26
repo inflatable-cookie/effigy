@@ -133,19 +133,6 @@ impl RouteTable {
             .routes()
     }
 
-    /// Register a new route.
-    ///
-    /// Returns an error if a route for the domain already exists.
-    pub fn register(&mut self, route: Route) -> Result<(), GatewayError> {
-        if self.routes.contains_key(&route.domain) {
-            return Err(GatewayError::DuplicateRoute {
-                domain: route.domain,
-            });
-        }
-        self.routes.insert(route.domain.clone(), route);
-        Ok(())
-    }
-
     /// Update an existing route or insert a new one.
     pub fn upsert(&mut self, route: Route) {
         self.routes.insert(route.domain.clone(), route);

@@ -104,8 +104,14 @@ pub fn prune_stale_health_check_pidfiles(
 /// The prune. It prints the matching-file count before and after so the caller
 /// reports real counts instead of trusting `find`'s exit status.
 fn prune_stale_health_check_pidfiles_script() -> String {
+    prune_stale_health_check_pidfiles_script_for(HEALTHCHECK_TASK_ROOT)
+}
+
+/// The prune script for one task root. Production only ever passes
+/// [`HEALTHCHECK_TASK_ROOT`]; a test runs the same script against a private tree.
+fn prune_stale_health_check_pidfiles_script_for(root: &str) -> String {
     format!(
-        "root={HEALTHCHECK_TASK_ROOT}; pattern='{HEALTHCHECK_PIDFILE_PATTERN}'; \
+        "root={root}; pattern='{HEALTHCHECK_PIDFILE_PATTERN}'; \
          printf 'before '; \
          find \"$root\" -mindepth 3 -maxdepth 3 -type f -name \"$pattern\" 2>/dev/null | wc -l; \
          find \"$root\" -mindepth 3 -maxdepth 3 -type f -name \"$pattern\" -mmin +{HEALTHCHECK_PIDFILE_STALE_MINUTES} -delete 2>/dev/null; \
@@ -139,24 +145,64 @@ mod tests {
 
     use super::{
         parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles,
-        prune_stale_health_check_pidfiles_script, HealthCheckPidFilePrune,
-        HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
+        HealthCheckPidFilePrune, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
     };
 
     #[test]
     fn prune_script_deletes_only_the_exact_pattern_older_than_ten_minutes() {
-        let script = prune_stale_health_check_pidfiles_script();
-        assert!(script.contains(HEALTHCHECK_TASK_ROOT));
-        assert!(script.contains(&format!(
-            "-name \"$pattern\" -mmin +{HEALTHCHECK_PIDFILE_STALE_MINUTES} -delete"
-        )));
-        assert!(script.contains("-mindepth 3 -maxdepth 3 -type f"));
-        // The only deletion is the pattern-scoped find, never a bare rm,
-        // wildcard expansion or the task root itself.
-        assert_eq!(script.matches("-delete").count(), 1);
-        assert!(!script.contains(" rm "));
-        assert!(!script.contains("rm -"));
-        assert!(!script.contains(&format!("{HEALTHCHECK_TASK_ROOT}/*")));
+        use super::prune_stale_health_check_pidfiles_script_for;
+        use std::fs;
+        use std::process::Command;
+        use std::time::{Duration, SystemTime};
+
+        let fixture = tempfile::tempdir().expect("fresh private fixture");
+        let root = fixture.path().join("task-root");
+        let stale = root.join("default/container/health-check-old.pid");
+        let fresh = root.join("default/container/health-check-new.pid");
+        let wrong_name = root.join("default/container/other.pid");
+        let shallow = root.join("default/health-check-shallow.pid");
+        let deep = root.join("default/container/nested/health-check-deep.pid");
+        for path in [&stale, &fresh, &wrong_name, &shallow, &deep] {
+            fs::create_dir_all(path.parent().expect("fixture parent")).expect("mkdir fixture");
+            fs::write(path, "1").expect("write fixture file");
+        }
+        let stale_time = SystemTime::now() - Duration::from_secs(60 * 60);
+        for path in [&stale, &wrong_name, &shallow, &deep] {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .expect("open fixture file")
+                .set_modified(stale_time)
+                .expect("age fixture file");
+        }
+
+        let script = prune_stale_health_check_pidfiles_script_for(&root.display().to_string());
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .expect("run the prune script");
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Two candidates sat directly in a task directory; only the stale one
+        // went.
+        assert_eq!(
+            parse_health_check_pidfile_prune(&stdout),
+            Some(HealthCheckPidFilePrune {
+                before: 2,
+                after: 1
+            }),
+            "{stdout}"
+        );
+        assert!(!stale.exists(), "{stdout}");
+        for survivor in [&fresh, &wrong_name, &shallow, &deep] {
+            assert!(
+                survivor.exists(),
+                "{} must survive the prune: {stdout}",
+                survivor.display()
+            );
+        }
     }
 
     /// The private adapter script: it records every argv vector it is handed

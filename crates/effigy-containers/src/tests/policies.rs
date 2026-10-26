@@ -22,12 +22,54 @@ fn setup_workspace_app_path_bundle(root: &std::path::Path) {
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
 }
 
+/// One selection: the container a manifest resolves for a requested name, or
+/// the reason it refuses to guess.
 #[test]
-fn load_container_policy_uses_default_container() {
-    let root = temp_repo("default");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
+fn container_selection_cases() {
+    #[derive(Clone, Copy)]
+    enum Selection {
+        /// The selected container keeps this name.
+        Resolves(&'static str),
+        /// The selection is refused and its message names this token.
+        Refused(&'static str),
+    }
+
+    fn default_render(policy: &crate::EffectiveContainerPolicy) {
+        assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
+        assert_eq!(
+            policy.compose_file_display,
+            ".effigy/runtime/compose/web.generated.compose.yml"
+        );
+        assert_eq!(policy.dns_domain, None);
+        assert!(!policy.dns_tls);
+        assert_eq!(policy.dns_port, None);
+        let render = policy.render.as_ref().unwrap();
+        assert_eq!(
+            policy.compose_files,
+            vec![
+                render
+                    .path
+                    .join("checkout/.effigy/runtime/compose/web.generated.compose.yml"),
+                render
+                    .path
+                    .join("checkout/.effigy/runtime/dns/web.compose.override.yml"),
+            ]
+        );
+    }
+
+    type Check = fn(&crate::EffectiveContainerPolicy);
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static [(&'static str, &'static str)],
+        Option<&'static str>,
+        Selection,
+        Option<Check>,
+    );
+    let cases: [Row; 6] = [
+        (
+            "the container default",
+            r#"
 [containers]
 default = "web"
 
@@ -35,46 +77,14 @@ default = "web"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 "#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    assert_eq!(policy.name, "web");
-    assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
-    assert_eq!(
-        policy.compose_file_display,
-        ".effigy/runtime/compose/web.generated.compose.yml"
-    );
-    assert_eq!(policy.dns_domain, None);
-    assert!(!policy.dns_tls);
-    assert_eq!(policy.dns_port, None);
-    let render = policy.render.as_ref().unwrap();
-    assert_eq!(
-        policy.compose_files,
-        vec![
-            render
-                .path
-                .join("checkout/.effigy/runtime/compose/web.generated.compose.yml"),
-            render
-                .path
-                .join("checkout/.effigy/runtime/dns/web.compose.override.yml"),
-        ]
-    );
-}
-
-#[test]
-fn load_container_policy_falls_back_to_the_default_system_workspace_container() {
-    let root = temp_repo("system-default");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
+            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            None,
+            Selection::Resolves("web"),
+            Some(default_render),
+        ),
+        (
+            "the system workspace binding when no container default exists",
+            r#"
 [systems]
 default = "dev"
 
@@ -89,26 +99,14 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 working_dir = "/workspace"
 "#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    assert_eq!(policy.name, "web");
-}
-
-#[test]
-fn load_container_policy_prefers_the_container_default_over_the_system_binding() {
-    let root = temp_repo("container-default-before-system");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
+            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            None,
+            Selection::Resolves("web"),
+            None,
+        ),
+        (
+            "the container default over the system binding",
+            r#"
 [containers]
 default = "api"
 
@@ -131,23 +129,238 @@ default_workspace = "app"
 [systems.dev.workspaces.app]
 container = "web"
 "#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/api-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-    fs::write(
-        root.join("infra/dev/web-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
+            &[
+                ("infra/dev/api-compose.yml", "services:\n  app:\n    image: example\n"),
+                ("infra/dev/web-compose.yml", "services:\n  app:\n    image: example\n"),
+            ],
+            None,
+            Selection::Resolves("api"),
+            None,
+        ),
+        (
+            "a named container without a default",
+            r#"
+[containers]
 
-    let policy = load_container_policy(&root, None).expect("policy");
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            Some("web"),
+            Selection::Resolves("web"),
+            None,
+        ),
+        (
+            "an omitted name with neither default",
+            r#"
+[containers]
 
-    assert_eq!(policy.name, "api");
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            None,
+            Selection::Refused("container name omitted but neither"),
+            None,
+        ),
+        (
+            "a manifest with no container registry",
+            "[tasks]\n",
+            &[],
+            None,
+            Selection::Refused("[containers]"),
+            None,
+        ),
+    ];
+    for (name, manifest, files, requested, expected, check) in cases {
+        let root = temp_repo("container-selection");
+        fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
+        for (path, body) in files {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().expect("compose parent"))
+                .expect("mkdir compose dir");
+            fs::write(path, body).expect("write compose");
+        }
+        match expected {
+            Selection::Resolves(container) => {
+                let policy = load_container_policy(&root, requested).expect(name);
+                assert_eq!(policy.name, container, "{name}");
+                if let Some(check) = check {
+                    check(&policy);
+                }
+            }
+            Selection::Refused(token) => {
+                let error = load_container_policy(&root, requested).expect_err(name);
+                assert!(
+                    matches!(error, ContainerPolicyError::TaskInvocation(_)),
+                    "{name}: {error:?}"
+                );
+                assert!(error.to_string().contains(token), "{name}: {error}");
+            }
+        }
+    }
+}
+
+/// One compose project name: the catalog alias, a sanitized component, an
+/// explicit name, the checkout name when only bundle defaults carry an alias,
+/// and two containers that must not collide.
+#[test]
+fn project_name_cases() {
+    #[derive(Clone, Copy)]
+    enum Expects {
+        /// A single container resolves to this project name.
+        One(&'static str),
+        /// The alias comes only from bundle defaults, so the checkout names it.
+        RepoName,
+        /// Two containers keep these distinct project names.
+        Two(&'static str, &'static str),
+    }
+
+    fn single_container(alias: &str, project_name: &str) -> String {
+        format!(
+            r#"
+[catalog]
+alias = "{alias}"
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+{project_name}
+"#
+        )
+    }
+
+    type Row = (&'static str, fn(&Path) -> String, Expects);
+    let cases: [Row; 5] = [
+        (
+            "a catalog alias names a single container",
+            |_| single_container("workspace-app-reference", ""),
+            Expects::One("workspace-app-reference-dev"),
+        ),
+        (
+            "default project name components are sanitized",
+            |_| single_container("R7-webCore", ""),
+            Expects::One("r7-webcore-dev"),
+        ),
+        (
+            "an explicit project name is sanitized",
+            |_| {
+                single_container(
+                    "workspace-app-reference",
+                    "project_name = \"r7-webCore-decodelabs-library\"",
+                )
+            },
+            Expects::One("r7-webcore-decodelabs-library"),
+        ),
+        (
+            "an alias that only comes from bundle defaults leaves the checkout name",
+            |root| {
+                let bundle = root.with_file_name("bundle-defaults-alias-bundle");
+                fs::create_dir_all(&bundle).expect("mkdir bundle");
+                fs::write(
+                    bundle.join("bundle.toml"),
+                    r#"
+[bundle]
+name = "legacy-site"
+description = "legacy site fixture"
+"#,
+                )
+                .expect("write bundle descriptor");
+                fs::write(
+                    bundle.join("effigy.toml"),
+                    r#"
+[catalog]
+alias = "root"
+"#,
+                )
+                .expect("write bundle defaults");
+                format!(
+                    r#"
+[bundle]
+base = {{ type = "path", dir = "{}" }}
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+                    bundle.display()
+                )
+            },
+            Expects::RepoName,
+        ),
+        (
+            "two containers keep distinct project names",
+            |_| {
+                r#"
+[catalog]
+alias = "workspace-app-reference"
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.worker]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "jobs"
+"#
+                .to_owned()
+            },
+            Expects::Two(
+                "workspace-app-reference-web-dev",
+                "workspace-app-reference-worker-dev",
+            ),
+        ),
+    ];
+    for (name, manifest, expects) in cases {
+        let root = temp_repo("project-name");
+        fs::write(root.join("effigy.toml"), manifest(&root)).expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(
+            root.join("infra/dev/docker-compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .expect("compose");
+
+        match expects {
+            Expects::One(project_name) => {
+                let policy = {
+                    let _lock = crate::test_env_lock();
+                    load_container_policy(&root, None).expect(name)
+                };
+                assert_eq!(policy.project_name, project_name, "{name}");
+            }
+            Expects::RepoName => {
+                let policy = {
+                    let _lock = crate::test_env_lock();
+                    load_container_policy(&root, None).expect(name)
+                };
+                let expected = format!(
+                    "{}-dev",
+                    root.file_name().and_then(|name| name.to_str()).unwrap()
+                );
+                assert_eq!(policy.project_name, expected, "{name}");
+            }
+            Expects::Two(web, worker) => {
+                let policies = load_all_container_policies(&root).expect(name);
+                assert_eq!(policies.len(), 2, "{name}");
+                assert_eq!(policies[0].name, "web", "{name}");
+                assert_eq!(policies[0].project_name, web, "{name}");
+                assert_eq!(policies[1].name, "worker", "{name}");
+                assert_eq!(policies[1].project_name, worker, "{name}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -455,34 +668,6 @@ mounts = ["late:/var/www/late:ro"]
 }
 
 #[test]
-fn load_container_policy_requires_a_default_when_name_omitted() {
-    let root = temp_repo("sole-container");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let error = load_container_policy(&root, None).expect_err("should fail");
-
-    assert!(error
-        .to_string()
-        .contains("container name omitted but neither `[containers].default` nor a `[systems].default` workspace container is defined"));
-}
-
-#[test]
 fn load_container_exec_working_dir_ignores_host_task_defaults_for_workspace_inference() {
     let root = temp_repo("bundle-host-default-workdir");
     setup_workspace_app_path_bundle(&root);
@@ -562,179 +747,6 @@ mounts = [{ member = "underlay", target = "/workspace-root/underlay" }]
 }
 
 #[test]
-fn load_container_policy_accepts_named_container_without_default() {
-    let root = temp_repo("sole-non-dev-container");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, Some("web")).expect("policy");
-
-    assert_eq!(policy.name, "web");
-}
-
-#[test]
-fn load_container_policy_uses_catalog_alias_as_single_container_project_name() {
-    let root = temp_repo("single-container-alias");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[catalog]
-alias = "workspace-app-reference"
-
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    assert_eq!(policy.project_name, "workspace-app-reference-dev");
-}
-
-#[test]
-fn load_container_policy_sanitizes_default_project_name_components() {
-    let root = temp_repo("R7-webCore");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[catalog]
-alias = "R7-webCore"
-
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    assert_eq!(policy.project_name, "r7-webcore-dev");
-}
-
-#[test]
-fn load_container_policy_sanitizes_explicit_project_name() {
-    let root = temp_repo("explicit-project-name");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-project_name = "r7-webCore-decodelabs-library"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = load_container_policy(&root, None).expect("policy");
-
-    assert_eq!(policy.project_name, "r7-webcore-decodelabs-library");
-}
-
-#[test]
-fn load_container_policy_uses_repo_name_when_alias_only_comes_from_bundle_defaults() {
-    let root = temp_repo("single-container-bundle-root-alias");
-    let bundle = root.with_file_name("single-container-bundle-root-alias-bundle");
-    fs::create_dir_all(&bundle).expect("mkdir bundle");
-    fs::write(
-        bundle.join("bundle.toml"),
-        r#"
-[bundle]
-name = "legacy-site"
-description = "legacy site fixture"
-"#,
-    )
-    .expect("write bundle descriptor");
-    fs::write(
-        bundle.join("effigy.toml"),
-        r#"
-[catalog]
-alias = "root"
-"#,
-    )
-    .expect("write bundle defaults");
-    fs::write(
-        root.join("effigy.toml"),
-        format!(
-            r#"
-[bundle]
-base = {{ type = "path", dir = "{}" }}
-
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-"#,
-            bundle.display()
-        ),
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policy = {
-        let _lock = crate::test_env_lock();
-        load_container_policy(&root, None).expect("policy")
-    };
-    let expected = format!(
-        "{}-dev",
-        root.file_name().and_then(|name| name.to_str()).unwrap()
-    );
-
-    assert_eq!(policy.project_name, expected);
-}
-
-#[test]
 fn load_container_policy_rejects_duplicate_effective_project_names() {
     let root = temp_repo("duplicate-project-names");
     fs::write(
@@ -771,47 +783,6 @@ project_name = "workspace-app-reference-dev"
     assert!(error.to_string().contains("`workspace-app-reference-dev`"));
     assert!(error.to_string().contains("`web`"));
     assert!(error.to_string().contains("`worker`"));
-}
-
-#[test]
-fn load_container_policy_uses_distinct_default_project_names_for_multiple_containers() {
-    let root = temp_repo("multiple-default-project-names");
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[catalog]
-alias = "workspace-app-reference"
-
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-
-[containers.worker]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "jobs"
-"#,
-    )
-    .expect("write manifest");
-    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(
-        root.join("infra/dev/docker-compose.yml"),
-        "services:\n  app:\n    image: example\n",
-    )
-    .expect("compose");
-
-    let policies = load_all_container_policies(&root).expect("policies");
-
-    assert_eq!(policies.len(), 2);
-    assert_eq!(policies[0].name, "web");
-    assert_eq!(policies[0].project_name, "workspace-app-reference-web-dev");
-    assert_eq!(policies[1].name, "worker");
-    assert_eq!(
-        policies[1].project_name,
-        "workspace-app-reference-worker-dev"
-    );
 }
 
 #[test]
@@ -1089,11 +1060,3 @@ primary_service = "app"
     );
 }
 
-#[test]
-fn load_container_policy_requires_registry() {
-    let root = temp_repo("missing-registry");
-    fs::write(root.join("effigy.toml"), "[tasks]\n").expect("write manifest");
-    let error = load_container_policy(&root, None).expect_err("should fail");
-    assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
-    assert!(error.to_string().contains("[containers]"));
-}
