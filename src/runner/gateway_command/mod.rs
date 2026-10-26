@@ -246,7 +246,6 @@ pub(super) fn run_internal_gateway(args: InternalGatewayArgs) -> Result<String, 
     if args.listener_handoff {
         config = config.with_listener_handoff(true);
     }
-    fixture::register(&config)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

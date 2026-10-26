@@ -315,6 +315,12 @@ pub(super) fn tree(dir: &Path) -> BTreeMap<String, String> {
                 .expect("under base")
                 .display()
                 .to_string();
+            // SQLite's WAL index is shared memory: a reader's read mark is not
+            // application state, and the volume's mapping timing must not turn
+            // it into a reported write.
+            if key.ends_with("-shm") {
+                continue;
+            }
             let body = if meta.is_file() {
                 let bytes = std::fs::read(&path).unwrap_or_default();
                 format!("{:?}", crate::id::Digest::of(&bytes))

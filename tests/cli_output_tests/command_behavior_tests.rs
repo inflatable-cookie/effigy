@@ -2340,14 +2340,10 @@ case "$*" in
                   ;;
                   *)
                   done_marker="$EFFIGY_TEST_REMOTE_DONE_DIR/exec-$$.done"
-                  if [ -n "${EFFIGY_TEST_PROCESS_HELPER:-}" ]; then
-                    "$EFFIGY_TEST_PROCESS_HELPER" run "$EFFIGY_TEST_REMOTE_OWNER" "$done_marker" "$last_arg" >/dev/null 2>&1 &
-                  else
-                    EFFIGY_FIXTURE_PROCESS_OWNER="$EFFIGY_TEST_REMOTE_OWNER" \
-                    EFFIGY_FIXTURE_PROCESS_DONE="$done_marker" \
-                    EFFIGY_FIXTURE_PROCESS_SCRIPT="$last_arg" \
-                    "$EFFIGY_TEST_FIXTURE_PROCESS_BINARY" --ignored --exact support::fixture_remote_process_child --nocapture >/dev/null 2>&1 &
-                  fi
+                  EFFIGY_FIXTURE_PROCESS_OWNER="$EFFIGY_TEST_REMOTE_OWNER" \
+                  EFFIGY_FIXTURE_PROCESS_DONE="$done_marker" \
+                  EFFIGY_FIXTURE_PROCESS_SCRIPT="$last_arg" \
+                  "$EFFIGY_TEST_FIXTURE_PROCESS_BINARY" --ignored --exact support::fixture_remote_process_child --nocapture >/dev/null 2>&1 &
                   i=0
                   while [ ! -f "$done_marker" ] && [ "$i" -lt 1500 ]; do
                     sleep 0.2

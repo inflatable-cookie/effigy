@@ -7,16 +7,9 @@ publish = false
 description = "Owned temporary fixtures for Effigy tests"
 
 [dependencies]
-effigy-kernel = { path = "../effigy-kernel", features = ["test-support"] }
+effigy-kernel = { path = "../effigy-kernel" }
 libc = "0.2"
-serde_json = "1"
 tempfile = "3"
 
 [lints]
 workspace = true
-
-[[bin]]
-name = "effigy-fixture-process"
-path = "tests/fixtures/process.rs"
-test = false
-bench = false

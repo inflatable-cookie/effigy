@@ -683,7 +683,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         let home = home();
         let cx = cx();
         let spec = ProcessSpec {
-            argv: vec!["/bin/sh".into(), "-c".into(), "trap '' HUP; /usr/bin/env -i /bin/sh -c 'trap \"\" HUP; trap \"printf signal > signalled\" TERM CONT; echo $$ > descendant; while :; do if [ -f check ]; then : > checked; fi; done' & while [ ! -f descendant ]; do :; done".into()],
+            argv: vec!["/bin/sh".into(), "-c".into(), "trap '' HUP; /usr/bin/env -i /bin/sh -c 'trap \"\" HUP; trap \"printf signal > signalled\" TERM CONT; echo $$ > descendant; while :; do if [ -f check ]; then : > checked; fi; /bin/sleep 0.05; done' & while [ ! -f descendant ]; do /bin/sleep 0.05; done".into()],
             cwd: home.path().into(), env: BTreeMap::new(),
             grace: Duration::from_millis(10), lifetime: Lifetime::Finite(Duration::from_secs(60)), terminal, label: "anchor proof".into(),
         };
@@ -850,8 +850,7 @@ fn anchor_spawn_overhead_is_measured() {
     let _load: Vec<_> = (0..load)
         .map(|_| {
             OwnedChild(
-                Command::new("/bin/sh")
-                    .args(["-c", "while :; do :; done"])
+                Command::new("/usr/bin/yes")
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
