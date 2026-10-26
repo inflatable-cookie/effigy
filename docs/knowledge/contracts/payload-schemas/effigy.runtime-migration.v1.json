@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "effigy.runtime-migration.v1 payload",
-  "description": "Read-only report on the retired current-main central-store import. v0.15 ships only the v0.14.1 importers, which read legacy files on first use. A committed migration manifest is provenance and the retired store is ignored; without one, a machine still holding it is refused with the exact upgrade path. The command never stages, imports, stops, changes or deletes anything.",
+  "description": "Read-only report on the retired current-main central-store import. v0.15 ships only the v0.14.1 importers, which read legacy files on first use. The retired store, any cutover manifest and any old per-checkout import record are ignored: never read on a durable open, never changed, never deleted and never a refusal. The command never stages, imports, stops, changes or deletes anything.",
   "type": "object",
   "required": [
     "schema",
@@ -15,8 +15,7 @@
     "state": {
       "enum": [
         "no-legacy-state",
-        "committed",
-        "unreleased-main-state"
+        "committed"
       ]
     },
     "source": {
@@ -24,12 +23,6 @@
     },
     "message": {
       "type": "string"
-    },
-    "committed": {
-      "type": [
-        "object",
-        "null"
-      ]
     },
     "schema_version": {
       "const": 1

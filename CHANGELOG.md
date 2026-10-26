@@ -350,6 +350,22 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The startup image pin and executable identity. `Executable` is the binary's
+  path, and a helper execs whatever binary is there, so rebuilding or
+  reinstalling Effigy during a long run is no longer a refusal. The helper
+  handshake frame carries `HELPER_PROTOCOL`; a binary that speaks another
+  version refuses naming both versions and saying "rerun the command". The
+  device/inode/size/mtime/ctime identity, the private-image clone and verified
+  copy, the replaced-image retry and their fault points are gone.
+- The retired v0.14-to-v0.15 cutover and import-seal machinery:
+  `require_cutover`, `cutover_root`, `migration/adoption.rs`, the
+  `UnreleasedMainRuntime` ("run Effigy main 7b82d26") refusal, the
+  `MigrationPending` and missing-local-seal refusals, and the import seal as a
+  gate identity source. `kernel.db`, `migration/cutover.json`,
+  `migration-committed.json` and `migration-prepared.json` are ignored: never
+  read on a durable open, never changed, never deleted and never a refusal. A
+  checkout database with no `checkout.json` binding is bound in place.
+  `effigy run migrate --plan` only reports `no-legacy-state` or `committed`.
 - Parent-capability inheritance. `EFFIGY_PARENT_CAPABILITY`, descriptor 9 and
   the memory lease behind them are gone, together with the run-class
   inheritance, the 25 ms grant peek, the "descriptor was closed" notice and
@@ -1378,6 +1394,11 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **Only `.effigy/state` itself is owner- and mode-checked.** The path walk
+  reopens every ancestor no-follow but no longer consults an ancestor's owner
+  or mode, so a umask-002 checkout, a CI container or `/Users/Shared` opens.
+  An effect creates `.effigy/state` 0700 or tightens an existing
+  operator-owned directory to 0700; nothing else is repaired.
 - A stop counts its own window, from the grace the custody receipt recorded,
   instead of inheriting the caller's cleanup budget. A host-process supervisor
   mints that budget when its run begins, so stopping a workload that had been

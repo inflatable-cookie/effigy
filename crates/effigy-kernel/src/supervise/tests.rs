@@ -13,9 +13,6 @@ use crate::store::Store;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-mod image;
-
 fn cx() -> EffectContext {
     OperationContext::new(
         Deadline::At(Instant::now() + Duration::from_secs(90)),
@@ -140,13 +137,13 @@ impl World {
         let alive = unsafe { libc::kill(pid, 0) } == 0;
         assert!(!alive, "helper {pid} outlived its failed handshake");
     }
-    /// Oracle: no helper log or private image is left in the state root.
+    /// Oracle: no helper log is left in the state root.
     fn assert_no_residue(&self) {
         let root = self.home().join(".effigy/state");
         let residue: Vec<_> = std::fs::read_dir(&root)
             .unwrap()
             .filter_map(|e| e.ok()?.file_name().into_string().ok())
-            .filter(|name| name.starts_with("helper-") || name.starts_with("exe-"))
+            .filter(|name| name.starts_with("helper-"))
             .collect();
         assert!(residue.is_empty(), "state-root residue: {residue:?}");
     }
@@ -317,27 +314,24 @@ fn supervisor_death_before_admission_is_typed() {
     world.assert_owner_free(&root, "detached", 2);
 }
 
-/// The real entry reports its own refusal on stderr before exiting, so the
-/// parent's typed outcome names the cause (here: a replaced binary, I-SV4).
+/// A helper from a binary that speaks another protocol refuses the frame and
+/// names both versions, so a binary replaced during a long run says what to do.
 #[test]
-fn sentinel_refusal_reaches_the_parent_stderr_tail() {
+fn a_helper_protocol_mismatch_reaches_the_parent_stderr_tail() {
     let world = World::new();
     let cx = cx();
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
-    let fixture = fixture();
-    let executable = Executable::capture(&fixture).unwrap();
-    // The config names a stale identity for the sentinel's own image, as a
-    // binary replaced after the parent spawned it would: verify refuses.
-    let mut stale = executable.clone();
-    stale.changed.1 = stale.changed.1.wrapping_add(1);
+    let executable = Executable::capture(&fixture()).unwrap();
+    let other = HELPER_PROTOCOL + 1;
     let config = SentinelConfig {
+        protocol: other,
         home: world.home(),
         machine: false,
         machine_gates: None,
-        owner: owner("refusal"),
+        owner: owner("protocol"),
         run: RunId::new(1, [1; 10]).unwrap(),
         next: vec![b"recover".to_vec()],
-        executable: stale,
+        executable: executable.clone(),
     };
     let log = helper_log(&root).unwrap();
     let mut child = helper(&executable, SENTINEL)
@@ -357,106 +351,51 @@ fn sentinel_refusal_reaches_the_parent_stderr_tail() {
     let error = helper_failed(SENTINEL, &mut child, &log, result.expect_err("refused"));
     let (_, exit, stderr) = helper_exited(error);
     assert_eq!(exit, HelperExit::Code(1));
-    assert!(stderr.contains("startup binary replaced"), "{stderr:?}");
+    let message = format!(
+        "helper protocol {other} does not match this binary's protocol {HELPER_PROTOCOL}; \
+         rerun the command"
+    );
+    assert!(stderr.contains(&message), "{stderr:?}");
 }
 
-/// The effigy#239 cause: a rebuild replaces the startup path between this
-/// process's verify and the sentinel's own (`cargo run` of Effigy beside a
-/// live run). The first sentinel replaces its own path, as the rebuild would,
-/// and refuses unacknowledged; admission retries once from the private image
-/// of the unchanged startup image, which acknowledges. No private image remains.
+/// A rebuild or reinstall replaces the binary at the path during a run. The
+/// next helper execs whatever is there; with the same protocol it admits.
 #[test]
-fn startup_path_replaced_during_handshake_retries_from_the_startup_image() {
+fn a_binary_replaced_mid_run_still_admits_its_helper() {
     let world = World::new();
     let cx = cx();
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
-    let plan = world.helper(
-        r#"case "$0" in
-*/.effigy/state/exe-*|/dev/fd/*) printf '\001'; exec cat >/dev/null ;;
-esac
-cp "$0" "$0.rebuilt" && mv "$0.rebuilt" "$0"
-echo 'sentinel refused: startup binary replaced' >&2
-exit 1"#,
-    );
+    let plan = world.helper("printf '\\001'; exec cat >/dev/null");
+    std::fs::rename(&plan.executable.path, world.dir.path().join("old-helper")).unwrap();
+    std::fs::write(
+        &plan.executable.path,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nprintf '\\001'; exec cat >/dev/null\n",
+            world.pid_file().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &plan.executable.path,
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
     let mut run = Run::begin(
         &cx,
         &root,
         &inv("rebuilt"),
-        opts(1, Some(plan.clone())),
-        &cleanup(&cx),
-        &mut Strict,
-    )
-    .expect("the retry from the startup image is admitted");
-    assert!(run.has_sentinel());
-    assert!(plan.executable.verify().is_err(), "the path was replaced");
-    run.interrupt(&cleanup(&cx), crate::outcome::WorkloadOutcome::NotStarted)
-        .unwrap();
-    let settled = run.settle(&cleanup(&cx), &mut Strict).unwrap();
-    assert_eq!(settled.cleanup(), crate::outcome::CleanupOutcome::Complete);
-    world.assert_no_residue();
-    world.assert_owner_free(&root, "rebuilt", 2);
-}
-
-/// A replaced path is retried once only: a startup image whose every run
-/// refuses still ends in the typed outcome, with the second refusal's tail.
-#[test]
-fn a_refusing_startup_image_is_retried_once_then_typed() {
-    let world = World::new();
-    let cx = cx();
-    let root = StateRoot::effects(&cx, &world.home()).unwrap();
-    let plan = world.helper(
-        r#"case "$0" in
-*/.effigy/state/exe-*|/dev/fd/*) echo 'private image refused' >&2; exit 2 ;;
-esac
-cp "$0" "$0.rebuilt" && mv "$0.rebuilt" "$0"
-exit 1"#,
-    );
-    let error = Run::begin(
-        &cx,
-        &root,
-        &inv("refusing"),
         opts(1, Some(plan)),
         &cleanup(&cx),
         &mut Strict,
     )
-    .expect_err("both attempts refused");
-    let (_, exit, stderr) = helper_exited(error);
-    assert_eq!(exit, HelperExit::Code(2));
-    assert!(stderr.contains("private image refused"), "{stderr:?}");
-    world.assert_closed_not_started(&root, "refusing", RunId::new(1, [1; 10]).unwrap());
+    .expect("the replaced binary speaks the same protocol");
+    assert!(run.has_sentinel());
     world.assert_no_residue();
-    world.assert_owner_free(&root, "refusing", 2);
-}
-
-/// A replacement that lands before spawn is refused by this process's own
-/// verify: typed `NotStarted` naming the refusal, never store I/O. The
-/// admission retry treats it like a refusing sentinel (nothing ran).
-#[test]
-fn a_path_replaced_before_spawn_is_typed_not_started() {
-    let world = World::new();
-    let cx = cx();
-    let root = StateRoot::effects(&cx, &world.home()).unwrap();
-    let plan = world.helper("exit 0");
-    let path = world.dir.path().join("bin/helper");
-    let rebuilt = world.dir.path().join("bin/helper.rebuilt");
-    std::fs::copy(&path, &rebuilt).unwrap();
-    std::fs::rename(&rebuilt, &path).unwrap();
-    let log = helper_log(&root).unwrap();
-    let error = spawn_helper(&plan.executable, SENTINEL, &log, None).expect_err("refused");
-    match error {
-        RunError::HelperExited {
-            helper,
-            exit,
-            cause,
-            ..
-        } => {
-            assert_eq!((helper.as_str(), exit), (SENTINEL, HelperExit::NotStarted));
-            assert!(cause.contains("startup binary replaced"), "{cause}");
-        }
-        other => panic!("expected a typed refusal, got {other:?}"),
-    }
-    assert!(plan.executable.replaced_image().is_some());
-    world.assert_no_residue();
+    run.interrupt(&cleanup(&cx), WorkloadOutcome::NotStarted)
+        .unwrap();
+    run.settle(&cleanup(&cx), &mut Strict).unwrap();
+    world.assert_helper_reaped();
+    world.assert_owner_free(&root, "rebuilt", 2);
 }
 
 #[test]

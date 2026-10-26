@@ -24,6 +24,7 @@ pub(crate) struct MemoryGuard {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    protocol: u32,
     memory: bool,
     owner: ProcessIdentity,
     gates: usize,
@@ -60,12 +61,6 @@ impl MemoryGuard {
             } else {
                 "checkout lease backup startup"
             })?;
-        #[cfg(target_os = "linux")]
-        if purpose == MemoryPurpose::Foreground && executable.exec_fd.is_some() {
-            return Err(RunError::Invalid(
-                "foreground helper needs the verified startup path".into(),
-            ));
-        }
         let owner = ident::process_identity(std::process::id())
             .verified()
             .cloned()
@@ -79,6 +74,7 @@ impl MemoryGuard {
         }
         let (watch, closure) = ClosurePin::new()?;
         let config = Config {
+            protocol: HELPER_PROTOCOL,
             memory: true,
             owner,
             gates: copies.len(),
@@ -108,7 +104,6 @@ impl MemoryGuard {
                 Ok(())
             });
         }
-        super::prepare_helper_exec(&mut command, executable, SENTINEL)?;
         let mut child = command.spawn()?;
         let input = child
             .stdin
@@ -271,6 +266,7 @@ fn memory_frame(
 
 pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<(), RunError> {
     let config: Config = serde_json::from_value(config)?;
+    super::check_protocol(config.protocol)?;
     if !config.memory
         || config.gates == 0
         || config.gates > GATE_MAX

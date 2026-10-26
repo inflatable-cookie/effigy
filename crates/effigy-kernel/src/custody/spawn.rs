@@ -177,7 +177,7 @@ impl Blocked {
         spec: &ProcessSpec,
         nonce: &str,
         cx: &OperationContext,
-        image: &crate::supervise::anchor::Image<'_>,
+        image: &crate::supervise::anchor::Image,
         closure: Option<&crate::closure::ClosurePin>,
         handoff: Option<&OwnedFd>,
     ) -> io::Result<Self> {
@@ -205,7 +205,7 @@ impl Blocked {
         key: &str,
         nonce: &str,
         cx: &OperationContext,
-        image: Option<&crate::supervise::anchor::Image<'_>>,
+        image: Option<&crate::supervise::anchor::Image>,
         closure: Option<&crate::closure::ClosurePin>,
         handoff: Option<&OwnedFd>,
     ) -> io::Result<Self> {
@@ -270,7 +270,6 @@ impl Blocked {
         let anchor_args = [
             image.map_or(c"".as_ptr(), |i| i.path.as_ptr()),
             c"__kernel-anchor".as_ptr(),
-            image.map_or(c"".as_ptr(), |i| i.metadata.as_ptr()),
             std::ptr::null(),
         ];
         let anchor_env = [
@@ -281,7 +280,7 @@ impl Blocked {
             .and_then(|i| i.fd.as_ref())
             .map_or(-1, AsRawFd::as_raw_fd);
         let anchored = image.is_some();
-        let cwd = DirFd::walk(&spec.cwd, Trust::Operator).map_err(io::Error::other)?;
+        let cwd = DirFd::walk(&spec.cwd, Trust::Ancestor).map_err(io::Error::other)?;
         let _fork = FORK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

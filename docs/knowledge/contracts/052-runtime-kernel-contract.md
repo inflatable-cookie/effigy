@@ -267,9 +267,8 @@ pin. A durable run with no memory guard keeps its checkout custody backup in
 the same way.
 
 Bound checkout admission always takes the filesystem owner alias alongside its
-persisted-token spelling and every verified import alias. The sentinel derives
-the same filesystem alias from the checkout binding or import seal when it
-reopens the journal. Durable recovery checks predecessors under every held owner
+persisted-token spelling. The sentinel derives the same filesystem alias from
+the checkout binding when it reopens the journal. Durable recovery checks predecessors under every held owner
 alias before admitting a successor. First durable initialization therefore cannot
 split exclusion from an already running token-free foreground invocation. The
 bounded admission retention sweep runs after those gates; a refused alias gate
@@ -1133,11 +1132,8 @@ Before acknowledging the barrier, the blocked child forks an anchor inside
 its already-created process group (and its session for a PTY). A transient
 intermediate child reparents the anchor and is reaped before workload exec,
 so the workload never inherits a hidden child to wait for. The anchor
-re-execs the run's retained startup image as `__kernel-anchor`, verifies the
-image (I-SV4), ignores HUP, INT and TERM, then acknowledges its pid. Linux
-executes and verifies the held descriptor; macOS uses the existing private
-image pin when the startup path was replaced. Its environment contains only
-the custody nonce. The parent records the full `{pid, start, boot}` identity
+re-execs the run's binary as `__kernel-anchor`, ignores HUP, INT and TERM,
+then acknowledges its pid. Its environment contains only the custody nonce. The parent records the full `{pid, start, boot}` identity
 in the optional `anchor` field alongside the existing receipt. Old receipts
 omit that field and deserialize unchanged; imports infer no anchor.
 
@@ -1163,12 +1159,11 @@ sentinel is in another session and cannot join a PTY workload's group.
 both constraints. A fork-only anchor would require an execed custody leader
 helper, or delegating workload creation and descriptor transfer to a sentinel
 launched with its own recorded nonce. This implementation execs only the
-anchor and preserves the existing workload barrier protocol. The retained
-startup image is the only
-shipped native image with the kernel entry point; using it preserves I-SV4 and
+anchor and preserves the existing workload barrier protocol. The run's own
+binary is the only shipped image with the kernel entry point, so using it
 avoids adding a separately distributed helper. After the leader's descriptor
 closure, anchor setup closes only its newly created descriptors; the helper
-closes the protocol's known inherited descriptors after image verification.
+closes the protocol's known inherited descriptors at startup.
 
 Planner ruling (2026-10-21, effigy-bd): about 500 net production lines plus
 proofs are authorized; proof and benchmark lines do not count toward the
@@ -1434,8 +1429,10 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
   resident daemon other than the user gateway.
 - I-SV3: front ends (TUI, attached text, detached) read the same events and
   logs. A front end never changes topology or semantics (K11).
-- I-SV4: the supervisor and sentinel re-exec the binary identified at
-  startup; a replaced binary on disk is detected and refused.
+- I-SV4: the supervisor and sentinel exec whatever binary the startup path
+  names, so a rebuild or reinstall during a run is ordinary. The helper
+  handshake frame carries a protocol version; a binary that speaks another
+  version refuses before running anything, naming both versions.
 
 #### Failure model
 
@@ -2039,18 +2036,22 @@ block; foreground admission and all reads never append it.
   runs/<run-id>/                    durable redacted rotating logs
   objects/<sha256>/                 immutable render/source closures
   staging/<run-id>/                 durable run-owned staging
-  migration-committed.json          local import seal, only on a machine that committed §11.1
+  migration-committed.json          old import record; ignored, never read
+  migration-prepared.json           old import record; ignored, never read
 ~/.effigy/state/
   machine.db                        only §7.5 shared facts (+ -wal and -shm while open)
   gates/<scope>.scope               machine scope locks
   gates/<scope>/<rid>.gate          shared-resource locks
-  migration/                       retired §11.1 cutover manifest and receipts
+  migration/                        old cutover manifest and receipts; ignored
 ```
 
-Roots/components are real, operator-owned 0700 directories; files are 0600,
-no-follow, descriptor-verified and bounded (K13). Checkout ancestors may have
-ordinary source-directory read/execute permissions but must not be writable by
-another user; the private `.effigy/state/` subtree must pass the strict check.
+The state root and its family directories are real, operator-owned 0700
+directories; files are 0600, no-follow, descriptor-verified and bounded (K13).
+Only `.effigy/state` itself is owner- and mode-checked: an effect creates it
+0700 or tightens an existing operator-owned directory to 0700, and nothing
+else. Ancestors, including `.effigy`, are reopened no-follow but their owner
+and mode are never consulted, so a umask-002 checkout, a CI container or
+`/Users/Shared` is ordinary.
 Mutation on NFS, SMB, WebDAV, FUSE or sshfs refuses. SQLite keeps §5.5's
 WAL/FULL settings. Private fixtures use a fresh `HOME` **and independent
 checkout roots**, never real checkout links. No production state override is
@@ -2174,9 +2175,8 @@ nor holder records are added to the machine database.
 | 14 | Reports and exports | explicit user-owned paths, engine `atomic_replace` |
 | 15 | Platform setup outputs | resolver, launchd, completion; setup verifies ownership before changing (R3), retained until explicit removal |
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
-| 17 | Migration receipts | machine `state/migration/`, local `state/migration-committed.json` and destination metadata; retired §11.1 evidence, read never written |
 
-Families 1–6 and 17 are host-only; family 4 may be mounted read-only by the
+Families 1–6 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
 move into either database. Observe creates none of these paths. Certificate
 and platform setup remain explicit gateway/setup work, not foreground admission.
@@ -2594,8 +2594,8 @@ only, and host access needs a terminal opened through Effigy.
   or compile Effigy or look for a sibling checkout. A contributor's explicit
   Prepare may build the artifact and record the same digest receipt.
 - A version or protocol mismatch between client, context and server refuses
-  before any effect, naming the host re-prepare command. A live executable is
-  never replaced under an active run (I-SV4).
+  before any effect, naming the host re-prepare command. Guest artifact
+  installation never replaces the live executable under an active run.
 
 ### 8.10 Rules under this design
 
@@ -2666,38 +2666,13 @@ Task engine adoption (effigy#217, 2026-10-19):
 Prerequisite kernel additions for that adoption: `run::history`,
 `run::unclosed` and `RunSummary` (§5.6 status reads); `TaskId` and
 `ResourceId::key` accessors (§5.1); `Terminal::Inherit { capture }` and
-separately redacted stdout and stderr queues (§5.7); `Executable` identified by
-file identity instead of a content digest, and holding the startup image open
-(§5.8, I-SV4). When a build replaces the running binary's path (`cargo run` of
-Effigy inside an Effigy sequence), a later sentinel re-execs the unchanged
-held startup image without copying its data. On macOS `fclonefileat` clones
-from the held fd into the verified state directory; the APFS CoW clone is
-removed only after the sentinel acknowledges. A clone cannot leave its
-filesystem, and a state root apart from the running image is an ordinary
-operator setup — a project checkout on an external drive, or `[scratch]` on a
-second disk — so `EXDEV` (and `ENOTSUP` from a filesystem without cloning)
-falls back to a verified copy: the bytes come from the held descriptor, are
-flushed, compared byte for byte with the held image, and the copy is then made
-read-only, so the pin is exactly the running image and cannot change after it.
-A partially written copy is removed, and no other failure falls back, so a
-resource refusal still refuses and a same-volume pin still writes no data. On
-Linux `execveat` with
-`AT_EMPTY_PATH` executes the held fd directly; the sentinel verifies that
-inherited descriptor before acknowledging. Pinning checks device, inode,
-size, mtime and ctime before and after, and helper verification retains all
-five fields. As before, an unlink's ctime change is allowed only when
-recognising the replaced, otherwise unchanged held image. A copy that cannot
-be written or compared, and fd execution on a platform without it, refuse with
-`HelperExited(NotStarted)`; there is no laxer pin. Fault points cover
-pin preparation, clone/copy selection, post-pin identity and fd execution;
-a changed image still refuses. A replacement can also land
-between this process's verify and the sentinel's own (effigy#239: library
-tests' nested `cargo run --bin effigy` re-uplifts `target/debug/effigy` as a
-new inode on every invocation). That sentinel refuses and exits
-unacknowledged, or this process's own verify refuses before spawn
-(`NotStarted`); either way nothing ran and nothing recorded it, so admission
-retries once from the pinned held image. The detached supervisor has no such fallback yet:
-a replaced path still refuses its start, now as a typed `HelperExited`.
+separately redacted stdout and stderr queues (§5.7); and an `Executable` that
+is the binary's path. Helpers exec whatever that path names, so a build that
+replaces the running binary's path (`cargo run` of Effigy inside an Effigy
+sequence) is not a refusal. Each helper handshake frame carries
+`HELPER_PROTOCOL`; a binary that speaks another version refuses and names both
+versions, telling the operator to rerun the command. There is no image pin, no
+clone or copy, and no identity check.
 
 Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
 CLI and helper dispatch with release optimization and symbols stripped so macOS's
@@ -2927,16 +2902,16 @@ ever wrote it and v0.15 ships one migration path: the v0.14.1 importers above.
   `7b82d26`: 110,944 machine rows, one checkout destination and 50 history
   partitions dropped. Its `state/migration/cutover.json` and per-checkout
   `migration-committed.json` seals are that machine's evidence.
-- With a committed manifest, Effigy ignores `kernel.db` entirely. Per M3 it
-  never deletes it; removal is explicit maintenance after one minor.
-- With no committed manifest, a machine still holding the store is refused
-  once, before any effect: "this machine has unreleased-main runtime state;
-  migrate it with Effigy main 7b82d26 (`effigy run migrate
-  --legacy-launchers-stopped`) then upgrade". It is never guessed at (M5).
-- `effigy run migrate --plan` only reports that state. The importer's
-  busy-writer preflight, stop controls, prepared/staged destinations, commit
-  manifest publication, seal resumption and the 151,244,800-byte actual-copy
-  proof are gone; `docs/knowledge/retired.toml` lists their terms and paths.
+- `kernel.db`, `migration/cutover.json`, `migration-committed.json` and
+  `migration-prepared.json` are all ignored. They are never read on a durable
+  open, never changed, never deleted and never a refusal. Per M3 removal is
+  explicit maintenance after one minor.
+- A checkout database with no `checkout.json` binding is bound in place.
+- `effigy run migrate --plan` only reports whether a cutover manifest exists.
+  The importer's busy-writer preflight, stop controls, prepared/staged
+  destinations, commit manifest publication, seal resumption, the actual-copy
+  proof and the unreleased-main refusal are gone; `docs/knowledge/retired.toml`
+  lists their terms and paths.
 
 ## 12. Proof plan
 
@@ -3046,7 +3021,7 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Task status read model | `tasks status <task>` and `tasks status --all`, text/JSON: first foreground run with no token/DB is live, not never-run; free/stale gates and foreground exit produce not-recorded; old durable success stays historical; held/unverifiable identity and discovered residue are unknown; interrupted durable runs keep recovery commands. No history row or token is created. Validate the v3 envelopes and durable-only latest/history per 018 |
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
 | Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
-| Retired central store | A machine home holding the retired `~/.effigy/state/kernel.db` is refused once with the Effigy main `7b82d26` upgrade path, before any run or destination state exists and without changing the file; with a committed manifest the file is ignored and never deleted; `run migrate --plan` never stages, stops, imports or deletes anything |
+| Retired central store | A machine home holding the retired `~/.effigy/state/kernel.db` opens normally: the file, any cutover manifest and any old per-checkout import record are ignored, never changed and never deleted; `run migrate --plan` never stages, stops, imports or deletes anything |
 | Deleted-worktree retirement (Tom, 2026-10-22) | Disposable backend stacks from deleted linked/Queue worktrees, with their checkout journals removed and no central index: `effigy container retire --dead` groups the labelled resources by checkout path, retires the groups whose path is gone, and preserves live/unknown/foreign groups, persistent data and the unselected backend |
 | Gateway/environment regression | Private gateway and disposable engine fixtures: unchanged pins/routes after migration, proxy readiness, container reuse, R4 holder refusal, idle-stop and interrupted recovery; no calls to the unselected backend or operator's gateway |
 

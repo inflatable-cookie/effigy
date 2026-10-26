@@ -373,9 +373,8 @@ without a central index). The amendment and implementation shipped together.
 2026-10-24: the current-main central-store importer itself is retired
 (effigy#307). Once Tom's machine had migrated, he confirmed the schema existed
 only on his machine and accepted removing the importer before v0.15. §11.1 is
-now a retired note: a machine which committed that cutover ignores `kernel.db`
-and never deletes it, and one still holding it without a manifest is refused
-once with the Effigy main `7b82d26` upgrade path.
+now a retired note: the old store, any cutover manifest and any old
+per-checkout import record are ignored, never changed and never deleted.
 
 2026-10-24, foreground custody reports. Queue host runs whose Effigy process
 died stayed `running` and held capacity, because Q-010 keeps foreground runs in
@@ -422,16 +421,16 @@ The ruling is the location-only rule, recorded in
 
 - A journal opens by its location, `<checkout>/.effigy/state/`. No recorded
   device or inode can refuse it.
-- `checkout.json` and an import seal's destination are provenance: a record from
-  an earlier boot, or one that no longer matches, is rewritten to the current
-  values by the next effect and the journal keeps its history.
+- `checkout.json` is provenance: a record from an earlier boot, or one that no
+  longer matches, is rewritten to the current values by the next effect and the
+  journal keeps its history. Old import records are ignored entirely.
 - Prior-boot runs are already history through the boot identity their records
   carry.
 - The refusals that remain are invariants about the current process: a live
   custodian whose retained checkout, state directory or Git locator was replaced,
-  a Git resolution that disagrees with the checkout's own `.git`, and a database
-  this binary never bound. Custody leases and socket receipts are identified by
-  inode, never by the mount-time device number.
+  and a Git resolution that disagrees with the checkout's own `.git`. A
+  database with no binding is bound in place. Custody leases and socket
+  receipts are identified by inode, never by the mount-time device number.
 
 ## Q-011 — v0.15 simplification before qualification
 

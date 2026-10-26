@@ -49,12 +49,6 @@ impl<'a> MachineFacts<'a> {
                 "machine facts require an explicit shared-fact root and owner".into(),
             ));
         }
-        let observe = cx
-            .child(Duration::from_secs(10))
-            .operation()
-            .observe()
-            .map_err(|_| RunError::Invalid("machine fact observation context".into()))?;
-        crate::migration::adoption::access(&observe, root)?;
         let mut guard =
             Gate::acquire(cx, root, std::slice::from_ref(&options.owner), options.wait)?;
         let mut store = Store::open(cx, root)?;

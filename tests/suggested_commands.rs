@@ -27,10 +27,6 @@ const NOT_A_COMMAND_FORM: &[(&str, &str)] = &[
         "`<group>` and `<command>` stand for one of the names the sentence lists, and no list value is a help topic's own name",
     ),
     (
-        "effigy run migrate --legacy-launchers-stopped",
-        "the command of the older Effigy build (7b82d26) the sentence tells you to install; this checkout's `run migrate` is plan-only",
-    ),
-    (
         "effigy deps sample bun sample",
         "two bare positional `{}` arguments (an operation and a library) that carry no placeholder name, so their value kind is unknowable",
     ),

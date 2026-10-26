@@ -17,7 +17,6 @@
     "crates/effigy-kernel/src/fs.rs": 4,
     "crates/effigy-kernel/src/gate/checkout_fence.rs": 1,
     "crates/effigy-kernel/src/id.rs": 2,
-    "crates/effigy-kernel/src/migration.rs": 1,
     "crates/effigy-kernel/src/probe.rs": 1,
     "crates/effigy-kernel/src/probe/guard.rs": 1,
     "crates/effigy-kernel/src/remote.rs": 1,

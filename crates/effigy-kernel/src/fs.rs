@@ -175,8 +175,9 @@ impl fmt::Display for FileName {
 /// Trust policy for one opened object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Trust {
-    /// Above the trusted root: owned by root or the operator, and not
-    /// writable by others unless sticky.
+    /// Above the state root: only proves the component is a real directory.
+    /// Its owner and mode are never checked, so a umask-002 checkout, a CI
+    /// container or `/Users/Shared` cannot refuse the operator's own state.
     Ancestor,
     /// Operator-owned and not group- or other-writable (user files, `~/.effigy`).
     Operator,
@@ -206,9 +207,10 @@ impl Clone for DirFd {
 impl DirFd {
     /// Opens a user directory. The operator's own path spelling (for example
     /// macOS `/var` → `/private/var`) is resolved first; every component is
-    /// then reopened no-follow from `/` and owner-checked.
+    /// then reopened no-follow from `/`. Only `.effigy/state` carries an
+    /// ownership and mode check; every other directory is opened as it is.
     pub fn open(path: &Path) -> Result<Self, FsError> {
-        Self::walk(path, Trust::Operator)
+        Self::walk(path, Trust::Ancestor)
     }
     pub(crate) fn walk(path: &Path, last: Trust) -> Result<Self, FsError> {
         Self::walk_with_setup(path, last, None)
@@ -813,17 +815,17 @@ pub(crate) fn check(
             },
         ));
     }
+    // An ancestor above the state root is only reopened no-follow.
     let operator = operator_uid();
     let owner_ok = match trust {
-        Trust::Ancestor => stat.st_uid == 0 || stat.st_uid == operator,
+        Trust::Ancestor => true,
         Trust::Operator | Trust::Private => stat.st_uid == operator,
     };
     if !owner_ok {
         return Err(FsError::untrusted(path, "wrong owner"));
     }
-    let sticky = mode & libc::S_ISVTX as u32 != 0;
     let mode_ok = match trust {
-        Trust::Ancestor => mode & 0o022 == 0 || (sticky && kind == Kind::Dir),
+        Trust::Ancestor => true,
         Trust::Operator => mode & 0o022 == 0,
         Trust::Private => mode & 0o077 == 0,
     };

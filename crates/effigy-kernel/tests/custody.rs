@@ -499,13 +499,8 @@ fn custody_detach_secondary_client_death_and_explicit_stop() {
     });
 }
 #[test]
-fn custody_replaced_binary_refuses_startup_and_status_names_dead_sentinel() {
+fn custody_dead_sentinel_is_reported_as_a_gap_and_settles() {
     let home = home();
-    let copy = home.path().join("fixture-copy");
-    std::fs::copy(fixture(), &copy).unwrap();
-    let executable = Executable::capture(&copy).unwrap();
-    std::fs::write(&copy, b"changed").unwrap();
-    assert!(executable.verify().is_err());
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let run = begin(&cx, &root);

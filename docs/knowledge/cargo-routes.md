@@ -101,13 +101,10 @@ routes and never need a row.
 ## Host note: permanent-drive outputs and multi-step runs
 
 With Oxide's permanent-drive placement (`target` is a link to the build
-volume), a multi-step Effigy task whose first step rebuilds `effigy` used to
-fail to admit the next step: the supervisor pins its replaced startup image
-with `fclonefileat`, which cannot cross from the build volume into the
-checkout's state root (`Cross-device link`). The pin now falls back to a
-verified, read-only copy across filesystems (contract 052 §10.1), so the next
-step admits from a state root on another volume. This is host state, not
-routing. The routes that used to hit it are `proof:containers:isolated-dirs`,
+volume), a multi-step Effigy task whose first step rebuilds `effigy` admits its
+next step from whatever binary the path names; a state root on another volume
+is irrelevant. This is host state, not routing. The routes that used to expose
+cross-volume pinning are `proof:containers:isolated-dirs`,
 `proof:containers:isolated-mount-points`, `test:containers:generations:cli`,
 `test:containers:generations:consumers` and `test:doctor:git-timeout-proof`;
 they are the ones to re-check on a host that links `target` to another volume.

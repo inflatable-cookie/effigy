@@ -230,11 +230,10 @@ The 052 §11.1 importer for the current-main central store is retired
 (effigy#307). v0.15 ships only the v0.14.1 importers above, so an environment
 closure arrives through the family import on first use: the desired render,
 backend, retention, object refs and holders keep their identity, and containers
-are not recreated (M7). A machine that committed the retired
-cutover ignores the old store and never deletes it; one still holding it
-without a committed manifest is refused once with the Effigy main `7b82d26`
-upgrade path. PID-only evidence remains Unknown, and old input stays
-byte-identical (M1/M3/M4/M8).
+are not recreated (M7). The old store, any cutover manifest and any old
+per-checkout import record are ignored: never read on a durable open, never
+changed, never deleted and never a refusal. PID-only evidence remains Unknown,
+and old input stays byte-identical (M1/M3/M4/M8).
 
 ## 8. Guest
 

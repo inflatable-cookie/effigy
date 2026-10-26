@@ -15,7 +15,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "A run reads by its run id or its key. A run started with `--run-id` logs each stream's output (redacted) unless both were terminals; other runs keep no log.",
         "`run logs --follow` ends when the run settles. Resume a lost follow with the byte offsets you already received; expired bytes are reported, never skipped.",
         "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run.",
-        "`run migrate` only reports. v0.15 imports v0.14.1 legacy state on first use; a machine still holding the retired current-main central store must be migrated with Effigy main 7b82d26 before it upgrades."
+        "`run migrate` only reports. v0.15 imports v0.14.1 legacy state on first use; the retired current-main central store, any cutover manifest and any old import record are ignored and never deleted."
     ],
     usage: text_lines![
         "effigy run migrate --plan [--json]",

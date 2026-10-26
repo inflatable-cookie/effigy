@@ -1,5 +1,5 @@
-//! Runtime routing proofs: publication evidence, unreleased-main refusal and
-//! one local journal per checkout. Every source is under a private fixture.
+//! Runtime routing proofs: one local journal per checkout, bound in place.
+//! Every source is under a private fixture.
 mod support;
 use effigy_kernel::ctx::EffectClass;
 use effigy_kernel::gate::{Gate, Wait};
@@ -18,82 +18,6 @@ fn location(root: &std::path::Path) -> migration::CheckoutLocation {
         root: root.to_path_buf(),
         git_directory: None,
     }
-}
-
-/// A machine home which still holds the retired current-main central store.
-fn retired_central_store() -> (effigy_test_support::Fixture, StateRoot, ResourceId) {
-    let home = home();
-    let cx = effects(EffectClass::Mutate);
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
-    let owner = ResourceId::store(
-        Scope::Checkout(CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16])),
-        "fixture",
-    )
-    .unwrap();
-    let mut store = Store::open(&cx, &root).unwrap();
-    store
-        .txn(&cx, |txn| txn.resource(&owner, "test").map(|_| ()))
-        .unwrap();
-    drop(store);
-    (home, root, owner)
-}
-
-#[test]
-fn runtime_checkout_routing_refuses_unreleased_main_before_creating_a_destination() {
-    let (machine, _, _) = retired_central_store();
-    let checkout = home();
-    let cx = effects(EffectClass::Mutate);
-    let before = snapshot(machine.path());
-    assert!(matches!(
-        StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())),
-        Err(StoreError::UnreleasedMainRuntime)
-    ));
-    let message = StoreError::UnreleasedMainRuntime.to_string();
-    assert!(
-        message.starts_with("this machine has unreleased-main runtime state;"),
-        "{message}"
-    );
-    assert!(message.contains("7b82d26"), "{message}");
-    assert!(!message.contains("prepared but not sealed"), "{message}");
-    assert!(!checkout.path().join(".effigy").exists());
-    assert!(matches!(
-        StateRoot::runtime_machine_observe(&observe(), machine.path()),
-        Observed::Unknown(_)
-    ));
-    assert!(matches!(
-        StateRoot::runtime_machine_effects(&cx, machine.path()),
-        Err(StoreError::UnreleasedMainRuntime)
-    ));
-    assert_eq!(snapshot(machine.path()), before);
-}
-#[test]
-fn runtime_routing_ignores_the_retired_store_once_a_manifest_committed() {
-    let (machine, _, _) = retired_central_store();
-    let checkout = home();
-    let cx = effects(EffectClass::Mutate);
-    let state = machine.path().join(".effigy/state");
-    let migration = state.join("migration");
-    std::fs::create_dir_all(&migration).unwrap();
-    std::fs::set_permissions(&migration, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let digest = "7b82d2648".to_owned() + &"0".repeat(55);
-    let receipt = serde_json::json!({
-        "format": "effigy.runtime-import.v1",
-        "id": digest,
-        "source_digest": digest,
-        "source_schema": 3,
-        "source_build": "effigy main 7b82d2648",
-        "writer_build": "effigy-kernel fixture",
-        "destinations": [],
-        "dropped_history": {"checkouts": 0, "resources": 0, "runs": 0, "sample": []},
-    });
-    let manifest = migration.join("cutover.json");
-    std::fs::write(&manifest, serde_json::to_vec(&receipt).unwrap()).unwrap();
-    std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let before = std::fs::read(state.join("kernel.db")).unwrap();
-    // M3: the retired source is never deleted. A committed manifest is
-    // provenance, so the file is ignored rather than imported or refused.
-    StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
-    assert_eq!(std::fs::read(state.join("kernel.db")).unwrap(), before);
 }
 
 #[test]
@@ -158,13 +82,78 @@ fn runtime_checkout_routing_is_local_and_rebinds_a_replaced_git_directory() {
     assert!(StateRoot::checkout_effects(&cx, machine.path(), &retargeted).is_err());
 }
 #[test]
-fn runtime_checkout_routing_rejects_unbound_database_and_masks_guest_before_io() {
+fn runtime_checkout_binds_a_database_that_has_no_binding() {
     let machine = home();
     let checkout = home();
     let cx = effects(EffectClass::Mutate);
+    // A checkout database created before any binding existed is bound in place.
     let primitive = StateRoot::effects(&cx, checkout.path()).unwrap();
     drop(Store::open(&cx, &primitive).unwrap());
-    assert!(StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).is_err());
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path()))
+        .expect("a checkout database without a binding is bound in place");
+    drop(Store::open(&cx, &root).expect("the bound journal opens"));
+    assert!(checkout
+        .path()
+        .join(".effigy/state/checkout.json")
+        .is_file());
+}
+
+#[test]
+fn runtime_old_migration_records_are_ignored() {
+    let machine = home();
+    let checkout = home();
+    let state = checkout.path().join(".effigy/state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for name in ["migration-committed.json", "migration-prepared.json"] {
+        let record = state.join(name);
+        std::fs::write(&record, br#"{"format":"effigy.runtime-import.v1"}"#).unwrap();
+        std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path()))
+        .expect("old migration records are ignored");
+    drop(Store::open(&cx, &root).expect("the journal opens"));
+    assert!(state.join("migration-committed.json").is_file());
+    assert!(state.join("migration-prepared.json").is_file());
+}
+
+#[test]
+fn runtime_checkout_under_a_group_writable_ancestor_opens() {
+    // A umask-002 parent, a CI container or `/Users/Shared` is ordinary. Only
+    // `.effigy/state` itself is operator-owned and 0700.
+    let space = home();
+    let parent = space.path().join("shared");
+    std::fs::create_dir(&parent).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let checkout = parent.join("app");
+    std::fs::create_dir(&checkout).unwrap();
+    // A umask-002 clone is group-writable, and so is everything under it.
+    std::fs::set_permissions(&checkout, std::fs::Permissions::from_mode(0o775)).unwrap();
+    std::fs::create_dir(checkout.join(".effigy")).unwrap();
+    std::fs::set_permissions(
+        checkout.join(".effigy"),
+        std::fs::Permissions::from_mode(0o775),
+    )
+    .unwrap();
+    let machine = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location(&checkout))
+        .expect("a group-writable ancestor is not a refusal");
+    drop(Store::open(&cx, &root).unwrap());
+    assert_eq!(
+        std::fs::symlink_metadata(root.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700,
+        "the state root itself is 0700"
+    );
+}
+
+#[test]
+fn runtime_checkout_masks_guest_before_io() {
     let guest = effigy_kernel::ctx::OperationContext::new(
         effigy_kernel::ctx::Deadline::At(
             std::time::Instant::now() + std::time::Duration::from_secs(5),
@@ -188,6 +177,7 @@ fn runtime_checkout_routing_rejects_unbound_database_and_masks_guest_before_io()
     ));
     assert_eq!(snapshot(fresh.path()), before);
 }
+
 #[test]
 fn runtime_machine_format_bootstrap_is_idempotent_without_opening_a_database() {
     let machine = home();
@@ -217,9 +207,10 @@ fn runtime_bound_checkout_survives_unreadable_machine_layout() {
         StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
     let machine_root = StateRoot::runtime_machine_effects(&cx, machine.path()).unwrap();
     std::fs::write(machine_root.path().join("machine-format.json"), b"corrupt").unwrap();
+    // A marker is provenance, never a gate on reading shared facts.
     assert!(matches!(
         StateRoot::runtime_machine_observe(&observe(), machine.path()),
-        Observed::Unknown(_)
+        Observed::Verified(_, _)
     ));
     let before = snapshot(machine.path());
     StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
@@ -479,9 +470,10 @@ fn runtime_machine_gate_refusal_does_not_make_local_gates_depend_on_machine_form
 }
 #[test]
 fn the_state_home_is_never_read_as_a_checkout_state_root() {
-    // A legacy store under the state home stands in for the machine store that
-    // shares `<home>/.effigy/state` after the Q-010 cutover.
-    let (home, _source, _) = retired_central_store();
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    drop(Store::open(&cx, &root).unwrap());
     let observed = StateRoot::checkout_observe_in(&observe(), home.path(), &location(home.path()));
     assert!(
         matches!(observed, Observed::Absent(_)),

@@ -118,7 +118,6 @@ impl ForegroundRun {
             .operation()
             .observe()
             .map_err(|_| RunError::Invalid("foreground publication context".into()))?;
-        crate::migration::adoption::check_invocation(&publication, root, inv)?;
         let plan = opts
             .custody
             .ok_or_else(|| RunError::Invalid("foreground custody needs a memory guard".into()))?;
@@ -197,8 +196,8 @@ impl ForegroundRun {
     pub(crate) fn has_guard(&self) -> bool {
         self.guard.is_some()
     }
-    pub(crate) fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
-        crate::supervise::anchor::Image::memory(&self.executable)
+    pub(crate) fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError> {
+        crate::supervise::anchor::Image::prepare(&self.executable)
     }
     pub(crate) fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
         let effect = self

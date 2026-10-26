@@ -68,13 +68,8 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        // Short, and on the repo's volume: a managed run's control socket lives
-        // under this home and a Unix socket path is bounded (SUN_LEN), while a
-        // durable helper pins its startup image with a zero-copy clone, which a
-        // `clonefile` only performs within one volume. The repo is the external
-        // `/Users/Shared` fixture, so the home stays on `/tmp` beside it even
-        // when a `[scratch]` run puts `TMPDIR` on another disk (the pin then
-        // refuses with a cross-device link). `/tmp` is short enough for the
+        // Short: a managed run's control socket lives under this home and a
+        // Unix socket path is bounded (SUN_LEN). `/tmp` is short enough for the
         // socket; macOS's default `TMPDIR` is not.
         let home =
             effigy_test_support::Fixture::in_parent("ekm-", Path::new("/tmp")).expect("home");
@@ -490,11 +485,8 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
 }
 
 /// A sequence whose step rebuilds the running binary (as `cargo run` of
-/// Effigy inside Effigy does) still starts its later runs: their helpers
-/// re-exec the startup image, never the replacement (I-SV4). The tree is
-/// declared durable because the held startup image is the durable helper's
-/// pin; a memory foreground anchor refuses a replaced path by design instead
-/// of pinning one.
+/// Effigy inside Effigy does) still starts its later runs: helpers exec
+/// whatever binary the path names, and the handshake protocol matches.
 #[test]
 fn task_engine_runs_after_the_running_binary_is_replaced_on_disk() {
     let fixture = Fixture::new();
@@ -538,9 +530,9 @@ run = "echo after >> runs.log"
     let leftovers = fs::read_dir(fixture.repo.join(".effigy/state"))
         .expect("state root")
         .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("exe-"))
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("helper-"))
         .count();
-    assert_eq!(leftovers, 0, "private images are removed after use");
+    assert_eq!(leftovers, 0, "helper logs are removed after use");
 }
 
 #[test]

@@ -21,12 +21,12 @@ pub enum SentinelStatus {
     Gap(UnknownReason),
 }
 impl<'a> Run<'a> {
-    pub(crate) fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'a>, RunError> {
+    pub(crate) fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError> {
         let lease = self
             .sentinel
             .as_ref()
             .ok_or_else(|| RunError::Invalid("custody needs its sentinel".into()))?;
-        crate::supervise::anchor::Image::prepare(self.root, &lease.executable)
+        crate::supervise::anchor::Image::prepare(&lease.executable)
     }
 }
 impl Run<'_> {

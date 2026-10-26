@@ -191,11 +191,9 @@ read-only report and never stages, imports, stops or deletes anything:
 effigy run migrate --plan --json
 ```
 
-It reports one of three states through `effigy.runtime-migration.v1`:
-`no-legacy-state`, `committed` (a cutover manifest exists; the retired store is
-ignored and never deleted) or, refused before any effect, `unreleased-main-state`
-with the exact upgrade path: migrate that machine with Effigy main `7b82d26`
-(`effigy run migrate --legacy-launchers-stopped`) and then upgrade. Host-wide
-admission capacity is unaffected: a pending refusal is not a machine-wide gate,
-and ordinary foreground work continues.
+It reports one of two states through `effigy.runtime-migration.v1`:
+`no-legacy-state`, or `committed` (a cutover manifest exists). A retired store
+or old migration record is ignored, never changed and never deleted, and never
+refuses a run. Host-wide admission capacity is unaffected: migration state is
+not a machine-wide gate, and ordinary foreground work continues.
 

@@ -114,12 +114,7 @@ impl StateRoot {
         if let Some(checkout) = &self.checkout {
             return checkout.identity(&self.owner).map(Some);
         }
-        if let Some(identity) = super::runtime::binding_identity(cx, self)? {
-            return Ok(Some(identity));
-        }
-        crate::migration::adoption::checkout_filesystem_facts(cx, self)?
-            .map(|(checkout, git)| filesystem_identity(&checkout, git.as_deref()))
-            .transpose()
+        super::runtime::binding_identity(cx, self)
     }
     /// Exclusion also follows the owning directory across a Git locator
     /// replacement. A running old generation keeps this alias until cleanup.

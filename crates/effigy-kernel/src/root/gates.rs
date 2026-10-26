@@ -167,8 +167,8 @@ impl StateRoot {
                 "checkout lease requires an explicit machine domain",
             ));
         };
-        let home = DirFd::walk(home, Trust::Operator)?;
-        let Some(effigy) = home.child(".effigy", Trust::Operator, create)? else {
+        let home = DirFd::walk(home, Trust::Ancestor)?;
+        let Some(effigy) = home.child(".effigy", Trust::Ancestor, create)? else {
             return Ok(None);
         };
         let gates = effigy.child("gates", Trust::Private, create)?;
@@ -263,7 +263,7 @@ impl MachineGates {
         if let Some(reason) = &self.address.unavailable {
             return Err(FsError::untrusted(&self.address.home, reason));
         }
-        let current = DirFd::walk(&self.address.home, Trust::Operator)?.identity()?;
+        let current = DirFd::walk(&self.address.home, Trust::Ancestor)?.identity()?;
         if self
             .address
             .owner

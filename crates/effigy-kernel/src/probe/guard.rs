@@ -29,7 +29,6 @@ pub struct ProbeRuntime {
 }
 impl ProbeRuntime {
     pub fn install(executable: Executable) -> io::Result<Arc<Self>> {
-        executable.verify()?;
         let observer = verified(ident::process_identity(std::process::id()))?;
         if INSTALLED.swap(true, Ordering::AcqRel) {
             return Err(io::Error::other("probe runtime already installed"));
@@ -110,7 +109,6 @@ impl ProbeRuntime {
         nonblocking(client.output.as_raw_fd())?;
         client.send(
             &Message::Hello {
-                executable: self.executable.clone(),
                 observer: self.observer.clone(),
             },
             cx,
@@ -190,7 +188,6 @@ impl Nonce {
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) enum Message {
     Hello {
-        executable: Executable,
         observer: ProcessIdentity,
     },
     Register {
@@ -340,11 +337,7 @@ fn guard_main(cancel: CancelToken) -> io::Result<()> {
     let (observer, own) = loop {
         check(&startup, "guard startup").map_err(uncertain)?;
         match read_frame(&mut input, &mut buffered)? {
-            Frame::Value(Message::Hello {
-                executable,
-                observer,
-            }) => {
-                executable.verify()?;
+            Frame::Value(Message::Hello { observer }) => {
                 // Both identities must be on this boot. The pipe, not a pid
                 // or heartbeat, supplies observer liveness after startup.
                 if ident::process_identity(observer.pid).verified() != Some(&observer) {

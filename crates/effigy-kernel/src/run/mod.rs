@@ -381,7 +381,6 @@ impl<'a> Run<'a> {
             .operation()
             .observe()
             .map_err(|_| RunError::Invalid("run publication observation context".into()))?;
-        crate::migration::adoption::check_invocation(&observe, root, inv)?;
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
         let ids = aliases::gates(&observe, root, &inv.spec().owner, &ids)?;
