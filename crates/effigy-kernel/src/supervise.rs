@@ -318,6 +318,12 @@ fn helper_root(
         StateRoot::effects(cx, home)
     };
     let mut root = root.map_err(|error| RunError::Store(error.into()))?;
+    if !machine {
+        // A helper reopens the owner's checkout by path, so it must take the
+        // owner's gate spelling or its recovery would not meet the owner's
+        // locks (and any blocker on them).
+        root = root.as_checkout();
+    }
     if let Some(address) = gates {
         let observe = cx
             .child(Duration::from_secs(10))

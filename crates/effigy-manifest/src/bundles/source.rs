@@ -172,18 +172,14 @@ fn source_key(selection: &BundleSelection) -> Result<String, serde_json::Error> 
 }
 fn state_location(
     manifest: &Path,
-) -> Result<effigy_kernel::migration::CheckoutLocation, ManifestError> {
+) -> Result<effigy_kernel::location::CheckoutLocation, ManifestError> {
     let root = effigy_core::resolver::resolve_target_root(parent(manifest).into(), None)
         .map_err(|err| error(manifest, err.to_string()))?
         .resolved_root;
     // Prepared sources belong to the checkout that owns the manifest, never to
     // a nested catalog's directory (contract 052 §7.1).
-    let checkout = effigy_core::worktree_scope::checkout_root(&root);
-    let git_directory = effigy_core::worktree_scope::git_directory(&checkout)
-        .map_err(|err| error(manifest, err.to_string()))?;
-    Ok(effigy_kernel::migration::CheckoutLocation {
-        root: checkout,
-        git_directory,
+    Ok(effigy_kernel::location::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(&root),
     })
 }
 

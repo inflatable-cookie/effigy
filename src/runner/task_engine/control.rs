@@ -81,7 +81,7 @@ impl RunRecord {
             return false;
         };
         matches!(
-            holder.released(&kernel::observe(), &self.root),
+            holder.released(&kernel::observe()),
             Observed::Verified(true, _)
         )
     }

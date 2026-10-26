@@ -344,7 +344,6 @@ impl Gate {
                 reason: "state root opened read-only".into(),
             });
         }
-        root.verify_binding()?;
         let started = Instant::now();
         let mut deadline = match wait {
             Wait::FailFast => started + FAIL_FAST,
@@ -399,10 +398,6 @@ impl Gate {
                 open_gate(dir, &format!("{}.gate", id.name()), true)?.expect("created gate file");
             let file = lock(cx, file, libc::LOCK_EX, deadline, started, wait, id)?;
             guard.gates.push((id.clone(), file));
-        }
-        root.verify_binding()?;
-        if let Some(machine) = &machine {
-            machine.verify_binding()?;
         }
         crate::fault_point!(GateAcquire)
             .map_err(|e| GateError::Io(IoError::new("gate acquire", root.path(), &e)))?;
@@ -533,9 +528,6 @@ pub(crate) fn signal_named_holder(
             })
         }
     };
-    if let Err(error) = root.verify_binding() {
-        return Observed::Unknown(crate::root::unknown(&error));
-    }
     let machine = if scope == "machine" {
         match root.machine_gate_observe(&observe) {
             Observed::Verified(root, _) => root,
@@ -545,11 +537,6 @@ pub(crate) fn signal_named_holder(
     } else {
         None
     };
-    if let Some(machine) = &machine {
-        if let Err(error) = machine.verify_binding() {
-            return Observed::Unknown(crate::root::unknown(&error));
-        }
-    }
     let root = machine.as_ref().unwrap_or(root);
     let gates = match root.family(Family::Gates) {
         Ok(Some(gates)) => gates,
@@ -685,9 +672,6 @@ pub(crate) fn probe_names(
     if cx.placement() == crate::ctx::Placement::Guest {
         return Observed::Unknown(UnknownReason::HostAuthorityRequired);
     }
-    if let Err(error) = root.verify_binding() {
-        return Observed::Unknown(crate::root::unknown(&error));
-    }
     let machine = if scope == "machine" {
         match root.machine_gate_observe(cx) {
             Observed::Verified(root, _) => root,
@@ -697,11 +681,6 @@ pub(crate) fn probe_names(
     } else {
         None
     };
-    if let Some(machine) = &machine {
-        if let Err(error) = machine.verify_binding() {
-            return Observed::Unknown(crate::root::unknown(&error));
-        }
-    }
     let root = machine.as_ref().unwrap_or(root);
     let gates = match root.family(Family::Gates) {
         Ok(Some(gates)) => gates,

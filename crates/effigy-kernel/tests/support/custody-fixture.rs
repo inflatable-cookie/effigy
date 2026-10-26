@@ -230,9 +230,8 @@ fn main() {
         let root = StateRoot::checkout_effects(
             &cx,
             &machine,
-            &effigy_kernel::migration::CheckoutLocation {
+            &effigy_kernel::location::CheckoutLocation {
                 root: checkout.clone(),
-                git_directory: None,
             },
         )
         .unwrap();
@@ -294,9 +293,8 @@ fn main() {
         StateRoot::checkout_effects(
             &cx,
             &machine,
-            &effigy_kernel::migration::CheckoutLocation {
+            &effigy_kernel::location::CheckoutLocation {
                 root: home.into(),
-                git_directory: None,
             },
         )
         .unwrap()

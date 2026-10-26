@@ -3,7 +3,6 @@ use super::*;
 use crate::ctx::{EffectClass, Placement};
 use crate::id::{ExecutionTarget, ResourceKind, Scope};
 use crate::ident::ProcessIdentity;
-use crate::observe::Observed;
 use crate::outcome::CleanupOutcome;
 use crate::supervise::{memory::MemoryGuard, Executable};
 use std::collections::BTreeMap;
@@ -16,7 +15,6 @@ use std::time::Duration;
 /// and memory sentinel hold the same gate descriptions through cleanup.
 #[derive(Debug)]
 pub struct ForegroundRun {
-    root: StateRoot,
     record: ForegroundRecord,
     cx: EffectContext,
     next: Invocation,
@@ -62,7 +60,6 @@ impl ForegroundRun {
         inv: &ResolvedInvocation,
         opts: BeginOpts,
     ) -> Result<Self, RunError> {
-        self.verify_custody()?;
         if self.ancestor_owners.contains(&inv.spec().owner)
             || self.record.incarnation().owner == inv.spec().owner
             || matches!(self.record.phase(), Phase::Stopping | Phase::Closed)
@@ -113,11 +110,6 @@ impl ForegroundRun {
             ));
         }
         cx.operation().check("foreground admission")?;
-        let publication = cx
-            .child(Duration::from_secs(10))
-            .operation()
-            .observe()
-            .map_err(|_| RunError::unavailable("foreground publication context"))?;
         let plan = opts
             .custody
             .ok_or_else(|| RunError::broken("foreground custody needs a memory guard"))?;
@@ -135,11 +127,12 @@ impl ForegroundRun {
                 "foreground gates must belong to the owning checkout",
             ));
         }
-        let ids = aliases::gates(&publication, root, &inv.spec().owner, &ids)?;
+        let ids = aliases::gates(root, &inv.spec().owner, &ids)?;
         let mut gate = Gate::acquire(cx, root, &ids, opts.wait)?;
         // Declared shared exclusion gates remain held too; adapter gates
-        // cannot reach this local-only path.
-        check_predecessors(cx, root, &ids)?;
+        // cannot reach this local-only path. The held flock is the exclusion: a
+        // predecessor it does not name cannot still be live, so a journal row
+        // left behind is not a reason to refuse (F11).
         gate.set_foreground(
             &opts.id,
             &inv.spec().owner,
@@ -159,7 +152,6 @@ impl ForegroundRun {
             crate::supervise::memory::MemoryPurpose::Foreground,
         )?;
         Ok(Self {
-            root: root.clone(),
             record: ForegroundRecord::new(opts.id, inv.spec().owner.clone()),
             cx: cx.clone(),
             next: opts.next,
@@ -172,11 +164,6 @@ impl ForegroundRun {
             children: Vec::new(),
             completion: None,
         })
-    }
-    /// Recheck the filesystem generations retained by this run before continuing work.
-    pub fn verify_custody(&self) -> Result<(), RunError> {
-        self.root.verify_binding().map_err(StoreError::from)?;
-        Ok(())
     }
     pub fn record(&self) -> &ForegroundRecord {
         &self.record
@@ -224,7 +211,6 @@ impl ForegroundRun {
     }
     pub fn finish(&mut self, workload: WorkloadOutcome) -> Result<(), RunError> {
         self.cx.operation().check("foreground finish")?;
-        self.verify_custody()?;
         if workload == WorkloadOutcome::Succeeded
             && self.children.iter().any(|child| {
                 *child
@@ -310,43 +296,6 @@ impl ForegroundRun {
     }
 }
 
-/// Foreground admission warns about a journal it cannot read and proceeds: the
-/// owner flock is the only exclusion that matters, and an unreadable journal is
-/// not evidence of a live predecessor (K1, Q-011). A predecessor that is proved
-/// and unsettled still refuses.
-fn check_predecessors(
-    cx: &EffectContext,
-    root: &StateRoot,
-    owners: &[ResourceId],
-) -> Result<(), RunError> {
-    let observe = cx
-        .child(Duration::from_secs(10))
-        .operation()
-        .observe()
-        .map_err(|_| RunError::unavailable("foreground predecessor read context"))?;
-    let reader = match Store::read(&observe, root) {
-        Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Ok(()),
-        Observed::Unknown(reason) => {
-            eprintln!(
-                "[warn] {}: the checkout journal is unreadable ({reason}); continuing without its recorded state",
-                root.path().join(root.database_name()).display()
-            );
-            return Ok(());
-        }
-    };
-    for owner in owners {
-        for previous in journal::predecessors(reader.conn(), owner)? {
-            if !previous.acknowledged {
-                return Err(RunError::PredecessorUnsettled {
-                    run: previous.id,
-                    effects: journal::effects(reader.conn(), previous.id)?,
-                });
-            }
-        }
-    }
-    Ok(())
-}
 impl Drop for ForegroundRun {
     fn drop(&mut self) {
         // Owner custody remains if the guard died. A guard retains the locks

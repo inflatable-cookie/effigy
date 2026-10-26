@@ -33,7 +33,7 @@ pub fn wait_kernel_helpers(home: &Path) -> io::Result<()> {
     let cx = operation.observe().map_err(|_| {
         io::Error::other("fixture helper observation requires a finite observe context")
     })?;
-    let root = match StateRoot::legacy_observe(&cx, home) {
+    let root = match StateRoot::observe(&cx, home) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => {

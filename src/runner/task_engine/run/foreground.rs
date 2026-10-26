@@ -36,8 +36,7 @@ impl TaskRun {
         let plan = super::super::admission::plan(request.admission)?;
         // Hook custody is connected to the same memory record below; until
         // admitted it cannot grant a child permission to bypass admission.
-        let location = kernel::checkout_location(&request.target.root)
-            .map_err(|error| start_error(&error.to_string()))?;
+        let location = kernel::checkout_location(&request.target.root);
         let cx = kernel::effects();
         let checkout = checkout::read(&request.target.root)
             .map_err(|error| start_error(&error.to_string()))?
@@ -182,16 +181,6 @@ impl TaskRun {
     }
 
     pub(in crate::runner) fn verify_admission(&mut self) -> Result<(), RunnerError> {
-        let binding = match &self.memory {
-            Some(memory) => memory
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .verify_custody(),
-            None => self.run_mut()?.verify_custody(),
-        };
-        binding.map_err(|error| {
-            RunnerError::task_invocation(format!("run filesystem authority changed: {error}"))
-        })?;
         super::super::admission::verify_held()?;
         if let Some(admission) = &mut self.admission {
             admission.verify()?;
@@ -243,8 +232,7 @@ impl TaskRun {
         let effigy_kernel::id::Scope::Checkout(checkout) = owner.scope() else {
             return Err(start_error("memory parent is not checkout-local"));
         };
-        let location = kernel::checkout_location(&self.target.root)
-            .map_err(|error| start_error(&error.to_string()))?;
+        let location = kernel::checkout_location(&self.target.root);
         let root = StateRoot::foreground_effects(&kernel::effects(), &location)
             .map_err(|error| start_error(&error.to_string()))?;
         let step_owner = ResourceId::store(

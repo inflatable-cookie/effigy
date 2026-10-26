@@ -374,7 +374,6 @@ impl Store {
             });
         }
         // A live custodian continuing through a replaced locator is refused.
-        root.verify_binding()?;
         let name = FileName::new(root.database_name())?;
         let (_, stat) = root
             .dir()
@@ -486,9 +485,6 @@ impl Store {
             return injected;
         }
         // A live custodian continuing through a replaced locator is refused.
-        if let Err(error) = root.verify_binding() {
-            return Observed::Unknown(crate::root::unknown(&error));
-        }
         if let Err(error) = check_store_files(root) {
             return Observed::Unknown(crate::root::unknown(&error));
         }
@@ -1367,8 +1363,8 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
 /// A store with a hot write-ahead log, or the index beside it, is a plain
 /// read-only connection to SQLite's own WAL: its committed frames are visible
 /// and a crashed writer's are not. A checkpointed store is an immutable open —
-/// no lock, no index and no file — which also covers the zero-length log a
-/// closed writer can leave behind (K1, Q-011).
+/// no lock, no index and no file — which is also the only form that writes
+/// nothing into a read-only or copied checkout (K1, Q-011).
 fn open_reading(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
     // A state root whose database is not created yet holds nothing, whatever
     // its side files say.

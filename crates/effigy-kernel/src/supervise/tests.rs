@@ -396,7 +396,7 @@ fn a_helper_frame_with_a_changed_shape_and_a_new_protocol_names_the_version() {
             "{entry}: {detail:?}"
         );
         assert!(
-            !detail.contains("not readable") && !detail.contains("broken"),
+            !detail.contains("not readable") && !detail.contains("Effigy is broken"),
             "{entry}: a version mismatch never reads as a broken value: {detail:?}"
         );
     }
@@ -451,9 +451,8 @@ fn helper_restores_machine_resource_gate_domain_instead_of_a_checkout_shadow() {
     let root = StateRoot::checkout_effects(
         &cx,
         &world.home(),
-        &crate::migration::CheckoutLocation {
+        &crate::location::CheckoutLocation {
             root: checkout.clone(),
-            git_directory: None,
         },
     )
     .unwrap();

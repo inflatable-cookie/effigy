@@ -1180,7 +1180,7 @@ fn copy_tree(source: &Path, target: &Path) {
 fn checkout_release_resumes_while_another_checkout_writer_is_stalled() {
     use effigy_kernel::ctx::*;
     use effigy_kernel::id::{ResourceId, Scope};
-    use effigy_kernel::migration::CheckoutLocation;
+    use effigy_kernel::location::CheckoutLocation;
     use effigy_kernel::{root::StateRoot, store::Store};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -1223,7 +1223,6 @@ fn checkout_release_resumes_while_another_checkout_writer_is_stalled() {
     let cx = op.effects().unwrap();
     let location = CheckoutLocation {
         root: first.root.clone(),
-        git_directory: effigy_core::worktree_scope::git_directory(&first.root).unwrap(),
     };
     let root = StateRoot::checkout_effects(&cx, &first.home, &location).unwrap();
     let owner = ReleaseSession::open(&first.home, &first.root)

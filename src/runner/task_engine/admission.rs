@@ -1010,7 +1010,7 @@ fn write_record(
     cleanup: &'static str,
     groups: u64,
 ) -> Result<(), String> {
-    let location = kernel::checkout_location(&target.root).map_err(|error| error.to_string())?;
+    let location = kernel::checkout_location(&target.root);
     let cx = kernel::effects();
     let boot = effigy_kernel::ident::boot_identity();
     let boot = boot

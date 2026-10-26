@@ -392,14 +392,9 @@ impl<'a> Run<'a> {
             return Err(RunError::refused("invocation class differs from context"));
         }
         cx.operation().check("begin")?;
-        let observe = cx
-            .child(std::time::Duration::from_secs(10))
-            .operation()
-            .observe()
-            .map_err(|_| RunError::unavailable("run publication observation context"))?;
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
-        let ids = aliases::gates(&observe, root, &inv.spec().owner, &ids)?;
+        let ids = aliases::gates(root, &inv.spec().owner, &ids)?;
         let mut guard = Gate::acquire(cx, root, &ids, opts.wait)?;
         crate::fault_point!(BeginGated)?;
         // Only an owner gate may span recovery callbacks or later effects (K14).
@@ -543,7 +538,6 @@ impl<'a> Run<'a> {
     }
     /// Recheck the filesystem generations retained by this run before continuing work.
     pub fn verify_custody(&self) -> Result<(), RunError> {
-        self.root.verify_binding().map_err(StoreError::from)?;
         self.verify_checkout_custody()
     }
     pub(crate) fn has_sentinel(&self) -> bool {
