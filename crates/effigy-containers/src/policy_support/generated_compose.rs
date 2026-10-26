@@ -7,9 +7,7 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
-use crate::runtime::scope::{
-    CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL, SHARED_RENDER_LABEL,
-};
+use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
     ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, SHARED_SERVICE_HOST,
@@ -802,19 +800,6 @@ fn resolve_shared_service_bindings(
             "shared-service typed port policy application",
             &mut assembly,
         )?;
-        // The render names itself on the service it creates, so `up` can ask
-        // the runtime whether the shared container it finds is this render
-        // (effigy#377). The digest covers the assembled document and the files
-        // the fragment binds; it is computed before its own label is added and
-        // depends on no checkout, so every checkout that shares the service
-        // agrees on it.
-        let render_digest = shared_render_digest(&compose_document, &assembly.config_files)?;
-        apply_shared_render_label(&mut compose_document, &render_digest);
-        compose_document.write_back(
-            &shared_project_name,
-            "shared-service typed port policy application and render identity",
-            &mut assembly,
-        )?;
         if effective_ports.is_empty() {
             return Err(ContainerPolicyError::TaskInvocation(format!(
                 "shared service `{service_name}` must expose at least one published port on the bounded shared-service path"
@@ -829,68 +814,33 @@ fn resolve_shared_service_bindings(
             .copied()
             .find(|binding| binding.host != binding.container)
             .unwrap_or(parsed_bindings[0]);
-        // Shared services live outside any one environment's generated
-        // payload; key their output by the shared project so every renderer
-        // of the same shared project converges on one file.
-        // A shared fragment names its own catalog files relative to the state
-        // directory it was rendered with, so publish them at that same
-        // relative path instead of leaving the declared bind source missing
-        // (effigy#371). A fresh home then works: nothing depends on a file an
-        // older Effigy left behind.
-        let compose_path = draft.assembly(
-            &output_dir,
-            &output_dir.join(GENERATED_RUNTIME_COMPOSE_DIR),
-            &shared_project_name,
-            &assembly,
-        )?;
+        // A shared service belongs to no checkout, so its render is not part of
+        // this generation: `Draft::finish` publishes it at one machine-wide
+        // content-addressed directory under the Effigy home, with absolute bind
+        // sources, so every checkout that shares it hands Compose the same
+        // bytes and the same config-hash (effigy#377).
+        draft.shared_render(
+            shared_project_name.clone(),
+            output_dir,
+            assembly.compose_yaml,
+            assembly.config_files,
+        );
         bindings.push(SharedServiceBinding {
             service_name: service_name.clone(),
             catalog: service.catalog.clone(),
             domain_label: contract.domain_label,
             project_name: shared_project_name,
-            compose_file: compose_path,
+            compose_file: PathBuf::new(),
             host: SHARED_SERVICE_HOST.to_owned(),
             host_port: binding.host,
             container_port: binding.container,
             host_env_vars: contract.shared_host_env_vars,
             port_env_vars: contract.shared_port_env_vars,
-            render_digest,
+            render_digest: String::new(),
         });
     }
     bindings.sort_by(|left, right| left.service_name.cmp(&right.service_name));
     Ok(bindings)
-}
-
-/// Identity of one shared service render: its assembled Compose document and
-/// every file the fragment binds. It reaches the container as
-/// [`SHARED_RENDER_LABEL`], so a later `up` reads from the runtime whether the
-/// shared service it finds is the render it is about to start (effigy#377).
-fn shared_render_digest(
-    document: &GeneratedComposeDocument,
-    config_files: &std::collections::HashMap<String, String>,
-) -> Result<String, ContainerPolicyError> {
-    let mut content = serde_yaml::to_string(document)
-        .map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "failed to serialize the shared-service render identity: {error}"
-            ))
-        })?
-        .into_bytes();
-    let mut files = config_files.iter().collect::<Vec<_>>();
-    files.sort_by(|left, right| left.0.cmp(right.0));
-    for (name, body) in files {
-        content.extend_from_slice(name.as_bytes());
-        content.push(0);
-        content.extend_from_slice(body.as_bytes());
-        content.push(0);
-    }
-    Ok(effigy_gateway::ports::sha256_hex(&content))
-}
-
-fn apply_shared_render_label(document: &mut GeneratedComposeDocument, digest: &str) {
-    for service in document.services.values_mut() {
-        upsert_yaml_label(&mut service.extra, SHARED_RENDER_LABEL, digest);
-    }
 }
 
 fn validate_supported_shared_service(

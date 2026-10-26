@@ -51,7 +51,8 @@ pub use policy::load::{
 pub use policy::model::{
     ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
     EffectiveDataPeer, EffectiveDnsRoute, EffectiveHostProcess, EffectiveManagedHostListener,
-    EffectiveServiceAlias, HostProcessRestart, HostProcessSignal, SharedServiceBinding,
+    EffectiveServiceAlias, HostProcessRestart, HostProcessSignal, SharedRender,
+    SharedServiceBinding,
 };
 pub use report::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,

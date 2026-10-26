@@ -1822,17 +1822,28 @@ variant = "default"
             shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
             "shared compose should bind the runtime host port to loopback: {shared_compose}"
         );
-        assert!(!home
-            .join("shared-services")
-            .join(&shared.project_name)
-            .join(format!("{}.generated.compose.yml", shared.project_name))
-            .exists());
+        // A shared service belongs to no checkout: its render lives at one
+        // machine-wide, content-addressed directory, not in this checkout's
+        // generation (effigy#377).
+        assert_eq!(
+            shared.compose_file,
+            home.join("shared-services")
+                .join(&shared.project_name)
+                .join(&shared.render_digest)
+                .join(format!("{}.generated.compose.yml", shared.project_name))
+        );
+        assert!(
+            !shared.compose_file.starts_with(&root),
+            "the shared render names no checkout: {}",
+            shared.compose_file.display()
+        );
     });
 }
 
-/// A shared backing service publishes the init SQL its fragment binds, in the
-/// generation, so a fresh home directory works and a later `databases` change
-/// reaches the server (effigy#371).
+/// A shared backing service publishes the init SQL its fragment binds, at one
+/// machine-wide content-addressed directory, so a fresh home directory works, a
+/// later `databases` change reaches the server, and every checkout hands Compose
+/// the same bytes (effigy#371, effigy#377).
 #[test]
 fn a_shared_service_publishes_the_init_sql_it_binds() {
     with_temp_effigy_home("catalog-shared-db-init-sql", |home| {
@@ -1863,11 +1874,12 @@ databases = ["app", "legacy"]
         let policy = load_prepared_policy(&root, None).expect("policy");
         let shared = &policy.shared_services[0];
         assert!(
-            !home
-                .join("shared-services")
+            home.join("shared-services")
                 .join(&shared.project_name)
-                .exists(),
-            "nothing is published under the home directory"
+                .join(&shared.render_digest)
+                .join(format!("{}.generated.compose.yml", shared.project_name))
+                .is_file(),
+            "the shared render is published under the machine-wide home"
         );
         let shared_compose = policy
             .read_compose(&shared.compose_file)
@@ -1885,7 +1897,11 @@ databases = ["app", "legacy"]
         let source = Path::new(init_sql.split(':').next().expect("source"));
         assert!(
             source.is_absolute() && source.starts_with(shared.compose_file.parent().unwrap()),
-            "the bind source is a file inside this generation, not the checkout: {init_sql}"
+            "the bind source is an absolute file in the shared render, not a checkout path: {init_sql}"
+        );
+        assert!(
+            !init_sql.contains(&root.display().to_string()),
+            "the shared render names no checkout: {init_sql}"
         );
         let sql = fs::read_to_string(source).expect("the bind source is a written file");
         assert!(sql.contains("CREATE DATABASE IF NOT EXISTS `app`"), "{sql}");
@@ -1901,13 +1917,23 @@ databases = ["app", "legacy"]
             Some(shared.render_digest.as_str()),
             "the shared service carries the digest of the render that wrote it: {shared_compose}"
         );
+        // Another checkout of the same declaration publishes the same bytes at
+        // the same absolute path, so Compose keeps one shared container instead
+        // of recreating it per checkout (effigy#377).
+        let second_checkout = temp_repo("catalog-shared-db-init-sql-other");
+        fs::copy(
+            root.join("effigy.toml"),
+            second_checkout.join("effigy.toml"),
+        )
+        .expect("copy manifest");
+        let other = load_prepared_policy(&second_checkout, None).expect("other policy");
+        let other_shared = &other.shared_services[0];
+        assert_eq!(other_shared.render_digest, shared.render_digest);
+        assert_eq!(other_shared.compose_file, shared.compose_file);
         assert_eq!(
-            shared.render_digest,
-            load_prepared_policy(&root, None)
-                .expect("second policy")
-                .shared_services[0]
-                .render_digest,
-            "the same render is the same identity in every checkout"
+            fs::read_to_string(&other_shared.compose_file).expect("other shared compose"),
+            shared_compose,
+            "the shared render is byte-identical from another checkout"
         );
     });
 }

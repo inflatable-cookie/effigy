@@ -656,9 +656,10 @@ fn shared_compose_args<'a>(
 }
 
 /// Shared services start on the dependent environment's exact backend, never
-/// a hard-coded engine.
+/// a hard-coded engine. They run from the shared render's own machine-wide
+/// directory, so the invocation names no checkout (effigy#377).
 fn run_shared_compose_capture(
-    repo_root: &Path,
+    cwd: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
     label: &str,
@@ -667,7 +668,7 @@ fn run_shared_compose_capture(
         effigy_containers::backend::exact_backend(&policy.repo_root, &policy.name, policy.driver)
             .id;
     let profile = policy.profile.as_str();
-    let request = ContainerManagerRequest::new(repo_root)
+    let request = ContainerManagerRequest::new(&policy.repo_root)
         .backend_override(backend.clone())
         .interrupt_policy(ContainerInterruptPolicy::Forward);
     let mut detection = ContainerBackendDetection::from_env_and_path();
@@ -699,7 +700,7 @@ fn run_shared_compose_capture(
     })?;
     plan.args = resolved_args;
     let mut command = std::process::Command::new(&plan.program);
-    command.current_dir(repo_root).args(&plan.args);
+    command.current_dir(cwd).args(&plan.args);
     command
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {

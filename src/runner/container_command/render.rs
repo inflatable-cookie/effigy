@@ -13,7 +13,7 @@ pub(super) fn run(
         .render
         .as_ref()
         .ok_or_else(|| RunnerError::task_invocation("no resolved container render"))?;
-    let files = render
+    let mut files = render
         .closure
         .files()
         .iter()
@@ -23,6 +23,19 @@ pub(super) fn run(
             Ok(serde_json::json!({"name":name,"path":render.path.join(name),"content":content}))
         })
         .collect::<Result<Vec<_>, RunnerError>>()?;
+    // A shared service renders outside this checkout's generation, at one
+    // machine-wide content-addressed directory (effigy#377).
+    for shared in &render.shared {
+        for (relative, bytes) in &shared.files {
+            let content = std::str::from_utf8(bytes)
+                .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+            files.push(serde_json::json!({
+                "name": format!("shared/{}", relative.display()),
+                "path": shared.directory.join(relative),
+                "content": content,
+            }));
+        }
+    }
     let services =
         effigy_containers::catalog_service_sources(&context.resolved.resolved_root, &policy.name)?;
     if output_json {

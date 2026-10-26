@@ -380,18 +380,19 @@ first `-f` input — so no Effigy value is interpolated into the stack and no
 container environment carries one. Internal policy readers resolve those
 relative inputs to the generation's own paths before parsing bind syntax or
 estimating mount budgets; the immutable file bytes keep the relative spelling.
-A shared service is read by its own invocation and names its own directory the
-same way, so its configuration is identical in every checkout that shares it. A
-catalog file a shared fragment binds (MariaDB and Postgres init SQL) is
-published inside the generation at the path that fragment names, so a fresh home
-directory works and a changed `databases` value reaches the server.
-That render also names itself on the service it creates
-(`com.effigy.shared-render`). `up` reads the label from the runtime: a shared
-container from another render is stopped and removed before Compose creates the
-new one, so its published host port is never held twice, and its named data
-volume is kept. An unchanged shared container is not touched. One machine gate
-per shared Compose project serialises the ensure, so two checkouts' `up`s never
-interleave a replacement.
+A shared service belongs to no checkout, so it is not part of a generation. Its
+Compose input and every file its fragment binds (MariaDB and Postgres init SQL)
+are published at one machine-wide, content-addressed directory under the Effigy
+home — `<effigy home>/shared-services/<project>/<digest>/` — with absolute bind
+sources. Two checkouts with the same shared declaration therefore hand Compose
+byte-identical input at the same absolute path, and its config-hash does not
+change with the checkout. That render also names itself on the service it
+creates (`com.effigy.shared-render`). `up` reads the label from the runtime: a
+shared container from another render is stopped and removed before Compose
+creates the new one, so its published host port is never held twice, and its
+named data volume is kept. An unchanged shared container is not touched. One
+machine gate per shared Compose project serialises the ensure, so two checkouts'
+`up`s never interleave a replacement.
 `build.dockerfile` is the one relative input Compose reads against the *build
 context* rather than the project directory, so a catalog Dockerfile is rendered
 inline as `dockerfile_inline` from the generation's own content: the stack names
