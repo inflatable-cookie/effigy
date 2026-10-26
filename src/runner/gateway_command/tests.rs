@@ -2,6 +2,20 @@ use super::*;
 use chrono::Utc;
 use effigy_gateway::routes::{Route, RouteSource};
 
+/// A fixture child this test started, stopped by its own recorded PID.
+#[cfg(unix)]
+struct OwnedChild(std::process::Child);
+
+#[cfg(unix)]
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 fn private_gateway_publication_can_finish_after_the_old_one_second_window() {
     let operation = effigy_gateway::operator::context(
@@ -669,17 +683,6 @@ fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed
 #[cfg(unix)]
 #[test]
 fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
-    struct OwnedChild(std::process::Child);
-
-    impl Drop for OwnedChild {
-        fn drop(&mut self) {
-            if self.0.try_wait().ok().flatten().is_none() {
-                let _ = self.0.kill();
-            }
-            let _ = self.0.wait();
-        }
-    }
-
     let root = tempfile::tempdir().expect("private fixture directory");
     let home = root.path().join("home");
     let gateway_home = home.join(GATEWAY_DIR_NAME);
@@ -979,21 +982,122 @@ fn legacy_recovery_status_preflight_preserves_stale_records() {
 #[cfg(unix)]
 #[test]
 fn gateway_up_for_managed_task_startup_notice_is_state_accurate() {
-    let stopped = managed_startup_notice(ManagedStartState::Stopped);
-    assert!(stopped.contains("stopped"));
-    for state in [ManagedStartState::Replacing, ManagedStartState::Unverified] {
-        let text = managed_startup_notice(state);
-        assert!(
-            !text.contains("down"),
-            "startup notice claimed the daemon was down for {state:?}: {text}"
-        );
-        assert!(
-            !text.contains("stopped"),
-            "startup notice claimed the daemon was stopped for {state:?}: {text}"
-        );
+    assert!(managed_startup_notice(ManagedStartState::Stopped).contains("stopped"));
+    let unverified = managed_startup_notice(ManagedStartState::Unverified);
+    assert!(unverified.contains("starting"));
+    assert!(!unverified.contains("down"), "{unverified}");
+    assert!(!unverified.contains("stopped"), "{unverified}");
+}
+
+/// A fixture process or a test harness never drives the machine gateway; a
+/// private root is the fixture's own, and an installed binary outside a fixture
+/// keeps the operator's gateway lifecycle.
+#[test]
+fn only_an_installed_binary_outside_a_fixture_drives_the_machine_gateway() {
+    assert!(!may_drive_the_operator_gateway(false, true, false));
+    assert!(!may_drive_the_operator_gateway(false, false, true));
+    assert!(!may_drive_the_operator_gateway(false, true, true));
+    assert!(may_drive_the_operator_gateway(true, true, true));
+    assert!(may_drive_the_operator_gateway(false, false, false));
+}
+
+/// A managed start uses the gateway that runs, whichever build started it: one
+/// warning names both builds, nothing stops or replaces it, and the running
+/// process keeps its PID (papercut 01530b7e).
+#[cfg(unix)]
+#[test]
+fn managed_start_reuses_a_running_gateway_of_another_build() {
+    let root = tempfile::tempdir().expect("private fixture directory");
+    let home = root.path().join("home");
+    let gateway_home = home.join(GATEWAY_DIR_NAME);
+    std::fs::create_dir_all(&gateway_home).expect("create private gateway directory");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gateway_home, std::fs::Permissions::from_mode(0o700))
+            .expect("restrict private gateway directory");
     }
-    assert!(managed_startup_notice(ManagedStartState::Replacing).contains("different build"));
-    assert!(managed_startup_notice(ManagedStartState::Unverified).contains("starting"));
+    let _home_guard = set_test_gateway_home(&home);
+
+    let mut child = OwnedChild(
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("start private process fixture"),
+    );
+    let pid = child.0.id();
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while server::probe_gateway_process(pid) != GatewayProcessProbe::Running {
+        assert!(
+            std::time::Instant::now() < ready_deadline,
+            "private child was never observed running"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let live = identity::read_live_process_identity(pid).expect("live identity");
+    let pid_path = gateway_home.join("gateway.pid");
+    let version_path = gateway_home.join("gateway.version");
+    let identity_path = gateway_home.join("gateway.identity");
+    std::fs::write(&pid_path, pid.to_string()).expect("write PID record");
+    std::fs::write(&version_path, "v0.13.1+local.test\n").expect("write another build");
+    std::fs::write(
+        &identity_path,
+        serde_json::to_vec(&serde_json::json!({
+            "format_version": 1,
+            "pid": pid,
+            "boot_identity": live.boot_identity,
+            "start_identity": live.start_identity,
+        }))
+        .expect("serialize identity"),
+    )
+    .expect("write identity");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&pid_path, &version_path, &identity_path] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .expect("protect record");
+        }
+    }
+
+    let config = gateway_config().expect("config");
+    let running = verified_gateway_status_for_up(&config)
+        .status
+        .expect("a running gateway is observable");
+    let note = running_gateway_build_note(&running.status).expect("another build is named");
+    assert!(
+        note.contains("v0.13.1+local.test"),
+        "warning must name the running build: {note}"
+    );
+    assert!(
+        note.contains(effigy_core::build_info::active_version().as_str()),
+        "warning must name this build: {note}"
+    );
+    let before = [
+        std::fs::read(&pid_path).expect("PID"),
+        std::fs::read(&version_path).expect("version"),
+        std::fs::read(&identity_path).expect("identity"),
+    ];
+
+    let marker = root.path().join("managed-start-ran");
+    let command = format!("touch '{}'", marker.display());
+    gateway_up_for_managed_task_with(&command, verified_gateway_status_for_up)
+        .expect("a managed start must use the running gateway");
+
+    assert!(
+        !marker.exists(),
+        "a managed start must not run its start command while a gateway runs"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&pid_path).expect("PID is preserved"),
+        pid.to_string(),
+        "the running gateway must keep its PID"
+    );
+    assert_eq!(std::fs::read(&pid_path).expect("PID"), before[0]);
+    assert_eq!(std::fs::read(&version_path).expect("version"), before[1]);
+    assert_eq!(std::fs::read(&identity_path).expect("identity"), before[2]);
+    assert!(
+        child.0.try_wait().expect("probe private child").is_none(),
+        "the running gateway process must keep running"
+    );
 }
 
 #[cfg(unix)]

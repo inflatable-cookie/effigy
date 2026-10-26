@@ -155,6 +155,8 @@ pub struct Status {
     pub ready: bool,
     pub run: Option<RunId>,
     pub control_socket: Option<PathBuf>,
+    /// Build identity of the running daemon, from its own version record.
+    pub binary_version: Option<String>,
     pub reason: Option<String>,
 }
 impl Status {
@@ -164,6 +166,7 @@ impl Status {
             ready: false,
             run: None,
             control_socket: None,
+            binary_version: None,
             reason,
         }
     }
@@ -251,6 +254,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
                 ready: false,
                 run: Some(completion.run),
                 control_socket: Some(run::control_socket_path(&root, &owner(), completion.run)),
+                binary_version: None,
                 reason: completion_reason(&completion.workload, &completion.stderr_tail),
             })),
             None => Ok(None),
@@ -264,6 +268,11 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
         ready: false,
         run: Some(id),
         control_socket: Some(run::control_socket_path(&root, &owner(), id)),
+        // The build identity is an observation for the reuse warning: an
+        // unreadable or absent version record never refuses status.
+        binary_version: crate::identity::read_gateway_version(&config.pid_file_path)
+            .ok()
+            .flatten(),
         reason: None,
     };
     match state {
@@ -275,7 +284,10 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
             result.status = "stopped";
             result.reason = closed_reason(&cx, &root, id, &workload, &effects);
         }
+        // A closed run whose cleanup is incomplete and an interrupted run both
+        // left nothing serving: `up` reconciles either one.
         RunStatus::Closed { .. } | RunStatus::Interrupted { .. } => {
+            result.status = "stopped";
             result.reason =
                 Some("gateway cleanup is incomplete; run `effigy gateway up` to reconcile".into())
         }
@@ -488,6 +500,7 @@ pub fn up_with_executable_within(
     require_operator()?;
     let before = status(config)?;
     if before.ready {
+        note_reused_gateway_build(&before);
         return Ok(before);
     }
     if before.status == "setup_required" {
@@ -501,6 +514,13 @@ pub fn up_with_executable_within(
         return Err(error(
             "a gateway is already running but degraded; inspect `effigy gateway status`",
         ));
+    }
+    // Start only when the previous run is over. A gateway that is starting,
+    // stopping or unobservable is in use: `up` uses it as it is, and only
+    // `effigy gateway down` followed by `effigy gateway up` replaces one.
+    if before.status != "stopped" {
+        note_reused_gateway_build(&before);
+        return Ok(before);
     }
     let home = home(config)?;
     crate::setup::read_receipt(home)?;
@@ -626,6 +646,20 @@ pub fn up_with_executable_within(
         std::thread::sleep(Duration::from_millis(25));
     }
 }
+/// One warning when the gateway `up` is using runs a different build. `up`
+/// never replaces a running gateway; the operator action that does is `down`
+/// followed by `up`.
+fn note_reused_gateway_build(status: &Status) {
+    let current = effigy_core::build_info::active_version();
+    if status.binary_version.as_deref() == Some(current.as_str()) {
+        return;
+    }
+    eprintln!(
+        "[gateway] the gateway is running build {}; using it instead of replacing it with build {current}; `effigy gateway down` then `effigy gateway up` replaces it",
+        status.binary_version.as_deref().unwrap_or("unknown"),
+    );
+}
+
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     require_operator()?;
     let current = status(config)?;
@@ -876,6 +910,49 @@ mod tests {
             "stopped"
         );
     }
+    /// A live gateway run is in use. `up` uses it as it is and admits no
+    /// second run, so no Effigy build can replace the machine gateway as a
+    /// side effect of ensuring one exists (papercut 01530b7e).
+    #[test]
+    fn up_uses_a_live_gateway_run_instead_of_replacing_it() {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        let op = context(Duration::from_secs(10), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
+        let live = run::Run::begin(
+            &cx,
+            &root,
+            &invocation(owner()),
+            run::BeginOpts {
+                id: run_id().unwrap(),
+                wait: effigy_kernel::gate::Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cleanup,
+            &mut Adapter,
+        )
+        .unwrap();
+        let running = status(&config).unwrap();
+        assert_eq!(
+            running.run,
+            Some(live.id()),
+            "the fixture must observe the live run: {running:?}"
+        );
+        assert_ne!(running.status, "stopped");
+
+        let reused = up(&config).unwrap();
+        assert_eq!(
+            reused.run,
+            Some(live.id()),
+            "up must use the live run instead of admitting another: {reused:?}"
+        );
+        assert_eq!(reused.status, running.status);
+    }
+
     #[test]
     fn failed_http_self_test_is_bounded() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

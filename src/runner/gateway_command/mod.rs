@@ -44,14 +44,11 @@ pub(super) const GATEWAY_PRIVATE_STATE_ROOT_ENV: &str =
 const MANAGED_GATEWAY_START_TIMEOUT: Duration = Duration::from_secs(35);
 
 /// Why a managed auto-start decided to run the gateway command. Startup text
-/// keys off this so an unknown or replaced live daemon is never called simply
-/// "down".
+/// keys off this so an unknown live daemon is never called simply "down".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ManagedStartState {
     /// Records proved the gateway is not running.
     Stopped,
-    /// A live gateway runs a different build and will be replaced.
-    Replacing,
     /// The managed override skips the preflight, so state is unverified.
     Unverified,
 }
@@ -60,9 +57,6 @@ fn managed_startup_notice(state: ManagedStartState) -> &'static str {
     match state {
         ManagedStartState::Stopped => {
             "gateway is stopped; starting local DNS/proxy. If an administrator prompt appears, approve it in this terminal; startup is bounded to 35 seconds"
-        }
-        ManagedStartState::Replacing => {
-            "gateway is running a different build; restarting with the current build. If an administrator prompt appears, approve it in this terminal; startup is bounded to 35 seconds"
         }
         ManagedStartState::Unverified => {
             "starting local DNS/proxy. If an administrator prompt appears, approve it in this terminal; startup is bounded to 35 seconds"
@@ -116,14 +110,47 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
     }
 }
 
+/// `up` starts the gateway when none is running and otherwise uses the one that
+/// runs, whichever Effigy build started it. Only the operator commands
+/// `effigy gateway down` and `effigy gateway up` stop or replace a gateway.
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
     let config = gateway_config()?;
+    refuse_a_fixtures_operator_gateway_start(&config)?;
     if !config.is_private() && effigy_core::executable_override::current().is_none() {
         effigy_gateway::operator::up(&config)
             .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
         return Ok(());
     }
     gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
+}
+
+/// A test harness or fixture never starts, stops or replaces the machine
+/// gateway: its managed invocation would run this checkout's build as the
+/// operator daemon (papercut 01530b7e). Fixtures own a private gateway root.
+fn refuse_a_fixtures_operator_gateway_start(config: &GatewayConfig) -> Result<(), RunnerError> {
+    // A unit-test build reads an isolated standard gateway directory, so it
+    // can never reach the machine gateway from here.
+    let test_build = !cfg!(test) && effigy_core::effigy_invocation::runs_from_a_test_harness();
+    let fixture = cfg!(debug_assertions)
+        && !cfg!(test)
+        && std::env::vars_os().any(|(key, _)| {
+            matches!(
+                key.to_string_lossy().as_ref(),
+                "EFFIGY_TEST_FIXTURE_LEDGER" | "EFFIGY_TEST_FIXTURE_ROOT"
+            )
+        });
+    if may_drive_the_operator_gateway(config.is_private(), test_build, fixture) {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "this is a fixture process with no private gateway root; refusing to start or replace the machine gateway. Set `{GATEWAY_PRIVATE_STATE_ROOT_ENV}` to an owned directory"
+    )))
+}
+
+/// Only a released binary outside a fixture may start, stop or replace the
+/// machine gateway.
+fn may_drive_the_operator_gateway(private: bool, test_harness: bool, fixture: bool) -> bool {
+    private || !(test_harness || fixture)
 }
 
 /// Whether an authenticated, running gateway with an unreadable identity is
@@ -171,35 +198,52 @@ fn gateway_up_for_managed_task_with_diagnosis(
         let config = gateway_config()?;
         let probe = preflight(&config);
         if probe.identity_permission_denied {
-            // Mirror `up`: one elevated lifecycle through the command when an
-            // interactive terminal can approve it; otherwise reuse the
-            // authenticated, running gateway without replacement, or refuse
-            // with the same bounded diagnosis and launch nothing.
-            if !(std::io::stdin().is_terminal() && elevation::gateway_identity_elevation_allowed())
-            {
-                if reusable_unverified_gateway(&diagnose(&config)) {
-                    eprintln!("{}", unverified_gateway_reuse_note());
-                    return Ok(());
-                }
-                match resolve_gateway_status_for_config(&config, probe.status) {
-                    Err(error) => return Err(error),
-                    Ok(_) => {
-                        return Err(RunnerError::task_invocation(
-                            "gateway identity is unknown; refusing replacement",
-                        ));
-                    }
-                }
-            }
-        } else if let Some(status) = resolve_gateway_status_for_config(&config, probe.status)? {
-            if gateway_status_matches_current_binary(&status) {
+            // A gateway record exists that this user may not read. A managed
+            // start only ever reuses a gateway, so an unreadable identity
+            // reuses one whose process is confirmed running and otherwise
+            // refuses. It never elevates, stops or replaces one.
+            if reusable_unverified_gateway(&diagnose(&config)) {
+                eprintln!("{}", unverified_gateway_reuse_note());
                 return Ok(());
             }
-            state = ManagedStartState::Replacing;
-        } else {
-            state = ManagedStartState::Stopped;
+            match resolve_gateway_status_for_config(&config, probe.status) {
+                Err(error) => return Err(error),
+                Ok(_) => {
+                    return Err(RunnerError::task_invocation(
+                        "gateway identity is unknown; refusing to start or replace the gateway",
+                    ));
+                }
+            }
         }
+        let Some(status) = resolve_gateway_status_for_config(&config, probe.status)? else {
+            state = ManagedStartState::Stopped;
+            emit_gateway_startup_notice(state);
+            return run_managed_gateway_start(command);
+        };
+        // The gateway that runs is the one to use, whichever build started it.
+        if let Some(note) = running_gateway_build_note(&status.status) {
+            eprintln!("{note}");
+        }
+        Ok(())
+    } else {
+        emit_gateway_startup_notice(state);
+        run_managed_gateway_start(command)
     }
-    emit_gateway_startup_notice(state);
+}
+
+/// One warning when the gateway a managed start uses runs a different build.
+fn running_gateway_build_note(status: &GatewayStatus) -> Option<String> {
+    let current = effigy_core::build_info::active_version();
+    if status.binary_version.as_deref() == Some(current.as_str()) {
+        return None;
+    }
+    Some(format!(
+        "[gateway] the gateway is running build {}; using it instead of replacing it with build {current}; `effigy gateway down` then `effigy gateway up` replaces it",
+        status.binary_version.as_deref().unwrap_or("unknown"),
+    ))
+}
+
+fn run_managed_gateway_start(command: &str) -> Result<(), RunnerError> {
     // Keep the operator terminal available to sudo/osascript authentication,
     // while bounding the complete managed startup handoff and retaining its
     // output for an actionable failure.

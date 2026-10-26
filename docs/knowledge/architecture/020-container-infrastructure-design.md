@@ -698,9 +698,11 @@ against a live root gateway:
   spawns the child with `Stdio::inherit()` on stdin and piped stdout/stderr,
   then drains both pipes with `wait_with_output`. Noninteractive and declined
   authentication still return Unknown, so the lifecycle refuses without a
-  signal, cleanup, or replacement. Startup text is state-keyed (`stopped`,
-  `replacing a different build`, or `unverified`); an unknown or mismatched
-  live daemon is never described as "down".
+  signal, cleanup, or replacement. Startup text is state-keyed (`stopped` or
+  `unverified`); an unknown or mismatched live daemon is never described as
+  "down". A managed start that finds any running gateway uses it instead of
+  starting another (see "Managed start never replaces a running gateway"
+  below).
 - The macOS boot identity was the raw `kern.boottime` timeval, whose
   microsecond field is not stable across reads. A sidecar written by the
   published v0.14.0 macOS build could therefore compare `Mismatch` against the
@@ -773,11 +775,12 @@ source outcomes. The reported host's exact `ps` output and the cause of its
 PID 11887 failure were not observed or reproduced; no live gateway check was
 performed.
 
-Managed and ordinary `gateway up` preflight now read identity locally without
-the elevated-reader fallback. A verified different build that needs privilege
-delegates once to the existing elevated `gateway up` command, which acquires
-the transition lock and performs fresh identity reads through stop polling and
-at both signal boundaries. The signal-zero check only selects that transport;
+Managed and ordinary `gateway up` preflight read identity locally without the
+elevated-reader fallback. A managed start never stops or replaces a running
+gateway, so it never delegates to an elevated replacement: `effigy gateway
+down` followed by `effigy gateway up` acquires the transition lock and
+performs fresh identity reads through stop polling and at both signal
+boundaries. The signal-zero check only selects that transport;
 it does not authorize TERM or KILL. If local identity access is denied,
 noninteractive input or an already-elevated invocation refuses without record
 cleanup or replacement launch. Standalone status and the separate `down`
@@ -839,6 +842,27 @@ which needs its own operator ruling before any implementation. Private
 controls: `test:gateway:permission-reuse` (deterministic refusal plus genuine
 private owned-process reuse through the production callers, with structural
 diagnosis controls); no real cross-UID qualification is claimed.
+
+#### Managed start never replaces a running gateway (effigy#382)
+
+A managed start starts a gateway only when the records prove none is running.
+When one runs, `container up`, `dev` and every other path that ensures the
+gateway use it as it is, whichever Effigy build started it, and one warning
+names both builds. The replacement path in
+`ensure_gateway_running_for_container` is gone, so no Effigy binary can become
+the machine gateway as a side effect of an environment coming up; only
+`effigy gateway down` and `effigy gateway up` replace a running gateway. An
+unreadable identity reuses a confirmed running daemon or refuses, and never
+delegates to an elevated replacement. A test harness or a fixture process with
+no private gateway root refuses to start or replace the machine gateway, and
+`effigy-test-support::gateway::private_root` gives a fixture an owned private
+root in one call.
+
+Private controls: `managed_start_reuses_a_running_gateway_of_another_build`
+(a live gateway of another build keeps its PID, its records and its process,
+and the warning names both builds),
+`only_an_installed_binary_outside_a_fixture_drives_the_machine_gateway`, and
+`up_uses_a_live_gateway_run_instead_of_replacing_it`.
 
 ### Gateway process identity ruling
 

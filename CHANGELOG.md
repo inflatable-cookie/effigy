@@ -808,6 +808,12 @@ During v0.x, MINOR bumps may include breaking changes.
   which shows the whole pipeline instead of only the version, tag and gate
   preview; `release --plan --version <SEMVER>` covers the old
   `simulate --version`. The refusal names the replacement.
+- **The managed gateway build-replacement path.** A managed start no longer
+  stops a gateway because its recorded build differs from the caller's, and the
+  identity handoff it used to request an elevated replacement is gone with
+  `ManagedStartState::Replacing` and the `different build` startup notice.
+  `effigy gateway down` followed by `effigy gateway up` replaces a gateway
+  (papercut 01530b7e, effigy#382).
 
 ### Added
 - **`effigy container <NAME> restart <process>...` replaces only the named host
@@ -2110,6 +2116,17 @@ During v0.x, MINOR bumps may include breaking changes.
   and `up` reads that label from the runtime, so an unchanged shared service is
   never touched. Two checkouts' `up`s are serialised on one machine gate per
   shared Compose project (effigy#377).
+- **A running gateway is never replaced by the binary that asks for one.**
+  `container up`, `dev` and every other path that ensures the gateway start
+  one only when the records prove none is running; a gateway that runs is used
+  as it is, whichever Effigy build started it, and one warning names both
+  builds. `up` admits a new run only over a stopped or interrupted one, so an
+  unreadable or changed observation can no longer supersede a live machine
+  gateway. Only `effigy gateway down` followed by `effigy gateway up` replaces
+  a running gateway. A test harness or fixture process with no private gateway
+  root refuses to start or replace the machine gateway, and
+  `effigy-test-support::gateway::private_root` gives a fixture an owned private
+  root (papercut 01530b7e, effigy#382).
 - `container retire` and `container retire --dead` remove every owned container
   every time. They deleted each container with a forced remove, which the
   runtime's restart manager treated as an exit and undid for the

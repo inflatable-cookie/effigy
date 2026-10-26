@@ -1,5 +1,6 @@
 //! Test-only fixture ownership. All ordinary fixtures live outside the checkout.
 pub mod env;
+pub mod gateway;
 mod kernel_helpers;
 pub mod process;
 use std::cell::RefCell;

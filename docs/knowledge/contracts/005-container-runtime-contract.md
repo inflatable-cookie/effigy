@@ -338,7 +338,12 @@ withdrawal are the same in both.
 Gateway lifecycle gating distinguishes reuse from authority. Route publication
 and withdrawal write the owner-checked route table directly and never gate on
 the daemon's identity, and a managed task start only reuses an already-running
-daemon or starts one. A gateway with an authenticated record, a confirmed
+daemon or starts one. A managed start starts a gateway only when the records
+prove none is running: a gateway that runs is used as it is, whichever Effigy
+build started it, with one warning naming both builds. `effigy gateway down`
+and `effigy gateway up` are the only actions that replace a running gateway,
+and a test harness or fixture with no private gateway root refuses to start or
+replace the machine gateway. A gateway with an authenticated record, a confirmed
 running process, and an identity unreadable to this user (permission-denied) is
 therefore reusable on every publish/withdraw/reuse path, including a headless
 managed start, which prints one note that the identity could not be verified

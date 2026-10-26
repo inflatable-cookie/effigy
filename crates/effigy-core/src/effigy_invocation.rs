@@ -17,17 +17,29 @@ pub fn resolve_effigy_invocation_prefix(
         }
     }
 
-    let executable = std::env::current_exe()?;
-    let is_test_harness = executable
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .is_some_and(|name| name == "deps");
-    if is_test_harness {
+    if runs_from_a_test_harness() {
         let manifest_path = shell_quote(test_harness_manifest_path);
         return Ok(format!(
             "cargo run --quiet --manifest-path {manifest_path} --bin effigy --"
         ));
     }
 
+    let executable = std::env::current_exe()?;
     Ok(shell_quote(&executable.display().to_string()))
+}
+
+/// True when this process runs from a test harness, so its Effigy invocation
+/// names this checkout's build (`cargo run --bin effigy`) instead of an
+/// installed binary. Fixture code may not drive shared machine state through
+/// it.
+pub fn runs_from_a_test_harness() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|executable| {
+            executable
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name == "deps")
+        })
+        .unwrap_or(false)
 }
