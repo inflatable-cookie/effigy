@@ -1710,30 +1710,6 @@ fn an_unknown_task_publish_with_a_check_reconciles_before_any_retry() {
 }
 
 #[test]
-fn a_machine_holding_the_retired_central_store_refuses_release_reads_once() {
-    use std::os::unix::fs::PermissionsExt;
-    let fixture = fixture("unreleased-main");
-    single_identity_project(&fixture);
-    // The retired current-main store never existed outside unreleased main.
-    // Its mere presence is refused; v0.15 does not import or delete it.
-    let state = fixture.home.join(".effigy/state");
-    std::fs::create_dir_all(&state).unwrap();
-    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let store = state.join("kernel.db");
-    std::fs::write(&store, b"retired central store").unwrap();
-    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let refused = read_release_record(&fixture.home, &fixture.root)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refused.contains("unreleased-main runtime state"),
-        "{refused}"
-    );
-    assert!(refused.contains("7b82d26"), "{refused}");
-    assert_eq!(std::fs::read(&store).unwrap(), b"retired central store");
-}
-
-#[test]
 fn a_task_publish_whose_outcome_is_lost_leaves_unknown_and_resumes_through_check() {
     let fixture = fixture("task-crash");
     single_identity_project(&fixture);

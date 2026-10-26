@@ -100,10 +100,6 @@ pub enum StoreError {
     Identity(IdentityError),
     /// Store waits need a finite deadline (K8, I-CX2).
     Unbounded,
-    MigrationPending(String),
-    /// The retired current-main central store is present and no migration
-    /// manifest committed this machine (contract 052 §11.1).
-    UnreleasedMainRuntime,
     /// Retention, repair and scope removal run only in Mutate (K15).
     ClassRefused(EffectClass),
     InTransaction,
@@ -126,11 +122,6 @@ pub enum StoreError {
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnreleasedMainRuntime => write!(
-                f,
-                "this machine has unreleased-main runtime state; migrate it with Effigy main 7b82d26 (`effigy run migrate --legacy-launchers-stopped`) then upgrade"
-            ),
-            Self::MigrationPending(id) => write!(f, "runtime import {id} is prepared but not sealed; finish migration before using this journal"),
             Self::Corrupt(reason) => write!(
                 f,
                 "the runtime journal is unusable ({reason}); nothing was changed. The explicit repair \
@@ -325,12 +316,8 @@ impl Store {
                 reason: "state root opened read-only".into(),
             });
         }
-        let observe = cx
-            .child(Duration::from_secs(10))
-            .operation()
-            .observe()
-            .map_err(|_| StoreError::Unbounded)?;
-        let adoption = crate::migration::adoption::access(&observe, root)?;
+        // A live custodian continuing through a replaced locator is refused.
+        root.verify_binding()?;
         let name = FileName::new(root.database_name())?;
         let (_, stat) = root
             .dir()
@@ -348,7 +335,6 @@ impl Store {
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        crate::migration::adoption::validate_database(&conn, &adoption)?;
         let mut store = Self {
             conn,
             root: root.clone(),
@@ -424,10 +410,10 @@ impl Store {
         if let Some(injected) = crate::fault::injected() {
             return injected;
         }
-        let adoption = match crate::migration::adoption::access(cx, root) {
-            Ok(adoption) => adoption,
-            Err(error) => return Observed::Unknown(read_unknown(&error)),
-        };
+        // A live custodian continuing through a replaced locator is refused.
+        if let Err(error) = root.verify_binding() {
+            return Observed::Unknown(crate::root::unknown(&error));
+        }
         if let Err(error) = check_store_files(root) {
             return Observed::Unknown(crate::root::unknown(&error));
         }
@@ -443,12 +429,7 @@ impl Store {
             Ok(None) => return Observed::Absent(AbsenceProof::NoStore),
             Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
         }
-        let opened = open_reading(root, cx.remaining().min(READ_BUSY_WAIT)).and_then(|reader| {
-            if let Some(reader) = &reader {
-                crate::migration::adoption::validate_database(reader.conn(), &adoption)?;
-            }
-            Ok(reader)
-        });
+        let opened = open_reading(root, cx.remaining().min(READ_BUSY_WAIT));
         match opened {
             Ok(Some(reader)) => Observed::Verified(reader, evidence("kernel store")),
             Ok(None) => Observed::Absent(AbsenceProof::NoStore),

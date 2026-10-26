@@ -687,8 +687,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             cwd: home.path().into(), env: BTreeMap::new(),
             grace: Duration::from_millis(10), lifetime: Lifetime::Finite(Duration::from_secs(60)), terminal, label: "anchor proof".into(),
         };
-        let root = StateRoot::effects(&cx, home.path()).unwrap();
-        let image = crate::supervise::anchor::Image::prepare(&root, &executable()).unwrap();
+        let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
         let mut child =
             spawn::Blocked::fork(&spec, "anchor-proof", cx.operation(), &image, None, None)
                 .unwrap();
@@ -862,7 +861,6 @@ fn anchor_spawn_overhead_is_measured() {
         })
         .collect();
     let home = home();
-    let cx = cx();
     let spec = ProcessSpec {
         argv: vec![
             executable_path().into_os_string(),
@@ -875,7 +873,6 @@ fn anchor_spawn_overhead_is_measured() {
         terminal: Terminal::None,
         label: "overhead".into(),
     };
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
     let image_path = std::env::var_os("EFFIGY_KERNEL_ANCHOR_IMAGE")
         .map(PathBuf::from)
         .unwrap_or_else(executable_path);
@@ -893,8 +890,8 @@ fn anchor_spawn_overhead_is_measured() {
         } {
             let cx = self::cx();
             let started = Instant::now();
-            let image = enabled
-                .then(|| crate::supervise::anchor::Image::prepare(&root, &executable).unwrap());
+            let image =
+                enabled.then(|| crate::supervise::anchor::Image::prepare(&executable).unwrap());
             let mut child = if enabled {
                 spawn::Blocked::fork(
                     &spec,

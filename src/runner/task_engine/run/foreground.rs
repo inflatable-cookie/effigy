@@ -97,7 +97,6 @@ impl TaskRun {
                 placement: LifecyclePlacement::Inline,
             }),
         };
-        kernel::refuse_unreleased_main()?;
         let memory = match parent.and_then(|parent| parent.memory) {
             Some(parent) => parent
                 .lock()

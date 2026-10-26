@@ -541,7 +541,7 @@ pub fn read_release_record(
     })?;
     let root = match StateRoot::checkout_observe_in(&observe, home, &location(repo_root)?) {
         Observed::Verified(root, _) => root,
-        Observed::Absent(_) => return legacy_release_refusal(&observe, home),
+        Observed::Absent(_) => return Ok(None),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state is unreadable: {reason:?}"
@@ -550,7 +550,7 @@ pub fn read_release_record(
     };
     let reader = match Store::read(&observe, &root) {
         Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return legacy_release_refusal(&observe, home),
+        Observed::Absent(_) => return Ok(None),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state store is unreadable: {reason:?}"
@@ -576,17 +576,6 @@ pub fn read_release_record(
         }
         None => Ok(None),
     }
-}
-
-/// Historical evidence is read-only. Missing local state must not hide a
-/// paused old release. A machine which still holds the retired central store
-/// has no v0.15 import path, so it is refused once rather than guessed at.
-fn legacy_release_refusal(
-    observe: &effigy_kernel::ctx::ObserveContext,
-    home: &Path,
-) -> Result<Option<ReleaseRecord>, ReleaseError> {
-    effigy_kernel::migration::refuse_unreleased_main(observe, home).map_err(storage_error)?;
-    Ok(None)
 }
 
 /// Incomplete cleanup stays in the journal. Project it without a late file

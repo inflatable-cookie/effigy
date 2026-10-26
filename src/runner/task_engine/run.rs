@@ -99,7 +99,6 @@ pub(in crate::runner) struct RunKey {
 #[derive(Debug)]
 pub(super) struct KeyNamespace {
     pub ids: Vec<RunId>,
-    pub aliases: Vec<effigy_kernel::id::CheckoutId>,
 }
 
 impl RunKey {
@@ -162,46 +161,15 @@ impl RunKey {
         root: &effigy_kernel::root::StateRoot,
     ) -> Result<KeyNamespace, RunnerError> {
         if root.is_machine() {
-            return Ok(KeyNamespace {
-                ids: Vec::new(),
-                aliases: Vec::new(),
-            });
+            return Ok(KeyNamespace { ids: Vec::new() });
         }
-        let mut checkouts = checkout::identities(cx, root.owning_directory().path())
+        let checkouts = checkout::identities(cx, root.owning_directory().path())
             .map_err(|error| unverifiable_key(self, &error.to_string()))?;
-        let aliases = match effigy_kernel::migration::authority(cx, root) {
-            Observed::Verified(
-                effigy_kernel::migration::Authority::Committed {
-                    checkout,
-                    checkout_aliases,
-                    ..
-                },
-                _,
-            ) => checkout
-                .into_iter()
-                .chain(checkout_aliases)
-                .collect::<Vec<_>>(),
-            Observed::Verified(effigy_kernel::migration::Authority::Fresh, _) => Vec::new(),
-            other => {
-                return Err(unverifiable_key(
-                    self,
-                    &format!("import authority: {}", describe_authority(&other)),
-                ))
-            }
-        };
-        for alias in &aliases {
-            if !checkouts.contains(alias) {
-                checkouts.push(*alias);
-            }
-        }
-        let mut ids = checkouts
+        let ids = checkouts
             .into_iter()
             .map(|checkout| self.scoped(checkout).map(|key| key.id()))
             .collect::<Result<Vec<_>, _>>()?;
-        if !aliases.is_empty() {
-            ids.push(Self::parse(&self.key)?.id());
-        }
-        Ok(KeyNamespace { ids, aliases })
+        Ok(KeyNamespace { ids })
     }
 }
 
@@ -1191,7 +1159,7 @@ fn refuse_bound_key(
             key: key.key.clone(),
             id,
         };
-        check_bound_key(&candidate, task, &reader, &namespace.aliases)?;
+        check_bound_key(&candidate, task, &reader)?;
     }
     Ok(())
 }
@@ -1200,21 +1168,14 @@ fn check_bound_key(
     key: &RunKey,
     task: &TaskId,
     reader: &effigy_kernel::store::StoreReader,
-    aliases: &[effigy_kernel::id::CheckoutId],
 ) -> Result<(), RunnerError> {
     match effigy_kernel::run::summary(reader, key.id()) {
         Observed::Absent(_) => Ok(()),
         Observed::Verified(existing, _) => {
-            let same = existing.invocation.as_ref().is_some_and(|invocation| {
-                let old = &invocation.spec().task;
-                old.resource() == task.resource()
-                    || aliases.contains(&old.checkout())
-                        && aliases.contains(&task.checkout())
-                        && old.catalog() == task.catalog()
-                        && old.task() == task.task()
-                        && old.surface() == task.surface()
-                        && old.profile() == task.profile()
-            });
+            let same = existing
+                .invocation
+                .as_ref()
+                .is_some_and(|invocation| invocation.spec().task.resource() == task.resource());
             if same {
                 Err(RunnerError::RunKeyExists {
                     run: key.id().to_string(),
@@ -1235,26 +1196,6 @@ fn check_bound_key(
             }
         }
         Observed::Unknown(reason) => Err(unverifiable_key(key, &format!("{reason}"))),
-    }
-}
-
-/// The import authority in words: a state a person can act on, never a
-/// `Debug` tree of the enum.
-fn describe_authority(observed: &Observed<effigy_kernel::migration::Authority>) -> String {
-    use effigy_kernel::migration::Authority;
-    match observed {
-        Observed::Verified(Authority::Prepared { id }, _) => {
-            format!("import {id} is prepared but not sealed")
-        }
-        Observed::Verified(Authority::Committed { id, .. }, _) => {
-            format!("import {id} is committed")
-        }
-        Observed::Verified(Authority::LegacyEvidence, _) => {
-            "the journal carries legacy evidence only".to_owned()
-        }
-        Observed::Verified(Authority::Fresh, _) => "the journal is fresh".to_owned(),
-        Observed::Absent(_) => "the journal has no import authority".to_owned(),
-        Observed::Unknown(reason) => reason.to_string(),
     }
 }
 

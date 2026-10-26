@@ -450,9 +450,9 @@ dead and replaced sentinels as gaps. Sentinel EOF uses the same Run settle write
 with a bounded gate wait; SIGSTOP leaves the pipe and gate held.
 A helper that dies before acknowledging is a typed `HelperExited` with its exit
 and a bounded stderr tail from an unlinked private log; admission settles
-`Closed(NotStarted)`. A sentinel that refused because its path was replaced
-mid-handshake is retried once from the private startup image (effigy#239,
-`test:kernel:helpers`).
+`Closed(NotStarted)`. A binary replaced during a run is exec'd as it is; the
+helper handshake frame's protocol version refuses a binary that speaks another
+version, naming both versions (`test:kernel:helpers`).
 
 Detached startup records socket intent before binding, then records the socket
 inode receipt. A bind fault starts no workload and settles `Closed(NotStarted)`;
@@ -474,7 +474,7 @@ outcome. No engine topology or command grammar lives in the kernel.
 | I-P4/I-P8, O12 | verified anchor identity, nonce and group membership; per-member identity checks; unanchored leader/pidfd or member nonce plus start | anchored nonce-free recovery after leader reap (plain and PTY); killed-anchor and old-receipt refusal; reused/foreign/mixed/cleared-environment strict fakes; race refusal; native nonce recovery |
 | I-P5/I-P6, K10/K12 | streaming redactor, rotating log, bounded queues; explicit env | split secret and ps argv; log ENOSPC preserves ring and success |
 | I-P7, K9; cascade/escalation | one main router; signal-sourced cancel token; durable escalation request | HUP/INT/TERM cascade; duplicate router refused; Rhai try/catch cannot swallow token cancellation; repeated INT without polling |
-| I-SV1/I-SV4; startup | same-binary re-exec, checked invocation decoder, Run-owned registration/socket | replacement refusal; socket fault produces NotStarted; registration atomicity under Kill/ENOSPC |
+| I-SV1/I-SV4; startup | same-binary re-exec, checked invocation decoder, Run-owned registration/socket, handshake protocol version | replaced binary admits; version mismatch names both versions; socket fault produces NotStarted; registration atomicity under Kill/ENOSPC |
 | I-SV2; owner and sentinel lifetime | sole owner death pipe, same settle, pure sentinel metadata | owner/supervisor SIGKILL; both-dead successor recovery; SIGSTOP does not settle; dead sentinel gap; descriptor closes exactly once in order |
 | I-SV3; clients and matrix | common events; owning versus detached/secondary liveness | owning-client kill and terminal-close matrix; detach then stop; secondary death; 288-cell front-end/prior/stop/attachment model |
 | K4; one writer | lifecycle, socket and process results enter through Run | source ratchet rejects journal writes in supervision/custody; idempotent settle and attachment release |

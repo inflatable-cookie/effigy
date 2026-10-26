@@ -6,7 +6,7 @@ use crate::ctx::{
     OperationContext, StopCause,
 };
 use crate::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
-use crate::fs::{DirFd, FileName, Trust};
+use crate::fs::{FileName, Trust};
 use crate::gate::Wait;
 use crate::id::{ResolvedInvocation, ResourceId, RunId};
 use crate::ident::{self, ProcessIdentity};
@@ -22,7 +22,6 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -30,9 +29,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(crate) mod anchor;
-mod image;
 pub(crate) mod memory;
-use image::{private_image, PrivateImage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placement {
@@ -54,106 +51,37 @@ pub enum ClientMode {
     Owning,
     Detach,
 }
-/// The binary a run's helpers re-exec, identified by its file: device,
-/// inode, size and modification and change times. Any replacement or
-/// rewrite changes at least one, and the change time cannot be set back by
-/// the writer (I-SV4). Identification is a stat, so a large debug build costs
-/// nothing per run. The capturing process also holds the startup image open,
-/// so a rebuild that replaces the path (a `cargo build` of the running binary)
-/// still leaves that image to re-exec.
+/// The binary a run's helpers re-exec. Helpers exec whatever the path names,
+/// so rebuilding or reinstalling Effigy during a long run is ordinary. The
+/// helper handshake frame carries [`HELPER_PROTOCOL`]; a binary that does not
+/// speak it refuses before running anything.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Executable {
     path: PathBuf,
-    device: u64,
-    inode: u64,
-    size: u64,
-    modified: (i64, i64),
-    changed: (i64, i64),
-    #[serde(skip)]
-    image: Option<std::sync::Arc<std::fs::File>>,
-    // Only the private, parent-to-helper frame carries this inherited fd.
-    #[cfg(target_os = "linux")]
-    #[serde(default)]
-    exec_fd: Option<RawFd>,
 }
 impl Executable {
     pub fn current() -> io::Result<Self> {
         Self::capture(&std::env::current_exe()?)
     }
     pub fn capture(path: &Path) -> io::Result<Self> {
-        let image = open_executable(path)?;
-        let metadata = image.metadata()?;
-        if !metadata.is_file() {
+        if !std::fs::metadata(path)?.is_file() {
             return Err(io::Error::other("binary is not a regular file"));
         }
-        Ok(Self {
-            path: path.into(),
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            size: metadata.len(),
-            modified: (metadata.mtime(), metadata.mtime_nsec()),
-            changed: (metadata.ctime(), metadata.ctime_nsec()),
-            image: Some(std::sync::Arc::new(image)),
-            #[cfg(target_os = "linux")]
-            exec_fd: None,
-        })
-    }
-    /// The held startup image when its path no longer names it and its
-    /// content is unchanged. Unlinking the path updates the inode's change
-    /// time, so content identity here is device, inode, size and mtime.
-    fn replaced_image(&self) -> Option<&std::fs::File> {
-        let image = self.image.as_deref()?;
-        let held = image.metadata().ok()?;
-        (self.verify().is_err()
-            && (held.dev(), held.ino(), held.len()) == (self.device, self.inode, self.size)
-            && (held.mtime(), held.mtime_nsec()) == self.modified)
-            .then_some(image)
-    }
-    pub fn verify(&self) -> io::Result<()> {
-        #[cfg(target_os = "linux")]
-        let fresh = if let Some(fd) = self.exec_fd {
-            image::fd_executable(&self.path, fd)?
-        } else {
-            Self::capture(&self.path)?
-        };
-        #[cfg(not(target_os = "linux"))]
-        let fresh = Self::capture(&self.path)?;
-        let changed: Vec<_> = [
-            ("device", self.device != fresh.device),
-            ("inode", self.inode != fresh.inode),
-            ("size", self.size != fresh.size),
-            ("mtime", self.modified != fresh.modified),
-            ("ctime", self.changed != fresh.changed),
-        ]
-        .into_iter()
-        .filter_map(|(field, differs)| differs.then_some(field))
-        .collect();
-        if !changed.is_empty() {
-            return Err(io::Error::other(format!(
-                "startup binary replaced ({} changed)",
-                changed.join(", ")
-            )));
-        }
-        Ok(())
+        Ok(Self { path: path.into() })
     }
 }
-/// Descriptor-relative, no-follow open of a trusted binary (K13).
-fn open_executable(path: &Path) -> io::Result<std::fs::File> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("binary parent missing"))?;
-    let dir = DirFd::walk(parent, Trust::Operator).map_err(io::Error::other)?;
-    let name = FileName::new(
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| io::Error::other("invalid binary name"))?,
-    )
-    .map_err(io::Error::other)?;
-    let (file, _) = dir
-        .open_file(&name, libc::O_RDONLY, None, Trust::Operator)
-        .map_err(io::Error::other)?
-        .ok_or_else(|| io::Error::other("binary missing"))?;
-    Ok(file)
+/// The helper handshake protocol this binary speaks. A helper started from a
+/// different binary refuses a frame whose version differs.
+pub const HELPER_PROTOCOL: u32 = 1;
+/// Refuse a helper frame this binary cannot read, naming both versions.
+fn check_protocol(version: u32) -> Result<(), RunError> {
+    if version == HELPER_PROTOCOL {
+        return Ok(());
+    }
+    Err(RunError::Invalid(format!(
+        "helper protocol {version} does not match this binary's protocol \
+         {HELPER_PROTOCOL}; rerun the command"
+    )))
 }
 #[derive(Debug, Clone)]
 pub struct LifecyclePlan {
@@ -187,6 +115,7 @@ impl SentinelLease {
 }
 #[derive(Serialize, Deserialize)]
 struct SentinelConfig {
+    protocol: u32,
     home: PathBuf,
     #[serde(default)]
     machine: bool,
@@ -262,9 +191,6 @@ fn spawn_helper(
 ) -> Result<Child, RunError> {
     let mut busy = 0;
     loop {
-        executable
-            .verify()
-            .map_err(|error| helper_not_started(entry, error))?;
         let mut command = helper(executable, entry).map_err(|e| helper_not_started(entry, e))?;
         if let Some(launch) = launch {
             command
@@ -293,8 +219,6 @@ fn spawn_helper(
         command
             .stdout(Stdio::piped())
             .stderr(log.try_clone().map_err(|e| helper_not_started(entry, e))?);
-        prepare_helper_exec(&mut command, executable, entry)
-            .map_err(|error| helper_not_started(entry, error))?;
         match command.spawn() {
             // A just-written image can be briefly busy while another thread's
             // fork still holds its write descriptor.
@@ -413,23 +337,6 @@ pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command
 
     Ok(command)
 }
-/// Register a held-image exec only after all descriptor and environment
-/// preparation. On Linux execveat never returns on success, so later callbacks
-/// would otherwise be skipped.
-fn prepare_helper_exec(
-    command: &mut Command,
-    executable: &Executable,
-    entry: &str,
-) -> io::Result<()> {
-    #[cfg(target_os = "linux")]
-    if let Some(fd) = executable.exec_fd {
-        image::exec_held(command, executable, fd, entry)?;
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = (command, executable, entry);
-    Ok(())
-}
-
 pub(crate) fn spawn_sentinel(
     run: &Run<'_>,
     root: &StateRoot,
@@ -444,35 +351,16 @@ pub(crate) fn spawn_sentinel(
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| RunError::Invalid("invalid state root".into()))?;
-    let mut retried = false;
-    loop {
-        // A rebuilt path re-execs the startup image, never the replacement.
-        let pin = private_image(root, &plan.executable)?;
-        match sentinel_attempt(run, root, home, pin.as_ref(), plan, next) {
-            // A rebuild can replace the path after `private_image` looked at it
-            // (`cargo run` of Effigy beside a live run): this process's verify
-            // refuses before spawn, or the sentinel's own refuses and it exits
-            // unacknowledged. Either way nothing ran and nothing recorded it,
-            // so one retry from the unchanged startup image is safe (I-SV4).
-            Err(RunError::HelperExited { .. })
-                if !retried && pin.is_none() && plan.executable.replaced_image().is_some() =>
-            {
-                retried = true;
-            }
-            // The sentinel verified and runs its image: the private image can go.
-            result => return result,
-        }
-    }
+    sentinel_attempt(run, root, home, plan, next)
 }
 fn sentinel_attempt(
     run: &Run<'_>,
     root: &StateRoot,
     home: &Path,
-    pin: Option<&PrivateImage<'_>>,
     plan: &LifecyclePlan,
     next: &Invocation,
 ) -> Result<SentinelLease, RunError> {
-    let executable = pin.map_or(&plan.executable, |pin| &pin.executable);
+    let executable = &plan.executable;
     let log = helper_log(root)?;
     // A detached owner runs in the environment its client handed over; its
     // sentinel settles the same effects, so it gets that environment too.
@@ -492,6 +380,7 @@ fn sentinel_attempt(
         .take()
         .ok_or_else(|| RunError::Invalid("sentinel pipe missing".into()))?;
     let config = SentinelConfig {
+        protocol: HELPER_PROTOCOL,
         home: home.into(),
         machine: root.is_machine(),
         machine_gates: root.machine_gate_address(),
@@ -710,10 +599,7 @@ fn read_supervisor_config() -> Result<SupervisorConfig, RunError> {
     nonblocking(input.as_raw_fd())?;
     nonblocking(libc::STDOUT_FILENO)?;
     let config: SupervisorConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
-    config
-        .executable
-        .verify()
-        .map_err(|error| RunError::Invalid(format!("startup binary refused: {error}")))?;
+    check_protocol(config.protocol)?;
     Ok(config)
 }
 const SENTINEL: &str = "__kernel-sentinel";
@@ -729,10 +615,7 @@ fn sentinel(
         return memory::serve(config, &mut input);
     }
     let config: SentinelConfig = serde_json::from_value(config)?;
-    config
-        .executable
-        .verify()
-        .map_err(|error| RunError::Invalid(format!("startup binary refused: {error}")))?;
+    check_protocol(config.protocol)?;
     let next = Invocation::validated(
         config.next.into_iter().map(OsString::from_vec).collect(),
         validate_next,
@@ -903,6 +786,7 @@ impl WireProcess {
 }
 #[derive(Serialize, Deserialize)]
 struct SupervisorConfig {
+    protocol: u32,
     home: PathBuf,
     #[serde(default)]
     machine: bool,
@@ -1201,14 +1085,8 @@ fn launch(
     cx.require(crate::ctx::Capability::HostAuthority)
         .map_err(|_| RunError::HostAuthorityRequired)?;
     cx.operation().check("start detached")?;
-    let observe = cx
-        .child(Duration::from_secs(10))
-        .operation()
-        .observe()
-        .map_err(|_| RunError::Invalid("detached publication context".into()))?;
-    crate::migration::adoption::access(&observe, root)?;
-
     let config = SupervisorConfig {
+        protocol: HELPER_PROTOCOL,
         home: root.owning_directory().path().into(),
         machine: root.is_machine(),
         machine_gates: root.machine_gate_address(),

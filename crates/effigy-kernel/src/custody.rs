@@ -345,7 +345,7 @@ trait ProcessOwner {
     fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError>;
     fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError>;
     fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError>;
-    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError>;
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError>;
     fn capture_log(
         &self,
         sequence: i64,
@@ -380,7 +380,7 @@ impl ProcessOwner for Run<'_> {
     fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
         self.acknowledge_checkout_process(ticket)
     }
-    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError> {
         self.anchor_image()
     }
     fn capture_log(
@@ -421,7 +421,7 @@ impl ProcessOwner for crate::run::ForegroundRun {
     fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
         self.ack_process(ticket)
     }
-    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image, RunError> {
         self.anchor_image()
     }
     fn capture_log(

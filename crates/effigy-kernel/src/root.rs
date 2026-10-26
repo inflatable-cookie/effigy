@@ -64,9 +64,9 @@ impl StateRoot {
     pub fn effects(cx: &EffectContext, home: &Path) -> Result<Self, FsError> {
         cx.require(Capability::HostAuthority)
             .map_err(|_| FsError::HostAuthorityRequired)?;
-        let home = DirFd::walk(home, Trust::Operator)?;
+        let home = DirFd::walk(home, Trust::Ancestor)?;
         let effigy = home
-            .child(".effigy", Trust::Operator, true)?
+            .child(".effigy", Trust::Ancestor, true)?
             .expect("created directory");
         let dir = effigy.private_child_adopt("state")?;
         dir.require_local()?;
@@ -86,8 +86,8 @@ impl StateRoot {
         if cx.placement() == Placement::Guest {
             return Observed::Unknown(UnknownReason::HostAuthorityRequired);
         }
-        let opened = DirFd::walk(home, Trust::Operator).and_then(|home| {
-            match home.child(".effigy", Trust::Operator, false)? {
+        let opened = DirFd::walk(home, Trust::Ancestor).and_then(|home| {
+            match home.child(".effigy", Trust::Ancestor, false)? {
                 Some(effigy) => effigy
                     .child("state", Trust::Private, false)
                     .map(|state| state.map(|state| (home, state))),
@@ -158,7 +158,7 @@ impl StateRoot {
     /// Recheck the retained checkout, state and Git generations before an
     /// engine continues file work through this handle.
     pub fn verify_binding(&self) -> Result<(), FsError> {
-        if DirFd::walk(self.owner.path(), Trust::Operator)?.identity()? != self.owner.identity()? {
+        if DirFd::walk(self.owner.path(), Trust::Ancestor)?.identity()? != self.owner.identity()? {
             return Err(FsError::untrusted(
                 self.owner.path(),
                 "owning checkout directory changed",
@@ -225,64 +225,5 @@ pub(crate) fn unknown(error: &FsError) -> UnknownReason {
         )),
         FsError::Io(io) if io.is_permission() => UnknownReason::PermissionDenied,
         other => UnknownReason::Inconsistent(other.to_string()),
-    }
-}
-
-/// Whether an observation failed only because a state root carries a
-/// group/other-readable mode an effect may tighten.
-///
-/// That mode is not a fact about the journal: v0.14 `effigy state` created
-/// `.effigy/state/` with the process umask (papercut 9e5134a4), and
-/// [`StateRoot::effects`] adopts such a root. Effect paths use this to reach
-/// that adoption instead of refusing; observation keeps the root `Unknown` and
-/// never repairs it.
-pub(crate) fn is_open_mode_only(reason: &UnknownReason) -> bool {
-    matches!(
-        reason,
-        UnknownReason::Untrusted(detail) if names_open_mode_only(detail)
-    )
-}
-
-/// A leftover open mode, either as the bare reason or as the rendered
-/// sentence that names the path and the `chmod` that fixes it.
-///
-/// The rendered form is `{path} is readable by other users; run `chmod 700
-/// {path}``, so the sentence continues after the command: it has to be matched
-/// by its prefix, not by the end of the string. Misjudging it here would make
-/// every effect path refuse a root the adoption is meant to tighten (papercut
-/// 9e5134a4).
-fn names_open_mode_only(detail: &str) -> bool {
-    detail == crate::fs::OPEN_MODE_REASON
-        || detail.contains("is readable by other users; run `chmod 700 ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_leftover_open_mode_is_recognised_in_both_its_bare_and_rendered_forms() {
-        // Bare: observation constructs it from the raw filesystem reason.
-        let bare = UnknownReason::Untrusted(crate::fs::OPEN_MODE_REASON.to_owned());
-        assert!(is_open_mode_only(&bare), "bare reason: {bare}");
-
-        // Rendered: `StoreError`/`root::unknown` name the path and the chmod.
-        let rendered = unknown(&FsError::Untrusted {
-            path: "/repo/.effigy/state".into(),
-            reason: crate::fs::OPEN_MODE_REASON.to_owned(),
-        });
-        assert!(
-            matches!(&rendered, UnknownReason::Untrusted(detail)
-                if detail.contains("chmod 700 /repo/.effigy/state")),
-            "rendered reason names the path and the chmod: {rendered}"
-        );
-        assert!(
-            is_open_mode_only(&rendered),
-            "the rendered open-mode sentence must still reach adoption: {rendered}"
-        );
-
-        // Any other untrusted reason is not an open mode: it keeps refusing.
-        let foreign = UnknownReason::Untrusted("/repo/.effigy/state is not trusted store state (wrong owner); fix its ownership and permissions".to_owned());
-        assert!(!is_open_mode_only(&foreign), "foreign reason: {foreign}");
     }
 }

@@ -86,8 +86,8 @@ A host suite runs with `EFFIGY_EXECUTABLE` naming the Effigy binary that
 started the test run, unless the environment already sets it. Steps that invoke
 Effigy from inside a test (a task reference, a Rhai `effigy.*` call) therefore
 reuse that binary instead of rebuilding the workspace binary with `cargo run`.
-A rebuild can replace a running process's startup image, which kernel custody
-refuses, and it costs a Cargo invocation per step. Set `EFFIGY_EXECUTABLE`
+A rebuild can replace the running binary under another suite, and it costs a
+Cargo invocation per step. Set `EFFIGY_EXECUTABLE`
 yourself to test against a different build; the TUI and parallel paths carry the
 same value.
 

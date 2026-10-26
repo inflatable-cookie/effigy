@@ -11,20 +11,10 @@ pub(super) fn gates(
     ids: &[ResourceId],
 ) -> Result<Vec<ResourceId>, RunError> {
     let mut gates = ids.to_vec();
-    let access = crate::migration::adoption::access(cx, root)?;
     let Some(local) = root.local_gate_identity(cx)? else {
         return Ok(gates);
     };
-    let mut checkouts = vec![local, root.directory_gate_identity()?];
-    if let crate::migration::adoption::Access::Committed {
-        checkout: Some(checkout),
-        checkout_aliases,
-        ..
-    } = access
-    {
-        checkouts.push(checkout);
-        checkouts.extend(checkout_aliases);
-    }
+    let checkouts = vec![local, root.directory_gate_identity()?];
     for id in ids {
         if let Scope::Checkout(checkout) = id.scope() {
             if checkout.kind() == CheckoutKind::Filesystem && checkout != local {

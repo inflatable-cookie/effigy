@@ -28,18 +28,15 @@ fn an_ordinary_test_run_prepares_the_custody_fixture_binary() {
         "ordinary test runs must build `{}`",
         path.display()
     );
-    let executable = effigy_kernel::supervise::Executable::capture(path)
+    effigy_kernel::supervise::Executable::capture(path)
         .expect("the prepared custody fixture is a capturable helper binary");
-    executable
-        .verify()
-        .expect("the prepared custody fixture is still the captured image");
 }
 
 #[test]
 fn the_prepared_custody_fixture_serves_kernel_helper_entries() {
-    // `__kernel-anchor` reads its image frame before any session frame, so an
-    // invocation without one must exit non-zero and name the missing frame: the
-    // binary dispatches kernel entries rather than merely existing.
+    // `__kernel-anchor` requires the custody nonce, so an invocation without
+    // one must exit non-zero and name it: the binary dispatches kernel entries
+    // rather than merely existing.
     let output = Command::new(prepared_fixture())
         .arg("__kernel-anchor")
         .env_clear()
@@ -54,7 +51,7 @@ fn the_prepared_custody_fixture_serves_kernel_helper_entries() {
         "an `__kernel-anchor` entry without an image frame must fail closed: {stderr}"
     );
     assert!(
-        stderr.contains("anchor image frame missing"),
+        stderr.contains("anchor nonce missing"),
         "the fixture must serve the kernel anchor entry, got: {stderr}"
     );
 }

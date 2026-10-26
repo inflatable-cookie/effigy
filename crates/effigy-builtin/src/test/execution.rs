@@ -451,10 +451,9 @@ fn host_scratch_env(ports: &dyn BuiltinRuntimePorts) -> std::collections::BTreeM
 ///
 /// A task step that invokes Effigy falls back to `cargo run --bin effigy` from
 /// a test harness, and every one of those builds can replace the uplifted
-/// binary while another suite's process is still running. The kernel refuses a
-/// foreground memory guard whose startup image was replaced (`I-SV4`), so a
-/// suite shares the stable binary that started the test run instead. An
-/// operator's explicit value wins.
+/// binary while another suite's process is still running. A suite shares the
+/// stable binary that started the test run instead, so one build cannot swap
+/// the binary under another suite. An operator's explicit value wins.
 fn suite_host_env(ports: &dyn BuiltinRuntimePorts) -> std::collections::BTreeMap<String, String> {
     let mut env = host_scratch_env(ports);
     if let Some(executable) = suite_effigy() {
