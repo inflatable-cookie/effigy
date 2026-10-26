@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use effigy_containers::EffectiveContainerPolicy;
 use effigy_containers::{ContainerComposeInvocationPlan, ContainerRuntimeInvocationPlan};
 #[cfg(unix)]
 use nix::libc;
@@ -28,20 +27,17 @@ pub enum ComposeRunOutcome {
 }
 
 pub fn run_compose_plan_capture(
-    policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
 ) -> Result<Output, EffigyRuntimeError> {
-    run_compose_plan_capture_with_env(policy, plan, &[])
+    run_compose_plan_capture_with_env(plan, &[])
 }
 
 pub fn run_compose_plan_capture_with_env(
-    policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
     env: &[(String, OsString)],
 ) -> Result<Output, EffigyRuntimeError> {
     effigy_containers::exec::run_compose_invocation_capture_with_env(
         &plan.repo_root,
-        policy,
         &plan.program,
         &plan.args,
         &plan.label,

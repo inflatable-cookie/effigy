@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -10,7 +11,7 @@ mod running;
 mod validation;
 
 use effigy_containers::compose::compose_args;
-use effigy_containers::exec::{ensure_colima_running, run_compose_capture};
+use effigy_containers::exec::{ensure_colima_running, run_compose_capture_with_env};
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 use effigy_runtime_plan::{
     RuntimeActivationPlan, RuntimeActivationRequest, RuntimeActivationRoute, RuntimeLeasePolicy,
@@ -345,25 +346,31 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     run_runtime_prep_steps(
         || prepare_runtime_mounts_stage(repo_root, policy),
         || {
-            // Task preparation applies through the same one apply path as
-            // `container up`: Compose recreates only changed services.
+            // Task preparation runs the same apply as `container up`: the
+            // shared services are started first, the same secrets reach the
+            // same Compose args, and Compose recreates only changed services
+            // (effigy#371).
+            let apply = || {
+                run_task_apply(
+                    repo_root,
+                    policy,
+                    crate::runner::container_command::support::ensure_shared_services_running,
+                    crate::runner::container_command::secret_env::compose_secret_env_for_apply,
+                    |repo_root, policy, args, label, env| {
+                        run_compose_capture_with_env(repo_root, policy, args, label, env)
+                            .map(|_| ())
+                            .map_err(RunnerError::from)
+                    },
+                )
+                .map_err(|error| {
+                    effigy_containers::environment::BackendError::Uncertain(error.to_string())
+                })
+            };
             bring_up = Some(crate::runner::environment::reconcile(
                 repo_root,
                 policy,
                 start.retention,
-                || {
-                    run_runtime_compose_up_stage(
-                        repo_root,
-                        policy,
-                        |repo_root, policy, args, label| {
-                            Ok(run_compose_capture(repo_root, policy, args, label).map(|_| ())?)
-                        },
-                    )
-                    .map_err(|error| {
-                        effigy_containers::environment::BackendError::Uncertain(error.to_string())
-                    })?;
-                    Ok(())
-                },
+                apply,
             )?);
             Ok(())
         },
@@ -386,6 +393,32 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
         Some(bring_up) => crate::runner::environment::activate(&bring_up, start.holders),
         None => Ok(()),
     }
+}
+
+/// A task's environment apply, as one unit: start the shared services, resolve
+/// the secrets the stack delivers, then run the one Compose apply with exactly
+/// the arguments `container up` passes.
+fn run_task_apply(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    ensure_shared: impl FnOnce(&EffectiveContainerPolicy) -> Result<Vec<String>, RunnerError>,
+    secret_env: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+    ) -> Result<Vec<(String, OsString)>, RunnerError>,
+    run_compose: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+        &[OsString],
+        &str,
+        &[(String, OsString)],
+    ) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
+    for note in ensure_shared(policy)? {
+        eprintln!("[info] shared service ready: {note}");
+    }
+    let env = secret_env(repo_root, policy)?;
+    run_runtime_compose_up_stage(repo_root, policy, &env, run_compose)
 }
 
 fn run_verified_prep_capture(

@@ -11,7 +11,7 @@ use effigy_kernel::id::{
     Surface, TaskId,
 };
 use effigy_kernel::objects::Closure;
-use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
+use effigy_kernel::observe::{Evidence, Observed};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation, WorkloadOutcome};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{AttachMode, BeginOpts, Liveness, Run};
@@ -22,7 +22,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 mod adapters;
-mod busy;
 mod faults;
 mod importer;
 
@@ -245,12 +244,6 @@ impl Fake {
 impl EnvironmentBackend for Fake {
     fn selection(&self) -> &BackendSelection {
         &self.selection
-    }
-    fn reconcile(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError> {
-        self.call("apply", render.project)
-    }
-    fn stop(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError> {
-        self.call("stop", render.project)
     }
     fn inventory(&mut self, _: &Path, project: &str) -> Observed<Vec<Workload>> {
         panic!("strict fake: unmodelled inventory of `{project}`")
@@ -514,12 +507,18 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
             let result = match transition {
                 "recreate" => bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[])
                     .map(|applied| {
-                        let expected = if liveness == "interrupted" {
-                            Applied::Reconciled
-                        } else {
-                            Applied::HeldByRuns
-                        };
-                        assert_eq!(applied, expected, "recreate against a {liveness} holder");
+                        if liveness == "interrupted" {
+                            assert_eq!(applied, Applied::Reconciled);
+                            return;
+                        }
+                        match applied {
+                            // A live holder keeps the running stack; the
+                            // deferred edit names it (effigy#371).
+                            Applied::HeldByRuns(holders) => {
+                                assert_eq!(holders.len(), 1, "{holders:?}")
+                            }
+                            other => panic!("recreate against a {liveness} holder: {other:?}"),
+                        }
                     }),
                 "down" => take_down(&ctx, &stack, Operation::Down, &fake, None),
                 "handover" => take_down(&ctx, &stack, Operation::Handover, &fake, None),

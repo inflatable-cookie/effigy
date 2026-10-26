@@ -16,16 +16,19 @@ pub(super) fn prepare_runtime_mounts_stage(
     prepare_host_bind_mount_dirs(repo_root, policy)
 }
 
-/// The one apply, for a task's own stack preparation: the same invocation
-/// `container up` runs, and a failure is an error naming the compose output.
+/// The one apply, for a task's own stack preparation: the same invocation and
+/// the same secrets `container up` runs, and a failure is an error naming the
+/// compose output.
 pub(super) fn run_runtime_compose_up_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    env: &[(String, std::ffi::OsString)],
     run_compose: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
         &[std::ffi::OsString],
         &str,
+        &[(String, std::ffi::OsString)],
     ) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     run_compose(
@@ -33,6 +36,7 @@ pub(super) fn run_runtime_compose_up_stage(
         policy,
         &compose_up_args(policy),
         "docker compose up",
+        env,
     )
     .map_err(|error| {
         RunnerError::task_invocation(format!(

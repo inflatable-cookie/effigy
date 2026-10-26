@@ -1277,8 +1277,8 @@ pub(in crate::runner) fn release_inline_managed_environment(
         "inline managed environment down",
     )
     .map_err(RunnerError::from)?;
-    let output = effigy_runtime::signals::run_compose_plan_capture(&policy, &plan)
-        .map_err(RunnerError::from)?;
+    let output =
+        effigy_runtime::signals::run_compose_plan_capture(&plan).map_err(RunnerError::from)?;
     if output.status.success() {
         Ok(format!("inline environment `{}` is down", policy.name))
     } else {

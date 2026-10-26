@@ -945,7 +945,7 @@ fn run_inline_workspace_standard_task(
         run,
         preflight.output_json,
     );
-    teardown_inline_workspace_container(&policy, teardown_plan.as_ref());
+    teardown_inline_workspace_container(teardown_plan.as_ref());
     finish_remote(preflight, context, secret_ref, exit?, workload)
 }
 
@@ -1007,12 +1007,9 @@ fn inline_workspace_teardown_plan(
 
 /// Tear down the container this task activated. The teardown is best
 /// effort; its result never changes the task's outcome.
-fn teardown_inline_workspace_container(
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    plan: Option<&ContainerComposeInvocationPlan>,
-) {
+fn teardown_inline_workspace_container(plan: Option<&ContainerComposeInvocationPlan>) {
     if let Some(plan) = plan {
-        let _ = effigy_runtime::signals::run_compose_plan_capture(policy, plan);
+        let _ = effigy_runtime::signals::run_compose_plan_capture(plan);
     }
 }
 

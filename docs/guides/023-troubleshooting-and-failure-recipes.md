@@ -402,8 +402,8 @@ transition to finish, then run the command again. There is no force-unlock: the
 gate belongs to a live run, and a crashed or killed transition has already
 released it.
 
-With `--json` the refusal carries `error.details`
-`effigy.environment-busy.v1` (see the JSON payload examples).
+The refusal is one sentence naming the holder (its run, pid and task) and its
+state; the command's exit code and `--json` error shape are unchanged.
 
 ### Symptom: `refused to stop, restart or recreate environment`
 

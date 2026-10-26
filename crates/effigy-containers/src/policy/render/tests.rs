@@ -347,7 +347,8 @@ fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
 }
 
 /// The runtime restarts a stopped service: every rendered service carries
-/// `restart: unless-stopped` unless the stack declares its own policy.
+/// `restart: unless-stopped` unless the stack declares its own policy, and no
+/// overlay file can beat that declaration (effigy#371).
 #[test]
 fn a_render_restarts_every_service_that_does_not_declare_a_policy() {
     let (_fixture, checkout, home) = fixture();
@@ -358,18 +359,185 @@ fn a_render_restarts_every_service_that_does_not_declare_a_policy() {
     .unwrap();
     crate::with_test_effigy_home(&home, || {
         let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
-        let document: serde_yaml::Value =
-            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
+        let merged = merged_compose(&policy);
         assert_eq!(
-            document["services"]["app"]["restart"],
+            merged["services"]["app"]["restart"],
             serde_yaml::Value::String("unless-stopped".into()),
             "a service without a policy is restarted by the runtime"
         );
         assert_eq!(
-            document["services"]["db"]["restart"],
+            merged["services"]["db"]["restart"],
             serde_yaml::Value::String("no".into()),
-            "a declared policy wins"
+            "a declared policy wins in the merged model, so a one-shot job stays down"
         );
+        // The runtime DNS override is a later `-f` file and names every
+        // service, so it must carry no policy of its own.
+        for file in policy.compose_files.iter().skip(1) {
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&policy.read_compose(file).unwrap()).unwrap();
+            for (name, service) in document["services"].as_mapping().unwrap() {
+                assert!(
+                    service.get("restart").is_none(),
+                    "{} in {} must not restate a restart policy",
+                    name.as_str().unwrap_or("<name>"),
+                    file.display()
+                );
+            }
+        }
+    });
+}
+
+/// The Compose model Compose itself reads: every `-f` file merged in order,
+/// mappings merged key by key and every other value replaced by the later
+/// file.
+fn merged_compose(policy: &EffectiveContainerPolicy) -> serde_yaml::Value {
+    let mut merged = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    for file in &policy.compose_files {
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(file).unwrap()).unwrap();
+        merge(&mut merged, document);
+    }
+    merged
+}
+
+fn merge(into: &mut serde_yaml::Value, from: serde_yaml::Value) {
+    match (into, from) {
+        (serde_yaml::Value::Mapping(into), serde_yaml::Value::Mapping(from)) => {
+            for (key, value) in from {
+                match into.get_mut(&key) {
+                    Some(existing) => merge(existing, value),
+                    None => {
+                        into.insert(key, value);
+                    }
+                }
+            }
+        }
+        (into, from) => *into = from,
+    }
+}
+
+/// Every relative path a Compose input names resolves where the file was
+/// read, not where the generation publishes it (effigy#371).
+#[test]
+fn a_render_resolves_every_relative_input_path_against_the_checkout() {
+    let (fixture, checkout, home) = fixture();
+    std::fs::create_dir_all(checkout.join("app")).unwrap();
+    std::fs::write(checkout.join("app/Dockerfile"), "FROM scratch\n").unwrap();
+    std::fs::write(checkout.join("app.env"), "A=1\n").unwrap();
+    std::fs::write(checkout.join("bind.txt"), "bind\n").unwrap();
+    std::fs::write(checkout.join("secret.txt"), "secret\n").unwrap();
+    std::fs::write(
+        checkout.join("compose.yml"),
+        r#"services:
+  app:
+    build:
+      dockerfile: Dockerfile
+"#,
+    )
+    .unwrap();
+    // A user override is a later `-f` file: its own relative paths resolve
+    // against the project directory too, and it inherits the base's build
+    // context rather than naming one.
+    std::fs::create_dir_all(checkout.join(".effigy/runtime/compose")).unwrap();
+    std::fs::write(
+        checkout.join(".effigy/runtime/compose/compose.override.yml"),
+        r#"services:
+  app:
+    build:
+      additional_contexts:
+        - shared=./app
+    env_file:
+      - path: ./app.env
+        required: false
+    volumes:
+      - type: bind
+        source: ./bind.txt
+        target: /bind.txt
+secrets:
+  token:
+    file: ./secret.txt
+configs:
+  settings:
+    file: ./app.env
+"#,
+    )
+    .unwrap();
+    crate::with_test_effigy_home(&home, || {
+        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
+        let service = &document["services"]["app"];
+        // A build mapping with no context builds from the checkout, never from
+        // the generation that holds the Compose file.
+        let context = service["build"]["context"]
+            .as_str()
+            .expect("a missing build context names the directory Compose would have used");
+        assert!(
+            Path::new(context).is_absolute() && !context.contains(".effigy/state"),
+            "a missing build context names the pre-render project directory, not the generation: {context}"
+        );
+        assert_eq!(
+            Path::new(context),
+            checkout.join(".effigy/runtime/compose"),
+            "the context is the directory the Compose input was read from"
+        );
+        let override_document: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[1]).unwrap()).unwrap();
+        assert_eq!(
+            override_document["services"]["app"]["build"]["additional_contexts"][0],
+            serde_yaml::Value::String(format!(
+                "shared={}",
+                checkout.join(".effigy/runtime/compose/app").display()
+            )),
+            "an additional context resolves against the file that names it"
+        );
+        assert!(
+            override_document["services"]["app"]["build"]
+                .get("context")
+                .is_none(),
+            "an overlay never names a build context of its own"
+        );
+        assert_eq!(
+            override_document["services"]["app"]["env_file"][0]["path"],
+            serde_yaml::Value::String(
+                checkout
+                    .join(".effigy/runtime/compose/app.env")
+                    .display()
+                    .to_string()
+            ),
+            "a long-syntax env_file entry resolves against the file that names it"
+        );
+        assert_eq!(
+            override_document["services"]["app"]["volumes"][0]["source"],
+            serde_yaml::Value::String(
+                checkout
+                    .join(".effigy/runtime/compose/bind.txt")
+                    .display()
+                    .to_string()
+            ),
+            "a long-syntax bind volume resolves against the file that names it"
+        );
+        assert_eq!(
+            override_document["secrets"]["token"]["file"],
+            serde_yaml::Value::String(
+                checkout
+                    .join(".effigy/runtime/compose/secret.txt")
+                    .display()
+                    .to_string()
+            ),
+            "a top-level secret file resolves against the file that names it"
+        );
+        assert_eq!(
+            override_document["configs"]["settings"]["file"],
+            serde_yaml::Value::String(
+                checkout
+                    .join(".effigy/runtime/compose/app.env")
+                    .display()
+                    .to_string()
+            ),
+            "a top-level config file resolves against the file that names it"
+        );
+        let _ = fixture;
     });
 }
 

@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
@@ -253,7 +253,6 @@ pub trait ContainerBackend: Send + Sync {
     fn id(&self) -> BackendId;
     fn capabilities(&self) -> ContainerBackendCapabilities;
 
-    fn compose_invocation(&self, repo_root: &Path) -> Vec<String>;
     fn compose_process_invocation(
         &self,
         profile: &str,
@@ -288,15 +287,6 @@ impl ContainerBackend for DockerComposeBackend {
         }
     }
 
-    fn compose_invocation(&self, repo_root: &Path) -> Vec<String> {
-        vec![
-            "docker".to_owned(),
-            "compose".to_owned(),
-            "--project-directory".to_owned(),
-            repo_root.display().to_string(),
-        ]
-    }
-
     fn compose_process_invocation(
         &self,
         _profile: &str,
@@ -321,15 +311,6 @@ impl ContainerBackend for ColimaNerdctlBackend {
             can_copy: true,
             can_stream_logs: true,
         }
-    }
-
-    fn compose_invocation(&self, repo_root: &Path) -> Vec<String> {
-        vec![
-            "nerdctl".to_owned(),
-            "compose".to_owned(),
-            "--project-directory".to_owned(),
-            repo_root.display().to_string(),
-        ]
     }
 
     fn compose_process_invocation(
@@ -796,20 +777,6 @@ mod tests {
         );
         assert_eq!(backend_override_from_env_value("auto"), None);
         assert_eq!(backend_override_from_env_value("unknown"), None);
-    }
-
-    #[test]
-    fn compose_invocations_are_stable() {
-        let repo = PathBuf::from("/tmp/repo");
-
-        assert_eq!(
-            DockerComposeBackend.compose_invocation(&repo),
-            vec!["docker", "compose", "--project-directory", "/tmp/repo"]
-        );
-        assert_eq!(
-            ColimaNerdctlBackend.compose_invocation(&repo),
-            vec!["nerdctl", "compose", "--project-directory", "/tmp/repo"]
-        );
     }
 
     #[test]

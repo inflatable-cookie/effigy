@@ -268,6 +268,7 @@ mod tests {
                 failing_streak: 4,
                 last_output: Some("GET / HTTP/1.1 404".to_owned()),
                 exit_code: None,
+                restart_policy: None,
             },
             ServiceHealth {
                 service: "db".to_owned(),
@@ -277,6 +278,7 @@ mod tests {
                 failing_streak: 0,
                 last_output: None,
                 exit_code: None,
+                restart_policy: None,
             },
         ];
         let mut steps = BTreeMap::new();

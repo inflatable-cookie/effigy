@@ -327,7 +327,7 @@ where
                     "docker compose down -v"
                 },
             )?;
-            run_compose_plan_capture(&policy, &plan)?;
+            run_compose_plan_capture(&plan)?;
             if preserve_persistent_data {
                 if let Some(classification) = volume_actions.as_ref() {
                     remove_reset_volumes(repo_root, &policy, classification)?;

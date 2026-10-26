@@ -350,6 +350,20 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- **Automatic Colima repair.** Effigy no longer stops and restarts the shared
+  Colima profile to "repair" it: the runtime-state and registry-DNS heuristics
+  and their retries are gone from the capture, streaming and liveness paths. A
+  detected problem keeps its own error and names the manual
+  `effigy container profile repair`; nothing takes down every stack on the
+  profile because a registry lookup failed offline (effigy#371).
+- **`effigy.environment-busy.v1`.** A busy environment refusal is one sentence
+  naming the holder's run, pid, task and state instead of a second record of the
+  environment; `HeldBy` names runs only. The refusal's exit code and text
+  contract are unchanged (effigy#371).
+- **The environment backend's reconcile and stop seams**, and the container
+  backend's `compose_invocation`. Applying and stopping run through the caller's
+  effect closure, so the adapters only observe, and the environment tests now
+  assert the inventory calls production runs (effigy#371).
 - **A run's scratch directory is no longer a kernel effect.** It is a plain
   directory with one marker file, removed when the run succeeds and kept for 24
   hours when it fails, and a bounded sweep at a later run's start retires it
@@ -1438,6 +1452,41 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **A service's declared `restart:` always wins, including `"no"`.** The
+  generated service still gets `restart: unless-stopped` where the stack
+  declares none, but the policy is written only into the file that defines the
+  service (it names an `image`, a `build` or an `extends`), never into an
+  override file. A later `-f` file wins Compose's merge, so Effigy's runtime DNS
+  override used to restate the policy for every service and beat a one-shot
+  job's `restart: "no"` (effigy#371).
+- **A one-shot job that ran to completion is ready.** A service that declares
+  `restart: "no"` and exits successfully is the service doing its job, so the
+  stack it belongs to can become ready; a failed exit is still unready, and so
+  is every service the runtime restarts (effigy#371).
+- **A shared catalog's bound config file is published by the render.** The
+  MariaDB and Postgres init SQL reach the generation at the path their fragment
+  names, so a fresh home directory works and a changed `databases` value reaches
+  the server instead of depending on a file an older Effigy left behind
+  (effigy#371).
+- **A task's environment ensure runs the same apply as `container up`.** It
+  starts the shared services first and delivers the same compose-env secrets to
+  the same Compose arguments, so the two paths converge on the same stack
+  (effigy#371).
+- **`container up` renders once.** The creation load allocates ports, prepares
+  every mount source and publishes the generation, and every later stage and the
+  apply use that one policy; the second render, the manager report, the
+  operation plan and the pre-apply inventory are gone (effigy#371).
+- **An edit a live run holds is reported, not skipped silently.** `container up`
+  names the holder and that the edit applies on the next up; a holder list that
+  cannot be read is unknown, so the apply proceeds (Q-011) (effigy#371).
+- **Every remaining relative Compose input resolves where it was read.**
+  Long-syntax bind volumes and `env_file` entries, `build.additional_contexts`,
+  a `build:` mapping with no `context`, top-level `secrets`/`configs` files,
+  `extends.file` and `include` are made absolute against the file that names
+  them, as `volumes` and `build.context` already were (effigy#371).
+- **`dns:` is never written for a `network_mode` service.** The runtime DNS
+  override skips those services, because Compose rejects the combination
+  (effigy#371).
 - **Scratch is decided by its own marker.** A successful run removes its
   directory at the engine's normal completion, and a failed, cancelled or
   timed-out run records `keep: true` and a conclusion time in the directory's
