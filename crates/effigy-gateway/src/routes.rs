@@ -1,13 +1,10 @@
 //! Typed route snapshots; the gateway endpoint Store owns persistence.
 
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
-
-use fs2::FileExt;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -50,10 +47,6 @@ pub struct Route {
 
     /// Absolute path to the project directory.
     pub project: String,
-
-    /// Generation token of the linked worktree that claimed this route.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
 
     /// Process and listener generation that owns a dynamically managed host
     /// listener route. Static `target_host` routes leave this unset.
@@ -99,84 +92,6 @@ impl ManagedListenerRouteOwner {
             return false;
         };
         std::net::TcpStream::connect_timeout(&address, Duration::from_millis(300)).is_ok()
-    }
-}
-
-/// Process-wide and cross-process lock for route-table read/check/write.
-/// The lock file is separate from the atomically replaced JSON file.
-pub struct RouteTableLock(std::fs::File);
-
-impl RouteTableLock {
-    pub fn acquire(path: &Path) -> Result<Self, GatewayError> {
-        Self::acquire_until(path, Instant::now() + Duration::from_secs(30))
-    }
-    pub(crate) fn acquire_until(path: &Path, deadline: Instant) -> Result<Self, GatewayError> {
-        let lock_path = path.with_extension("lock");
-        if let Some(parent) = lock_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                GatewayError::RouteTableWriteError {
-                    path: lock_path.clone(),
-                    reason: error.to_string(),
-                }
-            })?;
-        }
-        #[cfg(unix)]
-        let file = {
-            use std::os::unix::fs::OpenOptionsExt;
-            OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(&lock_path)
-        };
-        #[cfg(not(unix))]
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path);
-        let file = file.map_err(|error| GatewayError::RouteTableWriteError {
-            path: lock_path.clone(),
-            reason: error.to_string(),
-        })?;
-        loop {
-            match file.try_lock_exclusive() {
-                Ok(()) => break,
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
-                {
-                    std::thread::sleep(
-                        Duration::from_millis(10)
-                            .min(deadline.saturating_duration_since(Instant::now())),
-                    );
-                }
-                Err(e) => {
-                    return Err(GatewayError::RouteTableWriteError {
-                        path: lock_path,
-                        reason: format!("lock refused or deadline expired: {e}"),
-                    })
-                }
-            }
-        }
-        Ok(Self(file))
-    }
-}
-
-impl Drop for RouteTableLock {
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
-}
-
-impl std::fmt::Debug for RouteTableLock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The newtype owns a lock file; the raw descriptor is an
-        // implementation detail and is redacted from diagnostics.
-        f.debug_struct("RouteTableLock").finish_non_exhaustive()
     }
 }
 

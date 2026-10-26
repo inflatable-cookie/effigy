@@ -13,7 +13,6 @@ fn test_route(domain: &str, target: &str) -> Route {
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
         tls: false,
-        scope: None,
         managed_listener: None,
         registered: Utc::now(),
     }
@@ -30,18 +29,6 @@ fn empty_table() {
     let table = RouteTable::new();
     assert!(table.is_empty());
     assert_eq!(table.len(), 0);
-}
-
-#[test]
-fn legacy_import_lock_wait_respects_its_deadline() {
-    let fixture = tempfile::tempdir().unwrap();
-    let path = fixture.path().join("routes.json");
-    let _held = RouteTableLock::acquire(&path).unwrap();
-    let now = std::time::Instant::now();
-    assert!(
-        RouteTableLock::acquire_until(&path, now + std::time::Duration::from_millis(20)).is_err()
-    );
-    assert!(now.elapsed() < std::time::Duration::from_secs(1));
 }
 
 #[test]
@@ -194,7 +181,6 @@ fn route_serialization_format() {
         tcp_target: None,
         source: RouteSource::Container,
         project: "/tmp/proj".to_string(),
-        scope: None,
         managed_listener: None,
         tls: false,
         registered: DateTime::parse_from_rfc3339("2026-04-16T10:00:00Z")
@@ -301,16 +287,6 @@ fn route_deserialization_defaults_missing_target() {
 
     let parsed: Route = serde_json::from_str(json).unwrap();
     assert_eq!(parsed.target, None);
-}
-
-#[test]
-fn route_table_lock_debug_is_available_and_redacts_the_lock_descriptor() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("routes.json");
-    let lock = RouteTableLock::acquire(&path).unwrap();
-    let rendered = format!("{lock:?}");
-    assert_eq!(rendered, "RouteTableLock { .. }");
-    assert!(!rendered.contains("fd:"));
 }
 
 #[test]

@@ -18,13 +18,12 @@ use effigy_containers::{
     RetireOutcome, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL,
     SCOPE_LABEL,
 };
-use effigy_gateway::registration::cleanup_owned_routes_and_certs;
+use effigy_gateway::registration::withdraw_owned_routes;
 
 use super::data::maybe_confirm_destructive_container_action;
 use super::support::run_runtime_volume_capture;
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
-use crate::runner::gateway_command::{gateway_dir, remove_gateway_tls_cert};
 
 mod dead;
 
@@ -703,42 +702,19 @@ fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
     }
 }
 
-/// Release the checkout's gateway state by checkout path alone: its routes and
-/// their certificates. The route table is the only record of loopback
-/// ownership, so removing the routes frees the checkout's alias address too.
-/// Ports are the OS's or Compose's now, so retirement releases no port
-/// registry entry.
+/// Release the checkout's gateway state by checkout path alone: its routes.
+/// The route table is the only record of loopback ownership, so removing the
+/// routes frees the checkout's alias address too. Ports are the OS's or
+/// Compose's now, so retirement releases no port registry entry, and
+/// certificates are a cache keyed by domain: they stay for the next `up` and
+/// the gateway daemon prunes the ones no route names.
 pub(super) fn release_gateway(checkout: &str) -> Result<GatewayRelease, RunnerError> {
     let path = super::gateway_registration::gateway_route_table_path()?;
-    let removed = cleanup_owned_routes_and_certs(&path, checkout, None, &[], delete_tls_cert)
+    let removed = withdraw_owned_routes(&path, checkout)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(GatewayRelease {
         routes: removed.into_iter().map(|route| route.domain).collect(),
     })
-}
-
-/// Remove one of the checkout's TLS certificates, and confirm it is gone.
-fn delete_tls_cert(domain: &str) -> Result<(), effigy_gateway::GatewayError> {
-    if remove_gateway_tls_cert(domain).is_ok() {
-        return Ok(());
-    }
-    let certs_dir = gateway_dir()
-        .map_err(|error| effigy_gateway::GatewayError::TlsError {
-            domain: domain.to_owned(),
-            reason: error.to_string(),
-        })?
-        .join("certs");
-    let pem = certs_dir.join(format!("{domain}.pem"));
-    let key = certs_dir.join(format!("{domain}-key.pem"));
-    let _ = std::fs::remove_file(&pem);
-    let _ = std::fs::remove_file(&key);
-    if pem.exists() || key.exists() {
-        return Err(effigy_gateway::GatewayError::TlsError {
-            domain: domain.to_owned(),
-            reason: "certificate files remain".to_owned(),
-        });
-    }
-    Ok(())
 }
 
 /// The runtime's own sentence from a failed deletion. A wrapped CLI prints the
@@ -1055,9 +1031,25 @@ mod tests {
                 .expect("register route");
             }
 
+            let certs = crate::runner::gateway_command::gateway_dir()
+                .expect("gateway directory")
+                .join("certs");
+            std::fs::create_dir_all(&certs).expect("certs directory");
+            for domain in ["dormant.test", "other.test"] {
+                std::fs::write(certs.join(format!("{domain}.pem")), "cert").expect("cert file");
+                std::fs::write(certs.join(format!("{domain}-key.pem")), "key").expect("key file");
+            }
+
             let release =
                 release_gateway(&checkout_label).expect("release the checkout's gateway state");
             assert_eq!(release.routes, vec!["dormant.test".to_owned()]);
+            for domain in ["dormant.test", "other.test"] {
+                assert!(
+                    certs.join(format!("{domain}.pem")).exists(),
+                    "a certificate is a cache and survives retirement"
+                );
+                assert!(certs.join(format!("{domain}-key.pem")).exists());
+            }
 
             let snapshot = EndpointStore::for_routes(&path)
                 .snapshot()

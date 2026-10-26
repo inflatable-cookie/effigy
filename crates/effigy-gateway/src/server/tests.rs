@@ -838,7 +838,6 @@ fn demo_route_table() -> RouteTable {
         tls: false,
         source: RouteSource::Container,
         project: "/tmp/demo".to_owned(),
-        scope: None,
         managed_listener: None,
         registered: chrono::Utc::now(),
     });
@@ -927,7 +926,6 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
                 tls: false,
                 source: RouteSource::Container,
                 project: checkout.display().to_string(),
-                scope: None,
                 managed_listener: None,
                 registered: chrono::Utc::now(),
             });
