@@ -12,9 +12,10 @@
 //!
 //! `EFFIGY_ADMITTED=<admitting run id>` is set on everything an admitted
 //! run spawns. A heavy invocation that sees it does not call the hook again;
-//! the marker is advisory, so there is no liveness check. Nothing else grants
-//! nested admission, and a hook failure, a crash or a timeout still fails
-//! closed for the run that had to call the hook.
+//! the marker is advisory evidence, so there is no liveness check on it and
+//! nothing else grants nested admission. A hook failure, a crash or a timeout
+//! still fails closed for the run that had to call the hook, and a task that
+//! is not heavy never consults the hook at all.
 //!
 //! ## Admission protocol v2 (effigy#325)
 //!
@@ -46,7 +47,6 @@ use effigy_kernel::ctx::OpenReason;
 use effigy_kernel::custody::{
     EnvValue, Lifetime, OwnedProcess, ProcessReceipt, ProcessSpec, SpawnError, SpawnGate, Terminal,
 };
-use effigy_kernel::ident::ProcessIdentity;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_manifest::ManifestTaskAdmission;
@@ -81,12 +81,11 @@ const ACK_MAX: usize = 64 * 1024;
 // run (a sequence step or a QA member) runs on the thread that admitted its
 // parent, so this is per thread and not ambient: two runs that share this
 // process but not a thread never see each other's marker, and neither can
-// suppress the other's hook. Bounded suite workers receive an explicit,
-// freshly verified AdmissionInheritance capsule. `HELD` follows the lexical
-// `PARENTS` stack that nests runs, so admission nesting and run nesting
-// cannot disagree.
+// suppress the other's hook. `HELD` follows the lexical `PARENTS` stack that
+// nests runs, so admission nesting and run nesting cannot disagree. The marker
+// is advisory: no hook identity is retained or re-verified (Q-011, F10).
 thread_local! {
-    static HELD: RefCell<Vec<(String, ProcessIdentity)>> = const { RefCell::new(Vec::new()) };
+    static HELD: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// The v2 reporting channel of the admission this thread is inside.
     /// In-process nested runs (sequence steps, QA members) spawn workload
     /// groups of the admitting run, so they report through the same channel.
@@ -94,7 +93,7 @@ thread_local! {
 }
 
 fn held_marker() -> Option<String> {
-    HELD.with(|held| held.borrow().last().map(|(marker, _)| marker.clone()))
+    HELD.with(|held| held.borrow().last().cloned())
 }
 
 /// What a run must do before its workload.
@@ -118,7 +117,6 @@ impl Plan {
 
 /// Decides admission before the run begins; a malformed timeout refuses.
 pub(super) fn plan(class: Option<ManifestTaskAdmission>) -> Result<Plan, RunnerError> {
-    verify_held()?;
     decide(
         class,
         &held_marker(),
@@ -208,14 +206,14 @@ pub(in crate::runner) fn child_marker() -> Option<String> {
 /// The stack a held admission pushed to, innermost last. Only the thread
 /// that holds it can read it, which is the point: no other thread's run may
 /// treat this admission as its own.
-fn push_marker(marker: String, hook: ProcessIdentity) {
-    HELD.with(|held| held.borrow_mut().push((marker, hook)));
+fn push_marker(marker: String) {
+    HELD.with(|held| held.borrow_mut().push(marker));
 }
 
 fn pop_marker(marker: &str) {
     HELD.with(|held| {
         let mut held = held.borrow_mut();
-        if let Some(index) = held.iter().rposition(|(held, _)| held == marker) {
+        if let Some(index) = held.iter().rposition(|held| held == marker) {
             held.remove(index);
         }
     });
@@ -243,79 +241,7 @@ fn active_core() -> Option<Arc<AdmissionCore>> {
     CHANNELS.with(|channels| channels.borrow().iter().rev().find_map(Weak::upgrade))
 }
 
-/// Explicitly lends a verified parent hook to a bounded suite worker. Unrelated
-/// threads still have no ambient access to another thread's admission.
-#[derive(Debug)]
-pub(in crate::runner) struct AdmissionInheritance {
-    marker: String,
-    hook: Option<ProcessIdentity>,
-}
 
-#[derive(Debug)]
-pub(in crate::runner) struct AdmissionScope {
-    marker: Option<String>,
-    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
-}
-
-impl AdmissionInheritance {
-    pub(in crate::runner) fn capture(run: effigy_kernel::id::RunId) -> Result<Self, RunnerError> {
-        Ok(Self {
-            marker: format!("worker:{run}"),
-            hook: current_hook()?,
-        })
-    }
-    pub(in crate::runner) fn enter(&self) -> Result<AdmissionScope, RunnerError> {
-        let marker = if let Some(hook) = &self.hook {
-            verify_hook(hook)?;
-            push_marker(self.marker.clone(), hook.clone());
-            Some(self.marker.clone())
-        } else {
-            None
-        };
-        Ok(AdmissionScope {
-            marker,
-            _thread: std::marker::PhantomData,
-        })
-    }
-}
-
-impl Drop for AdmissionScope {
-    fn drop(&mut self) {
-        if let Some(marker) = &self.marker {
-            pop_marker(marker);
-        }
-    }
-}
-
-/// The hook this thread's run holds in process, if any. Only an in-process
-/// admission names a hook; an inherited marker is advisory and names none.
-pub(super) fn current_hook() -> Result<Option<ProcessIdentity>, RunnerError> {
-    verify_held()?;
-    Ok(HELD.with(|held| held.borrow().last().map(|(_, hook)| hook.clone())))
-}
-fn verify_hook(hook: &ProcessIdentity) -> Result<(), RunnerError> {
-    if matches!(effigy_kernel::ident::process_identity(hook.pid), Observed::Verified(ref current, _) if current == hook)
-        && matches!(
-            effigy_kernel::ident::process_state(hook.pid),
-            Observed::Verified(
-                effigy_kernel::ident::ProcessState::Active
-                    | effigy_kernel::ident::ProcessState::Stopped,
-                _
-            )
-        )
-    {
-        return Ok(());
-    }
-    Err(RunnerError::task_invocation("admission hook is no longer verified live; workload stopped because admission fails closed"))
-}
-pub(super) fn verify_held() -> Result<(), RunnerError> {
-    HELD.with(|held| {
-        for (_, hook) in held.borrow().iter() {
-            verify_hook(hook)?;
-        }
-        Ok::<(), RunnerError>(())
-    })
-}
 
 /// The v2 report channel: the hook process both sides address, and the
 /// sequence the acknowledged prefix has reached.
@@ -380,6 +306,8 @@ pub(super) struct Admission {
 }
 
 impl Admission {
+    /// The hook still holds this run's admission. Its exit is observed through
+    /// the custody receipt the run owns, never through a retained identity.
     pub(super) fn verify(&mut self) -> Result<(), RunnerError> {
         let mut hook = lock(&self.core.hook);
         if matches!(hook.poll(), Observed::Verified(..)) {
@@ -387,9 +315,7 @@ impl Admission {
                 "admission hook exited; workload stopped because admission fails closed",
             ));
         }
-        let identity = hook.identity().identity;
-        drop(hook);
-        verify_hook(&identity)
+        Ok(())
     }
     /// Whether this admission reports its custody to the hook.
     pub(super) fn reporting(&self) -> bool {
@@ -719,17 +645,6 @@ pub(super) fn admit(
                             "the hook exited instead of retaining admission".into(),
                         ));
                     }
-                    if verify_hook(&hook.identity().identity).is_err() {
-                        step.fail(&format!(
-                            "heavy admission for `{}` was withdrawn: the hook is no longer verified live",
-                            target.label
-                        ));
-                        return Err(refused(
-                            "failed",
-                            "the hook is no longer verified live; the workload never ran".into(),
-                        ));
-                    }
-                    let identity = hook.identity().identity;
                     // Everything after the decision line is the hook's first
                     // acknowledgements; nothing is lost between v1 and v2.
                     let consumed = stdout
@@ -738,7 +653,6 @@ pub(super) fn admit(
                         .map_or(stdout.len(), |end| end + 1);
                     let handled = finish_admission(
                         hook,
-                        identity.clone(),
                         run,
                         target,
                         &run_id,
@@ -747,7 +661,7 @@ pub(super) fn admit(
                     );
                     match handled {
                         Ok(mut admission) => {
-                            push_marker(run_id.clone(), identity);
+                            push_marker(run_id.clone());
                             admission.marker = run_id;
                             admission.waited = started.elapsed();
                             step.succeed(&format!(
@@ -841,7 +755,6 @@ pub(super) fn admit(
 #[allow(clippy::too_many_arguments)]
 fn finish_admission(
     hook: OwnedProcess,
-    identity: ProcessIdentity,
     run: &mut super::run::TaskRun,
     target: &TaskTarget,
     run_id: &str,
@@ -901,9 +814,9 @@ fn finish_admission(
         )
     })?;
     push_channel(&core);
-    // Keep `identity` verified: a hook that answered and then died cannot
-    // witness this run.
-    verify_hook(&identity)?;
+    // The run holds the hook through its custody receipt: the settle observes
+    // it, so a hook that answered and then died cannot witness this run and
+    // needs no separate identity check (F10).
     Ok(admission)
 }
 
@@ -1180,13 +1093,7 @@ mod tests {
     #[test]
     fn a_held_admission_marker_belongs_to_the_thread_that_holds_it() {
         let hook = Some("/bin/true".to_owned());
-        push_marker(
-            "run-held".to_owned(),
-            effigy_kernel::ident::process_identity(std::process::id())
-                .verified()
-                .expect("own identity")
-                .clone(),
-        );
+        push_marker("run-held".to_owned());
         // The holding thread is inside the admission: a nested heavy run on
         // it never queues twice.
         assert!(matches!(
@@ -1258,32 +1165,23 @@ mod tests {
     }
 
     #[test]
-    fn a_suite_worker_borrows_only_an_explicitly_captured_live_hook() {
-        let identity = effigy_kernel::ident::process_identity(std::process::id())
-            .verified()
-            .unwrap()
-            .clone();
-        push_marker("parent-fixture".into(), identity.clone());
-        let inherited =
-            AdmissionInheritance::capture(effigy_kernel::id::RunId::new(1, [17; 10]).unwrap())
-                .unwrap();
-        let expected = identity.clone();
-        std::thread::spawn(move || {
-            assert!(held_marker().is_none());
-            {
-                let _scope = inherited.enter().unwrap();
-                assert_eq!(current_hook().unwrap(), Some(expected));
-                assert!(matches!(
-                    plan(Some(ManifestTaskAdmission::Heavy)).unwrap(),
-                    Plan::Nested
-                ));
-            }
-            assert!(held_marker().is_none());
-        })
-        .join()
-        .unwrap();
-        assert_eq!(current_hook().unwrap(), Some(identity));
+    fn a_marker_is_advisory_and_never_consulted_for_a_light_task() {
+        push_marker("parent-fixture".into());
+        assert_eq!(held_marker().as_deref(), Some("parent-fixture"));
+        // A nested heavy run is admitted by the marker alone: no hook identity
+        // is retained, verified or consulted (F10).
+        assert!(matches!(
+            plan(Some(ManifestTaskAdmission::Heavy)).unwrap(),
+            Plan::Nested
+        ));
         pop_marker("parent-fixture");
+        assert_eq!(held_marker(), None);
+        // A task that is not heavy never reads the hook at all, whatever the
+        // environment says.
+        assert!(matches!(
+            decide(None, &None, &false, &Some("hook".into()), &None),
+            Ok(Plan::Run)
+        ));
     }
 
     #[test]

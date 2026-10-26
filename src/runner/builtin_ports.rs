@@ -73,7 +73,6 @@ impl<'a> RunnerBuiltinPorts<'a> {
 struct SuiteCustody {
     run: Option<TaskRun>,
     label: String,
-    admission: crate::runner::task_engine::AdmissionInheritance,
 }
 
 impl effigy_builtin::HostSuiteCustody for SuiteCustody {
@@ -84,10 +83,6 @@ impl effigy_builtin::HostSuiteCustody for SuiteCustody {
         env: &std::collections::BTreeMap<String, String>,
         capture: bool,
     ) -> Result<effigy_builtin::HostSuiteOutcome, BuiltinError> {
-        let _admission = self
-            .admission
-            .enter()
-            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
         let Some(run) = self.run.as_mut() else {
             return Err(BuiltinError::task_invocation(
                 "the suite's run was already settled",
@@ -174,8 +169,6 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
             .step(index, label)
             .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
         Ok(Some(Box::new(SuiteCustody {
-            admission: crate::runner::task_engine::AdmissionInheritance::capture(run.id())
-                .map_err(|error| BuiltinError::task_invocation(error.to_string()))?,
             run: Some(run),
             label: label.to_owned(),
         })))

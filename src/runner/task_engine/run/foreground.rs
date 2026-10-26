@@ -181,7 +181,6 @@ impl TaskRun {
     }
 
     pub(in crate::runner) fn verify_admission(&mut self) -> Result<(), RunnerError> {
-        super::super::admission::verify_held()?;
         if let Some(admission) = &mut self.admission {
             admission.verify()?;
         }
