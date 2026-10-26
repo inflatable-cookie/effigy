@@ -884,6 +884,10 @@
 # inject negative observation/wait outcomes; no consumer runtime is started.
 "test:host-process:owned-stop" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "owned-stop-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_owned_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  # The Acow shape: the process Effigy supervises is a real nested `effigy
+  # <task>`, whose own workload group drains before the environment's stop
+  # reports closure (effigy#357, effigy#370).
+  { id = "owned-stop-nested-effigy", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(nested_effigy_host_process_stops_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "format:host-process:owned-stop" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs tests/gateway_private.rs" }
 # An environment-owned host-process supervisor started by a task's

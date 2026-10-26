@@ -350,6 +350,10 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- **The v0.14 managed-session refusal.** `session.json`, stop markers and exec
+  group markers are neither read nor adopted, so a recorded supervisor PID that
+  a reboot has reused can no longer refuse or block a managed task. The
+  `legacy` state and its `stop` refusal are gone from managed status.
 - **A run's scratch directory is no longer a kernel effect.** It is a plain
   directory with one marker file, removed when the run succeeds and kept for 24
   hours when it fails, and a bounded sweep at a later run's start retires it
@@ -1438,6 +1442,26 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **A slow host listener reports progress and can be stopped.** While a
+  managed listener's reserved port is still closed and its child runs, `up`
+  prints a progress line every 30 s to the console as well as to the log, and a
+  `down` or `container <env> restart` from another shell stops the run and ends
+  the wait instead of blocking on the environment. A child that exits its
+  leader before it answers is reported as `daemonised`.
+- **A stop waits out the supervisor's own window.** The requester derives its
+  wait from the process's declared shutdown grace plus the kernel's stop
+  margin, so a stop that legitimately needs the SIGKILL tail is reported as a
+  stop instead of "the live kernel run still holds its gate; no signal was
+  sent". A stop whose window expires reports a timeout with the phase and the
+  waited duration, never "the evidence contradicts itself".
+- **`container <env> restart <process>` keeps the address it replaces.** A
+  restarted listener reuses the address its endpoint record published, so every
+  `internal_url` a dependent already resolved still reaches it. The restart
+  holds `Gate(Env)` like `up`, and an environment that is not up - including
+  one that declares only host processes - is one warning rather than a refusal.
+- **A managed run's environment `up` has no fixed deadline.** The 900 s cap and
+  its `health_wait_timeout_secs` hint are gone: `up` is the two-phase wait it
+  already runs, reports progress every 30 s, and ends on the run's stop.
 - **Scratch is decided by its own marker.** A successful run removes its
   directory at the engine's normal completion, and a failed, cancelled or
   timed-out run records `keep: true` and a conclusion time in the directory's

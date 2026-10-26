@@ -25,7 +25,7 @@ pub(crate) const KIND: &str = "kernel:process";
 /// Beyond its declared grace, a stop still drains bounded capture, reaps the
 /// leader and stops the anchor. The margin bounds those; it is never a second
 /// grace and it never replaces observing the group (effigy#357).
-const STOP_MARGIN: Duration = Duration::from_secs(30);
+pub const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// The descriptor slot a spawn hands its optional one-shot reader to (K12).
 /// It sits above the capability reader (9) and cleanup pin (10) slots, so a
 /// caller can hand one short-lived payload to its own child without either
@@ -327,6 +327,13 @@ fn evidence() -> Evidence {
 }
 fn unknown(e: impl std::fmt::Display) -> UnknownReason {
     UnknownReason::Inconsistent(e.to_string())
+}
+/// A spent window is not evidence that contradicts itself: the stop says what
+/// it waited for and how long (effigy#370).
+fn timed_out(phase: impl std::fmt::Display) -> UnknownReason {
+    UnknownReason::TimedOut {
+        phase: phase.to_string(),
+    }
 }
 fn lock(core: &Mutex<ProcessCore>) -> std::sync::MutexGuard<'_, ProcessCore> {
     core.lock()
@@ -1108,8 +1115,8 @@ impl ProcessCore {
         // starts, so by the time its workload needs stopping the budget may be
         // spent; a spent budget says nothing about whether the group closed and
         // never stands in for observing it (effigy#357).
-        let stopped =
-            cx.window(Duration::from_millis(self.receipt.grace_millis).saturating_add(STOP_MARGIN));
+        let window = Duration::from_millis(self.receipt.grace_millis).saturating_add(STOP_MARGIN);
+        let stopped = cx.window(window);
         let mut signals = Vec::new();
         let mut residue = Vec::new();
         if !self.reaped {
@@ -1148,8 +1155,12 @@ impl ProcessCore {
                 }
                 killed = true;
             }
-            if let Err(e) = stopped.operation().check("group closure") {
-                break Observed::Unknown(unknown(format!("{e}")));
+            if stopped.operation().check("group closure").is_err() {
+                break Observed::Unknown(timed_out(format!(
+                    "group closure of process group {} after {}s",
+                    self.receipt.identity.pid,
+                    window.as_secs()
+                )));
             }
             std::thread::sleep(Duration::from_millis(5));
         };
@@ -1184,8 +1195,12 @@ impl ProcessCore {
                     }
                     Ok(None) => {}
                 }
-                if let Err(error) = stopped.operation().check("leader reap") {
-                    residue.push(unknown(format!("{error}")));
+                if stopped.operation().check("leader reap").is_err() {
+                    residue.push(timed_out(format!(
+                        "leader {} reap after {}s",
+                        self.receipt.identity.pid,
+                        window.as_secs()
+                    )));
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(2));

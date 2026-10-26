@@ -511,6 +511,15 @@ fn wait_for_listener_activation(
     }
 }
 
+/// The console progress line for a listener that is alive and has not opened
+/// its port yet: the phase has no deadline, and the line says what ends it.
+fn listener_start_progress(process_name: &str, elapsed: Duration) -> String {
+    format!(
+        "[host process] listener `{process_name}` is still starting after {}s: the port is closed and the child is running, so its readiness timeout has not started; `effigy container <env> down` stops it",
+        elapsed.as_secs()
+    )
+}
+
 /// Wait until the listener's supervisor publishes this generation's declared
 /// state: `ready`, or the failure it observed. There is no deadline of the
 /// caller's: a child that is still building has not opened its port, and the
@@ -524,6 +533,8 @@ fn wait_for_listener_state(
     route_table_path: &Path,
 ) -> Result<HostListenerState, RunnerError> {
     let mut next_liveness_check = Instant::now();
+    let started = Instant::now();
+    let mut next_progress = started;
     loop {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -584,6 +595,16 @@ fn wait_for_listener_state(
                     });
                 }
                 _ => {
+                    // The supervisor's own progress line goes to the process
+                    // log; this one goes to the console of whoever is waiting,
+                    // so a slow start is never a silent prompt (effigy#370).
+                    if Instant::now() >= next_progress {
+                        next_progress = Instant::now() + LISTENER_START_PROGRESS_INTERVAL;
+                        eprintln!(
+                            "{}",
+                            listener_start_progress(process_name, started.elapsed())
+                        );
+                    }
                     if Instant::now() >= next_liveness_check {
                         next_liveness_check = Instant::now() + Duration::from_secs(1);
                         if let Err(error) = read_live_process_identity(state.supervisor_pid) {
@@ -1120,7 +1141,9 @@ fn supervise_generations(
         match end {
             GenerationEnd::Stopped => break,
             GenerationEnd::DependencyChanged => {
-                wait_or_break(&shutdown, Duration::from_millis(spec.restart_delay_ms));
+                wait_or_break(&shutdown, Duration::from_millis(spec.restart_delay_ms), || {
+                    stop_requested(run, watch)
+                });
             }
             GenerationEnd::Exited(code) => {
                 if !spec.restart.restarts_after(code) {
@@ -1137,6 +1160,7 @@ fn supervise_generations(
                 wait_or_break(
                     &shutdown,
                     restart_backoff(&mut backoff, spec.restart_delay_ms),
+                    || stop_requested(run, watch),
                 );
             }
         }
@@ -1918,10 +1942,19 @@ fn wait_for_ready_listener(
             return Err(ListenerStartupFailure::Stopped);
         }
         if let effigy_kernel::observe::Observed::Verified(exit, _) = child.poll() {
-            return Err(RunnerError::task_invocation(format!(
-                "managed listener at {address} exited with code {} before it answered {}",
-                exit.code, config.readiness_path
-            ))
+            return Err(RunnerError::task_invocation(if exit.code == 0 {
+                format!(
+                    "managed listener at {address} daemonised: its leader exited with code 0 \
+                     before it answered {}, so a successor process holds the port and Effigy \
+                     supervises only the group it started",
+                    config.readiness_path
+                )
+            } else {
+                format!(
+                    "managed listener at {address} exited with code {} before it answered {}",
+                    exit.code, config.readiness_path
+                )
+            })
             .into());
         }
         let probe = probe_http_readiness(address, &config.route_domain, config);
@@ -2137,10 +2170,17 @@ pub(in crate::runner) fn append_log_line(path: &Path, line: &str) {
     }
 }
 
-fn wait_or_break(shutdown: &Arc<std::sync::atomic::AtomicBool>, delay: Duration) {
+/// The replacement wait after one ended generation. A stop request ends it at
+/// once: the backoff is a wait between generations, not a deaf window
+/// (effigy#370).
+fn wait_or_break(
+    shutdown: &Arc<std::sync::atomic::AtomicBool>,
+    delay: Duration,
+    stop: impl Fn() -> bool,
+) {
     let deadline = Instant::now() + delay;
     while Instant::now() < deadline {
-        if shutdown.load(Ordering::SeqCst) {
+        if shutdown.load(Ordering::SeqCst) || stop() {
             return;
         }
         std::thread::sleep(Duration::from_millis(100).min(delay));
@@ -2429,6 +2469,44 @@ mod tests {
         wait_until("the process group to close", || {
             group_members(pid).is_empty()
         });
+    }
+
+    /// A crash-looping process spends most of its life in the restart
+    /// backoff. A stop request is honoured there, so `down` settles it within
+    /// seconds instead of reporting that the live run holds its gate
+    /// (effigy#370).
+    #[test]
+    fn host_process_owned_stop_during_restart_backoff_settles() {
+        let fixture = fixture();
+        let mut crashing = host_process("crash", "exit 3", HostProcessRestart::Always);
+        crashing.restart_delay_ms = 60_000;
+        let policy = policy(&fixture.checkout, vec![crashing]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the crash-looping host process starts");
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("crash.log");
+        wait_until("the first generation to exit into its backoff", || {
+            fs::read_to_string(&log).is_ok_and(|text| text.contains("exited (code 3)"))
+        });
+        let pid = super::kernel_run::host_process_status(&fixture.checkout, &policy)[0]
+            .pid
+            .expect("recorded leader pid");
+        let started = Instant::now();
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "the backoff is not a deaf window: {elapsed:?}\n{report:?}"
+        );
+        assert!(
+            report.complete(),
+            "failed stop must be reported: {report:?}"
+        );
+        assert!(
+            !report.lines().join("\n").contains("holds its gate"),
+            "a stop during backoff is taken, not refused: {report:?}"
+        );
+        assert!(group_members(pid).is_empty(), "the leader is closed");
     }
 
     /// A process that exits by itself is recorded with its exit and its last
@@ -2782,10 +2860,54 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         );
     }
 
-    /// A stop requested while a child is still in phase (a) ends the wait and
-    /// settles the run: the phase has no deadline, the stop does.
+    /// A child that leaves the port to a successor is reported as daemonised,
+    /// not as a start that answered: Effigy supervises the group it started, so
+    /// a listener that exits its leader fails the start with that reason
+    /// (effigy#370).
     #[test]
-    fn host_process_listener_stop_during_a_starting_child_settles() {
+    fn host_process_owned_a_daemonising_child_is_reported_as_such() {
+        let fixture = fixture();
+        let domain = "daemonised.host.test";
+        let (_gateway_home, policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "daemonised",
+            "import sys\nsys.exit(0)",
+            60,
+        );
+        let started = Instant::now();
+        let error =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+                .expect_err("a child that exits its leader before answering fails the start")
+                .to_string();
+        assert!(error.contains("daemonised"), "{error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the daemonising child is reported, not waited on: {:?}",
+            started.elapsed()
+        );
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "failed", "{state}");
+        assert!(
+            state["diagnostic"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("daemonised"),
+            "{state}"
+        );
+    }
+
+    /// A stop requested while a child is still in phase (a) ends the wait and
+    /// settles the run: the phase has no deadline, the stop does. The `up`
+    /// console carries a progress line for the wait, and the stop that ends it
+    /// is the one `down` and `container restart` run (effigy#370).
+    #[test]
+    fn host_process_owned_stop_during_a_starting_child_settles() {
+        let progress = listener_start_progress("api", Duration::from_secs(30));
+        assert!(
+            progress.contains("still starting after 30s") && progress.contains("down` stops it"),
+            "the waiting console names the wait and what ends it: {progress}"
+        );
         let fixture = fixture();
         let domain = "stopped-while-starting.host.test";
         let (_gateway_home, policy) = listener_policy_running(
@@ -2807,17 +2929,133 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
                 .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
                 .is_some_and(|state| state["status"] == "starting")
         });
+        let started = Instant::now();
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "a hung child does not delay the stop: {:?}",
+            started.elapsed()
+        );
         assert!(report.complete(), "{report:?}");
         let stopped = up
             .join()
             .expect("the up waiting on a starting child returns");
+        let error = stopped
+            .expect_err("an up whose listener was stopped before readiness does not report a start")
+            .to_string();
         assert!(
-            stopped.is_err(),
-            "an up whose listener was stopped before readiness does not report a start"
+            !error.contains("timed out") && !error.contains("holds its gate"),
+            "the waiting up reports the stop, not a deadline: {error}"
         );
         assert_eq!(read_json(&state_path)["status"], "stopped");
+    }
+
+    /// A restart replaces named generations in place, so a listener keeps the
+    /// address it published and every dependent's resolved `internal_url`
+    /// still reaches it (effigy#367, effigy#370).
+    #[test]
+    fn host_process_owned_restart_keeps_a_listeners_published_address() {
+        let fixture = fixture();
+        let domain = "reclaim-restart.host.test";
+        let (_gateway_home, mut policy) =
+            listener_policy(&fixture.checkout, domain, "reclaim-restart");
+        let mut consumer = host_process(
+            "consumer",
+            "printf '%s' \"$API_URL\" > consumer-url.txt",
+            HostProcessRestart::Never,
+        );
+        consumer.depends_on = vec!["app".to_owned()];
+        consumer.env = vec![("API_URL".to_owned(), "${host_process.app.internal_url}".to_owned())];
+        policy.host_processes.push(consumer);
+        let state_path = listener_state(&policy);
+        let url_path = fixture.checkout.join("consumer-url.txt");
+
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the listener and its dependent start");
+        let address = read_json(&state_path)["address"]
+            .as_str()
+            .expect("published address")
+            .to_owned();
+        wait_until("the dependent to record its resolved endpoint", || {
+            fs::read_to_string(&url_path).is_ok_and(|text| text == format!("http://{address}"))
+        });
+
+        fs::remove_file(&url_path).expect("clear the dependent's record");
+        let report = super::kernel_run::restart_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            &["app".to_owned()],
+        )
+        .expect("the named listener restarts");
+        let restarted = report
+            .processes
+            .iter()
+            .find(|process| process.name == "app")
+            .expect("app is in the restart report");
+        assert_eq!(
+            restarted
+                .listener
+                .as_ref()
+                .map(|listener| listener.address.as_str()),
+            Some(address.as_str()),
+            "a restart reuses the address the listener published: {report:?}"
+        );
+        assert_eq!(
+            read_json(&state_path)["address"],
+            address.as_str(),
+            "the state record keeps the published address"
+        );
+        wait_until("the restarted dependent to record the same endpoint", || {
+            fs::read_to_string(&url_path).is_ok_and(|text| text == format!("http://{address}"))
+        });
+
+        let stop = super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stop.complete(), "{stop:?}");
+    }
+
+    /// A restart of an environment that declares only host processes works:
+    /// the replace step holds the environment for its change, and an
+    /// environment with no container rows is not a refusal (effigy#370).
+    #[test]
+    fn host_process_owned_restart_works_for_a_host_process_only_environment() {
+        use effigy_containers::environment::Operation;
+
+        let fixture = fixture();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process(
+                "app",
+                "exec /bin/sleep 120",
+                HostProcessRestart::Never,
+            )],
+        );
+        let started = Instant::now();
+        let report = super::super::environment::holding_environment(&policy, Operation::Up, || {
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)?;
+            super::kernel_run::restart_host_processes_for_container(
+                &fixture.checkout,
+                &policy,
+                &["app".to_owned()],
+            )
+            .map(|report| report.processes)
+        })
+        .expect("a host-process-only environment restarts");
+        assert_eq!(
+            report.iter().map(|process| process.name.as_str()).collect::<Vec<_>>(),
+            vec!["app"]
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "the restart does not wait out a gate: {:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)[0].state,
+            "running"
+        );
+        let stop = super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stop.complete(), "{stop:?}");
     }
 
     /// A listener route's owner is its checkout path, environment and process

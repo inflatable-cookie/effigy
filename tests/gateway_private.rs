@@ -5638,6 +5638,166 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     );
 }
 
+/// The app one nested-effigy host process serves: it records its pid and, on
+/// SIGTERM, takes three seconds to finish before it exits. That drain is longer
+/// than the outer supervisor's escalation is comfortable with, so the stop has
+/// to observe the whole closure rather than cut the workload short or call the
+/// evidence inconsistent.
+const NESTED_EFFIGY_APP: &str = r#"
+import os, signal, sys, time
+pid_file, drained = sys.argv[1], sys.argv[2]
+open(pid_file, "w").write(str(os.getpid()))
+def stop(*_):
+    time.sleep(3)
+    open(drained, "w").write("drained\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+while True:
+    time.sleep(1)
+"#;
+
+/// Acow's API shape: the host process's `run` is a real nested `effigy` task,
+/// so the stop crosses two custody layers - the outer supervisor's group and
+/// the nested run's own workload group. The stop reports closure verified,
+/// never "the evidence contradicts itself", and the workload drains rather
+/// than being cut short by the requester's own window (effigy#357, #370).
+#[test]
+fn nested_effigy_host_process_stops_with_closure_verified() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("nested effigy checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Nested Effigy Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "nested-effigy@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let control = fixture.path().join("nested-effigy-control");
+    fs::create_dir(&control).expect("nested effigy control directory");
+    let app = control.join("app.py");
+    fs::write(&app, NESTED_EFFIGY_APP).expect("write the fixture app");
+    let pid_file = control.join("app-pid");
+    let drained = control.join("drained");
+    let profile = "fixture";
+    let task = "fixture:api";
+    let task_run = format!(
+        "exec python3 {} {} {}",
+        toml_quote(&app.display().to_string()),
+        toml_quote(&pid_file.display().to_string()),
+        toml_quote(&drained.display().to_string())
+    );
+    // The Acow shape: the process Effigy supervises is Effigy itself.
+    let host_run = format!("exec '{}' {task}", EFFIGY);
+    let host_process = format!(
+        "[[containers.web.host_processes]]\nname = \"api\"\nrun = {}\nrestart = \"never\"\nshutdown_grace_secs = 6\n\n",
+        toml_quote(&host_run)
+    );
+    let task_declaration = format!(
+        "[tasks.{}]\ndurable = true\nrun = {}\n",
+        toml_quote(task),
+        toml_quote(&task_run)
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n{host_process}{task_declaration}",
+        profile = toml_quote(profile),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the nested effigy config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let log_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("api.log");
+
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let up_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    assert!(
+        up.status.success(),
+        "`container web up --detach` failed: {up_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    wait_for_path_exists(&pid_file, Duration::from_secs(60), "the nested task's app");
+    let app_pid: i32 = fs::read_to_string(&pid_file)
+        .expect("the app records its pid")
+        .trim()
+        .parse()
+        .expect("the app pid is a number");
+
+    let started = Instant::now();
+    let down = run_container_cli(&checkout, &cleanup, &["down"]);
+    let elapsed = started.elapsed();
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed: {down_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    assert!(
+        !down_text.contains("contradicts itself")
+            && !down_text.contains("group closure unverified"),
+        "a stop within its grace reports closure, not inconsistent evidence: {down_text}"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(11),
+        "the stop settles within its grace plus five seconds: {elapsed:?}\n{down_text}"
+    );
+    assert!(
+        drained.exists(),
+        "the nested workload drained instead of being cut short: {down_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    assert!(
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(app_pid), None).is_err(),
+        "the nested task's app is gone after the stop"
+    );
+}
+
 /// The headless managed supervisor stays alive while its session runs and its
 /// lifecycle child outlives the test on panic, so the guard stops the whole
 /// owned process tree on drop.

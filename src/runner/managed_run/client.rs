@@ -55,7 +55,6 @@ pub(in crate::runner) struct Started {
 /// refusal (the run is already live, its predecessor would not settle, a
 /// setup error) is reported here; nothing was started.
 pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, RunnerError> {
-    super::legacy::refuse_live_session(&request.addressed)?;
     let home = task_engine::state_home_path().ok_or_else(|| {
         RunnerError::task_invocation(
             "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state",

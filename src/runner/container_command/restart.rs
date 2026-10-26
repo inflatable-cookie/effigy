@@ -34,41 +34,54 @@ pub(super) fn run_container_restart(
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     validate_container_policy(&repo_root, &policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if let Some(warning) = environment_up(&repo_root, &policy)? {
+    if let Some(warning) = environment_up_notice(&repo_root, &policy) {
         eprintln!("{warning}");
     }
-    let report = restart_host_processes_for_container(&repo_root, &policy, processes)?;
+    // The replace step takes `Gate(Env)` like `up`, so `down` and a concurrent
+    // bring-up cannot interleave with a restart that is starting a generation
+    // (effigy#367, effigy#370).
+    let report = environment::holding_environment(
+        &policy,
+        effigy_containers::environment::Operation::Up,
+        || restart_host_processes_for_container(&repo_root, &policy, processes),
+    )?;
     Ok(restart_report(&repo_root, &report, output_json))
 }
 
-/// The environment must be up: `up` is the one path that starts an
+/// The environment should be up: `up` is the one path that starts an
 /// environment's own services, and a host process started without them has
 /// nothing to talk to.
 ///
 /// The observation is [`environment::running`], the same running stack check
-/// `container status` projects. A stack the inventory cannot prove is not a
-/// refusal: the restart names the observation and carries on.
-fn environment_up(
+/// `container status` projects, and it is advisory: an environment that
+/// declares only host processes has no container rows to prove, and a stack the
+/// inventory cannot read is not a refusal either. Either way the restart names
+/// the observation and proceeds (effigy#370).
+fn environment_up_notice(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-) -> Result<Option<String>, RunnerError> {
-    environment_up_from(environment::running(repo_root, policy), &policy.name)
+) -> Option<String> {
+    environment_up_notice_from(
+        environment::running(repo_root, policy).map_err(|error| error.to_string()),
+        &policy.name,
+    )
 }
 
-fn environment_up_from(
-    observation: Result<Observed<bool>, RunnerError>,
+fn environment_up_notice_from(
+    observation: Result<Observed<bool>, String>,
     environment: &str,
-) -> Result<Option<String>, RunnerError> {
+) -> Option<String> {
     match observation {
-        Ok(Observed::Verified(false, _)) => Err(RunnerError::task_invocation(format!(
-            "environment `{environment}` is not up; run `effigy container {environment} up`"
-        ))),
-        Ok(Observed::Unknown(reason)) => Ok(Some(format!(
+        Ok(Observed::Verified(true, _)) | Ok(Observed::Absent(_)) => None,
+        Ok(Observed::Verified(false, _)) => Some(format!(
+            "[warn] host processes: environment `{environment}` is not up; restarting the named processes anyway"
+        )),
+        Ok(Observed::Unknown(reason)) => Some(format!(
             "[warn] host processes: the environment `{environment}` inventory is unreadable ({reason}); restarting the named processes anyway"
-        ))),
-        // A verified running stack, an absent journal or an unreadable
-        // inventory all proceed: none of them proves the stack is down.
-        _ => Ok(None),
+        )),
+        Err(error) => Some(format!(
+            "[warn] host processes: the environment `{environment}` inventory could not be read ({error}); restarting the named processes anyway"
+        )),
     }
 }
 
@@ -127,33 +140,35 @@ mod tests {
         Evidence::new("environment inventory".into(), None).expect("fixed evidence")
     }
 
-    /// An environment that is not up is refused with the `up` command that
-    /// starts it; an inventory that cannot be read is a warning, never a
-    /// refusal.
+    /// An environment that is not up, and one whose inventory cannot be read,
+    /// are named and the restart proceeds: an environment that declares only
+    /// host processes has no container rows to prove, so "not up" is never a
+    /// refusal (effigy#370).
     #[test]
-    fn a_stopped_environment_is_refused_with_its_up_command() {
-        let error = environment_up_from(Ok(Observed::Verified(false, evidence())), "web")
-            .expect_err("a stopped environment is refused");
-        assert_eq!(
-            error.to_string(),
-            "environment `web` is not up; run `effigy container web up`"
-        );
+    fn a_stopped_or_unreadable_environment_warns_and_the_restart_proceeds() {
+        for (observation, expected) in [
+            (
+                Ok(Observed::Verified(false, evidence())),
+                "is not up; restarting the named processes anyway",
+            ),
+            (
+                Ok(Observed::Unknown(UnknownReason::Inconsistent(
+                    "docker unavailable".into(),
+                ))),
+                "inventory is unreadable",
+            ),
+            (Err("docker ps failed".to_owned()), "could not be read"),
+        ] {
+            let warning = environment_up_notice_from(observation, "web")
+                .expect("an unproven environment warns");
+            assert!(warning.starts_with("[warn] "), "{warning}");
+            assert!(warning.contains(expected), "{warning}");
+        }
 
         assert_eq!(
-            environment_up_from(Ok(Observed::Verified(true, evidence())), "web")
-                .expect("a running environment proceeds"),
+            environment_up_notice_from(Ok(Observed::Verified(true, evidence())), "web"),
             None
         );
-        let warning = environment_up_from(
-            Ok(Observed::Unknown(UnknownReason::Inconsistent(
-                "docker unavailable".into(),
-            ))),
-            "web",
-        )
-        .expect("an unreadable inventory proceeds")
-        .expect("an unreadable inventory warns");
-        assert!(warning.starts_with("[warn] "), "{warning}");
-        assert!(warning.contains("docker unavailable"), "{warning}");
     }
 
     /// One text line per restarted process names its run, its listener and
