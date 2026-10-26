@@ -469,13 +469,14 @@ mod tests {
     /// must produce and how often the runtime was probed.
     #[test]
     fn classify_docker_participation_cases() {
-        let cases: [(
-            &str,
+        type Row = (
+            &'static str,
             Vec<DockerEndpoint>,
             fn(&Path) -> SocketProbe,
             RuntimeParticipation,
             Option<usize>,
-        ); 8] = [
+        );
+        let cases: [Row; 8] = [
             (
                 "an absent explicit endpoint",
                 vec![DockerEndpoint::Unix(PathBuf::from(

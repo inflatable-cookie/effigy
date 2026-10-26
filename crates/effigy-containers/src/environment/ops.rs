@@ -210,11 +210,12 @@ mod tests {
     #[test]
     fn holder_states_decide_whether_an_apply_proceeds() {
         let run = RunId::new(1_760_000_000_000, [3; 10]).expect("run id");
-        let states: [(&str, Observed<Vec<Holder>>, Vec<RunId>); 4] = [
+        type Row = (&'static str, Observed<Vec<Holder>>, Vec<RunId>);
+        let states: [Row; 4] = [
             (
                 "a live holder",
-                Observed::Verified(vec![holder(run.clone())], evidence()),
-                vec![run.clone()],
+                Observed::Verified(vec![holder(run)], evidence()),
+                vec![run],
             ),
             (
                 // Settling removes it upstream. If one were read here it is
@@ -222,12 +223,12 @@ mod tests {
                 "an interrupted holder that reached the list",
                 Observed::Verified(
                     vec![Holder {
-                        run: run.clone(),
+                        run,
                         liveness: Observed::Verified(Liveness::Interrupted, evidence()),
                     }],
                     evidence(),
                 ),
-                vec![run.clone()],
+                vec![run],
             ),
             (
                 "an unreadable holder list",

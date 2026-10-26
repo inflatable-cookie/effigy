@@ -425,7 +425,14 @@ mod host_git_mount_tests {
     /// or a fuller mount that already covers it.
     #[test]
     fn host_mount_is_skipped() {
-        let cases: [(&str, HostMount, &str, &[(&str, bool)], Host); 15] = [
+        type Row = (
+            &'static str,
+            HostMount,
+            &'static str,
+            &'static [(&'static str, bool)],
+            Host,
+        );
+        let cases: [Row; 15] = [
             (
                 "git config: the host file is missing",
                 HostMount::GitConfig,

@@ -275,7 +275,8 @@ mod tests {
     /// is refused with the `external = true` remedy.
     #[test]
     fn legacy_form_cases() {
-        let cases: [(&str, &str, Result<(&str, &str), &str>); 3] = [
+        type Row = (&'static str, &'static str, Result<(&'static str, &'static str), &'static str>);
+        let cases: [Row; 3] = [
             (
                 "a repo-relative source resolves",
                 "./assets:/srv/assets",
@@ -356,7 +357,12 @@ mod tests {
     /// and an unexpanded or absent source is refused by name.
     #[test]
     fn structured_form_cases() {
-        let cases: [(&str, fn(&Path) -> PathBuf, fn(&Path, &Path) -> Case); 6] = [
+        type Row = (
+            &'static str,
+            fn(&Path) -> PathBuf,
+            fn(&Path, &Path) -> Case,
+        );
+        let cases: [Row; 6] = [
             (
                 "an absolute source without external",
                 assets_repo,

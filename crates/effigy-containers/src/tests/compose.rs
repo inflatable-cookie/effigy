@@ -743,7 +743,8 @@ fn translated_fixed_port_is_assigned_per_scope_kind() {
         fs::write(checkout.join(".git/config"), "[core]\n").unwrap();
     }
 
-    let cases: [(&str, fn(&Path, &Path), Option<&str>); 3] = [
+    type Row = (&'static str, fn(&Path, &Path), Option<&'static str>);
+    let cases: [Row; 3] = [
         ("a linked worktree", linked_worktree, Some("127.0.0.1::80")),
         (
             "a marked ephemeral clone",

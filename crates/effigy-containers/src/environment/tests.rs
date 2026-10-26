@@ -432,7 +432,7 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
             bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
             let mut task = holder(&ctx, "dev", 1);
             hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
-            let holder_run = task.id().clone();
+            let holder_run = task.id();
             let mut task = match liveness {
                 "live" => Some(task),
                 "interrupted" => {
@@ -479,7 +479,7 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                             // stack, and the up names it (effigy#371 F8).
                             Applied::HeldByRuns(holders) => assert_eq!(
                                 holders,
-                                vec![holder_run.clone()],
+                                vec![holder_run],
                                 "the deferred apply names its holder"
                             ),
                             other => panic!("recreate against a {liveness} holder: {other:?}"),

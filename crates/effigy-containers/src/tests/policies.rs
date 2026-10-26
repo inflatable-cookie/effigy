@@ -58,14 +58,15 @@ fn container_selection_cases() {
     }
 
     type Check = fn(&crate::EffectiveContainerPolicy);
-    let cases: [(
-        &str,
-        &str,
-        &[(&str, &str)],
-        Option<&str>,
+    type Row = (
+        &'static str,
+        &'static str,
+        &'static [(&'static str, &'static str)],
+        Option<&'static str>,
         Selection,
         Option<Check>,
-    ); 6] = [
+    );
+    let cases: [Row; 6] = [
         (
             "the container default",
             r#"
@@ -234,7 +235,8 @@ primary_service = "app"
         )
     }
 
-    let cases: [(&str, fn(&Path) -> String, Expects); 5] = [
+    type Row = (&'static str, fn(&Path) -> String, Expects);
+    let cases: [Row; 5] = [
         (
             "a catalog alias names a single container",
             |_| single_container("workspace-app-reference", ""),
