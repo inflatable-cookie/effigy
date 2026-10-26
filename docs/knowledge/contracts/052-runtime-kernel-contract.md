@@ -2738,7 +2738,14 @@ and `--detach` are front ends over the same run. Row by row:
   `Gate(Env)` for its lifetime. The supervisor spawns each child generation
   through `Custody`, which journals the group receipt, the anchor and the
   grace; readiness, route publication and the declared restart policy stay
-  engine work. `up` keeps the owning pipe until the listener's declared
+  engine work. Bring-up waits in two phases: while the reserved port is closed
+  and the child runs it has no deadline, prints a progress line to the console
+  every 30 s as well as to the log, and ends on the stop a `down` from another
+  shell sends, so a live but hung child can never hold a start forever; once
+  the port first answers, the listener's declared `readiness_timeout_secs`
+  bounds reaching the declared status. A child that exits its leader before it
+  answers fails the start as `daemonised`, naming the successor Effigy cannot
+  observe. `up` keeps the owning pipe until the listener's declared
   readiness is observed and then detaches; a bring-up that stops short drops
   the pipe, which is the kernel's owner-loss stop. `down`, `reset` and session
   settle stop a run with a fenced `StopRequest`, wait for the live supervisor,
@@ -2747,7 +2754,11 @@ and `--detach` are front ends over the same run. Row by row:
   (including a SIGKILL after the declared grace), the exit and any residue. The
   supervisor takes a fresh cleanup budget for each stop and for its settle, so
   a process that has been up for hours still stops and closes its run without
-  the environment having to settle it (effigy#357). A
+  the environment having to settle it (effigy#357). The requester waits for
+  that supervisor for the run's declared shutdown grace plus the kernel's stop
+  margin, so it never gives up before the supervisor's own window, and a stop
+  that runs out of window reports a timeout with what it waited for rather
+  than inconsistent evidence (effigy#370). A
   process that exits is recorded with its exit in the custody receipt and its
   last log lines in the unchanged `.effigy/runtime/host-processes/<env>/`
   log; `container status` projects the run, state and last exit. A v0.14.1
@@ -2777,9 +2788,13 @@ and `--detach` are front ends over the same run. Row by row:
   its route, because its run may still be live (effigy#335).
   `container <env> restart <process>...` is the same start path narrowed to a
   set of names: it settles each named process's current generation, starts a
-  new one, waits for its readiness and publishes its route, and it does the
-  same for every process that `depends_on` a named one, in dependency order,
-  while the containers and the other host processes keep running.
+  new one on the address that listener published, waits for its readiness and
+  publishes its route, and it does the same for every process that `depends_on`
+  a named one, in dependency order, while the containers and the other host
+  processes keep running. Reusing the published address keeps every
+  `internal_url` a dependent already resolved valid, and the restart holds
+  `Gate(Env)` for its change exactly as `up` does, so a bring-up or a stop
+  cannot interleave with it (effigy#370).
 - Remote stop of a bare PGID: narrowed by the nonce check above;
   `signal_session` on a registration stays open with §5.10.
 
@@ -2881,7 +2896,7 @@ aliases, and no scope exports or re-imports them
 | --- | --- | --- | --- | --- |
 | Task lease locks | `<root>/.effigy/locks/` | not imported | a live legacy holder (same host, PID alive, Effigy command) refuses Mutate on that task with the next command | foreign hostname or unreadable record: refuse, never delete |
 | Task status v1 | `<root>/.effigy/runtime/tasks/`, `<root>/.effigy/reports/tasks/` | not imported and not read; the one-minor read-only view is retired in v0.15 (M6), so old status history is dropped. Status history is not state: nothing restarts or unlocks from it. | — | — |
-| Managed sessions, stop markers, exec group markers, lifecycle state | `<root>/.effigy/runtime/managed*/` | a run with phase from its status, owner identity PID-only | a live legacy owner refuses `begin` for that owner and names the legacy stop control, kept for one minor | PID-only owners and bare PGIDs are `Unknown`; never signalled by number |
+| Managed sessions, stop markers, exec group markers, lifecycle state | `<root>/.effigy/runtime/managed*/` | not imported and not read: no PID-only owner refuses, locks or adopts anything, so a rebooting host reuses a recorded PID without consequence | — | — |
 | Environment markers, lease, persistent owner, handover, admission | `~/.effigy/runtime/host-container-leases/`, `<root>/.effigy/runtime/` | `resources` row: desired from persistent or lease, applied from complete, failed-unknown from partial without complete | a live reaper sleeper is waited for or refused | containers adopted only by `Verified` labels |
 | Generated renders | `<root>/.effigy/runtime/compose/` | not imported; re-rendered into objects on the next apply | — | — |
 | Backend override metadata | `crates/effigy-containers/src/lib.rs:219-235` | the environment's backend field | — | unparsable: `Unknown` backend; destructive actions refuse until the backend is named |

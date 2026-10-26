@@ -356,7 +356,7 @@ pub(super) fn ensure_pinned_host_ports_available(
 
 /// Shared services come up through the same one apply as the environment's
 /// own stack: `compose up -d --remove-orphans`, with failures propagated.
-pub(super) fn ensure_shared_services_running(
+pub(in crate::runner) fn ensure_shared_services_running(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
     let mut notes = Vec::new();

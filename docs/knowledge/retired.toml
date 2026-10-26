@@ -473,7 +473,7 @@ owner = "docs/knowledge/contracts/017-task-status-record-and-active-run-model-co
 terms = ["effigy tasks cache", "effigy.cache.v1", "effigy.task.cache.store.v1", "task-cache-v1.json"]
 paths = ["src/runner/cache/", "src/runner/cache.rs", "crates/effigy-builtin/src/cache/", "crates/effigy-builtin/src/cache.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "docs/guides/022-manifest-cookbook.md", "docs/guides/085-v0.15.0-consumer-migration.md", "src/runner/task_engine/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/tests/lib_tests_help_render_tests.rs", "tests/cli_output_tests/json_envelope_tests/runtime.rs", "src/runner/execute/pipeline/standard.rs"]
+allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "docs/guides/022-manifest-cookbook.md", "docs/guides/085-v0.15.0-consumer-migration.md", "src/runner/task_engine/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/tests/lib_tests_help_render_tests.rs", "tests/cli_output_tests/json_envelope_tests/runtime.rs"]
 
 [[retired]]
 id = "effigy-task-lease-lock"
@@ -751,12 +751,12 @@ allow = ["CHANGELOG.md", "docs/knowledge/contracts/052-runtime-kernel-contract.m
 [[retired]]
 id = "managed-headless-session-runtime"
 retired = "2026-10-20"
-replacement = "Each managed run has one detached supervisor that records the run in the kernel journal and settles it once. `<task> status [--json]` (effigy.managed.status.v1), `logs` and `stop` read and stop it; `--detach` starts it in the background. A live v0.14 session.json is refused with its own stop command and never adopted."
+replacement = "Each managed run has one detached supervisor that records the run in the kernel journal and settles it once. `<task> status [--json]` (effigy.managed.status.v1), `logs` and `stop` read and stop it; `--detach` starts it in the background. A v0.14 session.json is neither read nor adopted, so a reused PID can never refuse a task."
 owner = "docs/guides/012-dev-process-manager-tui.md"
 terms = ["effigy.managed.headless.v1", "ManagedRunSettle", "redacted_secret_values"]
 paths = ["crates/effigy-managed/src/runtime/headless.rs", "crates/effigy-managed/src/runtime/redaction.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "src/runner/managed_run/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
 
 [[retired]]
 id = "effigy-artifact-command"
@@ -1419,6 +1419,50 @@ allow = [
   "src/runner/container_command/support.rs",
   "tests/cli_output_tests/reset_generation_tests.rs",
   "tests/scripts/container-render-consumers.py",
+]
+
+[[retired]]
+id = "environment-busy-diagnostics"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#371)"
+replacement = "A refused transition is one sentence naming the holder the kernel's gate evidence recorded: its run, pid, task and observed process state, and whether the wait ended. `--json` adds no separate record of the environment: `EnvError::Busy` carries the sentence, `HeldBy` names the holding runs, and the command's exit code and error shape are unchanged. Busy diagnostics no longer read the environment record a second time to report its state and generation."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = [
+  "effigy.environment-busy.v1",
+  "environment-busy",
+  "BusyDiagnostics",
+  "BusyRecord",
+  "HolderFacts",
+  "HeldHolder",
+  "busy_details",
+]
+paths = [
+  "crates/effigy-containers/src/environment/tests/busy.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/023-troubleshooting-and-failure-recipes.md",
+  "docs/guides/026-json-payload-examples.md",
+  "src/runner/environment.rs",
+  "src/tests/lib_tests_parse_tests/refusal_command_tests.rs",
+]
+
+[[retired]]
+id = "automatic-colima-repair"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#371)"
+replacement = "Effigy never stops or restarts the shared Colima profile to repair it: a runtime-state or registry-DNS failure is reported as it stands, and the message names the explicit in-place `effigy container profile repair` or `effigy container profile reset-runtime`. Starting a missing profile and starting a stopped one are unchanged, and another checkout's stack on the same VM is never taken down by one checkout's failed `up`."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "repair_colima_runtime",
+  "docker_failure_looks_like_colima_dns_outage",
+  "runtime_failure_should_repair",
+  "retried after repairing Colima runtime state",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-containers/src/exec/colima_runtime.rs",
 ]
 
 [[retired]]

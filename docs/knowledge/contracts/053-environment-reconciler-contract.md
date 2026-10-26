@@ -91,15 +91,13 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   every interrupted holder as gate holder, taking that holder's owner gate
   `FailFast` (052 I-A2); live and unknown holders always refuse.
 - **Busy.** An admission that finds `Gate(Env)` held is refused `Busy` with
-  the kernel's own gate evidence carried through: the holder's run id and pid
-  with its freshly observed process state, the wait that ended and the
-  deadline it was given, and one pure read of the record's state and
-  generation. A holder whose identity cannot be verified is reported as
-  unknown, never as live; one that has exited, or whose pid now belongs to a
-  successor process, is named as such. The refusal acquires nothing, retries
-  nothing, contacts no backend and releases nobody. `HeldBy` (a live holder
-  protects the environment) and kernel journal contention stay distinct
-  refusals. `--json` carries it as `effigy.environment-busy.v1`.
+  one sentence naming the holder the kernel's own gate evidence recorded: its
+  run id, pid, task and freshly observed process state, and whether the wait
+  ended. A holder whose identity cannot be verified is named by its category,
+  never as live. The refusal acquires nothing, retries nothing, contacts no
+  backend and releases nobody, and it adds no JSON payload beyond the command's
+  error: `HeldBy` (a live holder protects the environment) and kernel journal
+  contention stay distinct refusals.
 - **Effects.** An apply is journalled `environment:apply` with `Retain`
   settlement; a stop is `environment:stop`, `Irreversible`. Recording either
   disposition calls no adapter, so it needs no holder check. A launch failure

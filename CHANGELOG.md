@@ -27,12 +27,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - A gateway route is one claim: `domain -> (checkout path, target)`. The same
   checkout path always replaces its own route, covering a new run, a new
   generation and a container-to-listener handover. A different checkout takes
-  the domain over automatically when the recorded checkout path no longer
-  exists or its target does not accept a TCP connection within 200 ms, logging
-  the takeover in one line; otherwise the write is refused with one message
-  naming the other checkout and the command that stops it. `down`, `retire` and
-  settle remove the checkout's routes by path, listener routes included, so a
-  domain is free immediately and `down` followed by `up` elsewhere works at
+  the domain over automatically when the recorded checkout path is missing or
+  its target does not accept a TCP connection within 200 ms, logging the
+  takeover in one line; otherwise the write is refused with one message naming
+  the other checkout and the command that stops it. An unreadable or unmounted
+  checkout path is unknown, not missing, so its routes stay. `down`, `retire`
+  and settle remove the checkout's routes by path, listener routes included, so
+  a domain is free immediately and `down` followed by `up` elsewhere works at
   once. A managed listener route's owner is its checkout path, environment and
   process name; no run id is recorded.
 - `effigy gateway repair` (with `--owner-checkout`, `--yes` and `--expect-plan`)
@@ -380,6 +381,40 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`RetainedCheckout`'s refusals are gone**, including "checkout Git locator
   changed", "checkout Git directory changed" and "resolved Git directory
   disagrees with checkout".
+- **Automatic Colima repair.** Effigy no longer stops and restarts the shared
+  Colima profile to "repair" it: the runtime-state and registry-DNS heuristics
+  and their retries are gone from the capture, streaming and liveness paths. A
+  detected problem keeps its own error and names the manual
+  `effigy container profile repair`; nothing takes down every stack on the
+  profile because a registry lookup failed offline (effigy#371).
+- **`effigy.environment-busy.v1`.** A busy environment refusal is one sentence
+  naming the holder's run, pid, task and state instead of a second record of the
+  environment; `HeldBy` names runs only. The refusal's exit code and text
+  contract are unchanged (effigy#371).
+- **The environment backend's reconcile and stop seams**, and the container
+  backend's `compose_invocation`. Applying and stopping run through the caller's
+  effect closure, so the adapters only observe, and the environment tests now
+  assert the inventory calls production runs (effigy#371).
+- **The gateway's dead-route sweep.** The daemon no longer drops a route
+  because its target does not answer a 200 ms TCP probe. The timer, the target
+  probe inside it and its `prune_dead_routes` removal path are gone, so a
+  container restart, a Colima restart and a listener that has not bound yet all
+  keep their route. A route whose target is briefly down survives, proved over
+  60 seconds on a private gateway.
+- **Certificate deletion on `down` and `retire`.** A TLS certificate is a cache
+  keyed by domain: withdrawal keeps it, so a stack that comes back finds it
+  ready, and the daemon removes the ones no route names once they are seven
+  days old. The certificate-removal callback, the replaced-TLS cleanup and the
+  pending-cert removal are gone with it.
+- **The route-table lock and the route's scope token.** The endpoint store's
+  one transaction is the whole write path, so `RouteTableLock`, the per-route
+  `scope` field and the worktree token minted inside a store transaction are
+  gone. A record that still carries `scope` decodes, and its next write drops
+  it.
+- **The v0.14 managed-session refusal.** `session.json`, stop markers and exec
+  group markers are neither read nor adopted, so a recorded supervisor PID that
+  a reboot has reused can no longer refuse or block a managed task. The
+  `legacy` state and its `stop` refusal are gone from managed status.
 - **A run's scratch directory is no longer a kernel effect.** It is a plain
   directory with one marker file, removed when the run succeeds and kept for 24
   hours when it fails, and a bounded sweep at a later run's start retires it
@@ -1496,6 +1531,72 @@ During v0.x, MINOR bumps may include breaking changes.
 - **A scratch tree's removal progress is now visible in its marker.** A failed
   removal rewrites the marker, so the tree stays Effigy's and is retired by a
   later sweep.
+- **A service's declared `restart:` always wins, including `"no"`.** The
+  generated service still gets `restart: unless-stopped` where the stack
+  declares none, but the policy is written only into the file that defines the
+  service (it names an `image`, a `build` or an `extends`), never into an
+  override file. A later `-f` file wins Compose's merge, so Effigy's runtime DNS
+  override used to restate the policy for every service and beat a one-shot
+  job's `restart: "no"` (effigy#371).
+- **A one-shot job that ran to completion is ready.** A service that declares
+  `restart: "no"` and exits successfully is the service doing its job, so the
+  stack it belongs to can become ready; a failed exit is still unready, and so
+  is every service the runtime restarts (effigy#371).
+- **A shared catalog's bound config file is published by the render.** The
+  MariaDB and Postgres init SQL reach the generation at the path their fragment
+  names, so a fresh home directory works and a changed `databases` value reaches
+  the server instead of depending on a file an older Effigy left behind
+  (effigy#371).
+- **A task's environment ensure runs the same apply as `container up`.** It
+  starts the shared services first and delivers the same compose-env secrets to
+  the same Compose arguments, so the two paths converge on the same stack
+  (effigy#371).
+- **`container up` renders once.** The creation load allocates ports, prepares
+  every mount source and publishes the generation, and every later stage and the
+  apply use that one policy; the second render, the manager report, the
+  operation plan and the pre-apply inventory are gone (effigy#371).
+- **An edit a live run holds is reported, not skipped silently.** `container up`
+  names the holder and that the edit applies on the next up; a holder list that
+  cannot be read is unknown, so the apply proceeds (Q-011) (effigy#371).
+- **Every remaining relative Compose input resolves where it was read.**
+  Long-syntax bind volumes and `env_file` entries, `build.additional_contexts`,
+  a `build:` mapping with no `context`, top-level `secrets`/`configs` files and
+  `include` are made absolute against the file that names them, as `volumes` and
+  `build.context` already were (effigy#371).
+- **`dns:` is never written for a `network_mode` service.** The runtime DNS
+  override skips those services, because Compose rejects the combination
+  (effigy#371).
+- **A checkout path that cannot be read is not a deleted checkout.** Only a
+  missing path counts as gone, and a path whose own parent is missing, as after
+  a reboot before the volume mounts, is unknown, so an ejected or unreadable
+  checkout keeps its routes and domains instead of losing them until its next
+  `up`. `container down` withdraws every route the checkout's path owns, so a
+  domain the manifest has since renamed is freed with the environment, and a
+  route that is already gone is not an error. A store row another checkout
+  cannot describe now warns and skips that row instead of refusing every write
+  to the machine-wide store. A store this build writes carries the empty
+  `imported_sha256` and `quarantined` maps a pinned build requires, so the
+  `efc1478` binary Queue and Oxide run reads it again.
+- **A slow host listener reports progress and can be stopped.** While a
+  managed listener's reserved port is still closed and its child runs, `up`
+  prints a progress line every 30 s to the console as well as to the log, and a
+  `down` or `container <env> restart` from another shell stops the run and ends
+  the wait instead of blocking on the environment. A child that exits its
+  leader before it answers is reported as `daemonised`.
+- **A stop waits out the supervisor's own window.** The requester derives its
+  wait from the process's declared shutdown grace plus the kernel's stop
+  margin, so a stop that legitimately needs the SIGKILL tail is reported as a
+  stop instead of "the live kernel run still holds its gate; no signal was
+  sent". A stop whose window expires reports a timeout with the phase and the
+  waited duration, never "the evidence contradicts itself".
+- **`container <env> restart <process>` keeps the address it replaces.** A
+  restarted listener reuses the address its endpoint record published, so every
+  `internal_url` a dependent already resolved still reaches it. The restart
+  holds `Gate(Env)` like `up`, and an environment that is not up - including
+  one that declares only host processes - is one warning rather than a refusal.
+- **A managed run's environment `up` has no fixed deadline.** The 900 s cap and
+  its `health_wait_timeout_secs` hint are gone: `up` is the two-phase wait it
+  already runs, reports progress every 30 s, and ends on the run's stop.
 - **Scratch is decided by its own marker.** A successful run removes its
   directory at the engine's normal completion, and a failed, cancelled or
   timed-out run records `keep: true` and a conclusion time in the directory's
@@ -1941,6 +2042,16 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- `container retire` and `container retire --dead` remove every owned container
+  every time. They deleted each container with a forced remove, which the
+  runtime's restart manager treated as an exit and undid for the
+  `restart: unless-stopped` policy the generated Compose now renders, so a
+  milestone-QA teardown came back with `mailpit` and `silo` running and exited
+  non-zero on the volume and network they still held. Each container is stopped
+  first, so the removal sticks, and only residue the backend still lists counts
+  as a failure. A stopped Colima profile is a warning and no longer fails the
+  retirement. The stale-container removal that clears a nerdctl name-store
+  conflict stops the container it removes for the same reason (effigy#376).
 - Shared backing-service environment goes only to the services that are its
   clients, and those clients can resolve it. The generated Compose rewrite
   injected every shared `*_HOST` into every service, so a local MariaDB catalog

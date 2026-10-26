@@ -40,10 +40,48 @@ fn cert_paths_for_domain() {
 }
 
 #[test]
-fn remove_cert_ignores_missing_files() {
+fn orphan_certificates_prune_by_age_and_a_routed_domain_keeps_its_pair() {
     let dir = tempfile::tempdir().unwrap();
-    let config = TlsConfig::new(dir.path().to_path_buf());
-    config.remove_cert("missing.test").unwrap();
+    let now = std::time::SystemTime::now();
+    let old = now - Duration::from_secs(8 * 24 * 60 * 60);
+    for domain in ["orphan.test", "routed.test", "fresh.test"] {
+        for name in [format!("{domain}.pem"), format!("{domain}-key.pem")] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "pem").unwrap();
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(if domain == "fresh.test" { now } else { old })
+                .unwrap();
+        }
+    }
+
+    let pruned = prune_orphan_certs(
+        dir.path(),
+        &BTreeSet::from(["routed.test".to_owned()]),
+        CERT_CACHE_MAX_AGE,
+        now,
+    )
+    .unwrap();
+
+    assert_eq!(pruned, ["orphan.test"]);
+    assert!(!dir.path().join("orphan.test.pem").exists());
+    assert!(!dir.path().join("orphan.test-key.pem").exists());
+    assert!(dir.path().join("routed.test.pem").exists());
+    assert!(dir.path().join("routed.test-key.pem").exists());
+    assert!(dir.path().join("fresh.test.pem").exists());
+    assert!(dir.path().join("fresh.test-key.pem").exists());
+}
+
+#[test]
+fn orphan_certificate_prune_ignores_a_missing_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let pruned = prune_orphan_certs(
+        &dir.path().join("missing"),
+        &BTreeSet::new(),
+        CERT_CACHE_MAX_AGE,
+        std::time::SystemTime::now(),
+    )
+    .unwrap();
+    assert!(pruned.is_empty());
 }
 
 #[test]

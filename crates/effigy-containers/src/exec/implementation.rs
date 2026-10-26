@@ -8,22 +8,20 @@ use std::process::Output;
 use std::time::{Duration, Instant};
 
 use super::colima_runtime::{
-    default_runtime_profile, detect_container_backend, repair_colima_runtime,
-    run_runtime_command_capture_for_policy,
+    default_runtime_profile, detect_container_backend, run_runtime_command_capture_for_policy,
     run_runtime_command_capture_for_policy_with_absolute_deadline,
     run_runtime_command_capture_for_policy_with_timeout, running_colima_profiles,
 };
 use super::parse::{
-    docker_failure_looks_like_colima_dns_outage,
-    docker_failure_looks_like_colima_runtime_state_loss, infer_host_working_dir_from_inspect,
-    parse_running_compose_containers, parse_running_container_stats, RunningComposeContainer,
-    RunningComposeContainerProfiled, RunningContainerStatsCapture,
+    infer_host_working_dir_from_inspect, parse_running_compose_containers,
+    parse_running_container_stats, RunningComposeContainer, RunningComposeContainerProfiled,
+    RunningContainerStatsCapture,
 };
 use super::participation::{
     colima_runtime_participation, docker_runtime_participation, RuntimeParticipation,
 };
 use super::process::{
-    error_is_timeout, run_command_capture_os, run_command_capture_os_with_env,
+    run_command_capture_os, run_command_capture_os_with_env,
     run_command_capture_with_timeout_and_env, run_detached_command_streaming_with_env,
     run_detached_command_with_env,
 };
@@ -228,15 +226,27 @@ pub fn run_compose_capture(
     args: &[OsString],
     label: &str,
 ) -> Result<Output, ContainerExecError> {
+    run_compose_capture_with_env(repo_root, policy, args, label, &[])
+}
+
+/// [`run_compose_capture`] with the environment the one apply delivers. A
+/// task's environment ensure and `container up` both use it (effigy#371).
+pub fn run_compose_capture_with_env(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
     let (program, args) = compose_invocation_for_repo(repo_root, policy, args);
-    run_compose_invocation_capture(repo_root, policy, OsStr::new(program), &args, label)
+    run_compose_invocation_capture_with_env(repo_root, OsStr::new(program), &args, label, env)
 }
 
 pub fn list_running_compose_containers_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = run_runtime_command_capture_with_repair(
+    let output = capture_runtime_command(
         repo_root,
         policy,
         &project_ps_args(policy.project_name.as_str(), false),
@@ -280,7 +290,7 @@ pub fn list_running_compose_containers_for_policy_with_deadline(
     policy: &EffectiveContainerPolicy,
     deadline: Option<Instant>,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = run_runtime_command_capture_with_repair(
+    let output = capture_runtime_command(
         repo_root,
         policy,
         &project_ps_args(policy.project_name.as_str(), false),
@@ -307,7 +317,7 @@ pub fn list_running_compose_containers_for_project_with_deadline(
     project_name: &str,
     deadline: Option<Instant>,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = run_runtime_command_capture_with_repair(
+    let output = capture_runtime_command(
         repo_root,
         policy,
         &project_ps_args(project_name, false),
@@ -334,7 +344,7 @@ pub fn list_compose_containers_for_policy_including_stopped_with_deadline(
     policy: &EffectiveContainerPolicy,
     deadline: Option<Instant>,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = run_runtime_command_capture_with_repair(
+    let output = capture_runtime_command(
         repo_root,
         policy,
         &project_ps_args(policy.project_name.as_str(), true),
@@ -1187,7 +1197,7 @@ pub fn list_compose_containers_for_project_including_stopped(
     project_name: &str,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
     let output = retry_inventory_once(|| {
-        run_runtime_command_capture_with_repair(
+        capture_runtime_command(
             repo_root,
             policy,
             &project_ps_args(project_name, true),
@@ -1279,7 +1289,7 @@ pub fn inspect_containers_for_policy(
 ) -> Result<Output, ContainerExecError> {
     let mut args = vec![OsString::from("inspect")];
     args.extend(names.iter().map(OsString::from));
-    run_runtime_command_capture_with_repair(
+    capture_runtime_command(
         repo_root,
         policy,
         &args,
@@ -1322,45 +1332,8 @@ pub fn container_last_log_line_for_policy(
         .to_owned())
 }
 
-fn run_runtime_command_capture_with_repair(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    args: &[OsString],
-    label: &str,
-    timeout: Option<Duration>,
-    deadline: Option<Instant>,
-) -> Result<Output, ContainerExecError> {
-    match capture_runtime_command(repo_root, policy, args, label, timeout, deadline) {
-        Ok(output) => Ok(output),
-        // A bounded (doctor) probe is read-only: it never pays for a Colima
-        // runtime repair that could outlive the shared deadline. Timeouts and
-        // state-loss failures surface as unavailable instead.
-        Err(error) if deadline.is_none() && runtime_failure_should_repair(&error) => {
-            repair_colima_runtime(policy, repo_root)?;
-            capture_runtime_command(repo_root, policy, args, label, timeout, None).map_err(
-                |retry_error| match retry_error {
-                    ContainerExecError::Failure {
-                        command,
-                        code,
-                        stdout,
-                        stderr,
-                    } => ContainerExecError::Failure {
-                        command,
-                        code,
-                        stdout,
-                        stderr: format!(
-                            "{stderr}\n[effigy] retried after repairing Colima runtime state for profile `{}`",
-                            policy.profile,
-                        ),
-                    },
-                    other => other,
-                },
-            )
-        }
-        Err(error) => Err(error),
-    }
-}
-
+/// One runtime capture. A failure is reported as it stands: Effigy never
+/// stops or restarts the shared Colima profile to "repair" it (effigy#371).
 fn capture_runtime_command(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -1383,17 +1356,6 @@ fn capture_runtime_command(
     }
 }
 
-fn runtime_failure_should_repair(error: &ContainerExecError) -> bool {
-    match error {
-        ContainerExecError::Failure { stdout, stderr, .. } => {
-            !error_is_timeout(error)
-                && (docker_failure_looks_like_colima_dns_outage(stdout, stderr)
-                    || docker_failure_looks_like_colima_runtime_state_loss(stdout, stderr))
-        }
-        ContainerExecError::Launch { .. } => false,
-    }
-}
-
 /// Runs one invocation an environment backend adapter resolved for its exact
 /// selection. Detached Compose activation never inherits a capture pipe.
 pub fn run_backend_invocation(
@@ -1413,17 +1375,15 @@ pub fn run_backend_invocation(
 
 pub fn run_compose_invocation_capture(
     repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
     program: &OsStr,
     args: &[OsString],
     label: &str,
 ) -> Result<Output, ContainerExecError> {
-    run_compose_invocation_capture_with_env(repo_root, policy, program, args, label, &[])
+    run_compose_invocation_capture_with_env(repo_root, program, args, label, &[])
 }
 
 pub fn run_compose_invocation_capture_with_env(
     repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
     program: &OsStr,
     args: &[OsString],
     label: &str,
@@ -1434,39 +1394,7 @@ pub fn run_compose_invocation_capture_with_env(
     {
         return run_detached_command_with_env(repo_root, &program, args, label, env);
     }
-    match run_command_capture_os_with_env(repo_root, &program, args, label, env) {
-        Ok(output) => Ok(output),
-        Err(ContainerExecError::Failure {
-            command: _,
-            code: _,
-            stdout,
-            stderr,
-        }) if docker_failure_looks_like_colima_dns_outage(&stdout, &stderr)
-            || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
-        {
-            repair_colima_runtime(policy, repo_root)?;
-            run_command_capture_os_with_env(repo_root, &program, args, label, env).map_err(|retry_error| {
-                match retry_error {
-                    ContainerExecError::Failure {
-                        command: retry_command,
-                        code: retry_code,
-                        stdout: retry_stdout,
-                        stderr: retry_stderr,
-                    } => ContainerExecError::Failure {
-                        command: retry_command,
-                        code: retry_code,
-                        stdout: retry_stdout,
-                        stderr: format!(
-                            "{retry_stderr}\n[effigy] retried after repairing Colima runtime state for profile `{}`",
-                            policy.profile,
-                        ),
-                    },
-                    other => other,
-                }
-            })
-        }
-        Err(error) => Err(error),
-    }
+    run_command_capture_os_with_env(repo_root, &program, args, label, env)
 }
 
 /// Run one Compose invocation whose progress a person is watching.
@@ -1501,29 +1429,6 @@ pub fn run_compose_invocation_streaming_with_env(
         on_line,
     ) {
         Ok(output) => Ok(output),
-        // The same one-retry repair the capturing path takes, so a Colima DNS
-        // or runtime-state outage is repaired rather than reported as the
-        // stack's failure. Report events are idempotent, so the retry's
-        // repeated lines only rewrite steps that already exist.
-        Err(ContainerExecError::Failure {
-            command: _,
-            code: _,
-            stdout,
-            stderr,
-        }) if docker_failure_looks_like_colima_dns_outage(&stdout, &stderr)
-            || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
-        {
-            repair_colima_runtime(policy, repo_root)?;
-            run_detached_command_streaming_with_env(
-                repo_root,
-                &program,
-                args,
-                label,
-                env,
-                stop_requested,
-                on_line,
-            )
-        }
         // nerdctl keeps its own name store. A container it left behind makes
         // replacing a service that really changed fail on that name; clear the
         // stale one and retry once.
@@ -1577,6 +1482,15 @@ fn take_stale_owned_container(
     if project.as_deref() != Some(policy.project_name.as_str()) {
         return Ok(false);
     }
+    // A running container's `rm -f` is a kill the restart manager may undo for
+    // `restart: unless-stopped`; stopping first records a user stop, so the
+    // removal holds (effigy#376). A stop that finds nothing running is fine.
+    let _ = run_docker_capture(
+        repo_root,
+        policy,
+        &[OsString::from("stop"), OsString::from(&claimed)],
+        "runtime stop",
+    );
     let removed = run_docker_capture(
         repo_root,
         policy,

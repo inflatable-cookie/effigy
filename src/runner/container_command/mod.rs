@@ -52,7 +52,7 @@ mod render;
 mod restart;
 mod retire;
 mod scope;
-mod secret_env;
+pub(in crate::runner) mod secret_env;
 mod shell_prep;
 mod steps;
 pub(in crate::runner) mod support;

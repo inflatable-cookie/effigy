@@ -74,6 +74,9 @@ pub struct ServiceHealth {
     pub last_output: Option<String>,
     /// `State.ExitCode` for a container that is not running.
     pub exit_code: Option<i64>,
+    /// `HostConfig.RestartPolicy.Name`: `no`, `always`, `unless-stopped`, or
+    /// absent. A one-shot job declares `no`.
+    pub restart_policy: Option<String>,
 }
 
 impl ServiceHealth {
@@ -81,11 +84,25 @@ impl ServiceHealth {
     /// otherwise. A container with no check is ready as soon as it runs;
     /// a declared check that is still `starting` is not ready yet.
     pub fn is_ready(&self) -> bool {
+        if self.is_one_shot_complete() {
+            return true;
+        }
         self.state.eq_ignore_ascii_case("running")
             && !matches!(
                 self.health,
                 Some(HealthState::Unhealthy | HealthState::Starting)
             )
+    }
+
+    /// A one-shot job that ran to completion. It declared `restart: "no"`,
+    /// which is exactly the promise that it does not come back, and it exited
+    /// successfully; that is the service doing its job, not a failed start
+    /// (effigy#371). A `restart: "no"` service that exited non-zero is still
+    /// unready, and so is every service the runtime restarts.
+    pub fn is_one_shot_complete(&self) -> bool {
+        self.has_exited()
+            && self.exit_code == Some(0)
+            && matches!(self.restart_policy.as_deref(), Some("" | "no") | None)
     }
 
     /// A container that started and then stopped. A `created` container was
@@ -182,6 +199,20 @@ pub fn parse_inspect_health(bytes: &[u8]) -> Result<Vec<ServiceHealth>, String> 
         state: Option<State>,
         #[serde(default)]
         config: Option<Config>,
+        #[serde(default)]
+        host_config: Option<HostConfig>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct HostConfig {
+        #[serde(default)]
+        restart_policy: Option<RestartPolicy>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct RestartPolicy {
+        #[serde(default)]
+        name: Option<String>,
     }
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "PascalCase")]
@@ -226,6 +257,11 @@ pub fn parse_inspect_health(bytes: &[u8]) -> Result<Vec<ServiceHealth>, String> 
             let container = record.name.trim_start_matches('/').to_owned();
             let state = record.state;
             let health = state.as_ref().and_then(|state| state.health.as_ref());
+            let restart_policy = record
+                .host_config
+                .and_then(|host| host.restart_policy)
+                .and_then(|policy| policy.name)
+                .map(|name| name.trim().to_owned());
             let service = record
                 .config
                 .and_then(|config| config.labels)
@@ -245,6 +281,7 @@ pub fn parse_inspect_health(bytes: &[u8]) -> Result<Vec<ServiceHealth>, String> 
                     .and_then(|health| health.log.last())
                     .and_then(|log| bounded_last_output(&log.output)),
                 exit_code: state.as_ref().and_then(|state| state.exit_code),
+                restart_policy,
             }
         })
         .collect())

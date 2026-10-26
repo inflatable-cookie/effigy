@@ -41,9 +41,6 @@ use effigy_manifest::TaskSelection;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-/// `up` of an environment a managed run starts: bounded, even for a cold
-/// engine that pulls images and boots a VM inside it.
-const ENVIRONMENT_UP_BUDGET: Duration = Duration::from_secs(900);
 /// Where an exec workload's remote session leader records itself, under
 /// the checkout. Each marker carries its effect's nonce (`EXEC_NONCE`).
 const EXEC_MARKER_DIR: &str = ".effigy/runtime/managed-exec";
@@ -1065,7 +1062,6 @@ fn environment_plan(
         } else {
             Vec::new()
         },
-        up_budget: ENVIRONMENT_UP_BUDGET,
         readiness_budget: Duration::from_secs(plan.readiness.timeout_secs),
         ready_lines,
     }))
@@ -1278,8 +1274,8 @@ pub(in crate::runner) fn release_inline_managed_environment(
         "inline managed environment down",
     )
     .map_err(RunnerError::from)?;
-    let output = effigy_runtime::signals::run_compose_plan_capture(&policy, &plan)
-        .map_err(RunnerError::from)?;
+    let output =
+        effigy_runtime::signals::run_compose_plan_capture(&plan).map_err(RunnerError::from)?;
     if output.status.success() {
         Ok(format!("inline environment `{}` is down", policy.name))
     } else {

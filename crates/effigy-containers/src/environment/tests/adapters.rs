@@ -1,6 +1,8 @@
 //! Strict-fake proofs for both backend adapters (§12.2): fake `colima` and
-//! `docker` executables record every invocation. The selected adapter must
-//! issue exactly the modelled calls; the unselected backend sees none.
+//! `docker` executables record every invocation. The selected adapter issues
+//! exactly its own inventory calls, and the unselected backend sees none. The
+//! apply and the stop are not adapter work: the caller passes them to the
+//! kernel as one effect.
 
 use super::*;
 use std::os::unix::fs::PermissionsExt;
@@ -83,16 +85,7 @@ impl Drop for FakeTools {
 
 fn exercise(selection: BackendSelection, tools: &FakeTools) -> Vec<Workload> {
     let workdir = tools.logs.parent().unwrap().to_path_buf();
-    let files = [workdir.join("compose.yml")];
-    let render = RenderRef {
-        project: PROJECT,
-        workdir: &workdir,
-        compose_files: &files,
-        env: &[],
-    };
     let mut adapter = selection.adapter();
-    adapter.reconcile(&render).expect("reconcile");
-    adapter.stop(&render).expect("stop");
     match adapter.inventory(&workdir, PROJECT) {
         Observed::Verified(rows, _) => rows,
         other => panic!("inventory: {other:?}"),
@@ -103,15 +96,9 @@ fn exercise(selection: BackendSelection, tools: &FakeTools) -> Vec<Workload> {
 fn colima_adapter_targets_only_its_profile() {
     let tools = FakeTools::install();
     let rows = exercise(selection(), &tools);
-    let compose = format!(
-        "-f {} -p {PROJECT}",
-        tools.logs.parent().unwrap().join("compose.yml").display()
-    );
     assert_eq!(
         tools.calls("colima"),
         [
-            format!("nerdctl --profile fixture -- compose {compose} up -d --remove-orphans"),
-            format!("nerdctl --profile fixture -- compose {compose} stop"),
             format!(
                 "nerdctl --profile fixture -- ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
             ),
@@ -145,15 +132,9 @@ fn docker_adapter_targets_only_the_docker_cli() {
         reason: BackendReason::UserPreference,
     };
     let rows = exercise(selection, &tools);
-    let compose = format!(
-        "-f {} -p {PROJECT}",
-        tools.logs.parent().unwrap().join("compose.yml").display()
-    );
     assert_eq!(
         tools.calls("docker"),
         [
-            format!("compose {compose} up -d --remove-orphans"),
-            format!("compose {compose} stop"),
             format!(
                 "ps --all --no-trunc --filter label=com.docker.compose.project={PROJECT} --format {{{{.ID}}}}"
             ),

@@ -622,7 +622,7 @@ where
         ContainerAction::Activate,
         "docker compose up",
     )?;
-    crate::signals::run_compose_plan_capture(&policy, &plan)?;
+    crate::signals::run_compose_plan_capture(&plan)?;
     let health = wait_for_container_ready(&policy)?;
     let gateway_routes = register_gateway_routes(repo_root, &policy)?;
     execute_pull_production_hook(repo_root, &policy, &hook)?;

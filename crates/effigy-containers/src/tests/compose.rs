@@ -1830,6 +1830,72 @@ variant = "default"
     });
 }
 
+/// A shared backing service publishes the init SQL its fragment binds, in the
+/// generation, so a fresh home directory works and a later `databases` change
+/// reaches the server (effigy#371).
+#[test]
+fn a_shared_service_publishes_the_init_sql_it_binds() {
+    with_temp_effigy_home("catalog-shared-db-init-sql", |home| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("catalog-shared-db-init-sql");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+databases = ["app", "legacy"]
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_prepared_policy(&root, None).expect("policy");
+        let shared = &policy.shared_services[0];
+        assert!(
+            !home
+                .join("shared-services")
+                .join(&shared.project_name)
+                .exists(),
+            "nothing is published under the home directory"
+        );
+        let shared_compose = policy
+            .read_compose(&shared.compose_file)
+            .expect("read shared compose");
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&shared_compose).expect("shared compose is YAML");
+        let volumes = document["services"]["db"]["volumes"]
+            .as_sequence()
+            .expect("the shared service mounts its init SQL");
+        let init_sql = volumes
+            .iter()
+            .filter_map(serde_yaml::Value::as_str)
+            .find(|mount| mount.contains("/docker-entrypoint-initdb.d/"))
+            .expect("the fragment binds an init SQL file");
+        let source = Path::new(init_sql.split(':').next().expect("source"));
+        assert!(
+            source.is_absolute() && source.starts_with(shared.compose_file.parent().unwrap()),
+            "the bind source is a file inside this generation, not the checkout: {init_sql}"
+        );
+        let sql = fs::read_to_string(source).expect("the bind source is a written file");
+        assert!(sql.contains("CREATE DATABASE IF NOT EXISTS `app`"), "{sql}");
+        assert!(
+            sql.contains("CREATE DATABASE IF NOT EXISTS `legacy`"),
+            "a declared database reaches the init SQL: {sql}"
+        );
+    });
+}
+
 #[test]
 fn generated_compose_rejects_unsupported_shared_catalog() {
     with_temp_effigy_home("catalog-shared-unsupported", |_| {

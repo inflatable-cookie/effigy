@@ -41,8 +41,8 @@ use crate::tls::{
 
 const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
 
-/// How often the daemon drops routes whose recorded owner is gone.
-const DEAD_ROUTE_SWEEP: Duration = Duration::from_secs(30);
+/// How often the daemon drops cached certificates no route names.
+const CERT_PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdleShutdownAction {
@@ -1505,17 +1505,6 @@ async fn run_gateway_with_cancel(
         ("TCP alias manager", result)
     });
 
-    // Drop routes whose checkout path is gone or whose target stopped
-    // listening, so `gateway status` lists domains something still serves.
-    let sweep_path = runtime_config.route_table_path.clone();
-    let sweep_shutdown = shutdown_rx.clone();
-    server_tasks.spawn(async move {
-        (
-            "dead route sweep",
-            run_dead_route_sweep(sweep_path, sweep_shutdown).await,
-        )
-    });
-
     // Optionally start the HTTPS proxy.
     let _tls_watcher = if let (Some(tls_addr), Some(tls_config)) =
         (runtime_config.proxy.tls_bind_addr, &runtime_config.tls)
@@ -1524,6 +1513,18 @@ async fn run_gateway_with_cancel(
         if !runtime_config.is_private() {
             std::fs::create_dir_all(&certs_dir)?;
         }
+        // Certificates are a cache keyed by domain. Nothing withdraws one with
+        // its route, so the daemon drops the ones no route names once they are
+        // old enough to be worth nothing.
+        let prune_dir = certs_dir.clone();
+        let prune_table = Arc::clone(&shared_table);
+        let prune_shutdown = shutdown_rx.clone();
+        server_tasks.spawn(async move {
+            (
+                "certificate cache prune",
+                run_cert_cache_prune(prune_dir, prune_table, prune_shutdown).await,
+            )
+        });
         let (resolver, cert_count) = match private_tls_resolver {
             Some((resolver, count)) => (resolver, count),
             None => {
@@ -1705,31 +1706,45 @@ async fn run_gateway_with_cancel(
     Ok(())
 }
 
-/// Remove dead routes on a timer until the daemon stops.
-async fn run_dead_route_sweep(
-    path: PathBuf,
+/// Drop cached certificates no route names once their age passes
+/// `CERT_CACHE_MAX_AGE`, then wait for the daemon to stop.
+async fn run_cert_cache_prune(
+    certs_dir: PathBuf,
+    table: Arc<RwLock<RouteTable>>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), GatewayError> {
     loop {
+        let routed = crate::locks::read_tolerant(&table)
+            .all_routes()
+            .into_iter()
+            .filter(|route| route.tls)
+            .map(|route| route.domain.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let dir = certs_dir.clone();
+        let pruned = tokio::task::spawn_blocking(move || {
+            crate::tls::prune_orphan_certs(
+                &dir,
+                &routed,
+                crate::tls::CERT_CACHE_MAX_AGE,
+                std::time::SystemTime::now(),
+            )
+        })
+        .await
+        .map_err(|error| GatewayError::WatcherError(error.to_string()))?;
+        match pruned {
+            Ok(domains) if !domains.is_empty() => {
+                debug!(domains = ?domains, "pruned cached certificates no route names")
+            }
+            Ok(_) => {}
+            Err(error) => debug!(error = %error, "certificate cache prune skipped"),
+        }
         tokio::select! {
-            _ = tokio::time::sleep(DEAD_ROUTE_SWEEP) => {}
+            _ = tokio::time::sleep(CERT_PRUNE_INTERVAL) => {}
             result = shutdown.changed() => {
                 if result.is_err() || *shutdown.borrow() {
                     return Ok(());
                 }
             }
-        }
-        let path = path.clone();
-        let swept =
-            tokio::task::spawn_blocking(move || crate::registration::prune_dead_routes(&path))
-                .await
-                .map_err(|error| GatewayError::WatcherError(error.to_string()))?;
-        match swept {
-            Ok(domains) if !domains.is_empty() => {
-                debug!(domains = ?domains, "released dead gateway routes")
-            }
-            Ok(_) => {}
-            Err(error) => debug!(error = %error, "dead route sweep skipped"),
         }
     }
 }

@@ -57,7 +57,6 @@ fn route(target: SocketAddr) -> Route {
         tcp_target: None,
         source: RouteSource::Task,
         project: "/fixture".into(),
-        scope: None,
         managed_listener: None,
         tls: false,
         registered: chrono::Utc::now(),

@@ -12,7 +12,6 @@ fn route(domain: &str, checkout: &str, dns_ip: Option<Ipv4Addr>, target: Option<
         tcp_target: target.map(str::to_owned),
         source: RouteSource::Container,
         project: checkout.to_owned(),
-        scope: None,
         managed_listener: None,
         tls: false,
         registered: chrono::Utc::now(),

@@ -20,7 +20,7 @@ mod view;
 pub use backend::{
     effective as effective_backend, parse_inspect, project_resources, select as select_backend,
     BackendError, BackendKind, BackendReason, BackendSelection, ColimaBackend, DockerBackend,
-    EnvironmentBackend, ProjectResources, RenderRef, Workload,
+    EnvironmentBackend, ProjectResources, Workload,
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use import::{
@@ -29,8 +29,8 @@ pub use import::{
 };
 pub use ops::{activate, down, reconcile, reset, Applied, Up};
 pub use reconcile::{
-    BusyDiagnostics, BusyRecord, EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, HeldHolder,
-    Operation, APPLY_EFFECT, GATE_WAIT, RUN_BUDGET, STOP_EFFECT,
+    EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, APPLY_EFFECT, GATE_WAIT,
+    RUN_BUDGET, STOP_EFFECT,
 };
 pub use record::{
     EngineRecord, EnvRecord, EnvState, ImportedMarker, LabelEvidence, LegacyImport, Retention,

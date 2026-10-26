@@ -13,7 +13,7 @@ use super::deregister_runtime_gateway_routes;
 use super::gateway_registration::deregister_gateway_routes_for_container;
 use super::runtime_error_from_runner;
 use super::secret_env::{
-    materialize_container_secret_runtime, resolve_container_secret_runtime,
+    materialize_container_secret_runtime, resolve_container_secret_runtime, secrets_required,
     ResolvedContainerSecretRuntime,
 };
 use super::shell_prep::{
@@ -37,6 +37,7 @@ use crate::runner::exec_command::{
 };
 use crate::runner::host_process::start_host_processes_for_container;
 use effigy_containers::environment::{BackendError, Operation, Retention};
+use effigy_containers::ContainerAction;
 use effigy_containers::{
     annotate_workspace_extra_mount_decisions,
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
@@ -51,7 +52,6 @@ use effigy_containers::{
     workspace_extra_mount_decision_lines, EffectiveAttachMode, EffectiveContainerPolicy,
     WorkspaceExtraMountDecision,
 };
-use effigy_containers::{ContainerAction, ContainerRuntimeState};
 use effigy_containers::{
     ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
     ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
@@ -69,8 +69,6 @@ use effigy_runtime::write::{
     run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
     run_container_reset,
 };
-
-const SECRETS_REQUIRED_ENV: &str = "EFFIGY_SECRETS_REQUIRED";
 
 struct ContainerUpPlan {
     stop_flag: Arc<AtomicBool>,
@@ -435,56 +433,32 @@ fn prepare_container_up(
     operation.active = declared_detached;
     operation.preparation_step = Some("policy");
     let ports_step = steps::phase("preparing ports and loopback");
-    let prepared = match (|| -> Result<_, RunnerError> {
-        // Allocation is a Prepare effect, before admission captures the render.
-        Ok(effigy_containers::policy::render::prepare_inputs(
-            &load_container_policy(repo_root, name)?,
-        )?)
-    })() {
-        Ok(prepared) => {
-            ports_step.succeed("ports and loopback prepared");
-            prepared
-        }
-        Err(error) => {
-            ports_step.fail(error.to_string());
-            return Err(error);
-        }
-    };
+    // One render per `up`: the creation load allocates ports, prepares every
+    // mount source, renders the generation once and reports the extra-mount
+    // decisions it recorded. Every later stage uses this policy.
+    let (policy, workspace_mount_decisions) =
+        match load_container_policy_for_creation(repo_root, name) {
+            Ok(prepared) => {
+                ports_step.succeed("ports and loopback prepared");
+                prepared
+            }
+            Err(error) => {
+                ports_step.fail(error.to_string());
+                return Err(error.into());
+            }
+        };
     let rendering_step = steps::phase("rendering the stack");
     operation.preparation_step = Some("rendering");
-    // One render per `up`: every later stage uses these bytes.
-    let mut policy = prepared;
-    effigy_containers::policy::render::prepare(&policy)?;
     rendering_step.succeed(format!(
         "stack rendered from {}",
         policy.compose_file_display
     ));
     operation.preparation_step = Some("validation");
-    let operation_plan = lifecycle_operation_plan(
-        repo_root,
-        &policy,
-        ContainerLifecycleOperation::up(attach, detach),
-    );
     validate_container_policy(repo_root, &policy)?;
     crate::runner::host_process::validate_host_process_preflight(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
-    let secret_runtime = if operation_plan.consumes_declared_container_secrets() {
-        resolve_container_secret_runtime(repo_root, &policy, secrets_required())?
-    } else {
-        ResolvedContainerSecretRuntime {
-            delivery: policy.secret_delivery,
-            env: Vec::new(),
-            warnings: Vec::new(),
-        }
-    };
-    let compose_secret_env = match secret_runtime.delivery {
-        effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv => secret_runtime
-            .env
-            .iter()
-            .map(|(key, value)| (key.clone(), OsString::from(value.expose())))
-            .collect::<Vec<_>>(),
-        effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles => Vec::new(),
-    };
+    let secret_runtime = resolve_container_secret_runtime(repo_root, &policy, secrets_required())?;
+    let compose_secret_env = super::secret_env::compose_env(&secret_runtime);
     let mut warnings = colima_profile_warnings(&policy, repo_root);
     // A declared container key this bring-up could not deliver is reported
     // here, before the slow Compose work, and again in the bring-up's JSON
@@ -501,19 +475,7 @@ fn prepare_container_up(
         steps::during("starting shared services", "shared services ready", || {
             ensure_shared_services_running(&policy)
         })?;
-    operation.preparation_step = Some("refresh");
-    let workspace_mount_decisions = refresh_workspace_mounts_for_creation(repo_root, &mut policy)?;
     operation.preparation_step = Some("dispatch");
-    validate_container_policy(repo_root, &policy)?;
-    validate_compose_backend_runtime(repo_root, &policy)?;
-    let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
-        repo_root,
-        &policy,
-        ContainerAction::Activate,
-        ContainerRuntimeState::Starting,
-        None,
-    )
-    .map_err(RunnerError::from)?;
     let up_plan = effigy_runtime::container_manager::compose_up_invocation_plan(
         repo_root,
         &policy,
@@ -535,16 +497,6 @@ fn prepare_container_up(
         workspace_mount_decisions,
         up_plan,
     })
-}
-
-fn refresh_workspace_mounts_for_creation(
-    repo_root: &Path,
-    policy: &mut EffectiveContainerPolicy,
-) -> Result<Vec<WorkspaceExtraMountDecision>, RunnerError> {
-    let (creation_policy, decisions) =
-        load_container_policy_for_creation(repo_root, Some(policy.name.as_str()))?;
-    *policy = creation_policy;
-    Ok(decisions)
 }
 
 /// Runs the Compose activation. Attached interrupts and failures return
@@ -939,12 +891,6 @@ pub(super) fn run_container_down_command(
             ))
         }
     }
-}
-
-fn secrets_required() -> bool {
-    std::env::var(SECRETS_REQUIRED_ENV)
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
 }
 
 pub(super) fn run_container_status_command(
@@ -1489,7 +1435,7 @@ mod tests {
         annotate_workspace_extra_mount_decisions, detached_activation_error,
         detached_activation_failure, detached_activation_identity, ensure_up_workspace_permissions,
         exec_operation_plan, gateway_registration_failure, lifecycle_operation_plan,
-        refresh_workspace_mounts_for_creation, run_container_down_command, sanitized_failure_cause,
+        prepare_container_up, run_container_down_command, sanitized_failure_cause,
         DetachedOperationState, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
@@ -1499,8 +1445,8 @@ mod tests {
     use crate::runner::container_command::test_support::temp_repo;
     use effigy_containers::EffectiveAttachMode;
     use effigy_containers::{
-        down_report, load_container_policy, up_detached_report, ContainerAction,
-        EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
+        down_report, load_container_policy, load_container_policy_for_creation, up_detached_report,
+        ContainerAction, EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
     };
     use effigy_containers::{
         ContainerConfirmationPolicy, ContainerExecOperation, ContainerLifecycleOperation,
@@ -1850,8 +1796,101 @@ services:
         );
     }
 
+    /// One render per `container up`: preparation publishes exactly one
+    /// generation for the checkout and runs no apply, and the plan carries the
+    /// extra-mount decisions that render recorded (effigy#371).
     #[test]
-    fn creation_refresh_is_captured_by_compose_backend_plan_without_mount_claim() {
+    fn container_up_preparation_renders_once_and_runs_no_apply() {
+        let root = temp_repo("container-up-one-render", "one-render");
+        let home = root.join("home");
+        let bin = root.join("bin");
+        fs::create_dir_all(&home).expect("mkdir home");
+        fs::create_dir_all(&bin).expect("mkdir bin");
+        let log = root.join("docker-calls");
+        let docker = bin.join("docker");
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nexit 0\n",
+                log = log.display()
+            ),
+        )
+        .expect("write fake docker");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&docker).expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&docker, permissions).expect("chmod fake docker");
+        }
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "compose.yml"
+primary_service = "app"
+"#,
+        )
+        .expect("write manifest");
+        fs::write(
+            root.join("compose.yml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose");
+
+        let saved = (
+            std::env::var_os("PATH"),
+            std::env::var_os("HOME"),
+            std::env::var_os("EFFIGY_COMPOSE_BACKEND"),
+        );
+        std::env::set_var(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                saved.0.clone().unwrap_or_default().to_string_lossy()
+            ),
+        );
+        std::env::set_var("HOME", &home);
+        std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
+
+        let mut operation = DetachedOperationState::default();
+        let prepared = prepare_container_up(&root, Some("web"), false, true, &mut operation);
+
+        match saved.0 {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        match saved.1 {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match saved.2 {
+            Some(value) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", value),
+            None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
+        }
+
+        let plan = prepared.expect("container up prepares");
+        let objects = root.join(".effigy/state/objects");
+        let published = fs::read_dir(&objects)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0);
+        assert_eq!(
+            published, 1,
+            "one `up` publishes one generation: {objects:?}"
+        );
+        let calls = fs::read_to_string(&log).unwrap_or_default();
+        assert!(
+            !calls.lines().any(|call| call.contains("compose")),
+            "preparation runs no apply: {calls}"
+        );
+        assert!(plan.workspace_mount_decisions.is_empty());
+    }
+
+    #[test]
+    fn the_creation_load_captures_a_mount_created_during_preparation() {
         let root = temp_repo("workspace-mount-creation-plan", "direct");
         fs::write(
             root.join("effigy.toml"),
@@ -1879,15 +1918,12 @@ mounts = ["prepared:/workspace-root/prepared:ro"]
         )
         .expect("write compose");
 
-        let mut policy = load_container_policy(&root, Some("web")).expect("initial policy");
-        let initially_rendered = policy
-            .read_compose(&policy.compose_files[0])
-            .expect("read initial workspace compose");
-        assert!(!initially_rendered.contains("/workspace-root/prepared"));
-
+        // A mount source the run prepares does not exist yet when the manifest
+        // is read: the one creation load is the render that captures it, so an
+        // `up` never renders twice (effigy#371).
         let source = root.join("prepared");
         fs::create_dir(&source).expect("preparation creates source");
-        let decisions = refresh_workspace_mounts_for_creation(&root, &mut policy)
+        let (policy, decisions) = load_container_policy_for_creation(&root, Some("web"))
             .expect("resolve creation-time mounts");
 
         let backend = effigy_containers::ContainerManager::defaults();

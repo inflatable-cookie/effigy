@@ -356,10 +356,9 @@ pub fn colima_is_running(
 }
 
 /// Deadline-aware Colima liveness probe. A bounded (doctor) call shares one
-/// monotonic deadline: an expired deadline never spawns, timeouts/unavailable
-/// never report clean, and the read-only probe never triggers a runtime repair
-/// (no start/restart/cleanup) while a deadline is in force. The unbounded
-/// production path keeps the existing state-loss repair behavior.
+/// monotonic deadline: an expired deadline never spawns, and
+/// timeouts/unavailable never report clean. The probe only reads: Effigy never
+/// stops or restarts the shared profile to repair it (effigy#371).
 pub fn colima_is_running_with_deadline(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
@@ -374,28 +373,6 @@ pub fn colima_is_running_with_deadline(
         &cmd.label,
         deadline,
     )?;
-    if !output.status.success()
-        && deadline.is_none()
-        && docker_failure_looks_like_colima_runtime_state_loss(
-            &String::from_utf8_lossy(&output.stdout),
-            &String::from_utf8_lossy(&output.stderr),
-        )
-    {
-        repair_colima_runtime(policy, repo_root)?;
-        let retried = run_command_capture_allow_failure_with_deadline(
-            repo_root,
-            &cmd.program,
-            &args,
-            &cmd.label,
-            None,
-        )?;
-        if !retried.status.success() {
-            return Ok(false);
-        }
-        let stdout = String::from_utf8_lossy(&retried.stdout);
-        let stderr = String::from_utf8_lossy(&retried.stderr);
-        return Ok(parse_colima_running(&stdout, &stderr));
-    }
     if !output.status.success() {
         return Ok(false);
     }
@@ -747,29 +724,6 @@ fn start_colima_runtime_units(
     )
     .map(|_| ())
     .map_err(|error| error.to_string())
-}
-
-pub(super) fn repair_colima_runtime(
-    policy: &EffectiveContainerPolicy,
-    repo_root: &Path,
-) -> Result<(), ContainerExecError> {
-    stop_colima_profile_for_repair(policy, repo_root)?;
-    prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
-        command: "colima profile config".to_owned(),
-        code: None,
-        stdout: String::new(),
-        stderr: error,
-    })?;
-    let start = colima_start_command(policy);
-    let start_args: Vec<&str> = start.args.iter().map(|value| value.as_str()).collect();
-    run_command_capture_with_timeout(
-        repo_root,
-        &start.program,
-        &start_args,
-        &start.label,
-        COLIMA_START_TIMEOUT,
-    )?;
-    Ok(())
 }
 
 pub fn recover_colima_runtime(
@@ -1410,7 +1364,13 @@ case "$1" in
     ;;
   start) : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
   stop) rm -f "$root/running"; printf 'stopped\n' ;;
-  nerdctl) exit 0 ;;
+  nerdctl)
+    if [ -f "$root/offline" ]; then
+      printf '%s\n' 'failed to solve: rust:1.88-bookworm: failed to resolve source metadata for docker.io/library/rust:1.88-bookworm: dial tcp: lookup registry-1.docker.io on 192.168.5.3:53: read udp: connection refused' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
   ssh) exit 0 ;;
   *) printf 'unexpected colima invocation: %s\n' "$*" >&2; exit 1 ;;
 esac
@@ -1518,6 +1478,39 @@ esac
                 .map(str::to_owned)
                 .collect()
         }
+    }
+
+    /// An offline registry lookup used to take the shared VM down and start
+    /// it again, which stops every other checkout's stack. A detected problem
+    /// is now reported with the manual command and nothing else (effigy#371).
+    #[test]
+    fn an_offline_registry_failure_never_stops_the_shared_profile() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.state("offline");
+        let policy = fixture.policy();
+        let args = ["up", "-d"]
+            .into_iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+
+        let failure = crate::exec::run_compose_capture(&fixture.root, &policy, &args, "compose up")
+            .expect_err("the registry failure is reported as it stands");
+        assert!(
+            failure.to_string().contains("registry-1.docker.io"),
+            "the runtime's own cause reaches the caller: {failure}"
+        );
+        let calls = fixture.calls();
+        assert!(
+            !calls.iter().any(|call| call.starts_with("stop ")),
+            "Effigy never stops the shared profile: {calls:#?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call.starts_with("start ")),
+            "Effigy never restarts the shared profile: {calls:#?}"
+        );
     }
 
     #[test]

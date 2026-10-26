@@ -81,8 +81,10 @@ point must exist. Up and routed-task preparation create a missing host
 mount-point directory for a named volume of the primary service nested under
 the working directory (the isolated `target` and `node_modules` trees) before
 the apply. A non-directory or symlink at that path refuses; creation never
-replaces a file and never follows a link. This is a host-side preparation step,
-not permission repair: it changes no ownership or mode.
+replaces a file and never follows a link, and the refusal names
+`oxide outputs adopt` as the fix, because an Oxide output link on an isolated
+path is the shape that meets it. This is a host-side preparation step, not
+permission repair: it changes no ownership or mode.
 
 Permission preflight checks the declared mounts before repair, including
 explicit exec paths: a declared volume absent from a live stack cannot grant
@@ -159,16 +161,26 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
-Readiness is Running plus the service's own health check. Every service
-without its own `restart:` is rendered with `restart: unless-stopped`, so a
-service that stops after a VM restart, a Colima restart or a crash comes back
-by itself. Effigy never probes exec readiness, hand-starts an exited service or
+Readiness is Running plus the service's own health check. A service that
+declared `restart: "no"` and exited successfully is complete, not unready, so a
+one-shot job does not fail the stack's readiness; a failed exit is unready. A service's declared
+`restart:` always wins, `"no"` included; the generated service gets
+`restart: unless-stopped` only where the stack declares none, so a one-shot job
+stays down and a service that stops after a VM restart, a Colima restart or a
+crash comes back by itself. The policy is written into the file that defines the
+service (it names an `image`, a `build` or an `extends`) and never into an
+override file: a later `-f` file wins Compose's merge, so Effigy's own runtime
+DNS override would otherwise override the stack's choice. Effigy never probes exec readiness, hand-starts an exited service or
 restarts one to repair it: an unlabelled, foreign or wrong-checkout primary
 fails the owned-binding check, and a user's own `effigy exec` reports its own
 error (a `working_dir` the image does not have fails that command, not `up`).
 
 No path may stop, restart or recreate an environment's containers while a
-run holds that environment, except that run's own stop. The environment
+run holds that environment, except that run's own stop. A bring-up that a live
+run holds is not applied: it attaches the requesting runs to the running stack
+and reports the holder and that the edit applies on the next up, so an edit is
+never silently skipped. A holder list that cannot be read is unknown, not held:
+the bring-up warns and applies (Q-011). The environment
 reconciler makes this structural ([053](053-environment-reconciler-contract.md)):
 every stop, restart, recreation, reset, handover and idle stop is a transition
 that owns the environment's gate and needs a permit, refused while any live or
@@ -369,12 +381,21 @@ container environment carries one. Internal policy readers resolve those
 relative inputs to the generation's own paths before parsing bind syntax or
 estimating mount budgets; the immutable file bytes keep the relative spelling.
 A shared service is read by its own invocation and names its own directory the
-same way, so its configuration is identical in every checkout that shares it.
+same way, so its configuration is identical in every checkout that shares it. A
+catalog file a shared fragment binds (MariaDB and Postgres init SQL) is
+published inside the generation at the path that fragment names, so a fresh home
+directory works and a changed `databases` value reaches the server.
 `build.dockerfile` is the one relative input Compose reads against the *build
 context* rather than the project directory, so a catalog Dockerfile is rendered
 inline as `dockerfile_inline` from the generation's own content: the stack names
 no path outside the generation and a copied or moved checkout renders the same
 image.
+`container up` renders once: the creation load allocates ports, prepares every
+mount source and publishes the generation, and every later stage and the apply
+use that one policy. A task's environment ensure runs the same apply as
+`container up` — the same shared-service start, the same secret delivery and the
+same Compose arguments — so alternating the two paths recreates nothing.
+
 Prepare establishes owned mount directories before
 admission, so creating a cache cannot change canonical bind paths afterward.
 Relative user build contexts and Dockerfiles keep their
@@ -843,15 +864,24 @@ Repo-owned Compose files keep their own resource rules: linked worktrees fail
 closed when they contain fixed published ports, container names, or named
 external resources that Effigy cannot scope.
 
-Gateway route ownership is the checkout path plus its generation token. Route
-table claims and removals serialize under a lock separate from the atomically
-replaced table file. A live foreign owner blocks a domain claim, including
-HTTP, TLS and TCP alias routes. Teardown and stale-route pruning remove only
-routes still owned by the caller; certificate deletion follows the same
-owner-checked removal while the lock is held. A missing or replaced worktree
-generation is stale and may be claimed by another worktree. A fixed domain
-therefore refuses a second live worktree until the consumer supplies distinct
-domains. The route table never silently moves a live sibling's domain.
+Gateway route ownership is the checkout path alone. One endpoint store
+transaction is the whole write path: a claim, a takeover and a withdrawal all
+commit from it, and no separate lock or generation token is recorded. A live
+foreign owner blocks a domain claim, including HTTP, TLS and TCP alias routes.
+Withdrawal removes every route the caller's checkout path owns, listener routes
+included, and leaves a route another checkout owns. Only a *missing* checkout
+path is gone: an unreadable path (permission refusal, a stale network handle)
+and a path whose own parent is missing (a volume that is not mounted yet) are
+unknown, and their routes stay. Nothing withdraws a route because its target is
+briefly down, so a container restart, a Colima restart or a listener that has
+not bound yet keeps its route. A missing worktree path is stale and may be
+claimed by another worktree. A fixed domain therefore refuses a second live
+worktree until the consumer supplies distinct domains. The route table never
+silently moves a live sibling's domain.
+
+A TLS certificate is a cache keyed by domain. `down` and `retire` keep it, so a
+stack that comes back finds its certificate ready, and the gateway daemon
+prunes a certificate no route names once it is seven days old.
 
 A checkout may switch between its container environment and hybrid managed
 listener mode in either direction, and between any two of its environments,
@@ -1013,11 +1043,15 @@ plus Effigy's checkout label (`com.effigy.checkout`, or `com.effigy.repo-root`
 for a volume the `data_from` path created) and, when a scope is selected, the
 `com.effigy.scope` token. Effigy keeps no record beside them: `effigy container
 retire` asks the backend what carries those labels and deletes all of it, on
-every profile the runtime reports and on the configured endpoint. There is no
+every profile the runtime reports and on the configured endpoint except a
+stopped Colima profile, which is a warning: nothing on it runs and it cannot be
+read without starting its VM. There is no
 runtime-scope journal, no checkout generation and no custody-lease fence.
 
 Listing uses `ps -a`, and each kind is read with one labelled `ps` or `ls`, so
-Created and exited containers retire with running ones. Compose networks carry
+Created and exited containers retire with running ones. A container is stopped
+before it is removed, so a `restart: unless-stopped` service is not restarted
+while it is being retired. Compose networks carry
 no Effigy label of their own, so they are found by their
 `com.docker.compose.project` label and attributed to the one checkout the
 project's labelled resources name; a project two checkouts share is never
@@ -1032,13 +1066,14 @@ reporting them as unlabelled. A volume of a project whose containers are
 already gone is still found, because the checkout's manifest names its
 projects. `retire --keep-data` keeps every labelled
 volume, names which ones are named data (`com.effigy.persist=true`) and lists
-them; without it retirement removes them with the rest of the stack. Anything
-that could not be deleted is named with the runtime's own error and retirement
-exits non-zero; it never reports a clean result while an owned resource
-survives.
-Retirement also releases the checkout's gateway routes and their certificates
-by checkout path alone, which frees its loopback address with them. A second
-retire with nothing left is success and reports `idempotent: true`.
+them; without it retirement removes them with the rest of the stack. What the
+backend still lists afterwards is named with the runtime's own error and
+retirement exits non-zero; a resource already gone is removed, not a failure,
+so it never reports a clean result while an owned resource survives.
+Retirement also releases the checkout's gateway routes by checkout path alone,
+which frees its loopback address with them. Its certificates stay as a cache
+the daemon prunes by age. A second retire with nothing left is success and
+reports `idempotent: true`.
 
 A container, volume or network of one of this checkout's Compose projects that
 carries no Effigy checkout label is reported under `kept` and left alone, never
@@ -1124,11 +1159,9 @@ skill location.
 Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless
 labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
-stack deletion. Certificate removal for retired TLS routes is recorded on
-the scope first, then runs as one owner-checked operation under the
-route-table lock before the table is saved. A TLS failure leaves the route
-and the pending-cert list for retry. A pending certificate whose domain now
-has a foreign owner is left in place.
+stack deletion. A TLS certificate outlives the route that needed it: nothing
+removes one on a stop or a retirement, and the gateway daemon prunes the
+certificates no route names once they are seven days old.
 
 ## Approved ephemeral clone extension
 
@@ -1230,8 +1263,11 @@ probes again. Unit start and the re-probe are both bounded. If the runtime is
 still not ready, Effigy refuses before Compose: the failure names the profile,
 both readiness observations and the explicit
 `effigy container profile repair` and `effigy container profile reset-runtime`
-commands. A task bring-up never stops or restarts the VM, because that would
-take down every stack on the profile; other Colima profiles are never touched.
+commands. Nothing stops or restarts the VM automatically — neither a task
+bring-up nor a failed apply, and no failure text (an offline registry lookup
+included) triggers one — because that would take down every stack on the
+profile. A detected problem prints the manual command instead. Other Colima
+profiles are never touched.
 A newly started profile also waits for both probes. Failures identify the
 runtime stage and include the last probe result.
 
@@ -1429,15 +1465,15 @@ environment, but they must not invent a separate activation model.
 A route is the whole claim on a domain: `domain -> (checkout path, target)`.
 The same checkout path always replaces its own route, so a new run, a new
 generation and a container-to-listener handover need no proof. A different
-checkout path takes the domain over when the recorded checkout path no longer
-exists, or the recorded target does not accept a TCP connection within 200 ms;
+checkout path takes the domain over when the recorded checkout path is
+missing, or the recorded target does not accept a TCP connection within 200 ms;
 the takeover is logged in one line. Otherwise the write is refused with one
 message naming the other checkout and the command that stops it there
 (`effigy container down`). `down`, `retire` and settle remove the checkout's
 routes by path, listener routes included, whether or not a supervisor is alive,
 so the domain is free immediately and a following `up` from another checkout
-takes it at once. The daemon sweeps the same dead-owner rule on a timer so
-`gateway status` lists domains something still serves.
+takes it at once. Nothing else withdraws a route: there is no timer, and a
+route whose target is briefly down stays until its checkout withdraws it.
 
 The route table is the whole record of loopback ownership: an address is in
 use exactly when some route references it, as its `dns_ip` or as its target. A

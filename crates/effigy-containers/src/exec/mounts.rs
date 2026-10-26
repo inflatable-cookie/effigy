@@ -164,7 +164,7 @@ fn host_point_presence(point: &IsolatedMountPoint) -> Result<HostPoint, Containe
                 .map(|target| target.display().to_string())
                 .unwrap_or_else(|error| format!("<unreadable: {error}>"));
             Err(unavailable(format!(
-                "isolated mount point `{}` is a symlink to `{target}`; refusing to follow it. A host output link sits on a container-isolated path. Keep the path a real directory (the producer detaches its link), or drop it from `isolated_dirs`.",
+                "isolated mount point `{}` is a symlink to `{target}`; refusing to follow it. A host output link sits on a container-isolated path: adopt the project's output links with `oxide outputs adopt` so the path stays a real directory, or drop it from `isolated_dirs`.",
                 point.host_path.display()
             )))
         }
@@ -258,7 +258,7 @@ mod tests {
                 "the refusal names the link target: {error}"
             );
             assert!(error.contains("container-isolated path"), "{error}");
-            assert!(error.contains("the producer detaches its link"), "{error}");
+            assert!(error.contains("oxide outputs adopt"), "{error}");
             assert!(error.contains("drop it from `isolated_dirs`"), "{error}");
         }
     }

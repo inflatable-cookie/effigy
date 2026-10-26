@@ -98,7 +98,11 @@ impl EffectiveContainerPolicy {
                     }
                     let mut document: serde_yaml::Value =
                         serde_yaml::from_str(&content).map_err(error)?;
-                    resolve_generation_paths(&mut document, self.project_directory(path));
+                    let defining = self
+                        .compose_files
+                        .first()
+                        .is_some_and(|first| first == path);
+                    resolve_generation_paths(&mut document, self.project_directory(path), defining);
                     return serde_yaml::to_string(&document).map_err(error);
                 }
             }
@@ -162,19 +166,25 @@ impl Draft {
         self.insert(path.into(), bytes);
         Ok(text)
     }
+    /// Add one assembly to the render. `directory` holds the Compose file;
+    /// `configs` is where the catalog's own files are published, because a
+    /// fragment names them relative to the `repo_root` it was rendered with.
+    /// A shared service renders with its own state directory as that root, so
+    /// its init SQL lands where its bind source already points (effigy#371).
     pub(crate) fn assembly(
         &mut self,
         directory: &Path,
+        configs: &Path,
         name: &str,
         assembly: &effigy_catalog::assembly::AssemblyResult,
-    ) -> PathBuf {
+    ) -> Result<PathBuf, ContainerPolicyError> {
         let path = directory.join(format!("{name}.generated.compose.yml"));
         let compose = inline_catalog_dockerfiles(directory, assembly);
         self.insert(path.clone(), compose.into_bytes());
         for (name, bytes) in &assembly.config_files {
-            self.insert(directory.join(name), bytes.as_bytes());
+            self.insert(configs.join(name), bytes.as_bytes());
         }
-        path
+        Ok(path)
     }
     pub(crate) fn finish(
         mut self,
@@ -250,10 +260,13 @@ impl Draft {
                 // are relative to the project directory. Normalize first.
                 replacements.sort_by_key(|(path, _)| std::cmp::Reverse(path.len()));
                 let mut value: serde_yaml::Value = serde_yaml::from_slice(&bytes).map_err(error)?;
+                let defining = project_input(&path, first_input.as_ref(), shared_inputs.iter())
+                    .is_some_and(|input| input == path);
                 super::super::workspace::normalize_runtime_rewrite_paths(
                     &mut value,
                     path.parent()
                         .ok_or_else(|| error("Compose input has no parent"))?,
+                    defining,
                 );
                 relocate(&mut value, &replacements);
                 if backend == crate::compose::ComposeBackend::ColimaNerdctl {
@@ -338,7 +351,7 @@ fn inline_catalog_dockerfiles(
         else {
             continue;
         };
-        let resolved = Path::new(context).join(dockerfile);
+        let resolved = Path::new(&context).join(dockerfile);
         let Some((_, content)) = assembly.dockerfiles.iter().find(|(catalog, _)| {
             resolved
                 == directory
@@ -346,6 +359,9 @@ fn inline_catalog_dockerfiles(
                     .join(catalog)
                     .join("Dockerfile")
         }) else {
+            // A fragment may name a Dockerfile in the project itself. That one
+            // is not part of the assembly, and its build context is absolute,
+            // so Compose reads it where the project keeps it.
             continue;
         };
         build.remove(&key);
@@ -427,8 +443,12 @@ fn relative_name(directory: &Path, name: &Path) -> String {
 /// Resolve the relative inputs a render names into the generation, so internal
 /// readers see the files Compose reads. The generation is immutable, so its own
 /// names are the only relative inputs that survive a render.
-fn resolve_generation_paths(document: &mut serde_yaml::Value, directory: &Path) {
-    crate::workspace::normalize_runtime_rewrite_paths(document, directory);
+fn resolve_generation_paths(
+    document: &mut serde_yaml::Value,
+    directory: &Path,
+    defines_services: bool,
+) {
+    crate::workspace::normalize_runtime_rewrite_paths(document, directory, defines_services);
 }
 
 #[cfg(test)]

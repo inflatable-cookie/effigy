@@ -4,9 +4,10 @@ use super::{
     ensure_runtime_gateway_readiness_stage_using, ensure_runtime_running_stage,
     parse_bind_mount_host_path, prepare_host_bind_mount_dirs, prepare_runtime_mounts_stage,
     reconcile_runtime_aliases_stage_using, refresh_changed_cargo_inputs_using,
-    run_runtime_compose_up_stage, run_runtime_prep_steps, runtime_activation_plan_from_request,
-    runtime_activation_report_for_result, validate_policy_runtime,
-    validate_runtime_activation_stage, verify_live_checkout_mount_using, ActivationRequest,
+    run_runtime_compose_up_stage, run_runtime_prep_steps, run_task_apply,
+    runtime_activation_plan_from_request, runtime_activation_report_for_result,
+    validate_policy_runtime, validate_runtime_activation_stage, verify_live_checkout_mount_using,
+    ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
@@ -436,9 +437,9 @@ fn runtime_compose_up_stage_runs_the_one_apply() {
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let calls = Arc::new(Mutex::new(Vec::<(PathBuf, Vec<OsString>, String)>::new()));
 
-    run_runtime_compose_up_stage(repo_root, &policy, {
+    run_runtime_compose_up_stage(repo_root, &policy, &[], {
         let calls = Arc::clone(&calls);
-        move |repo_root, _policy, args, label| {
+        move |repo_root, _policy, args, label, _env| {
             calls.lock().expect("calls lock").push((
                 repo_root.to_path_buf(),
                 args.to_vec(),
@@ -465,9 +466,9 @@ fn runtime_compose_up_stage_propagates_a_compose_failure() {
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let calls = Arc::new(Mutex::new(0usize));
 
-    let error = run_runtime_compose_up_stage(repo_root, &policy, {
+    let error = run_runtime_compose_up_stage(repo_root, &policy, &[], {
         let calls = Arc::clone(&calls);
-        move |_, _, _, _| {
+        move |_, _, _, _, _| {
             *calls.lock().expect("calls lock") += 1;
             Err(RunnerError::task_invocation("service `db` exited 1"))
         }
@@ -477,6 +478,72 @@ fn runtime_compose_up_stage_propagates_a_compose_failure() {
     assert!(
         error.to_string().contains("service `db` exited 1"),
         "{error}"
+    );
+}
+
+/// A task's environment ensure starts the shared services and delivers the
+/// compose-env secrets before the same apply `container up` runs, so
+/// alternating the two paths recreates nothing (effigy#371).
+#[test]
+fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply() {
+    let repo_root = Path::new("/tmp/demo-repo");
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let order = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let shared_order = Arc::clone(&order);
+    let secrets_order = Arc::clone(&order);
+    run_task_apply(
+        repo_root,
+        &policy,
+        move |_| {
+            shared_order
+                .lock()
+                .expect("order lock")
+                .push("shared".to_owned());
+            Ok(vec!["db [mariadb] -> host.docker.internal:49153".to_owned()])
+        },
+        move |_, _| {
+            secrets_order
+                .lock()
+                .expect("order lock")
+                .push("secrets".to_owned());
+            Ok(vec![(
+                "DB_PASSWORD".to_owned(),
+                OsString::from("from-the-vault"),
+            )])
+        },
+        {
+            let apply_order = Arc::clone(&order);
+            move |_, policy, args, label, env| {
+                apply_order
+                    .lock()
+                    .expect("order lock")
+                    .push("apply".to_owned());
+                assert_eq!(label, "docker compose up");
+                assert_eq!(
+                    args,
+                    effigy_containers::compose::compose_up_args(policy),
+                    "the task path passes the very arguments `container up` passes"
+                );
+                assert_eq!(
+                    env,
+                    &[("DB_PASSWORD".to_owned(), OsString::from("from-the-vault"))],
+                    "the secret delivery reaches the apply"
+                );
+                Ok(())
+            }
+        },
+    )
+    .expect("the task apply succeeds");
+
+    assert_eq!(
+        *order.lock().expect("order lock"),
+        vec![
+            "shared".to_owned(),
+            "secrets".to_owned(),
+            "apply".to_owned()
+        ],
+        "shared services and secrets come first, then the one apply"
     );
 }
 

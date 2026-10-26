@@ -396,7 +396,7 @@ pub(super) fn stop_peer_data_services(
             &handover.environment,
             &handover.project_name,
             || {
-                effigy_runtime::signals::run_compose_plan_capture(policy, &stop_plan)
+                effigy_runtime::signals::run_compose_plan_capture(&stop_plan)
                     .map(|_| ())
                     .map_err(|error| {
                         RunnerError::task_invocation(format!(

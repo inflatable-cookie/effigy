@@ -13,6 +13,7 @@ use std::time::Instant;
 use super::backend::{BackendError, BackendSelection};
 use super::reconcile::{EnvContext, EnvError, EnvRef, EnvRun, Operation, GATE_WAIT};
 use super::record::{EngineRecord, Retention};
+use effigy_kernel::run::Holder;
 
 /// One bring-up.
 #[derive(Debug)]
@@ -26,13 +27,14 @@ pub struct Up<'a> {
 }
 
 /// What a bring-up did to the backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applied {
     /// The backend converged on the render.
     Reconciled,
-    /// A live run holds the environment: the running stack is kept and the
-    /// requesting runs are attached to it.
-    HeldByRuns,
+    /// A live run holds the environment: the running stack is kept, the
+    /// requesting runs are attached to it, and the render is not applied. The
+    /// holders name themselves so the caller can report the deferred edit.
+    HeldByRuns(Vec<RunId>),
 }
 
 /// The apply run of a bring-up: publishes the desired render, records the
@@ -79,8 +81,9 @@ fn reconcile_in(
     record.retention = retention;
     record.project = request.project.to_owned();
     run.write_record(&record)?;
-    if holders_remain(run) {
-        return Ok(Applied::HeldByRuns);
+    let holders = live_holders(run.holders());
+    if !holders.is_empty() {
+        return Ok(Applied::HeldByRuns(holders));
     }
     run.apply_with(request.backend, request.project, apply)?;
     Ok(Applied::Reconciled)
@@ -104,10 +107,13 @@ pub fn activate(
     result
 }
 
-fn holders_remain(run: &EnvRun<'_>) -> bool {
-    match run.holders() {
-        Observed::Verified(holders, _) => !holders.is_empty(),
-        _ => true,
+/// The runs that keep this environment from being re-applied. A holder list
+/// that cannot be read is unknown, not held: the apply proceeds (Q-011). An
+/// interrupted holder is settled above, so it never stands here.
+fn live_holders(holders: Observed<Vec<Holder>>) -> Vec<RunId> {
+    match holders {
+        Observed::Verified(holders, _) => holders.into_iter().map(|holder| holder.run).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -176,5 +182,48 @@ impl EnvRun<'_> {
     pub fn reset_objects(&mut self) -> Result<(), EnvError> {
         let result = Objects::reset(&mut self.run);
         self.kernel(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use effigy_kernel::observe::{Evidence, UnknownReason};
+    use effigy_kernel::run::Liveness;
+
+    fn evidence() -> Evidence {
+        Evidence::new("fixture".to_owned(), None).expect("fixed evidence")
+    }
+
+    fn holder(run: RunId) -> Holder {
+        Holder {
+            run,
+            liveness: Observed::Verified(Liveness::Live, evidence()),
+        }
+    }
+
+    /// A live holder keeps the running stack and names itself, so the caller
+    /// can report the deferred edit (effigy#371).
+    #[test]
+    fn a_live_holder_defers_the_apply_and_names_itself() {
+        let run = RunId::new(1_760_000_000_000, [3; 10]).expect("run id");
+        assert_eq!(
+            live_holders(Observed::Verified(vec![holder(run)], evidence())),
+            vec![run]
+        );
+    }
+
+    /// A holder list that cannot be read is unknown, not held, so the apply
+    /// proceeds rather than silently reporting success for an unapplied edit
+    /// (Q-011).
+    #[test]
+    fn an_unreadable_holder_list_proceeds() {
+        assert!(
+            live_holders(Observed::Unknown(UnknownReason::StoreUnreadable(
+                "fixture".to_owned()
+            )))
+            .is_empty()
+        );
+        assert!(live_holders(Observed::Verified(Vec::new(), evidence())).is_empty());
     }
 }

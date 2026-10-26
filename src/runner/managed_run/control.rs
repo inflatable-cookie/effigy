@@ -168,12 +168,6 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
         "not-recorded" => vec![format!("effigy {}", addressed.task)],
         _ => vec![format!("effigy {} --headless", addressed.task)],
     };
-    if status.state == "not-recorded" {
-        if let Some(legacy) = super::legacy::live_session(addressed) {
-            status.state = "legacy".to_owned();
-            status.warnings.push(legacy);
-        }
-    }
     status
 }
 
@@ -425,9 +419,6 @@ pub(in crate::runner) fn logs(
 pub(in crate::runner) fn stop(addressed: &Addressed<'_>) -> Result<String, RunnerError> {
     let status = status_view(addressed);
     let Some(run) = &status.run else {
-        if status.state == "legacy" {
-            return Err(RunnerError::task_invocation(status.warnings.join("; ")));
-        }
         return Ok(format!(
             "managed task `{}` (profile `{}`) is not running",
             addressed.task, addressed.profile

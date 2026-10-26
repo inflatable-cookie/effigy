@@ -42,7 +42,26 @@ use crate::runner::error::RunnerError;
 
 /// How long a stop request waits for the live supervisor to act before the
 /// requester settles the run as its gate holder.
-const STOP_PICKUP: Duration = Duration::from_secs(30);
+///
+/// A supervisor's own stop window is its declared grace plus the kernel's stop
+/// margin (effigy#357), so the requester derives its wait from the same window
+/// and never gives up first (effigy#370).
+const STOP_PICKUP_MARGIN: Duration = Duration::from_secs(5);
+
+fn stop_pickup(grace: Option<u64>) -> Duration {
+    Duration::from_secs(grace.unwrap_or(0).max(1))
+        + effigy_kernel::custody::STOP_MARGIN
+        + STOP_PICKUP_MARGIN
+}
+
+/// The declared shutdown grace of one host process.
+fn shutdown_grace(policy: &EffectiveContainerPolicy, name: &str) -> Option<u64> {
+    policy
+        .host_processes
+        .iter()
+        .find(|process| process.name == name)
+        .map(|process| process.shutdown_grace_secs)
+}
 
 /// One stopped host process, as the environment's stop reported it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -522,7 +541,7 @@ fn start_host_processes_inner(
     let mut facts = HostProcessEnvFacts::for_policy(policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     facts.set_gateway_https_port(super::super::gateway_command::gateway_https_port());
-    let listener_binds = reserve_listener_binds(policy, &mut facts)?;
+    let listener_binds = reserve_listener_binds(&dir, policy, &mut facts)?;
     let ordered = order_host_processes(&policy.host_processes)?;
     let by_name = policy
         .host_processes
@@ -785,10 +804,13 @@ fn declared_bind_is_dynamic(bind: &str) -> bool {
 /// Give each dynamic listener a concrete loopback port before any child
 /// launches.
 ///
-/// `127.0.0.1:0` means "any free port": this process binds it once to learn
-/// the port, releases it immediately, and hands the address to the listener.
-/// Nothing is recorded, so a restart simply asks the OS again.
+/// A listener that already published an address keeps it: the address is the
+/// process's published endpoint, so a restart (and a re-`up`) leaves every
+/// `internal_url` a dependent resolved still valid (effigy#367, effigy#370).
+/// Only a listener with no recorded address - a first start, or one whose
+/// terminal `stopped` record cleared it - asks the OS for a port.
 fn reserve_listener_binds(
+    dir: &Path,
     policy: &EffectiveContainerPolicy,
     facts: &mut HostProcessEnvFacts,
 ) -> Result<BTreeMap<String, String>, RunnerError> {
@@ -797,20 +819,35 @@ fn reserve_listener_binds(
         let Some(listener) = process.listener.as_ref() else {
             continue;
         };
-        if !declared_bind_is_dynamic(&listener.bind) {
-            continue;
-        }
+        let dynamic = declared_bind_is_dynamic(&listener.bind);
         let address = listener.bind.parse::<SocketAddr>().map_err(|error| {
             RunnerError::task_invocation(format!(
                 "managed listener bind address is invalid: {error}"
             ))
         })?;
-        let port = free_loopback_port(address.ip())?;
-        let bind = SocketAddr::new(address.ip(), port);
+        let bind = if !dynamic {
+            listener.bind.clone()
+        } else {
+            match recorded_listener_bind(dir, &process.name) {
+                Some(recorded) => recorded,
+                None => {
+                    let port = free_loopback_port(address.ip())?;
+                    SocketAddr::new(address.ip(), port).to_string()
+                }
+            }
+        };
         facts.set_listener_internal_url(&process.name, format!("http://{bind}"));
-        binds.insert(process.name.clone(), bind.to_string());
+        if dynamic {
+            binds.insert(process.name.clone(), bind);
+        }
     }
     Ok(binds)
+}
+
+/// The address a listener published, if it published one.
+fn recorded_listener_bind(dir: &Path, name: &str) -> Option<String> {
+    let state: HostListenerState = read_private_json(&host_process_state_path(dir, name)).ok()?;
+    state.address.filter(|address| !address.is_empty())
 }
 
 /// A port the OS reports as free on `ip`, released before it is handed over.
@@ -968,7 +1005,7 @@ fn stop_resource_run(
         action: RequestAction::Stop,
     };
     let requested = effigy_kernel::run::request(&cx, state_root, &request).is_ok();
-    let deadline = Instant::now() + STOP_PICKUP;
+    let deadline = Instant::now() + stop_pickup(shutdown_grace(policy, name));
     while let Ok(Some(current)) = latest_open_run(repo_root, resource) {
         if current.id != run_id {
             // A successor generation replaced this one; the predecessor
@@ -1516,7 +1553,8 @@ mod tests {
         );
 
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
-        let binds = reserve_listener_binds(&policy, &mut facts).expect("allocate");
+        let dir = tempfile::tempdir().expect("runtime dir");
+        let binds = reserve_listener_binds(dir.path(), &policy, &mut facts).expect("allocate");
         let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
         assert_ne!(bind.port(), 0, "a dynamic bind receives a concrete port");
         assert_eq!(
@@ -1545,7 +1583,8 @@ mod tests {
             )],
         );
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
-        let binds = reserve_listener_binds(&policy, &mut facts).expect("no allocation");
+        let dir = tempfile::tempdir().expect("runtime dir");
+        let binds = reserve_listener_binds(dir.path(), &policy, &mut facts).expect("no allocation");
         assert!(binds.is_empty());
         assert_eq!(
             resolved_host_process_listener(&policy.host_processes[0], &binds)
@@ -1592,7 +1631,8 @@ mod tests {
         policy.dns_base_domain = Some("acme.test".to_owned());
 
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
-        let binds = reserve_listener_binds(&policy, &mut facts).expect("reservation");
+        let dir = tempfile::tempdir().expect("runtime dir");
+        let binds = reserve_listener_binds(dir.path(), &policy, &mut facts).expect("reservation");
         let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
         let env = resolved_host_process_environment(&policy.host_processes[1], &facts)
             .expect("references resolve");
