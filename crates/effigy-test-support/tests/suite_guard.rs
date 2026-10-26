@@ -42,6 +42,8 @@ fn reported(output: &std::process::Output) -> (u32, String) {
 }
 
 /// A child that leaves the runner's session and refuses cooperative signals.
+/// It is deliberately never waited on: the suite sweep must end it.
+#[allow(clippy::zombie_processes)]
 fn leaked_child() -> u32 {
     use std::os::unix::process::CommandExt;
     let mut command = Command::new("/bin/sh");

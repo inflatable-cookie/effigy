@@ -6463,11 +6463,11 @@ fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response()
     let owner = effigy_test_support::Fixture::workspace("effigy-gateway-failure-proof-").unwrap();
     for mode in ["panic", "exit", "timeout"] {
         let mut command = Command::new("python3");
+        command.arg(&guard);
         if mode == "timeout" {
             command.args(["--timeout", "40"]);
         }
         let output = command
-            .arg(&guard)
             .arg("--")
             .arg(std::env::current_exe().unwrap())
             .args([
