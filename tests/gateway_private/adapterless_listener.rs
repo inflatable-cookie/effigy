@@ -5,10 +5,10 @@
 //! that know nothing about Effigy beyond `HOST`/`PORT`: a plain
 //! `python3 -m http.server` (as Underlay's `effigy profile:api` will), a shipped
 //! bundle adapter that needs the report path and generation Effigy supplies and
-//! whose report Effigy never reads, one that binds a different address, and a
-//! reserved port another process already holds. Disposable loopback fixtures, a
-//! private gateway and a fake Docker backend only; every child is stopped by the
-//! fixture that started it.
+//! whose report Effigy never reads, one that binds a different address and exits
+//! before the reserved port opens, and a reserved port another process already
+//! holds. Disposable loopback fixtures, a private gateway and a fake Docker
+//! backend only; every child is stopped by the fixture that started it.
 use super::*;
 
 const LISTENER_NAME: &str = "web";
@@ -264,10 +264,13 @@ fn managed_host_adapterless_listener_publishes_a_plain_servers_route_and_restart
 }
 
 /// A child that binds a different address (here `0.0.0.0:<other>`) never
-/// answers the reserved one, so startup fails naming the reserved address and
-/// the readiness request it never answered.
+/// answers the reserved one. That is phase (a): the child is alive and the
+/// reserved port is closed, so the wait carries on past the declared budget
+/// instead of failing it. The child exiting is what fails the generation, and
+/// the diagnostic names the reserved address, the readiness request it never
+/// answered and the exit code (effigy#358).
 #[test]
-fn managed_host_adapterless_listener_bound_elsewhere_names_the_reserved_port() {
+fn managed_host_adapterless_listener_bound_elsewhere_waits_until_the_child_exits() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let foreign_ca = fixture.path().join("foreign-ca");
@@ -280,9 +283,13 @@ fn managed_host_adapterless_listener_bound_elsewhere_names_the_reserved_port() {
         fixture_listener_address(&format!("adapterless:{}", setup.fixture.path().display()))
             .parse::<SocketAddr>()
             .expect("fixture listener address");
+    // It serves the other address for longer than the declared readiness
+    // budget, then exits 4: the child's own exit is the failure signal.
+    let bound_elsewhere = "import os, socket, time\ns = socket.socket()\ns.bind((\"0.0.0.0\", int(os.environ[\"OTHER_PORT\"])))\ns.listen(1)\ntime.sleep(5)\nraise SystemExit(4)";
     let manifest = format!(
-        "[[containers.web.host_processes]]\nname = {}\nrun = 'exec python3 -m http.server \"$OTHER_PORT\" --bind 0.0.0.0'\nrestart = \"never\"\nenv = {{ OTHER_PORT = {} }}\n\n{}",
+        "[[containers.web.host_processes]]\nname = {}\nrun = {}\nrestart = \"never\"\nenv = {{ OTHER_PORT = {} }}\n\n{}",
         toml_quote(LISTENER_NAME),
+        toml_quote(&format!("exec python3 -c '{}'", bound_elsewhere)),
         toml_quote(&elsewhere.port().to_string()),
         listener_declaration(domain, "127.0.0.1:0", 3)
     );
@@ -298,7 +305,7 @@ fn managed_host_adapterless_listener_bound_elsewhere_names_the_reserved_port() {
     );
     assert!(
         !failed.status.success(),
-        "a listener bound to another address must fail startup: {message}"
+        "a listener whose child exits before its port opens must fail startup: {message}"
     );
     let state = read_json_file(&state_path);
     let log = fs::read_to_string(listener_log_path(&checkout, profile, LISTENER_NAME))
@@ -322,6 +329,10 @@ fn managed_host_adapterless_listener_bound_elsewhere_names_the_reserved_port() {
     assert!(
         message.contains(&reserved.to_string()),
         "the failure names the reserved address: {message}"
+    );
+    assert!(
+        diagnostic.contains("exited with code 4"),
+        "the failure names the child's exit, not a deadline: {diagnostic}"
     );
     assert!(
         RouteTable::load(&setup.private_gateway.join("routes.json"))

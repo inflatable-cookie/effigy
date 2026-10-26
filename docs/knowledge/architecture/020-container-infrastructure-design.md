@@ -376,12 +376,13 @@ An incomplete pre-publication cleanup retains the exact child generation as
 unavailable, rather than claiming that startup continues or teardown succeeded.
 Supervision admission and listener readiness are separate phases: the supervisor
 publishes this activation's `starting` record before it waits on dependencies or
-spawns a child, and the caller measures the declared readiness budget from that
-publication. A slow supervisor start or a slow activation publication is
-supervision admission, never readiness, so the supervisor's own terminal
-`failed` publication is what the caller observes. The caller adds only a bounded
-terminal-publication allowance, and its refusal keeps the supervisor's phase
-diagnostic.
+spawns a child, so a slow supervisor start or a slow activation publication is
+supervision admission, never readiness. Readiness itself has two phases: while
+the reserved port is closed and the child is alive the wait has no deadline, and
+the declared readiness budget starts when the port first answers. The caller
+waits on the supervisor's own record rather than a deadline of its own, so its
+refusal keeps the supervisor's phase diagnostic, and a supervisor that exited
+without publishing readiness is the failure it names.
 
 For a directly spawned child, the supervisor observes kernel exit state without
 reaping the leader. It stops surviving group members before reaping that leader

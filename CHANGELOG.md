@@ -350,6 +350,10 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The `up`-side readiness deadline for a starting managed listener
+  (`TERMINAL_PUBLICATION_ALLOWANCE` and the per-listener timeout argument to the
+  listener-state wait). The supervisor's own terminal record ends the wait, and
+  the readiness budget belongs to the port being open (effigy#358).
 - Parent-capability inheritance. `EFFIGY_PARENT_CAPABILITY`, descriptor 9 and
   the memory lease behind them are gone, together with the run-class
   inheritance, the 25 ms grant peek, the "descriptor was closed" notice and
@@ -1378,6 +1382,21 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A managed listener's startup wait has two phases, and only the second has a
+  deadline (effigy#358, Acow #756). While the reserved port is closed and the
+  child is alive, Effigy waits with no deadline and writes a progress line to
+  the process log about every thirty seconds; the child exiting is the failure.
+  `readiness.timeout_secs` starts when the port first accepts a connection and
+  bounds reaching the declared status from there. `container up` waits on the
+  supervisor's own record instead of a deadline of its own, so a cold Rust build
+  that waits for an Oxide slot no longer fails `up` or `dev:hybrid`; a
+  supervisor that exits without publishing readiness is the failure it names.
+- A host-process supervisor mints a fresh cleanup budget for each step — its
+  admission, every stop and its own settle — instead of one budget created when
+  the run began. A run that compiled or served for longer than the budget used
+  to report `timed out … while waiting for the environment to settle` — after
+  8m08s in Acow #756 — or `group closure unverified: … during group closure`,
+  and can now always stop and settle (effigy#357, effigy#358).
 - A stop counts its own window, from the grace the custody receipt recorded,
   instead of inheriting the caller's cleanup budget. A host-process supervisor
   mints that budget when its run begins, so stopping a workload that had been

@@ -268,6 +268,11 @@ domain = "frontend.example.test"
 tls = true
 ```
 
+`readiness.timeout_secs` bounds only the wait after the reserved port first
+answers; a child still building has not opened its port, so the supervisor and
+the `up` that waits on it carry no deadline and the child's own exit is the
+failure that ends the wait.
+
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
 `EFFIGY_HOST_PROCESS_INTERNAL_URL`, plus the `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`
@@ -306,8 +311,9 @@ trust store is never replaced. The gateway contract records which runtimes read
 which variable and why. Effigy reads no adapter report: only the reserved
 address answering publishes the route, and the report path is a write-only
 courtesy for shipped adapters, removed when the generation stops. A child that
-binds a different address fails startup, naming the reserved address and the
-readiness request it never answered.
+binds a different address never answers the reserved one, so its generation
+stays in the no-deadline phase until that child exits, and the failure names the
+reserved address, the readiness request it never answered and the exit code.
 
 Routes publish to the caller's private gateway when
 `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` selects one, and otherwise to the shared
@@ -569,8 +575,11 @@ server may drop a response it sees as abandoned after EOF. A status line split
 across writes is read to its line break within a bounded response deadline.
 Connection failure, write failure, EOF or silence before a status line,
 malformed status and any other status keep the listener not ready. The probe
-does not retry within one attempt; the declared readiness deadline governs
-repeated attempts, and a closed port is not a failure while the child is alive.
+does not retry within one attempt. A closed port is not a failure while the
+child is alive: the supervisor waits with no deadline and reports progress to
+the process log, and the child exiting is the failure. The declared readiness
+deadline starts when the port first accepts a connection and then governs
+repeated attempts, so a cold build's compile time is never spent against it.
 
 A generation that fails keeps a one-line `diagnostic` string in its state file
 after its child is cleaned up, and a settling supervisor does not replace that
