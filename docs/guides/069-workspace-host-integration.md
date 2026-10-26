@@ -232,7 +232,7 @@ mount point. A missing `root` — and any missing parent above it — is created
 the run that needs it, the root itself with mode `0700`; an existing directory
 keeps its own mode.
 
-With that block set, every host-placed run gets its own `<root>/<8-character
+With that block set, every host-placed run gets its own `<root>/effigy/<8-character
 run directory>/`, named from the run's whole identity (so two runs started in
 the same instant, and every `--run-id` run, still differ), and its host
 processes see that directory as `TMPDIR`, `TMP` and `TEMP`. The canonical
@@ -242,7 +242,13 @@ never rewrites the temp environment, and a command that would hold no scratch
 directory (including `effigy test`) opens no run at all, so it needs no Effigy
 state home.
 
-The directory is a plain directory with one marker file inside it,
+`effigy/` is the only entry Effigy names at the top of the root, so nothing has
+to tell an unrelated folder from a run: a run is a directory carrying Effigy's
+marker, wherever it sits. An earlier build placed runs directly under the root;
+those stay where they are and retire in place by the same marker and expiry
+rules. Effigy never moves, renames or bulk-cleans them.
+
+The run directory is a plain directory with one marker file inside it,
 `.effigy-scratch.json`. It is not a kernel record and no journal is involved, so
 nothing about scratch can refuse a run, and no run's start waits on another
 checkout.
@@ -270,8 +276,11 @@ observation.
   its conclusion is more than 24 hours old, when it has no conclusion and the
   process that created it is gone, or when it is more than 7 days old. It reads
   only the marker and a process-liveness check — never a journal — and stops at
-  its own time and count bounds; whatever it did not reach is a later run's. An
-  entry it did not mark itself, and any entry it cannot decide, is left alone.
+  its own time and count bounds; whatever it did not reach is a later run's. It
+  covers this build's runs under `<root>/effigy/` and a legacy run left directly
+  under the root, with the same bounds over both. An entry it did not mark
+  itself, and any entry it cannot decide, is left alone; the `effigy/`
+  namespace is never treated as a run.
 - Only the run that opened a directory concludes it, so a step's or a nested
   run's success never removes the parent's tree.
 

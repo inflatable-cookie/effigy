@@ -100,14 +100,16 @@ pub struct UserProgramConfig {
 ///
 /// Unset means no change: Effigy leaves the operating system's temp directory
 /// alone. A `root` moves the scratch of every host-placed run into that
-/// directory (see the user guide). A missing root is created when the run needs
-/// it, and a root Effigy cannot write degrades to the default temp directory
-/// with one warning. No path is hardcoded here: it comes from this file, and
-/// Effigy knows nothing about any other tool's directories.
+/// directory, under an `effigy/` child of one directory per run (see the user
+/// guide). A missing root is created when the run needs it, and a root Effigy
+/// cannot write degrades to the default temp directory with one warning. No
+/// path is hardcoded here: it comes from this file, and Effigy knows nothing
+/// about any other tool's directories.
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserScratchConfig {
-    /// Directory that holds one subdirectory per run. Unset disables scratch.
+    /// Directory that holds an `effigy/` child of run directories. Unset
+    /// disables scratch.
     #[serde(default)]
     pub root: Option<String>,
     /// Accepted so an existing config keeps loading. The volume holding `root`

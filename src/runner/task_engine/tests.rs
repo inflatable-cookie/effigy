@@ -312,12 +312,13 @@ fn a_host_run_uses_its_scratch_as_temp_and_the_settle_removes_it_on_success() {
             let (seen, wrote) = read_temp(&mut run, work.path());
             assert_eq!(
                 Path::new(&seen),
-                Path::new(&seen),
-                "the run's temp directory is on the configured volume"
+                crate::runner::scratch::path_for_tests(&config.root, &run.id()),
+                "the run's temp directory is its own directory on the configured volume"
             );
             assert!(
-                Path::new(&seen).starts_with(&config.root),
-                "`{seen}` is not under the configured root"
+                Path::new(&seen)
+                    .starts_with(crate::runner::scratch::namespace_for_tests(&config.root)),
+                "`{seen}` is not under the configured root's namespace"
             );
             assert!(wrote, "a workload writes into its own scratch");
             assert_eq!(
@@ -517,9 +518,11 @@ fn a_nested_run_reuses_its_parents_scratch_instead_of_starting_another() {
         );
         assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
         assert!(!Path::new(&parent_temp).exists());
-        assert_eq!(
-            std::fs::read_dir(&config.root).expect("root").count(),
-            0,
+        assert!(
+            std::fs::read_dir(crate::runner::scratch::namespace_for_tests(&config.root))
+                .expect("namespace")
+                .count()
+                == 0,
             "one run, one scratch directory"
         );
     });
@@ -736,10 +739,7 @@ fn the_builtin_test_routes_run_holds_a_sentinel_so_a_kill_still_settles_it() {
         );
         // Nothing is left for the sweep: the route's own settle released it.
         assert!(
-            !root
-                .path()
-                .join(crate::runner::scratch::name_for_tests(&id))
-                .exists(),
+            !crate::runner::scratch::path_for_tests(root.path(), &id).exists(),
             "the settled route released its directory"
         );
     });

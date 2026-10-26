@@ -352,6 +352,19 @@ During v0.x, MINOR bumps may include breaking changes.
   Effigy's process environment, so task children no longer inherit the
   passphrase; nested commands that need the vault use the local unlock
   credential or prompt.
+- **Per-run scratch lives under an `effigy/` namespace of the configured root.**
+  With `[scratch] root` set, a new host-placed run's directory is
+  `<root>/effigy/<8-character run name>/`, still marked, still `TMPDIR`, `TMP`
+  and `TEMP`, and still removed on success and kept 24 hours after a failure.
+  `effigy/` is the only entry Effigy names at the top of the operator's root, so
+  a host-side reader identifies a run by its marker instead of distinguishing
+  run names from sibling project folders (effigy#386). A run an earlier build
+  left directly under the root stays where it is: it is never moved, renamed or
+  bulk-cleaned, and the ordinary bounded sweep retires it in place by the same
+  marker, liveness, 24-hour retention and seven-day expiry rules, with one set
+  of sweep bounds over both locations. Unmarked folders, files and symlinks in
+  either place are untouched, and the `effigy/` namespace itself is never
+  treated as a run.
 
 ### Removed
 - **The retired release prepare/execute machinery is gone.** `ReleasePreparePlan`,
