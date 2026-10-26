@@ -650,7 +650,7 @@ pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted,
         // run this command addressed. That is the idempotent outcome, not a
         // refusal (the supervisor fault matrix crosses this boundary at every
         // journal commit).
-        Err(effigy_kernel::run::RunError::Invalid(reason))
+        Err(effigy_kernel::run::RunError::Refused(reason))
             if reason == "request run is not current" =>
         {
             Ok(StopStarted::AlreadyClosed)

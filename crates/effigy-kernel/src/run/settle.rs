@@ -40,7 +40,7 @@ pub(super) fn cleanup_effects(cleanup: &CleanupContext) -> Result<EffectContext,
     cleanup
         .operation()
         .effects()
-        .map_err(|_| RunError::Invalid("cleanup needs effects".into()))
+        .map_err(|_| RunError::broken("cleanup needs effects"))
 }
 impl Run<'_> {
     pub(super) fn settle_inner(
@@ -50,7 +50,7 @@ impl Run<'_> {
     ) -> Result<Outcome<Settled>, RunError> {
         let cx = cleanup_effects(cleanup)?;
         if !self.guard.covers(&self.owner.resource) {
-            return Err(RunError::Invalid("settle needs owner gate".into()));
+            return Err(RunError::broken("a settle without its owner gate"));
         }
         crate::fault_point!(SettleBefore)?;
         let record = journal::run(self.store.conn(), self.id)?;
@@ -265,7 +265,7 @@ pub(super) fn outcome(
         })
     };
     let mut outcome = Outcome::new(result, workload, cleanup_result, &[])
-        .map_err(|_| RunError::Invalid("stored workload outcome".into()))?;
+        .map_err(|_| RunError::broken("stored workload outcome"))?;
     for effect in effects {
         outcome.add_effect(EffectReport {
             resource: effect.spec.target.resource.clone(),
@@ -402,13 +402,13 @@ pub(crate) fn settle_interrupted_wait(
         .child(Duration::from_secs(10))
         .operation()
         .observe()
-        .map_err(|_| RunError::Invalid("recovery alias observation context".into()))?;
+        .map_err(|_| RunError::unavailable("recovery alias observation context"))?;
     let ids = super::aliases::gates(&observe, root, owner, std::slice::from_ref(owner))?;
     let guard = Gate::acquire(cx, root, &ids, wait)?;
     let store = Store::open(&cleanup_effects(cleanup)?, root)?;
     let record = journal::run(store.conn(), id)?;
     if record.owner != owner.name().to_string() {
-        return Err(RunError::Invalid("wrong run owner".into()));
+        return Err(RunError::broken("wrong run owner"));
     }
     Run {
         root,

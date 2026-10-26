@@ -867,11 +867,12 @@ a transaction.
 | Crash, Kill mid-transaction | SQLite rolls back. The intent was not committed, so its effect never started (K3). |
 | Crash, Kill mid-replace | The target is the old or new file, never torn. A leftover temporary is removed by the next writer under the gate. |
 | ENOSPC | The commit fails and the operation stops before its effect. A replace leaves the previous file intact. |
-| Busy (another writer) | Wait the store's own window (30 s admission and effects, 120 s settle), then refuse with the holder's pid and run as an environmental condition. Settle never reports a task failure for it. |
+| Busy or locked (another writer) | Wait the store's own window (30 s admission and effects, 120 s settle), then report `Unavailable` with the holder's pid and run (§6.1). Settle never reports a task failure for it. |
+| Cannot open, or permissions deny the file | `Unavailable`, naming the path it could not open. Never `Corrupt`: the file is not wrong, its environment is. |
 | Killed writer mid-transaction | SQLite rolls back the uncommitted write-ahead frames. A reader keeps the last committed snapshot without repairing anything; the next writer recovers. |
 | Perm | Mutate refuses before any effect. Observe returns `Unknown(PermissionDenied)`. |
 | Clock | Records carry wall time for display and journal sequence for order. Nothing compares wall times for authority. |
-| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the store aside with its `-journal`, `-wal` and `-shm` files, so a leftover log never attaches to the next `kernel.db`. Resources it described become `Unknown`, so R3 protects them. A foreground run warns once and still runs. |
+| Verified corruption of `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate reports `Corrupt` and names the explicit repair, which moves the store aside with its `-journal`, `-wal` and `-shm` files, so a leftover log never attaches to the next `kernel.db`. Resources it described become `Unknown`, so R3 protects them. A foreground run warns once and still runs. An invariant failure that is not corruption is `Broken` and never suggests the repair (§6.1). |
 | Hot rollback journal seen by a read-only reader | `Unknown(store unreadable)`; the next Mutate recovers it. A foreground run warns once and still runs. |
 
 #### Proof
@@ -890,7 +891,7 @@ a transaction.
 ```rust
 impl Run {
     pub fn begin(cx: &EffectContext, inv: &ResolvedInvocation, opts: BeginOpts)
-        -> Result<Run, BeginError>;
+        -> Result<Run, RunError>;   // §6.1: Refused, Unavailable or Broken
     pub fn intend(&mut self, effect: EffectSpec) -> Result<EffectTicket, StoreError>;
     pub fn applied(&mut self, t: EffectTicket, receipt: Receipt) -> Result<(), StoreError>;
     pub fn failed(&mut self, t: EffectTicket, error: ErrorInfo) -> Result<(), StoreError>;
@@ -912,13 +913,6 @@ pub enum Settlement {
                                      // environment attachment per its policy
     Retain,                          // never undone: borrowed resources, persistent data
     Irreversible,                    // reported, never replayed: SQL import, git push
-}
-
-pub enum BeginError {
-    Busy(GateError),
-    PredecessorUnsettled { run: RunId, residue: Vec<Residue> },
-    HostAuthorityRequired,
-    Store(StoreError),
 }
 ```
 
@@ -1378,7 +1372,7 @@ pub enum Placement { Inline, Detached, Guest }
 pub enum ClientMode { Owning, Detach }
 
 pub fn start_detached(cx: &EffectContext, inv: &ResolvedInvocation, client: ClientMode)
-    -> Result<SupervisorClient, BeginError>;
+    -> Result<SupervisorClient, RunError>;   // §6.1: Refused, Unavailable or Broken
 
 impl SupervisorClient {
     pub fn events(&self) -> EventStream;      // journal events and log frames
@@ -1440,7 +1434,7 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
 | --- | --- |
 | Supervisor Crash or Kill | The sentinel settles. |
 | Supervisor and sentinel both Crash or Kill | Status shows `interrupted`; the next Mutate on the owner, or `stop`, settles. |
-| Sentinel or supervisor dies, or stops answering, before it acknowledges | `RunError::HelperExited { helper, exit, cause, stderr_tail }`, never a store error. `exit` is the helper's code or signal; `Stopped` when it was still running after a 2-second bound (it is the parent's own unreaped, unregistered child, so stopping it is identity-safe); or `NotStarted` when this process refused the image before spawn or the spawn failed. Until it acknowledges, the helper's stderr is an unlinked private file under the state root; the outcome carries its last 4 KiB, and the hidden entry writes its refusal there before exiting. After acknowledgement stderr returns to the null device. An admitted run then settles `Closed(NotStarted)`: nothing ran on the helper's behalf. |
+| Sentinel or supervisor dies, or stops answering, before it acknowledges | `Unavailable` (§6.1), naming the helper, how it ended, the parent's handshake cause and the helper's stderr tail; never a store error and never a refusal. The end is its code or signal; `Stopped` when it was still running after a 2-second bound (it is the parent's own unreaped, unregistered child, so stopping it is identity-safe); or `NotStarted` when this process refused the image before spawn or the spawn failed. Until it acknowledges, the helper's stderr is an unlinked private file under the state root; the outcome carries its last 4 KiB, and the hidden entry writes its refusal there before exiting. After acknowledgement stderr returns to the null device. An admitted run then settles `Closed(NotStarted)`: nothing ran on the helper's behalf. |
 | ENOSPC on the socket path | The admitted run launches no workload and settles with nothing applied: `Closed(NotStarted)`. If closing also fails, the run reads Interrupted under §5.6 recovery. |
 | Perm on the socket | The peer-uid check refuses. The request row remains; the supervisor reads requests when it polls the store. |
 | Clock | No time authority. |
@@ -1993,6 +1987,39 @@ them; the table governs new kernel-backed surfaces.
 - Text and JSON for one outcome carry identical facts.
 
 ## 6. Failure model summary
+
+### 6.1 Error categories (K4, effigy#360)
+
+Every kernel and run error is exactly one of three categories, and each
+category has one `Display` and one next step (`effigy_kernel::human::Category`).
+The error's own text names the rule, what was waited on, or the check that
+failed, and never contradicts its category.
+
+| Category | What happened | The one next step it carries |
+| --- | --- | --- |
+| Refused | The request was well formed and a rule said no: another run holds it, a conflict, an inactive environment, a stale generation, a placement without host authority, an effect class the operation may not use. | Nothing ran; stop what holds it or change the request, then retry. |
+| Unavailable | Something environmental did not answer in time or could not be reached: a busy store, a timed-out gate, a helper that exited before acknowledging, I/O, a path that cannot be opened or permissions that deny it (both naming the path), a failed step. | Nothing is broken, and retrying once it answers is safe. |
+| Broken | Effigy's own record or an invariant is wrong. | This is an Effigy bug, not your request; report it with the check it names. |
+
+Only verified corruption — SQLite `NotADatabase` or `DatabaseCorrupt`,
+`PRAGMA integrity_check` or a foreign-key violation, a schema this Effigy
+cannot read, or a format Effigy wrote that it can no longer read — says
+`Corrupt` and names the one repair: `Store::repair` moves `kernel.db` and its
+`-journal`, `-wal` and `-shm` files aside, so no leftover log attaches to the
+next `kernel.db`. A journal mode, binary or binding that no longer matches is
+`Broken`, never `Corrupt`, so a pin or token mismatch cannot point a reader at
+a destructive repair (effigy#360).
+
+A busy store, a locked database, `SQLITE_CANTOPEN` and a permission refusal are
+`Unavailable`, naming the path: they are environment conditions, and retrying
+after the cause is fixed is safe. A failed step renders as
+`RunError::unavailable(step, cause)`.
+
+There is no invalid-request error in the kernel. A name this checkout does not
+route is resolved before the kernel reaches admission, and the message that
+names `effigy tasks` comes from that resolution
+(`RunnerError::TaskNotFound`/`RoutingError::TaskNotFound`), so it appears only
+when a user actually named something that is not a task (effigy#360).
 
 | Fault | Kernel guarantee | Not claimed |
 | --- | --- | --- |
@@ -2671,8 +2698,10 @@ is the binary's path. Helpers exec whatever that path names, so a build that
 replaces the running binary's path (`cargo run` of Effigy inside an Effigy
 sequence) is not a refusal. Each helper handshake frame carries
 `HELPER_PROTOCOL`; a binary that speaks another version refuses and names both
-versions, telling the operator to rerun the command. There is no image pin, no
-clone or copy, and no identity check.
+versions, telling the operator to rerun the command. The version covers the
+event frame's shape too, so a refusal event that carries a category (§6.1) is
+never decoded by a binary that predates it. There is no image pin, no clone or
+copy, and no identity check.
 
 Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
 CLI and helper dispatch with release optimization and symbols stripped so macOS's
@@ -2764,9 +2793,10 @@ and `--detach` are front ends over the same run. Row by row:
   own heavy work still runs its own admission hook, so nothing bypasses
   admission. A managed run's supervisor likewise keeps nothing from its client
   except the run it already owns. A store failure while supervising renders as
-  `RunError::StepFailed { step, cause }` — the store error with its cause and a
-  next step — never `RunError::Invalid` and never a "not a valid run request"
-  message.
+  `Unavailable` (§6.1) — the failing step, its cause and the one next step —
+  never as a refusal and never as an invalid request. A supervisor that refuses
+  admission reports its category on its own event pipe, so its client renders
+  the refusal with the category the supervisor read, never a relabelled one.
   A listener route records the kernel run that published it. The next run of
   the same checkout scope reclaims a route only when this checkout's journal
   proves that recorded run settled — its run row closed, or its resource gate

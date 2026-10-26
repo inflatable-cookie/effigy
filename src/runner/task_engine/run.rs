@@ -1040,12 +1040,13 @@ fn settle_warning(error: &RunError) -> String {
             "run settle did not record its outcome: {busy}. The run stays unsettled for its \
              sentinel or the next run of this task to reconcile; the task's own result stands"
         ),
-        other => format!("run settle failed: {}", run_error(other)),
+        other => format!("run settle failed: {other}"),
     }
 }
 
 fn record_outcome(run: &mut Run<'static>, workload: WorkloadOutcome) -> Result<(), RunError> {
-    let cleanup = kernel::cleanup().map_err(|error| RunError::Invalid(error.to_string()))?;
+    let cleanup = kernel::cleanup()
+        .map_err(|error| RunError::unavailable(format!("the cleanup budget: {error}")))?;
     match workload {
         WorkloadOutcome::Cancelled { .. }
         | WorkloadOutcome::TimedOut { .. }
@@ -1078,10 +1079,7 @@ fn close_run_settled(
 ) {
     let mut warnings = Vec::new();
     if let Err(error) = record_outcome(&mut run, workload) {
-        warnings.push(format!(
-            "run outcome was not recorded: {}",
-            run_error(&error)
-        ));
+        warnings.push(format!("run outcome was not recorded: {error}"));
     }
     match run.settle(&cleanup, &mut TaskSettlement::default()) {
         Ok(outcome) => {
@@ -1253,15 +1251,6 @@ fn new_run_id() -> Result<RunId, RunnerError> {
         .map_err(|error| RunnerError::task_invocation(format!("run id: {error}")))
 }
 
-fn run_error(error: &RunError) -> String {
-    match error {
-        RunError::Store(error) => format!("state store: {error}"),
-        RunError::Gate(error) => format!("gate: {error}"),
-        RunError::HelperExited { .. } => error.to_string(),
-        other => format!("{other}"),
-    }
-}
-
 fn begin_error(
     error: RunError,
     target: &TaskTarget,
@@ -1291,16 +1280,13 @@ fn begin_error(
             effects.len(),
             target.label
         )),
-        RunError::HostAuthorityRequired | RunError::Gate(GateError::HostAuthorityRequired) => {
-            RunnerError::task_invocation(format!(
-                "`{}` needs host authority; run it on the host",
-                target.label
-            ))
-        }
+        RunError::Gate(GateError::HostAuthorityRequired) => RunnerError::task_invocation(format!(
+            "`{}` needs host authority; run it on the host",
+            target.label
+        )),
         other => RunnerError::task_invocation(format!(
             "`{}` could not be admitted: {}",
-            target.label,
-            run_error(&other)
+            target.label, other
         )),
     }
 }

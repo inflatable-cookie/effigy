@@ -26,7 +26,7 @@ pub(super) fn entry() -> Result<(), RunError> {
         .unwrap_or_default()
         .is_empty()
     {
-        return Err(RunError::Invalid("anchor nonce missing".into()));
+        return Err(RunError::broken("anchor nonce missing"));
     }
     // SAFETY: supported signals and SIG_IGN; this single-threaded helper never
     // forwards or handles workload signals. Its only exit after go is KILL.
@@ -54,7 +54,7 @@ pub(super) fn entry() -> Result<(), RunError> {
     go.read_exact(&mut byte)?; // pre-go owner death closes this pipe
     drop(go);
     if byte != [1] {
-        return Err(RunError::Invalid("invalid anchor go".into()));
+        return Err(RunError::broken("invalid anchor go"));
     }
     loop {
         // SAFETY: pause has no arguments; ignored signals cannot end the

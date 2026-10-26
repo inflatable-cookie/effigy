@@ -23,8 +23,8 @@ impl<'a> Run<'a> {
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Run<'a>, RunError> {
         if invocation.spec().owner == self.owner.resource {
-            return Err(RunError::Invalid(
-                "child cannot reacquire its parent's owner gate".into(),
+            return Err(RunError::broken(
+                "child cannot reacquire its parent's owner gate",
             ));
         }
         // Check reuse before the intent: an old id must never become a child
@@ -40,7 +40,7 @@ impl<'a> Run<'a> {
             .optional()?
             .is_some()
         {
-            return Err(RunError::Invalid("child run id already exists".into()));
+            return Err(RunError::refused("child run id already exists"));
         }
         let child = Child {
             id: opts.id,
@@ -126,7 +126,7 @@ impl<'a> Run<'a> {
                 )
                 .map(|outcome| outcome.cleanup() == CleanupOutcome::Complete)
             }
-            _ => Err(RunError::Invalid("child parent mismatch".into())),
+            _ => Err(RunError::broken("child parent mismatch")),
         };
         let (state, reason) = match result {
             Ok(true) => (EffectState::Released, None),

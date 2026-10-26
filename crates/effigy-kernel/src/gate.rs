@@ -7,6 +7,7 @@ pub use foreground::{ForegroundDiag, ForegroundHolder};
 
 use crate::ctx::{Capability, EffectClass, EffectContext, Interrupt, ObserveContext};
 use crate::fs::{self, FileName, FsError, IoError, Trust, FILE_MODE};
+use crate::human::Category;
 use crate::id::{ResourceId, ResourceKind, RunId, Scope};
 use crate::ident::{self, ProcessState};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -101,57 +102,71 @@ impl From<FsError> for GateError {
         }
     }
 }
+impl GateError {
+    pub fn category(&self) -> Category {
+        match self {
+            Self::Busy { .. }
+            | Self::HostAuthorityRequired
+            | Self::ClassRefused { .. }
+            | Self::Interrupted(Interrupt::Cancelled { .. }) => Category::Refused,
+            Self::TimedOut { .. }
+            | Self::UnsupportedFilesystem { .. }
+            | Self::Untrusted { .. }
+            | Self::Io(_)
+            | Self::Interrupted(Interrupt::TimedOut { .. }) => Category::Unavailable,
+            // K14: a gate inside a store transaction is Effigy's own ordering.
+            Self::InTransaction => Category::Broken,
+        }
+    }
+}
 impl std::fmt::Display for GateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Busy { id, holder } => write!(
-                f,
-                "gate `{}` is held{}; wait for that process to finish, or stop it",
-                id.label(),
-                holder_note(holder)
-            ),
-            Self::TimedOut {
-                id,
-                waited,
-                holder,
-            } => write!(
-                f,
-                "gate `{}` was still held after {}{}; retry once that process finishes",
+        let detail = match self {
+            Self::Busy { id, holder } => {
+                format!("`{}` is held{}", id.label(), holder_note(holder))
+            }
+            Self::TimedOut { id, waited, holder } => format!(
+                "`{}` was still held after {}{}",
                 id.label(),
                 crate::human::human_duration(*waited),
                 holder_note(holder)
             ),
-            Self::HostAuthorityRequired => f.write_str(
-                "a gate lives on the host; a guest placement cannot take it",
-            ),
-            Self::UnsupportedFilesystem { path, fs } => write!(
-                f,
-                "{} is on a network filesystem ({fs}); flock needs a local disk, so move the state root",
+            Self::HostAuthorityRequired => {
+                "a lock lives on the host, and a guest placement cannot take it".to_owned()
+            }
+            Self::UnsupportedFilesystem { path, fs } => format!(
+                "{} is on a network filesystem ({fs}), and a lock needs a local disk",
                 path.display()
             ),
-            Self::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => write!(
-                f,
-                "{} is readable by other users; run `chmod 700 {}`",
-                path.display(),
-                path.display()
-            ),
-            Self::Untrusted { path, reason } => write!(
-                f,
-                "{} is not trusted gate state ({reason}); fix its ownership and permissions, then retry",
-                path.display()
-            ),
-            Self::Io(error) => error.fmt(f),
-            Self::ClassRefused { id, class } => write!(
-                f,
-                "a {} operation may not take gate `{}`; this resource needs a prepare-or-mutate operation",
+            Self::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => {
+                format!("{} is readable by other users", path.display())
+            }
+            Self::Untrusted { path, reason } => {
+                format!("{} is not trusted gate state ({reason})", path.display())
+            }
+            Self::Io(error) => {
+                return write!(
+                    f,
+                    "the gate could not proceed: {error}; {}",
+                    self.category().next_step()
+                )
+            }
+            Self::ClassRefused { id, class } => format!(
+                "a {} operation may not take `{}`, which needs a prepare-or-mutate operation",
                 crate::human::effect_class_label(*class),
                 id.label()
             ),
-            Self::InTransaction => f.write_str(
-                "a store transaction is already open on this thread, so taking a gate here would deadlock",
-            ),
-            Self::Interrupted(interrupt) => interrupt.fmt(f),
-        }
+            Self::InTransaction => {
+                "a store transaction is already open on this thread, and taking a gate inside it \
+                 would deadlock"
+                    .to_owned()
+            }
+            Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => interrupt.to_string(),
+            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
+                format!("it was {interrupt}")
+            }
+        };
+        f.write_str(&self.category().render("the gate", &detail))
     }
 }
 

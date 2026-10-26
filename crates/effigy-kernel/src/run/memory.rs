@@ -321,7 +321,7 @@ impl ForegroundRecord {
 }
 
 fn invalid(message: &str) -> RunError {
-    RunError::Invalid(message.into())
+    RunError::broken(message)
 }
 
 #[cfg(test)]

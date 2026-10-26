@@ -64,13 +64,13 @@ impl MemoryGuard {
         let owner = ident::process_identity(std::process::id())
             .verified()
             .cloned()
-            .ok_or_else(|| RunError::Invalid("foreground owner identity unavailable".into()))?;
+            .ok_or_else(|| RunError::unavailable("foreground owner identity unavailable"))?;
         let mut copies = gate.share_custody()?;
         for ancestor in ancestors {
             copies.push(crate::gate::duplicate_custody(ancestor)?);
         }
         if copies.len() > GATE_MAX {
-            return Err(RunError::Invalid("too many foreground gates".into()));
+            return Err(RunError::broken("too many foreground gates"));
         }
         let (watch, closure) = ClosurePin::new()?;
         let config = Config {
@@ -140,8 +140,8 @@ impl MemoryGuard {
         )?;
         guard.ack()?;
         if identity.is_none() {
-            return Err(RunError::Invalid(
-                "foreground guard identity unavailable".into(),
+            return Err(RunError::unavailable(
+                "foreground guard identity unavailable",
             ));
         }
         Ok(guard)
@@ -151,12 +151,12 @@ impl MemoryGuard {
         self.closure
             .as_ref()
             .cloned()
-            .ok_or_else(|| RunError::Invalid("foreground custody pipe is closed".into()))
+            .ok_or_else(|| RunError::unavailable("foreground custody pipe is closed"))
     }
     pub(crate) fn register(&mut self, effect: &Effect) -> Result<(), RunError> {
         if self.child.try_wait()?.is_some() {
-            return Err(RunError::Invalid(
-                "foreground guard exited before workload go".into(),
+            return Err(RunError::unavailable(
+                "foreground guard exited before workload go",
             ));
         }
         let input = self
@@ -194,9 +194,7 @@ impl MemoryGuard {
             }
         }
         if byte != [1] {
-            return Err(RunError::Invalid(
-                "invalid foreground guard acknowledgement".into(),
-            ));
+            return Err(RunError::broken("invalid foreground guard acknowledgement"));
         }
         Ok(())
     }
@@ -209,7 +207,7 @@ impl MemoryGuard {
                 return if exit.success() {
                     Ok(())
                 } else {
-                    Err(RunError::Invalid("foreground guard left residue".into()))
+                    Err(RunError::broken("foreground guard left residue"))
                 };
             }
             cx.operation().check("foreground guard closure")?;
@@ -239,7 +237,7 @@ fn memory_frame(
 ) -> Result<(), RunError> {
     let bytes = serde_json::to_vec(value)?;
     if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
-        return Err(RunError::Invalid("foreground guard frame too large".into()));
+        return Err(RunError::broken("foreground guard frame too large"));
     }
     let mut frame = Vec::with_capacity(bytes.len() + 4);
     frame.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
@@ -272,14 +270,10 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         || config.gates > GATE_MAX
         || ident::process_identity(config.owner.pid).verified() != Some(&config.owner)
     {
-        return Err(RunError::Invalid(
-            "invalid foreground guard owner or gates".into(),
-        ));
+        return Err(RunError::broken("invalid foreground guard owner or gates"));
     }
     if config.watch < 128 {
-        return Err(RunError::Invalid(
-            "invalid foreground closure descriptors".into(),
-        ));
+        return Err(RunError::broken("invalid foreground closure descriptors"));
     }
     let mut watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
     let mut gates: Vec<OwnedFd> = Vec::new();
@@ -292,9 +286,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             || stat.st_uid != crate::fs::operator_uid()
             || stat.st_mode & 0o077 != 0
         {
-            return Err(RunError::Invalid(
-                "untrusted inherited foreground gate".into(),
-            ));
+            return Err(RunError::broken("untrusted inherited foreground gate"));
         }
         // SAFETY: the parent pre-exec created these distinct inherited fds.
         // fstat verified each exists; no other owner is constructed for them.
@@ -322,7 +314,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
                     read_exact(input, &mut size[1..])?;
                     let size = u32::from_be_bytes(size) as usize;
                     if size > ResolvedInvocation::MAX_WIRE_BYTES {
-                        return Err(RunError::Invalid("foreground guard frame too large".into()));
+                        return Err(RunError::broken("foreground guard frame too large"));
                     }
                     let mut bytes = vec![0; size];
                     read_exact(input, &mut bytes)?;
@@ -332,9 +324,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
                         || effect.sequence <= effects.last().map_or(0, |last| last.sequence)
                         || effect.spec.target != config.fence
                     {
-                        return Err(RunError::Invalid(
-                            "invalid foreground custody receipt".into(),
-                        ));
+                        return Err(RunError::broken("invalid foreground custody receipt"));
                     }
                     crate::custody::verify_foreground_receipt(&effect, config.run)?;
                     // Acknowledge only after a complete receipt is retained.
@@ -365,7 +355,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     drop(output);
     let cleanup = context(CancelToken::default(), Duration::from_secs(60))
         .cleanup(Duration::from_secs(60))
-        .map_err(|_| RunError::Invalid("foreground cleanup overflow".into()))?;
+        .map_err(|_| RunError::broken("foreground cleanup overflow"))?;
     let mut residue = false;
     for effect in effects.iter().rev() {
         // Exact identity and ready-anchor evidence only. Existing custody
@@ -395,7 +385,7 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
     }
     drop(gates); // positive delegated closure; no numeric replay
     if residue {
-        return Err(RunError::Invalid("foreground guard left residue".into()));
+        return Err(RunError::broken("foreground guard left residue"));
     }
     if let Some(error) = protocol_error {
         return Err(error);

@@ -34,6 +34,7 @@ use nix::sys::signal::Signal;
 use super::error::RunnerError;
 
 use super::managed_listener_readiness::{probe_http_readiness, HttpReadinessOutcome};
+use effigy_kernel::human::Category;
 use effigy_kernel::run::RunError;
 use effigy_kernel::supervise::EngineSession;
 
@@ -797,14 +798,13 @@ fn cleanup_budget() -> effigy_kernel::ctx::CleanupContext {
     crate::runner::task_engine::cleanup_context(HOST_PROCESS_CLEANUP_BUDGET)
 }
 
-/// A supervisor step failed for a store, file, identity or capability reason.
-/// The request is well formed, so the outcome names the failing step and the
-/// cause instead of reading as an invalid request (effigy#332).
-fn step_failed(step: &str, error: impl std::fmt::Display) -> RunError {
-    RunError::StepFailed {
-        step: step.to_owned(),
-        cause: error.to_string(),
-    }
+/// A refusal this supervisor reports to its client and returns, with its
+/// category crossing the event pipe unchanged. A step that could not proceed
+/// reads as unavailable, never as an invalid request (effigy#332).
+fn refuse(session: &EngineSession, category: Category, detail: impl std::fmt::Display) -> RunError {
+    let detail = detail.to_string();
+    session.refused(category, &detail);
+    RunError::reported(category, detail)
 }
 
 /// The supervisor's kernel entry (contract 052 §10.2). It admits one run
@@ -815,17 +815,26 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     let spec: HostProcessRuntimeSpec = match serde_json::from_slice(session.payload()) {
         Ok(spec) => spec,
         Err(_) => {
-            session.refused("the managed host-process payload is unreadable");
-            return Err(RunError::Invalid("host-process payload".into()));
+            return Err(refuse(
+                &session,
+                Category::Refused,
+                "the host-process payload is unreadable",
+            ));
         }
     };
     if spec.schema != HOST_PROCESS_SPEC_SCHEMA || !spec.cwd.is_absolute() {
-        session.refused("managed host process has an unsupported or invalid runtime spec");
-        return Err(RunError::Invalid("host-process spec".into()));
+        return Err(refuse(
+            &session,
+            Category::Refused,
+            "the host-process spec is unsupported or invalid",
+        ));
     }
     let Some(checkout) = spec.checkout else {
-        session.refused("managed host process has no checkout identity");
-        return Err(RunError::Invalid("host-process checkout".into()));
+        return Err(refuse(
+            &session,
+            Category::Refused,
+            "the host process has no checkout identity",
+        ));
     };
     let resource = match effigy_kernel::id::ResourceId::host_process(
         checkout,
@@ -835,8 +844,11 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     ) {
         Ok(resource) => resource,
         Err(error) => {
-            session.refused(&error.to_string());
-            return Err(RunError::Invalid(error.to_string()));
+            return Err(refuse(
+                &session,
+                Category::Refused,
+                format!("its resource name is unusable ({error})"),
+            ))
         }
     };
     let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
@@ -847,8 +859,11 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         )) {
             Ok(git_directory) => git_directory,
             Err(error) => {
-                session.refused(&error.to_string());
-                return Err(RunError::Invalid(error.to_string()));
+                return Err(refuse(
+                    &session,
+                    Category::Unavailable,
+                    format!("the git directory is unreadable ({error})"),
+                ))
             }
         },
     };
@@ -856,24 +871,33 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         match effigy_kernel::root::StateRoot::checkout_effects(&cx, &spec.state_home, &location) {
             Ok(root) => root,
             Err(error) => {
-                session.refused(&error.to_string());
-                return Err(RunError::Invalid(error.to_string()));
+                return Err(refuse(
+                    &session,
+                    Category::Unavailable,
+                    format!("the state root is unusable ({error})"),
+                ))
             }
         };
     let invocation = match kernel_run::invocation(checkout, &resource, &spec) {
         Ok(invocation) => invocation,
         Err(error) => {
-            session.refused(&error.to_string());
-            return Err(RunError::Invalid(error.to_string()));
+            return Err(refuse(
+                &session,
+                Category::Refused,
+                format!("its invocation is unusable ({error})"),
+            ))
         }
     };
-    let next = kernel_run::recovery_invocation(&spec.environment)
-        .map_err(|error| step_failed("host-process recovery invocation", error))?;
-    let executable = crate::runner::task_engine::startup_executable()
-        .map_err(|error| step_failed("host-process startup binary", error))?;
+    let next = kernel_run::recovery_invocation(&spec.environment).map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("host-process recovery invocation", error)
+    })?;
+    let executable = crate::runner::task_engine::startup_executable().map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("host-process startup binary", error)
+    })?;
     let options = effigy_kernel::run::BeginOpts {
-        id: kernel_run::fresh_run_id()
-            .map_err(|error| step_failed("host-process run identity", error))?,
+        id: kernel_run::fresh_run_id().map_err(|error| {
+            effigy_kernel::run::RunError::step_failed("host-process run identity", error)
+        })?,
         wait: effigy_kernel::gate::Wait::FailFast,
         acknowledge: Vec::new(),
         next,
@@ -893,15 +917,15 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     ) {
         Ok(run) => run,
         Err(error) => {
-            let reason = error.to_string();
-            session.refused(&reason);
+            session.refused(error.category(), &error.to_string());
             return Err(error);
         }
     };
     session.admitted(&mut run)?;
     let supervisor_pid = std::process::id();
-    redirect_supervisor_output(&spec.log_file)
-        .map_err(|error| step_failed("supervisor output redirection", error))?;
+    redirect_supervisor_output(&spec.log_file).map_err(|error| {
+        effigy_kernel::run::RunError::step_failed("supervisor output redirection", error)
+    })?;
     let watch = session.owner_watch().ok();
     let started = supervise_generations(
         &mut run,
@@ -922,8 +946,8 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
             // A store or capability failure inside the supervisor names the
             // step and its cause. It is never reported as an invalid request
             // (effigy#332).
-            return Err(step_failed(
-                &format!("managed host process `{}` supervision", spec.process_name),
+            return Err(effigy_kernel::run::RunError::step_failed(
+                format!("host process `{}` supervision", spec.process_name),
                 error,
             ));
         }

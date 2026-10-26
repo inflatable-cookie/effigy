@@ -105,14 +105,10 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
 }
 
 fn refusal(addressed: &Addressed<'_>, error: RunError) -> RunnerError {
-    match error {
-        // The supervisor's own refusal, already a complete sentence.
-        RunError::Invalid(reason) => RunnerError::task_invocation(reason),
-        other => RunnerError::task_invocation(format!(
-            "managed task `{}` (profile `{}`) did not start its supervisor: {other}",
-            addressed.task, addressed.profile
-        )),
-    }
+    RunnerError::task_invocation(format!(
+        "managed task `{}` (profile `{}`) did not start its supervisor: {error}",
+        addressed.task, addressed.profile
+    ))
 }
 
 /// The run's own output, followed by byte offset (complete, unlike the

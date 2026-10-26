@@ -133,12 +133,16 @@ pub(super) fn fmt_runner_error(
             "task catalog prefix `{prefix}` not found (available: {})",
             available.join(", ")
         ),
-        RunnerError::TaskNotFound { name, path } => {
-            write!(f, "task `{name}` is not defined in {}", path.display())
-        }
+        RunnerError::TaskNotFound { name, path } => write!(
+            f,
+            "task `{name}` is not defined in {}; run `effigy tasks` to see the task names this \
+             checkout routes",
+            path.display()
+        ),
         RunnerError::TaskNotFoundAny { name, catalogs } => write!(
             f,
-            "task `{name}` is not defined in effective catalogs: {}",
+            "task `{name}` is not defined in effective catalogs: {}; run `effigy tasks` to see the \
+             task names this checkout routes",
             catalogs.join(", ")
         ),
         RunnerError::TaskAmbiguous { name, candidates } => write!(

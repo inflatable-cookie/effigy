@@ -19,6 +19,7 @@ use effigy_kernel::ctx::{OpenReason, StopCause};
 use effigy_kernel::custody::{
     EnvValue, Lifetime, OwnedProcess, ProcessSpec, SecretValue, Terminal,
 };
+use effigy_kernel::human::Category;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
@@ -52,8 +53,8 @@ static OWNER: Mutex<Option<OwnerSession>> = Mutex::new(None);
 /// plan). An invocation that never reaches admission is refused.
 pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunError> {
     let Some(payload) = wire::decode::<Payload>(session.payload()) else {
-        session.refused("the managed run payload is unreadable");
-        return Err(RunError::Invalid("managed payload".into()));
+        session.refused(Category::Refused, "the managed run payload is unreadable");
+        return Err(RunError::refused("the managed run payload is unreadable"));
     };
     task_engine::adopt_state_home(payload.state_home.clone());
     let command = effigy_cli::Command::Task(effigy_cli::TaskInvocation {
@@ -74,8 +75,8 @@ pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunErro
             Err(error) => error.to_string(),
             Ok(_) => "the invocation did not resolve to a managed run".to_owned(),
         };
-        owner.session.refused(&reason);
-        return Err(RunError::Invalid(reason));
+        owner.session.refused(Category::Refused, &reason);
+        return Err(RunError::refused(reason));
     }
     Ok(())
 }
@@ -173,14 +174,14 @@ pub(in crate::runner) fn own(
     }) {
         Ok(run) => run,
         Err(error) => {
-            session.refused(&error.to_string());
+            session.refused(Category::Refused, &error.to_string());
             return Err(error);
         }
     };
     let admitted = session.admitted(&mut *run.run_mut()?);
     if let Err(error) = admitted {
-        let message = format!("the managed run could not open its control socket: {error}");
-        session.refused(&message);
+        let message = format!("the managed run could not open its control socket ({error})");
+        session.refused(Category::Unavailable, &message);
         let (_, warnings) = run.close_settled(WorkloadOutcome::NotStarted, SETTLE_BUDGET);
         warn(&warnings);
         return Err(RunnerError::task_invocation(message));

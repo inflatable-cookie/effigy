@@ -42,6 +42,7 @@ pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 
 use crate::ctx::{CleanupContext, EffectContext, Interrupt};
 use crate::gate::{Gate, GateError, GateGuard, Wait};
+use crate::human::Category;
 use crate::id::{Generation, ResolvedInvocation, ResourceId, RunId};
 use crate::observe::UnknownReason;
 use crate::outcome::{Invocation, Outcome, WorkloadOutcome};
@@ -139,27 +140,26 @@ impl Phase {
             "active" => Ok(Self::Active),
             "stopping" => Ok(Self::Stopping),
             "closed" => Ok(Self::Closed),
-            _ => Err(RunError::Store(StoreError::Corrupt(
-                "invalid run phase".into(),
-            ))),
+            _ => Err(RunError::broken(format!("run phase `{value}`"))),
         }
     }
 }
+/// Every kernel and run error is exactly one of `human::Category`'s three, and
+/// reads through one `Display` per category (§5.5, K4).
 #[derive(Debug)]
 pub enum RunError {
     Store(StoreError),
     Gate(GateError),
     Interrupted(Interrupt),
-    HostAuthorityRequired,
-    Invalid(String),
-    /// A store, capability or supervision step failed while the run was being
-    /// admitted or was already running. The request itself was well formed, so
-    /// the error names the failing step and its cause and never reads as an
-    /// invalid request (§5.8, effigy#332).
-    StepFailed {
-        step: String,
-        cause: String,
-    },
+    /// A rule said no: another run holds it, a conflict, an inactive
+    /// environment, a placement without host authority, an effect class the
+    /// operation may not use. The request was well formed.
+    Refused(String),
+    /// A step the run needed did not answer or could not be reached: a store or
+    /// capability failure, I/O, a helper that exited. Nothing is broken.
+    Unavailable(String),
+    /// Effigy's own data or an invariant is wrong. `check` names it.
+    Broken(String),
     StaleGeneration {
         expected: Fence,
         current: Option<Generation>,
@@ -169,73 +169,76 @@ pub enum RunError {
         effects: Vec<Effect>,
     },
     HeldBy(Vec<Holder>),
+    /// Its environment is not active at the current generation: ensure it.
     EnvNotActive,
-    Conflict(ResourceId),
-    /// A re-executed helper (sentinel or supervisor) ended or stopped
-    /// answering before it acknowledged its handshake. Nothing ran on its
-    /// behalf; `cause` is the parent's handshake error.
-    HelperExited {
-        helper: String,
-        exit: crate::supervise::HelperExit,
-        cause: String,
-        stderr_tail: String,
-    },
+}
+impl RunError {
+    /// The request was well formed and a rule said no; `rule` names the rule and
+    /// any holder.
+    pub fn refused(rule: impl Into<String>) -> Self {
+        Self::Refused(rule.into())
+    }
+    /// A step did not answer; the text names what was waited on and why.
+    pub fn unavailable(detail: impl Into<String>) -> Self {
+        Self::Unavailable(detail.into())
+    }
+    /// A step did not answer, named with the step and its cause.
+    pub fn step_failed(step: impl std::fmt::Display, cause: impl std::fmt::Display) -> Self {
+        Self::Unavailable(format!("{step} failed ({cause})"))
+    }
+    /// Effigy's own data or an invariant is wrong; `check` names the check.
+    pub fn broken(check: impl Into<String>) -> Self {
+        Self::Broken(check.into())
+    }
+    /// The error a helper reported over its event pipe. A helper's category and
+    /// detail cross the process boundary, so a child's refusal is never
+    /// relabelled by its parent.
+    pub fn reported(category: Category, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        match category {
+            Category::Refused => Self::Refused(detail),
+            Category::Unavailable => Self::Unavailable(detail),
+            Category::Broken => Self::Broken(detail),
+        }
+    }
+    pub fn category(&self) -> Category {
+        match self {
+            Self::Store(error) => error.category(),
+            Self::Gate(error) => error.category(),
+            Self::Interrupted(Interrupt::TimedOut { .. }) => Category::Unavailable,
+            Self::Interrupted(_) => Category::Refused,
+            Self::Refused(_) | Self::StaleGeneration { .. } => Category::Refused,
+            Self::PredecessorUnsettled { .. } | Self::HeldBy(_) | Self::EnvNotActive => {
+                Category::Refused
+            }
+            Self::Unavailable(_) => Category::Unavailable,
+            Self::Broken(_) => Category::Broken,
+        }
+    }
 }
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::HelperExited {
-                helper,
-                exit,
-                cause,
-                stderr_tail,
-            } => {
-                write!(
-                    f,
-                    "kernel helper `{helper}` {exit} before acknowledging ({cause})"
-                )?;
-                if !stderr_tail.is_empty() {
-                    write!(f, ": {}", stderr_tail.trim_end())?;
-                }
-                Ok(())
-            }
-            Self::Store(error) => write!(f, "the run was refused because {error}"),
-            Self::Gate(error) => write!(f, "the run was refused because {error}"),
-            Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => {
-                write!(f, "the run was refused because it {interrupt}")
-            }
-            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
-                write!(f, "the run was refused because it was {interrupt}")
-            }
-            Self::HostAuthorityRequired => f.write_str(
-                "the run was refused: a managed run needs host authority, and this placement is a guest",
-            ),
-            Self::Invalid(what) => write!(
-                f,
-                "the run was refused: `{what}` is not a valid run request; run `effigy tasks` to see the task names this checkout routes"
-            ),
-            Self::StepFailed { step, cause } => write!(
-                f,
-                "the run could not proceed: {step} failed ({cause}); resolve that cause and retry the command"
-            ),
+        let detail = match self {
+            Self::Refused(rule) => rule.clone(),
+            Self::EnvNotActive => "its environment is not active".to_owned(),
+            Self::Unavailable(detail) => detail.clone(),
+            Self::Broken(check) => check.clone(),
+
             Self::StaleGeneration { expected, current } => match current {
-                Some(current) => write!(
-                    f,
-                    "the run was refused: it expected generation {} of resource `{}`, but the resource is now at generation {}; retry the command so it resolves the current state",
+                Some(current) => format!(
+                    "it expected generation {} of resource `{}`, but the resource is now at generation {}",
                     expected.generation.get(),
                     expected.resource.label(),
                     current.get()
                 ),
-                None => write!(
-                    f,
-                    "the run was refused: it expected generation {} of resource `{}`, which no longer exists; retry the command so it resolves the current state",
+                None => format!(
+                    "it expected generation {} of resource `{}`, which no longer exists",
                     expected.generation.get(),
                     expected.resource.label()
                 ),
             },
-            Self::PredecessorUnsettled { run, effects } => write!(
-                f,
-                "the run was refused: run {run} has {} effect(s) still unsettled; let that run finish or settle it before starting this one",
+            Self::PredecessorUnsettled { run, effects } => format!(
+                "run {run} has {} effect(s) still unsettled, so settle that run before starting another",
                 effects.len()
             ),
             Self::HeldBy(holders) => {
@@ -243,22 +246,20 @@ impl std::fmt::Display for RunError {
                     .iter()
                     .map(|holder| holder.run.to_string())
                     .collect::<Vec<_>>();
-                write!(
-                    f,
-                    "the run was refused: {} still holds a resource it needs ({}); stop that run first",
+                format!(
+                    "{} still holds a resource it needs ({})",
                     named.len(),
                     named.join(", ")
                 )
             }
-            Self::EnvNotActive => f.write_str(
-                "the run was refused: its environment is not active, so start the environment before this workload",
-            ),
-            Self::Conflict(resource) => write!(
-                f,
-                "the run was refused: resource `{}` is already claimed by another run; stop that run or choose another resource",
-                resource.label()
-            ),
-        }
+            Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => interrupt.to_string(),
+            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
+                format!("it was {interrupt}")
+            }
+            Self::Store(error) => return write!(f, "{error}"),
+            Self::Gate(error) => return write!(f, "{error}"),
+        };
+        f.write_str(&self.category().render("the run", &detail))
     }
 }
 impl std::error::Error for RunError {}
@@ -289,7 +290,9 @@ impl From<Interrupt> for RunError {
 }
 impl From<serde_json::Error> for RunError {
     fn from(e: serde_json::Error) -> Self {
-        Self::Store(StoreError::Corrupt(e.to_string()))
+        Self::Store(StoreError::Broken(format!(
+            "a value this store wrote is not readable ({e})"
+        )))
     }
 }
 
@@ -358,29 +361,29 @@ impl<'a> Run<'a> {
                 || inv.spec().gates.iter().any(|id| !id.is_machine_fact())
                 || !inv.spec().attachments.is_empty())
         {
-            return Err(RunError::Invalid("machine runs require shared-fact owners and machine identity; checkout work belongs in its own journal".into()));
+            return Err(RunError::refused("machine runs require shared-fact owners and machine identity; checkout work belongs in its own journal"));
         }
         if inv.spec().task.checkout().kind() == crate::id::CheckoutKind::Filesystem {
-            return Err(RunError::Invalid(
-                "filesystem checkout identities cannot own durable runs".into(),
+            return Err(RunError::refused(
+                "filesystem checkout identities cannot own durable runs",
             ));
         }
         if cx.operation().placement() != crate::ctx::Placement::Host
             || inv.spec().placement != crate::ctx::Placement::Host
         {
-            return Err(RunError::HostAuthorityRequired);
+            return Err(RunError::refused(
+                "a managed run needs host authority, and this placement is a guest",
+            ));
         }
         if cx.operation().class() != inv.spec().class {
-            return Err(RunError::Invalid(
-                "invocation class differs from context".into(),
-            ));
+            return Err(RunError::refused("invocation class differs from context"));
         }
         cx.operation().check("begin")?;
         let observe = cx
             .child(std::time::Duration::from_secs(10))
             .operation()
             .observe()
-            .map_err(|_| RunError::Invalid("run publication observation context".into()))?;
+            .map_err(|_| RunError::unavailable("run publication observation context"))?;
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
         let ids = aliases::gates(&observe, root, &inv.spec().owner, &ids)?;
@@ -619,12 +622,12 @@ impl<'a> Run<'a> {
     pub fn intend(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         // Environment mutation must go through TransitionPermit::intend.
         if spec.target.resource.kind() == crate::id::ResourceKind::Env {
-            return Err(RunError::Invalid(
-                "environment effect needs a transition permit".into(),
+            return Err(RunError::broken(
+                "environment effect needs a transition permit",
             ));
         }
         if spec.kind.starts_with("kernel:") {
-            return Err(RunError::Invalid("reserved effect kind".into()));
+            return Err(RunError::refused("reserved effect kind"));
         }
         self.intend_inner(spec)
     }
@@ -709,7 +712,7 @@ impl<'a> Run<'a> {
     ) -> Result<(), RunError> {
         self.can_effect()?;
         if ticket.run != self.id || ticket.owner != self.owner {
-            return Err(RunError::Invalid("foreign effect ticket".into()));
+            return Err(RunError::broken("foreign effect ticket"));
         }
         let result = (|| {
             if state == EffectState::Failed {
@@ -723,7 +726,7 @@ impl<'a> Run<'a> {
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
                     journal::check_target(txn.conn(), &effect)?;
                     if !matches!(effect.state, EffectState::Intended | EffectState::Unknown) {
-                        return Err(RunError::Invalid("effect already completed".into()));
+                        return Err(RunError::broken("effect already completed"));
                     }
                     journal::write_effect(
                         txn,
@@ -749,9 +752,7 @@ impl<'a> Run<'a> {
     fn can_effect(&self) -> Result<(), RunError> {
         self.cx.operation().check("effect")?;
         if self.poisoned || matches!(self.phase()?, Phase::Stopping | Phase::Closed) {
-            return Err(RunError::Invalid(
-                "run must settle before more effects".into(),
-            ));
+            return Err(RunError::broken("run must settle before more effects"));
         }
         Ok(())
     }
@@ -765,7 +766,7 @@ impl<'a> Run<'a> {
             (previous, phase),
             (Phase::Starting, Phase::Active) | (_, Phase::Stopping)
         ) {
-            return Err(RunError::Invalid("invalid phase transition".into()));
+            return Err(RunError::broken("invalid phase transition"));
         }
         if phase == Phase::Active
             && self
@@ -773,7 +774,7 @@ impl<'a> Run<'a> {
                 .iter()
                 .any(|e| e.spec.required && e.state != EffectState::Applied)
         {
-            return Err(RunError::Invalid("startup obligations unresolved".into()));
+            return Err(RunError::broken("startup obligations unresolved"));
         }
         let result = (|| {
             crate::fault_point!(PhaseBefore)?;
@@ -803,15 +804,13 @@ impl<'a> Run<'a> {
     ) -> Result<(), RunError> {
         self.can_effect()?;
         if ticket.run != self.id || ticket.owner != self.owner {
-            return Err(RunError::Invalid("foreign completion ticket".into()));
+            return Err(RunError::broken("foreign completion ticket"));
         }
         journal::check_fence(self.store.conn(), &self.owner)?;
         let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
         journal::check_target(self.store.conn(), &effect)?;
         if effect.state != EffectState::Applied || self.completed.contains_key(&ticket.sequence) {
-            return Err(RunError::Invalid(
-                "effect is not awaiting completion".into(),
-            ));
+            return Err(RunError::broken("effect is not awaiting completion"));
         }
         self.completed.insert(ticket.sequence, obligation);
         // The observed exit joins the receipt for status readers. It is
@@ -869,7 +868,7 @@ impl<'a> Run<'a> {
             crate::outcome::CleanupOutcome::NotNeeded,
             &obligations,
         )
-        .map_err(|_| RunError::Invalid("workload obligations incomplete".into()))?;
+        .map_err(|_| RunError::broken("workload obligations incomplete"))?;
         let result = (|| {
             self.store.transaction_within(
                 &self.cx,
@@ -905,7 +904,7 @@ impl<'a> Run<'a> {
                 | WorkloadOutcome::NotStarted
         ) || self.phase()? == Phase::Closed
         {
-            return Err(RunError::Invalid("invalid interruption outcome".into()));
+            return Err(RunError::broken("invalid interruption outcome"));
         }
         let cx = settle::cleanup_effects(cleanup)?;
         let machine_lifecycle = self.machine_lifecycle();
@@ -945,16 +944,18 @@ pub struct Request {
 /// them; owner handling rechecks the same fence immediately before acting.
 pub fn request(cx: &EffectContext, root: &StateRoot, request: &Request) -> Result<(), RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
-        .map_err(|_| RunError::Invalid("request needs Mutate".into()))?;
+        .map_err(|_| RunError::refused("request needs Mutate"))?;
     cx.require(crate::ctx::Capability::HostAuthority)
-        .map_err(|_| RunError::HostAuthorityRequired)?;
+        .map_err(|_| {
+            RunError::refused("a managed run needs host authority, and this placement is a guest")
+        })?;
     let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
     crate::fault_point!(RequestBefore)?;
     store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
         journal::check_fence(txn.conn(), &request.expected)?;
         let record = journal::run(txn.conn(), request.run)?;
         if record.owner != request.expected.resource.name().to_string() || record.generation != request.expected.generation || record.phase == Phase::Closed {
-            return Err(RunError::Invalid("request run is not current".into()));
+            return Err(RunError::refused("request run is not current"));
         }
         txn.conn().execute("INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) VALUES (?1,?2,?3,?4,'pending',?5)",
             params![request.id.to_string(), request.run.to_string(), request.expected.generation.get() as i64,
@@ -977,7 +978,7 @@ impl Run<'_> {
     }
     pub fn resolve_request(&mut self, request: &Request) -> Result<(), RunError> {
         if request.run != self.id || request.expected != self.owner {
-            return Err(RunError::Invalid("foreign request".into()));
+            return Err(RunError::broken("foreign request"));
         }
         self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
             journal::check_fence(txn.conn(), &request.expected)?;
@@ -1029,7 +1030,7 @@ pub fn status(
                 && effects.iter().all(|e| e.state.terminal());
             let workload = record
                 .workload
-                .ok_or_else(|| RunError::Invalid("closed without workload".into()))?;
+                .ok_or_else(|| RunError::broken("closed without workload"))?;
             return Ok(Observed::Verified(
                 RunStatus::Closed {
                     workload,

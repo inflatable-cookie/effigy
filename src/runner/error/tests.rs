@@ -160,6 +160,33 @@ fn container_surface_selection_variants_render_stably() {
 }
 
 #[test]
+fn an_unknown_task_name_is_the_only_error_that_names_effigy_tasks() {
+    // effigy#360: the invalid-request wording belongs to exactly this case, so
+    // a held run, a revoked capability or a broken record never reads as one.
+    let not_defined = RunnerError::TaskNotFound {
+        name: "deploy".into(),
+        path: Path::new("/repo/effigy.toml").into(),
+    }
+    .to_string();
+    assert_eq!(
+        not_defined,
+        "task `deploy` is not defined in /repo/effigy.toml; run `effigy tasks` to see the task \
+         names this checkout routes"
+    );
+    let any_catalog = RunnerError::TaskNotFoundAny {
+        name: "deploy".into(),
+        catalogs: vec!["web".into(), "infra".into()],
+    }
+    .to_string();
+    assert_eq!(
+        any_catalog,
+        "task `deploy` is not defined in effective catalogs: web, infra; run `effigy tasks` to \
+         see the task names this checkout routes"
+    );
+    assert!(!any_catalog.contains("not a valid"));
+}
+
+#[test]
 fn workspace_session_cleanup_constructor_preserves_shape() {
     let err = RunnerError::workspace_session_cleanup("shell failed", "cleanup failed");
     match &err {

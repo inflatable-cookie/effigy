@@ -79,8 +79,8 @@ impl<'a> Run<'a> {
                 .as_ref()
                 .is_none_or(|plan| plan.placement != Placement::Detached)
         {
-            return Err(RunError::Invalid(
-                "planned startup requires the detached machine gateway".into(),
+            return Err(RunError::refused(
+                "planned startup requires the detached machine gateway",
             ));
         }
         let planned = crate::custody::process_intent(
@@ -91,7 +91,9 @@ impl<'a> Run<'a> {
             },
             true,
         )
-        .map_err(|error| RunError::Invalid(format!("gateway process plan: {error}")))?;
+        .map_err(|error| {
+            RunError::refused(format!("the gateway process plan is unusable ({error})"))
+        })?;
         Self::begin_under(
             cx,
             root,
@@ -123,8 +125,8 @@ impl<'a> Run<'a> {
                 });
             }
         }
-        Err(RunError::Invalid(
-            "effect was not in the admitted gateway plan".into(),
+        Err(RunError::broken(
+            "effect was not in the admitted gateway plan",
         ))
     }
     pub(super) fn planned_receipt(
@@ -134,7 +136,7 @@ impl<'a> Run<'a> {
     ) -> Result<(), RunError> {
         self.can_effect()?;
         if ticket.run != self.id || ticket.owner != self.owner {
-            return Err(RunError::Invalid("foreign gateway receipt".into()));
+            return Err(RunError::broken("foreign gateway receipt"));
         }
         let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
         let startup = self
@@ -144,9 +146,7 @@ impl<'a> Run<'a> {
         if !startup.claimed.contains(&ticket.sequence)
             || startup.receipts.contains_key(&ticket.sequence)
         {
-            return Err(RunError::Invalid(
-                "unclaimed or duplicate gateway receipt".into(),
-            ));
+            return Err(RunError::broken("unclaimed or duplicate gateway receipt"));
         }
         startup.receipts.insert(ticket.sequence, receipt);
         if effect.spec.kind == socket::KIND {
@@ -160,14 +160,10 @@ impl<'a> Run<'a> {
                 .all(|effect| startup.receipts.contains_key(&effect.sequence))
         {
             self.poisoned = true;
-            return Err(RunError::Invalid(
-                "gateway receipt set is incomplete".into(),
-            ));
+            return Err(RunError::broken("gateway receipt set is incomplete"));
         }
         let Some((owner, sentinel, placement)) = startup.lifecycle.as_ref() else {
-            return Err(RunError::Invalid(
-                "gateway sentinel registration missing".into(),
-            ));
+            return Err(RunError::broken("gateway sentinel registration missing"));
         };
         let result = self.store.transaction(&self.cx.child(Duration::from_secs(30)), |txn| {
             journal::check_fence(txn.conn(), &self.owner)?;

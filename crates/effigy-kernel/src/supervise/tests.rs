@@ -191,16 +191,14 @@ fn fixture() -> PathBuf {
     crate::fixture::custody_fixture()
 }
 
-fn helper_exited(error: RunError) -> (String, HelperExit, String) {
-    match error {
-        RunError::HelperExited {
-            helper,
-            exit,
-            stderr_tail,
-            ..
-        } => (helper, exit, stderr_tail),
-        other => panic!("expected a typed helper death, got {other:?}"),
-    }
+/// A helper death reads as unavailable and names the helper, how it ended and
+/// the stderr tail it left.
+fn helper_exited(error: RunError, helper: &str, exit: &HelperExit) {
+    let RunError::Unavailable(detail) = error else {
+        panic!("a helper death must read as unavailable, got {error:?}");
+    };
+    let expected = format!("kernel helper `{helper}` {exit} before acknowledging");
+    assert!(detail.contains(&expected), "{detail:?}");
 }
 
 /// Every way a sentinel can die before acknowledging, during admission.
@@ -233,10 +231,9 @@ fn helper_death_before_acknowledgement_during_admission_is_typed_and_settles() {
             &mut Strict,
         )
         .expect_err(body);
-        let (helper, exit, stderr) = helper_exited(error);
-        assert_eq!(helper, SENTINEL, "{body}");
-        assert_eq!(exit, expected, "{body}");
-        assert!(stderr.contains(tail), "{body}: {stderr:?}");
+        let tails = error.to_string();
+        helper_exited(error, SENTINEL, &expected);
+        assert!(tails.contains(tail), "{body}: {tails:?}");
         world.assert_helper_reaped();
         world.assert_closed_not_started(&root, "admission", RunId::new(1, [1; 10]).unwrap());
         world.assert_no_residue();
@@ -271,9 +268,9 @@ fn helper_death_before_acknowledgement_during_child_admission_is_typed_and_settl
             &mut Strict,
         )
         .expect_err("child sentinel died");
-    let (helper, exit, stderr) = helper_exited(error);
-    assert_eq!((helper.as_str(), exit), (SENTINEL, HelperExit::Code(5)));
-    assert!(stderr.contains("child helper died"), "{stderr:?}");
+    let detail = error.to_string();
+    helper_exited(error, SENTINEL, &HelperExit::Code(5));
+    assert!(detail.contains("child helper died"), "{detail:?}");
     world.assert_helper_reaped();
     world.assert_closed_not_started(&root, "child", RunId::new(1, [2; 10]).unwrap());
     let settled = parent.settle(&cleanup(&cx), &mut Strict).unwrap();
@@ -305,9 +302,9 @@ fn supervisor_death_before_admission_is_typed() {
         ClientMode::Owning,
     )
     .expect_err("supervisor died");
-    let (helper, exit, stderr) = helper_exited(error);
-    assert_eq!((helper.as_str(), exit), (SUPERVISOR, HelperExit::Code(6)));
-    assert!(stderr.contains("supervisor broke"), "{stderr:?}");
+    let detail = error.to_string();
+    helper_exited(error, SUPERVISOR, &HelperExit::Code(6));
+    assert!(detail.contains("supervisor broke"), "{detail:?}");
     world.assert_helper_reaped();
     world.assert_no_residue();
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
@@ -349,13 +346,10 @@ fn a_helper_protocol_mismatch_reaches_the_parent_stderr_tail() {
         read_exact(&mut ready, &mut [0u8])
     })();
     let error = helper_failed(SENTINEL, &mut child, &log, result.expect_err("refused"));
-    let (_, exit, stderr) = helper_exited(error);
-    assert_eq!(exit, HelperExit::Code(1));
-    let message = format!(
-        "helper protocol {other} does not match this binary's protocol {HELPER_PROTOCOL}; \
-         rerun the command"
-    );
-    assert!(stderr.contains(&message), "{stderr:?}");
+    let detail = error.to_string();
+    helper_exited(error, SENTINEL, &HelperExit::Code(1));
+    let message = format!("this helper speaks protocol {other} and this binary speaks");
+    assert!(detail.contains(&message), "{detail:?}");
 }
 
 /// A rebuild or reinstall replaces the binary at the path during a run. The

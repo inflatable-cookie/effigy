@@ -39,8 +39,8 @@ pub struct TransitionPermit<'r, 'root> {
 impl TransitionPermit<'_, '_> {
     pub fn intend(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         if spec.target != self.run.owner || spec.kind.starts_with("kernel:") {
-            return Err(RunError::Invalid(
-                "permit targets its environment generation only".into(),
+            return Err(RunError::refused(
+                "permit targets its environment generation only",
             ));
         }
         self.run.can_effect()?;
@@ -116,7 +116,7 @@ impl Attachments {
                 .iter()
                 .any(|e| e.spec.required && e.state != EffectState::Applied)
         {
-            return Err(RunError::Invalid("environment is not ready".into()));
+            return Err(RunError::refused("environment is not ready"));
         }
         run.store
             .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
@@ -140,13 +140,11 @@ impl Attachments {
     ) -> Result<AttachmentTicket, RunError> {
         run.can_effect()?;
         if env.resource.kind() != ResourceKind::Env || env.resource == run.owner.resource {
-            return Err(RunError::Invalid(
-                "attachment needs a distinct environment".into(),
-            ));
+            return Err(RunError::refused("attachment needs a distinct environment"));
         }
         if run.owner.resource.canonical() >= env.resource.canonical() {
-            return Err(RunError::Invalid(
-                "attachment would reverse canonical gate order".into(),
+            return Err(RunError::refused(
+                "attachment would reverse canonical gate order",
             ));
         }
         if let crate::id::Scope::Checkout(checkout) = env.resource.scope() {
@@ -191,16 +189,14 @@ impl Attachments {
         cleanup: &CleanupContext,
     ) -> Result<(), RunError> {
         if ticket.effect.run != run.id || ticket.effect.owner != run.owner {
-            return Err(RunError::Invalid("foreign attachment".into()));
+            return Err(RunError::broken("foreign attachment"));
         }
         let effect = journal::effect(run.store.conn(), run.id, ticket.effect.sequence)?;
         if effect.spec.target.resource != ticket.environment || effect.spec.kind != KIND {
-            return Err(RunError::Invalid("foreign attachment effect".into()));
+            return Err(RunError::broken("foreign attachment effect"));
         }
         if !matches!(run.phase()?, Phase::Stopping | Phase::Closed) {
-            return Err(RunError::Invalid(
-                "attachment release requires settle".into(),
-            ));
+            return Err(RunError::broken("attachment release requires settle"));
         }
         run.settle_attachment(&effect, &settle::cleanup_effects(cleanup)?)
     }
@@ -209,7 +205,7 @@ impl Attachments {
     ) -> Result<TransitionPermit<'r, 'root>, RunError> {
         run.can_effect()?;
         if run.owner.resource.kind() != ResourceKind::Env {
-            return Err(RunError::Invalid("permit needs environment owner".into()));
+            return Err(RunError::broken("permit needs environment owner"));
         }
         journal::check_fence(run.store.conn(), &run.owner)?;
         ensure_no_holders(run.store.conn(), &run.owner.resource)?;
@@ -224,7 +220,7 @@ impl Attachments {
     ) -> Result<TransitionPermit<'r, 'root>, RunError> {
         run.can_effect()?;
         if run.owner.resource.kind() != ResourceKind::Env {
-            return Err(RunError::Invalid("permit needs environment owner".into()));
+            return Err(RunError::broken("permit needs environment owner"));
         }
         journal::check_fence(run.store.conn(), &run.owner)?;
         ensure_no_holders_except(run.store.conn(), &run.owner.resource, Some(exempt))?;
@@ -249,7 +245,7 @@ impl Attachments {
                 .iter()
                 .any(|e| e.spec.required && e.state != EffectState::Applied)
         {
-            return Err(RunError::Invalid("environment is not ready".into()));
+            return Err(RunError::refused("environment is not ready"));
         }
         let result = (|| {
             crate::fault_point!(AttachBefore)?;
@@ -271,9 +267,7 @@ impl Attachments {
                         if matches!(record.phase, Phase::Stopping | Phase::Closed)
                             || owner >= run.owner.resource.canonical()
                         {
-                            return Err(RunError::Invalid(
-                                "requesting holder is settling or out of gate order".into(),
-                            ));
+                            return Err(RunError::refused("requesting holder is settling or out of gate order"));
                         }
                         let exists: bool = txn.conn().query_row(
                             "SELECT EXISTS(SELECT 1 FROM attachments WHERE environment=?1 AND run_id=?2 AND state<>'released')",

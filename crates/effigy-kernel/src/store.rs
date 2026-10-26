@@ -15,6 +15,7 @@
 use crate::ctx::{EffectClass, EffectContext, Interrupt, ObserveContext};
 use crate::fs::{FileName, FsError, IoError, Trust, FILE_MODE};
 use crate::gate::{self, Gate, GateError, GateGuard, HolderDiag, OwnerState, RunPhaseFact, Wait};
+use crate::human::Category;
 use crate::id::{CheckoutId, Generation, IdentityError, ResourceId, RunId, Scope};
 use crate::ident::BootInstant;
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -106,9 +107,9 @@ pub enum StoreError {
     Interrupted(Interrupt),
     Gate(Box<GateError>),
     /// `atomic_replace` needs a held store gate.
-    WrongGuard,
-    /// A checkout or payload resource was offered to the shared-fact store.
-    MachineContentsRefused(String),
+    /// A rule said no: the write guard the change needed, or checkout contents
+    /// offered to the shared machine store.
+    Refused(String),
     TooLarge {
         limit: u64,
     },
@@ -118,90 +119,127 @@ pub enum StoreError {
         current: u64,
     },
     UnknownResource,
+    /// Effigy's own record or an invariant is wrong, but nothing on disk is
+    /// corrupt: an Effigy bug, and never a repair.
+    Broken(String),
 }
+impl StoreError {
+    pub fn category(&self) -> Category {
+        match self {
+            Self::Corrupt(_) | Self::UnknownSchema { .. } | Self::Broken(_) => Category::Broken,
+            Self::InTransaction => Category::Broken,
+            Self::Interrupted(Interrupt::TimedOut { .. }) => Category::Unavailable,
+            Self::Interrupted(_) => Category::Refused,
+            Self::HostAuthorityRequired
+            | Self::Refused(_)
+            | Self::ClassRefused(_)
+            | Self::TooLarge { .. }
+            | Self::NotCorrupt
+            | Self::StaleGeneration { .. }
+            | Self::UnknownResource => Category::Refused,
+            Self::Untrusted { .. }
+            | Self::UnsupportedFilesystem { .. }
+            | Self::Io(_)
+            | Self::Sqlite { .. }
+            | Self::Busy { .. }
+            | Self::Unbounded
+            | Self::Identity(_)
+            | Self::Gate(_) => Category::Unavailable,
+        }
+    }
+}
+/// The one next step verified corruption carries (§5.5): the store moves aside
+/// with its write-ahead log, so no leftover log attaches to the next
+/// `kernel.db`.
+const CORRUPT_REPAIR: &str = "the explicit repair moves `kernel.db` and its `-journal`, `-wal` \
+and `-shm` files aside, and then this command works";
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Verified corruption is the one case that says `Corrupt` and names the
+        // repair; every other error renders through its category's one display.
         match self {
-            Self::Corrupt(reason) => write!(
-                f,
-                "the runtime journal is unusable ({reason}); nothing was changed. The explicit repair \
-                 moves `kernel.db` and its `-journal`, `-wal` and `-shm` files aside: do that, then \
-                 retry; `effigy doctor` reports the state root"
-            ),
-            Self::Busy { waited, holder } => write!(
-                f,
-                "the state store kernel.db stayed busy for {:.1}s{}; another Effigy process is \
-                 writing its run journal (an environment condition, not a task failure)",
+            Self::Corrupt(reason) => {
+                return write!(
+                    f,
+                    "Effigy is broken: kernel.db is corrupt ({reason}); nothing was changed, and \
+                     {CORRUPT_REPAIR}"
+                )
+            }
+            Self::UnknownSchema { found } => {
+                return write!(
+                    f,
+                    "Effigy is broken: kernel.db is corrupt (it records schema version {found}, \
+                     which this Effigy cannot read); nothing was changed, and {CORRUPT_REPAIR}"
+                )
+            }
+            Self::Gate(error) => return error.fmt(f),
+            _ => {}
+        }
+        let detail = match self {
+            Self::Busy { waited, holder } => format!(
+                "the state store kernel.db stayed busy for {:.1}s{} while another Effigy process \
+                 wrote its run journal",
                 waited.as_secs_f64(),
                 holder_note(holder)
             ),
-            Self::HostAuthorityRequired => f.write_str(
-                "the kernel store lives on the host; a guest placement cannot open it, so nothing was touched",
-            ),
-            Self::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => write!(
-                f,
-                "{} is readable by other users; run `chmod 700 {}`",
+            Self::HostAuthorityRequired => {
+                "the kernel store lives on the host, and a guest placement cannot open it"
+                    .to_owned()
+            }
+            Self::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => format!(
+                "{} is readable by other users, so run `chmod 700 {}`",
                 path.display(),
                 path.display()
             ),
-            Self::Untrusted { path, reason } => write!(
-                f,
-                "{} is not trusted store state ({reason}); fix its ownership and permissions, then retry",
+            Self::Untrusted { path, reason } => {
+                format!("{} is not trusted store state ({reason})", path.display())
+            }
+            Self::UnsupportedFilesystem { path, fs } => format!(
+                "{} is on a network filesystem ({fs}), and the store needs a local disk",
                 path.display()
             ),
-            Self::UnsupportedFilesystem { path, fs } => write!(
-                f,
-                "{} is on a network filesystem ({fs}); move the state root to a local disk",
-                path.display()
-            ),
-            Self::Io(error) => error.fmt(f),
-            Self::Sqlite { code, message } => write!(
-                f,
-                "kernel.db refused the query ({message}, SQLite code {code}); retry, and if it persists run `effigy doctor`"
-            ),
-            Self::UnknownSchema { found } => write!(
-                f,
-                "kernel.db has schema version {found}, which this Effigy does not know; use the Effigy version that wrote it, or migrate the store"
-            ),
-            Self::Identity(error) => write!(f, "kernel.db failed its identity check: {error}"),
-            Self::Unbounded => f.write_str(
-                "a store wait needs a finite deadline; Effigy refused an unbounded wait",
-            ),
-            Self::ClassRefused(class) => write!(
-                f,
-                "a {} operation may not run this store effect; retention, repair and scope removal need a Mutate operation",
+            Self::Sqlite { code, message } => {
+                format!("kernel.db refused the query ({message}, SQLite code {code})")
+            }
+            Self::Io(error) => error.to_string(),
+            Self::Identity(error) => format!("kernel.db failed its identity check: {error}"),
+            Self::Broken(check) => check.clone(),
+            Self::Unbounded => {
+                "a store wait needs a finite deadline, so Effigy refused an unbounded one"
+                    .to_owned()
+            }
+            Self::ClassRefused(class) => format!(
+                "a {} operation may not run this store effect; retention, repair and scope removal \
+                 need a Mutate operation",
                 crate::human::effect_class_label(*class)
             ),
-            Self::InTransaction => f.write_str(
-                "a store transaction is already open on this thread, so this operation refused rather than nest",
-            ),
-            Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => {
-                write!(f, "the operation {interrupt}")
+            Self::InTransaction => {
+                "a store transaction is already open on this thread, and nesting it is not allowed"
+                    .to_owned()
             }
+            Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => interrupt.to_string(),
             Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
-                write!(f, "the operation was {interrupt}")
+                format!("it was {interrupt}")
             }
-            Self::Gate(error) => error.fmt(f),
-            Self::WrongGuard => f.write_str(
-                "this store change needs the write guard for its resource; retry through the code path that holds it",
+            Self::Refused(rule) => rule.clone(),
+            Self::TooLarge { limit } => {
+                format!("the store refused a value above its {limit}-byte limit")
+            }
+            Self::NotCorrupt => "kernel.db is intact, so there is nothing to repair".to_owned(),
+            Self::StaleGeneration { current } => format!(
+                "the store is already at generation {current}, and a pointer commit must select a \
+                 strictly newer one"
             ),
-            Self::MachineContentsRefused(what) => write!(
-                f,
-                "{what} belongs to a checkout journal, not the shared machine store"
-            ),
-            Self::TooLarge { limit } => write!(
-                f,
-                "the store refused a value above its {limit}-byte limit; reduce what the operation records"
-            ),
-            Self::NotCorrupt => f.write_str("kernel.db is intact, so there is nothing to repair"),
-            Self::StaleGeneration { current } => write!(
-                f,
-                "the store is already at generation {current}; a pointer commit must select a strictly newer generation"
-            ),
-            Self::UnknownResource => f.write_str(
-                "the store has no record of that resource; the run that named it may have been removed, so retry the command",
-            ),
-        }
+            Self::UnknownResource => {
+                "the store has no record of that resource, so the run that named it may have been \
+                 removed"
+                    .to_owned()
+            }
+            Self::Corrupt(_) | Self::UnknownSchema { .. } | Self::Gate(_) => {
+                unreachable!("rendered above")
+            }
+        };
+        f.write_str(&self.category().render("the state store", &detail))
     }
 }
 
@@ -243,6 +281,7 @@ impl From<rusqlite::Error> for StoreError {
             })
         };
         match code.code {
+            // Verified corruption: the only codes that may say `Corrupt`.
             ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt => {
                 Self::Corrupt(error.to_string())
             }
@@ -252,6 +291,10 @@ impl From<rusqlite::Error> for StoreError {
                     "SQLite reported a busy store without a writer gate holder".into(),
                 ))),
             },
+            // An unreadable file is an environment condition naming its path,
+            // never corruption: retrying after the path or its permissions are
+            // fixed is safe (§5.5).
+            ErrorCode::CannotOpen => io(libc::ENOENT),
             ErrorCode::DiskFull => io(libc::ENOSPC),
             ErrorCode::PermissionDenied | ErrorCode::ReadOnly => io(libc::EACCES),
             _ => Self::Sqlite {
@@ -329,12 +372,22 @@ impl Store {
             });
         }
         check_store_files(root).map_err(StoreError::from)?;
+        let path = root.dir().join(root.database_name());
         let conn = Connection::open_with_flags(
-            root.dir().join(root.database_name()),
+            path.clone(),
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        )
+        .map_err(|error| match StoreError::from(error) {
+            // The path a person needs is the store's own, not `kernel.db`
+            // relative to a directory they cannot see from the message.
+            StoreError::Io(mut io) => {
+                io.path = path;
+                StoreError::Io(io)
+            }
+            other => other,
+        })?;
         let mut store = Self {
             conn,
             root: root.clone(),
@@ -385,7 +438,12 @@ impl Store {
                 Ok(mode) if mode.eq_ignore_ascii_case("wal") => return Ok(()),
                 // Another connection keeps the old mode until it closes.
                 Ok(_) if !left.is_zero() => {}
-                Ok(mode) => return Err(StoreError::Corrupt(format!("journal mode {mode}"))),
+                Ok(mode) => {
+                    return Err(StoreError::Corrupt(format!(
+                        "it runs in journal mode {mode} instead of the write-ahead log Effigy \
+                         sets"
+                    )))
+                }
                 Err(error) => match StoreError::from(error) {
                     StoreError::Busy { .. } if !left.is_zero() => {}
                     other => return Err(other),
@@ -654,7 +712,9 @@ impl Store {
             .conn
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
         if integrity != "ok" {
-            return Err(StoreError::Corrupt(integrity));
+            return Err(StoreError::Corrupt(format!(
+                "PRAGMA integrity_check: {integrity}"
+            )));
         }
         let violations: i64 =
             self.conn
@@ -678,7 +738,9 @@ impl Store {
         let _guard = Gate::acquire(cx, root, &[gate], Wait::FailFast)?;
         match Self::open(cx, root) {
             Ok(_) => return Err(StoreError::NotCorrupt),
-            Err(StoreError::Corrupt(_)) => {}
+            // A store this Effigy cannot read at all, corrupt or of an unknown
+            // schema, is what the repair is for.
+            Err(StoreError::Corrupt(_)) | Err(StoreError::UnknownSchema { .. }) => {}
             Err(other) => return Err(other),
         }
         let stamp = wall_ms();
@@ -852,7 +914,10 @@ impl Txn<'_> {
         authority: &str,
     ) -> Result<ResourceRecord, StoreError> {
         if self.machine && !id.is_machine_fact() {
-            return Err(StoreError::MachineContentsRefused(id.label()));
+            return Err(StoreError::Refused(format!(
+                "{} belongs to a checkout journal, not the shared machine store",
+                id.label()
+            )));
         }
         let name = id.name().to_string();
         let existing: Option<Vec<u8>> = self
@@ -921,8 +986,9 @@ impl Txn<'_> {
         git_dir_hint: Option<&str>,
     ) -> Result<(), StoreError> {
         if self.machine {
-            return Err(StoreError::MachineContentsRefused(
-                "checkout catalog".into(),
+            return Err(StoreError::Refused(
+                "the checkout catalog belongs to a checkout journal, not the shared machine store"
+                    .into(),
             ));
         }
         self.conn.execute(
@@ -1344,6 +1410,9 @@ fn uri_path(path: PathBuf) -> String {
     out
 }
 fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
+    // A query that cannot be answered is the query's own error (busy, locked,
+    // cannot open, permission); only a store with no readable schema version at
+    // all is corrupt.
     let value: Option<String> = conn
         .query_row(
             "SELECT value FROM meta WHERE key='schema_version'",
@@ -1351,13 +1420,10 @@ fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
             |row| row.get(0),
         )
         .optional()
-        .map_err(|error| match StoreError::from(error) {
-            StoreError::Sqlite { message, .. } => StoreError::Corrupt(message),
-            other => other,
-        })?;
+        .map_err(StoreError::from)?;
     value
         .and_then(|value| value.parse().ok())
-        .ok_or_else(|| StoreError::Corrupt("missing schema version".into()))
+        .ok_or_else(|| StoreError::Corrupt("it has no schema version".into()))
 }
 fn read_unknown(error: &StoreError) -> UnknownReason {
     match error {
