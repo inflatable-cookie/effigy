@@ -92,6 +92,12 @@ impl Fixture {
         append(&self.state.join("locked"), name);
     }
 
+    /// Mark a container running with `restart: unless-stopped`.
+    fn running_unless_stopped(&self, name: &str) {
+        append(&self.state.join("running"), name);
+        append(&self.state.join("unless-stopped"), name);
+    }
+
     fn state_lines(&self, file: &str) -> Vec<String> {
         fs::read_to_string(self.state.join(file))
             .unwrap_or_default()
@@ -221,8 +227,19 @@ case "$*" in
     done
     sed -n "s/^\([^|]*\)|$project\$/\1/p" "$state/networks" 2>/dev/null
     ;;
+  "stop "*)
+    name="${{2:-}}"
+    grep -vx "$name" "$state/running" > "$state/running.tmp" 2>/dev/null || true
+    mv "$state/running.tmp" "$state/running" 2>/dev/null || true
+    ;;
   "rm -f "*)
     name="${{3:-}}"
+    # A kill of a running `restart: unless-stopped` container is an exit the
+    # runtime undoes: the container comes back under the same name.
+    if grep -qx "$name" "$state/running" 2>/dev/null && grep -qx "$name" "$state/unless-stopped" 2>/dev/null; then
+      printf '%s\n' "$name" >> "$state/restarts"
+      exit 0
+    fi
     if grep -qx "$name" "$state/locked" 2>/dev/null; then
       printf 'container removal failed\n' >&2
       exit 1
@@ -496,4 +513,56 @@ fn retire_of_a_checkout_with_no_labelled_resources_is_a_no_op() {
     // Nothing reached a mutating backend command.
     let calls = fixture.state_lines("calls.log");
     assert!(calls.iter().all(|call| !call.contains(" rm ")), "{calls:?}");
+}
+
+/// The scripted runtime's own proof: `rm -f` of a running
+/// `restart: unless-stopped` container is undone by a restart, which is what
+/// happened to a milestone-QA stack (effigy#376).
+#[test]
+fn the_scripted_runtime_restarts_a_killed_unless_stopped_container() {
+    let fixture = Fixture::new("effigy-retire-race-model-");
+    let scope = "33333333333333333333333333333333";
+    fixture.container("web-1", "app-web-wt-333333333333", scope);
+    fixture.running_unless_stopped("web-1");
+    let output = Command::new("docker")
+        .args(["rm", "-f", "web-1"])
+        .env("EFFIGY_TEST_RUNTIME_STATE", &fixture.state)
+        .env("PATH", &fixture.path)
+        .output()
+        .expect("scripted docker");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fixture.state_lines("restarts"), vec!["web-1".to_owned()]);
+    assert_eq!(fixture.state_lines("containers").len(), 1);
+}
+
+#[test]
+fn retire_stops_before_removing_so_unless_stopped_never_resurrects() {
+    let fixture = Fixture::new("effigy-retire-restart-policy-");
+    let scope = "44444444444444444444444444444444";
+    let project = "app-web-wt-444444444444";
+    fixture.container("web-1", project, scope);
+    fixture.container("mail-1", project, scope);
+    fixture.running_unless_stopped("web-1");
+    fixture.running_unless_stopped("mail-1");
+
+    let (ok, report) = fixture.retire(&["container", "retire", "--yes"]);
+    assert!(ok, "{report}");
+    assert_eq!(names(&report["removed"]), vec!["mail-1", "web-1"]);
+    assert!(fixture.state_lines("containers").is_empty());
+    assert!(
+        fixture.state_lines("restarts").is_empty(),
+        "a removal never restarts what it is removing"
+    );
+    let calls = fixture.state_lines("calls.log");
+    for name in ["web-1", "mail-1"] {
+        let stop = calls
+            .iter()
+            .position(|call| call == &format!("docker stop {name}"))
+            .unwrap_or_else(|| panic!("no stop of {name}: {calls:?}"));
+        let remove = calls
+            .iter()
+            .position(|call| call == &format!("docker rm -f {name}"))
+            .unwrap_or_else(|| panic!("no removal of {name}: {calls:?}"));
+        assert!(stop < remove, "{name} is stopped before it is removed");
+    }
 }

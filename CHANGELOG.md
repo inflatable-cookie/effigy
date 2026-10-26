@@ -1984,6 +1984,16 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- `container retire` and `container retire --dead` remove every owned container
+  every time. They deleted each container with a forced remove, which the
+  runtime's restart manager treated as an exit and undid for the
+  `restart: unless-stopped` policy the generated Compose now renders, so a
+  milestone-QA teardown came back with `mailpit` and `silo` running and exited
+  non-zero on the volume and network they still held. Each container is stopped
+  first, so the removal sticks, and only residue the backend still lists counts
+  as a failure. A stopped Colima profile is a warning and no longer fails the
+  retirement. The stale-container removal that clears a nerdctl name-store
+  conflict stops the container it removes for the same reason (effigy#376).
 - Shared backing-service environment goes only to the services that are its
   clients, and those clients can resolve it. The generated Compose rewrite
   injected every shared `*_HOST` into every service, so a local MariaDB catalog

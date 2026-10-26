@@ -1043,11 +1043,15 @@ plus Effigy's checkout label (`com.effigy.checkout`, or `com.effigy.repo-root`
 for a volume the `data_from` path created) and, when a scope is selected, the
 `com.effigy.scope` token. Effigy keeps no record beside them: `effigy container
 retire` asks the backend what carries those labels and deletes all of it, on
-every profile the runtime reports and on the configured endpoint. There is no
+every profile the runtime reports and on the configured endpoint except a
+stopped Colima profile, which is a warning: nothing on it runs and it cannot be
+read without starting its VM. There is no
 runtime-scope journal, no checkout generation and no custody-lease fence.
 
 Listing uses `ps -a`, and each kind is read with one labelled `ps` or `ls`, so
-Created and exited containers retire with running ones. Compose networks carry
+Created and exited containers retire with running ones. A container is stopped
+before it is removed, so a `restart: unless-stopped` service is not restarted
+while it is being retired. Compose networks carry
 no Effigy label of their own, so they are found by their
 `com.docker.compose.project` label and attributed to the one checkout the
 project's labelled resources name; a project two checkouts share is never
@@ -1062,10 +1066,10 @@ reporting them as unlabelled. A volume of a project whose containers are
 already gone is still found, because the checkout's manifest names its
 projects. `retire --keep-data` keeps every labelled
 volume, names which ones are named data (`com.effigy.persist=true`) and lists
-them; without it retirement removes them with the rest of the stack. Anything
-that could not be deleted is named with the runtime's own error and retirement
-exits non-zero; it never reports a clean result while an owned resource
-survives.
+them; without it retirement removes them with the rest of the stack. What the
+backend still lists afterwards is named with the runtime's own error and
+retirement exits non-zero; a resource already gone is removed, not a failure,
+so it never reports a clean result while an owned resource survives.
 Retirement also releases the checkout's gateway routes by checkout path alone,
 which frees its loopback address with them. Its certificates stay as a cache
 the daemon prunes by age. A second retire with nothing left is success and

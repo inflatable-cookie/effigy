@@ -332,22 +332,37 @@ pub(super) struct Group {
 }
 
 /// Profiles to query: every profile the runtime reports a container for, plus
-/// the configured endpoint. A stopped profile is named in a warning and never
-/// blocks the rest.
+/// the configured endpoint. A stopped profile publishes nothing and cannot be
+/// read without starting its VM, so it is named in a warning and left out
+/// instead of failing the retirement (effigy#376).
 pub(super) fn query_profiles() -> Vec<String> {
-    let mut profiles = BTreeSet::new();
-    profiles.insert(effigy_containers::backend::global_endpoint(None));
     let inventory = effigy_containers::exec::discover_compose_containers_all_states();
-    for row in &inventory.rows {
-        profiles.insert(row.profile.clone());
-    }
     if let Some(summary) = inventory.incomplete_failure_summary() {
         eprintln!("[warn] runtime inventory is incomplete: {summary}");
     }
-    for profile in inventory.stopped_profiles() {
+    let stopped = inventory.stopped_profiles();
+    for profile in &stopped {
         eprintln!(
             "[warn] Colima profile `{profile}` is stopped; anything it holds cannot be seen or retired until it starts"
         );
+    }
+    queried_profiles(
+        &effigy_containers::backend::global_endpoint(None),
+        inventory.rows.iter().map(|row| row.profile.as_str()),
+        &stopped,
+    )
+}
+
+/// [`query_profiles`]' decision, apart from the runtime it reads.
+fn queried_profiles<'a>(
+    configured: &str,
+    reported: impl IntoIterator<Item = &'a str>,
+    stopped: &[&str],
+) -> Vec<String> {
+    let mut profiles = BTreeSet::from([configured.to_owned()]);
+    profiles.extend(reported.into_iter().map(str::to_owned));
+    for profile in stopped {
+        profiles.remove(*profile);
     }
     profiles.into_iter().collect()
 }
@@ -593,7 +608,7 @@ pub(super) fn retire_owned(
 ) -> Result<RetireOutcome, RunnerError> {
     let cwd = observation_cwd(checkout);
     let mut outcome = RetireOutcome::default();
-    let mut deleted = Vec::new();
+    let mut attempted = Vec::new();
     for resource in owned {
         if resource.kind == ResourceKind::Volume && keep_data {
             outcome.kept.push(KeptResource {
@@ -606,20 +621,14 @@ pub(super) fn retire_owned(
             });
             continue;
         }
-        match delete_resource(&cwd, resource) {
-            Ok(()) => deleted.push(resource.clone()),
-            Err(error) => outcome.failed.push(FailedResource {
-                resource: resource.clone(),
-                error,
-            }),
-        }
+        attempted.push((resource.clone(), delete_resource(&cwd, resource).err()));
     }
-    let remaining = still_there(&cwd, &deleted)?;
-    for resource in deleted {
+    let remaining = still_there(&cwd, attempted.iter().map(|(resource, _)| resource))?;
+    for (resource, error) in attempted {
         match remaining.contains(&resource) {
             true => outcome.failed.push(FailedResource {
                 resource,
-                error: "the backend still lists it after deletion".to_owned(),
+                error: error.unwrap_or_else(|| "the backend still lists it".to_owned()),
             }),
             false => outcome.removed.push(resource),
         }
@@ -627,13 +636,13 @@ pub(super) fn retire_owned(
     Ok(outcome)
 }
 
-/// Re-read the backend and report which deleted resources are still listed.
-fn still_there(
+/// Re-read the backend and report which attempted resources are still listed.
+fn still_there<'a>(
     cwd: &Path,
-    deleted: &[OwnedResource],
+    resources: impl IntoIterator<Item = &'a OwnedResource>,
 ) -> Result<BTreeSet<OwnedResource>, RunnerError> {
     let mut present = BTreeSet::new();
-    for resource in deleted {
+    for resource in resources {
         let (program, args) = match resource.kind {
             ResourceKind::Container => ("ps", vec!["-a"]),
             ResourceKind::Volume => ("volume", vec!["ls"]),
@@ -669,11 +678,24 @@ fn still_there(
 
 fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
     let command = match resource.kind {
-        ResourceKind::Container => DockerCommand {
-            program: "docker".to_owned(),
-            args: vec!["rm".to_owned(), "-f".to_owned(), resource.name.clone()],
-            description: format!("remove owned container {}", resource.name),
-        },
+        ResourceKind::Container => {
+            // `rm -f` on a running container is a kill, which the runtime's
+            // restart manager later undoes for `restart: unless-stopped`. An
+            // explicit stop is recorded as a user stop, so the removal holds
+            // (effigy#376). A stop that finds nothing running is not an error;
+            // the removal below is what decides the outcome.
+            let stop = DockerCommand {
+                program: "docker".to_owned(),
+                args: vec!["stop".to_owned(), resource.name.clone()],
+                description: format!("stop owned container {}", resource.name),
+            };
+            let _ = run_runtime_volume_capture(cwd, &resource.profile, &stop);
+            DockerCommand {
+                program: "docker".to_owned(),
+                args: vec!["rm".to_owned(), "-f".to_owned(), resource.name.clone()],
+                description: format!("remove owned container {}", resource.name),
+            }
+        }
         ResourceKind::Volume => remove_volume_command(&resource.name),
         ResourceKind::Network => DockerCommand {
             program: "docker".to_owned(),
@@ -1063,6 +1085,18 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(domains, vec!["other.test".to_owned()]);
         });
+    }
+
+    #[test]
+    fn a_stopped_profile_is_never_queried_even_when_it_is_the_endpoint() {
+        assert_eq!(
+            queried_profiles(
+                "effigy-release",
+                ["effigy", "effigy-release"],
+                &["effigy-release"]
+            ),
+            vec!["effigy".to_owned()]
+        );
     }
 
     #[test]
