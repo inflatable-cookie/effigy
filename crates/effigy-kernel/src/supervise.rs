@@ -8,6 +8,7 @@ use crate::ctx::{
 use crate::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
 use crate::fs::{FileName, Trust};
 use crate::gate::Wait;
+use crate::human::Category;
 use crate::id::{ResolvedInvocation, ResourceId, RunId};
 use crate::ident::{self, ProcessIdentity};
 use crate::observe::Observed;
@@ -71,16 +72,17 @@ impl Executable {
     }
 }
 /// The helper handshake protocol this binary speaks. A helper started from a
-/// different binary refuses a frame whose version differs.
-pub const HELPER_PROTOCOL: u32 = 1;
+/// different binary refuses a frame whose version differs. 2: a refused
+/// admission carries its category alongside the rule (effigy#360).
+pub const HELPER_PROTOCOL: u32 = 2;
 /// Refuse a helper frame this binary cannot read, naming both versions.
 fn check_protocol(version: u32) -> Result<(), RunError> {
     if version == HELPER_PROTOCOL {
         return Ok(());
     }
-    Err(RunError::Invalid(format!(
-        "helper protocol {version} does not match this binary's protocol \
-         {HELPER_PROTOCOL}; rerun the command"
+    Err(RunError::refused(format!(
+        "this helper speaks protocol {version} and this binary speaks {HELPER_PROTOCOL}, so the \
+         command has to be run again"
     )))
 }
 #[derive(Debug, Clone)]
@@ -156,7 +158,7 @@ const HELPER_EXIT_WAIT: Duration = Duration::from_secs(2);
 /// the state root, so an early exit keeps its reason and leaves no residue.
 fn helper_log(root: &StateRoot) -> Result<std::fs::File, RunError> {
     let name = FileName::new(&format!("helper-{}-{}.log", std::process::id(), nonce()))
-        .map_err(|e| RunError::Invalid(e.to_string()))?;
+        .map_err(|e| RunError::broken(format!("the helper log name: {e}")))?;
     let fs = crate::store::StoreError::from;
     let (file, _) = root
         .dir()
@@ -167,18 +169,16 @@ fn helper_log(root: &StateRoot) -> Result<std::fs::File, RunError> {
             Trust::Private,
         )
         .map_err(fs)?
-        .ok_or_else(|| RunError::Invalid("helper log missing".into()))?;
+        .ok_or_else(|| RunError::unavailable("helper log missing"))?;
     root.dir().remove(&name, false).map_err(fs)?;
     Ok(file)
 }
 /// A helper that never started: nothing ran on its behalf.
 fn helper_not_started(entry: &str, cause: io::Error) -> RunError {
-    RunError::HelperExited {
-        helper: entry.into(),
-        exit: HelperExit::NotStarted,
-        cause: cause.to_string(),
-        stderr_tail: String::new(),
-    }
+    RunError::unavailable(format!(
+        "kernel helper `{entry}` {} ({cause})",
+        HelperExit::NotStarted
+    ))
 }
 /// Verifies the image and spawns `entry` with stderr to `log`. Refusal and
 /// spawn failure are typed, never store I/O. An engine supervisor gets its
@@ -267,12 +267,16 @@ fn helper_failed(
             HelperExit::Stopped
         }
     };
-    RunError::HelperExited {
-        helper: entry.into(),
-        exit,
-        cause: cause.to_string(),
-        stderr_tail: helper_tail(log),
-    }
+    let tail = helper_tail(log);
+    let tail = tail.trim_end();
+    let tail = if tail.is_empty() {
+        String::new()
+    } else {
+        format!(": {tail}")
+    };
+    RunError::unavailable(format!(
+        "kernel helper `{entry}` {exit} before acknowledging ({cause}){tail}"
+    ))
 }
 /// After acknowledging, a helper's stderr returns to the null device it had
 /// before: a long-lived helper never grows the unlinked log.
@@ -303,7 +307,7 @@ fn helper_root(
             .child(Duration::from_secs(10))
             .operation()
             .observe()
-            .map_err(|_| RunError::Invalid("helper machine gate observation".into()))?;
+            .map_err(|_| RunError::unavailable("helper machine gate observation"))?;
         root = root.restore_machine_gates(&observe, address);
     }
     Ok(root)
@@ -344,13 +348,15 @@ pub(crate) fn spawn_sentinel(
     next: &Invocation,
 ) -> Result<SentinelLease, RunError> {
     if plan.placement == Placement::Guest {
-        return Err(RunError::HostAuthorityRequired);
+        return Err(RunError::refused(
+            "a managed run needs host authority, and this placement is a guest",
+        ));
     }
     let home = root
         .path()
         .parent()
         .and_then(Path::parent)
-        .ok_or_else(|| RunError::Invalid("invalid state root".into()))?;
+        .ok_or_else(|| RunError::unavailable("invalid state root"))?;
     sentinel_attempt(run, root, home, plan, next)
 }
 fn sentinel_attempt(
@@ -378,7 +384,7 @@ fn sentinel_attempt(
     let mut writer = child
         .stdin
         .take()
-        .ok_or_else(|| RunError::Invalid("sentinel pipe missing".into()))?;
+        .ok_or_else(|| RunError::unavailable("sentinel pipe missing"))?;
     let config = SentinelConfig {
         protocol: HELPER_PROTOCOL,
         home: home.into(),
@@ -392,7 +398,7 @@ fn sentinel_attempt(
     let mut ready = child
         .stdout
         .take()
-        .ok_or_else(|| RunError::Invalid("sentinel ready pipe missing".into()))?;
+        .ok_or_else(|| RunError::unavailable("sentinel ready pipe missing"))?;
     let acknowledged = (|| {
         nonblocking(writer.as_raw_fd())?;
         write_frame(&mut writer, &config)?;
@@ -410,7 +416,7 @@ fn sentinel_attempt(
     let identity = ident::process_identity(child.id())
         .verified()
         .cloned()
-        .ok_or_else(|| RunError::Invalid("sentinel identity unavailable".into()))?;
+        .ok_or_else(|| RunError::unavailable("sentinel identity unavailable"))?;
     Ok(SentinelLease {
         identity,
         executable: plan.executable.clone(),
@@ -533,10 +539,11 @@ pub fn internal_entry(
         SENTINEL => sentinel(adapter, validate_next),
         SUPERVISOR => read_supervisor_config().and_then(|config| match config.work {
             Work::Engine { .. } => {
-                emit(&Event::Refused(
-                    "this binary runs no engine supervisor".into(),
-                ));
-                Err(RunError::Invalid("engine supervisor unsupported".into()))
+                emit(&Event::Refused {
+                    category: Category::Refused,
+                    detail: "this binary runs no engine supervisor".into(),
+                });
+                Err(RunError::refused("this binary runs no engine supervisor"))
             }
             work => supervisor(
                 router,
@@ -620,7 +627,7 @@ fn sentinel(
         config.next.into_iter().map(OsString::from_vec).collect(),
         validate_next,
     )
-    .map_err(|_| RunError::Invalid("invalid recovery invocation".into()))?;
+    .map_err(|_| RunError::broken("invalid recovery invocation"))?;
     {
         let mut ready = std::io::stdout().lock();
         ready.write_all(&[1])?;
@@ -633,7 +640,7 @@ fn sentinel(
     loop {
         match input.read(&mut byte) {
             Ok(0) => break,
-            Ok(_) => return Err(RunError::Invalid("unexpected sentinel pipe payload".into())),
+            Ok(_) => return Err(RunError::broken("unexpected sentinel pipe payload")),
             Err(e)
                 if matches!(
                     e.kind(),
@@ -649,12 +656,12 @@ fn sentinel(
     let op = context(CancelToken::default(), Duration::from_secs(30));
     let cx = op
         .effects()
-        .map_err(|_| RunError::Invalid("sentinel context".into()))?;
+        .map_err(|_| RunError::broken("sentinel context"))?;
     let root = helper_root(&cx, &config.home, config.machine, config.machine_gates)?;
     if root.is_machine() && config.owner.kind() == crate::id::ResourceKind::Gateway {
         let observe = op
             .observe()
-            .map_err(|_| RunError::Invalid("sentinel observe".into()))?;
+            .map_err(|_| RunError::unavailable("sentinel observe"))?;
         if let Observed::Verified(reader, _) = crate::store::Store::read(&observe, &root) {
             if matches!(run::machine_completion(&reader, &config.owner), Observed::Verified(completion, _) if completion.run == config.run)
             {
@@ -665,7 +672,7 @@ fn sentinel(
     if matches!(
         crate::run::metadata(
             &op.observe()
-                .map_err(|_| RunError::Invalid("sentinel observe".into()))?,
+                .map_err(|_| RunError::unavailable("sentinel observe"))?,
             &root,
             config.run
         ),
@@ -681,7 +688,7 @@ fn sentinel(
     }
     if let Observed::Verified(metadata, _) = run::metadata(
         &op.observe()
-            .map_err(|_| RunError::Invalid("sentinel observe".into()))?,
+            .map_err(|_| RunError::unavailable("sentinel observe"))?,
         &root,
         config.run,
     ) {
@@ -689,7 +696,7 @@ fn sentinel(
             && matches!(
                 crate::gate::Gate::probe(
                     &op.observe()
-                        .map_err(|_| RunError::Invalid("sentinel observe".into()))?,
+                        .map_err(|_| RunError::unavailable("sentinel observe"))?,
                     &root,
                     &config.owner
                 ),
@@ -701,7 +708,7 @@ fn sentinel(
     }
     let cleanup = op
         .cleanup(Duration::from_secs(30))
-        .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;
+        .map_err(|_| RunError::broken("cleanup overflow"))?;
     crate::fault_point!(SentinelBeforeSettle)?;
     match run::settle_interrupted_wait(
         &cx,
@@ -825,7 +832,11 @@ pub enum Event {
         workload: WorkloadOutcome,
         exit_code: i32,
     },
-    Refused(String),
+    /// Admission refused: the category and the rule. Nothing ran.
+    Refused {
+        category: Category,
+        detail: String,
+    },
     /// An engine supervisor's own event; the kernel never reads it.
     Engine(Vec<u8>),
 }
@@ -894,11 +905,11 @@ impl SupervisorClient {
         let cleanup = cx
             .operation()
             .cleanup(Duration::from_secs(30))
-            .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;
+            .map_err(|_| RunError::broken("cleanup overflow"))?;
         let cx = &cleanup
             .operation()
             .effects()
-            .map_err(|_| RunError::Invalid("stop needs effects".into()))?;
+            .map_err(|_| RunError::broken("stop needs effects"))?;
         let root = &self.root;
         run::request(
             cx,
@@ -975,7 +986,7 @@ pub fn start_detached(
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
-        .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
+        .map_err(|_| RunError::refused("detached spawn needs Mutate"))?;
     let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
     start_detached_at(cx, &root, inv, id, next, processes, executable, client)
 }
@@ -1037,7 +1048,7 @@ pub fn start_engine(
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
-        .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
+        .map_err(|_| RunError::refused("detached spawn needs Mutate"))?;
     let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
     start_engine_at(cx, &root, launch_spec, executable, client)
 }
@@ -1054,10 +1065,11 @@ pub fn start_engine_at(
     };
     // Placeholder identity until the engine's `Admitted` names its run.
     let pending = (
-        RunId::new(0, [0; 10]).map_err(|e| RunError::Invalid(e.to_string()))?,
+        RunId::new(0, [0; 10])
+            .map_err(|e| RunError::broken(format!("a placeholder run id: {e}")))?,
         Fence {
             resource: ResourceId::store(crate::id::Scope::Machine, "engine-supervisor")
-                .map_err(|e| RunError::Invalid(e.to_string()))?,
+                .map_err(|e| RunError::broken(format!("a placeholder supervisor resource: {e}")))?,
             generation: crate::id::Generation::new(0),
         },
     );
@@ -1081,9 +1093,11 @@ fn launch(
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
-        .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
+        .map_err(|_| RunError::refused("detached spawn needs Mutate"))?;
     cx.require(crate::ctx::Capability::HostAuthority)
-        .map_err(|_| RunError::HostAuthorityRequired)?;
+        .map_err(|_| {
+            RunError::refused("a managed run needs host authority, and this placement is a guest")
+        })?;
     cx.operation().check("start detached")?;
     let config = SupervisorConfig {
         protocol: HELPER_PROTOCOL,
@@ -1098,11 +1112,11 @@ fn launch(
     let mut writer = child
         .stdin
         .take()
-        .ok_or_else(|| RunError::Invalid("owner pipe missing".into()))?;
+        .ok_or_else(|| RunError::unavailable("owner pipe missing"))?;
     let events = child
         .stdout
         .take()
-        .ok_or_else(|| RunError::Invalid("event pipe missing".into()))?;
+        .ok_or_else(|| RunError::unavailable("event pipe missing"))?;
     let sent = (|| {
         nonblocking(writer.as_raw_fd())?;
         write_frame(&mut writer, &config)?;
@@ -1127,15 +1141,13 @@ fn launch(
             result.run = run;
             result.fence = fence;
         }
-        Ok(Event::Refused(reason)) => {
-            // The supervisor refused to admit its run and said why. That reason
-            // is a store, gate or capability refusal, never an invalid request.
-            return Err(RunError::StepFailed {
-                step: "supervisor admission".into(),
-                cause: reason,
-            });
+        Ok(Event::Refused { category, detail }) => {
+            // The supervisor refused to admit its run and said why, with the
+            // category it read to a person. Nothing ran on its behalf, and its
+            // sentence is printed as it stands.
+            return Err(RunError::reported(category, detail));
         }
-        Ok(_) => return Err(RunError::Invalid("invalid admission event".into())),
+        Ok(_) => return Err(RunError::broken("invalid admission event")),
         Err(error) => return Err(helper_failed(SUPERVISOR, &mut result.child, &log, error)),
     }
     // Explicit detach is an operation, not a different topology. The caller
@@ -1269,7 +1281,7 @@ impl OwningChannel {
             let size = u32::from_be_bytes(
                 self.buffer[..4]
                     .try_into()
-                    .map_err(|_| RunError::Invalid("client frame".into()))?,
+                    .map_err(|_| RunError::broken("client frame"))?,
             ) as usize;
             if size > ResolvedInvocation::MAX_WIRE_BYTES {
                 // A malformed client stream is a lost owning client.
@@ -1340,16 +1352,27 @@ impl EngineSession {
         release_helper_log();
         Ok(())
     }
-    /// Admission refused: the client reports `reason`; nothing ran. The
-    /// reason also reaches the client's helper log tail, so a refusal too
-    /// long for one event frame still names itself.
-    pub fn refused(&self, reason: &str) {
-        let _ = writeln!(io::stderr(), "{reason}");
-        let mut end = reason.len().min(3072);
-        while !reason.is_char_boundary(end) {
+    /// Admission refused: the client reads the category's own sentence around
+    /// `detail`; nothing ran. The sentence also reaches the client's helper log
+    /// tail, so a refusal too long for one event frame still names itself.
+    pub fn refused(&self, category: Category, detail: &str) {
+        self.refused_message(category, category.render("the run", detail));
+    }
+
+    /// Admission refused with a sentence this process already rendered (its own
+    /// `RunError`, or a supervisor's refusal): the client prints it verbatim,
+    /// so a refusal is framed exactly once.
+    pub fn refused_message(&self, category: Category, message: impl Into<String>) {
+        let message = message.into();
+        let _ = writeln!(io::stderr(), "{message}");
+        let mut end = message.len().min(3072);
+        while !message.is_char_boundary(end) {
             end -= 1;
         }
-        self.emit(&Event::Refused(reason[..end].into()));
+        self.emit(&Event::Refused {
+            category,
+            detail: message[..end].into(),
+        });
     }
     pub fn active(&self) {
         self.emit(&Event::Active);
@@ -1594,15 +1617,15 @@ fn supervisor(
         next,
     } = work
     else {
-        return Err(RunError::Invalid("process supervisor work".into()));
+        return Err(RunError::refused("process supervisor work"));
     };
-    let inv =
-        ResolvedInvocation::decode(&invocation).map_err(|e| RunError::Invalid(e.to_string()))?;
+    let inv = ResolvedInvocation::decode(&invocation)
+        .map_err(|e| RunError::broken(format!("the invocation on the wire: {e}")))?;
     let next = Invocation::validated(
         next.into_iter().map(OsString::from_vec).collect(),
         validate_next,
     )
-    .map_err(|_| RunError::Invalid("invalid recovery invocation".into()))?;
+    .map_err(|_| RunError::broken("invalid recovery invocation"))?;
     let op = OperationContext::new(
         Deadline::Open(OpenReason::DevServer),
         router.root_cancel(),
@@ -1614,11 +1637,11 @@ fn supervisor(
     );
     let cx = op
         .effects()
-        .map_err(|_| RunError::Invalid("supervisor context".into()))?;
+        .map_err(|_| RunError::broken("supervisor context"))?;
     let root = helper_root(&cx, &home, machine, machine_gates)?;
     let cleanup = op
         .cleanup(Duration::from_secs(30))
-        .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;
+        .map_err(|_| RunError::broken("cleanup overflow"))?;
     let specs = processes
         .into_iter()
         .map(WireProcess::decode)
@@ -1635,9 +1658,7 @@ fn supervisor(
     };
     let run = if root.is_machine() && inv.spec().owner.kind() == crate::id::ResourceKind::Gateway {
         let [process] = specs.as_slice() else {
-            return Err(RunError::Invalid(
-                "gateway must have one planned process".into(),
-            ));
+            return Err(RunError::refused("gateway must have one planned process"));
         };
         Run::begin_gateway(&cx, &root, &inv, options, &cleanup, adapter, process)
     } else {
@@ -1646,14 +1667,20 @@ fn supervisor(
     let mut run = match run {
         Ok(run) => run,
         Err(error) => {
-            emit(&Event::Refused(error.to_string()));
+            emit(&Event::Refused {
+                category: error.category(),
+                detail: error.to_string(),
+            });
             return Err(error);
         }
     };
     let listener = match run.control_socket() {
         Ok(listener) => listener,
         Err(error) => {
-            emit(&Event::Refused(error.to_string()));
+            emit(&Event::Refused {
+                category: error.category(),
+                detail: error.to_string(),
+            });
             release_helper_log();
             run.interrupt(&cleanup, WorkloadOutcome::NotStarted)?;
             run.settle(&cleanup, adapter)?;
@@ -1675,7 +1702,10 @@ fn supervisor(
         Ok(children) => children,
         Err(error) => {
             let result = run.settle(&cleanup, adapter);
-            emit(&Event::Refused(format!("{error:?}")));
+            emit(&Event::Refused {
+                category: Category::Unavailable,
+                detail: format!("a workload spawn failed ({error:?})"),
+            });
             result?;
             return Ok(());
         }
@@ -1700,7 +1730,7 @@ fn supervisor(
         if let Some(cause) = stop {
             let _ = run.interrupt(
                 &op.cleanup(Duration::from_secs(30))
-                    .map_err(|_| RunError::Invalid("cleanup overflow".into()))?,
+                    .map_err(|_| RunError::broken("cleanup overflow"))?,
                 WorkloadOutcome::Cancelled {
                     signal: match &cause {
                         StopCause::Signal(signal) => Some(*signal),
@@ -1717,7 +1747,7 @@ fn supervisor(
             if child.expired() {
                 run.interrupt(
                     &op.cleanup(Duration::from_secs(30))
-                        .map_err(|_| RunError::Invalid("cleanup overflow".into()))?,
+                        .map_err(|_| RunError::broken("cleanup overflow"))?,
                     WorkloadOutcome::TimedOut {
                         phase: "workload".into(),
                     },
@@ -1758,7 +1788,7 @@ fn supervisor(
     }
     let result = run.settle(
         &op.cleanup(Duration::from_secs(30))
-            .map_err(|_| RunError::Invalid("cleanup overflow".into()))?,
+            .map_err(|_| RunError::broken("cleanup overflow"))?,
         adapter,
     )?;
     emit(&Event::Closed {

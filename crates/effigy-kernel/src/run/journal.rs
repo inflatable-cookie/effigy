@@ -92,7 +92,7 @@ pub(super) fn insert_effect(
 ) -> Result<i64, RunError> {
     let record = run(txn.conn(), id)?;
     if matches!(record.phase, Phase::Stopping | Phase::Closed) {
-        return Err(RunError::Invalid("run is stopping".into()));
+        return Err(RunError::refused("run is stopping"));
     }
     let sequence: i64 = txn.conn().query_row(
         "SELECT coalesce(max(seq),0)+1 FROM events WHERE run_id=?1",
@@ -144,7 +144,7 @@ pub(super) fn effect(conn: &Connection, id: RunId, seq: i64) -> Result<Effect, R
     effects(conn, id)?
         .into_iter()
         .find(|e| e.sequence == seq)
-        .ok_or_else(|| RunError::Invalid("unknown effect ticket".into()))
+        .ok_or_else(|| RunError::broken("unknown effect ticket"))
 }
 pub(super) fn write_effect(
     txn: &Txn<'_>,
@@ -157,7 +157,7 @@ pub(super) fn write_effect(
     let state = serde_json::to_value(state)?;
     let state = state
         .as_str()
-        .ok_or_else(|| RunError::Invalid("effect state encoding".into()))?;
+        .ok_or_else(|| RunError::broken("effect state encoding"))?;
     txn.conn().execute("UPDATE events SET state=?3,receipt=coalesce(?4,receipt),error=?5 WHERE run_id=?1 AND seq=?2",
         params![id.to_string(),seq,state,receipt.map(serde_json::to_string).transpose()?,reason])?;
     Ok(())

@@ -578,7 +578,7 @@ fn attachments_residue_keeps_holder_and_claim_protection_even_when_acknowledged(
     );
     assert!(matches!(
         Claims::reserve(&mut other, &[data], Duration::ZERO),
-        Err(RunError::Conflict(_))
+        Err(RunError::Refused(_))
     ));
     drop(other);
     let mut acknowledged = opts(2);
@@ -678,7 +678,7 @@ fn claims_conflict_set_is_atomic_and_concurrent_starts_have_one_winner() {
                 );
                 assert!(matches!(
                     Claims::reserve(&mut other, &[port.clone(), data.clone()], Duration::ZERO),
-                    Err(RunError::Conflict(_))
+                    Err(RunError::Refused(_))
                 ));
                 let count: i64 = other
                     .store
@@ -776,7 +776,7 @@ fn claims_persistent_payload_survives_settle_and_release_quarantines() {
     );
     assert!(matches!(
         Claims::reserve(&mut foreign, &[address], Duration::ZERO),
-        Err(RunError::Conflict(_))
+        Err(RunError::Refused(_))
     ));
     foreign.settle(&cleanup(&cx), &mut fake).unwrap();
 }
@@ -934,7 +934,7 @@ fn claims_quarantine_blocks_reuse_until_boot_deadline_and_release_is_once() {
     let mut other = begin(&cx, &root, owner(), 2, &mut fake);
     assert!(matches!(
         Claims::reserve(&mut other, std::slice::from_ref(&address), Duration::ZERO),
-        Err(RunError::Conflict(_))
+        Err(RunError::Refused(_))
     ));
     drop(other);
     // Strict clock fixture: a different boot ends quarantine; no wall timestamp.
@@ -1076,7 +1076,7 @@ fn claims_simultaneous_reservations_commit_exactly_one_conflict_set() {
                             Claims::commit(&mut run, &token, 1).unwrap();
                             true
                         }
-                        Err(RunError::Conflict(_)) => false,
+                        Err(RunError::Refused(_)) => false,
                         other => panic!("{other:?}"),
                     };
                     barrier.wait(); // Keep the winner's reservation until both attempted.
@@ -1127,7 +1127,7 @@ fn claims_prepare_and_refresh_classes_cannot_reserve_resources() {
                 &[ResourceId::data("fake", "local", "data").unwrap()],
                 Duration::ZERO
             ),
-            Err(RunError::Invalid(_))
+            Err(RunError::Refused(rule)) if rule.contains("Mutate")
         ));
         let claims: i64 = run
             .store
@@ -1919,7 +1919,7 @@ fn run_machine_owner_refusal_precedes_database_creation_and_shared_runs_reject_p
             &cleanup(&cx),
             &mut fake,
         );
-        assert!(matches!(result, Err(RunError::Invalid(_))));
+        assert!(matches!(result, Err(RunError::Refused(_))));
         assert!(!root.path().join("machine.db").exists());
     }
     spec.owner = ResourceId::gateway("fixture").unwrap();

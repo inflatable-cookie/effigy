@@ -160,6 +160,56 @@ fn container_surface_selection_variants_render_stably() {
 }
 
 #[test]
+fn an_admission_refusal_carries_the_kernel_category() {
+    // effigy#360: a supervisor relays an admission failure with the kernel's
+    // own category, so a busy store at managed start is unavailable and never
+    // a refusal.
+    let unavailable = RunnerError::RunAdmission {
+        category: effigy_kernel::human::Category::Unavailable,
+        message: "`dev` could not be admitted: the state store could not proceed".into(),
+    };
+    assert_eq!(
+        unavailable.category(),
+        effigy_kernel::human::Category::Unavailable
+    );
+    assert_eq!(
+        unavailable.to_string(),
+        "`dev` could not be admitted: the state store could not proceed"
+    );
+    assert_eq!(
+        RunnerError::task_invocation("a request failure").category(),
+        effigy_kernel::human::Category::Refused
+    );
+}
+
+#[test]
+fn an_unknown_task_name_is_the_only_error_that_names_effigy_tasks() {
+    // effigy#360: the invalid-request wording belongs to exactly this case, so
+    // a held run, a revoked capability or a broken record never reads as one.
+    let not_defined = RunnerError::TaskNotFound {
+        name: "deploy".into(),
+        path: Path::new("/repo/effigy.toml").into(),
+    }
+    .to_string();
+    assert_eq!(
+        not_defined,
+        "task `deploy` is not defined in /repo/effigy.toml; run `effigy tasks` to see the task \
+         names this checkout routes"
+    );
+    let any_catalog = RunnerError::TaskNotFoundAny {
+        name: "deploy".into(),
+        catalogs: vec!["web".into(), "infra".into()],
+    }
+    .to_string();
+    assert_eq!(
+        any_catalog,
+        "task `deploy` is not defined in effective catalogs: web, infra; run `effigy tasks` to \
+         see the task names this checkout routes"
+    );
+    assert!(!any_catalog.contains("not a valid"));
+}
+
+#[test]
 fn workspace_session_cleanup_constructor_preserves_shape() {
     let err = RunnerError::workspace_session_cleanup("shell failed", "cleanup failed");
     match &err {

@@ -67,9 +67,7 @@ impl ForegroundRun {
             || self.record.incarnation().owner == inv.spec().owner
             || matches!(self.record.phase(), Phase::Stopping | Phase::Closed)
         {
-            return Err(RunError::Invalid(
-                "invalid foreground child admission".into(),
-            ));
+            return Err(RunError::broken("invalid foreground child admission"));
         }
         let mut ancestors = self.ancestor_owners.clone();
         ancestors.push(self.record.incarnation().owner.clone());
@@ -94,7 +92,9 @@ impl ForegroundRun {
     ) -> Result<Self, RunError> {
         if cx.operation().placement() != Placement::Host || inv.spec().placement != Placement::Host
         {
-            return Err(RunError::HostAuthorityRequired);
+            return Err(RunError::refused(
+                "a managed run needs host authority, and this placement is a guest",
+            ));
         }
         if cx.operation().class() != EffectClass::Mutate
             || inv.spec().class != EffectClass::Mutate
@@ -108,8 +108,8 @@ impl ForegroundRun {
             )
             || !opts.acknowledge.is_empty()
         {
-            return Err(RunError::Invalid(
-                "foreground admission requires local checkout capabilities".into(),
+            return Err(RunError::refused(
+                "foreground admission requires local checkout capabilities",
             ));
         }
         cx.operation().check("foreground admission")?;
@@ -117,12 +117,12 @@ impl ForegroundRun {
             .child(Duration::from_secs(10))
             .operation()
             .observe()
-            .map_err(|_| RunError::Invalid("foreground publication context".into()))?;
+            .map_err(|_| RunError::unavailable("foreground publication context"))?;
         let plan = opts
             .custody
-            .ok_or_else(|| RunError::Invalid("foreground custody needs a memory guard".into()))?;
+            .ok_or_else(|| RunError::broken("foreground custody needs a memory guard"))?;
         if plan.placement != crate::supervise::Placement::Inline {
-            return Err(RunError::Invalid("foreground custody cannot detach".into()));
+            return Err(RunError::broken("foreground custody cannot detach"));
         }
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
@@ -131,8 +131,8 @@ impl ForegroundRun {
                 || !matches!(id.scope(), Scope::Checkout(_))
                 || !matches!(id.kind(), ResourceKind::Task | ResourceKind::Store)
         }) {
-            return Err(RunError::Invalid(
-                "foreground gates must belong to the owning checkout".into(),
+            return Err(RunError::broken(
+                "foreground gates must belong to the owning checkout",
             ));
         }
         let ids = aliases::gates(&publication, root, &inv.spec().owner, &ids)?;
@@ -190,7 +190,7 @@ impl ForegroundRun {
     pub(crate) fn closure_pin(&self) -> Result<crate::closure::ClosurePin, RunError> {
         self.guard
             .as_ref()
-            .ok_or_else(|| RunError::Invalid("foreground guard unavailable".into()))?
+            .ok_or_else(|| RunError::broken("foreground guard unavailable"))?
             .closure_pin()
     }
     pub(crate) fn has_guard(&self) -> bool {
@@ -205,10 +205,10 @@ impl ForegroundRun {
             .effects()
             .iter()
             .find(|e| e.sequence == ticket.sequence)
-            .ok_or_else(|| RunError::Invalid("missing foreground process receipt".into()))?;
+            .ok_or_else(|| RunError::broken("missing foreground process receipt"))?;
         self.guard
             .as_mut()
-            .ok_or_else(|| RunError::Invalid("foreground guard unavailable".into()))?
+            .ok_or_else(|| RunError::broken("foreground guard unavailable"))?
             .register(effect)
     }
     pub(crate) fn retain_process(
@@ -233,9 +233,7 @@ impl ForegroundRun {
                     != Some(WorkloadOutcome::Succeeded)
             })
         {
-            return Err(RunError::Invalid(
-                "foreground child obligations incomplete".into(),
-            ));
+            return Err(RunError::broken("foreground child obligations incomplete"));
         }
         self.record.finish(workload)
     }
@@ -325,7 +323,7 @@ fn check_predecessors(
         .child(Duration::from_secs(10))
         .operation()
         .observe()
-        .map_err(|_| RunError::Invalid("foreground predecessor read context".into()))?;
+        .map_err(|_| RunError::unavailable("foreground predecessor read context"))?;
     let reader = match Store::read(&observe, root) {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(_) => return Ok(()),

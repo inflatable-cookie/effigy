@@ -504,10 +504,10 @@ fn store_atomic_replace_keeps_previous_mode_and_needs_a_store_gate() {
         .collect();
     assert_eq!(names.len(), 2, "temporaries left: {names:?}");
     let task_guard = Gate::acquire(&cx, &root, &[task("build")], Wait::FailFast).unwrap();
-    assert_eq!(
+    assert!(matches!(
         atomic_replace(&cx, &task_guard, &dir, &name, b"x", keep),
-        Err(StoreError::WrongGuard)
-    );
+        Err(StoreError::Refused(_))
+    ));
     assert!(matches!(
         atomic_replace(
             &cx,
@@ -1616,11 +1616,11 @@ fn store_machine_contents_refuse_checkout_data_and_catalog_rows_atomically() {
             txn.resource(&ResourceId::gateway("rolled-back").unwrap(), "gateway")?;
             txn.resource(&forbidden, "refused").map(|_| ())
         });
-        assert!(matches!(result, Err(StoreError::MachineContentsRefused(_))));
+        assert!(matches!(result, Err(StoreError::Refused(_))));
     }
     assert!(matches!(
         store.txn(&cx, |txn| txn.checkout_seen(&checkout(), None, None)),
-        Err(StoreError::MachineContentsRefused(_))
+        Err(StoreError::Refused(_))
     ));
     drop(store);
     let conn = rusqlite::Connection::open_with_flags(
@@ -1658,12 +1658,12 @@ fn store_checked_output_and_cache_retirement_refuse_aliases_before_effects() {
     let wrong = Gate::acquire(&cx, &root, &[task("not-a-store")], Wait::FailFast).unwrap();
     assert!(matches!(
         open_output(&cx, &wrong, &dir, &name),
-        Err(StoreError::WrongGuard)
+        Err(StoreError::Refused(_))
     ));
-    assert_eq!(
+    assert!(matches!(
         remove_record(&cx, &wrong, &dir, &name),
-        Err(StoreError::WrongGuard)
-    );
+        Err(StoreError::Refused(_))
+    ));
     assert!(!dir.path().join(name.as_str()).exists());
     let mut file = open_output(&cx, &guard, &dir, &name).unwrap();
     file.write_all(b"old output").unwrap();

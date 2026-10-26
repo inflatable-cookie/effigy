@@ -16,13 +16,13 @@ impl Objects {
     pub fn publish_desired(run: &mut Run<'_>, closure: &Closure) -> Result<String, RunError> {
         run.can_effect()?;
         if run.root.is_machine() {
-            return Err(RunError::Invalid(
-                "immutable objects belong in a checkout journal".into(),
+            return Err(RunError::refused(
+                "immutable objects belong in a checkout journal",
             ));
         }
         run.cx
             .require(Capability::SourceStore)
-            .map_err(|_| RunError::Invalid("object publication needs Prepare or Mutate".into()))?;
+            .map_err(|_| RunError::refused("object publication needs Prepare or Mutate"))?;
         let ticket = run.intend_inner(EffectSpec {
             target: run.owner.clone(),
             kind: objects::KIND.into(),
@@ -73,10 +73,10 @@ impl Objects {
                 .operation()
                 .child(std::time::Duration::from_secs(30))
                 .observe()
-                .map_err(|_| RunError::Invalid("object observation budget".into()))?;
+                .map_err(|_| RunError::unavailable("object observation budget"))?;
             let published = objects::open(&objects, closure.digest(), &observe)?;
             if published.closure != *closure {
-                return Err(RunError::Invalid("object collision".into()));
+                return Err(RunError::broken("object collision"));
             }
             crate::fault_point!(ObjectPublishBefore)?;
             run.store.transaction(&run.cx, |txn| {
@@ -85,7 +85,7 @@ impl Objects {
                     params![closure.digest(), published.path.to_string_lossy(), closure.size() as i64, txn.now()])?;
                 let matches: bool = txn.conn().query_row("SELECT kind='closure-v1' AND path=?2 AND size=?3 FROM objects WHERE digest=?1",
                     params![closure.digest(), published.path.to_string_lossy(), closure.size() as i64], |r| r.get(0))?;
-                if !matches { return Err(RunError::Invalid("object row conflicts with closure".into())); }
+                if !matches { return Err(RunError::broken("object row conflicts with closure")); }
                 crate::fault_point!(ObjectRefBefore)?;
                 set_desired(txn, &run.owner, closure.digest())?;
                 journal::write_effect(txn, run.id, ticket.sequence, EffectState::Applied, Some(&Value::String(closure.digest().into())), None)?;
@@ -105,12 +105,12 @@ impl Objects {
     pub fn promote(run: &mut Run<'_>, expected: &str) -> Result<(), RunError> {
         run.can_effect()?;
         if run.root.is_machine() {
-            return Err(RunError::Invalid(
-                "immutable objects belong in a checkout journal".into(),
+            return Err(RunError::refused(
+                "immutable objects belong in a checkout journal",
             ));
         }
         if run.cx.operation().class() != crate::ctx::EffectClass::Mutate {
-            return Err(RunError::Invalid("object promotion needs Mutate".into()));
+            return Err(RunError::refused("object promotion needs Mutate"));
         }
         objects::validate_digest(expected)?;
         let _guard = objects::lock(&run.cx, run.root)?;
@@ -120,7 +120,7 @@ impl Objects {
                 journal::check_fence(txn.conn(), &run.owner)?;
                 let resource = run.owner.resource.name().to_string();
                 let desired: Option<String> = txn.conn().query_row("SELECT digest FROM object_refs WHERE resource=?1 AND role='desired'", [&resource], |r| r.get(0)).optional()?;
-                if desired.as_deref() != Some(expected) { return Err(RunError::Invalid("desired object changed before promotion".into())); }
+                if desired.as_deref() != Some(expected) { return Err(RunError::broken("desired object changed before promotion")); }
                 let seq = sequence(txn, &resource)?;
                 txn.conn().execute("INSERT INTO object_refs(digest,resource,role,seq) SELECT digest,resource,'superseded',?2 FROM object_refs WHERE resource=?1 AND role='last_applied' AND digest<>?3 ON CONFLICT(digest,resource,role) DO UPDATE SET seq=excluded.seq", params![resource, seq, expected])?;
                 txn.conn().execute("DELETE FROM object_refs WHERE resource=?1 AND (role='last_applied' OR (role='superseded' AND digest=?2))", params![resource, expected])?;
@@ -141,12 +141,12 @@ impl Objects {
     pub fn reset(run: &mut Run<'_>) -> Result<(), RunError> {
         run.can_effect()?;
         if run.root.is_machine() {
-            return Err(RunError::Invalid(
-                "immutable objects belong in a checkout journal".into(),
+            return Err(RunError::refused(
+                "immutable objects belong in a checkout journal",
             ));
         }
         if run.cx.operation().class() != crate::ctx::EffectClass::Mutate {
-            return Err(RunError::Invalid("object reset needs Mutate".into()));
+            return Err(RunError::refused("object reset needs Mutate"));
         }
         let _guard = objects::lock(&run.cx, run.root)?;
         crate::fault_point!(ObjectRefBefore)?;
@@ -202,13 +202,13 @@ impl Run<'_> {
         self.can_effect()?;
         self.cx
             .require(Capability::SourceStore)
-            .map_err(|_| RunError::Invalid("backend metadata needs Prepare or Mutate".into()))?;
+            .map_err(|_| RunError::refused("backend metadata needs Prepare or Mutate"))?;
         if backend.engine.trim().is_empty()
             || backend.context.trim().is_empty()
             || backend.source.trim().is_empty()
         {
-            return Err(RunError::Invalid(
-                "backend metadata fields must be nonempty".into(),
+            return Err(RunError::refused(
+                "backend metadata fields must be nonempty",
             ));
         }
         self.store.transaction(&self.cx, |txn| {
@@ -232,7 +232,7 @@ impl Run<'_> {
         self.can_effect()?;
         self.cx
             .require(Capability::SourceStore)
-            .map_err(|_| RunError::Invalid("engine record needs Prepare or Mutate".into()))?;
+            .map_err(|_| RunError::refused("engine record needs Prepare or Mutate"))?;
         let encoded = serde_json::to_string(record)?;
         if encoded.len() > ENGINE_RECORD_MAX {
             return Err(StoreError::TooLarge {
@@ -269,7 +269,7 @@ impl Run<'_> {
                 .spec
                 .payload
                 .as_str()
-                .ok_or_else(|| RunError::Invalid("staging digest missing".into()))?;
+                .ok_or_else(|| RunError::broken("staging digest missing"))?;
             let name = objects::validate_digest(digest)?;
             let _guard = objects::lock(cx, self.root)?;
             crate::fault_point!(ObjectCleanupBefore)?;

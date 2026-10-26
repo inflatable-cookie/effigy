@@ -390,7 +390,6 @@ fn container_env(
 fn remote_error(error: &RemoteError) -> String {
     match error {
         RemoteError::Unknown(reason) => format!("{reason:?}"),
-        RemoteError::Run(error @ RunError::HelperExited { .. }) => error.to_string(),
         RemoteError::Run(error) => format!("{error:?}"),
         RemoteError::Spawn(error) => format!("{error:?}"),
     }

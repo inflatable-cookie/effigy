@@ -842,9 +842,7 @@ impl OwnedProcess {
     ) -> Result<(), RunError> {
         let core = lock(&self.core);
         if core.exit != Some(exit) {
-            return Err(RunError::Invalid(
-                "unverified foreground process exit".into(),
-            ));
+            return Err(RunError::broken("unverified foreground process exit"));
         }
         run.record_mut().completed(
             &self.ticket,
@@ -855,7 +853,7 @@ impl OwnedProcess {
     pub fn complete(&self, run: &mut Run<'_>, exit: Exit) -> Result<(), RunError> {
         let core = lock(&self.core);
         if core.exit != Some(exit) {
-            return Err(RunError::Invalid("unverified process exit".into()));
+            return Err(RunError::broken("unverified process exit"));
         }
         run.completed(
             &self.ticket,
@@ -1220,7 +1218,7 @@ pub(crate) fn verify_foreground_receipt(
         effect
             .receipt
             .clone()
-            .ok_or_else(|| RunError::Invalid("missing foreground receipt".into()))?,
+            .ok_or_else(|| RunError::broken("missing foreground receipt"))?,
     )?;
     if record.process.nonce != format!("{}:{}", run, effect.sequence)
         || record.process.pgid != record.process.identity.pid
@@ -1232,8 +1230,8 @@ pub(crate) fn verify_foreground_receipt(
             .as_ref()
             .is_some_and(|a| anchor::verified(&record.process, a))
     {
-        return Err(RunError::Invalid(
-            "foreground receipt identity or anchor unavailable".into(),
+        return Err(RunError::broken(
+            "foreground receipt identity or anchor unavailable",
         ));
     }
     Ok(())

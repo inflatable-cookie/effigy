@@ -415,8 +415,8 @@ fn describe_event(event: &supervise::Event) -> String {
         } => {
             format!("the supervisor closed before going active (exit code {exit_code}; {workload})")
         }
-        supervise::Event::Refused(reason) => {
-            format!("the supervisor refused to start it ({reason})")
+        supervise::Event::Refused { detail, .. } => {
+            format!("the supervisor refused to start it ({detail})")
         }
         supervise::Event::Engine(_) => {
             "the supervisor sent an engine-only event before going active".to_owned()
@@ -792,7 +792,10 @@ mod tests {
     #[test]
     fn a_daemon_that_never_went_active_says_what_the_supervisor_did() {
         // Before: `gateway daemon failed to start: Refused("port 443 in use")`.
-        let refused = describe_event(&supervise::Event::Refused("port 443 is in use".into()));
+        let refused = describe_event(&supervise::Event::Refused {
+            category: effigy_kernel::human::Category::Refused,
+            detail: "port 443 is in use".into(),
+        });
         assert_eq!(
             refused,
             "the supervisor refused to start it (port 443 is in use)"
@@ -808,7 +811,10 @@ mod tests {
              exit code 1)"
         );
         for event in [
-            supervise::Event::Refused("x".into()),
+            supervise::Event::Refused {
+                category: effigy_kernel::human::Category::Refused,
+                detail: "x".into(),
+            },
             supervise::Event::Engine(vec![1, 2, 3]),
         ] {
             let reason = describe_event(&event);

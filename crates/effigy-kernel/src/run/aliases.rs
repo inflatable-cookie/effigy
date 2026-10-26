@@ -18,8 +18,8 @@ pub(super) fn gates(
     for id in ids {
         if let Scope::Checkout(checkout) = id.scope() {
             if checkout.kind() == CheckoutKind::Filesystem && checkout != local {
-                return Err(RunError::Invalid(
-                    "filesystem gate belongs to a different checkout generation".into(),
+                return Err(RunError::refused(
+                    "filesystem gate belongs to a different checkout generation",
                 ));
             }
             if id.scope() != owner.scope() && !checkouts.contains(&checkout) {

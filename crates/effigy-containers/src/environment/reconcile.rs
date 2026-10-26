@@ -478,9 +478,7 @@ impl EnvError {
             RunError::Gate(GateError::Busy { .. } | GateError::TimedOut { .. }) => {
                 Self::Busy(Box::new(BusyDiagnostics::unobserved(env)))
             }
-            RunError::Gate(GateError::HostAuthorityRequired) | RunError::HostAuthorityRequired => {
-                Self::HostAuthorityRequired
-            }
+            RunError::Gate(GateError::HostAuthorityRequired) => Self::HostAuthorityRequired,
             RunError::HeldBy(holders) => Self::HeldBy {
                 env: env.to_owned(),
                 holders: match facts {

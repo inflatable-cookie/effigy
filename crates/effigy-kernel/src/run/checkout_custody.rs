@@ -88,13 +88,13 @@ impl Run<'_> {
                 .child(std::time::Duration::from_secs(3))
                 .operation()
                 .observe()
-                .map_err(|_| RunError::Invalid("checkout fence observation context".into()))?;
+                .map_err(|_| RunError::unavailable("checkout fence observation context"))?;
             match Gate::checkout_fence_identity(&cx, self.root, &custody.token) {
                 crate::observe::Observed::Verified(actual, _)
                     if actual == custody.lease.identity() => {}
                 other => {
-                    return Err(RunError::Invalid(format!(
-                        "checkout custody fence changed or is unknown: {other:?}"
+                    return Err(RunError::refused(format!(
+                        "the checkout custody fence changed or is unknown ({other:?})"
                     )))
                 }
             }
