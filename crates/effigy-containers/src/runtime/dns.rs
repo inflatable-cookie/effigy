@@ -209,6 +209,9 @@ pub(crate) fn runtime_route_domains(
                 }
             }
         }
+        // A service whose every alias an effective route already claims keeps
+        // no entry, so the renderer writes no `networks` block for it.
+        service_alias_domains.retain(|_, domains| !domains.is_empty());
     }
 
     RuntimeDnsOverrideRoutes {
@@ -256,7 +259,11 @@ fn render_runtime_dns_override(
                 ));
             }
         }
-        if let Some(domains) = routes.service_alias_domains.get(service) {
+        if let Some(domains) = routes
+            .service_alias_domains
+            .get(service)
+            .filter(|domains| !domains.is_empty())
+        {
             out.push_str("    networks:\n");
             out.push_str("      default:\n");
             out.push_str("        aliases:\n");
@@ -377,6 +384,42 @@ mod tests {
             Some(&vec!["postgres.acme.test".to_owned()]),
             "an explicit scoped route keeps its gateway precedence while the canonical name still resolves locally"
         );
+    }
+
+    #[test]
+    fn primary_checkout_alias_claimed_by_a_route_renders_no_networks_block() {
+        // Primary shape: the alias is the route's own domain, so nothing is
+        // left to alias inside the container.
+        let mut s3 = alias();
+        s3.domain_label = "s3".to_owned();
+        let routes = [route("s3.acme.test")];
+        let routes = runtime_route_domains(&routes, &[s3], Some("acme.test"), Some("acme.test"));
+
+        let rendered = render_runtime_dns_override(
+            &["workspace".into(), "postgres".into()],
+            &["1.1.1.1".into()],
+            Some("192.168.5.2"),
+            &routes,
+        );
+
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&rendered).expect("complete DNS document");
+        assert!(
+            parsed["services"]["postgres"].get("networks").is_none(),
+            "an empty alias list must not render a networks block: {rendered}"
+        );
+        for (name, service) in parsed["services"].as_mapping().unwrap() {
+            if let Some(aliases) = service.get("networks").and_then(|net| net.get("default")) {
+                assert!(
+                    aliases
+                        .get("aliases")
+                        .and_then(serde_yaml::Value::as_sequence)
+                        .is_some(),
+                    "{} must render aliases as a sequence: {rendered}",
+                    name.as_str().unwrap_or_default()
+                );
+            }
+        }
     }
 
     #[test]
