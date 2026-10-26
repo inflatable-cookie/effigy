@@ -38,9 +38,8 @@ pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 pub use bundles::{
     bundle_update_notes, catalog_source_roots, inspect_bundle_source, prepare_bundle_sources,
     prepare_missing_bundle_sources, resolve_catalog_source, sync_bundle_source, BundleInputSpec,
-    BundleInputType,
-    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, CatalogSourceRoots,
-    SourcePreparation, SourceProgress, SourceProgressEvent, SourceSettlement,
+    BundleInputType, BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport,
+    CatalogSourceRoots, SourcePreparation, SourceProgress, SourceProgressEvent, SourceSettlement,
 };
 pub use composition::{
     load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,

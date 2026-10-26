@@ -77,9 +77,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
                 if full_prepare {
                     crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
                 } else {
-                    crate::runner::bundle_command::prepare_missing_sources_for_manifest(
-                        &manifest,
-                    )?;
+                    crate::runner::bundle_command::prepare_missing_sources_for_manifest(&manifest)?;
                 }
             }
         }

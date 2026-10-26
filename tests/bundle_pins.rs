@@ -780,10 +780,9 @@ fn a_plain_task_run_acquires_only_the_missing_pins() {
     let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
     assert!(ok, "{output}");
     assert!(output.contains("hello one"), "{output}");
-    let lock: serde_json::Value = serde_json::from_slice(
-        &fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap(),
-    )
-    .unwrap();
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap())
+            .unwrap();
     assert_eq!(lock["sources"]["bundle"]["revision"], first.as_str());
     assert_eq!(
         lock["sources"]["catalog:team"]["declaration"]["type"],
