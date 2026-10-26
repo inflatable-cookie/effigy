@@ -1559,14 +1559,6 @@ pub(in crate::runner) fn ensure_gateway_tls_cert(domain: &str) -> Result<(), Run
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
-pub(in crate::runner) fn remove_gateway_tls_cert(domain: &str) -> Result<(), RunnerError> {
-    let config = gateway_config()?;
-    let tls_config = gateway_tls_config(&config)?;
-    tls_config
-        .remove_cert(domain)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
 /// The active gateway's HTTPS port, when its TLS listener is configured.
 /// Host processes read it through `${gateway.https_port}` (effigy#321).
 pub(in crate::runner) fn gateway_https_port() -> Option<u16> {

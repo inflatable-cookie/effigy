@@ -31,7 +31,6 @@ fn route_table_with(domain: &str) -> Arc<RwLock<RouteTable>> {
         source: crate::routes::RouteSource::Container,
         project: "/tmp/test".to_string(),
         tls: false,
-        scope: None,
         managed_listener: None,
         registered: chrono::Utc::now(),
     });
@@ -49,7 +48,6 @@ fn route_table_with_dns_ip(domain: &str, dns_ip: Ipv4Addr) -> Arc<RwLock<RouteTa
         source: crate::routes::RouteSource::Container,
         project: "/tmp/test".to_string(),
         tls: false,
-        scope: None,
         managed_listener: None,
         registered: chrono::Utc::now(),
     });

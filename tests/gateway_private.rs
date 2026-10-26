@@ -142,6 +142,141 @@ fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
     );
 }
 
+/// Certificates are a cache keyed by domain, and the daemon prunes an orphan
+/// once it is older than the cache age. A route's certificate stays.
+#[cfg(unix)]
+#[test]
+fn private_gateway_prunes_an_orphan_certificate_and_keeps_a_routed_one() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let root = private_root(fixture.path(), "cert-cache");
+    parse_json_success(run_gateway(&root, "setup-tls", &effects, None, &[]));
+    let upstream = Upstream::start("private-gateway-cert-cache");
+    save_private_routes(&root, &[("kept.test", upstream.address, true)]);
+
+    let certs = root.join("certs");
+    let old = std::time::SystemTime::now() - Duration::from_secs(8 * 24 * 60 * 60);
+    for (domain, modified) in [("kept.test", old), ("orphan.test", old)] {
+        write_self_signed_cert_pair(&certs, domain, modified);
+    }
+
+    let mut child = spawn_private_gateway_daemon(&root, false);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while root.join("orphan.test.pem").exists() || root.join("orphan.test-key.pem").exists() {
+        if let Some(status) = child.try_wait().expect("check private daemon") {
+            panic!(
+                "private daemon exited before pruning ({status}); log={}",
+                fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the daemon did not prune the orphaned certificate; log={}",
+            fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        certs.join("kept.test.pem").exists() && certs.join("kept.test-key.pem").exists(),
+        "a routed domain keeps its cached certificate"
+    );
+    child.terminate_and_wait().expect("stop private daemon");
+}
+
+/// A store this build writes is readable by a pinned build. Queue and Oxide
+/// run `efc1478`, whose decoder requires the empty `imported_sha256` and
+/// `quarantined` maps; the vendored shape is checked in the crate's own tests.
+/// This proof runs when `EFFIGY_PINNED_READER_EFC1478` names that build's
+/// binary, because the pinned build is not part of this suite.
+#[cfg(unix)]
+#[test]
+fn pinned_reader_reads_a_store_this_build_wrote() {
+    let Some(pinned) = std::env::var_os("EFFIGY_PINNED_READER_EFC1478") else {
+        eprintln!("skipped: EFFIGY_PINNED_READER_EFC1478 names no pinned build");
+        return;
+    };
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let root = private_root(fixture.path(), "pinned-reader");
+    parse_json_success(run_gateway(&root, "setup-tls", &effects, None, &[]));
+    let upstream = Upstream::start("pinned-reader");
+    save_private_routes(&root, &[("pinned.test", upstream.address, true)]);
+
+    let output = Command::new(pinned)
+        .args([
+            "gateway",
+            "status",
+            "--private-state-root",
+            root.to_str().expect("UTF-8 fixture path"),
+            "--json",
+        ])
+        .env_remove(effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run the pinned build");
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "the pinned build could not read this store: {rendered}"
+    );
+    assert!(
+        rendered.contains("pinned.test"),
+        "the pinned build did not list the route: {rendered}"
+    );
+}
+
+/// A route whose target is briefly down survives far past the interval the
+/// retired dead-route sweep ran on. A container restart, a Colima restart and
+/// a listener that has not bound yet all look like this, and the route has to
+/// be there when the target is back.
+#[cfg(unix)]
+#[test]
+fn private_gateway_keeps_a_route_whose_target_is_down() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let root = private_root(fixture.path(), "route-survival");
+    parse_json_success(run_gateway(&root, "setup-tls", &effects, None, &[]));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bound probe port");
+    let down = listener.local_addr().expect("probe address");
+    drop(listener);
+    save_private_routes(&root, &[("localhost", down, false)]);
+
+    let mut child = spawn_private_gateway_daemon(&root, false);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !root.join("gateway.addresses.json").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "private daemon did not start; log={}",
+            fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let routed = || {
+        let status = parse_json_success(run_gateway(&root, "status", &effects, None, &[]));
+        status["routes"]
+            .as_array()
+            .is_some_and(|routes| routes.iter().any(|route| route["domain"] == "localhost"))
+    };
+    assert!(routed(), "the route is listed while its target is down");
+
+    // The retired sweep dropped a route like this within 30 seconds.
+    thread::sleep(Duration::from_secs(60));
+
+    assert!(
+        routed(),
+        "a route whose target is briefly down must survive: {}",
+        fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+    );
+    child.terminate_and_wait().expect("stop private daemon");
+}
+
 #[test]
 fn private_gateway_sentinel_reads_after_accept_before_client_bytes() {
     // Controlled counterexample to the inherited nonblocking arrangement:
@@ -1359,7 +1494,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         tcp_target: None,
         source: RouteSource::Manual,
         project: foreign_checkout.display().to_string(),
-        scope: None,
         managed_listener: None,
         tls: true,
         registered: Utc::now(),
@@ -3271,7 +3405,6 @@ fn save_localhost_route(root: &Path, target: SocketAddr) {
         tcp_target: None,
         source: RouteSource::Manual,
         project: root.display().to_string(),
-        scope: None,
         managed_listener: None,
         tls: true,
         registered: Utc::now(),
@@ -3279,6 +3412,71 @@ fn save_localhost_route(root: &Path, target: SocketAddr) {
     routes
         .save(&root.join("routes.json"))
         .expect("write trusted private fixture route");
+}
+
+/// Write one private fixture route table: the routes are the whole claim.
+fn save_private_routes(root: &Path, routes: &[(&str, SocketAddr, bool)]) {
+    let mut table = RouteTable::new();
+    for (domain, target, tls) in routes {
+        table.upsert(Route {
+            domain: (*domain).to_owned(),
+            target: Some(target.to_string()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            source: RouteSource::Manual,
+            project: root.display().to_string(),
+            managed_listener: None,
+            tls: *tls,
+            registered: Utc::now(),
+        });
+    }
+    table
+        .save(&root.join("routes.json"))
+        .expect("write private fixture route table");
+}
+
+/// A certificate pair the private resolver can load, with a chosen age.
+fn write_self_signed_cert_pair(certs: &Path, domain: &str, modified: std::time::SystemTime) {
+    let cert = certs.join(format!("{domain}.pem"));
+    let key = certs.join(format!("{domain}-key.pem"));
+    let output = Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "30",
+            "-subj",
+            &format!("/CN={domain}"),
+            "-addext",
+            &format!("subjectAltName=DNS:{domain}"),
+            "-keyout",
+            key.to_str().expect("UTF-8 key path"),
+            "-out",
+            cert.to_str().expect("UTF-8 cert path"),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run openssl for a fixture certificate");
+    assert!(
+        output.status.success(),
+        "openssl failed for {domain}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for path in [&cert, &key] {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open fixture certificate")
+            .set_modified(modified)
+            .expect("age the fixture certificate");
+    }
 }
 
 fn save_plain_localhost_route(root: &Path, target: SocketAddr) {
@@ -3291,7 +3489,6 @@ fn save_plain_localhost_route(root: &Path, target: SocketAddr) {
         tcp_target: None,
         source: RouteSource::Manual,
         project: root.display().to_string(),
-        scope: None,
         managed_listener: None,
         tls: false,
         registered: Utc::now(),

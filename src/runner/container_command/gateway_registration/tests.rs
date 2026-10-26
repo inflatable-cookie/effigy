@@ -281,16 +281,94 @@ fn register_and_deregister_gateway_route_roundtrip() {
         .expect("published");
     let route = routes.first().expect("some route");
 
-    register_gateway_route_at(&route_table_path, &repo_root, route).expect("register");
+    reconcile_gateway_routes(&route_table_path, &repo_root, &routes).expect("register");
     let table = RouteTable::load(&route_table_path).expect("load registered route table");
     let registered = table.lookup("clientname.test").expect("registered route");
     assert_eq!(registered.target.as_deref(), Some("127.0.0.1:8080"));
     assert!(registered.tls);
 
-    deregister_gateway_route_at(&route_table_path, &repo_root, "clientname.test")
-        .expect("deregister");
+    // Withdrawal is by checkout path, so it finds the route the write recorded.
+    let removed = effigy_gateway::registration::withdraw_owned_routes(
+        &route_table_path,
+        &repo_root.display().to_string(),
+    )
+    .expect("deregister");
+    assert_eq!(removed.len(), routes.len());
     let table = RouteTable::load(&route_table_path).expect("load deregistered route table");
     assert!(table.lookup("clientname.test").is_none());
+    let _ = route;
+}
+
+/// `down` withdraws every route this checkout's path owns: a domain the
+/// manifest has since renamed does not stay routed, a route an earlier
+/// generation left behind goes with the environment, another checkout keeps
+/// its own, and a certificate stays because it is a cache keyed by domain.
+#[test]
+fn down_withdraws_every_route_the_checkout_path_owns() {
+    with_test_home("down-withdraws-path", || {
+        let root = tempfile::tempdir().expect("fixture");
+        let checkout = root.path().join("checkout");
+        let other = root.path().join("other");
+        std::fs::create_dir_all(&checkout).expect("checkout directory");
+        std::fs::create_dir_all(&other).expect("other checkout directory");
+        let path = gateway_route_table_path().expect("route table path");
+        for (domain, project) in [
+            ("renamed.test", checkout.display().to_string()),
+            ("current.test", checkout.display().to_string()),
+            ("other.test", other.display().to_string()),
+        ] {
+            register_route(
+                &path,
+                &RouteRegistration {
+                    domain: domain.to_owned(),
+                    target: Some("127.0.0.1:18801".to_owned()),
+                    dns_ip: None,
+                    tcp_port: None,
+                    tcp_target: None,
+                    tls: true,
+                    project_path: project,
+                    source: RouteSource::Container,
+                },
+            )
+            .expect("register route");
+        }
+        let certs = gateway_dir().expect("gateway directory").join("certs");
+        std::fs::create_dir_all(&certs).expect("certs directory");
+        for domain in ["renamed.test", "current.test"] {
+            std::fs::write(certs.join(format!("{domain}.pem")), "cert").expect("cert file");
+            std::fs::write(certs.join(format!("{domain}-key.pem")), "key").expect("key file");
+        }
+        let mut policy = test_policy();
+        policy.repo_root = checkout.clone();
+        policy.dns_routes = vec![dns_route("current.test")];
+
+        let removed = deregister_gateway_routes_for_container(&policy).expect("withdraw");
+
+        assert_eq!(
+            removed,
+            ["current.test", "renamed.test"],
+            "withdrawal is by checkout path, not by the current manifest"
+        );
+        let table = RouteTable::load(&path).expect("route table");
+        assert!(table.lookup("renamed.test").is_none());
+        assert!(table.lookup("current.test").is_none());
+        assert!(
+            table.lookup("other.test").is_some(),
+            "another checkout keeps its route"
+        );
+        for domain in ["renamed.test", "current.test"] {
+            assert!(
+                certs.join(format!("{domain}.pem")).exists(),
+                "a certificate survives `down`"
+            );
+            assert!(certs.join(format!("{domain}-key.pem")).exists());
+        }
+        assert_eq!(
+            deregister_gateway_routes_for_container(&policy).expect("withdraw again"),
+            Vec::<String>::new(),
+            "a route that is already gone is not an error"
+        );
+    });
 }
 
 #[test]
@@ -316,7 +394,6 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
 
     let mut table = RouteTable::new();
     table.upsert(effigy_gateway::routes::Route {
-        scope: None,
         domain: desired.domain.clone(),
         target: desired.target.clone(),
         dns_ip: desired.dns_ip,
@@ -336,7 +413,6 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
     .expect("registered routes should match"));
 
     table.upsert(effigy_gateway::routes::Route {
-        scope: None,
         project: other_repo_root.display().to_string(),
         ..table
             .lookup(&desired.domain)
@@ -391,8 +467,8 @@ fn prune_stale_container_routes_removes_old_domains_for_same_project() {
         external_target: false,
     }];
 
-    prune_stale_container_routes_for_project(&route_table_path, &repo_root, &desired)
-        .expect("prune stale route");
+    reconcile_gateway_routes(&route_table_path, &repo_root, &desired)
+        .expect("the write prunes the stale route");
 
     let table = RouteTable::load(&route_table_path).expect("load pruned route table");
     assert!(table.lookup("db.legacy.test").is_none());
@@ -761,7 +837,6 @@ fn a_new_checkout_takes_the_lowest_address_no_live_route_references() {
                         tcp_target: Some(target.to_owned()),
                         source: RouteSource::Container,
                         project: sibling.display().to_string(),
-                        scope: None,
                         managed_listener: None,
                         tls: false,
                         registered: chrono::Utc::now(),
@@ -1186,7 +1261,10 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
         let removed = deregister_gateway_routes_for_container(&policy).unwrap();
         assert_eq!(removed.len(), 2);
         assert!(RouteTable::load(&route_table_path).unwrap().is_empty());
-        assert!(!cert.exists() && !key.exists());
+        assert!(
+            cert.exists() && key.exists(),
+            "a certificate is a cache keyed by domain and survives withdrawal"
+        );
     });
 }
 
@@ -1344,12 +1422,6 @@ fn stale_tcp_alias_can_be_reclaimed_without_live_listener_takeover() {
         let key = certs.join("postgres.example.test-key.pem");
         std::fs::write(&cert, "cert").unwrap();
         std::fs::write(&key, "key").unwrap();
-        let old_scope = RouteTable::load(&path)
-            .unwrap()
-            .lookup("postgres.example.test")
-            .unwrap()
-            .scope
-            .clone();
         std::fs::remove_dir_all(&private).unwrap();
         std::fs::create_dir_all(&private).unwrap();
         std::fs::write(private.join("commondir"), "../..\n").unwrap();
@@ -1373,9 +1445,11 @@ fn stale_tcp_alias_can_be_reclaimed_without_live_listener_takeover() {
             .lookup("postgres.example.test")
             .unwrap()
             .clone();
-        assert_ne!(current.scope, old_scope);
         assert_eq!(current.tcp_target.as_deref(), Some("127.0.0.1:8232"));
-        assert!(!cert.exists() && !key.exists());
+        assert!(
+            cert.exists() && key.exists(),
+            "a certificate is a cache keyed by domain and outlives its route"
+        );
     });
 }
 

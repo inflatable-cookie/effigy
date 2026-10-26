@@ -21,17 +21,19 @@ pub struct EndpointSnapshot {
     schema: u32,
     pub revision: u64,
     documents: BTreeMap<String, Value>,
-    /// Pre-0.15 fields kept decodable so one ordinary write can drop them.
-    /// Nothing reads any of them: the route table is the whole claim on a
-    /// domain, and port ranges and quarantine are gone.
+    /// Pre-0.15 fields. Nothing reads them: the route table is the whole claim
+    /// on a domain, and port ranges and quarantine are gone. A pinned build
+    /// still requires two of them (`efc1478`, which Queue and Oxide run), so an
+    /// ordinary write emits the empty maps it needs rather than omitting them.
+    /// `authority` stays absent: a pinned reader defaults it to the store.
     #[serde(rename = "authority", default, skip_serializing)]
     legacy_authority: Value,
-    #[serde(rename = "imported_sha256", default, skip_serializing)]
-    legacy_imported: Value,
-    #[serde(rename = "domains", default, skip_serializing)]
-    legacy_domains: Value,
-    #[serde(rename = "quarantined", default, skip_serializing)]
-    legacy_quarantined: Value,
+    #[serde(rename = "imported_sha256", default)]
+    legacy_imported: BTreeMap<String, Value>,
+    #[serde(rename = "domains", default)]
+    legacy_domains: BTreeMap<String, Value>,
+    #[serde(rename = "quarantined", default)]
+    legacy_quarantined: BTreeMap<String, Value>,
 }
 
 impl Default for EndpointSnapshot {
@@ -43,9 +45,9 @@ impl Default for EndpointSnapshot {
             revision: 0,
             documents,
             legacy_authority: Value::Null,
-            legacy_imported: Value::Null,
-            legacy_domains: Value::Null,
-            legacy_quarantined: Value::Null,
+            legacy_imported: BTreeMap::new(),
+            legacy_domains: BTreeMap::new(),
+            legacy_quarantined: BTreeMap::new(),
         }
     }
 }
@@ -65,6 +67,11 @@ impl EndpointSnapshot {
         // next write drops them.
         snapshot.documents.remove("ports");
         snapshot.documents.remove("loopback");
+        // The empty maps a pinned reader requires are written, never the
+        // contents an older build left in them: nothing reads them here.
+        snapshot.legacy_imported.clear();
+        snapshot.legacy_domains.clear();
+        snapshot.legacy_quarantined.clear();
         Ok(snapshot)
     }
 
@@ -123,6 +130,8 @@ impl EndpointSnapshot {
                 "tcp_target",
                 "source",
                 "project",
+                // A record written by an earlier build carries this field; the
+                // write drops it rather than keeping a retired identity.
                 "scope",
                 "managed_listener",
                 "tls",
@@ -175,48 +184,68 @@ impl EndpointSnapshot {
         Ok(())
     }
 
+    /// The endpoint claims this snapshot publishes beside its route table.
+    ///
+    /// A row this table cannot describe (a key that names another domain, a TCP
+    /// alias with no upstream, a tuple two aliases disagree about, a second
+    /// owner) is warned about and skipped. One bad row degrades its own claim
+    /// instead of refusing the machine-wide store's next write, which every
+    /// checkout shares.
     pub(super) fn claims(&self) -> Result<ClaimSet, GatewayError> {
         let mut claims = ClaimSet::new();
         let mut listeners = BTreeMap::new();
         for (key, route) in self.routes()?.routes {
             if !key.eq_ignore_ascii_case(&route.domain) {
-                return Err(error("route key does not match its domain"));
+                skip_row(&route.domain, "its key does not match its domain");
+                continue;
             }
-            let name = add(
+            let Some(name) = add(
                 &mut claims,
                 EndpointKind::Domain,
                 &route.domain,
                 &route.project,
                 &route.domain,
-            )?;
+            ) else {
+                continue;
+            };
             let details = &mut claims.get_mut(&name).expect("domain was inserted").1;
             details["route"] = serde_json::to_value(&route).map_err(error)?;
             if let Some(port) = route.tcp_port {
-                let target = route
-                    .tcp_target
-                    .as_ref()
-                    .filter(|t| !t.is_empty())
-                    .ok_or_else(|| error("TCP alias has no upstream target"))?;
+                let target = route.tcp_target.clone().filter(|target| !target.is_empty());
+                let Some(target) = target else {
+                    skip_row(
+                        &route.domain,
+                        "its TCP alias has no upstream target, so the alias claims nothing",
+                    );
+                    continue;
+                };
+                if port == 0 {
+                    skip_row(&route.domain, "its TCP alias port is zero");
+                    continue;
+                }
                 let endpoint = (route.dns_ip.unwrap_or(Ipv4Addr::LOCALHOST), port);
-                if port == 0
-                    || listeners
-                        .insert(endpoint, target.clone())
-                        .is_some_and(|previous| previous != *target)
+                if listeners
+                    .insert(endpoint, target.clone())
+                    .is_some_and(|previous| previous != target)
                 {
-                    return Err(error("TCP alias tuple has conflicting upstreams"));
+                    skip_row(
+                        &route.domain,
+                        "its TCP alias tuple has a conflicting upstream",
+                    );
+                    continue;
                 }
             }
             if let Some(ip) = route
                 .dns_ip
                 .filter(|ip| ip.is_loopback() && *ip != Ipv4Addr::LOCALHOST)
             {
-                add(
+                let _ = add(
                     &mut claims,
                     EndpointKind::Address,
                     &ip.to_string(),
                     &route.project,
                     &route.domain,
-                )?;
+                );
             }
         }
         Ok(claims)
@@ -225,7 +254,8 @@ impl EndpointSnapshot {
 
 /// Drop every route whose recorded checkout path is gone. Called on every
 /// route write so the whole table, not only the domains this write touches,
-/// stops claiming deleted worktrees.
+/// stops claiming deleted worktrees. A path that is only unreadable is
+/// unknown, not gone, so a checkout on an ejected volume keeps its routes.
 fn prune_gone_checkouts(table: &mut RouteTable) {
     let gone = table
         .all_routes()
@@ -245,18 +275,27 @@ fn add(
     key: &str,
     owner: &str,
     member: &str,
-) -> Result<String, GatewayError> {
-    let resource = ResourceId::endpoint(kind, key).map_err(error)?;
+) -> Option<String> {
+    let resource = match ResourceId::endpoint(kind, key) {
+        Ok(resource) => resource,
+        Err(_) => {
+            skip_row(key, "it is not a valid endpoint identity");
+            return None;
+        }
+    };
     let name = resource.name().to_string();
     if let Some((_, details)) = claims.get_mut(&name) {
         if details["owner"].as_str() != Some(owner) || kind == EndpointKind::Domain {
-            return Err(error(format!(
-                "conflicting endpoint owners for {key}; the route table holds one owner"
-            )));
+            skip_row(
+                key,
+                "the route table holds one owner for it and another row claims it",
+            );
+            return None;
         }
-        let members = details["members"]
-            .as_array_mut()
-            .ok_or_else(|| error("invalid claim members"))?;
+        let Some(members) = details["members"].as_array_mut() else {
+            skip_row(key, "its claim members are not readable");
+            return None;
+        };
         members.push(Value::String(member.into()));
         members.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
         members.dedup();
@@ -274,5 +313,11 @@ fn add(
             ),
         );
     }
-    Ok(name)
+    Some(name)
+}
+
+/// One row this table cannot describe degrades its own claim. It never refuses
+/// the machine-wide store's next write, which every checkout shares.
+fn skip_row(key: &str, reason: &str) {
+    eprintln!("[warn] gateway endpoint row `{key}` skipped: {reason}");
 }

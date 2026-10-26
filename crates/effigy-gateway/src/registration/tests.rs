@@ -276,28 +276,34 @@ fn a_recorded_target_that_stopped_listening_releases_the_domain() {
     assert!(dead_claim_reason(claimed.lookup("app.example.test").unwrap()).is_some());
 }
 
-/// The daemon's timer uses the same rule to keep `gateway status` honest.
+/// A route whose target is briefly down is not withdrawn by anything. A
+/// container restart, a Colima restart and a process that has not bound yet
+/// all look like this, and the route has to be there when the target is back.
 #[test]
-fn prune_dead_routes_releases_only_dead_owners() {
+fn a_route_whose_target_is_down_survives_every_other_write() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("routes.json");
-    let (live_checkout, _) = linked_checkout(root.path(), "live");
-    let (dead_checkout, _) = linked_checkout(root.path(), "dead");
+    let (checkout, _) = linked_checkout(root.path(), "checkout");
+    let (other, _) = linked_checkout(root.path(), "other");
+    let checkout_path = checkout.display().to_string();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let live_target = listener.local_addr().unwrap().to_string();
+    let down = listener.local_addr().unwrap().to_string();
+    drop(listener);
 
-    let mut live = container_registration(&live_checkout.display().to_string(), &live_target);
-    live.domain = "live.test".to_owned();
-    register_route(&path, &live).unwrap();
-    let mut dead = container_registration(&dead_checkout.display().to_string(), "127.0.0.1:1");
-    dead.domain = "dead.test".to_owned();
-    register_route(&path, &dead).unwrap();
+    register_route(&path, &container_registration(&checkout_path, &down)).unwrap();
+    let mut elsewhere = container_registration(&other.display().to_string(), "127.0.0.1:1");
+    elsewhere.domain = "other.test".to_owned();
+    register_route(&path, &elsewhere).unwrap();
 
-    let released = prune_dead_routes(&path).unwrap();
-    assert_eq!(released, ["dead.test"]);
     let table = RouteTable::load(&path).unwrap();
-    assert!(table.lookup("dead.test").is_none());
-    assert!(table.lookup("live.test").is_some());
+    let route = table
+        .lookup("app.example.test")
+        .expect("a briefly down target keeps its route");
+    assert_eq!(route.project, checkout_path);
+    assert!(
+        dead_claim_reason(route).is_some(),
+        "another checkout may still take the domain over"
+    );
 }
 
 #[test]
@@ -318,7 +324,6 @@ fn down_withdraws_every_generation_of_one_listeners_routes() {
                     tcp_target: None,
                     source: RouteSource::Task,
                     project: project.clone(),
-                    scope: None,
                     managed_listener: Some(synthetic_owner("child-1", "127.0.0.1:43123")),
                     tls: false,
                     registered: Utc::now(),
@@ -371,7 +376,6 @@ fn deregister_route_removes_a_listener_route_of_the_same_checkout() {
                 tcp_target: None,
                 source: RouteSource::Task,
                 project: project.clone(),
-                scope: None,
                 managed_listener: Some(synthetic_owner("child-1", "127.0.0.1:43123")),
                 tls: false,
                 registered: Utc::now(),
@@ -387,7 +391,7 @@ fn deregister_route_removes_a_listener_route_of_the_same_checkout() {
 }
 
 #[test]
-fn cleanup_owned_routes_and_certs_skips_foreign_owner() {
+fn withdraw_owned_routes_keeps_a_foreign_owners_route() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("routes.json");
     let (ours, private) = linked_checkout(root.path(), "worker");
@@ -403,94 +407,131 @@ fn cleanup_owned_routes_and_certs_skips_foreign_owner() {
         &container_registration(&theirs.display().to_string(), &live),
     )
     .unwrap();
-    let seen = std::sync::Mutex::new(Vec::new());
-    let removed = cleanup_owned_routes_and_certs(
-        &path,
-        &ours_path,
-        Some(&["app.example.test".to_owned()]),
-        &["app.example.test".to_owned()],
-        |domain| {
-            seen.lock().unwrap().push(domain.to_owned());
-            Ok(())
-        },
-    )
-    .unwrap();
+
+    let removed = withdraw_owned_routes(&path, &ours_path).unwrap();
     assert!(removed.is_empty());
-    assert!(seen.lock().unwrap().is_empty());
     assert!(RouteTable::load(&path)
         .unwrap()
         .lookup("app.example.test")
         .is_some());
 }
 
+/// Withdrawal is by checkout path, so a domain the manifest has since renamed
+/// or a listener route an earlier generation published goes too. A domain that
+/// has no route is simply absent from the result.
 #[test]
-fn cleanup_owned_routes_and_certs_removes_unclaimed_pending_cert() {
+fn withdraw_owned_routes_removes_every_route_the_path_owns() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("routes.json");
     let (checkout, _private) = linked_checkout(root.path(), "worker");
+    let (other, _other_private) = linked_checkout(root.path(), "other");
     let checkout_path = checkout.display().to_string();
-    let seen = std::sync::Mutex::new(Vec::new());
-    let removed = cleanup_owned_routes_and_certs(
+    let other_path = other.display().to_string();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let live = listener.local_addr().unwrap().to_string();
+    for domain in ["renamed.test", "listener.test"] {
+        let mut registration = container_registration(&checkout_path, &live);
+        registration.domain = domain.to_owned();
+        register_route(&path, &registration).unwrap();
+    }
+    register_managed_listener_route(
         &path,
         &checkout_path,
-        Some(&[]),
-        &["app.test".to_owned()],
-        |domain| {
-            seen.lock().unwrap().push(domain.to_owned());
-            Ok(())
-        },
+        "published.test",
+        "127.0.0.1:43123",
+        false,
+        synthetic_owner("child", "127.0.0.1:43123"),
     )
     .unwrap();
-    assert!(removed.is_empty());
-    assert_eq!(seen.lock().unwrap().as_slice(), ["app.test"]);
-    assert!(RouteTable::load(&path).unwrap().is_empty());
-}
-
-#[test]
-fn cleanup_owned_routes_and_certs_removes_owned_cert_then_route() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("routes.json");
-    let (checkout, _private) = linked_checkout(root.path(), "worker");
-    let checkout_path = checkout.display().to_string();
     register_route(
         &path,
-        &RouteRegistration {
-            domain: "app.test".to_owned(),
-            target: Some("127.0.0.1:8100".to_owned()),
-            dns_ip: None,
-            tcp_port: None,
-            tcp_target: None,
-            tls: true,
-            project_path: checkout_path.clone(),
-            source: RouteSource::Container,
-        },
+        &container_registration(&other.display().to_string(), &live),
     )
     .unwrap();
-    let seen = std::sync::Mutex::new(Vec::new());
-    let removed = cleanup_owned_routes_and_certs(
-        &path,
-        &checkout_path,
-        Some(&["app.test".to_owned()]),
-        &["app.test".to_owned()],
-        |domain| {
-            assert!(
-                RouteTable::load(&path)
-                    .unwrap()
-                    .lookup("app.test")
-                    .is_some(),
-                "route table still contains the domain until the TLS callback succeeds"
-            );
-            seen.lock().unwrap().push(domain.to_owned());
-            Ok(())
-        },
-    )
-    .unwrap();
-    assert_eq!(removed.len(), 1);
-    assert_eq!(seen.lock().unwrap().as_slice(), ["app.test"]);
-    assert!(RouteTable::load(&path)
-        .unwrap()
-        .lookup("app.test")
-        .is_none());
+
+    let removed = withdraw_owned_routes(&path, &checkout_path).unwrap();
+    let domains = removed
+        .iter()
+        .map(|route| route.domain.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        domains,
+        ["listener.test", "published.test", "renamed.test"],
+        "every route the path owns is withdrawn, in domain order"
+    );
+    let table = RouteTable::load(&path).unwrap();
+    assert!(table
+        .all_routes()
+        .iter()
+        .all(|route| route.project != checkout_path));
+    assert_eq!(
+        table
+            .lookup("app.example.test")
+            .map(|route| route.project.as_str()),
+        Some(other_path.as_str()),
+        "another checkout keeps its own route"
+    );
+}
+
+/// An unreadable checkout path is unknown, not gone: a checkout on a volume
+/// whose permissions are wrong, or on a mount that is asleep, keeps its route.
+#[test]
+#[cfg(unix)]
+fn an_unreadable_checkout_path_keeps_its_route() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let tight = root.path().join("tight");
+    let checkout = tight.join("checkout");
+    let (other, _) = linked_checkout(root.path(), "other");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let checkout_path = checkout.display().to_string();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let live = listener.local_addr().unwrap().to_string();
+    register_route(&path, &container_registration(&checkout_path, &live)).unwrap();
+
+    std::fs::set_permissions(&tight, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut elsewhere = container_registration(&other.display().to_string(), "127.0.0.1:1");
+    elsewhere.domain = "other.test".to_owned();
+    register_route(&path, &elsewhere).unwrap();
+    let table = RouteTable::load(&path).unwrap();
+    std::fs::set_permissions(&tight, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        table.lookup("app.example.test").is_some(),
+        "an unreadable checkout path is not a deleted checkout"
+    );
+}
+
+/// A path whose own parent is gone is unknown too: an unmounted volume looks
+/// exactly like this, so the route waits for the mount rather than being
+/// dropped and never republished.
+#[test]
+fn a_checkout_below_a_missing_parent_keeps_its_route() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let volume = root.path().join("volume");
+    let checkout = volume.join("checkout");
+    let (other, _) = linked_checkout(root.path(), "other");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let checkout_path = checkout.display().to_string();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let live = listener.local_addr().unwrap().to_string();
+    register_route(&path, &container_registration(&checkout_path, &live)).unwrap();
+
+    std::fs::remove_dir_all(&volume).unwrap();
+    let mut elsewhere = container_registration(&other.display().to_string(), "127.0.0.1:1");
+    elsewhere.domain = "other.test".to_owned();
+    register_route(&path, &elsewhere).unwrap();
+
+    assert!(
+        RouteTable::load(&path)
+            .unwrap()
+            .lookup("app.example.test")
+            .is_some(),
+        "a vanished mount root is not a deleted checkout"
+    );
 }
 
 /// Two checkouts racing for one live domain: exactly one wins and the other is
