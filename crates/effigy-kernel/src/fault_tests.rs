@@ -1392,6 +1392,9 @@ fn store_sweep_from_admission_prunes_expired_runs_on_a_fresh_store() {
 
 /// A legacy store is only migrated to incremental auto-vacuum while it is
 /// small: a 119 MB store is never rewritten inside a sweep's write window.
+///
+/// `legacy_vacuum_allowed` still gates the store-open migration path, so this
+/// stays: the audit's DELETE assumed the function had no production caller.
 #[test]
 fn store_legacy_auto_vacuum_migration_is_size_bounded() {
     assert!(crate::store::legacy_vacuum_allowed(1 << 20));

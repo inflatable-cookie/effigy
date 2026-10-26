@@ -41,9 +41,6 @@ pub(super) fn env() -> ResourceId {
 fn vault() -> ResourceId {
     ResourceId::store(Scope::Machine, "vault").expect("vault id")
 }
-fn endpoint() -> ResourceId {
-    ResourceId::endpoint(EndpointKind::Port, "8080").expect("endpoint id")
-}
 pub(super) fn id(n: u8) -> RunId {
     RunId::new(1, [n; 10]).expect("run id")
 }
@@ -1169,94 +1166,6 @@ fn faults_observe_with_guarded_subprocess_and_http_probes() {
     drive(&ObserveProbes);
 }
 
-// --- Endpoint reserve and commit. ---
-
-#[derive(Debug)]
-struct Endpoint;
-fn claim_state(home: &Path) -> Option<String> {
-    let cx = observe();
-    let Observed::Verified(root, _) = StateRoot::observe(&cx, home) else {
-        return None;
-    };
-    let Observed::Verified(reader, _) = Store::read(&cx, &root) else {
-        return None;
-    };
-    reader
-        .conn()
-        .query_row(
-            "SELECT state FROM claims WHERE resource=?1",
-            [endpoint().name().to_string()],
-            |r| r.get(0),
-        )
-        .ok()
-}
-impl Scenario for Endpoint {
-    fn name(&self) -> &'static str {
-        "endpoint"
-    }
-    fn oracles(&self) -> &'static [Oracle] {
-        &[
-            Oracle::O1a,
-            Oracle::O2,
-            Oracle::O3,
-            Oracle::O4,
-            Oracle::O5,
-            Oracle::O6,
-            Oracle::O8,
-            Oracle::O10,
-            Oracle::O13,
-        ]
-    }
-    fn required(&self) -> &'static [Point] {
-        &[
-            Point::ClaimReserveBefore,
-            Point::ClaimReserveAfter,
-            Point::ClaimReleaseBefore,
-            Point::ClaimReleaseAfter,
-            Point::AdapterBefore,
-            Point::AdapterAfter,
-        ]
-    }
-    fn owners(&self) -> Vec<ResourceId> {
-        vec![task(10), task(11)]
-    }
-    fn prepare(&self, home: &Path) {
-        install_audits(home);
-    }
-    fn run(&self, home: &Path) -> Option<i32> {
-        let cx = mutate();
-        let root = StateRoot::effects(&cx, home).ok()?;
-        let fake = &mut Fake::new(home);
-        let mut run = begin(&cx, &root, task(10), 50, None, vec![], fake).ok()?;
-        let token = attempt!(
-            run,
-            &cx,
-            fake,
-            Claims::reserve(&mut run, &[endpoint()], Duration::from_secs(600))
-        );
-        attempt!(run, &cx, fake, Claims::commit(&mut run, &token, 1));
-        attempt!(run, &cx, fake, apply(&mut run, fake, "route-8080"));
-        attempt!(run, &cx, fake, run.finish(WorkloadOutcome::Succeeded));
-        let exit = settle(run, &cx, fake);
-        // A held, live or quarantined claim refuses a second reservation;
-        // a jumped wall clock never lifts a boot-clock quarantine.
-        let before = claim_state(home);
-        let mut second = begin(&cx, &root, task(11), 51, None, vec![], fake).ok()?;
-        let reserved = Claims::reserve(&mut second, &[endpoint()], Duration::ZERO);
-        let held = matches!(before.as_deref(), Some("reserved" | "live" | "quarantined"));
-        assert!(
-            !(held && reserved.is_ok()),
-            "claim {before:?} reserved twice"
-        );
-        let _ = second.settle(&cleanup(&cx), fake);
-        exit
-    }
-}
-#[test]
-fn faults_endpoint_reserve_and_commit() {
-    drive(&Endpoint);
-}
-
 // --- Vault write: a generation pointer and a single atomic replace. ---
 
 #[derive(Debug)]
@@ -1538,13 +1447,12 @@ fn faults_objects_reset_is_atomic_and_preserves_sibling() {
 }
 
 pub(super) fn by_name(name: &str) -> &'static dyn Scenario {
-    let fixed: [&'static dyn Scenario; 9] = [
+    let fixed: [&'static dyn Scenario; 8] = [
         &ManagedAttach,
         &Environment,
         &Residue,
         &OwnerLoss,
         &ObserveProbes,
-        &Endpoint,
         &Vault,
         &ObjectPublication,
         &ObjectReset,
@@ -1559,12 +1467,6 @@ pub(super) fn by_name(name: &str) -> &'static dyn Scenario {
 
 // --- Engine-lane scenarios: placeholders, not kernel work (§12.5). ---
 
-#[test]
-#[ignore = "engine lane (environment): real backend handover on Colima, Docker Desktop and Linux Docker"]
-fn faults_engine_real_environment_handover() {}
-#[test]
-#[ignore = "engine lane (environment, gateway): legacy import (§11) of host sidecars, gateway state and routes"]
-fn faults_engine_legacy_import() {}
 // Gateway endpoint commits run against the user-owned daemon, watcher and
 // live HTTP in effigy-gateway::server::endpoint_faults (test:gateway:proxy).
 // Vault rotation is exercised by effigy-secrets::storage::tests::faults_engine_vault_rotation

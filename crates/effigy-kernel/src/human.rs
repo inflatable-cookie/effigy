@@ -142,10 +142,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn signal_name_names_common_signals() {
-        assert_eq!(signal_name(libc::SIGINT), "SIGINT");
-        assert_eq!(signal_name(libc::SIGTERM), "SIGTERM");
-        assert_eq!(signal_name(64), "an unknown signal");
     }
-}

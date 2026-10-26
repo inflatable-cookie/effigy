@@ -94,8 +94,6 @@ points! {
     AttachmentReleaseAfter,
     ClaimReserveBefore,
     ClaimReserveAfter,
-    ClaimReleaseBefore,
-    ClaimReleaseAfter,
     ClaimPublishBefore,
     ClaimPublishAfter,
     ClaimRetainBefore,

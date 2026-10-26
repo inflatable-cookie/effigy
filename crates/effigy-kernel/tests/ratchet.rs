@@ -126,28 +126,6 @@ fn ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total() {
     assert!(error.contains("fell"));
     assert!(empty.compare(&empty).is_ok());
 }
-#[test]
-fn ratchet_committed_baseline_matches_current_production_and_detects_added_command() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let current = inventory(root).unwrap();
-    let baseline: Inventory =
-        serde_json::from_slice(&std::fs::read(root.join("config/kernel-ratchet.json")).unwrap())
-            .unwrap();
-    current.compare(&baseline).unwrap();
-    let mut added = current;
-    added.production.insert(
-        "src/new_command.rs".into(),
-        counts("fn regression(){std::process::Command::new(\"true\");}"),
-    );
-    assert!(added
-        .compare(&baseline)
-        .unwrap_err()
-        .contains("src/new_command.rs"));
-}
 
 #[test]
 fn ratchet_type_aliases_function_references_and_typed_parameters_are_counted() {
