@@ -12,9 +12,9 @@ mod source;
 
 pub use source::{
     bundle_update_notes, catalog_source_roots, inspect_bundle_source, prepare_bundle_sources,
-    prepare_missing_bundle_sources, resolve_catalog_source, sync_bundle_source,
-    BundleSourceInspectReport, BundleSyncReport, CatalogSourceRoots, SourcePreparation,
-    SourceProgress, SourceProgressEvent, SourceSettlement,
+    prepare_missing_bundle_sources, relocate_source_paths, resolve_catalog_source,
+    sync_bundle_source, BundleSourceInspectReport, BundleSyncReport, CatalogSourceRoots,
+    SourcePreparation, SourceProgress, SourceProgressEvent, SourceSettlement,
 };
 use source::{resolve_bundle_selection, resolve_materialized_bundle_source, ResolvedBundleSource};
 

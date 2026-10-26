@@ -518,6 +518,21 @@ pub(in crate::runner::execute) fn sequence_step_label(
 }
 
 type StepExit = (i32, String, String, WorkloadOutcome);
+
+/// The source a command opens is the one the lock selects when it runs.
+///
+/// A sequence resolves every step before the first one runs, and a step is
+/// itself a Prepare path (`task:container up`, `task:bundle sync`). Such a
+/// step publishes a new source generation and removes the one the later
+/// steps were rendered against, so each command is pointed at the live
+/// object as it starts instead of the generation it named.
+pub(in crate::runner::execute) fn live_source_command(
+    selection: &TaskSelection<'_>,
+    command: &str,
+) -> String {
+    effigy_manifest::relocate_source_paths(&selection.catalog.manifest_path, command)
+}
+
 fn execute_step(
     action: &StepAction,
     preflight: &ExecutionPreflight,
@@ -553,15 +568,16 @@ fn execute_step(
         StepAction::Command(command)
             if !super::pipeline::standard::runs_plain_host_command(preflight, selection) =>
         {
+            let command = live_source_command(selection, command);
             super::pipeline::standard::run_sequence_container_command(
-                preflight, selection, command, run,
+                preflight, selection, &command, run,
             )
             .and_then(|output| nested_exit(output, preflight.output_json))
         }
         _ => {
             let command = match action {
                 StepAction::Command(command) | StepAction::Builtin { command, .. } => {
-                    command.clone()
+                    live_source_command(selection, command)
                 }
                 StepAction::Rhai { path } => {
                     let executable =
@@ -570,9 +586,10 @@ fn execute_step(
                             "/Cargo.toml"
                         ))
                         .map_err(RunnerError::Cwd)?;
+                    let path = live_source_command(selection, &path.display().to_string());
                     format!(
                         "{executable} script run --file {} --repo-root {} --task-name {}",
-                        effigy_core::shell::shell_quote(&path.display().to_string()),
+                        effigy_core::shell::shell_quote(&path),
                         effigy_core::shell::shell_quote(&root.display().to_string()),
                         effigy_core::shell::shell_quote(task_name)
                     )

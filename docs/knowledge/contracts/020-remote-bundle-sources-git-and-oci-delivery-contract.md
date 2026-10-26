@@ -251,6 +251,15 @@ under `.effigy/cache/sources/` that the lock does not reference and reports
 `pruned N source generations nothing pins` once. Every generation the lock
 selects is kept, so repeated syncs no longer accumulate copies of each source.
 
+A run step is a Prepare path too, so a later step must never open a path that
+Prepare has already removed. A path under
+`.effigy/cache/sources/<generation>/<source>/` names the source, not the
+generation that happened to hold it: a step command, a Rhai step path and a
+managed run command are pointed at the object the lock selects at the moment
+they start, not at the generation the manifest load or plan resolved. The run
+continues on the newly selected bytes, exactly as it does after its own
+Prepare, and nothing records an in-flight reference or delays the prune.
+
 A bounded host-side `~/.effigy/cache/sources-known.json` hint records the source bytes each
 checkout selected, written by any Prepare. A short shared cache gate serializes publishers;
 this derived hint is outside both runtime databases and contains no run index. A read may emit one
@@ -296,4 +305,6 @@ Update this contract when any of these change:
   floating-source window, the 5-second remote-check bound, the
   `sources.update.json` record, the `update = "auto" | "manual"` policy and the
   `bundle updated …` wording
+- source generation layout under `.effigy/cache/sources/`, when a run step
+  resolves its source path, and which generations a Prepare prunes
 - `bundle inspect` or `bundle sync` minimum source metadata

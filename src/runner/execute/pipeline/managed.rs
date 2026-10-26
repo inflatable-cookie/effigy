@@ -1133,8 +1133,15 @@ fn managed_workloads(
         .iter()
         .filter(|process| process.role == ManagedProcessRole::Standard)
     {
-        let run = process.run.clone();
-        let setup = process.setup.clone();
+        // The plan was rendered before this run's setup steps ran, and a setup
+        // step is a Prepare path: one can publish a new source generation and
+        // remove the one this command names. The process opens the source the
+        // lock selects when it starts.
+        let run = super::super::sequence_run::live_source_command(context.selection, &process.run);
+        let setup = process
+            .setup
+            .as_deref()
+            .map(|setup| super::super::sequence_run::live_source_command(context.selection, setup));
         let runs_on_host = process.run_on_host
             || context.container_handoff
             || matches!(
