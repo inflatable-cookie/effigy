@@ -473,7 +473,7 @@ owner = "docs/knowledge/contracts/017-task-status-record-and-active-run-model-co
 terms = ["effigy tasks cache", "effigy.cache.v1", "effigy.task.cache.store.v1", "task-cache-v1.json"]
 paths = ["src/runner/cache/", "src/runner/cache.rs", "crates/effigy-builtin/src/cache/", "crates/effigy-builtin/src/cache.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "docs/guides/022-manifest-cookbook.md", "docs/guides/085-v0.15.0-consumer-migration.md", "src/runner/task_engine/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/tests/lib_tests_help_render_tests.rs", "tests/cli_output_tests/json_envelope_tests/runtime.rs"]
+allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "docs/guides/022-manifest-cookbook.md", "docs/guides/085-v0.15.0-consumer-migration.md", "src/runner/task_engine/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/tests/lib_tests_help_render_tests.rs", "tests/cli_output_tests/json_envelope_tests/runtime.rs", "src/runner/execute/pipeline/standard.rs"]
 
 [[retired]]
 id = "effigy-task-lease-lock"
