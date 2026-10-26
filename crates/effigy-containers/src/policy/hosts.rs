@@ -633,6 +633,7 @@ mod tests {
                 container_port: 6379,
                 host_env_vars: vec![],
                 port_env_vars: vec![],
+                render_digest: "shared-render".to_owned(),
             }],
             Some(token),
             false,

@@ -814,31 +814,29 @@ fn resolve_shared_service_bindings(
             .copied()
             .find(|binding| binding.host != binding.container)
             .unwrap_or(parsed_bindings[0]);
-        // Shared services live outside any one environment's generated
-        // payload; key their output by the shared project so every renderer
-        // of the same shared project converges on one file.
-        // A shared fragment names its own catalog files relative to the state
-        // directory it was rendered with, so publish them at that same
-        // relative path instead of leaving the declared bind source missing
-        // (effigy#371). A fresh home then works: nothing depends on a file an
-        // older Effigy left behind.
-        let compose_path = draft.assembly(
-            &output_dir,
-            &output_dir.join(GENERATED_RUNTIME_COMPOSE_DIR),
-            &shared_project_name,
-            &assembly,
-        )?;
+        // A shared service belongs to no checkout, so its render is not part of
+        // this generation: `Draft::finish` publishes it at one machine-wide
+        // content-addressed directory under the Effigy home, with absolute bind
+        // sources, so every checkout that shares it hands Compose the same
+        // bytes and the same config-hash (effigy#377).
+        draft.shared_render(
+            shared_project_name.clone(),
+            output_dir,
+            assembly.compose_yaml,
+            assembly.config_files,
+        );
         bindings.push(SharedServiceBinding {
             service_name: service_name.clone(),
             catalog: service.catalog.clone(),
             domain_label: contract.domain_label,
             project_name: shared_project_name,
-            compose_file: compose_path,
+            compose_file: PathBuf::new(),
             host: SHARED_SERVICE_HOST.to_owned(),
             host_port: binding.host,
             container_port: binding.container,
             host_env_vars: contract.shared_host_env_vars,
             port_env_vars: contract.shared_port_env_vars,
+            render_digest: String::new(),
         });
     }
     bindings.sort_by(|left, right| left.service_name.cmp(&right.service_name));
@@ -1434,6 +1432,7 @@ services:
                 container_port: 3306,
                 host_env_vars: vec!["DB_HOST".to_owned()],
                 port_env_vars: vec!["DB_PORT".to_owned()],
+                render_digest: "shared-render".to_owned(),
             }],
             &clients,
             "192.168.5.2",
@@ -1496,6 +1495,7 @@ services:
                 container_port: 3306,
                 host_env_vars: vec!["DB_HOST".to_owned()],
                 port_env_vars: vec!["DB_PORT".to_owned()],
+                render_digest: "shared-render".to_owned(),
             }],
             &std::collections::BTreeSet::new(),
             "192.168.5.2",

@@ -2042,6 +2042,21 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A shared backing service renders identically from every checkout, and a real
+  change replaces it in one attempt. A shared service's Compose input and the
+  files its fragment binds are published at one machine-wide, content-addressed
+  directory under the Effigy home with absolute paths, so two checkouts with the
+  same shared declaration hand Compose byte-identical input and the same
+  config-hash: a second checkout's `up`, and one after the first checkout is
+  deleted, no longer recreates the shared container. A container from a
+  different render is stopped and removed before Compose creates the new one, so
+  its published host port is never held twice (`port is already allocated`) and
+  for `restart: unless-stopped` there is no killed container for the runtime to
+  bring back (`failed precondition`); its named data volume and rows are kept.
+  The render names itself on the service it creates (`com.effigy.shared-render`)
+  and `up` reads that label from the runtime, so an unchanged shared service is
+  never touched. Two checkouts' `up`s are serialised on one machine gate per
+  shared Compose project (effigy#377).
 - `container retire` and `container retire --dead` remove every owned container
   every time. They deleted each container with a forced remove, which the
   runtime's restart manager treated as an exit and undid for the

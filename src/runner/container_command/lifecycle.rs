@@ -1734,6 +1734,7 @@ mod tests {
             },
             host_env_vars: Vec::new(),
             port_env_vars: Vec::new(),
+            render_digest: format!("{name}-{catalog}"),
         }
     }
 

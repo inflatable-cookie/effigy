@@ -152,6 +152,41 @@ pub(in crate::runner) fn cleanup_context(budget: Duration) -> CleanupContext {
         .expect("cleanup budget")
 }
 
+/// One machine-wide gate per shared Compose service project (effigy#377).
+///
+/// A shared service belongs to no checkout, so two checkouts' `up`s are
+/// serialised on the service's own Compose project name in the machine gate
+/// namespace every checkout already uses. The caller decides what an
+/// unacquirable gate means; this only reports it.
+pub(in crate::runner) fn shared_service_gate(
+    project_name: &str,
+) -> Result<effigy_kernel::gate::GateGuard, RunnerError> {
+    let home =
+        state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
+    let cx = effects();
+    let root = StateRoot::runtime_machine_effects(&cx, &home)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let resource = effigy_kernel::id::ResourceId::store(
+        effigy_kernel::id::Scope::Machine,
+        &format!("shared-service {project_name}"),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    effigy_kernel::gate::Gate::acquire(
+        &cx,
+        &root,
+        &[resource],
+        effigy_kernel::gate::Wait::Until(
+            std::time::Instant::now() + std::time::Duration::from_secs(SHARED_SERVICE_GATE_SECS),
+        ),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+/// How long one `up` waits for another checkout to finish with a shared
+/// project before it proceeds without the gate. A shared `up` pulls and
+/// starts a data service, so the wait is generous.
+const SHARED_SERVICE_GATE_SECS: u64 = 120;
+
 static CHECKOUT_ROOTS: OnceLock<Mutex<std::collections::BTreeMap<PathBuf, &'static StateRoot>>> =
     OnceLock::new();
 

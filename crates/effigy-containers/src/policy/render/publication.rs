@@ -85,7 +85,43 @@ pub fn prepare(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyE
             Some(backend) => run.set_backend(backend),
             None => Ok(()),
         }
-    })
+    })?;
+    // A shared service belongs to no checkout, so its render is published
+    // outside this generation, at one machine-wide content-addressed directory
+    // every checkout that shares it computes (effigy#377).
+    for shared in &render.shared {
+        publish_shared_render(shared)?;
+    }
+    Ok(())
+}
+
+/// Write a shared render's files where its digest names them. Every file is
+/// content-addressed, so an identical file already there is left alone and a
+/// concurrent writer of the same bytes writes the same bytes (through a
+/// temporary file in the same directory, renamed into place).
+fn publish_shared_render(shared: &crate::SharedRender) -> Result<(), ContainerPolicyError> {
+    for (relative, bytes) in &shared.files {
+        let path = shared.directory.join(relative);
+        if std::fs::read(&path).is_ok_and(|existing| existing == *bytes) {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| ContainerPolicyError::Read {
+                path: parent.into(),
+                error,
+            })?;
+        }
+        let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::write(&temporary, bytes).map_err(|error| ContainerPolicyError::Read {
+            path: temporary.clone(),
+            error,
+        })?;
+        std::fs::rename(&temporary, &path).map_err(|error| ContainerPolicyError::Read {
+            path: path.clone(),
+            error,
+        })?;
+    }
+    Ok(())
 }
 
 /// The environment's recorded backend. Observe only: an unprepared checkout
