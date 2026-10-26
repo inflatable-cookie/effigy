@@ -2124,9 +2124,12 @@ During v0.x, MINOR bumps may include breaking changes.
   unreadable or changed observation can no longer supersede a live machine
   gateway. Only `effigy gateway down` followed by `effigy gateway up` replaces
   a running gateway. A test harness or fixture process with no private gateway
-  root refuses to start or replace the machine gateway, and
+  root refuses to start, stop or replace the machine gateway, and
   `effigy-test-support::gateway::private_root` gives a fixture an owned private
-  root (papercut 01530b7e, effigy#382).
+  root. A stop records the pid, argv and cwd of the process that asked for it in
+  the gateway's log. The operator-lifecycle cases refuse to run while the
+  machine gateway listens on 127.0.0.1:80, 443 or 15353, so they never take it
+  down (papercut 01530b7e, 06d1cd9e, effigy#382).
 - `container retire` and `container retire --dead` remove every owned container
   every time. They deleted each container with a forced remove, which the
   runtime's restart manager treated as an exit and undid for the

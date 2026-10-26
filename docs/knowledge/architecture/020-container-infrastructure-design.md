@@ -854,15 +854,21 @@ the machine gateway as a side effect of an environment coming up; only
 `effigy gateway down` and `effigy gateway up` replace a running gateway. An
 unreadable identity reuses a confirmed running daemon or refuses, and never
 delegates to an elevated replacement. A test harness or a fixture process with
-no private gateway root refuses to start or replace the machine gateway, and
-`effigy-test-support::gateway::private_root` gives a fixture an owned private
-root in one call.
+no private gateway root refuses to start, stop or replace the machine gateway,
+and `effigy-test-support::gateway::private_root` gives a fixture an owned
+private root in one call. A stop writes one line naming the stopping process's
+pid, argv and cwd to the gateway's log, so no stop is silent. The operator
+daemon lifecycle cases refuse to run while a gateway listens on
+`127.0.0.1:80`, `:443` or `:15353`: a fresh HOME isolates their state but not
+the machine's ports or privileged bind broker, so they never stop a running
+gateway (papercut 06d1cd9e).
 
 Private controls: `managed_start_reuses_a_running_gateway_of_another_build`
 (a live gateway of another build keeps its PID, its records and its process,
 and the warning names both builds),
-`only_an_installed_binary_outside_a_fixture_drives_the_machine_gateway`, and
-`up_uses_a_live_gateway_run_instead_of_replacing_it`.
+`only_an_installed_binary_outside_a_fixture_drives_the_machine_gateway`,
+`up_uses_a_live_gateway_run_instead_of_replacing_it`, and
+`a_stop_request_is_recorded_in_the_gateway_log_with_its_caller`.
 
 ### Gateway process identity ruling
 

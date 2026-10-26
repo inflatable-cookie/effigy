@@ -41,6 +41,26 @@ fn operator_fixture(prefix: &str) -> (effigy_test_support::Fixture, GatewayConfi
     (home, config)
 }
 
+/// A real operator daemon shares the machine's `127.0.0.1:80`/`:443` and the
+/// privileged bind broker with every HOME. These cases refuse to start one
+/// while the machine gateway listens there, and never stop a running one
+/// (papercut 06d1cd9e).
+fn machine_gateway_listener() -> Option<String> {
+    [
+        ("-iTCP:80", "TCP 80"),
+        ("-iTCP:443", "TCP 443"),
+        ("-iUDP:15353", "UDP 15353"),
+    ]
+    .into_iter()
+    .find_map(|(filter, label)| {
+        let output = std::process::Command::new("lsof")
+            .args(["-nP", filter])
+            .output()
+            .ok()?;
+        (output.status.success() && !output.stdout.is_empty()).then(|| label.to_owned())
+    })
+}
+
 /// Poll the private status until the run settles. A refusal must stop what it
 /// admitted rather than leave a live daemon behind.
 fn settled_status(config: &GatewayConfig) -> operator::Status {
@@ -61,6 +81,10 @@ fn settled_status(config: &GatewayConfig) -> operator::Status {
 #[test]
 fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     use std::os::unix::fs::PermissionsExt;
+    if let Some(listening) = machine_gateway_listener() {
+        eprintln!("skipping: the machine gateway already listens on {listening}; these cases start a real operator daemon and never stop a running one");
+        return;
+    }
     let (home, config) = operator_fixture("g219-");
 
     // The actor gets a strict PATH. Any accidental elevation writes evidence
@@ -191,6 +215,10 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
 #[test]
 fn operator_startup_bounds_admission_and_readiness_separately() {
     let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
+    if let Some(listening) = machine_gateway_listener() {
+        eprintln!("skipping: the machine gateway already listens on {listening}; these cases start a real operator daemon and never stop a running one");
+        return;
+    }
 
     let (_unadmitted_home, unadmitted) = operator_fixture("g248a-");
     let refusal = operator::up_with_executable_within(

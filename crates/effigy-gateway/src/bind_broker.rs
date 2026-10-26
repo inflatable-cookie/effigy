@@ -299,6 +299,27 @@ pub fn entry(uid: u32) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The shared broker serves only the machine's loopback endpoints on
+    /// 80 and 443, so a fixture's ephemeral listener can never take a port
+    /// through it (papercut 06d1cd9e).
+    #[test]
+    fn the_shared_broker_serves_only_the_machine_endpoints() {
+        assert!(allowed("127.0.0.1:80".parse().unwrap()));
+        assert!(allowed("127.0.0.1:443".parse().unwrap()));
+        assert!(allowed("127.1.0.7:443".parse().unwrap()));
+        for fixture in [
+            "127.0.0.1:8080",
+            "127.0.0.1:15353",
+            "127.1.0.7:8080",
+            "10.0.0.1:80",
+        ] {
+            assert!(
+                !allowed(fixture.parse().unwrap()),
+                "a fixture endpoint must never route through the shared broker: {fixture}"
+            );
+        }
+    }
+
     #[test]
     fn broker_socket_parent_accepts_macos_run_directory_and_refuses_world_write() {
         // macOS ships /private/var/run as root:daemon 0775, so a group-writable

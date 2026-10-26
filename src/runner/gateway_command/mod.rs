@@ -115,7 +115,7 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 /// `effigy gateway down` and `effigy gateway up` stop or replace a gateway.
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
     let config = gateway_config()?;
-    refuse_a_fixtures_operator_gateway_start(&config)?;
+    refuse_a_fixtures_operator_gateway_mutation(&config)?;
     if !config.is_private() && effigy_core::executable_override::current().is_none() {
         effigy_gateway::operator::up(&config)
             .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
@@ -125,9 +125,10 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
 }
 
 /// A test harness or fixture never starts, stops or replaces the machine
-/// gateway: its managed invocation would run this checkout's build as the
-/// operator daemon (papercut 01530b7e). Fixtures own a private gateway root.
-fn refuse_a_fixtures_operator_gateway_start(config: &GatewayConfig) -> Result<(), RunnerError> {
+/// gateway: its invocation would run this checkout's build as the operator
+/// daemon, or stop the operator's one (papercut 01530b7e, 06d1cd9e). Fixtures
+/// own a private gateway root.
+fn refuse_a_fixtures_operator_gateway_mutation(config: &GatewayConfig) -> Result<(), RunnerError> {
     // A unit-test build reads an isolated standard gateway directory, so it
     // can never reach the machine gateway from here.
     let test_build = !cfg!(test) && effigy_core::effigy_invocation::runs_from_a_test_harness();
@@ -535,6 +536,7 @@ fn run_gateway_up_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    refuse_a_fixtures_operator_gateway_mutation(config)?;
     if !config.is_private() {
         let result = live("starting the gateway", |step| {
             step.set_label("starting the gateway process and waiting for it to answer");
@@ -610,6 +612,7 @@ fn run_gateway_down_with_config(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    refuse_a_fixtures_operator_gateway_mutation(config)?;
     if !config.is_private() {
         let result = live("stopping the gateway", |step| {
             step.set_label("stopping the gateway process and removing its record");
@@ -653,6 +656,7 @@ fn run_gateway_down_with_config(
                 "stopping the gateway process on pid {}",
                 running.pid
             ));
+            effigy_gateway::operator::record_stop_request(config);
             if config.is_private() {
                 stop_private_gateway_process(&running.snapshot)
             } else {

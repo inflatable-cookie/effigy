@@ -660,6 +660,32 @@ fn note_reused_gateway_build(status: &Status) {
     );
 }
 
+/// A stop is never silent: the gateway's log records the pid, argv and cwd of
+/// the process that asked for it (papercut 06d1cd9e). Best effort: a stop never
+/// fails because its record could not be written.
+pub fn record_stop_request(config: &GatewayConfig) {
+    let cwd = std::env::current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "<unknown>".into());
+    let argv = std::env::args().collect::<Vec<_>>().join(" ");
+    let line = format!(
+        "[gateway] stop requested by pid {} cwd {cwd} argv {argv}\n",
+        std::process::id()
+    );
+    let Some(directory) = config.pid_file_path.parent() else {
+        return;
+    };
+    if let Ok(mut log) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("gateway.stderr.log"))
+    {
+        use std::io::Write;
+        let _ = log.write_all(line.as_bytes());
+    }
+    eprint!("{line}");
+}
+
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     require_operator()?;
     let current = status(config)?;
@@ -671,6 +697,7 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     if current.status == "stopped" {
         return Ok(current);
     }
+    record_stop_request(config);
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
     let root = StateRoot::runtime_machine_effects(&cx, home(config)?).map_err(error)?;
@@ -951,6 +978,33 @@ mod tests {
             "up must use the live run instead of admitting another: {reused:?}"
         );
         assert_eq!(reused.status, running.status);
+    }
+
+    /// A stop is never silent: the gateway's log names the pid, argv and cwd of
+    /// the process that asked for it (papercut 06d1cd9e).
+    #[test]
+    fn a_stop_request_is_recorded_in_the_gateway_log_with_its_caller() {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+        record_stop_request(&config);
+        let log = std::fs::read_to_string(
+            config
+                .pid_file_path
+                .parent()
+                .unwrap()
+                .join("gateway.stderr.log"),
+        )
+        .expect("the stop record is written beside the gateway records");
+        assert!(
+            log.contains(&format!("stop requested by pid {}", std::process::id())),
+            "{log}"
+        );
+        assert!(
+            log.contains(&std::env::current_dir().unwrap().display().to_string()),
+            "{log}"
+        );
+        assert!(log.contains("argv "), "{log}");
     }
 
     #[test]
