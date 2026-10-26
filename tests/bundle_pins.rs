@@ -1054,7 +1054,9 @@ fn legacy_bytes_are_imported_before_a_failed_remote_update() {
     let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");
-    assert!(!pin.exists());
+    // A read path imports the v0.14.1 bytes into the lock and never reaches the
+    // absent remote: the pin names those bytes from now on.
+    assert!(pin.exists(), "{output}");
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(20));
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");

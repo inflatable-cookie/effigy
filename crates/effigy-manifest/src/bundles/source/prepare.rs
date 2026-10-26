@@ -707,6 +707,7 @@ fn acquire_and_publish(
     )
     .map_err(|err| error(manifest, err.to_string()))?;
     let mut imported = old.sources.clone();
+    let mut imported_now = Vec::new();
     // Preserve the exact pre-upgrade bytes even when the first explicit sync
     // subsequently fails. No legacy cache is changed or removed.
     for (name, selection) in selections {
@@ -730,6 +731,7 @@ fn acquire_and_publish(
                     revision: legacy_version(&legacy, selection),
                 },
             );
+            imported_now.push(name.clone());
         }
     }
     if imported.len() != old.sources.len() {
@@ -753,6 +755,9 @@ fn acquire_and_publish(
     for (name, selection) in selections {
         let pinned = pins.get(name).cloned();
         let mut reason = match plans.get(name) {
+            // A source whose v0.14.1 bytes this run just imported already has a
+            // usable pin: it is neither acquired nor refused, on any path.
+            Some(SourcePlan::Acquire(_)) if imported_now.contains(name) => None,
             Some(SourcePlan::Acquire(reason)) => Some(*reason),
             _ => None,
         };
