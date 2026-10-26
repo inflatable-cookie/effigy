@@ -21,13 +21,14 @@ struct DocsFixture {
 
 impl DocsFixture {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-docs-policy-{name}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
                 .as_nanos()
-        ));
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir");
         Self { root }
     }

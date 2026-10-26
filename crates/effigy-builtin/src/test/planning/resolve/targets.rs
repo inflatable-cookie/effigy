@@ -262,7 +262,7 @@ mod tests {
 
     fn manifest_from_toml(body: &str) -> effigy_manifest::TaskManifest {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-builtin-target-runtime-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -270,7 +270,8 @@ mod tests {
                 .expect("time")
                 .as_nanos(),
             COUNTER.fetch_add(1, Ordering::Relaxed),
-        ));
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir temp manifest root");
         let path = root.join("effigy.toml");
         fs::write(&path, body).expect("write manifest");

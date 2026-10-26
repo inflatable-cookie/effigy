@@ -22,6 +22,7 @@ toml = "1"
 toml_edit = "0.25.11"
 
 [dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }
 effigy-json-schema = { path = "../effigy-json-schema" }
 tempfile = "3"
 

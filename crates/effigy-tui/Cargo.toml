@@ -24,5 +24,6 @@ vt100 = "0.16.2"
 workspace = true
 
 [dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }
 nix = { version = "0.31", default-features = false, features = ["term"] }
 tempfile = "3"

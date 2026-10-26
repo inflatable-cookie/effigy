@@ -247,8 +247,8 @@ fn first_party_script_inventory_excludes_generated_fixture_directories() {
         let source = root.join("scripts/source.rhai");
         for relative in [
             "scripts/source.rhai",
-            "crates/effigy-parent-fixtures-builder-literal-example/scripts/builder.rhai",
             "nested/target/generated.rhai",
+            "nested/.effigy/local.rhai",
         ] {
             let path = root.join(relative);
             fs::create_dir_all(path.parent().expect("script parent")).expect("script directory");

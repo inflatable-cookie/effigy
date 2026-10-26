@@ -168,36 +168,50 @@ fn format_preserves_link_references() {
     assert!(formatted.contains("[0.1.0]: https://"));
 }
 
+/// An empty category section is dropped rather than left as a bare heading.
 #[test]
-fn format_effigy_changelog_removes_empty_sections() {
-    let content = include_str!("../../../../CHANGELOG.md");
-    let changelog = parse_changelog(content).expect("should parse");
+fn formatting_removes_empty_category_sections() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Breaking
+
+### Added
+- One feature
+
+### Changed
+
+### Fixed
+- One fix
+
+## [0.1.0] - 2026-03-01
+
+### Added
+- Initial
+";
+    let changelog = parse_changelog(input).expect("should parse");
     let formatted = format_changelog(&changelog);
 
-    // The original has empty ### Breaking and ### Changed sections
-    // After formatting, those should be gone (if they had no entries)
-    // Check that we don't have an empty Breaking section
-    // An empty section would be "### Breaking\n\n###" or "### Breaking\n\n##"
     let lines: Vec<&str> = formatted.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        if line.starts_with("### ") {
-            // The next non-blank line should be an entry or another header
-            let mut j = i + 1;
-            while j < lines.len() && lines[j].trim().is_empty() {
-                j += 1;
-            }
-            if j < lines.len() {
-                let next = lines[j];
-                // If the next non-blank line is a header (## or ###), this section is empty
-                assert!(
-                    !(next.starts_with("## ") || next.starts_with("### ")),
-                    "found empty section at line {}: `{}`",
-                    i + 1,
-                    line
-                );
-            }
+    for (index, line) in lines.iter().enumerate() {
+        if !line.starts_with("### ") {
+            continue;
         }
+        let next = lines[index + 1..]
+            .iter()
+            .find(|line| !line.trim().is_empty());
+        assert!(
+            !next.is_some_and(|next| next.starts_with("## ") || next.starts_with("### ")),
+            "found a bare empty section at line {}: `{line}`",
+            index + 1
+        );
     }
+    assert!(formatted.contains("### Added"), "{formatted}");
+    assert!(formatted.contains("### Fixed"), "{formatted}");
+    assert!(!formatted.contains("### Breaking"), "{formatted}");
+    assert!(!formatted.contains("### Changed"), "{formatted}");
 }
 
 #[test]

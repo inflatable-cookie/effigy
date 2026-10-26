@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
 use effigy_changelog::BumpKind;
 use effigy_manifest::ManifestError;
 
@@ -38,14 +37,6 @@ pub struct GateResult {
     pub hosted_run_url: Option<String>,
     pub hosted_head_sha: Option<String>,
     pub hosted_repository: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReusedGateRecord {
-    pub name: String,
-    pub run_url: String,
-    pub head_sha: String,
-    pub repository: String,
 }
 
 #[derive(Debug, Clone)]
@@ -137,83 +128,6 @@ pub enum FileMutationApply {
 }
 
 #[derive(Debug, Clone)]
-pub struct ReleasePreparePlan {
-    pub repo_root: PathBuf,
-    pub current_version: semver::Version,
-    pub version_source: ResolvedVersionSource,
-    pub suggested_version: Option<semver::Version>,
-    pub planned_version: Option<semver::Version>,
-    pub suggested_tag: Option<String>,
-    pub tag: Option<String>,
-    pub version_override_used: bool,
-    pub release_date: String,
-    pub gates_checked: bool,
-    pub configured_gate_count: usize,
-    pub gate_results: Vec<GateResult>,
-    pub environment_path: Option<PathBuf>,
-    pub blockers: Vec<String>,
-    pub mutations: Vec<FileMutationPlan>,
-    pub ready: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleasePrepared {
-    pub repo_root: PathBuf,
-    pub previous_version: semver::Version,
-    pub suggested_version: Option<semver::Version>,
-    pub prepared_version: Option<semver::Version>,
-    pub suggested_tag: Option<String>,
-    pub tag: Option<String>,
-    pub version_override_used: bool,
-    pub release_date: String,
-    pub state_file: PathBuf,
-    pub gates_checked: bool,
-    pub configured_gate_count: usize,
-    pub gate_results: Vec<GateResult>,
-    pub environment_path: Option<PathBuf>,
-    pub files_modified: Vec<PathBuf>,
-    pub blockers: Vec<String>,
-    pub prepared: bool,
-    pub state_file_written: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleaseExecutePlan {
-    pub repo_root: PathBuf,
-    pub state_file: PathBuf,
-    pub previous_version: Option<semver::Version>,
-    pub suggested_version: Option<semver::Version>,
-    pub prepared_version: Option<semver::Version>,
-    pub suggested_tag: Option<String>,
-    pub tag: Option<String>,
-    pub version_override_used: bool,
-    pub release_date: Option<String>,
-    pub prepared_at: Option<String>,
-    pub state_loaded: bool,
-    pub stale: bool,
-    pub stale_threshold_seconds: i64,
-    pub stale_override_required: bool,
-    pub stale_override_used: bool,
-    pub gates_checked: bool,
-    pub gates_passed: bool,
-    pub prepared_branch: Option<String>,
-    pub prepared_head: Option<String>,
-    pub branch: Option<String>,
-    pub current_head: Option<String>,
-    pub remote: Option<String>,
-    pub expected_files: Vec<String>,
-    pub modified_files: Vec<String>,
-    pub missing_expected_files: Vec<String>,
-    pub unexpected_files: Vec<String>,
-    pub source_fingerprint_available: bool,
-    pub fingerprint_drift: Vec<String>,
-    pub reused_gates: Vec<ReusedGateRecord>,
-    pub warnings: Vec<String>,
-    pub blockers: Vec<String>,
-    pub ready: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct ReleaseContext {
     pub repo_root: PathBuf,
     pub config: ReleaseConfig,
@@ -226,70 +140,6 @@ pub struct ReleaseContext {
     pub next_version: Option<semver::Version>,
     pub tag: Option<String>,
     pub blockers: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleaseExecuted {
-    pub repo_root: PathBuf,
-    pub state_file: PathBuf,
-    pub previous_version: Option<semver::Version>,
-    pub suggested_version: Option<semver::Version>,
-    pub prepared_version: Option<semver::Version>,
-    pub suggested_tag: Option<String>,
-    pub tag: Option<String>,
-    pub version_override_used: bool,
-    pub release_date: Option<String>,
-    pub prepared_at: Option<String>,
-    pub prepared_branch: Option<String>,
-    pub prepared_head: Option<String>,
-    pub branch: Option<String>,
-    pub current_head: Option<String>,
-    pub remote: Option<String>,
-    pub commit_message: Option<String>,
-    pub commit_sha: Option<String>,
-    pub stale: bool,
-    pub stale_override_used: bool,
-    pub fingerprint_drift: Vec<String>,
-    pub warnings: Vec<String>,
-    pub blockers: Vec<String>,
-    pub files_committed: Vec<String>,
-    pub state_file_removed: bool,
-    pub committed: bool,
-    pub tag_created: bool,
-    pub pushed: bool,
-    pub executed: bool,
-    pub post_release_instructions: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleasePreparedState {
-    pub previous_version: semver::Version,
-    pub suggested_version: Option<semver::Version>,
-    pub prepared_version: semver::Version,
-    pub suggested_tag: Option<String>,
-    pub tag: Option<String>,
-    pub version_override_used: bool,
-    pub release_date: Option<String>,
-    pub prepared_at: DateTime<Utc>,
-    pub prepared_at_raw: String,
-    pub gates_checked: bool,
-    pub gates_passed: bool,
-    pub files_modified: Vec<PathBuf>,
-    pub source_fingerprints: Option<ReleasePreparedSourceFingerprints>,
-    pub reused_gates: Vec<ReusedGateRecord>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleasePreparedSourceFingerprints {
-    pub prepared_branch: Option<String>,
-    pub prepared_head: Option<String>,
-    pub files: Vec<ReleasePreparedFileFingerprint>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleasePreparedFileFingerprint {
-    pub path: PathBuf,
-    pub digest: String,
 }
 
 #[derive(Debug)]

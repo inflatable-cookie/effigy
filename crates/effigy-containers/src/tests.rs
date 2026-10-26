@@ -21,15 +21,8 @@ mod policies;
 mod volumes_reports;
 
 pub(super) fn temp_repo(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-containers-{name}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    root
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-containers-{name}-"))
+        .expect("fixture directory")
 }
 
 pub(super) fn with_temp_effigy_home<T>(name: &str, run: impl FnOnce(PathBuf) -> T) -> T {

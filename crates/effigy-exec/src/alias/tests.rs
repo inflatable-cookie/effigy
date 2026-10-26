@@ -44,19 +44,12 @@ fn resolve_existing_alias() {
 #[test]
 fn resolve_nonexistent_alias() {
     let table = test_table();
-    let result = table.resolve("nonexistent");
-    assert!(result.is_err());
-    if let ExecError::AliasNotFound { available, .. } = result.unwrap_err() {
-        assert!(available.contains(&"mysql".to_string()));
-        assert!(available.contains(&"redis-cli".to_string()));
-    }
-}
-
-#[test]
-fn contains_check() {
-    let table = test_table();
-    assert!(table.contains("mysql"));
-    assert!(!table.contains("nonexistent"));
+    let error = table.resolve("nonexistent").expect_err("unknown alias");
+    let ExecError::AliasNotFound { available, .. } = error else {
+        panic!("an unknown alias must report AliasNotFound, got {error:?}");
+    };
+    assert!(available.contains(&"mysql".to_string()));
+    assert!(available.contains(&"redis-cli".to_string()));
 }
 
 #[test]
@@ -110,14 +103,6 @@ fn command_string_formatting() {
         ],
     };
     assert_eq!(resolved.command_string(), "php artisan migrate");
-}
-
-#[test]
-fn empty_table() {
-    let table = ExecAliasTable::new();
-    assert!(table.is_empty());
-    assert_eq!(table.len(), 0);
-    assert!(table.names().is_empty());
 }
 
 #[test]

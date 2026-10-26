@@ -859,6 +859,7 @@ dependencies = [
  "effigy-routing",
  "effigy-scan",
  "effigy-tasks",
+ "effigy-test-support",
  "effigy-tui",
  "effigy-ui",
  "globset",
@@ -926,6 +927,7 @@ name = "effigy-context"
 version = "0.14.1"
 dependencies = [
  "effigy-core",
+ "effigy-test-support",
 ]
 
 [[package]]
@@ -943,6 +945,7 @@ dependencies = [
 name = "effigy-core"
 version = "0.14.1"
 dependencies = [
+ "effigy-test-support",
  "hex",
  "serde",
  "serde_json",
@@ -975,6 +978,7 @@ name = "effigy-docs-policy"
 version = "0.14.1"
 dependencies = [
  "effigy-manifest",
+ "effigy-test-support",
  "regex",
  "serde_json",
  "walkdir",
@@ -992,6 +996,7 @@ dependencies = [
  "effigy-routing",
  "effigy-scan",
  "effigy-tasks",
+ "effigy-test-support",
  "effigy-ui",
  "globset",
  "jsonc-parser",
@@ -1026,6 +1031,7 @@ dependencies = [
  "effigy-context",
  "effigy-core",
  "effigy-tasks",
+ "effigy-test-support",
  "serde",
 ]
 
@@ -1095,6 +1101,7 @@ dependencies = [
  "effigy-manifest",
  "effigy-process",
  "effigy-tasks",
+ "effigy-test-support",
  "effigy-tui",
  "effigy-ui",
  "serde",
@@ -1111,6 +1118,7 @@ dependencies = [
  "chrono",
  "effigy-core",
  "effigy-kernel",
+ "effigy-test-support",
  "getrandom 0.4.3",
  "indexmap",
  "libc",
@@ -1127,6 +1135,7 @@ dependencies = [
 name = "effigy-process"
 version = "0.14.1"
 dependencies = [
+ "effigy-test-support",
  "nix 0.31.3",
 ]
 
@@ -1140,6 +1149,7 @@ dependencies = [
  "effigy-json-schema",
  "effigy-kernel",
  "effigy-manifest",
+ "effigy-test-support",
  "getrandom 0.4.3",
  "globset",
  "semver",
@@ -1165,6 +1175,7 @@ dependencies = [
  "effigy-execution",
  "effigy-manifest",
  "effigy-secrets",
+ "effigy-test-support",
  "effigy-ui",
  "portable-pty",
  "regex",
@@ -1187,6 +1198,7 @@ version = "0.14.1"
 dependencies = [
  "effigy-core",
  "effigy-manifest",
+ "effigy-test-support",
  "serde",
  "serde_json",
  "toml",
@@ -1205,6 +1217,7 @@ dependencies = [
  "effigy-gateway",
  "effigy-manifest",
  "effigy-process",
+ "effigy-test-support",
  "effigy-tui",
  "effigy-ui",
  "nix 0.31.3",
@@ -1256,6 +1269,7 @@ name = "effigy-state"
 version = "0.14.1"
 dependencies = [
  "effigy-manifest",
+ "effigy-test-support",
  "serde",
  "serde_json",
  "toml",
@@ -1297,6 +1311,7 @@ dependencies = [
  "effigy-cli",
  "effigy-core",
  "effigy-process",
+ "effigy-test-support",
  "effigy-ui",
  "libc",
  "nix 0.31.3",

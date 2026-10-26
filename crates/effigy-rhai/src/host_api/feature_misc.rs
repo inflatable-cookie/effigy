@@ -25,10 +25,6 @@ pub(super) fn register_misc_feature_modules(
         std::rc::Rc::new(build_changelog_module(context.clone(), callbacks.clone())),
     );
     engine.register_static_module(
-        MODULE_CACHE,
-        std::rc::Rc::new(build_cache_module(context.clone(), callbacks.clone())),
-    );
-    engine.register_static_module(
         MODULE_GATEWAY,
         std::rc::Rc::new(build_gateway_module(context.clone(), callbacks.clone())),
     );
@@ -51,10 +47,6 @@ pub(super) fn register_misc_feature_modules(
     engine.register_static_module(
         MODULE_CONTRACTS,
         std::rc::Rc::new(build_contracts_module(context.clone(), callbacks.clone())),
-    );
-    engine.register_static_module(
-        MODULE_UNLOCK,
-        std::rc::Rc::new(build_unlock_module(context.clone(), callbacks.clone())),
     );
     engine.register_static_module(
         MODULE_TEST,
@@ -191,32 +183,6 @@ fn build_changelog_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
     module
 }
 
-fn build_cache_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
-    let mut module = rhai::Module::new();
-    module_feature_no_args(
-        &mut module,
-        "inspect",
-        FEATURE_CACHE_INSPECT,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "inspect",
-        FEATURE_CACHE_INSPECT,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "invalidate",
-        FEATURE_CACHE_INVALIDATE,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module
-}
-
 fn build_gateway_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
     module_feature_no_args(
@@ -347,18 +313,6 @@ fn build_contracts_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
         &mut module,
         "check_json",
         FEATURE_CONTRACTS_CHECK_JSON,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module
-}
-
-fn build_unlock_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
-    let mut module = rhai::Module::new();
-    module_feature_options(
-        &mut module,
-        "scopes",
-        FEATURE_UNLOCK_SCOPES,
         context.clone(),
         callbacks.clone(),
     );

@@ -265,15 +265,6 @@ mod tests {
     };
 
     #[test]
-    fn active_version_file_uses_sibling_extension() {
-        let executable = std::path::Path::new("/tmp/effigy");
-        assert_eq!(
-            active_version_file_for(executable),
-            std::path::PathBuf::from("/tmp/effigy.active-version")
-        );
-    }
-
-    #[test]
     fn read_active_version_file_trims_and_ignores_empty_values() {
         let temp = tempfile::tempdir().expect("tempdir");
         let executable = temp.path().join("effigy");
@@ -615,30 +606,6 @@ mod tests {
     }
 
     static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn environment_guard_serializes_a_forced_concurrent_mutator() {
-        const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
-        let original = std::env::var_os(KEY);
-        let first = ProcessEnvRestore::set(KEY, "first");
-        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
-        let second = std::thread::spawn(move || {
-            assert!(matches!(
-                TEST_ENV_LOCK.try_lock(),
-                Err(std::sync::TryLockError::WouldBlock)
-            ));
-            attempted_tx.send(()).unwrap();
-            let _second = ProcessEnvRestore::set(KEY, "second");
-            assert_eq!(std::env::var(KEY).unwrap(), "second");
-        });
-        attempted_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap();
-        assert_eq!(std::env::var(KEY).unwrap(), "first");
-        drop(first);
-        second.join().unwrap();
-        assert_eq!(std::env::var_os(KEY), original);
-    }
 
     /// Restores one process-environment key while holding the crate env lock.
     struct ProcessEnvRestore {

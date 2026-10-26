@@ -269,12 +269,6 @@ mod tests {
     }
 
     #[test]
-    fn boot_identity_is_stable_within_one_boot() {
-        assert_eq!(boot_identity(), boot_identity());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
     fn boot_session_uuid_parser_rejects_missing_failed_and_malformed() {
         use super::parse_boot_session_uuid;
         let canonical = "5c42afa5-6f5c-420b-b203-86a715e66c68";

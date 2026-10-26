@@ -413,16 +413,10 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn temp_repo() -> PathBuf {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "effigy-context-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).expect("mkdir temp repo");
+        let root = effigy_test_support::Fixture::process_lifetime("effigy-context-")
+            .expect("fixture directory");
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"ctx\"\n").expect("write manifest");
         root
     }
@@ -483,8 +477,11 @@ mod tests {
 
     #[test]
     fn lossy_capture_falls_back_to_cwd_when_root_is_unresolved() {
-        let root =
-            std::env::temp_dir().join(format!("effigy-context-no-root-{}", std::process::id()));
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-context-no-root-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir unresolved root");
 
         let context = EffigyRuntimeContext::builder()

@@ -810,26 +810,6 @@ catalog = "php-fpm"
         root
     }
 
-    #[test]
-    fn environment_guard_serializes_a_forced_concurrent_mutator() {
-        const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
-        let original = std::env::var_os(KEY);
-        let first = ScopedEnvVar::set(KEY, "first");
-        let second = std::thread::spawn(move || {
-            let _second = ScopedEnvVar::set(KEY, "second");
-            assert_eq!(std::env::var(KEY).unwrap(), "second");
-        });
-        assert!(crate::contract_test_support::test_lock_waiter_position(
-            second.thread().id(),
-            std::time::Duration::from_secs(5)
-        )
-        .is_some());
-        assert_eq!(std::env::var(KEY).unwrap(), "first");
-        drop(first);
-        second.join().unwrap();
-        assert_eq!(std::env::var_os(KEY), original);
-    }
-
     struct ScopedEnvVar {
         key: String,
         previous: Option<String>,

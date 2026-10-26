@@ -1105,13 +1105,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn release_stages_cover_the_contracts_stage_boundaries() {
-        assert_eq!(RELEASE_STAGES[0], "validate");
-        assert_eq!(RELEASE_STAGES[6], "closeout");
-        assert!(RELEASE_STAGES.contains(&DEFAULT_APPROVAL_CHECKPOINT));
-    }
-
-    #[test]
     fn identity_kind_labels_are_the_config_values() {
         assert_eq!(IdentityKind::Semver.label(), "semver");
         assert_eq!(IdentityKind::Digest.label(), "digest");

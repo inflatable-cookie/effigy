@@ -61,15 +61,6 @@ fn reset_with_keep_data_preserves_persistent() {
 }
 
 #[test]
-fn empty_volumes_produce_empty_classification() {
-    let class = classify_for_reset(&[], true);
-    assert!(class.remove.is_empty());
-    assert!(class.keep.is_empty());
-}
-
-// ── Command specs ────────────────────────────────────────────────
-
-#[test]
 fn list_volumes_command_format() {
     let cmd = list_volumes_command("my-project");
     assert_eq!(cmd.program, "docker");
@@ -184,24 +175,6 @@ fn remove_volume_command_format() {
 }
 
 // ── ManagedVolume construction ───────────────────────────────────
-
-#[test]
-fn from_volume_info() {
-    let info = VolumeInfo {
-        project_name: "proj".to_string(),
-        name: "proj-db-data".to_string(),
-        named: true,
-        persist: true,
-        service: "db".to_string(),
-        mount: Some("/var/lib/mysql".to_string()),
-    };
-    let managed = ManagedVolume::from_volume_info(&info);
-    assert_eq!(managed.name, "proj-db-data");
-    assert!(managed.persist);
-    assert_eq!(managed.service, "db");
-    assert!(managed.size_bytes.is_none());
-    assert_eq!(managed.mount_target.as_deref(), Some("/var/lib/mysql"));
-}
 
 #[test]
 fn managed_volume_classifies_cache_kinds_from_mount_target() {

@@ -481,8 +481,13 @@ mod controls {
         }
     }
 
+    // --- Live controls: a real HOME broken the way a kernel bug would. ---
+
+    /// Merged proof: oracle_controls_o1a_o1b_reject_surviving_processes, oracle_controls_o2_o3_o13_reject_open_or_parallel_runs, oracle_controls_o4_rejects_a_gate_held_without_a_declared_holder, oracle_controls_o5_rejects_double_application_and_release, oracle_controls_o6_o7_o9_o10_reject_damage, oracle_controls_o8_rejects_undo_after_unknown_or_unobserved, oracle_controls_o11_o12_o14_reject_unsafe_destruction, oracle_live_controls_detect_real_violations.
     #[test]
-    fn oracle_controls_o1a_o1b_reject_surviving_processes() {
+    fn oracle_controls_reject_every_violating_world() {
+        // oracle_controls_o1a_o1b_reject_surviving_processes
+
         let mut world = World::default();
         world.runs.push(row(1, "closed", Some("complete")));
         world.effects.insert(run_id(1).to_string(), vec![]);
@@ -528,9 +533,9 @@ mod controls {
             vec![effect(1, "kernel:attachment", EffectState::Residue)],
         );
         fails(Oracle::O1b, &world);
-    }
-    #[test]
-    fn oracle_controls_o2_o3_o13_reject_open_or_parallel_runs() {
+
+        // oracle_controls_o2_o3_o13_reject_open_or_parallel_runs
+
         let mut world = World::default();
         world.runs.push(row(1, "active", None));
         world.statuses.insert(
@@ -573,9 +578,9 @@ mod controls {
         passes(Oracle::O13, &world);
         world.admissions[0].unresolved = 1;
         fails(Oracle::O13, &world);
-    }
-    #[test]
-    fn oracle_controls_o4_rejects_a_gate_held_without_a_declared_holder() {
+
+        // oracle_controls_o4_rejects_a_gate_held_without_a_declared_holder
+
         let mut world = World::default();
         let held = |pid| GateRead {
             file: "scope/x.gate".into(),
@@ -612,9 +617,9 @@ mod controls {
         let mut world = World::default();
         world.scopes_held.push("scope".into());
         fails(Oracle::O4, &world);
-    }
-    #[test]
-    fn oracle_controls_o5_rejects_double_application_and_release() {
+
+        // oracle_controls_o5_rejects_double_application_and_release
+
         let mut world = World {
             calls: vec!["apply a".into(), "release a".into()],
             ..World::default()
@@ -636,9 +641,9 @@ mod controls {
             ..World::default()
         };
         fails(Oracle::O5, &world);
-    }
-    #[test]
-    fn oracle_controls_o6_o7_o9_o10_reject_damage() {
+
+        // oracle_controls_o6_o7_o9_o10_reject_damage
+
         let mut world = World {
             integrity: Some(Err("1 foreign-key violations".into())),
             ..World::default()
@@ -658,9 +663,9 @@ mod controls {
             .diffs
             .push(("status".into(), vec!["created kernel.db".into()]));
         fails(Oracle::O10, &world);
-    }
-    #[test]
-    fn oracle_controls_o8_rejects_undo_after_unknown_or_unobserved() {
+
+        // oracle_controls_o8_rejects_undo_after_unknown_or_unobserved
+
         let mut world = World {
             events: vec![
                 Event::Observed {
@@ -686,9 +691,9 @@ mod controls {
             subject: "b".into(),
         }];
         fails(Oracle::O8, &world);
-    }
-    #[test]
-    fn oracle_controls_o11_o12_o14_reject_unsafe_destruction() {
+
+        // oracle_controls_o11_o12_o14_reject_unsafe_destruction
+
         let mut world = World {
             calls: vec!["env:down e@2 holders=0".into()],
             ..World::default()
@@ -715,12 +720,9 @@ mod controls {
             nonce: Some("probe".into()),
         });
         fails(Oracle::O14, &world);
-    }
 
-    // --- Live controls: a real HOME broken the way a kernel bug would. ---
+        // oracle_live_controls_detect_real_violations
 
-    #[test]
-    fn oracle_live_controls_detect_real_violations() {
         use super::super::scenarios::Fake;
         use crate::gate::{Gate, Wait};
         use crate::root::StateRoot;
@@ -822,36 +824,36 @@ mod controls {
         let store = Store::open(&cx, &root).unwrap();
         for (n, phase) in [(7u8, "active"), (8, "active")] {
             store
-                .conn()
-                .execute(
-                    "INSERT INTO runs(run_id,owner,generation,kind,placement,phase,created_at,updated_at) \
-                     VALUES (?1,?2,9,'operation','host',?3,0,0)",
-                    rusqlite::params![run_id(n).to_string(), owner.name().to_string(), phase],
-                )
-                .unwrap();
+                    .conn()
+                    .execute(
+                        "INSERT INTO runs(run_id,owner,generation,kind,placement,phase,created_at,updated_at) \
+                         VALUES (?1,?2,9,'operation','host',?3,0,0)",
+                        rusqlite::params![run_id(n).to_string(), owner.name().to_string(), phase],
+                    )
+                    .unwrap();
         }
         fails(Oracle::O13, &world());
         fails(Oracle::O3, &world());
         // O5: an attachment released twice.
         store
-            .conn()
-            .execute_batch(
-                "INSERT INTO attachments(environment,run_id,env_generation,mode,state) \
-                 SELECT name,(SELECT run_id FROM runs LIMIT 1),1,'\"Borrow\"','attached' FROM resources LIMIT 1;
-                 UPDATE attachments SET state='released';
-                 UPDATE attachments SET state='attached';
-                 UPDATE attachments SET state='released';",
-            )
-            .unwrap();
+                .conn()
+                .execute_batch(
+                    "INSERT INTO attachments(environment,run_id,env_generation,mode,state) \
+                     SELECT name,(SELECT run_id FROM runs LIMIT 1),1,'\"Borrow\"','attached' FROM resources LIMIT 1;
+                     UPDATE attachments SET state='released';
+                     UPDATE attachments SET state='attached';
+                     UPDATE attachments SET state='released';",
+                )
+                .unwrap();
         fails(Oracle::O5, &world());
         // O6: a dangling foreign key.
         store
-            .conn()
-            .execute_batch(
-                "PRAGMA foreign_keys=OFF; \
-                 INSERT INTO events(run_id,seq,kind,state,wall_time) VALUES ('missing',1,'x','intended',0);",
-            )
-            .unwrap();
+                .conn()
+                .execute_batch(
+                    "PRAGMA foreign_keys=OFF; \
+                     INSERT INTO events(run_id,seq,kind,state,wall_time) VALUES ('missing',1,'x','intended',0);",
+                )
+                .unwrap();
         fails(Oracle::O6, &world());
     }
 }

@@ -555,12 +555,6 @@ pub(super) fn run_rhai_feature(
         FEATURE_SCAN_DUPLICATE_BLOCKS => {
             run_builtin_json(repo_root, "scan", scan_args("duplicate-blocks", &options)?)
         }
-        FEATURE_CACHE_INSPECT => {
-            run_builtin_json(repo_root, "cache", cache_inspect_args(&options)?)
-        }
-        FEATURE_CACHE_INVALIDATE => {
-            run_builtin_json(repo_root, "cache", cache_invalidate_args(&options)?)
-        }
         FEATURE_CONTRACTS_CHECK_JSON => run_typed_command(
             repo_root,
             effigy_cli::Command::Contracts(ContractsArgs {
@@ -719,15 +713,6 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        FEATURE_UNLOCK_SCOPES => {
-            let mut args = vec!["unlock".to_owned()];
-            if bool_option(&options, "all")?.unwrap_or(false) {
-                args.push("--all".to_owned());
-            }
-            args.extend(string_array(&options, "scopes")?);
-            args.push("--yes".to_owned());
-            run_builtin_json(repo_root, "unlock", args)
-        }
         FEATURE_TEST_PLAN => {
             let mut args = vec!["test".to_owned(), "--plan".to_owned()];
             if let Some(suite) = string_option(&options, "suite")? {
@@ -800,8 +785,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_DOCTOR_RUN
             | FEATURE_SCAN_GOD_FILES
             | FEATURE_SCAN_DUPLICATE_BLOCKS
-            | FEATURE_CACHE_INSPECT
-            | FEATURE_CACHE_INVALIDATE
             | FEATURE_CONTRACTS_CHECK_JSON
             | FEATURE_DEPLOY_MODEL
             | FEATURE_DEPLOY_EMIT
@@ -812,7 +795,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_DEPLOY_REDEPLOY
             | FEATURE_CHANGELOG_VALIDATE
             | FEATURE_CHANGELOG_EXTRACT
-            | FEATURE_UNLOCK_SCOPES
             | FEATURE_TEST_PLAN
     )
 }
@@ -968,26 +950,6 @@ fn scan_args(scan: &str, options: &Value) -> Result<Vec<String>, RunnerError> {
     if let Some(format) = string_option(options, "format")? {
         args.push("--format".to_owned());
         args.push(format);
-    }
-    Ok(args)
-}
-
-fn cache_inspect_args(options: &Value) -> Result<Vec<String>, RunnerError> {
-    let mut args = vec!["inspect".to_owned()];
-    if let Some(selector) = string_option(options, "selector")? {
-        args.push(selector);
-    }
-    Ok(args)
-}
-
-fn cache_invalidate_args(options: &Value) -> Result<Vec<String>, RunnerError> {
-    let mut args = vec!["invalidate".to_owned()];
-    if bool_option(options, "all")?.unwrap_or(false) {
-        args.push("--all".to_owned());
-    }
-    args.extend(string_array(options, "selectors")?);
-    if let Some(selector) = string_option(options, "selector")? {
-        args.push(selector);
     }
     Ok(args)
 }

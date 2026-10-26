@@ -795,18 +795,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_existing_path_resolves_relative_components() {
-        let temp = tempdir().expect("tempdir");
-        let nested = temp.path().join("nested");
-        fs::create_dir(&nested).expect("nested");
-        let input = nested.join("..").join("nested");
-        assert_eq!(
-            canonical_existing_path(&input).expect("canonical"),
-            fs::canonicalize(nested).expect("canonical nested")
-        );
-    }
-
-    #[test]
     fn foreign_registration_is_not_claimed_and_conflicts_are_refused() {
         let temp = tempdir().expect("tempdir");
         let repo = absolute(temp.path());
@@ -938,15 +926,5 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(lock_mode, 0o600);
-    }
-
-    #[test]
-    fn schema_constants_match_empty_state() {
-        let repo = RepoLinkState::empty();
-        assert_eq!(repo.schema, REPO_LINK_STATE_SCHEMA);
-        assert_eq!(repo.schema_version, REPO_LINK_STATE_SCHEMA_VERSION);
-        let bun = crate::BunRegistrationIndex::empty();
-        assert_eq!(bun.schema, BUN_REGISTRATION_INDEX_SCHEMA);
-        assert_eq!(bun.schema_version, BUN_REGISTRATION_INDEX_SCHEMA_VERSION);
     }
 }

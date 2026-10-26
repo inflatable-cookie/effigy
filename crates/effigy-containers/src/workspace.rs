@@ -464,13 +464,14 @@ mod optional_source_tests {
     use std::path::Path;
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
+        let path = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-workspace-optional-source-{label}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
                 .as_nanos()
-        ));
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir temp dir");
         path
     }

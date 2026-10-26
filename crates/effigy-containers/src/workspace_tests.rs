@@ -4,11 +4,11 @@ mod structured_mount_tests {
     use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};
     use std::fs;
 
-    /// A fixture directory owned until this test thread exits, so nothing is
+    /// A fixture directory owned until this test process exits, so nothing is
     /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
-            .expect("create fixture directory")
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-structured-mount-{label}-"))
+            .expect("fixture directory")
     }
 
     #[test]
@@ -164,11 +164,19 @@ mod library_mount_tests {
     use super::super::*;
     use std::fs;
 
-    /// A fixture directory owned until this test thread exits, so nothing is
+    /// A fixture directory owned until this test process exits, so nothing is
     /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
-            .expect("create fixture directory")
+        let path = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-library-mount-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
+        .expect("fixture directory");
+        fs::create_dir_all(&path).expect("mkdir");
+        path
     }
 
     fn mount(raw: &str, host_path: PathBuf) -> LibraryMount {
@@ -250,11 +258,19 @@ mod host_git_mount_tests {
     use std::collections::BTreeMap;
     use std::fs;
 
-    /// A fixture directory owned until this test thread exits, so nothing is
+    /// A fixture directory owned until this test process exits, so nothing is
     /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
-            .expect("create fixture directory")
+        let path = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-host-git-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
+        .expect("fixture directory");
+        fs::create_dir_all(&path).expect("mkdir");
+        path
     }
 
     fn make_config(
@@ -378,9 +394,7 @@ mod host_git_mount_tests {
         /// the caller established.
         fn renders(self, config: &ManifestContainerConfig) -> bool {
             match self {
-                HostMount::GitConfig => {
-                    build_host_git_config_mount(config, "workspace").is_some()
-                }
+                HostMount::GitConfig => build_host_git_config_mount(config, "workspace").is_some(),
                 HostMount::SshDir => build_host_ssh_dir_mount(config, "workspace").is_some(),
                 HostMount::SshConfig => build_host_ssh_config_mount(config, "workspace").is_some(),
                 HostMount::KnownHosts => {
@@ -472,7 +486,10 @@ mod host_git_mount_tests {
                 "ssh config: the whole ssh directory is already mounted",
                 HostMount::SshConfig,
                 "php-fpm",
-                &[("mount_host_ssh_dir", true), ("mount_host_ssh_config", true)],
+                &[
+                    ("mount_host_ssh_dir", true),
+                    ("mount_host_ssh_config", true),
+                ],
                 Host::Home(&[".ssh/config"]),
             ),
             (
@@ -991,11 +1008,19 @@ mod worktree_git_mount_tests {
     use super::super::*;
     use std::fs;
 
-    /// A fixture directory owned until this test thread exits, so nothing is
+    /// A fixture directory owned until this test process exits, so nothing is
     /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
-            .expect("create fixture directory")
+        let path = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-worktree-git-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
+        .expect("fixture directory");
+        fs::create_dir_all(&path).expect("mkdir");
+        path
     }
 
     #[test]

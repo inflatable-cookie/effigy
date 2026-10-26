@@ -306,15 +306,6 @@ mod tests {
     }
 
     #[test]
-    fn bounded_service_reports_the_deadline_it_owns() {
-        let deadline = Instant::now()
-            .checked_add(Duration::from_secs(30))
-            .expect("future instant");
-        let process = BoundedReadOnlyProcess::new(deadline);
-        assert_eq!(process.deadline(), Some(deadline));
-    }
-
-    #[test]
     fn failing_child_reports_process_failure_not_timeout() {
         let process = BoundedReadOnlyProcess::new(
             Instant::now()

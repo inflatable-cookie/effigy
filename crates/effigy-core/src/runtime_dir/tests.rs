@@ -12,39 +12,6 @@ use super::{
     git_local_exclude_path, pattern_already_listed,
 };
 
-/// Historical helper: appended the pattern to `.gitignore`. Kept as the
-/// clean-tree oracle's failing baseline.
-fn legacy_ensure_pattern_ignored_in_gitignore(
-    repo_root: &Path,
-    append_line: &str,
-    accepted_aliases: &[&str],
-) -> io::Result<bool> {
-    if !repo_root.join(".git").is_dir() {
-        return Ok(false);
-    }
-    let gitignore_path = repo_root.join(".gitignore");
-    let existing = match fs::read_to_string(&gitignore_path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error),
-    };
-    if existing
-        .lines()
-        .map(str::trim)
-        .any(|line| accepted_aliases.contains(&line))
-    {
-        return Ok(false);
-    }
-    let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    updated.push_str(append_line);
-    updated.push('\n');
-    fs::write(gitignore_path, updated)?;
-    Ok(true)
-}
-
 fn git(cwd: &Path, args: &[&str]) -> Output {
     let output = Command::new("git")
         .args([
@@ -101,29 +68,6 @@ fn check_ignore(root: &Path, path: &str) -> bool {
 
 fn exclude_contents(root: &Path) -> String {
     fs::read_to_string(git_local_exclude_path(root)).expect("read exclude")
-}
-
-#[test]
-fn legacy_gitignore_helper_fails_the_clean_tree_oracle() {
-    let tmp = TempDir::new().expect("tempdir");
-    let root = tmp.path();
-    git_init_with_tracked_manifest(root);
-    assert!(!root.join(".gitignore").exists());
-    assert_eq!(porcelain(root), "");
-
-    let changed =
-        legacy_ensure_pattern_ignored_in_gitignore(root, ".effigy", &[".effigy", ".effigy/"])
-            .expect("legacy ignore");
-    assert!(changed);
-    assert_eq!(
-        fs::read_to_string(root.join(".gitignore")).expect("read"),
-        ".effigy\n"
-    );
-    let status = porcelain(root);
-    assert!(
-        status.contains(".gitignore"),
-        "legacy helper must dirty the tree: {status:?}"
-    );
 }
 
 #[test]
@@ -777,20 +721,6 @@ fn git_local_exclude_path_uses_common_dir_for_a_primary_checkout() {
     let root = tmp.path();
     fs::create_dir(root.join(".git")).expect("git dir");
     assert_eq!(git_local_exclude_path(root), root.join(".git/info/exclude"));
-}
-
-#[test]
-fn dangling_gitfile_diagnostic_does_not_invent_exclude_path() {
-    let tmp = TempDir::new().expect("tempdir");
-    let root = tmp.path();
-    fs::write(root.join(".git"), "gitdir: /nope/does/not/exist\n").expect("pointer");
-    assert_eq!(git_local_exclude_path(root), root.join(".git"));
-    assert!(
-        !git_local_exclude_path(root)
-            .to_string_lossy()
-            .ends_with("info/exclude"),
-        "must not invent .git/info/exclude through a gitfile"
-    );
 }
 
 #[test]

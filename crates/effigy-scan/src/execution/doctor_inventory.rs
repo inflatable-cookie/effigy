@@ -530,9 +530,9 @@ fn run_git_bounded(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     let evidence = DoctorGitProcessEvidence::from_test_config(Some(deadline));
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     if evidence.is_some() {
         command
             .env(
@@ -560,7 +560,7 @@ fn run_git_bounded(
     let child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            #[cfg(all(unix, debug_assertions))]
+            #[cfg(all(unix, test))]
             if let Some(evidence) = &evidence {
                 evidence.record(
                     "spawn_failed",
@@ -570,12 +570,12 @@ fn run_git_bounded(
                     }),
                 );
             }
-            #[cfg(not(all(unix, debug_assertions)))]
+            #[cfg(not(all(unix, test)))]
             let _ = error;
             return Ok(None);
         }
     };
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     if let Some(evidence) = &evidence {
         let pid = child.id();
         let pgid = i32::try_from(pid)
@@ -602,9 +602,9 @@ fn run_git_bounded(
             }),
         );
     }
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     let mut child = OwnedGitChild::new(child, evidence);
-    #[cfg(not(all(unix, debug_assertions)))]
+    #[cfg(not(all(unix, test)))]
     let mut child = OwnedGitChild::new(child);
     let stdout = child
         .child_mut()
@@ -653,7 +653,7 @@ fn run_git_bounded(
     }
 }
 
-#[cfg(all(unix, debug_assertions, test))]
+#[cfg(all(unix, test))]
 #[derive(Clone)]
 struct DoctorGitTestConfig {
     program: PathBuf,
@@ -671,20 +671,20 @@ struct DoctorGitTestConfig {
     late_marker: PathBuf,
 }
 
-#[cfg(all(unix, debug_assertions, test))]
+#[cfg(all(unix, test))]
 thread_local! {
     static DOCTOR_GIT_TEST_CONFIG: std::cell::RefCell<Option<DoctorGitTestConfig>> = const {
         std::cell::RefCell::new(None)
     };
 }
 
-#[cfg(all(unix, debug_assertions, test))]
+#[cfg(all(unix, test))]
 fn doctor_git_test_config() -> Option<DoctorGitTestConfig> {
     DOCTOR_GIT_TEST_CONFIG.with(|config| config.borrow().clone())
 }
 
 fn doctor_git_command() -> Command {
-    #[cfg(all(unix, debug_assertions, test))]
+    #[cfg(all(unix, test))]
     if let Some(config) = doctor_git_test_config() {
         let mut command = Command::new(config.program);
         command
@@ -710,17 +710,7 @@ fn doctor_git_command() -> Command {
             .env("EFFIGY_TEST_DOCTOR_GIT_LATE_MARKER", config.late_marker);
         return command;
     }
-    // Whole-CLI fixtures use the canonical interpreter: macOS may delay exec
-    // of a newly written shim beyond the probe's deliberately short deadline.
-    #[cfg(all(unix, debug_assertions))]
-    let script = std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_SCRIPT");
-    #[cfg(not(all(unix, debug_assertions)))]
-    let script: Option<std::ffi::OsString> = None;
-    let mut command = Command::new(if script.is_some() { "/bin/sh" } else { "git" });
-    if let Some(script) = script {
-        command.arg(script);
-    }
-    command
+    Command::new("git")
 }
 
 fn read_child_output(mut stream: impl std::io::Read) -> std::io::Result<Vec<u8>> {
@@ -736,12 +726,12 @@ struct OwnedGitChild {
     child: std::process::Child,
     pid: u32,
     settled: bool,
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     evidence: Option<DoctorGitProcessEvidence>,
 }
 
 impl OwnedGitChild {
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn new(child: std::process::Child, evidence: Option<DoctorGitProcessEvidence>) -> Self {
         let pid = child.id();
         Self {
@@ -752,7 +742,7 @@ impl OwnedGitChild {
         }
     }
 
-    #[cfg(not(all(unix, debug_assertions)))]
+    #[cfg(not(all(unix, test)))]
     fn new(child: std::process::Child) -> Self {
         let pid = child.id();
         Self {
@@ -770,7 +760,7 @@ impl OwnedGitChild {
         let result = self.child.try_wait()?;
         if result.is_some() {
             self.settled = true;
-            #[cfg(all(unix, debug_assertions))]
+            #[cfg(all(unix, test))]
             if let Some(status) = result.as_ref() {
                 if let Some(evidence) = &self.evidence {
                     evidence.record(
@@ -796,13 +786,13 @@ impl OwnedGitChild {
         // sent. Once the numeric identity has been used, do not signal it
         // again even if `wait` reports an error.
         self.settled = true;
-        #[cfg(all(unix, debug_assertions))]
+        #[cfg(all(unix, test))]
         terminate_git_tree(self.pid, self.evidence.as_ref());
-        #[cfg(not(all(unix, debug_assertions)))]
+        #[cfg(not(all(unix, test)))]
         terminate_git_tree(self.pid);
         #[cfg(not(unix))]
         let _ = self.child.kill();
-        #[cfg(all(unix, debug_assertions))]
+        #[cfg(all(unix, test))]
         {
             let wait_result = self.child.wait();
             if let Some(evidence) = &self.evidence {
@@ -822,7 +812,7 @@ impl OwnedGitChild {
                 );
             }
         }
-        #[cfg(not(all(unix, debug_assertions)))]
+        #[cfg(not(all(unix, test)))]
         {
             let _ = self.child.wait();
         }
@@ -840,10 +830,7 @@ fn git_budget_error() -> ScanError {
 }
 
 #[cfg(unix)]
-fn terminate_git_tree(
-    pid: u32,
-    #[cfg(debug_assertions)] evidence: Option<&DoctorGitProcessEvidence>,
-) {
+fn terminate_git_tree(pid: u32, #[cfg(test)] evidence: Option<&DoctorGitProcessEvidence>) {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
     let Ok(pid) = i32::try_from(pid) else {
@@ -856,26 +843,26 @@ fn terminate_git_tree(
     // preventing the process-group ID from being reused between signals.
     let target = Pid::from_raw(-pid);
     let term = kill(target, Signal::SIGTERM);
-    #[cfg(debug_assertions)]
+    #[cfg(test)]
     if let Some(evidence) = evidence {
         evidence.record_signal("TERM", target.as_raw(), &term);
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(test))]
     let _ = term;
     std::thread::sleep(std::time::Duration::from_millis(500));
     let kill_result = kill(target, Signal::SIGKILL);
-    #[cfg(debug_assertions)]
+    #[cfg(test)]
     if let Some(evidence) = evidence {
         evidence.record_signal("KILL", target.as_raw(), &kill_result);
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(test))]
     let _ = kill_result;
 }
 
 #[cfg(not(unix))]
 fn terminate_git_tree(_pid: u32) {}
 
-#[cfg(all(unix, debug_assertions))]
+#[cfg(all(unix, test))]
 /// Private debug-build recording enabled only by the doctor process fixture.
 /// With no test evidence path set, it has no filesystem or process effects.
 struct DoctorGitProcessEvidence {
@@ -887,35 +874,18 @@ struct DoctorGitProcessEvidence {
     started: Instant,
 }
 
-#[cfg(all(unix, debug_assertions))]
+#[cfg(all(unix, test))]
 impl DoctorGitProcessEvidence {
     fn from_test_config(deadline: Option<Instant>) -> Option<Self> {
-        #[cfg(test)]
-        {
-            let config = doctor_git_test_config()?;
-            Some(Self {
-                path: config.source_events,
-                invocation: config.invocation,
-                ready_marker: Some(config.initial_ready),
-                late_ready_marker: Some(config.late_ready),
-                deadline,
-                started: Instant::now(),
-            })
-        }
-        #[cfg(not(test))]
-        {
-            let path = std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE")?;
-            Some(Self {
-                path: PathBuf::from(path),
-                invocation: std::env::var("EFFIGY_TEST_DOCTOR_GIT_INVOCATION")
-                    .unwrap_or_else(|_| "unspecified".to_owned()),
-                ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_READY").map(PathBuf::from),
-                late_ready_marker: std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_LATE_READY")
-                    .map(PathBuf::from),
-                deadline,
-                started: Instant::now(),
-            })
-        }
+        let config = doctor_git_test_config()?;
+        Some(Self {
+            path: config.source_events,
+            invocation: config.invocation,
+            ready_marker: Some(config.initial_ready),
+            late_ready_marker: Some(config.late_ready),
+            deadline,
+            started: Instant::now(),
+        })
     }
 
     fn record(&self, event: &str, details: serde_json::Value) {
@@ -1320,19 +1290,19 @@ mod tests {
         assert!(!cache_paths(root, "root", root).current.exists());
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     #[test]
     fn doctor_git_timeout_process_group_evidence() {
         doctor_git_inventory_fixture_proof(false);
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     #[test]
     fn doctor_git_timeout_before_status_is_incomplete_evidence() {
         doctor_git_inventory_fixture_proof(true);
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn doctor_git_inventory_fixture_proof(slow_index: bool) {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
@@ -1484,7 +1454,7 @@ mod tests {
         drop(fixture_guard);
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     #[test]
     fn doctor_git_timeout_process_fixture_child() {
         use nix::sys::signal::Signal;
@@ -1636,7 +1606,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn path_binary(name: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
@@ -1652,7 +1622,7 @@ mod tests {
         panic!("could not find executable {name} on PATH");
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn run_git(program: &Path, root: &Path, args: &[&str]) {
         let status = Command::new(program)
             .arg("-C")
@@ -1663,7 +1633,7 @@ mod tests {
         assert!(status.success(), "Git fixture setup failed: {args:?}");
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn write_doctor_git_timeout_shim(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
 
@@ -1709,7 +1679,7 @@ exit 2
             .expect("make Git shim executable");
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn record_doctor_fixture_process(
         events: &Path,
         invocation: &str,
@@ -1788,7 +1758,7 @@ exit 2
         }
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn record_doctor_fixture_event(events: &Path, started: Instant, mut event: serde_json::Value) {
         use std::io::Write;
 
@@ -1809,10 +1779,10 @@ exit 2
         file.write_all(&line).expect("write fixture evidence");
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     struct DoctorGitTestConfigGuard;
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     impl DoctorGitTestConfigGuard {
         fn install(config: DoctorGitTestConfig) -> Self {
             DOCTOR_GIT_TEST_CONFIG.with(|slot| {
@@ -1823,7 +1793,7 @@ exit 2
         }
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     impl Drop for DoctorGitTestConfigGuard {
         fn drop(&mut self) {
             DOCTOR_GIT_TEST_CONFIG.with(|slot| {
@@ -1832,13 +1802,13 @@ exit 2
         }
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     struct DoctorGitFixtureGuard {
         events: PathBuf,
         receipts: Vec<(&'static str, PathBuf)>,
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     impl DoctorGitFixtureGuard {
         fn new(events: PathBuf, source_events: PathBuf, shell_events: PathBuf) -> Self {
             Self {
@@ -1922,7 +1892,7 @@ exit 2
         }
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     impl Drop for DoctorGitFixtureGuard {
         fn drop(&mut self) {
             self.print_evidence_before_cleanup();
@@ -1930,7 +1900,7 @@ exit 2
         }
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     struct DoctorProcessSibling {
         child: std::process::Child,
         pid: u32,
@@ -1938,7 +1908,7 @@ exit 2
         pgid: i32,
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     impl DoctorProcessSibling {
         fn spawn() -> Self {
             let child = Command::new("sleep")
@@ -1972,7 +1942,7 @@ exit 2
         }
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     impl Drop for DoctorProcessSibling {
         fn drop(&mut self) {
             let _ = self.child.kill();
@@ -1980,7 +1950,7 @@ exit 2
         }
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn assert_doctor_git_process_evidence(
         source_path: &Path,
         fixture_path: &Path,
@@ -2144,7 +2114,7 @@ exit 2
         leader_pid
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(unix, test))]
     fn assert_doctor_fixture_processes_reaped(events_path: &Path, invocation: &str) {
         let events = std::fs::read_to_string(events_path).expect("read process generations");
         for event in events

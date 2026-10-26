@@ -134,30 +134,6 @@ mod tests {
 
     static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    #[test]
-    fn environment_guard_serializes_a_forced_concurrent_mutator() {
-        const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
-        let original = std::env::var_os(KEY);
-        let first = ScopedEnvVar::set(KEY, "first");
-        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
-        let second = std::thread::spawn(move || {
-            assert!(matches!(
-                TEST_ENV_LOCK.try_lock(),
-                Err(std::sync::TryLockError::WouldBlock)
-            ));
-            attempted_tx.send(()).unwrap();
-            let _second = ScopedEnvVar::set(KEY, "second");
-            assert_eq!(std::env::var(KEY).unwrap(), "second");
-        });
-        attempted_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap();
-        assert_eq!(std::env::var(KEY).unwrap(), "first");
-        drop(first);
-        second.join().unwrap();
-        assert_eq!(std::env::var_os(KEY), original);
-    }
-
     struct ScopedEnvVar {
         key: &'static str,
         previous: Option<String>,

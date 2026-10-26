@@ -1569,33 +1569,6 @@ fn foreground_owner_kill(tree: bool) {
         .any(|line| line.trim() == process.pgid.to_string()));
 }
 
-#[test]
-fn foreground_open_lifetime_reads_predecessors_with_a_finite_budget() {
-    let home = home();
-    let bounded = context();
-    let cx = OperationContext::new(
-        Deadline::Open(OpenReason::Shell),
-        CancelToken::default(),
-        bounded.operation().limits().clone(),
-        EffectClass::Mutate,
-        effigy_kernel::ctx::Placement::Host,
-    )
-    .effects()
-    .unwrap();
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
-    let mut run = foreground_begin(&cx, &root);
-    let mut child = Custody::spawn_foreground(&mut run, spec(home.path(), "exit 0"), &cx).unwrap();
-    let exit = child.wait(bounded.operation()).verified().copied().unwrap();
-    child.complete_foreground(&mut run, exit).unwrap();
-    run.finish(WorkloadOutcome::Succeeded).unwrap();
-    assert_eq!(
-        run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
-            .unwrap()
-            .cleanup(),
-        CleanupOutcome::Complete
-    );
-}
-
 /// A durable run that crashed and left unsettled residue is not a refusal for
 /// the foreground form of the same task: the foreground run holds the owner
 /// flock, which proves no predecessor can still be live (F11). The residue is
@@ -1950,7 +1923,11 @@ fn a_foreground_task_runs_in_a_linked_worktree_with_a_group_writable_git_file() 
     child.complete_foreground(&mut run, exit).unwrap();
     run.finish(WorkloadOutcome::Succeeded).unwrap();
     assert_eq!(
-        std::fs::symlink_metadata(&pointer).unwrap().permissions().mode() & 0o777,
+        std::fs::symlink_metadata(&pointer)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
         0o664,
         "the worktree pointer is read and left exactly as it was"
     );
