@@ -473,7 +473,7 @@ owner = "docs/knowledge/contracts/017-task-status-record-and-active-run-model-co
 terms = ["effigy tasks cache", "effigy.cache.v1", "effigy.task.cache.store.v1", "task-cache-v1.json"]
 paths = ["src/runner/cache/", "src/runner/cache.rs", "crates/effigy-builtin/src/cache/", "crates/effigy-builtin/src/cache.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "docs/guides/022-manifest-cookbook.md", "docs/guides/085-v0.15.0-consumer-migration.md", "src/runner/task_engine/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/tests/lib_tests_help_render_tests.rs", "tests/cli_output_tests/json_envelope_tests/runtime.rs"]
+allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "docs/guides/022-manifest-cookbook.md", "docs/guides/085-v0.15.0-consumer-migration.md", "src/runner/task_engine/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/tests/lib_tests_help_render_tests.rs", "tests/cli_output_tests/json_envelope_tests/runtime.rs", "src/runner/execute/pipeline/standard.rs"]
 
 [[retired]]
 id = "effigy-task-lease-lock"
@@ -1419,4 +1419,92 @@ allow = [
   "src/runner/container_command/support.rs",
   "tests/cli_output_tests/reset_generation_tests.rs",
   "tests/scripts/container-render-consumers.py",
+]
+
+[[retired]]
+id = "checkout-and-machine-generation-records"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#372)"
+replacement = "A checkout journal opens by its location, `<checkout>/.effigy/state/`, and a machine store is a location too: neither records which checkout, Git directory or home generation it belongs to. A renumbered volume, a recreated `.git` directory, `git worktree repair` and a moved checkout write nothing and refuse nothing, and an unreadable record can no longer refuse every machine effect. The kernel's gate identity is a digest of the checkout's canonical path, so one checkout has one gate spelling."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "checkout.json",
+  "machine-format.json",
+  "MachineFormat",
+  "RetainedCheckout",
+  "verify_binding",
+  "binding_identity",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/retired.toml",
+]
+
+[[retired]]
+id = "checkout-gate-alias-spellings"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#372)"
+replacement = "A checkout-scoped gate is named one way: the digest of the checkout's canonical path. Both the run's persisted-token scope and the path spelling of the same resource take that one lock, so a token-free foreground invocation and a durable run of the same checkout still exclude each other. The second and third alias spellings and the `filesystem gate belongs to a different checkout generation` refusal are gone; a helper reopens the journal by path and marks itself as that checkout so its recovery meets its owner's locks."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "local_gate_identity",
+  "directory_gate_identity",
+  "different checkout generation",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/052-runtime-kernel-contract.md",
+]
+
+[[retired]]
+id = "foreground-predecessor-check"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#372)"
+replacement = "A foreground run holds the owner flock before it starts, so any predecessor that flock does not name cannot still be live: it reads no journal and a crashed durable run's unsettled row neither refuses the foreground form of the same task nor warns about state the run does not consult. Settling a durable predecessor stays a durable operation (`Run::begin` does it under the held owner gate)."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "check_predecessors",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/retired.toml",
+]
+
+[[retired]]
+id = "admission-hook-reverification"
+retired = "2026-10-26; v0.15 simplification (Q-012, effigy#372)"
+replacement = "A held admission is the advisory `EFFIGY_ADMITTED` marker and a per-thread held marker, with no retained hook identity: `verify_hook`, `verify_held` and the `AdmissionInheritance` capsule are gone. A task that is not `admission = \"heavy\"` never consults the hook, an unreadable hook identity cannot refuse a light task, and the run still holds the hook through its own custody receipt, so a hook that exits still fails the run it admitted closed."
+owner = "docs/knowledge/contracts/049-heavy-validation-admission-contract.md"
+terms = [
+  "verify_hook",
+  "verify_held",
+  "AdmissionInheritance",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/retired.toml",
+]
+
+[[retired]]
+id = "state-root-adoption-surface"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#372)"
+replacement = "Virtually nothing is left to adopt: the `adoption` flag, `legacy_observe`, `legacy_source`, `unpublished` and the vacuous foreground `verify_custody` are gone, and `CheckoutLocation` is the checkout path, so no caller resolves a Git directory for the kernel (`migration.rs` is now `location.rs`)."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "legacy_observe",
+  "legacy_source",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/retired.toml",
 ]

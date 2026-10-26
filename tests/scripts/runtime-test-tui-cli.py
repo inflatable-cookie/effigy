@@ -158,6 +158,5 @@ with tempfile.TemporaryDirectory(prefix="q010-test-tui-") as temporary:
             print(json.dumps({"proof": "test-tui-owner-death", "nested": args == ["nested"],
                               "cleanup_seconds": round(time.monotonic() - started, 3)}))
     assert not list(base.rglob("*.db")), "local TUI wrote a database"
-    assert not (project / ".effigy/state/checkout.json").exists()
     print(json.dumps({"proof": "interactive-local-test", "exit": 0, "database_files": 0,
                       "rows": 32, "columns": 100, "input": "hello"}))

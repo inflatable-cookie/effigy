@@ -112,12 +112,19 @@ Failure envelope shape:
   "result": null,
   "warnings": [],
   "error": {
-    "kind": "RunnerError",
+    "kind": "refused",
+    "type": "RunnerError",
     "message": "...",
     "details": {}
   }
 }
 ```
+
+`error.kind` is the three-kind classification a person reads too: `refused`
+(a rule said no), `unavailable` (something did not answer, and retrying once it
+does is safe) or `broken` (an Effigy bug). `error.type` names the error's own
+type (`RunnerError`, `CliParseError`). Read `error.kind` to decide whether a
+retry can help; read `error.human` for the sentence and next action.
 
 ### Failed Task Runs Keep Their Output Payload
 

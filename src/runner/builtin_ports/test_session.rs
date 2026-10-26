@@ -496,7 +496,6 @@ mod tests {
         }
         assert!(run.close(WorkloadOutcome::Succeeded).is_empty());
         assert!(!fixture.path().join(".effigy/state/kernel.db").exists());
-        assert!(!fixture.path().join(".effigy/state/checkout.json").exists());
     }
     #[test]
     fn stopping_an_unfinished_suite_never_reports_success() {
