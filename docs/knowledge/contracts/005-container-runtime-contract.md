@@ -370,6 +370,11 @@ relative inputs to the generation's own paths before parsing bind syntax or
 estimating mount budgets; the immutable file bytes keep the relative spelling.
 A shared service is read by its own invocation and names its own directory the
 same way, so its configuration is identical in every checkout that shares it.
+`build.dockerfile` is the one relative input Compose reads against the *build
+context* rather than the project directory, so a catalog Dockerfile is rendered
+inline as `dockerfile_inline` from the generation's own content: the stack names
+no path outside the generation and a copied or moved checkout renders the same
+image.
 Prepare establishes owned mount directories before
 admission, so creating a cache cannot change canonical bind paths afterward.
 Relative user build contexts and Dockerfiles keep their

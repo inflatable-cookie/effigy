@@ -169,16 +169,8 @@ impl Draft {
         assembly: &effigy_catalog::assembly::AssemblyResult,
     ) -> PathBuf {
         let path = directory.join(format!("{name}.generated.compose.yml"));
-        self.insert(path.clone(), assembly.compose_yaml.as_bytes());
-        for (name, bytes) in &assembly.dockerfiles {
-            self.insert(
-                directory
-                    .join(".effigy-catalog")
-                    .join(name)
-                    .join("Dockerfile"),
-                bytes.as_bytes(),
-            );
-        }
+        let compose = inline_catalog_dockerfiles(directory, assembly);
+        self.insert(path.clone(), compose.into_bytes());
         for (name, bytes) in &assembly.config_files {
             self.insert(directory.join(name), bytes.as_bytes());
         }
@@ -263,7 +255,6 @@ impl Draft {
                     path.parent()
                         .ok_or_else(|| error("Compose input has no parent"))?,
                 );
-                relocate_build_files(&mut value, &replacements);
                 relocate(&mut value, &replacements);
                 if backend == crate::compose::ComposeBackend::ColimaNerdctl {
                     healthcheck::normalize_exec_form(&mut value);
@@ -310,12 +301,24 @@ fn backend_name(backend: crate::compose::ComposeBackend) -> &'static str {
     }
 }
 
-fn relocate_build_files(value: &mut serde_yaml::Value, replacements: &[(String, String)]) {
-    let Some(services) = value
+/// The assembly's Compose document, with every catalog Dockerfile inlined.
+///
+/// Compose resolves `build.dockerfile` against the build context, which is the
+/// checkout, while the generation holds the file. The Dockerfile's content is
+/// already part of the generation, so the render names the content directly:
+/// no path is resolved against the context and no extra copy is published.
+fn inline_catalog_dockerfiles(
+    directory: &Path,
+    assembly: &effigy_catalog::assembly::AssemblyResult,
+) -> String {
+    let Ok(mut document) = serde_yaml::from_str::<serde_yaml::Value>(&assembly.compose_yaml) else {
+        return assembly.compose_yaml.clone();
+    };
+    let Some(services) = document
         .get_mut("services")
         .and_then(serde_yaml::Value::as_mapping_mut)
     else {
-        return;
+        return assembly.compose_yaml.clone();
     };
     for service in services.values_mut() {
         let Some(build) = service
@@ -324,25 +327,34 @@ fn relocate_build_files(value: &mut serde_yaml::Value, replacements: &[(String, 
         else {
             continue;
         };
-        let context = build
-            .get(serde_yaml::Value::String("context".into()))
-            .and_then(serde_yaml::Value::as_str)
-            .map(PathBuf::from);
-        let Some(serde_yaml::Value::String(file)) =
-            build.get_mut(serde_yaml::Value::String("dockerfile".into()))
+        let key = serde_yaml::Value::String("dockerfile".into());
+        let Some(serde_yaml::Value::String(dockerfile)) = build.get(&key) else {
+            continue;
+        };
+        // Compose resolves the path against the build context, which is what
+        // decides whether it names a Dockerfile this render publishes.
+        let Some(serde_yaml::Value::String(context)) =
+            build.get(serde_yaml::Value::String("context".into()))
         else {
             continue;
         };
-        if let Some(context) = context {
-            let resolved = context.join(&*file);
-            if let Some((_, target)) = replacements
-                .iter()
-                .find(|(source, _)| Path::new(source) == resolved)
-            {
-                *file = target.clone();
-            }
-        }
+        let resolved = Path::new(context).join(dockerfile);
+        let Some((_, content)) = assembly.dockerfiles.iter().find(|(catalog, _)| {
+            resolved
+                == directory
+                    .join(".effigy-catalog")
+                    .join(catalog)
+                    .join("Dockerfile")
+        }) else {
+            continue;
+        };
+        build.remove(&key);
+        build.insert(
+            serde_yaml::Value::String("dockerfile_inline".into()),
+            serde_yaml::Value::String(content.clone()),
+        );
     }
+    serde_yaml::to_string(&document).unwrap_or_else(|_| assembly.compose_yaml.clone())
 }
 
 fn relocate(value: &mut serde_yaml::Value, replacements: &[(String, String)]) {

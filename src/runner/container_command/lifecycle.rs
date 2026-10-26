@@ -128,8 +128,13 @@ fn sanitized_failure_cause(error: &RunnerError) -> String {
         .collect::<Vec<_>>()
         .join("; ");
     if cause.chars().count() > MAX_CHARS {
-        cause = cause.chars().take(MAX_CHARS).collect::<String>();
-        cause.push('…');
+        // A backend's last line says why it stopped, so the bound keeps both
+        // ends instead of only the opening failure (effigy#364).
+        let length = cause.chars().count();
+        let keep = MAX_CHARS / 2 - 1;
+        let head = cause.chars().take(keep).collect::<String>();
+        let tail = cause.chars().skip(length - keep).collect::<String>();
+        cause = format!("{head}…{tail}");
     }
     cause
 }

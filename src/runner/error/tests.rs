@@ -549,3 +549,35 @@ fn an_admission_refusal_keeps_the_hook_reason_and_the_next_step() {
     assert!(details.contains("effigy.admission.v1"), "{details}");
     assert!(details.contains("\"decision\":\"deny\""), "{details}");
 }
+
+/// A failed detached backend reaches the reader as its own `Display` sentence
+/// plus the activation advice. That sentence carries the backend's bounded
+/// output tail, whose last line is the cause, so folding must keep the end of
+/// it: the fatal line used to be dropped and only the first lines survived
+/// (effigy#364).
+#[test]
+fn a_long_backend_failure_keeps_the_fatal_line_it_ended_with() {
+    let mut stderr = String::from(
+        "[effigy] detached backend failed (code Some(1))\n[effigy] backend output tail:\n",
+    );
+    for index in 0..58 {
+        stderr.push_str(&format!("step {index}: building image\n"));
+    }
+    stderr.push_str("level=fatal msg=\"X\"\n");
+    let failure = RunnerError::from(ContainerExecError::Failure {
+        command: "docker compose up".to_owned(),
+        code: Some(1),
+        stdout: String::new(),
+        stderr,
+    });
+    let activation = RunnerError::task_invocation(format!(
+        "{failure}\ndetached activation unavailable: readiness and exposure are unverified."
+    ));
+    let human = activation.human_error();
+    assert!(
+        human.render_text().contains("level=fatal msg=\"X\""),
+        "{}",
+        human.render_text()
+    );
+    assert!(human.evidence_lines().len() <= effigy_ui::human::MAX_EVIDENCE_LINES);
+}

@@ -372,6 +372,10 @@ Effigy ownership:
 - generated assets are named relatively and resolved by Compose against the
   project directory, so the generation root is never interpolated and no
   container receives it
+- a catalog Dockerfile is rendered as `dockerfile_inline` from the generation's
+  own content, because Compose resolves `build.dockerfile` against the build
+  context (the checkout) rather than the project directory. Both backends read
+  it: `nerdctl compose` 2.3.1 and Docker Compose v2.17 and later
 - only the plan's forwarded secret values travel in the file; the shared
   invocation transform in `policy::render` (reached by attached, detached,
   `config`, `ps`, `logs`, `restart` and shared-service invocations) writes them
