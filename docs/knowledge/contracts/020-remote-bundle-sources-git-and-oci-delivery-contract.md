@@ -124,8 +124,13 @@ that only `effigy bundle sync` moved selected bytes.
   declared source, including path sources.
 - The Prepare paths update a stale source themselves, before the command
   composes the manifest from it: `effigy dev`, `effigy bootstrap`,
-  `effigy container up` and the callers of container up. A task's own ensure
-  reaches the same preparation.
+  `effigy container up` and the callers of container up.
+- Any other task run applies rule 1 only, before it composes the manifest: a
+  declared source with no pin at all is acquired, so a fresh checkout, worktree
+  or clone runs an ordinary task instead of refusing. An existing pin never
+  moves there - no changed declaration, path re-snapshot or floating Git check -
+  and no update record is written. A failed acquisition fails the task with the
+  acquisition error and the `effigy bundle sync` hint.
 
 A Prepare path resolves each declared source against its pin:
 
@@ -163,8 +168,9 @@ checkout lock still selects every source.
 
 `--plan`, inventory, help, version, completion, config views, status, doctor,
 bundle inspection and Observe graph paths never acquire sources, run a remote
-check, create locks or register Git excludes. An unprepared remote source
-returns an actionable preparation error. When a source is behind, the read
+check, create locks or register Git excludes, so a task run's `--plan` and
+`--help` forms are read only too. An unprepared remote source returns an
+actionable preparation error. When a source is behind, the read
 notice names the locked and the available revision and says that the next
 `effigy dev` or `effigy container up` will update it. Static help and version
 remain available while source preparation is unavailable.
@@ -193,8 +199,8 @@ path = "../book"           # relative to the manifest, so siblings are normal
 
 - The pin is committed in the manifest. `rev` or `rev_file` must supply exactly
   one commit; declaring both or neither is a manifest error.
-- Bootstrap and the first `dev` acquire only a missing checkout: clone, then
-  check out exactly the pin.
+- Bootstrap, the first `dev` and any task run acquire only a missing checkout:
+  clone, then check out exactly the pin.
 - An existing checkout is verified against the remote. A different HEAD or local
   changes are reported as drift and left untouched. Nothing resets, fetches
   forward or cleans a developer's working copy, and nothing advances a pin

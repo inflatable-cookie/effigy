@@ -192,7 +192,7 @@ fn commit_git_bundle(root: &Path, home: &Path, run: &str) -> String {
     fs::write(root.join("bundle.toml"), "[bundle]\nname = \"fixture\"\n").unwrap();
     fs::write(
         root.join("effigy.toml"),
-        format!("[tasks.dev]\nrun = \"echo {run}\"\n"),
+        format!("[tasks.dev]\nrun = \"echo {run}\"\n[tasks.hello]\nrun = \"echo hello {run}\"\n"),
     )
     .unwrap();
     git_in(root, home, &["add", "."]);
@@ -756,6 +756,86 @@ fn read_paths_never_check_a_floating_remote() {
     }
     assert_eq!(fs::read(&pin).unwrap(), lock);
     assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
+}
+
+/// A fresh checkout runs an ordinary task: the missing bundle and catalog pins
+/// are acquired before the strict parse (contract 020 §Behaviour rule 1).
+#[test]
+fn a_plain_task_run_acquires_only_the_missing_pins() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("source");
+    let first = init_git_bundle(&source, &fixture.home, "one");
+    let catalog = fixture.repo.join("catalog-src");
+    fs::create_dir(&catalog).unwrap();
+    fs::write(catalog.join("services.toml"), "").unwrap();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!(
+            "[bundle]\nbase = {{ type = \"git\", url = \"file://{}\" }}\n[catalog.sources.team]\ntype = \"path\"\ndir = \"catalog-src\"\n",
+            source.display()
+        ),
+    )
+    .unwrap();
+
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("hello one"), "{output}");
+    let lock: serde_json::Value = serde_json::from_slice(
+        &fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(lock["sources"]["bundle"]["revision"], first.as_str());
+    assert_eq!(
+        lock["sources"]["catalog:team"]["declaration"]["type"],
+        "path"
+    );
+
+    // A newer upstream commit never moves a pin on a task run, and no remote
+    // check is recorded: refresh stays on the Prepare paths.
+    commit_git_bundle(&source, &fixture.home, "two");
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(
+        output.contains("hello one") && !output.contains("hello two"),
+        "{output}"
+    );
+    assert_eq!(pinned_revision(&fixture), first);
+    assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
+}
+
+/// Read-only paths keep today's refusal and acquire nothing, even in a fresh
+/// checkout that a task run would prepare.
+#[test]
+fn read_only_paths_in_a_fresh_checkout_never_acquire() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("source");
+    init_git_bundle(&source, &fixture.home, "one");
+    git_bundle_manifest(&fixture, &source, None);
+    for args in [&["tasks"][..], &["hello", "--plan"][..]] {
+        let (ok, output) = fixture.run(args, &[], Duration::from_secs(20));
+        assert!(!ok, "{args:?}: {output}");
+        assert!(output.contains("is not prepared"), "{args:?}: {output}");
+        assert!(
+            !fixture.repo.join(".effigy/sources.lock.json").exists(),
+            "{args:?} acquired a source: {output}"
+        );
+    }
+}
+
+/// A first acquisition that cannot reach its source fails the task with the
+/// acquisition error and the command that retries it.
+#[test]
+fn a_failed_first_acquisition_fails_the_task_with_its_own_error() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("source");
+    init_git_bundle(&source, &fixture.home, "one");
+    git_bundle_manifest(&fixture, &source, None);
+    fs::remove_dir_all(&source).unwrap();
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(!ok, "{output}");
+    assert!(output.contains("source acquisition"), "{output}");
+    assert!(output.contains("effigy bundle sync"), "{output}");
+    assert!(!fixture.repo.join(".effigy/sources.lock.json").exists());
 }
 
 #[test]

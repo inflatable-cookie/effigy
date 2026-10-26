@@ -21,11 +21,7 @@ pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
         effigy_cli::Command::Bootstrap(_) => true,
         effigy_cli::Command::Task(task) => {
             task.name.rsplit('/').next() == Some("dev")
-                && !task
-                    .args
-                    .iter()
-                    .take_while(|arg| arg.as_str() != "--")
-                    .any(|arg| matches!(arg.as_str(), "--plan" | "--help" | "-h"))
+                && !is_read_only_task_invocation(task)
                 && !task
                     .args
                     .first()
@@ -33,6 +29,15 @@ pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
         }
         _ => false,
     }
+}
+
+/// A task invocation that only reads: `--plan`, `--help` or `-h` before any
+/// `--`. A read path never acquires a source.
+pub(crate) fn is_read_only_task_invocation(task: &effigy_cli::TaskInvocation) -> bool {
+    task.args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| matches!(arg.as_str(), "--plan" | "--help" | "-h"))
 }
 
 pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
@@ -284,6 +289,17 @@ pub(in crate::runner) fn prepare_pinned_sources_for_manifest(
 /// (contract 020): bundle and catalog sources first, then extra sources.
 pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
     prepare_bundle_sources_for_manifest(manifest)?;
+    prepare_pinned_sources_for_manifest(manifest)
+}
+
+/// Any other task run acquires only what this checkout is missing and never
+/// moves a pin (contract 020 §Behaviour rule 1): a fresh worktree runs its
+/// tasks instead of refusing on an unprepared source.
+pub(in crate::runner) fn prepare_missing_sources_for_manifest(
+    manifest: &Path,
+) -> Result<(), RunnerError> {
+    effigy_manifest::prepare_missing_bundle_sources(manifest, &source_preparation()?)
+        .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
     prepare_pinned_sources_for_manifest(manifest)
 }
 

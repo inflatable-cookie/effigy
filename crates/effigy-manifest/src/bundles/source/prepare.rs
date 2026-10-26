@@ -139,6 +139,16 @@ pub fn prepare_bundle_sources(
     prepare(manifest, preparation, Mode::Refresh)
 }
 
+/// A plain task run fills a gap: it acquires a declared source that has no pin
+/// at all and never moves an existing one, so a fresh checkout runs a task
+/// instead of refusing (contract 020 §Behaviour rule 1).
+pub fn prepare_missing_bundle_sources(
+    manifest: &Path,
+    preparation: &SourcePreparation,
+) -> Result<Option<BundleSyncReport>, ManifestError> {
+    prepare(manifest, preparation, Mode::Missing)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     /// `effigy bundle sync`: re-acquire every selected source.
@@ -146,6 +156,8 @@ enum Mode {
     /// `dev`, `bootstrap`, `container up`: acquire what is missing and refresh
     /// what is behind.
     Refresh,
+    /// Any other task run: acquire only a source with no pin at all.
+    Missing,
 }
 
 /// Why a pin is about to move (contract 020 §Behaviour).
@@ -225,6 +237,8 @@ fn prepare(
         .map(|(name, selection)| {
             let plan = match mode {
                 Mode::Sync => SourcePlan::Acquire(RefreshReason::Missing),
+                Mode::Missing if old.sources.contains_key(name) => SourcePlan::Keep,
+                Mode::Missing => SourcePlan::Acquire(RefreshReason::Missing),
                 Mode::Refresh => plan_source(
                     &manifest,
                     name,
@@ -589,6 +603,20 @@ fn warn(message: &str) {
     eprintln!("[bundle] {message}");
 }
 
+/// The acquisition error with the one command that retries it appended, unless
+/// the message already names it.
+fn with_sync_hint(manifest: &Path, failure: ManifestError) -> ManifestError {
+    match failure {
+        ManifestError::Compose { detail, .. } if detail.contains("effigy bundle sync") => {
+            error(manifest, detail)
+        }
+        ManifestError::Compose { detail, .. } => {
+            error(manifest, format!("{detail}; run `effigy bundle sync`"))
+        }
+        other => error(manifest, format!("{other}; run `effigy bundle sync`")),
+    }
+}
+
 fn source_dir(
     parent: &DirFd,
     name: &str,
@@ -811,7 +839,12 @@ fn acquire_and_publish(
                     kept: None,
                     failure: Some(failure.to_string()),
                 });
-                return Err(failure);
+                return Err(match mode {
+                    // A task run keeps the strict parse's guidance when its own
+                    // first acquisition cannot reach the source.
+                    Mode::Missing => with_sync_hint(manifest, failure),
+                    Mode::Sync | Mode::Refresh => failure,
+                });
             }
         };
         progress.emit(SourceProgressEvent::Finished {
@@ -1676,6 +1709,29 @@ mod tests {
         // Every selected source is current: the cheap path draws no step.
         assert!(prepare_bundle_sources(&manifest, &prep).unwrap().is_none());
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn missing_only_prepare_fills_a_gap_and_never_moves_a_pin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, prep) = fixture(tmp.path());
+        // A fresh checkout has no pin: a task run fills the gap.
+        assert!(prepare_missing_bundle_sources(&manifest, &prep)
+            .unwrap()
+            .is_some());
+        let pinned = lock_bytes(tmp.path());
+        assert!(selected(&manifest).contains("echo old"));
+        std::fs::write(
+            tmp.path().join("bundle/effigy.toml"),
+            "[tasks.hello]\nrun = \"echo new\"\n",
+        )
+        .unwrap();
+        // An existing pin never moves on a task run, even when its content did.
+        assert!(prepare_missing_bundle_sources(&manifest, &prep)
+            .unwrap()
+            .is_none());
+        assert_eq!(lock_bytes(tmp.path()), pinned);
+        assert!(selected(&manifest).contains("echo old"));
     }
 
     #[test]
