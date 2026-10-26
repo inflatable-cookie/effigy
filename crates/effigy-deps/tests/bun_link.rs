@@ -62,9 +62,23 @@ fn installed_bun_version() -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+/// Bun is an optional host tool. A missing Bun skips these proofs rather than
+/// reporting them green: `EFFIGY_REQUIRE_BUN=1` turns the skip into a failure,
+/// so a machine that claims Bun coverage either runs it or says it did not.
+fn bun_for(proof: &str) -> Option<String> {
+    if let Some(version) = installed_bun_version() {
+        return Some(version);
+    }
+    assert!(
+        std::env::var_os("EFFIGY_REQUIRE_BUN").is_none(),
+        "{proof} needs Bun, and EFFIGY_REQUIRE_BUN is set"
+    );
+    eprintln!("SKIPPED {proof}: Bun is not installed (set EFFIGY_REQUIRE_BUN=1 to require it)");
+    None
+}
+
 fn run_real_fixture(root_only: bool) {
-    let Some(version) = installed_bun_version() else {
-        eprintln!("skipping real Bun link proof because Bun is unavailable");
+    let Some(version) = bun_for("real Bun link proof") else {
         return;
     };
     eprintln!("real Bun link proof using Bun {version}");
@@ -281,8 +295,7 @@ fn run_real_fixture(root_only: bool) {
 /// the two identities are conflated, unlink looks for the ledger under
 /// `studio/` and silently leaves the desired link behind.
 fn run_nested_root_fixture(requested_root: NestedRequest) {
-    let Some(version) = installed_bun_version() else {
-        eprintln!("skipping nested-root Bun link proof because Bun is unavailable");
+    let Some(version) = bun_for("nested-root Bun link proof") else {
         return;
     };
     eprintln!("nested-root Bun link proof using Bun {version}");

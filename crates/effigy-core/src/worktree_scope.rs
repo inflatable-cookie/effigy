@@ -262,17 +262,6 @@ pub fn load_checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
     }
 }
 
-/// Check whether a recorded owner still names this checkout generation.
-pub fn is_live(repo_root: &Path, token: &str) -> bool {
-    let recorded = resolve(repo_root)
-        .ok()
-        .flatten()
-        .and_then(|scope| fs::read_to_string(scope.token_dir.join(SCOPE_FILE)).ok());
-    recorded
-        .and_then(|value| valid_token(&value))
-        .is_some_and(|value| value == token)
-}
-
 fn load_or_create_token(token_dir: &Path) -> io::Result<String> {
     load_or_create_token_file(&token_dir.join(SCOPE_FILE))
 }
@@ -442,6 +431,11 @@ mod tests {
     const MARKED: &str =
         "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n";
 
+    /// The token this checkout records now, or `None` when it records none.
+    fn recorded_checkout_token(checkout: &Path) -> Option<String> {
+        load_or_create(checkout).ok().flatten()
+    }
+
     /// A primary checkout token written the way v0.14.1 left it, so an
     /// existing `effigy-checkout-id` stays readable.
     pub(super) fn legacy_checkout_token(checkout: &Path, token: &str) -> String {
@@ -464,14 +458,14 @@ mod tests {
         fs::write(private.join("commondir"), "../..\n").unwrap();
         let first = load_or_create(&checkout).unwrap().unwrap();
         assert_eq!(load_or_create(&checkout).unwrap(), Some(first.clone()));
-        assert!(is_live(&checkout, &first));
+        assert_eq!(recorded_checkout_token(&checkout), Some(first.clone()));
         fs::remove_dir_all(&private).unwrap();
         fs::create_dir_all(&private).unwrap();
         fs::write(private.join("commondir"), "../..\n").unwrap();
-        assert!(!is_live(&checkout, &first));
+        assert_ne!(recorded_checkout_token(&checkout), Some(first.clone()));
         let next = load_or_create(&checkout).unwrap().unwrap();
         assert_ne!(first, next);
-        assert!(is_live(&checkout, &next));
+        assert_eq!(recorded_checkout_token(&checkout), Some(next.clone()));
     }
 
     #[test]
@@ -492,16 +486,16 @@ mod tests {
             load_or_create_scoped(&checkout).unwrap(),
             Some((ScopeKind::EphemeralClone, first.clone()))
         );
-        assert!(is_live(&checkout, &first));
+        assert_eq!(recorded_checkout_token(&checkout), Some(first.clone()));
 
         // Deleting the clone and recreating it at the same path must yield a
         // new generation token that invalidates the old owner.
         fs::remove_dir_all(checkout.join(".git")).unwrap();
         clone_checkout(root.path(), MARKED);
-        assert!(!is_live(&checkout, &first));
+        assert_ne!(recorded_checkout_token(&checkout), Some(first.clone()));
         let next = load_or_create(&checkout).unwrap().unwrap();
         assert_ne!(first, next);
-        assert!(is_live(&checkout, &next));
+        assert_eq!(recorded_checkout_token(&checkout), Some(next.clone()));
     }
 
     #[test]
