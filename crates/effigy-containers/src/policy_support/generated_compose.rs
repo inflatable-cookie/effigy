@@ -357,6 +357,38 @@ impl GeneratedComposeService {
         })
     }
 
+    /// Map `host` to `address` for this service. A client reaches the shared
+    /// service through `host.docker.internal`; the runtime DNS override replaces
+    /// the VM's own resolver, so the client carries the mapping itself.
+    fn add_extra_host(&mut self, host: &str, address: &str) -> Result<(), ContainerPolicyError> {
+        let entry = format!("{host}:{address}");
+        let extra_hosts = self
+            .extra
+            .entry("extra_hosts".to_owned())
+            .or_insert_with(|| YamlValue::Sequence(Vec::new()));
+        match extra_hosts {
+            YamlValue::Sequence(entries) => {
+                if !entries
+                    .iter()
+                    .any(|existing| existing.as_str() == Some(entry.as_str()))
+                {
+                    entries.push(YamlValue::String(entry));
+                }
+                Ok(())
+            }
+            YamlValue::Mapping(mapping) => {
+                mapping.insert(
+                    YamlValue::String(host.to_owned()),
+                    YamlValue::String(address.to_owned()),
+                );
+                Ok(())
+            }
+            other => Err(ContainerPolicyError::TaskInvocation(format!(
+                "shared-service host alias cannot extend `extra_hosts` {other:?}; the generated service needs a sequence or mapping"
+            ))),
+        }
+    }
+
     fn append_mounts(&mut self, mounts: &[String]) {
         let volumes = self.volumes.get_or_insert_with(Vec::new);
         for mount in mounts {
@@ -470,7 +502,12 @@ pub(crate) fn resolve_compose_source(
     if runtime_scoped {
         validate_scoped_generated_compose(project_name, &assembly, &compose_document)?;
     }
-    apply_shared_service_env_policy(&shared_services, &mut compose_document)?;
+    apply_shared_service_env_policy(
+        &shared_services,
+        &shared_service_clients(repo_root, &local_services)?,
+        &shared_service_host_alias(repo_root, container_name, config),
+        &mut compose_document,
+    )?;
     apply_generated_compose_media_policy(
         repo_root,
         container_name,
@@ -879,8 +916,64 @@ pub(crate) fn shared_service_output_dir(
     Ok(home.join("shared-services").join(project_name))
 }
 
+/// Services that consume a shared backing service.
+///
+/// Only the stack's own clients receive the shared `*_HOST` environment. A
+/// catalog that publishes a loopback endpoint, is shared-eligible itself, or
+/// has no exec surface is catalog infrastructure: it either provides the
+/// backing service or is an appliance with its own declared connection, and it
+/// keeps its own environment. A local MariaDB catalog service honours
+/// `MYSQL_HOST` in its own health check, so injecting another MariaDB's host
+/// there checks the wrong server.
+fn shared_service_clients(
+    repo_root: &Path,
+    services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
+) -> Result<std::collections::BTreeSet<String>, ContainerPolicyError> {
+    let resolver = catalog_resolver(Some(repo_root))?;
+    let mut clients = std::collections::BTreeSet::new();
+    for (name, service) in services {
+        let capabilities = resolver.resolve(&service.catalog)?.schema.capabilities;
+        if capabilities.exec_target
+            && !capabilities.shared_service
+            && capabilities.loopback_alias_label.is_none()
+        {
+            clients.insert(name.clone());
+        }
+    }
+    Ok(clients)
+}
+
+/// The host address a client resolves [`SHARED_SERVICE_HOST`] to.
+///
+/// Colima reaches the host at its profile gateway address, the same address the
+/// runtime DNS override maps host gateway domains to. A Docker engine backend
+/// supplies the host gateway itself, which is also the correct target on Docker
+/// Desktop, where the name already resolves.
+fn shared_service_host_alias(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+) -> String {
+    let driver = config
+        .driver
+        .unwrap_or(effigy_manifest::ManifestContainerDriver::Colima);
+    if crate::backend::exact_backend(repo_root, container_name, driver).id
+        == crate::BackendId::docker_compose()
+    {
+        return "host-gateway".to_owned();
+    }
+    let profile = config
+        .profile
+        .as_deref()
+        .unwrap_or(crate::DEFAULT_COLIMA_PROFILE);
+    crate::runtime::dns::resolve_runtime_gateway_address(profile)
+        .unwrap_or_else(|| "host-gateway".to_owned())
+}
+
 fn apply_shared_service_env_policy(
     shared_services: &[SharedServiceBinding],
+    clients: &std::collections::BTreeSet<String>,
+    host_alias: &str,
     compose_document: &mut GeneratedComposeDocument,
 ) -> Result<(), ContainerPolicyError> {
     if shared_services.is_empty() {
@@ -892,8 +985,12 @@ fn apply_shared_service_env_policy(
         .flat_map(SharedServiceBinding::standard_env_vars)
         .collect::<Vec<_>>();
 
-    for service in compose_document.services.values_mut() {
+    for (service_name, service) in compose_document.services.iter_mut() {
+        if !clients.contains(service_name) {
+            continue;
+        }
         inject_service_env_vars(service, &env_vars)?;
+        service.add_extra_host(SHARED_SERVICE_HOST, host_alias)?;
     }
     Ok(())
 }
@@ -1314,6 +1411,7 @@ services:
         )
         .expect("parse generated compose");
 
+        let clients = ["app".to_owned()].into_iter().collect();
         apply_shared_service_env_policy(
             &[SharedServiceBinding {
                 service_name: "db".to_owned(),
@@ -1327,6 +1425,8 @@ services:
                 host_env_vars: vec!["DB_HOST".to_owned()],
                 port_env_vars: vec!["DB_PORT".to_owned()],
             }],
+            &clients,
+            "192.168.5.2",
             &mut compose_document,
         )
         .expect("apply shared env policy");
@@ -1351,6 +1451,56 @@ services:
             environment.get("DB_PORT"),
             Some(&YamlValue::String("3306".to_owned()))
         );
+        assert_eq!(
+            compose_document.services["app"].extra.get("extra_hosts"),
+            Some(&YamlValue::Sequence(vec![YamlValue::String(
+                "host.docker.internal:192.168.5.2".to_owned()
+            )]))
+        );
+    }
+
+    #[test]
+    fn typed_generated_compose_env_policy_skips_non_clients() {
+        let mut compose_document = GeneratedComposeDocument::parse(
+            "acme",
+            "test parse",
+            r#"
+services:
+  db:
+    image: mariadb:10.11
+  dbgate:
+    image: dbgate/dbgate:7.2.3
+"#,
+        )
+        .expect("parse generated compose");
+
+        apply_shared_service_env_policy(
+            &[SharedServiceBinding {
+                service_name: "shared".to_owned(),
+                catalog: "mariadb".to_owned(),
+                domain_label: "shared".to_owned(),
+                project_name: "effigy-shared-mariadb-12345678".to_owned(),
+                compose_file: PathBuf::from("/tmp/shared.yml"),
+                host: SHARED_SERVICE_HOST.to_owned(),
+                host_port: 3306,
+                container_port: 3306,
+                host_env_vars: vec!["DB_HOST".to_owned()],
+                port_env_vars: vec!["DB_PORT".to_owned()],
+            }],
+            &std::collections::BTreeSet::new(),
+            "192.168.5.2",
+            &mut compose_document,
+        )
+        .expect("apply shared env policy");
+
+        for name in ["db", "dbgate"] {
+            let service = &compose_document.services[name];
+            assert!(
+                service.environment.is_none(),
+                "`{name}` is catalog infrastructure and keeps its own environment"
+            );
+            assert!(!service.extra.contains_key("extra_hosts"));
+        }
     }
 
     #[test]

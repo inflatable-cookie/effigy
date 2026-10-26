@@ -1859,6 +1859,102 @@ shared = true
 }
 
 #[test]
+fn shared_service_env_reaches_clients_and_local_services_keep_their_own() {
+    with_temp_effigy_home("catalog-shared-client-scope", |_home| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("catalog-shared-client-scope");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "workspace"
+
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+
+[containers.stack.services.dbgate]
+catalog = "dbgate"
+
+[containers.stack.services.mysql]
+catalog = "mariadb"
+database = "acowtancy"
+
+[containers.stack.services.legacy_mysql]
+catalog = "mariadb"
+database = "acowtancy"
+shared = true
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_prepared_policy(&root, None).expect("policy");
+        let shared = &policy.shared_services[0];
+        let compose = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("compose");
+        let document: serde_yaml::Value = serde_yaml::from_str(&compose).expect("parse compose");
+        let service = |name: &str| &document["services"][name];
+        let environment = |name: &str| -> Vec<String> {
+            service(name)["environment"]
+                .as_mapping()
+                .map(|mapping| {
+                    mapping
+                        .keys()
+                        .filter_map(serde_yaml::Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let gateway = crate::runtime::dns::resolve_runtime_gateway_address("effigy")
+            .expect("Colima gateway address");
+        let extra_hosts = serde_yaml::Value::Sequence(vec![serde_yaml::Value::String(format!(
+            "host.docker.internal:{gateway}"
+        ))]);
+
+        assert!(
+            !environment("mysql").iter().any(|name| name == "DB_HOST"
+                || name == "MYSQL_HOST"
+                || name == "DB_PORT"
+                || name == "MYSQL_PORT"),
+            "a local MariaDB catalog service must not read another MariaDB's health check: {}",
+            environment("mysql").join(", ")
+        );
+        assert!(service("mysql").get("extra_hosts").is_none());
+
+        assert!(
+            !environment("dbgate")
+                .iter()
+                .any(|name| name == "DB_HOST" || name == "MYSQL_HOST"),
+            "a catalog appliance keeps its own declared connection: {}",
+            environment("dbgate").join(", ")
+        );
+        assert!(service("dbgate").get("extra_hosts").is_none());
+
+        let workspace_env = environment("workspace");
+        for name in ["DB_HOST", "MYSQL_HOST", "DB_PORT", "MYSQL_PORT"] {
+            assert!(
+                workspace_env.iter().any(|entry| entry == name),
+                "the workspace client takes the shared service env: {}",
+                workspace_env.join(", ")
+            );
+        }
+        assert_eq!(
+            service("workspace")["environment"]["DB_HOST"],
+            "host.docker.internal"
+        );
+        assert_eq!(
+            service("workspace")["environment"]["DB_PORT"],
+            shared.host_port.to_string()
+        );
+        assert_eq!(service("workspace")["extra_hosts"], extra_hosts);
+    });
+}
+
+#[test]
 fn shared_service_compose_keeps_runtime_host_port_and_adds_loopback_binding() {
     with_temp_effigy_home("catalog-shared-loopback-binding", |_home| {
         let _lock = crate::test_env_lock();
