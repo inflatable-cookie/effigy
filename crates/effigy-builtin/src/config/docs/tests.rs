@@ -55,18 +55,19 @@ fn package_manager_profile_lines_contract_is_stable() {
 }
 
 #[test]
-fn tasks_cache_comment_profile_contract_is_stable() {
-    let reference = tasks_canonical_lines(ConfigDocProfile::Reference);
-    let schema = tasks_canonical_lines(ConfigDocProfile::Schema);
-
-    assert!(
-        reference.contains(&"# Phase-1 task cache contract: explicit opt-in declarations only.")
-    );
-    assert!(
-        schema.contains(&"# Phase-1 cache contract: explicit opt-in only, no implicit discovery.")
-    );
-    assert!(reference.contains(&"[tasks.build.cache]"));
-    assert!(schema.contains(&"[tasks.build.cache]"));
+fn config_output_loads_through_the_manifest_loader() {
+    // `effigy config` must emit a manifest the loader accepts. The retired
+    // `[tasks.build.cache]` table used to be documented here while the runtime
+    // refused it, so this loads the emitted file the way a user's does.
+    let fixture = tempfile::tempdir().expect("private config fixture");
+    for profile in [ConfigDocProfile::Reference, ConfigDocProfile::Schema] {
+        let source = tasks_canonical_lines(profile).join("\n");
+        assert!(!source.contains("[tasks.build.cache]"), "{source}");
+        let path = fixture.path().join("effigy.toml");
+        std::fs::write(&path, &source).expect("write config output");
+        effigy_manifest::load_task_manifest(&path)
+            .unwrap_or_else(|error| panic!("emitted config failed to load: {error}\n{source}"));
+    }
 }
 
 #[test]

@@ -316,6 +316,20 @@
 # §12.1 fault driver and oracles, and the §12.3 supervisor model matrix.
 # Measured 2026-10-19 on macOS (18 cores): faults 172–246 s wall (each drive in six
 # shard processes), matrix 16 s. Under 15 minutes, so one lane each.
+# Q-013 ruling 3: the fault-injection-gated kernel and secrets proofs run at
+# milestone QA instead of staying hand-run only. Each part keeps its own
+# selector, because each owns a fixture build, nextest config and sharding.
+"test:fault-injection" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { task = "test:kernel:faults" },
+  { task = "test:kernel:matrix" },
+  { task = "test:kernel:custody" },
+  { task = "test:kernel:probe" },
+  { task = "test:kernel:remote" },
+  { task = "test:kernel:helpers" },
+  { task = "test:kernel:gateway-budget" },
+  { task = "test:kernel:machine-facts" },
+  { task = "test:secrets:vault" },
+] }
 "test:kernel:faults" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::/) & not test(/^faults::matrix::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
@@ -1716,7 +1730,7 @@
 # Default validation shortcuts
 health = { visibility = "public", group = "Validation", description = "Format check plus a locked compile of the workspace.", run = [{ task = "fmt:check" }, "sh scripts/oxide-selector.sh check --workspace --locked"] }
 validate = { visibility = "public", group = "Validation", description = "Health plus clippy across every workspace target.", run = [{ task = "health" }, "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings"] }
-qa = { visibility = "public", group = "Validation", description = "Built-in tests, docs checks and changed JSON contracts.", run = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }] }
+qa = { visibility = "public", group = "Validation", description = "Built-in tests, the fault-injection proofs, docs checks and changed JSON contracts.", run = [{ task = "test" }, { task = "test:fault-injection" }, { task = "qa:docs" }, { task = "qa:json" }] }
 
 # Visibility/discovery changes: bounded tests and compilation of their owners.
 "test:tasks:visibility" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-builtin -p effigy-doctor --lib -E 'test(visibility) | test(task_defs::) | test(task_description_validation_tests) | test(manifest_schema)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
