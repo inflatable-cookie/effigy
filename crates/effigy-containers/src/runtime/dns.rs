@@ -13,7 +13,7 @@ pub(crate) fn materialize_runtime_dns_override(
     compose_files: &mut Vec<PathBuf>,
     draft: &mut crate::policy::render::Draft,
 ) -> Result<(), ContainerPolicyError> {
-    let services = collect_compose_service_names(compose_files, draft)?;
+    let (services, network_mode) = collect_compose_service_names(compose_files, draft)?;
     if services.is_empty() {
         return Ok(());
     }
@@ -24,18 +24,26 @@ pub(crate) fn materialize_runtime_dns_override(
     }
     let override_dir = repo_root.join(".effigy").join("runtime").join("dns");
     let override_path = override_dir.join(format!("{container_name}.compose.override.yml"));
-    let override_yaml =
-        render_runtime_dns_override(&services, &dns_servers, gateway_address.as_deref(), routes);
+    let override_yaml = render_runtime_dns_override(
+        &services,
+        &network_mode,
+        &dns_servers,
+        gateway_address.as_deref(),
+        routes,
+    );
     draft.insert(override_path.clone(), override_yaml.into_bytes());
     compose_files.push(override_path);
     Ok(())
 }
 
+/// Every service any input names, and which of them fixes its own networking.
+/// Compose rejects `dns:` beside `network_mode` (effigy#371).
 fn collect_compose_service_names(
     compose_files: &[PathBuf],
     draft: &mut crate::policy::render::Draft,
-) -> Result<Vec<String>, ContainerPolicyError> {
+) -> Result<(Vec<String>, std::collections::BTreeSet<String>), ContainerPolicyError> {
     let mut names = std::collections::BTreeSet::new();
+    let mut network_mode = std::collections::BTreeSet::new();
     for compose_file in compose_files {
         let content = draft.read(compose_file)?;
         let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
@@ -50,13 +58,17 @@ fn collect_compose_service_names(
         else {
             continue;
         };
-        for key in services.keys() {
-            if let Some(name) = key.as_str() {
-                names.insert(name.to_owned());
+        for (key, service) in services {
+            let Some(name) = key.as_str() else {
+                continue;
+            };
+            names.insert(name.to_owned());
+            if service.get("network_mode").is_some() {
+                network_mode.insert(name.to_owned());
             }
         }
     }
-    Ok(names.into_iter().collect())
+    Ok((names.into_iter().collect(), network_mode))
 }
 
 fn resolve_runtime_dns_servers(profile: &str) -> Vec<String> {
@@ -233,6 +245,7 @@ fn base_domain_from_route(domain: &str) -> Option<&str> {
 
 fn render_runtime_dns_override(
     services: &[String],
+    network_mode: &std::collections::BTreeSet<String>,
     dns_servers: &[String],
     gateway_address: Option<&str>,
     routes: &RuntimeDnsOverrideRoutes,
@@ -241,7 +254,9 @@ fn render_runtime_dns_override(
     out.push_str("services:\n");
     for service in services {
         out.push_str(&format!("  {service}:\n"));
-        if !dns_servers.is_empty() {
+        // `dns:` beside `network_mode` is a Compose error: the service keeps
+        // the networking its own block names.
+        if !dns_servers.is_empty() && !network_mode.contains(service) {
             out.push_str("    dns:\n");
             for server in dns_servers {
                 out.push_str(&format!("      - \"{}\"\n", server.replace('"', "\\\"")));
@@ -397,6 +412,7 @@ mod tests {
 
         let rendered = render_runtime_dns_override(
             &["workspace".into(), "postgres".into()],
+            &Default::default(),
             &["1.1.1.1".into()],
             Some("192.168.5.2"),
             &routes,
@@ -423,6 +439,34 @@ mod tests {
     }
 
     #[test]
+    fn a_network_mode_service_is_never_given_dns() {
+        let routes = runtime_route_domains(
+            &[route("s3.acme.test")],
+            &[alias()],
+            Some("acme.test"),
+            Some("acme.test"),
+        );
+        let network_mode = std::collections::BTreeSet::from(["host-networked".to_owned()]);
+        let rendered = render_runtime_dns_override(
+            &["web".into(), "host-networked".into()],
+            &network_mode,
+            &["1.1.1.1".into()],
+            Some("192.168.5.2"),
+            &routes,
+        );
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&rendered).expect("complete DNS document");
+        assert!(
+            parsed["services"]["web"].get("dns").is_some(),
+            "an ordinary service still gets the profile's resolvers: {rendered}"
+        );
+        assert!(
+            parsed["services"]["host-networked"].get("dns").is_none(),
+            "`dns:` beside `network_mode` is a Compose error: {rendered}"
+        );
+    }
+
+    #[test]
     fn runtime_dns_render_is_complete_without_host_configuration() {
         let routes: Vec<_> = (0..300)
             .map(|n| route(&format!("r{n}.teardown.test")))
@@ -435,6 +479,7 @@ mod tests {
         );
         let rendered = render_runtime_dns_override(
             &["workspace".into(), "postgres".into(), "web".into()],
+            &Default::default(),
             &["1.1.1.1".into()],
             Some("192.168.5.2"),
             &routes,

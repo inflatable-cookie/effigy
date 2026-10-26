@@ -576,7 +576,7 @@ pub(crate) fn resolve_compose_source(
         &mut assembly,
     )?;
     let output_dir = repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR);
-    let output_path = draft.assembly(&output_dir, container_name, &assembly);
+    let output_path = draft.assembly(&output_dir, &output_dir, container_name, &assembly)?;
     let mut compose_files = vec![output_path];
     let override_path = output_dir.join("compose.override.yml");
     if override_path.is_file() {
@@ -817,7 +817,17 @@ fn resolve_shared_service_bindings(
         // Shared services live outside any one environment's generated
         // payload; key their output by the shared project so every renderer
         // of the same shared project converges on one file.
-        let compose_path = draft.assembly(&output_dir, &shared_project_name, &assembly);
+        // A shared fragment names its own catalog files relative to the state
+        // directory it was rendered with, so publish them at that same
+        // relative path instead of leaving the declared bind source missing
+        // (effigy#371). A fresh home then works: nothing depends on a file an
+        // older Effigy left behind.
+        let compose_path = draft.assembly(
+            &output_dir,
+            &output_dir.join(GENERATED_RUNTIME_COMPOSE_DIR),
+            &shared_project_name,
+            &assembly,
+        )?;
         bindings.push(SharedServiceBinding {
             service_name: service_name.clone(),
             catalog: service.catalog.clone(),

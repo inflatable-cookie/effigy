@@ -236,7 +236,7 @@ fn shutdown_container_with_manager_plan(
             ContainerAction::Shutdown,
             label,
         )?;
-        crate::signals::run_compose_plan_capture(policy, &plan)?;
+        crate::signals::run_compose_plan_capture(&plan)?;
     }
     Ok(())
 }

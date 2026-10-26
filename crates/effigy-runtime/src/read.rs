@@ -82,7 +82,7 @@ pub fn run_container_status(
             ContainerAction::Status,
             "docker compose ps",
         )?;
-        let output = run_compose_plan_capture(&policy, &plan)?;
+        let output = run_compose_plan_capture(&plan)?;
         Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     } else {
         None
@@ -518,14 +518,8 @@ fn probe_primary_service_exec_ready(
         "docker compose exec readiness status probe",
     )?;
     let exec_ready = classify_exec_probe_result(
-        run_compose_invocation_capture(
-            &plan.repo_root,
-            policy,
-            &plan.program,
-            &plan.args,
-            &plan.label,
-        )
-        .map(|_| ()),
+        run_compose_invocation_capture(&plan.repo_root, &plan.program, &plan.args, &plan.label)
+            .map(|_| ()),
     )?;
     Ok(primary_service_exec_readiness(
         policy.primary_service.as_str(),

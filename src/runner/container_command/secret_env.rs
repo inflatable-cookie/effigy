@@ -11,6 +11,8 @@ use effigy_manifest::{
 };
 
 use crate::runner::error::RunnerError;
+
+const SECRETS_REQUIRED_ENV: &str = "EFFIGY_SECRETS_REQUIRED";
 use crate::runner::exec_command::run_verified_compose_exec_plan;
 use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 
@@ -60,6 +62,41 @@ impl ResolvedContainerSecretRuntime {
 // Written once so every undelivered-key warning names the same remedy the
 // user can act on.
 const UNLOCK_FIX: &str = "run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one";
+
+/// The environment variables the one apply delivers through `--env-file`.
+/// Both `container up` and a task's environment ensure pass exactly these, so
+/// the rendered config hash never flips between the two paths (effigy#371).
+pub(in crate::runner) fn compose_env(
+    runtime: &ResolvedContainerSecretRuntime,
+) -> Vec<(String, OsString)> {
+    match runtime.delivery {
+        ManifestContainerSecretDelivery::ComposeEnv => runtime
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), OsString::from(value.expose())))
+            .collect(),
+        ManifestContainerSecretDelivery::RuntimeFiles => Vec::new(),
+    }
+}
+
+/// Resolve the secrets a task's environment ensure delivers, and report keys
+/// it could not deliver instead of failing the task.
+pub(in crate::runner) fn compose_secret_env_for_apply(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<(String, OsString)>, RunnerError> {
+    let runtime = resolve_container_secret_runtime(repo_root, policy, secrets_required())?;
+    for warning in &runtime.warnings {
+        eprintln!("[warn] {warning}");
+    }
+    Ok(compose_env(&runtime))
+}
+
+pub(super) fn secrets_required() -> bool {
+    std::env::var(SECRETS_REQUIRED_ENV)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
 
 pub(super) fn resolve_container_secret_runtime(
     repo_root: &Path,

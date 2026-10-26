@@ -1420,3 +1420,47 @@ allow = [
   "tests/cli_output_tests/reset_generation_tests.rs",
   "tests/scripts/container-render-consumers.py",
 ]
+
+[[retired]]
+id = "environment-busy-diagnostics"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#371)"
+replacement = "A refused transition is one sentence naming the holder the kernel's gate evidence recorded: its run, pid, task and observed process state, and whether the wait ended. `--json` adds no separate record of the environment: `EnvError::Busy` carries the sentence, `HeldBy` names the holding runs, and the command's exit code and error shape are unchanged. Busy diagnostics no longer read the environment record a second time to report its state and generation."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = [
+  "effigy.environment-busy.v1",
+  "environment-busy",
+  "BusyDiagnostics",
+  "BusyRecord",
+  "HolderFacts",
+  "HeldHolder",
+  "busy_details",
+]
+paths = [
+  "crates/effigy-containers/src/environment/tests/busy.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/023-troubleshooting-and-failure-recipes.md",
+  "docs/guides/026-json-payload-examples.md",
+  "src/runner/environment.rs",
+  "src/tests/lib_tests_parse_tests/refusal_command_tests.rs",
+]
+
+[[retired]]
+id = "automatic-colima-repair"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#371)"
+replacement = "Effigy never stops or restarts the shared Colima profile to repair it: a runtime-state or registry-DNS failure is reported as it stands, and the message names the explicit in-place `effigy container profile repair` or `effigy container profile reset-runtime`. Starting a missing profile and starting a stopped one are unchanged, and another checkout's stack on the same VM is never taken down by one checkout's failed `up`."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "repair_colima_runtime",
+  "docker_failure_looks_like_colima_dns_outage",
+  "runtime_failure_should_repair",
+  "retried after repairing Colima runtime state",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-containers/src/exec/colima_runtime.rs",
+]

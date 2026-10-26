@@ -2,8 +2,11 @@
 //!
 //! A rendered Compose file asks the runtime itself to bring a service back
 //! after a VM restart, a Colima restart or a crash, so Effigy never hand-starts
-//! containers. Every service without its own `restart:` gets
-//! [`RESTART_POLICY`]; a service that declares one keeps it byte for byte.
+//! containers. Every service that defines itself (`image`, `build` or
+//! `extends`) and declares no `restart:` gets [`RESTART_POLICY`]; a declared
+//! policy is byte for byte what the stack wrote, and an overlay file (a user
+//! override, or Effigy's runtime DNS override) never gains one, because the
+//! later `-f` file would beat the file that defines the service (effigy#371).
 
 use serde_yaml::Value;
 
@@ -11,10 +14,15 @@ use serde_yaml::Value;
 pub(crate) const RESTART_POLICY: &str = "unless-stopped";
 
 const RESTART_KEY: &str = "restart";
+/// A service definition names an image, a build, or the fragment it extends.
+/// An overlay names none of them, so it only overrides a service it never
+/// defines.
+const DEFINING_KEYS: [&str; 3] = ["image", "build", "extends"];
 
-/// Add `restart: unless-stopped` to every service that does not declare a
-/// restart policy of its own. A declared policy (`no`, `always`, `on-failure`,
-/// …) wins, including an explicit `no`.
+/// Add `restart: unless-stopped` to every service that defines itself and does
+/// not declare a restart policy of its own. A declared policy (`no`, `always`,
+/// `on-failure`, …) wins, including an explicit `no`; an overlay file is left
+/// untouched.
 pub(crate) fn apply(document: &mut Value) {
     let Some(services) = document.get_mut("services").and_then(Value::as_mapping_mut) else {
         return;
@@ -26,6 +34,12 @@ pub(crate) fn apply(document: &mut Value) {
             continue;
         };
         if service.contains_key(&key) {
+            continue;
+        }
+        if !DEFINING_KEYS
+            .iter()
+            .any(|defining| service.contains_key(Value::String((*defining).into())))
+        {
             continue;
         }
         service.insert(key.clone(), policy.clone());
@@ -44,8 +58,10 @@ mod tests {
 
     #[test]
     fn every_service_without_a_policy_gets_unless_stopped() {
-        let document = rendered("services:\n  web:\n    image: nginx\n  db:\n    image: mysql\n");
-        for service in ["web", "db"] {
+        let document = rendered(
+            "services:\n  web:\n    image: nginx\n  db:\n    build: .\n  ext:\n    extends: base\n",
+        );
+        for service in ["web", "db", "ext"] {
             assert_eq!(
                 document["services"][service]["restart"],
                 Value::String(RESTART_POLICY.into()),
@@ -66,6 +82,16 @@ mod tests {
         assert_eq!(
             document["services"]["db"]["restart"],
             Value::String("on-failure".into())
+        );
+    }
+
+    #[test]
+    fn an_overlay_never_gains_a_policy_of_its_own() {
+        let document = rendered("services:\n  web:\n    dns:\n      - 1.1.1.1\n");
+        assert_eq!(
+            document["services"]["web"],
+            serde_yaml::from_str::<Value>("dns:\n  - 1.1.1.1\n").expect("yaml"),
+            "the later -f file would beat the service's own file"
         );
     }
 

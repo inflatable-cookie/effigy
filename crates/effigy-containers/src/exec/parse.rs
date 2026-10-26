@@ -36,15 +36,6 @@ pub struct RunningContainerStatsCapture {
     pub warning: Option<String>,
 }
 
-pub(super) fn docker_failure_looks_like_colima_dns_outage(stdout: &str, stderr: &str) -> bool {
-    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
-    (combined.contains("registry-1.docker.io")
-        || combined.contains("docker.io")
-        || combined.contains("failed to resolve source metadata"))
-        && combined.contains("lookup")
-        && combined.contains("connection refused")
-}
-
 pub(super) fn docker_failure_looks_like_colima_runtime_state_loss(
     stdout: &str,
     stderr: &str,
@@ -579,22 +570,6 @@ mod tests {
         assert_eq!(parsed[0].cpu_percent.as_deref(), Some("1.25%"));
         assert_eq!(parsed[0].memory_usage.as_deref(), Some("12.4MiB / 8GiB"));
         assert_eq!(parsed[0].memory_percent.as_deref(), Some("0.15%"));
-    }
-
-    #[test]
-    fn docker_failure_detection_matches_registry_dns_outage_shape() {
-        assert!(docker_failure_looks_like_colima_dns_outage(
-            "",
-            r#"failed to solve: rust:1.88-bookworm: failed to resolve source metadata for docker.io/library/rust:1.88-bookworm: failed to do request: Head "https://registry-1.docker.io/v2/library/rust/manifests/1.88-bookworm": dial tcp: lookup registry-1.docker.io on 192.168.5.3:53: read udp 192.168.5.3:48612->192.168.5.3:53: read: connection refused"#
-        ));
-    }
-
-    #[test]
-    fn docker_failure_detection_ignores_unrelated_compose_errors() {
-        assert!(!docker_failure_looks_like_colima_dns_outage(
-            "",
-            "service workspace depends on undefined service redis"
-        ));
     }
 
     #[test]

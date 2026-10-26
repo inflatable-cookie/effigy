@@ -1514,7 +1514,6 @@ print('detached diagnostic',file=sys.stderr)
         ];
         let output = super::super::implementation::run_compose_invocation_capture_with_env(
             fixture.path(),
-            &policy,
             std::ffi::OsStr::new("python3"),
             &args,
             "private detached up",

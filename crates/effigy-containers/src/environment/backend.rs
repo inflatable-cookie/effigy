@@ -9,7 +9,7 @@
 //! future Apple Containers adapter implements the same trait.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::store::BackendMetadata;
@@ -256,30 +256,6 @@ pub fn effective(
     }
 }
 
-/// One rendered environment, as the backend reconciles it.
-#[derive(Debug, Clone)]
-pub struct RenderRef<'a> {
-    pub project: &'a str,
-    pub workdir: &'a Path,
-    /// `compose -f … -p …` prefix plus the operation's own arguments.
-    pub compose_files: &'a [PathBuf],
-    pub env: &'a [(String, OsString)],
-}
-
-impl RenderRef<'_> {
-    fn compose(&self, tail: &[&str]) -> Vec<OsString> {
-        let mut args = vec![OsString::from("compose")];
-        for file in self.compose_files {
-            args.push(OsString::from("-f"));
-            args.push(file.as_os_str().to_os_string());
-        }
-        args.push(OsString::from("-p"));
-        args.push(OsString::from(self.project));
-        args.extend(tail.iter().map(OsString::from));
-        args
-    }
-}
-
 /// The adapter outcome. `Uncertain` means the engine may have acted: the
 /// journal records it `Unknown`, never `Failed` (R3, R5).
 #[derive(Debug)]
@@ -310,14 +286,10 @@ pub struct Workload {
     pub binds: Vec<String>,
 }
 
-/// The seam every engine adapter implements.
+/// The seam every engine adapter implements. Applying and stopping run
+/// through the caller's effect closure, so an adapter only observes.
 pub trait EnvironmentBackend {
     fn selection(&self) -> &BackendSelection;
-    /// Converge the backend on the render: create missing workloads and
-    /// recreate only changed ones (`compose up -d`).
-    fn reconcile(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError>;
-    /// Stop the render's workloads, keeping volumes.
-    fn stop(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError>;
     /// Exact-identity inventory of one Compose project, stopped rows included.
     fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>>;
 }
@@ -352,17 +324,6 @@ macro_rules! compose_adapter {
             fn selection(&self) -> &BackendSelection {
                 &self.selection
             }
-            fn reconcile(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError> {
-                run(
-                    &self.selection,
-                    render,
-                    &["up", "-d", "--remove-orphans"],
-                    "compose up",
-                )
-            }
-            fn stop(&mut self, render: &RenderRef<'_>) -> Result<(), BackendError> {
-                run(&self.selection, render, &["stop"], "compose stop")
-            }
             fn inventory(&mut self, workdir: &Path, project: &str) -> Observed<Vec<Workload>> {
                 inventory(&self.selection, workdir, project)
             }
@@ -371,23 +332,6 @@ macro_rules! compose_adapter {
 }
 compose_adapter!(ColimaBackend);
 compose_adapter!(DockerBackend);
-
-fn run(
-    selection: &BackendSelection,
-    render: &RenderRef<'_>,
-    tail: &[&str],
-    label: &str,
-) -> Result<(), BackendError> {
-    let (program, args) = selection.compose_invocation(&render.compose(tail));
-    crate::exec::run_backend_invocation(render.workdir, &program, &args, label, render.env)
-        .map(|_| ())
-        .map_err(|error| match error {
-            crate::exec::ContainerExecError::Launch { .. } => {
-                BackendError::NotStarted(error.to_string())
-            }
-            other => BackendError::Uncertain(other.to_string()),
-        })
-}
 
 fn inventory(
     selection: &BackendSelection,

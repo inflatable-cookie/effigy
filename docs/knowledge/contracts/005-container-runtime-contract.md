@@ -81,8 +81,10 @@ point must exist. Up and routed-task preparation create a missing host
 mount-point directory for a named volume of the primary service nested under
 the working directory (the isolated `target` and `node_modules` trees) before
 the apply. A non-directory or symlink at that path refuses; creation never
-replaces a file and never follows a link. This is a host-side preparation step,
-not permission repair: it changes no ownership or mode.
+replaces a file and never follows a link, and the refusal names
+`oxide outputs adopt` as the fix, because an Oxide output link on an isolated
+path is the shape that meets it. This is a host-side preparation step, not
+permission repair: it changes no ownership or mode.
 
 Permission preflight checks the declared mounts before repair, including
 explicit exec paths: a declared volume absent from a live stack cannot grant
@@ -159,16 +161,26 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
-Readiness is Running plus the service's own health check. Every service
-without its own `restart:` is rendered with `restart: unless-stopped`, so a
-service that stops after a VM restart, a Colima restart or a crash comes back
-by itself. Effigy never probes exec readiness, hand-starts an exited service or
+Readiness is Running plus the service's own health check. A service that
+declared `restart: "no"` and exited successfully is complete, not unready, so a
+one-shot job does not fail the stack's readiness; a failed exit is unready. A service's declared
+`restart:` always wins, `"no"` included; the generated service gets
+`restart: unless-stopped` only where the stack declares none, so a one-shot job
+stays down and a service that stops after a VM restart, a Colima restart or a
+crash comes back by itself. The policy is written into the file that defines the
+service (it names an `image`, a `build` or an `extends`) and never into an
+override file: a later `-f` file wins Compose's merge, so Effigy's own runtime
+DNS override would otherwise override the stack's choice. Effigy never probes exec readiness, hand-starts an exited service or
 restarts one to repair it: an unlabelled, foreign or wrong-checkout primary
 fails the owned-binding check, and a user's own `effigy exec` reports its own
 error (a `working_dir` the image does not have fails that command, not `up`).
 
 No path may stop, restart or recreate an environment's containers while a
-run holds that environment, except that run's own stop. The environment
+run holds that environment, except that run's own stop. A bring-up that a live
+run holds is not applied: it attaches the requesting runs to the running stack
+and reports the holder and that the edit applies on the next up, so an edit is
+never silently skipped. A holder list that cannot be read is unknown, not held:
+the bring-up warns and applies (Q-011). The environment
 reconciler makes this structural ([053](053-environment-reconciler-contract.md)):
 every stop, restart, recreation, reset, handover and idle stop is a transition
 that owns the environment's gate and needs a permit, refused while any live or
@@ -369,12 +381,21 @@ container environment carries one. Internal policy readers resolve those
 relative inputs to the generation's own paths before parsing bind syntax or
 estimating mount budgets; the immutable file bytes keep the relative spelling.
 A shared service is read by its own invocation and names its own directory the
-same way, so its configuration is identical in every checkout that shares it.
+same way, so its configuration is identical in every checkout that shares it. A
+catalog file a shared fragment binds (MariaDB and Postgres init SQL) is
+published inside the generation at the path that fragment names, so a fresh home
+directory works and a changed `databases` value reaches the server.
 `build.dockerfile` is the one relative input Compose reads against the *build
 context* rather than the project directory, so a catalog Dockerfile is rendered
 inline as `dockerfile_inline` from the generation's own content: the stack names
 no path outside the generation and a copied or moved checkout renders the same
 image.
+`container up` renders once: the creation load allocates ports, prepares every
+mount source and publishes the generation, and every later stage and the apply
+use that one policy. A task's environment ensure runs the same apply as
+`container up` — the same shared-service start, the same secret delivery and the
+same Compose arguments — so alternating the two paths recreates nothing.
+
 Prepare establishes owned mount directories before
 admission, so creating a cache cannot change canonical bind paths afterward.
 Relative user build contexts and Dockerfiles keep their
@@ -1238,8 +1259,11 @@ probes again. Unit start and the re-probe are both bounded. If the runtime is
 still not ready, Effigy refuses before Compose: the failure names the profile,
 both readiness observations and the explicit
 `effigy container profile repair` and `effigy container profile reset-runtime`
-commands. A task bring-up never stops or restarts the VM, because that would
-take down every stack on the profile; other Colima profiles are never touched.
+commands. Nothing stops or restarts the VM automatically — neither a task
+bring-up nor a failed apply, and no failure text (an offline registry lookup
+included) triggers one — because that would take down every stack on the
+profile. A detected problem prints the manual command instead. Other Colima
+profiles are never touched.
 A newly started profile also waits for both probes. Failures identify the
 runtime stage and include the last probe result.
 

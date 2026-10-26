@@ -296,6 +296,7 @@ fn service(service: &str, health: Option<HealthState>, streak: u64, output: &str
         failing_streak: streak,
         last_output: Some(output.to_owned()),
         exit_code: None,
+        restart_policy: None,
     }
 }
 
@@ -308,5 +309,27 @@ fn service_ready(service: &str) -> ServiceHealth {
         failing_streak: 0,
         last_output: None,
         exit_code: None,
+        restart_policy: None,
     }
+}
+
+/// A one-shot job declares `restart: "no"` and exits; that is completion, not
+/// a failed start, so the stack it belongs to can become ready (effigy#371).
+#[test]
+fn a_one_shot_job_that_exited_successfully_is_ready() {
+    let mut job = service_ready("init");
+    job.state = "exited".to_owned();
+    job.exit_code = Some(0);
+    job.restart_policy = Some("no".to_owned());
+    assert!(job.is_ready(), "{}", job.problem());
+    assert!(job.is_one_shot_complete());
+
+    // The same exit with a restart policy that brings it back is not
+    // completion, and a failed one-shot job is still a failure.
+    let mut restarting = job.clone();
+    restarting.restart_policy = Some("unless-stopped".to_owned());
+    assert!(!restarting.is_ready(), "{}", restarting.problem());
+    let mut failed = job.clone();
+    failed.exit_code = Some(1);
+    assert!(!failed.is_ready(), "{}", failed.problem());
 }

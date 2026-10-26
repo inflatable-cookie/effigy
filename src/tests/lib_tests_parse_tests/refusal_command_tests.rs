@@ -10,19 +10,13 @@
 //!
 //! `effigy tasks status --all` parses, but it lists declared tasks and never
 //! the run the refusal named; nothing in the text says which command stops it.
-//! After: each holder names its task, pid, age and whether a terminal is
-//! attached, and the exact commands are `` `effigy run stop <id>` ``,
-//! `` `effigy run status <id>` `` and `` `effigy runs` ``.
-//!
 //! A refusal that points at `effigy tasks status --all` or
 //! `effigy tasks status <name>` is worse than no advice: neither form parses
 //! for a managed profile, and the person is left guessing (effigy#313). Each
 //! suggestion here is parsed through the same grammar the CLI uses.
 
-use effigy_containers::environment::{EnvError, HeldHolder};
+use effigy_containers::environment::EnvError;
 use effigy_kernel::id::RunId;
-use effigy_kernel::observe::{Evidence, Observed};
-use effigy_kernel::run::Liveness;
 
 use crate::tests::prelude::parse_command;
 
@@ -32,32 +26,13 @@ fn run_id(milliseconds: u64, random: u8) -> String {
         .to_string()
 }
 
-fn evidence() -> Evidence {
-    Evidence::new("fixture".to_owned(), None).expect("fixed evidence")
-}
-
-fn holder(run: &str, task: &str, pid: u32, ago_ms: i64, foreground: bool) -> HeldHolder {
-    HeldHolder {
-        run: run.parse::<RunId>().expect("run id"),
-        liveness: Observed::Verified(Liveness::Live, evidence()),
-        task: Some(task.to_owned()),
-        pid: Some(pid),
-        started_at_ms: Some(now_ms() - ago_ms),
-        foreground,
-    }
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_millis() as i64
-}
-
-fn held_environment_refusal(holders: Vec<HeldHolder>) -> String {
+fn held_environment_refusal(holders: Vec<&str>) -> String {
     EnvError::HeldBy {
         env: "inventors".to_owned(),
-        holders,
+        holders: holders
+            .into_iter()
+            .map(|run| run.parse::<RunId>().expect("run id"))
+            .collect(),
     }
     .to_string()
 }
@@ -76,10 +51,7 @@ fn suggested_commands(text: &str) -> Vec<String> {
 fn a_held_environment_names_each_holder_and_how_to_end_it() {
     let held = run_id(1_760_000_000_000, 7);
     let background = run_id(1_760_000_100_000, 9);
-    let text = held_environment_refusal(vec![
-        holder(&held, "dev", 99_290, 66 * 60 * 1_000, true),
-        holder(&background, "watch", 40_112, 5_000, false),
-    ]);
+    let text = held_environment_refusal(vec![&held, &background]);
 
     assert!(
         text.contains(
@@ -87,28 +59,12 @@ fn a_held_environment_names_each_holder_and_how_to_end_it() {
         ),
         "{text}"
     );
-    // Each holder: id, task, pid, age, and whether a terminal is attached.
-    assert!(text.contains(&format!("run {held}")), "{text}");
-    assert!(text.contains("`dev`"), "{text}");
-    assert!(text.contains("pid 99290"), "{text}");
-    assert!(text.contains("started 1h06m ago"), "{text}");
-    assert!(text.contains("attached to a terminal"), "{text}");
-    assert!(text.contains(&format!("run {background}")), "{text}");
-    assert!(text.contains("`watch`"), "{text}");
-    assert!(text.contains("not attached to a terminal"), "{text}");
-
-    // The exact commands: stop through the run's own owner, or Ctrl-C in its
-    // terminal; inspect a run or list them all.
-    assert!(
-        text.contains(&format!("`effigy run stop {held}`")),
-        "{text}"
-    );
-    assert!(text.contains("Ctrl-C"), "{text}");
-    assert!(
-        text.contains(&format!("`effigy run status {held}`")),
-        "{text}"
-    );
-    assert!(text.contains("`effigy runs`"), "{text}");
+    assert!(text.contains(&held), "{text}");
+    assert!(text.contains(&background), "{text}");
+    // One sentence naming the command that ends a holder, and the observation
+    // that names each run's task and pid.
+    assert!(text.contains("`effigy run stop <id>`"), "{text}");
+    assert!(text.contains("effigy container inventors status"), "{text}");
     assert!(!text.contains("effigy tasks status"), "{text}");
     assert!(
         !text.contains("End those runs through their own stop first"),
@@ -117,21 +73,44 @@ fn a_held_environment_names_each_holder_and_how_to_end_it() {
 }
 
 #[test]
-fn every_command_a_held_environment_refusal_suggests_parses() {
+fn a_busy_environment_is_one_sentence_naming_pid_and_task() {
+    let text = EnvError::Busy(
+        "environment `stack` is busy: run abc (pid 99290, task `dev`) is transitioning it. Nothing was changed and no backend was contacted; inspect it with `effigy container stack status`, then retry"
+            .to_owned(),
+    )
+    .to_string();
+    assert!(text.contains("pid 99290"), "{text}");
+    assert!(text.contains("task `dev`"), "{text}");
+    assert!(text.contains("`effigy container stack status`"), "{text}");
+}
+
+#[test]
+fn every_command_a_refusal_suggests_parses() {
     let held = run_id(1_760_000_000_000, 7);
     let background = run_id(1_760_000_100_000, 9);
-    let text = held_environment_refusal(vec![
-        holder(&held, "dev", 99_290, 66 * 60 * 1_000, true),
-        holder(&background, "watch", 40_112, 5_000, false),
-    ]);
-    let commands = suggested_commands(&text);
+    let mut texts = vec![
+        held_environment_refusal(vec![&held, &background]),
+        EnvError::Busy(
+            "environment `stack` is busy: run abc (pid 99290, task `dev`) is transitioning it. Nothing was changed and no backend was contacted; inspect it with `effigy container stack status`, then retry"
+                .to_owned(),
+        )
+        .to_string(),
+    ];
+    let mut commands = Vec::new();
+    for text in texts.drain(..) {
+        commands.extend(suggested_commands(&text));
+    }
     assert!(
         commands
             .iter()
-            .any(|command| command == &format!("effigy run stop {held}")),
+            .any(|command| command == "effigy container stack status"),
         "{commands:?}"
     );
     for command in commands {
+        if command.contains('<') {
+            // A documented placeholder names the shape, not a runnable argv.
+            continue;
+        }
         parse_command(
             command
                 .split_whitespace()
@@ -140,27 +119,4 @@ fn every_command_a_held_environment_refusal_suggests_parses() {
         )
         .unwrap_or_else(|error| panic!("`{command}` does not parse: {error}"));
     }
-}
-
-#[test]
-fn an_unobserved_holder_still_names_the_run_and_the_commands() {
-    // A refusal raised without an observation context keeps the correctness of
-    // its advice: the run id and the commands, without invented facts.
-    let held = run_id(1_760_000_000_000, 7);
-    let text = held_environment_refusal(vec![HeldHolder {
-        run: held.parse().expect("run id"),
-        liveness: Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
-            "not observed".to_owned(),
-        )),
-        task: None,
-        pid: None,
-        started_at_ms: None,
-        foreground: false,
-    }]);
-    assert!(text.contains(&format!("run {held}")), "{text}");
-    assert!(
-        text.contains(&format!("`effigy run stop {held}`")),
-        "{text}"
-    );
-    assert!(!text.contains("pid"), "{text}");
 }
