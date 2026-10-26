@@ -26,10 +26,13 @@ pub(super) fn run(
     let services =
         effigy_containers::catalog_service_sources(&context.resolved.resolved_root, &policy.name)?;
     if output_json {
-        return Ok(serde_json::json!({"schema":"effigy.container.render.v1","schema_version":1,"ok":true,
+        return Ok(
+            serde_json::json!({"schema":"effigy.container.render.v1","schema_version":1,"ok":true,
             "environment":policy.name,"path":render.path,"digest":render.closure.digest(),
-            "compose_files":policy.compose_files,"environment_variables":{"EFFIGY_RENDER_ROOT":render.path},
-            "services":services,"files":files}).to_string());
+            "compose_files":policy.compose_files,"environment_variables":{},
+            "services":services,"files":files})
+            .to_string(),
+        );
     }
     let mut output = format!(
         "environment: {}\npath: {}\ndigest: {}\n",

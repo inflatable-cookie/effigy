@@ -2315,7 +2315,7 @@ working_dir = "/var/www/html"
 /// An environment that opts into `stable_ports` gets one concrete host port
 /// per published container port, derived from its checkout path.
 #[test]
-fn stable_ports_opt_in_renders_probed_ports() {
+fn stable_ports_opt_in_renders_derived_ports() {
     with_temp_effigy_home("stable-ports-opt-in", |_| {
         let _lock = crate::test_env_lock();
         let root = temp_repo("stable-ports-opt-in");

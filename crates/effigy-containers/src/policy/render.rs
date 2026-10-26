@@ -16,9 +16,6 @@ pub use vm::compose_invocation_args;
 mod healthcheck;
 mod restart;
 
-pub const ROOT_VARIABLE: &str = "EFFIGY_RENDER_ROOT";
-const ROOT_EXPRESSION: &str = "${EFFIGY_RENDER_ROOT:?Effigy render root is required}";
-
 fn error(error: impl std::fmt::Display) -> ContainerPolicyError {
     ContainerPolicyError::TaskInvocation(format!("container render: {error}"))
 }
@@ -84,8 +81,8 @@ pub fn prepare_inputs(
 
 impl EffectiveContainerPolicy {
     /// Read the resolved snapshot, including before its first publication.
-    /// Expand the reserved root before internal consumers parse bind syntax;
-    /// the immutable file itself retains Compose interpolation.
+    /// A rendered input names other files of its generation relative to the
+    /// Compose project directory, so readers resolve them where Compose will.
     /// Hand-built policies without a render retain ordinary file semantics.
     pub fn read_compose(&self, path: &Path) -> Result<String, ContainerPolicyError> {
         if let Some(render) = &self.render {
@@ -96,15 +93,12 @@ impl EffectiveContainerPolicy {
                     .get(&name.to_string_lossy().to_string())
                 {
                     let content = String::from_utf8(bytes.clone()).map_err(error)?;
-                    if !content.contains(ROOT_EXPRESSION) {
+                    if !content.contains("./") && !content.contains("../") {
                         return Ok(content);
                     }
                     let mut document: serde_yaml::Value =
                         serde_yaml::from_str(&content).map_err(error)?;
-                    relocate(
-                        &mut document,
-                        &[(ROOT_EXPRESSION.into(), render.path.display().to_string())],
-                    );
+                    resolve_generation_paths(&mut document, self.project_directory(path));
                     return serde_yaml::to_string(&document).map_err(error);
                 }
             }
@@ -113,6 +107,21 @@ impl EffectiveContainerPolicy {
             path: path.into(),
             error,
         })
+    }
+
+    /// The Compose project directory of the invocation that reads `file`: the
+    /// directory of its first `-f` input, which is where Compose resolves every
+    /// relative path. A shared service is read by its own invocation.
+    fn project_directory(&self, file: &Path) -> &Path {
+        project_input(
+            file,
+            self.compose_files.first(),
+            self.shared_services
+                .iter()
+                .map(|service| &service.compose_file),
+        )
+        .and_then(Path::parent)
+        .unwrap_or(Path::new("."))
     }
 }
 
@@ -217,24 +226,37 @@ impl Draft {
                 Ok((path.clone(), name))
             })
             .collect::<Result<BTreeMap<_, _>, ContainerPolicyError>>()?;
-        let mut files = self.inputs;
-        let mut replacements = names
+        let shared_inputs = policy
+            .shared_services
             .iter()
-            .map(|(path, name)| {
-                (
-                    path.display().to_string(),
-                    format!("{ROOT_EXPRESSION}/{name}"),
-                )
-            })
+            .map(|service| service.compose_file.clone())
             .collect::<Vec<_>>();
-        // Dockerfiles are relative to build.context, and bind sources are
-        // relative to the first Compose input. Normalize before relocating.
-        replacements.sort_by_key(|(path, _)| std::cmp::Reverse(path.len()));
+        let first_input = policy.compose_files.first().cloned();
+        let mut files = self.inputs;
         for (path, bytes) in self.files {
             let bytes = if matches!(
                 path.extension().and_then(OsStr::to_str),
                 Some("yml" | "yaml")
             ) {
+                // Compose resolves every relative input against the directory
+                // of the invocation's first `-f` file, so that directory is how
+                // this document names the rest of the generation.
+                let directory = project_input(&path, first_input.as_ref(), shared_inputs.iter())
+                    .and_then(|input| names.get(input))
+                    .and_then(|name| Path::new(name).parent())
+                    .unwrap_or(Path::new(""));
+                let mut replacements = names
+                    .iter()
+                    .map(|(source, name)| {
+                        (
+                            source.display().to_string(),
+                            relative_name(directory, Path::new(name)),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                // Dockerfiles are relative to build.context, and bind sources
+                // are relative to the project directory. Normalize first.
+                replacements.sort_by_key(|(path, _)| std::cmp::Reverse(path.len()));
                 let mut value: serde_yaml::Value = serde_yaml::from_slice(&bytes).map_err(error)?;
                 super::super::workspace::normalize_runtime_rewrite_paths(
                     &mut value,
@@ -344,36 +366,49 @@ fn relocate(value: &mut serde_yaml::Value, replacements: &[(String, String)]) {
     }
 }
 
-/// Supply the immutable generation root to Compose without process-global
-/// environment mutation. Both direct and manager-backed adapters use this.
-pub fn apply_environment(command: &mut std::process::Command, args: &[impl AsRef<OsStr>]) {
-    if let Some(root) = render_root(args) {
-        command.env(ROOT_VARIABLE, root);
+/// The first `-f` input of the Compose invocation that reads `file`, which is
+/// what decides its project directory. A shared service brings its own.
+fn project_input<'a>(
+    file: &Path,
+    first: Option<&'a PathBuf>,
+    shared: impl Iterator<Item = &'a PathBuf>,
+) -> Option<&'a Path> {
+    shared
+        .into_iter()
+        .find(|compose| compose.parent().is_some_and(|dir| file.starts_with(dir)))
+        .or(first)
+        .map(PathBuf::as_path)
+}
+
+/// `name` relative to the generation's `directory`, spelled the way Compose
+/// reads a relative input: `./…` beside the project directory, `../…` outside.
+fn relative_name(directory: &Path, name: &Path) -> String {
+    let directory = directory.components().collect::<Vec<_>>();
+    let name = name.components().collect::<Vec<_>>();
+    let shared = directory
+        .iter()
+        .zip(&name)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut parts: Vec<String> = vec!["..".to_owned(); directory.len() - shared];
+    parts.extend(
+        name[shared..]
+            .iter()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned()),
+    );
+    let relative = parts.join("/");
+    if relative.starts_with("..") {
+        relative
+    } else {
+        format!("./{relative}")
     }
 }
 
-/// The immutable generation root this invocation's Compose files live under.
-/// Every `-f` input inside a published closure names one object directory, so
-/// the first `-f` ancestor under `objects` is the root Compose must interpolate.
-fn render_root(args: &[impl AsRef<OsStr>]) -> Option<PathBuf> {
-    for pair in args.windows(2) {
-        if pair[0].as_ref() != OsStr::new("-f") {
-            continue;
-        }
-        let path = Path::new(pair[1].as_ref());
-        for root in path.ancestors() {
-            let Some(name) = root.file_name().and_then(OsStr::to_str) else {
-                continue;
-            };
-            if name.len() == 64
-                && name.bytes().all(|c| c.is_ascii_hexdigit())
-                && root.parent().and_then(Path::file_name) == Some(OsStr::new("objects"))
-            {
-                return Some(root.to_path_buf());
-            }
-        }
-    }
-    None
+/// Resolve the relative inputs a render names into the generation, so internal
+/// readers see the files Compose reads. The generation is immutable, so its own
+/// names are the only relative inputs that survive a render.
+fn resolve_generation_paths(document: &mut serde_yaml::Value, directory: &Path) {
+    crate::workspace::normalize_runtime_rewrite_paths(document, directory);
 }
 
 #[cfg(test)]

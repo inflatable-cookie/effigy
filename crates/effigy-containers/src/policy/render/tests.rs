@@ -57,6 +57,16 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
         assert_eq!(snapshot(fixture.path()), before);
         let prepared = prepare_resolved(&observed).unwrap();
         verify(&prepared).unwrap();
+        // An unchanged generation hands Compose the same arguments every time,
+        // so a re-up of a running stack recreates nothing (effigy#362).
+        let up = crate::compose::compose_up_args(&prepared);
+        assert_eq!(up, crate::compose::compose_up_args(&observed));
+        assert!(
+            !up.iter().any(|argument| argument
+                .to_str()
+                .is_some_and(|value| value.contains("EFFIGY_RENDER_ROOT"))),
+            "no Compose argument carries an Effigy interpolation value"
+        );
         // Published objects are ordinary owner-writable files (effigy#344).
         assert_eq!(
             std::fs::metadata(&prepared.compose_files[0])
@@ -192,11 +202,36 @@ fn internal_path_consumers_resolve_generated_asset_mounts() {
     crate::with_test_effigy_home(&home, || {
         let policy = load_container_policy(&checkout, None).unwrap();
         let render = policy.render.as_ref().unwrap();
-        assert!(render
-            .closure
-            .files()
+        assert!(
+            render.closure.files().values().all(|bytes| {
+                let text = String::from_utf8_lossy(bytes);
+                !text.contains("EFFIGY_RENDER_ROOT") && !text.contains("EFFIGY_RENDER_")
+            }),
+            "a rendered generation carries no Effigy interpolation value"
+        );
+        let rendered: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
+        let mut dockerfiles = rendered["services"]
+            .as_mapping()
+            .expect("services")
             .values()
-            .any(|bytes| String::from_utf8_lossy(bytes).contains(ROOT_EXPRESSION)));
+            .filter_map(|service| {
+                service
+                    .get("build")?
+                    .get("dockerfile")?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        dockerfiles.sort();
+        assert!(!dockerfiles.is_empty(), "GENERATED_DOCKERFILES_MISSING");
+        for dockerfile in &dockerfiles {
+            assert!(
+                dockerfile.starts_with("./")
+                    && !dockerfile.contains(&render.path.display().to_string()),
+                "the generation names its own files relatively: {dockerfile}"
+            );
+        }
         let plan = crate::load_workspace_ownership_plan(&policy).unwrap();
         let config = plan
             .targets

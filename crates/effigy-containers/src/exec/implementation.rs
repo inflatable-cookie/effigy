@@ -1524,8 +1524,81 @@ pub fn run_compose_invocation_streaming_with_env(
                 on_line,
             )
         }
-        Err(error) => Err(error),
+        // nerdctl keeps its own name store. A container it left behind makes
+        // replacing a service that really changed fail on that name; clear the
+        // stale one and retry once.
+        Err(error) => {
+            if let ContainerExecError::Failure { stdout, stderr, .. } = &error {
+                if take_stale_owned_container(repo_root, policy, stdout, stderr)? {
+                    return run_detached_command_streaming_with_env(
+                        repo_root,
+                        &program,
+                        args,
+                        label,
+                        env,
+                        stop_requested,
+                        on_line,
+                    );
+                }
+            }
+            Err(error)
+        }
     }
+}
+
+/// Remove the container nerdctl's name store still holds when it blocked a
+/// create, and report that the caller may retry once.
+///
+/// A container that carries another project's `com.docker.compose.project`
+/// label is never touched: its name conflict is reported as it stands.
+fn take_stale_owned_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    stdout: &str,
+    stderr: &str,
+) -> Result<bool, ContainerExecError> {
+    let Some(claimed) = name_store_conflict(&format!("{stdout}\n{stderr}")) else {
+        return Ok(false);
+    };
+    let Ok(observed) =
+        inspect_containers_for_policy(repo_root, policy, std::slice::from_ref(&claimed), None)
+    else {
+        return Ok(false);
+    };
+    let project = serde_json::from_slice::<serde_json::Value>(&observed.stdout)
+        .ok()
+        .and_then(|value| {
+            let labels = value.get(0)?.get("Config")?.get("Labels")?;
+            labels
+                .get(crate::COMPOSE_PROJECT_LABEL)?
+                .as_str()
+                .map(str::to_owned)
+        });
+    if project.as_deref() != Some(policy.project_name.as_str()) {
+        return Ok(false);
+    }
+    let removed = run_docker_capture(
+        repo_root,
+        policy,
+        &[
+            OsString::from("rm"),
+            OsString::from("-f"),
+            OsString::from(&claimed),
+        ],
+        "runtime rm",
+    )?;
+    Ok(removed.status.success())
+}
+
+/// The identifier nerdctl names when a create lost to its own name store:
+/// `name "<container>" is already used by ID <id>`.
+fn name_store_conflict(message: &str) -> Option<String> {
+    let marker = "is already used by id";
+    let start = message.to_ascii_lowercase().find(marker)? + marker.len();
+    message[start..]
+        .split(|character: char| !character.is_ascii_hexdigit())
+        .find(|candidate| candidate.len() >= 12)
+        .map(str::to_owned)
 }
 
 pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>, ContainerExecError>

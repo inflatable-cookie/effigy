@@ -603,7 +603,6 @@ fn run_shared_compose_capture(
     plan.args = resolved_args;
     let mut command = std::process::Command::new(&plan.program);
     command.current_dir(repo_root).args(&plan.args);
-    effigy_containers::policy::render::apply_environment(&mut command, &plan.args);
     command
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
@@ -944,9 +943,12 @@ mod tests {
         std::fs::write(directory.join("config.txt"), "shared asset").unwrap();
         let bin = root.join("bin");
         std::fs::create_dir(&bin).unwrap();
+        // The invocation names the generation's own Compose file and carries no
+        // Effigy interpolation value: the file reaches its assets relatively.
+        let script = "#!/bin/sh\ncase \"$*\" in *EFFIGY_RENDER_ROOT*) exit 76;; esac\n[ -z \"$EFFIGY_RENDER_ROOT\" ] || exit 77\n[ -r \"$EFFIGY_TEST_SHARED_ASSET\" ] || exit 78\nprintf 'shared asset available\\n'\n";
         for name in ["docker", "colima"] {
             let executable = bin.join(name);
-            std::fs::write(&executable, "#!/bin/sh\n[ \"$EFFIGY_RENDER_ROOT\" = \"$EFFIGY_TEST_SHARED_GENERATION\" ] && [ -r \"$EFFIGY_RENDER_ROOT/shared/config.txt\" ] || exit 76\nprintf 'shared asset available\\n'\n").unwrap();
+            std::fs::write(&executable, script).unwrap();
             std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let _env = EnvGuard::set_many(&[
@@ -960,10 +962,10 @@ mod tests {
             ),
             ("HOME", Some(root.display().to_string())),
             ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
-            ("EFFIGY_RENDER_ROOT", Some("incorrect-caller-root".into())),
+            ("EFFIGY_RENDER_ROOT", None),
             (
-                "EFFIGY_TEST_SHARED_GENERATION",
-                Some(generation.display().to_string()),
+                "EFFIGY_TEST_SHARED_ASSET",
+                Some(directory.join("config.txt").display().to_string()),
             ),
         ]);
         let args = vec![

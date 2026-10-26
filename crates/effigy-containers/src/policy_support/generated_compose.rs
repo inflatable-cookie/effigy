@@ -225,7 +225,9 @@ thread_local! {
     };
 }
 
-#[cfg(any(test, feature = "test-support"))]
+// Only this crate's own unit tests use a default private home; every other
+// build resolves the operator's home (see `test_effigy_home_override`).
+#[cfg(test)]
 thread_local! {
     static DEFAULT_TEST_EFFIGY_HOME: tempfile::TempDir = tempfile::tempdir().expect("private container fixture home");
 }
@@ -1069,13 +1071,21 @@ fn test_effigy_home_override() -> Option<PathBuf> {
     if explicit.is_some() {
         return explicit;
     }
-    // A production CLI linked with test-support needs one explicitly private
-    // home shared by concurrent fixture processes, not separate default homes.
+    // A fixture names one private home that concurrent fixture processes share.
     if let Some(home) = std::env::var_os("EFFIGY_TEST_CONTAINERS_HOME") {
         return Some(PathBuf::from(home));
     }
 
-    Some(DEFAULT_TEST_EFFIGY_HOME.with(|home| home.path().to_owned()))
+    // Only this crate's own unit tests borrow a default private home. Every
+    // other process is an ordinary one, including a binary this checkout builds
+    // while `test-support` is linked: a per-process temporary home would move
+    // every rendered home path and re-derive the shared-service port from it on
+    // every run, so an unchanged stack would be recreated every time
+    // (effigy#362). Those builds use the operator's own home instead.
+    #[cfg(test)]
+    return Some(DEFAULT_TEST_EFFIGY_HOME.with(|home| home.path().to_owned()));
+    #[cfg(not(test))]
+    None
 }
 
 fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {

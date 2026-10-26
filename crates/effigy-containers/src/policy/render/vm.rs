@@ -1,18 +1,18 @@
 //! Compose interpolation for the VM-hosted Colima backend.
 //!
 //! `colima nerdctl` runs Compose inside the VM, so the host process
-//! environment never reaches Compose interpolation there. `EFFIGY_RENDER_ROOT`
-//! and the values a Compose plan forwards (container secrets delivered through
-//! Compose's own environment) therefore travel in an interpolation file the VM
-//! can read, named with `--env-file`. Compose's default `.env` lookup is the
-//! first Compose file's directory, which inside a rendered generation is the
-//! sealed object directory: it never holds an `.env`, so naming this file drops
-//! no interpolation the invocation had before.
+//! environment never reaches Compose interpolation there. The values a Compose
+//! plan forwards (`secrets.delivery = "compose-env"`) therefore travel in a
+//! file the VM can read, named with `--env-file`. `nerdctl compose` also hands
+//! that file to every service's `nerdctl run`, so a value is written in the one
+//! form both readers agree on: a plain value stays unquoted, and only a value
+//! Compose must read literally is double quoted and escaped.
 //!
 //! The file lives under the Effigy home, never inside an object closure, so a
-//! generation's content digest stays independent of the state-home path. It is
-//! private to this process (0600 inside a 0700 directory) and reclaimed by the
-//! next invocation once its writer is gone.
+//! generation's content digest stays independent of the state-home path. Its
+//! name is the digest of its contents: the same plan names the same file, so a
+//! re-up adds nothing. It is private to this user (0600 inside a 0700
+//! directory) and reclaimed by age and by count.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -20,22 +20,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use effigy_kernel::{
-    fs::{DirFd, FileName},
-    gate::{Gate, GateGuard, Wait},
-    observe::Observed,
-};
-
-use super::{render_root, ROOT_VARIABLE};
+use effigy_kernel::fs::{DirFd, FileName};
+use effigy_kernel::gate::{Gate, Wait};
 
 /// Compose's interpolation file flag. `nerdctl compose` accepts exactly one.
 const ENV_FILE_FLAG: &str = "--env-file";
 /// Effigy-home directory that holds each interpolation set.
 const DIRECTORY: &str = "compose-env";
-/// A retained file this old is reclaimed even while its writer lives.
-const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
-/// Upper bound on retained interpolation files.
-const MAX_FILES: usize = 64;
 /// The Compose subcommand token every Compose invocation carries.
 const COMPOSE: &str = "compose";
 /// The host adapter whose Compose process runs inside the Colima VM.
@@ -50,7 +41,7 @@ pub fn compose_invocation_args(
     args: &[OsString],
     env: &[(String, OsString)],
 ) -> io::Result<Vec<OsString>> {
-    if !runs_in_vm(program) {
+    if !runs_in_vm(program) || env.is_empty() {
         return Ok(args.to_vec());
     }
     let Some(index) = args.iter().position(|argument| argument == COMPOSE) else {
@@ -60,14 +51,6 @@ pub fn compose_invocation_args(
     for (name, value) in env {
         validate_name(name)?;
         entries.insert(name.clone(), value.clone());
-    }
-    // The generation root is Effigy's own value: it outranks a caller pair of
-    // the same name and is the last value written.
-    if let Some(root) = render_root(args) {
-        entries.insert(ROOT_VARIABLE.to_owned(), root.into_os_string());
-    }
-    if entries.is_empty() {
-        return Ok(args.to_vec());
     }
     let path = write_interpolation_file(&entries)?;
     let mut resolved = args.to_vec();
@@ -96,9 +79,7 @@ fn validate_name(name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// One `NAME=value` line per variable. Values are double quoted: `\\`, `\"`
-/// and newlines are escaped and `$` is doubled, so Compose reads the value
-/// literally instead of interpolating it a second time.
+/// One `NAME=value` line per variable.
 fn render(entries: &BTreeMap<String, OsString>) -> io::Result<String> {
     let mut body = String::new();
     for (name, value) in entries {
@@ -109,33 +90,55 @@ fn render(entries: &BTreeMap<String, OsString>) -> io::Result<String> {
         })?;
         body.push_str(name);
         body.push('=');
-        body.push('"');
-        for character in value.chars() {
-            match character {
-                '\\' => body.push_str("\\\\"),
-                '"' => body.push_str("\\\""),
-                '\n' => body.push_str("\\n"),
-                '$' => body.push_str("$$"),
-                '\r' => {
-                    return Err(invalid(format!(
-                        "the Compose interpolation value for `{name}` carries a carriage return, which an env file cannot represent"
-                    )))
-                }
-                other => body.push(other),
-            }
+        match literal(value) {
+            Some(value) => body.push_str(value),
+            None => quote(&mut body, name, value)?,
         }
-        body.push_str("\"\n");
+        body.push('\n');
     }
     Ok(body)
+}
+
+/// The value itself, when both Compose and nerdctl read it unchanged: no quoting
+/// and nothing either of them would escape, trim or expand.
+fn literal(value: &str) -> Option<&str> {
+    (!value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_graphic() && !"\"'$\\#".contains(character)))
+    .then_some(value)
+}
+
+/// The double-quoted spelling of a value Compose must read literally: `\\`,
+/// `\"` and newlines are escaped and `$` is doubled, so Compose substitutes the
+/// value instead of interpolating it a second time.
+fn quote(body: &mut String, name: &str, value: &str) -> io::Result<()> {
+    body.push('"');
+    for character in value.chars() {
+        match character {
+            '\\' => body.push_str("\\\\"),
+            '"' => body.push_str("\\\""),
+            '\n' => body.push_str("\\n"),
+            '$' => body.push_str("$$"),
+            '\r' => {
+                return Err(invalid(format!(
+                    "the Compose interpolation value for `{name}` carries a carriage return, which an env file cannot represent"
+                )))
+            }
+            other => body.push(other),
+        }
+    }
+    body.push('"');
+    Ok(())
 }
 
 fn invalid(message: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-/// Write one interpolation set, reusing an identical file this process already
-/// published. The name carries the writer's pid so a later invocation can
-/// reclaim it once its writer is gone.
+/// Write one interpolation set, reusing an identical file this user already
+/// published. The name is the digest of the contents, so concurrent
+/// invocations of the same plan converge on one file.
 fn write_interpolation_file(entries: &BTreeMap<String, OsString>) -> io::Result<PathBuf> {
     let body = render(entries)?;
     let op = crate::environment::operation(
@@ -175,10 +178,9 @@ fn write_interpolation_file(entries: &BTreeMap<String, OsString>) -> io::Result<
         Wait::Until(std::time::Instant::now() + Duration::from_secs(10)),
     )
     .map_err(|e| invalid(e.to_string()))?;
-    prune(&cx, &gate, &directory);
     let digest = effigy_gateway::ports::sha256_hex(body.as_bytes());
-    let name = FileName::new(&format!("{}-{}.env", std::process::id(), &digest[..16]))
-        .map_err(|e| invalid(e.to_string()))?;
+    let name =
+        FileName::new(&format!("{}.env", &digest[..16])).map_err(|e| invalid(e.to_string()))?;
     let path = home.join(DIRECTORY).join(name.as_str());
     if path
         .symlink_metadata()
@@ -199,74 +201,6 @@ fn write_interpolation_file(entries: &BTreeMap<String, OsString>) -> io::Result<
 }
 
 #[cfg(test)]
-fn private_dir(directory: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(directory)
-}
-
-/// Reclaim interpolation files whose writer is gone, whose age makes them
-/// stale, or that exceed the retained-file bound. A file that cannot be
-/// removed is never fatal: only Compose's own read of the current file matters.
-fn prune(cx: &effigy_kernel::ctx::EffectContext, gate: &GateGuard, directory: &DirFd) {
-    let Ok(entries) = std::fs::read_dir(directory.path()) else {
-        return;
-    };
-    let mut retained = Vec::new();
-    for entry in entries.flatten() {
-        // The stable gate directory is not an interpolation record.
-        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
-            continue;
-        }
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(OsStr::to_str).map(str::to_owned) else {
-            continue;
-        };
-        let written = entry.metadata().and_then(|meta| meta.modified()).ok();
-        let abandoned = name
-            .split('-')
-            .next()
-            .and_then(|pid| pid.parse::<i32>().ok())
-            .is_some_and(|pid| !alive(pid));
-        let stale = written
-            .and_then(|written| written.elapsed().ok())
-            .is_some_and(|age| age > MAX_AGE);
-        if abandoned || stale {
-            if let Ok(name) = FileName::new(&name) {
-                let _ = effigy_kernel::record::remove_record(cx, gate, directory, &name);
-            }
-        } else {
-            retained.push((written, path));
-        }
-    }
-    if retained.len() <= MAX_FILES {
-        return;
-    }
-    retained.sort();
-    let excess = retained.len() - MAX_FILES;
-    for (_, path) in retained.into_iter().take(excess) {
-        if let Some(name) = path
-            .file_name()
-            .and_then(OsStr::to_str)
-            .and_then(|name| FileName::new(name).ok())
-        {
-            let _ = effigy_kernel::record::remove_record(cx, gate, directory, &name);
-        }
-    }
-}
-
-fn alive(pid: i32) -> bool {
-    // Unknown identity protects a possible live writer. Never signal a numeric PID.
-    pid > 0
-        && !matches!(
-            effigy_kernel::ident::process_identity(pid as u32),
-            Observed::Absent(_)
-        )
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
@@ -279,32 +213,19 @@ mod tests {
             .collect()
     }
 
-    fn object_root(home: &Path) -> PathBuf {
-        let root = home.join(".effigy/state/objects").join("a".repeat(64));
-        std::fs::create_dir_all(root.join("checkout")).expect("mkdir object root");
-        root
+    fn secret(value: &str) -> Vec<(String, OsString)> {
+        vec![("DATABASE_URL".to_owned(), OsString::from(value))]
     }
 
     #[test]
     fn a_vm_hosted_invocation_names_a_file_the_vm_can_read() {
         let home = tempfile::tempdir().expect("home");
-        let root = object_root(home.path());
-        let invocation = args(&[
-            "-f",
-            root.join("checkout/compose.yml").to_str().expect("path"),
-            "-p",
-            "probe",
-            "up",
-            "-d",
-        ]);
+        let invocation = args(&["-f", "checkout/compose.yml", "-p", "probe", "up", "-d"]);
         let resolved = crate::with_test_effigy_home(home.path(), || {
             compose_invocation_args(
                 OsStr::new("colima"),
                 &invocation,
-                &[(
-                    "DATABASE_URL".to_owned(),
-                    OsString::from("postgres://user:pa$$ word@db/app"),
-                )],
+                &secret("postgres://db/app"),
             )
         })
         .expect("interpolation file");
@@ -323,14 +244,10 @@ mod tests {
             path.is_file(),
             "the invocation names an interpolation file the VM can read"
         );
-        let body = std::fs::read_to_string(&path).expect("interpolation file");
         assert_eq!(
-            body,
-            format!(
-                "DATABASE_URL=\"postgres://user:pa$$$$ word@db/app\"\n{ROOT_VARIABLE}=\"{}\"\n",
-                root.display()
-            ),
-            "values are literal and the generation root is explicit"
+            std::fs::read_to_string(&path).expect("interpolation file"),
+            "DATABASE_URL=postgres://db/app\n",
+            "a plain value is unquoted, so nerdctl's container copy stays exact"
         );
         assert_eq!(
             std::fs::metadata(&path)
@@ -343,20 +260,38 @@ mod tests {
     }
 
     #[test]
+    fn the_same_values_name_the_same_file_and_new_values_add_one() {
+        let home = tempfile::tempdir().expect("home");
+        let first = crate::with_test_effigy_home(home.path(), || {
+            compose_invocation_args(OsStr::new("colima"), &args(&["up"]), &secret("one"))
+        })
+        .expect("interpolation file");
+        let same = crate::with_test_effigy_home(home.path(), || {
+            compose_invocation_args(OsStr::new("colima"), &args(&["up"]), &secret("one"))
+        })
+        .expect("interpolation file");
+        let changed = crate::with_test_effigy_home(home.path(), || {
+            compose_invocation_args(OsStr::new("colima"), &args(&["up"]), &secret("two"))
+        })
+        .expect("interpolation file");
+        assert_eq!(first, same, "an unchanged plan names the same file");
+        assert_ne!(first, changed, "a changed secret names its own file");
+    }
+
+    #[test]
     fn a_host_backend_keeps_the_process_environment() {
         let home = tempfile::tempdir().expect("home");
-        let root = object_root(home.path());
         let invocation = [
             OsString::from("compose"),
             OsString::from("-f"),
-            root.join("checkout/compose.yml").into_os_string(),
+            OsString::from("checkout/compose.yml"),
             OsString::from("up"),
         ];
         let resolved = crate::with_test_effigy_home(home.path(), || {
             compose_invocation_args(
                 OsStr::new("/usr/local/bin/docker"),
                 &invocation,
-                &[("TOKEN".to_owned(), OsString::from("secret"))],
+                &secret("secret"),
             )
         })
         .expect("unchanged invocation");
@@ -389,11 +324,7 @@ mod tests {
             OsString::from("ps"),
         ];
         let resolved = crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(
-                OsStr::new("colima"),
-                &invocation,
-                &[("TOKEN".to_owned(), OsString::from("secret"))],
-            )
+            compose_invocation_args(OsStr::new("colima"), &invocation, &secret("secret"))
         })
         .expect("unchanged runtime invocation");
         assert_eq!(resolved, invocation);
@@ -403,6 +334,7 @@ mod tests {
     fn values_round_trip_through_the_interpolation_file_encoding() {
         for value in [
             "plain",
+            "postgres://user:pa$$word@db/app",
             "a\\b",
             "a\"b",
             "lit\\n not newline",
@@ -415,22 +347,23 @@ mod tests {
         ] {
             let entries = BTreeMap::from([("VALUE".to_owned(), OsString::from(value))]);
             let body = render(&entries).expect("encoded value");
-            assert_eq!(body, format!("VALUE=\"{}\"\n", encode(value)));
             assert_eq!(decode(&body), value, "round trip for {value:?}");
         }
         let carriage_return = BTreeMap::from([("VALUE".to_owned(), OsString::from("a\rb"))]);
         assert!(render(&carriage_return).is_err());
     }
 
-    /// The inverse of [`render`] for one double-quoted value, mirroring the
-    /// env-file grammar Compose applies.
+    /// The value Compose reads back, from either spelling.
     fn decode(body: &str) -> String {
         let value = body
-            .strip_prefix("VALUE=\"")
-            .and_then(|value| value.strip_suffix("\"\n"))
+            .strip_prefix("VALUE=")
+            .and_then(|value| value.strip_suffix('\n'))
             .expect("encoded shape");
+        let Some(quoted) = value.strip_prefix('"') else {
+            return value.to_owned();
+        };
         let mut decoded = String::new();
-        let mut characters = value.chars();
+        let mut characters = quoted.strip_suffix('"').expect("closing quote").chars();
         while let Some(character) = characters.next() {
             match character {
                 '\\' => match characters.next().expect("escape") {
@@ -447,43 +380,5 @@ mod tests {
             }
         }
         decoded
-    }
-
-    fn encode(value: &str) -> String {
-        let mut encoded = String::new();
-        for character in value.chars() {
-            match character {
-                '\\' => encoded.push_str("\\\\"),
-                '"' => encoded.push_str("\\\""),
-                '\n' => encoded.push_str("\\n"),
-                '$' => encoded.push_str("$$"),
-                other => encoded.push(other),
-            }
-        }
-        encoded
-    }
-
-    #[test]
-    fn an_abandoned_interpolation_file_is_reclaimed_by_the_next_invocation() {
-        let home = tempfile::tempdir().expect("home");
-        let directory = home.path().join(DIRECTORY);
-        private_dir(&directory).expect("private directory");
-        // A pid that cannot be running: above the kernel's pid ceiling.
-        let abandoned = directory.join("2147483646-0123456789abcdef.env");
-        std::fs::write(&abandoned, "STALE=\"1\"\n").expect("abandoned file");
-        let live = directory.join(format!("{}-0123456789abcdef.env", std::process::id()));
-        std::fs::write(&live, "LIVE=\"1\"\n").expect("live file");
-
-        crate::with_test_effigy_home(home.path(), || {
-            compose_invocation_args(
-                OsStr::new("colima"),
-                &args(&["up"]),
-                &[("TOKEN".to_owned(), OsString::from("secret"))],
-            )
-        })
-        .expect("interpolation file");
-
-        assert!(!abandoned.exists(), "a dead writer's file is reclaimed");
-        assert!(live.exists(), "a live writer's file is retained");
     }
 }
