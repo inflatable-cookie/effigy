@@ -46,6 +46,10 @@ before they compose the manifest from it, and say so in one line:
 [bundle] bundle updated 544c0cc9 → 7111bf60 (upstream moved)
 ```
 
+An ordinary task run in a checkout that has never pinned the source acquires it
+first, so a fresh worktree or clone runs its tasks straight away. It never moves
+a pin: refreshing a stale source stays on the Prepare paths above.
+
 `bundle sync` stays as the explicit command, and it is the only updater a source
 declared `update = "manual"` has. It acquires and validates a new generation
 before atomically selecting it in `.effigy/sources.lock.json`. A failed

@@ -1874,6 +1874,13 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A task run in a fresh checkout or worktree acquires the bundle and catalog
+  sources this checkout has never pinned, then runs the task, instead of
+  refusing with `source `bundle` is not prepared`. It fills that gap only: an
+  existing pin never moves on a task run, and floating-Git checks, path
+  re-snapshots and changed declarations stay on `dev`, `bootstrap`,
+  `container up` and `bundle sync`. Read paths (`--plan`, `--help`, `tasks`,
+  status, `doctor`, `bundle inspect`) still acquire nothing.
 - A binary this checkout builds while `effigy-containers` carries the
   `test-support` feature no longer resolves a per-process temporary Effigy home.
   That home moved every rendered path under it and re-derived the shared-service

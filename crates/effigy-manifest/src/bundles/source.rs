@@ -18,8 +18,8 @@ use crate::{ManifestBundleBase, ManifestError};
 mod prepare;
 mod progress;
 pub use prepare::{
-    bundle_update_notes, prepare_bundle_sources, sync_bundle_source, SourcePreparation,
-    SourceSettlement,
+    bundle_update_notes, prepare_bundle_sources, prepare_missing_bundle_sources,
+    sync_bundle_source, SourcePreparation, SourceSettlement,
 };
 pub use progress::{SourceProgress, SourceProgressEvent};
 
