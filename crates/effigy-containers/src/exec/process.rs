@@ -1372,7 +1372,6 @@ mod tests {
             "the origin must not be reset after spawn: the child must be reaped before it finishes"
         );
     }
-
 }
 
 #[cfg(all(test, unix))]

@@ -77,7 +77,10 @@ default = "web"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 "#,
-            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            &[(
+                "infra/dev/docker-compose.yml",
+                "services:\n  app:\n    image: example\n",
+            )],
             None,
             Selection::Resolves("web"),
             Some(default_render),
@@ -99,7 +102,10 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 working_dir = "/workspace"
 "#,
-            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            &[(
+                "infra/dev/docker-compose.yml",
+                "services:\n  app:\n    image: example\n",
+            )],
             None,
             Selection::Resolves("web"),
             None,
@@ -130,8 +136,14 @@ default_workspace = "app"
 container = "web"
 "#,
             &[
-                ("infra/dev/api-compose.yml", "services:\n  app:\n    image: example\n"),
-                ("infra/dev/web-compose.yml", "services:\n  app:\n    image: example\n"),
+                (
+                    "infra/dev/api-compose.yml",
+                    "services:\n  app:\n    image: example\n",
+                ),
+                (
+                    "infra/dev/web-compose.yml",
+                    "services:\n  app:\n    image: example\n",
+                ),
             ],
             None,
             Selection::Resolves("api"),
@@ -146,7 +158,10 @@ container = "web"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 "#,
-            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            &[(
+                "infra/dev/docker-compose.yml",
+                "services:\n  app:\n    image: example\n",
+            )],
             Some("web"),
             Selection::Resolves("web"),
             None,
@@ -160,7 +175,10 @@ primary_service = "app"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 "#,
-            &[("infra/dev/docker-compose.yml", "services:\n  app:\n    image: example\n")],
+            &[(
+                "infra/dev/docker-compose.yml",
+                "services:\n  app:\n    image: example\n",
+            )],
             None,
             Selection::Refused("container name omitted but neither"),
             None,
@@ -179,8 +197,7 @@ primary_service = "app"
         fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
         for (path, body) in files {
             let path = root.join(path);
-            fs::create_dir_all(path.parent().expect("compose parent"))
-                .expect("mkdir compose dir");
+            fs::create_dir_all(path.parent().expect("compose parent")).expect("mkdir compose dir");
             fs::write(path, body).expect("write compose");
         }
         match expected {
@@ -1064,4 +1081,3 @@ primary_service = "app"
         EffectiveAttachMode::Attached
     );
 }
-

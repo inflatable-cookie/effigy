@@ -99,9 +99,30 @@ fn colima_command_cases() {
                     "{name}"
                 );
             }
-            (Run::Status, Expect::Command { args, absent, allow_failure })
-            | (Run::Start, Expect::Command { args, absent, allow_failure })
-            | (Run::Stop, Expect::Command { args, absent, allow_failure }) => {
+            (
+                Run::Status,
+                Expect::Command {
+                    args,
+                    absent,
+                    allow_failure,
+                },
+            )
+            | (
+                Run::Start,
+                Expect::Command {
+                    args,
+                    absent,
+                    allow_failure,
+                },
+            )
+            | (
+                Run::Stop,
+                Expect::Command {
+                    args,
+                    absent,
+                    allow_failure,
+                },
+            ) => {
                 let _lock = env_lock();
                 let policy = test_policy("myprofile");
                 let command = match run {
@@ -230,8 +251,7 @@ fn colima_platform_override_cases() {
         append_colima_platform_overrides(&mut args, platform, Some("aarch64"), Some("vz"));
         for flag in expected_flags {
             assert!(
-                args.windows(flag.len())
-                    .any(|window| window == *flag),
+                args.windows(flag.len()).any(|window| window == *flag),
                 "{platform}: missing {flag:?} in {args:?}"
             );
         }

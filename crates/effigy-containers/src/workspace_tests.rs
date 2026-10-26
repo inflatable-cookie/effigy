@@ -394,9 +394,7 @@ mod host_git_mount_tests {
         /// the caller established.
         fn renders(self, config: &ManifestContainerConfig) -> bool {
             match self {
-                HostMount::GitConfig => {
-                    build_host_git_config_mount(config, "workspace").is_some()
-                }
+                HostMount::GitConfig => build_host_git_config_mount(config, "workspace").is_some(),
                 HostMount::SshDir => build_host_ssh_dir_mount(config, "workspace").is_some(),
                 HostMount::SshConfig => build_host_ssh_config_mount(config, "workspace").is_some(),
                 HostMount::KnownHosts => {
@@ -488,7 +486,10 @@ mod host_git_mount_tests {
                 "ssh config: the whole ssh directory is already mounted",
                 HostMount::SshConfig,
                 "php-fpm",
-                &[("mount_host_ssh_dir", true), ("mount_host_ssh_config", true)],
+                &[
+                    ("mount_host_ssh_dir", true),
+                    ("mount_host_ssh_config", true),
+                ],
                 Host::Home(&[".ssh/config"]),
             ),
             (

@@ -727,7 +727,11 @@ fn translated_fixed_port_is_assigned_per_scope_kind() {
         let private = root.join("primary/.git/worktrees/worker");
         fs::create_dir_all(checkout).unwrap();
         fs::create_dir_all(&private).unwrap();
-        fs::write(checkout.join(".git"), format!("gitdir: {}\n", private.display())).unwrap();
+        fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", private.display()),
+        )
+        .unwrap();
         fs::write(private.join("commondir"), "../..\n").unwrap();
     }
     fn ephemeral_clone(checkout: &Path, _root: &Path) {
@@ -1334,7 +1338,8 @@ catalog = "minio"
                     // service claims a fixed address:port pair.
                     for container_port in ["5432", "1025", "9000"] {
                         assert!(
-                            !compose.contains(&format!("127.1.0.1:{container_port}:{container_port}")),
+                            !compose
+                                .contains(&format!("127.1.0.1:{container_port}:{container_port}")),
                             "{name}: {compose}"
                         );
                     }
@@ -1448,7 +1453,11 @@ fn composer_mount_modes() {
     }
 
     let cases: [(&str, ComposerMount, &str); 3] = [
-        ("the host composer home is enabled", ComposerMount::HostHome, "mount_host_composer_home = true"),
+        (
+            "the host composer home is enabled",
+            ComposerMount::HostHome,
+            "mount_host_composer_home = true",
+        ),
         ("the default shared mounts", ComposerMount::Shared, ""),
         (
             "both shared mounts are disabled",
@@ -2001,7 +2010,12 @@ services:
     for service in ["app", "db"] {
         let servers: Vec<&str> = dns_override["services"][service]["dns"]
             .as_sequence()
-            .map(|servers| servers.iter().filter_map(|server| server.as_str()).collect())
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter_map(|server| server.as_str())
+                    .collect()
+            })
             .unwrap_or_default();
         assert_eq!(
             servers,
@@ -2055,17 +2069,24 @@ catalog = "mailpit"
     let gateway_hosts = host_gateway_domains(&dns_override, "workspace");
     for domain in ["s3.acme.test", "api.s3.acme.test"] {
         assert!(
-            gateway_hosts.iter().any(|host| host == &format!("{domain}:192.168.5.2")),
+            gateway_hosts
+                .iter()
+                .any(|host| host == &format!("{domain}:192.168.5.2")),
             "dns override should route {domain} to the gateway: {dns_override:?}"
         );
     }
-    for (service, alias) in [("postgres", "postgres.acme.test"), ("mailpit", "smtp.acme.test")] {
+    for (service, alias) in [
+        ("postgres", "postgres.acme.test"),
+        ("mailpit", "smtp.acme.test"),
+    ] {
         assert!(
             service_aliases(&dns_override, service).iter().any(|entry| entry == alias),
             "dns override should alias {service} as {alias} under the configured base domain: {dns_override:?}"
         );
         assert!(
-            !gateway_hosts.iter().any(|host| host.starts_with(&format!("{alias}:"))),
+            !gateway_hosts
+                .iter()
+                .any(|host| host.starts_with(&format!("{alias}:"))),
             "TCP service aliases must not point back at the host gateway: {dns_override:?}"
         );
         assert!(
