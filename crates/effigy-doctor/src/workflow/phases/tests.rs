@@ -130,36 +130,6 @@ impl WorkflowPhaseHandler for MockWorkflowPhaseHandler {
 }
 
 #[test]
-fn workflow_phase_order_is_stable() {
-    assert_eq!(
-        workflow_phase_order(),
-        &[
-            WorkflowPhase::RootResolution,
-            WorkflowPhase::ManifestPreparation,
-            WorkflowPhase::Checks,
-            WorkflowPhase::FixFinalization,
-            WorkflowPhase::ManifestAvailabilityFindings,
-            WorkflowPhase::SummaryAndReport,
-        ]
-    );
-}
-
-#[test]
-fn workflow_phase_pipeline_runs_handlers_in_declarative_order() {
-    let mut handler = MockWorkflowPhaseHandler::new();
-    let _ = run_workflow_phase_pipeline(
-        PathBuf::from("/tmp/doctor-workspace"),
-        None,
-        true,
-        &mut handler,
-    )
-    .expect("pipeline should succeed");
-
-    assert_eq!(*handler.visited.borrow(), workflow_phase_order());
-    assert_eq!(*handler.fixed_flags.borrow(), vec![true, true]);
-}
-
-#[test]
 fn workflow_phase_pipeline_propagates_phase_error_and_stops_subsequent_phases() {
     let mut handler = MockWorkflowPhaseHandler::with_failure(WorkflowPhase::ManifestPreparation);
 

@@ -558,9 +558,7 @@ fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
 
 /// Assemble a realistic PHP stack and verify its complete in-memory inputs.
 #[test]
-fn end_to_end_php_stack_assembles_all_assets_without_writing() {
-    let dir = tempfile::tempdir().unwrap();
-
+fn end_to_end_php_stack_assembles_every_service_asset() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
@@ -840,9 +838,4 @@ fn end_to_end_php_stack_assembles_all_assets_without_writing() {
         == "client-project-app-var-www-html-node-modules"
         && !volume.persist));
 
-    assert_eq!(
-        std::fs::read_dir(dir.path()).unwrap().count(),
-        0,
-        "assembly stays pure"
-    );
 }

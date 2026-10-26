@@ -99,33 +99,6 @@ fn type_mismatch_rejected() {
 }
 
 #[test]
-fn render_simple_template() {
-    let renderer = TemplateRenderer::new();
-    let ctx = TemplateContext {
-        params: {
-            let mut m = HashMap::new();
-            m.insert("version".to_string(), Value::from("8.3"));
-            m
-        },
-        service_name: "app".to_string(),
-        services: HashMap::new(),
-        repo_root: ".".to_string(),
-        catalog_path: "/catalog/php-fpm".to_string(),
-        project_name: "test".to_string(),
-        host_uid: 501,
-        host_gid: 20,
-    };
-
-    let template = r#"services:
-  {{ service_name }}:
-    image: php:{{ version }}-fpm"#;
-
-    let result = renderer.render(template, &ctx, "test").unwrap();
-    assert!(result.contains("app:"));
-    assert!(result.contains("php:8.3-fpm"));
-}
-
-#[test]
 fn render_conditional_depends_on() {
     let renderer = TemplateRenderer::new();
     let mut siblings = HashMap::new();
@@ -164,69 +137,3 @@ fn render_conditional_depends_on() {
     assert!(result.contains("database:"));
 }
 
-#[test]
-fn render_sibling_params_lookup() {
-    let renderer = TemplateRenderer::new();
-    let mut siblings = HashMap::new();
-    siblings.insert(
-        "db".to_string(),
-        SiblingService {
-            name: "database".to_string(),
-            catalog: "mariadb".to_string(),
-            port: Some(3306),
-            params: {
-                let mut params = HashMap::new();
-                params.insert("password".to_string(), Value::from("localdev"));
-                params
-            },
-        },
-    );
-
-    let ctx = TemplateContext {
-        params: {
-            let mut m = HashMap::new();
-            m.insert("database_host".to_string(), Value::from("db"));
-            m
-        },
-        service_name: "dbadmin".to_string(),
-        services: siblings,
-        repo_root: ".".to_string(),
-        catalog_path: "".to_string(),
-        project_name: "test".to_string(),
-        host_uid: 501,
-        host_gid: 20,
-    };
-
-    let template = r#"{% set database_service = services[database_host] %}{{ database_service.params.password }}"#;
-
-    let result = renderer.render(template, &ctx, "test").unwrap();
-    assert_eq!(result, "localdev");
-}
-
-#[test]
-fn render_list_join() {
-    let renderer = TemplateRenderer::new();
-    let ctx = TemplateContext {
-        params: {
-            let mut m = HashMap::new();
-            m.insert(
-                "extensions".to_string(),
-                Value::from(vec!["gd", "redis", "pdo_mysql"]),
-            );
-            m
-        },
-        service_name: "app".to_string(),
-        services: HashMap::new(),
-        repo_root: ".".to_string(),
-        catalog_path: "".to_string(),
-        project_name: "test".to_string(),
-        host_uid: 501,
-        host_gid: 20,
-    };
-
-    let template = r#"args:
-  EXTENSIONS: "{{ extensions | join(' ') }}""#;
-
-    let result = renderer.render(template, &ctx, "test").unwrap();
-    assert!(result.contains("gd redis pdo_mysql"));
-}

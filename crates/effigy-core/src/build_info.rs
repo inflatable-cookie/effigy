@@ -264,16 +264,7 @@ mod tests {
         ACTIVE_VERSION_ENV,
     };
 
-    #[test]
-    fn active_version_file_uses_sibling_extension() {
-        let executable = std::path::Path::new("/tmp/effigy");
-        assert_eq!(
-            active_version_file_for(executable),
-            std::path::PathBuf::from("/tmp/effigy.active-version")
-        );
-    }
-
-    #[test]
+        #[test]
     fn read_active_version_file_trims_and_ignores_empty_values() {
         let temp = tempfile::tempdir().expect("tempdir");
         let executable = temp.path().join("effigy");

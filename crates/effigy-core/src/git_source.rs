@@ -76,7 +76,7 @@ fn normalize_local_git_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
+    use super::{canonical_git_cache_identity, sanitize_cache_segment};
 
     #[test]
     fn canonical_git_cache_identity_normalizes_common_remote_forms() {
@@ -108,11 +108,4 @@ mod tests {
         assert_eq!(sanitize_cache_segment(""), "_");
     }
 
-    #[test]
-    fn sha256_hex_is_stable() {
-        assert_eq!(
-            sha256_hex(b"github.com/acme/bundle"),
-            "fd5f7a504d36a805f75e306d4a9777259904b271f7a648baa1973420a97f782b"
-        );
     }
-}

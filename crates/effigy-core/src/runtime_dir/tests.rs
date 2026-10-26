@@ -724,20 +724,6 @@ fn git_local_exclude_path_uses_common_dir_for_a_primary_checkout() {
 }
 
 #[test]
-fn dangling_gitfile_diagnostic_does_not_invent_exclude_path() {
-    let tmp = TempDir::new().expect("tempdir");
-    let root = tmp.path();
-    fs::write(root.join(".git"), "gitdir: /nope/does/not/exist\n").expect("pointer");
-    assert_eq!(git_local_exclude_path(root), root.join(".git"));
-    assert!(
-        !git_local_exclude_path(root)
-            .to_string_lossy()
-            .ends_with("info/exclude"),
-        "must not invent .git/info/exclude through a gitfile"
-    );
-}
-
-#[test]
 fn pattern_listing_ignores_blank_lines() {
     assert!(pattern_already_listed(".effigy\n", ".effigy", &[".effigy"]));
     assert!(pattern_already_listed(

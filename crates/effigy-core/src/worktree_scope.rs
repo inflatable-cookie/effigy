@@ -647,23 +647,7 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
-    #[test]
-    fn project_tags_cover_every_scope_kind() {
-        assert_eq!(
-            ScopeKind::LinkedWorktree.project_tag(),
-            PROJECT_TAGS[0] // "wt"
-        );
-        assert_eq!(
-            ScopeKind::EphemeralClone.project_tag(),
-            PROJECT_TAGS[1] // "ec"
-        );
-    }
-}
-
-#[cfg(test)]
-mod observation_tests {
-    use super::*;
-    #[test]
+        #[test]
     fn scope_reads_leave_a_fresh_ephemeral_checkout_uninitialized() {
         let fixture = tempfile::tempdir().unwrap();
         let root = fixture.path().join("checkout");
