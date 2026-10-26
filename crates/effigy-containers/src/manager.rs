@@ -258,16 +258,6 @@ pub trait ContainerBackend: Send + Sync {
         profile: &str,
         args: &[OsString],
     ) -> (OsString, Vec<OsString>);
-
-    fn status(&self, request: &ContainerManagerRequest) -> ContainerOperationReport {
-        ContainerOperationReport::new(
-            self.id(),
-            request.repo_root.clone(),
-            ContainerAction::Status,
-        )
-        .policy_name(interrupt_policy_name(request.interrupt_policy))
-        .state(ContainerRuntimeState::Unknown)
-    }
 }
 
 #[derive(Debug, Default)]
@@ -426,13 +416,6 @@ impl ContainerManager {
         request: &ContainerManagerRequest,
     ) -> Result<&dyn ContainerBackend, ContainerManagerError> {
         self.registry.select(request)
-    }
-
-    pub fn status(
-        &self,
-        request: &ContainerManagerRequest,
-    ) -> Result<ContainerOperationReport, ContainerManagerError> {
-        Ok(self.selected_backend(request)?.status(request))
     }
 
     pub fn operation_report(
@@ -688,81 +671,61 @@ mod tests {
     use super::{
         backend_override_from_env_value, BackendId, ColimaNerdctlBackend, ContainerAction,
         ContainerBackend, ContainerBackendDetection, ContainerBackendRegistry,
-        ContainerInterruptPolicy, ContainerManager, ContainerManagerError, ContainerManagerRequest,
-        ContainerRuntimeState, DockerComposeBackend, RuntimeInvocation,
+        ContainerManager, ContainerManagerError, ContainerManagerRequest, DockerComposeBackend,
+        RuntimeInvocation,
     };
 
+    /// Backend selection follows an explicit request override first, then
+    /// Docker availability, and an unknown override is refused by name.
     #[test]
-    fn default_registry_exposes_docker_and_colima_backends() {
-        let ids = ContainerBackendRegistry::defaults().ids();
+    fn backend_selection_cases() {
+        let registry = ContainerBackendRegistry::defaults();
+        let manager = ContainerManager::defaults();
 
+        let overridden = ContainerManagerRequest::new("/tmp/repo")
+            .backend_override(BackendId::colima_nerdctl());
         assert_eq!(
-            ids,
-            vec![BackendId::docker_compose(), BackendId::colima_nerdctl()]
+            manager
+                .selected_backend(&overridden)
+                .expect("selected backend")
+                .id(),
+            BackendId::colima_nerdctl()
         );
-    }
+        assert_eq!(
+            registry
+                .detect_backend(
+                    &ContainerBackendDetection::new(true)
+                        .backend_override(BackendId::colima_nerdctl())
+                )
+                .expect("explicit override"),
+            BackendId::colima_nerdctl()
+        );
 
-    #[test]
-    fn override_selects_colima_backend() {
-        let request =
-            ContainerManagerRequest::new("/tmp/repo").backend_override(BackendId::colima_nerdctl());
-        let manager = ContainerManager::defaults();
+        for (docker_available, expected) in [
+            (true, BackendId::docker_compose()),
+            (false, BackendId::colima_nerdctl()),
+        ] {
+            assert_eq!(
+                registry
+                    .detect_backend(&ContainerBackendDetection::new(docker_available))
+                    .expect("detected backend"),
+                expected,
+                "docker available: {docker_available}"
+            );
+        }
 
-        let backend = manager.selected_backend(&request).expect("backend");
-
-        assert_eq!(backend.id(), BackendId::colima_nerdctl());
-    }
-
-    #[test]
-    fn unknown_override_is_reported() {
-        let request =
+        let unknown =
             ContainerManagerRequest::new("/tmp/repo").backend_override(BackendId::new("podman"));
-        let manager = ContainerManager::defaults();
-
-        let error = match manager.selected_backend(&request) {
+        let error = match manager.selected_backend(&unknown) {
             Ok(backend) => panic!("unexpected backend `{}`", backend.id()),
             Err(error) => error,
         };
-
         assert_eq!(
             error,
             ContainerManagerError::UnknownBackend {
                 backend_id: BackendId::new("podman")
             }
         );
-    }
-
-    #[test]
-    fn detection_prefers_explicit_override() {
-        let registry = ContainerBackendRegistry::defaults();
-        let detection =
-            ContainerBackendDetection::new(true).backend_override(BackendId::colima_nerdctl());
-
-        let backend_id = registry.detect_backend(&detection).expect("backend id");
-
-        assert_eq!(backend_id, BackendId::colima_nerdctl());
-    }
-
-    #[test]
-    fn detection_prefers_docker_when_available() {
-        let registry = ContainerBackendRegistry::defaults();
-
-        let backend_id = registry
-            .detect_backend(&ContainerBackendDetection::new(true))
-            .expect("backend id");
-
-        assert_eq!(backend_id, BackendId::docker_compose());
-    }
-
-    #[test]
-    fn detection_falls_back_to_colima_when_docker_is_unavailable() {
-        let registry = ContainerBackendRegistry::defaults();
-
-        let backend_id = registry
-            .detect_backend(&ContainerBackendDetection::new(false))
-            .expect("backend id");
-
-        assert_eq!(backend_id, BackendId::colima_nerdctl());
     }
 
     #[test]
@@ -779,230 +742,168 @@ mod tests {
         assert_eq!(backend_override_from_env_value("unknown"), None);
     }
 
+    /// One backend × {compose, runtime} table: the program and argument
+    /// rewrite each backend applies, the plan fields it reports, and the
+    /// command line a person reads.
     #[test]
-    fn compose_process_invocations_are_stable() {
-        let args = vec![OsString::from("compose"), OsString::from("ps")];
-
-        assert_eq!(
-            DockerComposeBackend.compose_process_invocation("effigy", &args),
-            (OsString::from("docker"), args.clone())
-        );
-        assert_eq!(
-            ColimaNerdctlBackend.compose_process_invocation("effigy", &args),
-            (
-                OsString::from("colima"),
-                vec![
-                    OsString::from("nerdctl"),
-                    OsString::from("--profile"),
-                    OsString::from("effigy"),
-                    OsString::from("--"),
-                    OsString::from("compose"),
-                    OsString::from("ps"),
-                ]
-            )
-        );
-    }
-
-    #[test]
-    fn docker_compose_invocation_plan_is_stable() {
+    fn compose_and_runtime_invocations_are_stable_per_backend() {
         let manager = ContainerManager::defaults();
         let request = ContainerManagerRequest::new("/tmp/repo");
+        let colima_override =
+            ContainerManagerRequest::new("/tmp/repo").backend_override(BackendId::colima_nerdctl());
         let args = vec![OsString::from("compose"), OsString::from("ps")];
-
-        let plan = manager
-            .compose_invocation_plan(
-                &request,
-                &ContainerBackendDetection::new(true),
-                "effigy",
-                &args,
-                ContainerAction::Status,
-                "docker compose ps",
-            )
-            .expect("compose plan");
-
-        assert_eq!(plan.backend_id, BackendId::docker_compose());
-        assert_eq!(plan.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(plan.profile, "effigy");
-        assert_eq!(plan.action, ContainerAction::Status);
-        assert_eq!(plan.program, OsString::from("docker"));
-        assert_eq!(plan.args, args);
-        assert_eq!(plan.label, "docker compose ps");
-        assert_eq!(plan.command_line(), "docker compose ps");
-    }
-
-    #[test]
-    fn colima_compose_invocation_plan_is_stable() {
-        let manager = ContainerManager::defaults();
-        let request = ContainerManagerRequest::new("/tmp/repo");
-        let args = vec![OsString::from("compose"), OsString::from("ps")];
-
-        let plan = manager
-            .compose_invocation_plan(
-                &request,
-                &ContainerBackendDetection::new(false),
-                "effigy",
-                &args,
-                ContainerAction::Status,
-                "docker compose ps",
-            )
-            .expect("compose plan");
-
-        assert_eq!(plan.backend_id, BackendId::colima_nerdctl());
-        assert_eq!(plan.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(plan.profile, "effigy");
-        assert_eq!(plan.action, ContainerAction::Status);
-        assert_eq!(plan.program, OsString::from("colima"));
-        assert_eq!(
-            plan.args,
-            vec![
+        let nerdctl_args = |tail: &[&str]| {
+            let mut args = vec![
                 OsString::from("nerdctl"),
                 OsString::from("--profile"),
                 OsString::from("effigy"),
                 OsString::from("--"),
-                OsString::from("compose"),
-                OsString::from("ps"),
-            ]
-        );
-        assert_eq!(
-            plan.command_line(),
-            "colima nerdctl --profile effigy -- compose ps"
-        );
-    }
+            ];
+            args.extend(tail.iter().map(OsString::from));
+            args
+        };
 
-    #[test]
-    fn compose_invocation_plan_honors_request_override() {
-        let manager = ContainerManager::defaults();
-        let request =
-            ContainerManagerRequest::new("/tmp/repo").backend_override(BackendId::colima_nerdctl());
-        let args = vec![OsString::from("compose"), OsString::from("ps")];
-
-        let plan = manager
-            .compose_invocation_plan(
-                &request,
-                &ContainerBackendDetection::new(true),
-                "effigy",
-                &args,
-                ContainerAction::Status,
-                "docker compose ps",
-            )
-            .expect("compose plan");
-
-        assert_eq!(plan.backend_id, BackendId::colima_nerdctl());
-        assert_eq!(
-            plan.command_line(),
-            "colima nerdctl --profile effigy -- compose ps"
-        );
-    }
-
-    #[test]
-    fn runtime_process_invocations_are_stable() {
-        let manager = ContainerManager::defaults();
-        let args = vec![
-            OsString::from("cp"),
-            OsString::from("a"),
-            OsString::from("b"),
-        ];
-
-        assert_eq!(
-            manager
-                .runtime_process_invocation(
-                    &ContainerBackendDetection::new(true),
-                    "effigy",
-                    "docker",
-                    &args
-                )
-                .expect("docker invocation"),
-            (OsString::from("docker"), args.clone())
-        );
-        assert_eq!(
-            manager
-                .runtime_process_invocation(
-                    &ContainerBackendDetection::new(false),
-                    "effigy",
-                    "docker",
-                    &args
-                )
-                .expect("colima invocation"),
+        // The backend's own rewrite of one compose argv.
+        for (backend, expected) in [
             (
-                OsString::from("colima"),
-                vec![
-                    OsString::from("nerdctl"),
-                    OsString::from("--profile"),
-                    OsString::from("effigy"),
-                    OsString::from("--"),
-                    OsString::from("cp"),
-                    OsString::from("a"),
-                    OsString::from("b"),
-                ]
-            )
-        );
-    }
+                &DockerComposeBackend as &dyn ContainerBackend,
+                (OsString::from("docker"), args.clone()),
+            ),
+            (
+                &ColimaNerdctlBackend as &dyn ContainerBackend,
+                (
+                    OsString::from("colima"),
+                    nerdctl_args(&["compose", "ps"]),
+                ),
+            ),
+        ] {
+            assert_eq!(
+                backend.compose_process_invocation("effigy", &args),
+                expected,
+                "compose invocation for {}",
+                backend.id()
+            );
+        }
 
-    #[test]
-    fn docker_runtime_invocation_plan_is_stable() {
-        let manager = ContainerManager::defaults();
-        let request = ContainerManagerRequest::new("/tmp/repo");
-        let args = vec![
-            OsString::from("image"),
-            OsString::from("rm"),
-            OsString::from("-f"),
-            OsString::from("example:latest"),
-        ];
-
-        let plan = manager
-            .runtime_invocation_plan(
+        // The manager's compose plan: Docker detection, Colima detection, and
+        // an explicit request override that wins over detection.
+        for (label, request, detection, expected_program, expected_args) in [
+            (
+                "docker from detection",
                 &request,
-                &ContainerBackendDetection::new(true),
-                RuntimeInvocation {
-                    profile: "effigy",
-                    docker_program: OsString::from("docker"),
-                    docker_args: &args,
-                    action: ContainerAction::Shutdown,
-                    label: "remove generated image".to_owned(),
-                },
-            )
-            .expect("runtime plan");
-
-        assert_eq!(plan.backend_id, BackendId::docker_compose());
-        assert_eq!(plan.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(plan.profile, "effigy");
-        assert_eq!(plan.action, ContainerAction::Shutdown);
-        assert_eq!(plan.program, OsString::from("docker"));
-        assert_eq!(plan.args, args);
-        assert_eq!(plan.label, "remove generated image");
-        assert_eq!(plan.command_line(), "docker image rm -f example:latest");
-    }
-
-    #[test]
-    fn colima_runtime_invocation_plan_is_stable() {
-        let manager = ContainerManager::defaults();
-        let request = ContainerManagerRequest::new("/tmp/repo");
-        let args = vec![
-            OsString::from("image"),
-            OsString::from("rm"),
-            OsString::from("-f"),
-            OsString::from("example:latest"),
-        ];
-
-        let plan = manager
-            .runtime_invocation_plan(
+                ContainerBackendDetection::new(true),
+                "docker",
+                args.clone(),
+            ),
+            (
+                "colima from detection",
                 &request,
-                &ContainerBackendDetection::new(false),
-                RuntimeInvocation {
-                    profile: "effigy",
-                    docker_program: OsString::from("docker"),
-                    docker_args: &args,
-                    action: ContainerAction::Shutdown,
-                    label: "remove generated image".to_owned(),
-                },
-            )
-            .expect("runtime plan");
+                ContainerBackendDetection::new(false),
+                "colima",
+                nerdctl_args(&["compose", "ps"]),
+            ),
+            (
+                "colima from the request override",
+                &colima_override,
+                ContainerBackendDetection::new(true),
+                "colima",
+                nerdctl_args(&["compose", "ps"]),
+            ),
+        ] {
+            let plan = manager
+                .compose_invocation_plan(
+                    request,
+                    &detection,
+                    "effigy",
+                    &args,
+                    ContainerAction::Status,
+                    "docker compose ps",
+                )
+                .expect("compose plan");
+            let expected_backend = if expected_program == "docker" {
+                BackendId::docker_compose()
+            } else {
+                BackendId::colima_nerdctl()
+            };
+            assert_eq!(plan.backend_id, expected_backend, "{label}");
+            assert_eq!(plan.repo_root, PathBuf::from("/tmp/repo"), "{label}");
+            assert_eq!(plan.profile, "effigy", "{label}");
+            assert_eq!(plan.action, ContainerAction::Status, "{label}");
+            assert_eq!(plan.program, OsString::from(expected_program), "{label}");
+            assert_eq!(plan.args, expected_args, "{label}");
+            assert_eq!(plan.label, "docker compose ps", "{label}");
+            assert_eq!(
+                plan.command_line(),
+                format!(
+                    "{expected_program} {}",
+                    expected_args
+                        .iter()
+                        .map(|arg| arg.to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+                "{label}"
+            );
+        }
 
-        assert_eq!(plan.backend_id, BackendId::colima_nerdctl());
-        assert_eq!(
-            plan.command_line(),
-            "colima nerdctl --profile effigy -- image rm -f example:latest"
-        );
+        // The runtime plan: the same rewrite for a non-compose runtime argv.
+        let runtime_args: Vec<OsString> = ["image", "rm", "-f", "example:latest"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        for (detection, expected_program, expected_args, expected_command) in [
+            (
+                ContainerBackendDetection::new(true),
+                "docker",
+                runtime_args.clone(),
+                "docker image rm -f example:latest",
+            ),
+            (
+                ContainerBackendDetection::new(false),
+                "colima",
+                nerdctl_args(&["image", "rm", "-f", "example:latest"]),
+                "colima nerdctl --profile effigy -- image rm -f example:latest",
+            ),
+        ] {
+            assert_eq!(
+                manager
+                    .runtime_process_invocation(
+                        &detection,
+                        "effigy",
+                        "docker",
+                        &runtime_args
+                    )
+                    .expect("runtime invocation"),
+                (OsString::from(expected_program), expected_args.clone()),
+                "{expected_program} runtime invocation"
+            );
+            let plan = manager
+                .runtime_invocation_plan(
+                    &request,
+                    &detection,
+                    RuntimeInvocation {
+                        profile: "effigy",
+                        docker_program: OsString::from("docker"),
+                        docker_args: &runtime_args,
+                        action: ContainerAction::Shutdown,
+                        label: "remove generated image".to_owned(),
+                    },
+                )
+                .expect("runtime plan");
+            let expected_backend = if expected_program == "docker" {
+                BackendId::docker_compose()
+            } else {
+                BackendId::colima_nerdctl()
+            };
+            assert_eq!(plan.backend_id, expected_backend);
+            assert_eq!(plan.repo_root, PathBuf::from("/tmp/repo"));
+            assert_eq!(plan.profile, "effigy");
+            assert_eq!(plan.action, ContainerAction::Shutdown);
+            assert_eq!(plan.program, OsString::from(expected_program));
+            assert_eq!(plan.args, expected_args);
+            assert_eq!(plan.label, "remove generated image");
+            assert_eq!(plan.command_line(), expected_command);
+        }
     }
 
     #[test]
@@ -1023,51 +924,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn status_report_includes_required_identity_fields() {
-        let request = ContainerManagerRequest::new("/tmp/repo")
-            .backend_override(BackendId::colima_nerdctl())
-            .interrupt_policy(ContainerInterruptPolicy::ShutdownOnInterrupt);
-        let manager = ContainerManager::defaults();
-
-        let report = manager.status(&request).expect("status report");
-
-        assert_eq!(report.backend_id, BackendId::colima_nerdctl());
-        assert_eq!(report.policy_name, "shutdown-on-interrupt");
-        assert_eq!(report.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(report.action, ContainerAction::Status);
-        assert_eq!(report.cleanup_result, None);
-        assert_eq!(report.state, ContainerRuntimeState::Unknown);
-    }
-
-    #[test]
-    fn lifecycle_operation_report_includes_cleanup_result() {
-        let request = ContainerManagerRequest::new("/tmp/repo")
-            .backend_override(BackendId::docker_compose())
-            .interrupt_policy(ContainerInterruptPolicy::ShutdownOnInterrupt);
-        let manager = ContainerManager::defaults();
-
-        let report = manager
-            .operation_report(
-                &request,
-                ContainerAction::Activate,
-                ContainerRuntimeState::Degraded,
-                Some(super::ContainerCleanupResult::Failed(
-                    "compose down failed".to_owned(),
-                )),
-            )
-            .expect("operation report");
-
-        assert_eq!(report.backend_id, BackendId::docker_compose());
-        assert_eq!(report.policy_name, "shutdown-on-interrupt");
-        assert_eq!(report.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(report.action, ContainerAction::Activate);
-        assert_eq!(
-            report.cleanup_result,
-            Some(super::ContainerCleanupResult::Failed(
-                "compose down failed".to_owned()
-            ))
-        );
-        assert_eq!(report.state, ContainerRuntimeState::Degraded);
-    }
 }

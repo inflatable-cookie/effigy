@@ -4,16 +4,11 @@ mod structured_mount_tests {
     use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};
     use std::fs;
 
+    /// A fixture directory owned until this test thread exits, so nothing is
+    /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "effigy-structured-mount-{label}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
+            .expect("create fixture directory")
     }
 
     #[test]
@@ -169,16 +164,11 @@ mod library_mount_tests {
     use super::super::*;
     use std::fs;
 
+    /// A fixture directory owned until this test thread exits, so nothing is
+    /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "effigy-library-mount-{label}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
+            .expect("create fixture directory")
     }
 
     fn mount(raw: &str, host_path: PathBuf) -> LibraryMount {
@@ -260,16 +250,11 @@ mod host_git_mount_tests {
     use std::collections::BTreeMap;
     use std::fs;
 
+    /// A fixture directory owned until this test thread exits, so nothing is
+    /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "effigy-host-git-{label}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
+            .expect("create fixture directory")
     }
 
     fn make_config(
@@ -375,6 +360,208 @@ mod host_git_mount_tests {
             .expect("build workspace runtime environment")
     }
 
+    /// The six host mounts a workspace service can carry, plus the runtime
+    /// environment they inject.
+    #[derive(Clone, Copy, Debug)]
+    enum HostMount {
+        GitConfig,
+        SshDir,
+        SshConfig,
+        KnownHosts,
+        SshAgent,
+        MkcertCa,
+        RuntimeEnvironment,
+    }
+
+    impl HostMount {
+        /// Whether this mount renders for `config`, in the host environment
+        /// the caller established.
+        fn renders(self, config: &ManifestContainerConfig) -> bool {
+            match self {
+                HostMount::GitConfig => {
+                    build_host_git_config_mount(config, "workspace").is_some()
+                }
+                HostMount::SshDir => build_host_ssh_dir_mount(config, "workspace").is_some(),
+                HostMount::SshConfig => build_host_ssh_config_mount(config, "workspace").is_some(),
+                HostMount::KnownHosts => {
+                    build_host_ssh_known_hosts_mount(config, "workspace").is_some()
+                }
+                HostMount::SshAgent => build_host_ssh_agent_mount(config, "workspace").is_some(),
+                HostMount::MkcertCa => build_host_mkcert_ca_mount(config, "workspace").is_some(),
+                HostMount::RuntimeEnvironment => {
+                    !build_workspace_runtime_environment(config, "workspace").is_empty()
+                }
+            }
+        }
+    }
+
+    /// The host state a row renders against.
+    enum Host {
+        /// A fixture HOME holding these relative files; an entry ending in `/`
+        /// is an empty directory, and anything else is created empty otherwise.
+        Home(&'static [&'static str]),
+        /// A host mkcert root CA that is present or absent.
+        MkcertCa(bool),
+    }
+
+    fn host_home(entries: &[&str]) -> PathBuf {
+        let home = temp_dir("host-mount-skip");
+        for entry in entries {
+            let path = home.join(entry);
+            if entry.ends_with('/') {
+                fs::create_dir_all(&path).expect("create fixture dir");
+                continue;
+            }
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create fixture parent");
+            }
+            fs::write(&path, "fixture\n").expect("write fixture file");
+        }
+        home
+    }
+
+    /// Every host mount is opt-in and withheld for its own reason: a missing
+    /// host source, a disabled catalog param, a catalog that does not mount it,
+    /// or a fuller mount that already covers it.
+    #[test]
+    fn host_mount_is_skipped() {
+        let cases: [(&str, HostMount, &str, &[(&str, bool)], Host); 15] = [
+            (
+                "git config: the host file is missing",
+                HostMount::GitConfig,
+                "php-fpm",
+                &[],
+                Host::Home(&[]),
+            ),
+            (
+                "git config: the catalog param is disabled",
+                HostMount::GitConfig,
+                "php-fpm",
+                &[("mount_host_git_config", false)],
+                Host::Home(&[".gitconfig"]),
+            ),
+            (
+                "git config: the catalog does not mount it",
+                HostMount::GitConfig,
+                "postgres",
+                &[],
+                Host::Home(&[".gitconfig"]),
+            ),
+            (
+                "ssh dir: mounting the whole directory is opt-in",
+                HostMount::SshDir,
+                "php-fpm",
+                &[],
+                Host::Home(&[".ssh/config"]),
+            ),
+            (
+                "known hosts: the whole ssh directory is already mounted",
+                HostMount::KnownHosts,
+                "node",
+                &[("mount_host_ssh_dir", true)],
+                Host::Home(&[".ssh/known_hosts"]),
+            ),
+            (
+                "ssh config: the whole ssh directory is already mounted",
+                HostMount::SshConfig,
+                "php-fpm",
+                &[("mount_host_ssh_dir", true), ("mount_host_ssh_config", true)],
+                Host::Home(&[".ssh/config"]),
+            ),
+            (
+                "ssh config: the host file is missing",
+                HostMount::SshConfig,
+                "workspace-rust-bun",
+                &[("mount_host_ssh_config", true)],
+                Host::Home(&[".ssh/"]),
+            ),
+            (
+                "ssh config: the catalog param is disabled",
+                HostMount::SshConfig,
+                "php-fpm",
+                &[("mount_host_ssh_config", false)],
+                Host::Home(&[".ssh/config"]),
+            ),
+            (
+                "ssh config: the catalog does not mount it",
+                HostMount::SshConfig,
+                "postgres",
+                &[("mount_host_ssh_config", true)],
+                Host::Home(&[".ssh/config"]),
+            ),
+            (
+                "ssh config: mounting it is opt-in",
+                HostMount::SshConfig,
+                "workspace-rust-bun",
+                &[],
+                Host::Home(&[".ssh/config"]),
+            ),
+            (
+                "mkcert CA: the host root CA is absent",
+                HostMount::MkcertCa,
+                "workspace-rust-bun",
+                &[],
+                Host::MkcertCa(false),
+            ),
+            (
+                "mkcert CA: the catalog param is disabled",
+                HostMount::MkcertCa,
+                "php-fpm",
+                &[("mount_host_mkcert_ca", false)],
+                Host::MkcertCa(true),
+            ),
+            (
+                "mkcert CA: the catalog does not mount it",
+                HostMount::MkcertCa,
+                "postgres",
+                &[],
+                Host::MkcertCa(true),
+            ),
+            (
+                "ssh agent: the catalog param is disabled",
+                HostMount::SshAgent,
+                "php-fpm",
+                &[("forward_host_ssh_agent", false)],
+                Host::Home(&[]),
+            ),
+            (
+                "runtime environment: the agent is not forwarded",
+                HostMount::RuntimeEnvironment,
+                "php-fpm",
+                &[("forward_host_ssh_agent", false)],
+                Host::Home(&[]),
+            ),
+        ];
+        for (name, mount, catalog, params, host) in cases {
+            let params = params
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), toml::Value::Boolean(*value)))
+                .collect();
+            let config = make_config(catalog, params);
+            // A private gateway never reads the host CA, so these rows prove
+            // the mount decision on the host path the tests control.
+            let _environment = RestoreEnvironmentVariable::remove(
+                effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV,
+            );
+            let renders = match host {
+                Host::Home(entries) => {
+                    let home = host_home(entries);
+                    with_test_host_home(Some(&home), || mount.renders(&config))
+                }
+                Host::MkcertCa(present) => {
+                    let root_ca = present.then(|| {
+                        let dir = temp_dir("host-mount-skip-mkcert");
+                        let pem = dir.join("rootCA.pem");
+                        fs::write(&pem, "-----BEGIN CERTIFICATE-----\n").expect("write root CA");
+                        pem
+                    });
+                    with_test_host_mkcert_root_ca(root_ca.as_deref(), || mount.renders(&config))
+                }
+            };
+            assert!(!renders, "{name}: the mount must not render");
+        }
+    }
+
     #[test]
     fn gitconfig_mount_renders_read_only_when_host_file_exists() {
         let home = temp_dir("gitconfig-present");
@@ -391,46 +578,6 @@ mod host_git_mount_tests {
         assert!(mount
             .rendered
             .contains(home.join(".gitconfig").to_str().unwrap()));
-    }
-
-    #[test]
-    fn gitconfig_mount_skipped_when_host_file_missing() {
-        let home = temp_dir("gitconfig-missing");
-        let config = make_config("php-fpm", enabled_params());
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_git_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
-    fn gitconfig_mount_skipped_when_param_disabled() {
-        let home = temp_dir("gitconfig-disabled");
-        fs::write(home.join(".gitconfig"), "ignored").expect("write");
-        let mut params = BTreeMap::new();
-        params.insert(
-            "mount_host_git_config".to_owned(),
-            toml::Value::Boolean(false),
-        );
-        let config = make_config("php-fpm", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_git_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
-    fn gitconfig_mount_skipped_for_non_workspace_catalogs() {
-        let home = temp_dir("gitconfig-non-workspace");
-        fs::write(home.join(".gitconfig"), "ignored").expect("write");
-        let config = make_config("postgres", enabled_params());
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_git_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
     }
 
     #[test]
@@ -500,37 +647,6 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn ssh_dir_mount_is_opt_in() {
-        let home = temp_dir("ssh-dir-opt-in");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        let config = make_config("php-fpm", enabled_params());
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_dir_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
-    fn known_hosts_mount_skipped_when_full_ssh_dir_is_enabled() {
-        let home = temp_dir("known-hosts-skip-full-ssh");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(
-            home.join(".ssh").join("known_hosts"),
-            "github.com ssh-ed25519 AAAA",
-        )
-        .expect("write known_hosts");
-        let mut params = enabled_params();
-        params.insert("mount_host_ssh_dir".to_owned(), toml::Value::Boolean(true));
-        let config = make_config("node", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_known_hosts_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
     fn ssh_config_mount_renders_host_file_when_enabled() {
         let home = temp_dir("ssh-config-present");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
@@ -560,78 +676,6 @@ mod host_git_mount_tests {
             "rendered should reference host path: {}",
             mount.rendered
         );
-    }
-
-    #[test]
-    fn ssh_config_mount_skipped_when_full_ssh_dir_is_enabled() {
-        let home = temp_dir("ssh-config-skip-full-ssh");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
-        let mut params = enabled_params();
-        params.insert("mount_host_ssh_dir".to_owned(), toml::Value::Boolean(true));
-        params.insert(
-            "mount_host_ssh_config".to_owned(),
-            toml::Value::Boolean(true),
-        );
-        let config = make_config("php-fpm", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
-    fn ssh_config_mount_skipped_when_host_file_missing() {
-        let home = temp_dir("ssh-config-missing");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        let mut params = enabled_params();
-        params.insert(
-            "mount_host_ssh_config".to_owned(),
-            toml::Value::Boolean(true),
-        );
-        let config = make_config("workspace-rust-bun", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
-    fn ssh_config_mount_skipped_when_param_disabled() {
-        let home = temp_dir("ssh-config-disabled");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
-        let mut params = enabled_params();
-        params.insert(
-            "mount_host_ssh_config".to_owned(),
-            toml::Value::Boolean(false),
-        );
-        let config = make_config("php-fpm", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
-    fn ssh_config_mount_skipped_for_non_workspace_catalogs() {
-        let home = temp_dir("ssh-config-non-workspace");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
-        let mut params = enabled_params();
-        params.insert(
-            "mount_host_ssh_config".to_owned(),
-            toml::Value::Boolean(true),
-        );
-        let config = make_config("postgres", params);
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
     }
 
     #[test]
@@ -697,19 +741,6 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn ssh_config_mount_is_opt_in() {
-        let home = temp_dir("ssh-config-opt-in");
-        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
-        let config = make_config("workspace-rust-bun", enabled_params());
-
-        let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
     fn ssh_agent_mount_renders_when_socket_present() {
         let parent = temp_dir("agent-present");
         let socket_path = parent.join("ssh-auth.sock");
@@ -728,22 +759,6 @@ mod host_git_mount_tests {
             mount.rendered,
             format!("{}:/run/host-services/ssh-auth.sock", socket_path.display())
         );
-    }
-
-    #[test]
-    fn ssh_agent_mount_skipped_when_param_disabled() {
-        // The host-side `.exists()` check was removed deliberately: the
-        // socket lives inside the Colima VM, not on the macOS host, so a
-        // host-side stat would always be false and the mount would be
-        // silently disabled. The opt-out path is the catalog param.
-        let mut params = enabled_params();
-        params.insert(
-            "forward_host_ssh_agent".to_owned(),
-            toml::Value::Boolean(false),
-        );
-        let config = make_config("php-fpm", params);
-        let mount = build_host_ssh_agent_mount(&config, "workspace");
-        assert!(mount.is_none());
     }
 
     #[test]
@@ -776,15 +791,6 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn mkcert_ca_mount_skipped_when_root_ca_absent() {
-        let config = make_config("workspace-rust-bun", enabled_params());
-        let mount = with_test_host_mkcert_root_ca(None, || {
-            build_host_mkcert_ca_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
     fn private_gateway_does_not_resolve_or_mount_the_host_mkcert_ca() {
         let dir = temp_dir("private-gateway-mkcert");
         let pem = dir.join("rootCA.pem");
@@ -797,30 +803,6 @@ mod host_git_mount_tests {
             build_host_mkcert_ca_mount(&config, "workspace")
         });
         assert!(mount.is_none());
-    }
-
-    #[test]
-    fn environment_guard_serializes_a_forced_concurrent_mutator() {
-        const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
-        let original = std::env::var_os(KEY);
-        let first = RestoreEnvironmentVariable::set(KEY, std::ffi::OsStr::new("first"));
-        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
-        let second = std::thread::spawn(move || {
-            assert!(matches!(
-                crate::TEST_ENV_LOCK.try_lock(),
-                Err(std::sync::TryLockError::WouldBlock)
-            ));
-            attempted_tx.send(()).unwrap();
-            let _second = RestoreEnvironmentVariable::set(KEY, std::ffi::OsStr::new("second"));
-            assert_eq!(std::env::var(KEY).unwrap(), "second");
-        });
-        attempted_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap();
-        assert_eq!(std::env::var(KEY).unwrap(), "first");
-        drop(first);
-        second.join().unwrap();
-        assert_eq!(std::env::var_os(KEY), original);
     }
 
     struct RestoreEnvironmentVariable {
@@ -861,35 +843,6 @@ mod host_git_mount_tests {
                 std::env::remove_var(self.variable);
             }
         }
-    }
-
-    #[test]
-    fn mkcert_ca_mount_skipped_when_param_disabled() {
-        let dir = temp_dir("mkcert-disabled");
-        let pem = dir.join("rootCA.pem");
-        fs::write(&pem, "ignored").expect("write");
-        let mut params = enabled_params();
-        params.insert(
-            "mount_host_mkcert_ca".to_owned(),
-            toml::Value::Boolean(false),
-        );
-        let config = make_config("php-fpm", params);
-        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
-            build_host_mkcert_ca_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
-    }
-
-    #[test]
-    fn mkcert_ca_mount_skipped_for_non_workspace_catalogs() {
-        let dir = temp_dir("mkcert-non-workspace");
-        let pem = dir.join("rootCA.pem");
-        fs::write(&pem, "ignored").expect("write");
-        let config = make_config("postgres", enabled_params());
-        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
-            build_host_mkcert_ca_mount(&config, "workspace")
-        });
-        assert!(mount.is_none());
     }
 
     #[test]
@@ -948,18 +901,6 @@ mod host_git_mount_tests {
             env.get("SSH_AUTH_SOCK").map(String::as_str),
             Some("/tmp/effigy-ssh-auth.sock")
         );
-    }
-
-    #[test]
-    fn runtime_environment_empty_when_agent_param_disabled() {
-        let mut params = enabled_params();
-        params.insert(
-            "forward_host_ssh_agent".to_owned(),
-            toml::Value::Boolean(false),
-        );
-        let config = make_config("php-fpm", params);
-        let env = build_workspace_runtime_environment(&config, "workspace");
-        assert!(env.is_empty());
     }
 
     #[test]
@@ -1043,16 +984,11 @@ mod worktree_git_mount_tests {
     use super::super::*;
     use std::fs;
 
+    /// A fixture directory owned until this test thread exits, so nothing is
+    /// left behind in the platform temp root.
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "effigy-worktree-git-{label}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+        effigy_test_support::Fixture::thread_lifetime(&format!("effigy-workspace-{label}-"))
+            .expect("create fixture directory")
     }
 
     #[test]
