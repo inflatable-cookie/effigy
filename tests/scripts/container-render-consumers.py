@@ -231,7 +231,15 @@ def prove_consumers():
                 # content it names instead of the path it used to publish.
                 for service in value.get("services", {}).values():
                     build = service.get("build")
-                    if not isinstance(build, dict) or "dockerfile" not in build:
+                    if not isinstance(build, dict):
+                        continue
+                    inline = build.get("dockerfile_inline")
+                    if isinstance(inline, str):
+                        # Compose reads `$$` as one literal dollar. The render
+                        # doubles a catalog Dockerfile's own `$` so interpolation
+                        # cannot rewrite it; compare what BuildKit reads.
+                        build["dockerfile_inline"] = inline.replace("$$", "$")
+                    if "dockerfile" not in build:
                         continue
                     path = build["dockerfile"]
                     if path.startswith("${"):

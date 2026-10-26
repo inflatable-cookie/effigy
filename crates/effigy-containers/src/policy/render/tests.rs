@@ -461,3 +461,54 @@ catalog = "workspace-rust-bun"
         );
     });
 }
+
+/// Compose interpolates every string in the Compose file, `dockerfile_inline`
+/// included: the catalog Dockerfile's `WORKDIR ${WORKSPACE_MOUNT}` and its
+/// shell `$line` were blanked before BuildKit saw them, and the build failed
+/// with `WORKDIR requires exactly one argument` on the Acowtancy stack. Every
+/// `$` is doubled, which Compose reads back as one literal dollar (effigy#366).
+#[test]
+fn a_catalog_dockerfile_keeps_every_dollar_through_compose_interpolation() {
+    let (_fixture, checkout, home) = fixture();
+    let content = "FROM busybox\nARG APP_DIR=/app\nWORKDIR ${APP_DIR}\nRUN echo \"$line\" >> /tmp/log\nRUN echo \"${bridge_sock}\"\n";
+    let catalog = checkout.join("infra/dev/catalog/dollar");
+    std::fs::create_dir_all(&catalog).unwrap();
+    std::fs::write(
+        catalog.join("service.toml"),
+        "[service]\nname = \"dollar\"\ndescription = \"a Dockerfile that uses its own dollars\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        catalog.join("compose.fragment.yml"),
+        "services:\n  '{{ service_name }}':\n    build:\n      context: '{{ repo_root }}'\n      dockerfile: '{{ catalog_path }}/Dockerfile'\n",
+    )
+    .unwrap();
+    std::fs::write(catalog.join("Dockerfile"), content).unwrap();
+    std::fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"stack\"\n[containers.stack]\nprimary_service = \"app\"\n[containers.stack.services.app]\ncatalog = \"dollar\"\n",
+    )
+    .unwrap();
+    crate::with_test_effigy_home(&home, || {
+        let policy = load_container_policy(&checkout, None).unwrap();
+        let rendered: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
+        let inline = rendered["services"]["app"]["build"]["dockerfile_inline"]
+            .as_str()
+            .expect("the Dockerfile content is rendered inline");
+        assert_eq!(
+            inline.matches('$').count(),
+            2 * content.matches('$').count(),
+            "every dollar is escaped: {inline}"
+        );
+        assert!(
+            inline.contains("ARG APP_DIR=/app"),
+            "the content is otherwise unchanged: {inline}"
+        );
+        assert_eq!(
+            inline.replace("$$", "$"),
+            content,
+            "Compose reads the escaped content as the catalog's own bytes: {inline}"
+        );
+    });
+}
