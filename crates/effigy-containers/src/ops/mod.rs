@@ -82,18 +82,6 @@ impl ContainerOperationPlan {
     pub fn consumes_declared_container_secrets(&self) -> bool {
         self.side_effect.consumes_declared_container_secrets()
     }
-
-    pub fn report(self, result: ContainerOperationResult) -> ContainerOperationReport {
-        ContainerOperationReport {
-            repo_root: self.request.repo_root,
-            policy_name: self.request.policy_name,
-            backend_id: self.request.backend_id,
-            kind: self.request.kind,
-            side_effect: self.side_effect,
-            confirmation: self.confirmation,
-            result,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,24 +224,6 @@ mod tests {
             plan.confirmation,
             ContainerConfirmationPolicy::NoConfirmationRequired
         );
-    }
-
-    #[test]
-    fn report_preserves_operation_identity() {
-        let report = ContainerOperationRequest::new(
-            PathBuf::from("/tmp/repo"),
-            "web",
-            ContainerOperationKind::lifecycle(ContainerLifecycleOperation::down(false)),
-        )
-        .backend_id("colima-nerdctl")
-        .plan()
-        .report(ContainerOperationResult::Completed);
-
-        assert_eq!(report.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(report.policy_name, "web");
-        assert_eq!(report.backend_id.as_deref(), Some("colima-nerdctl"));
-        assert_eq!(report.side_effect, ContainerSideEffectClass::StopsRuntime);
-        assert_eq!(report.result, ContainerOperationResult::Completed);
     }
 
     #[test]

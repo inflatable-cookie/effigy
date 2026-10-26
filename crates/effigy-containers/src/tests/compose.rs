@@ -1584,10 +1584,6 @@ working_dir = "/var/www/html"
         let policy = with_test_host_composer_home(Some(&host_composer_home), || {
             load_prepared_policy(&root, Some("web")).expect("policy")
         });
-        let rewritten = policy
-            .read_compose(&policy.compose_files[0])
-            .expect("read compose");
-
         let document = parsed_compose(&policy, 0);
         let volumes = service_volumes(&document, "app");
         assert!(
