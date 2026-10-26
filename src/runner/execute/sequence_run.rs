@@ -526,10 +526,7 @@ type StepExit = (i32, String, String, WorkloadOutcome);
 /// step publishes a new source generation and removes the one the later
 /// steps were rendered against, so each command is pointed at the live
 /// object as it starts instead of the generation it named.
-pub(in crate::runner::execute) fn live_source_command(
-    selection: &TaskSelection<'_>,
-    command: &str,
-) -> String {
+fn live_source_command(selection: &TaskSelection<'_>, command: &str) -> String {
     effigy_manifest::relocate_source_paths(&selection.catalog.manifest_path, command)
 }
 

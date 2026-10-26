@@ -126,6 +126,9 @@ pub(in crate::runner) struct OwnedRun {
     pub(in crate::runner) token: String,
     pub(in crate::runner) task: String,
     pub(in crate::runner) profile: String,
+    /// The catalog manifest whose pins this run's process commands resolve
+    /// against, read again as each process starts.
+    pub(in crate::runner) source_manifest: PathBuf,
     pub(in crate::runner) environment: Option<EnvironmentPlan>,
     pub(in crate::runner) fail_on_non_zero: bool,
     /// Whether the session's host processes may use the configured per-run
@@ -211,6 +214,7 @@ pub(in crate::runner) fn own(
         session,
         workloads: Vec::new(),
         holds_environment: plan.environment.is_some(),
+        source_manifest: plan.source_manifest.clone(),
         terminal: payload.terminal,
         lost_while_blocked: false,
         health: None,
@@ -227,6 +231,10 @@ struct Owner {
     session: EngineSession,
     workloads: Vec<Workload>,
     holds_environment: bool,
+    /// Resolved for a process command as it starts, never when the plan was
+    /// rendered: a setup step and the environment `up` are Prepare paths
+    /// (contract 020) and can replace the source generation a command names.
+    source_manifest: PathBuf,
     terminal: Option<(u16, u16)>,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
@@ -412,9 +420,16 @@ impl Owner {
 
     fn spawn(&mut self, run: &mut TaskRun, index: usize) -> Result<(), String> {
         let terminal = self.terminal;
+        // The source generation a command was rendered against can be gone: a
+        // setup step (`bundle sync`) or the environment's own `up` publishes a
+        // new one and removes it. The process opens the generation the lock
+        // selects now, including on a restart.
+        let mut command = effigy_manifest::relocate_source_paths(
+            &self.source_manifest,
+            &self.workloads[index].spec.command,
+        );
         let workload = &mut self.workloads[index];
         workload.starts += 1;
-        let mut command = workload.spec.command.clone();
         if let Some(group) = &workload.spec.exec_group {
             // K3: the remote group's intent precedes the exec client.
             let nonce = format!("{}:{}:{}", run.id(), workload.spec.name, workload.starts);

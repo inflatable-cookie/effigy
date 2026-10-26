@@ -698,6 +698,10 @@ fn own_managed_run(
             token: token.clone(),
             task: preflight.selector.task_name.clone(),
             profile: plan.profile.clone(),
+            // The catalog whose pins this run's commands resolve against. The
+            // supervisor re-resolves it when it starts each process, after the
+            // Prepare paths a setup step and the environment `up` run.
+            source_manifest: selection.catalog.manifest_path.clone(),
             environment,
             fail_on_non_zero: plan.fail_on_non_zero,
             scratch: managed_task_scratch(selection.task),
@@ -1133,15 +1137,8 @@ fn managed_workloads(
         .iter()
         .filter(|process| process.role == ManagedProcessRole::Standard)
     {
-        // The plan was rendered before this run's setup steps ran, and a setup
-        // step is a Prepare path: one can publish a new source generation and
-        // remove the one this command names. The process opens the source the
-        // lock selects when it starts.
-        let run = super::super::sequence_run::live_source_command(context.selection, &process.run);
-        let setup = process
-            .setup
-            .as_deref()
-            .map(|setup| super::super::sequence_run::live_source_command(context.selection, setup));
+        let run = process.run.clone();
+        let setup = process.setup.clone();
         let runs_on_host = process.run_on_host
             || context.container_handoff
             || matches!(

@@ -256,7 +256,9 @@ Prepare has already removed. A path under
 `.effigy/cache/sources/<generation>/<source>/` names the source, not the
 generation that happened to hold it: a step command, a Rhai step path and a
 managed run command are pointed at the object the lock selects at the moment
-they start, not at the generation the manifest load or plan resolved. The run
+they start, not at the generation the manifest load or plan resolved. In a
+managed run that moment is after its setup steps and after its environment is
+up — both Prepare paths — and again before a process restarts. The run
 continues on the newly selected bytes, exactly as it does after its own
 Prepare, and nothing records an in-flight reference or delays the prune.
 

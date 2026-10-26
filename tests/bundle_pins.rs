@@ -524,6 +524,72 @@ fn an_unchanged_step_refresh_keeps_the_bundle_helper_reachable() {
     selected_source_object(&fixture);
 }
 
+/// A managed run renders its process commands into a plan, then runs its
+/// setup steps and brings its environment up — both Prepare paths — before it
+/// starts a process. A refresh in between publishes a new source generation
+/// and removes the one the plan named, so the process must open the source the
+/// lock selects at start. `bundle_content_changed` decides whether the setup
+/// refresh selects new bytes or only a new generation.
+fn run_managed_bundle_helper_after_a_setup_refresh(
+    fixture: &Fixture,
+    bundle_content_changed: bool,
+) -> (bool, String) {
+    fs::create_dir(fixture.repo.join("bundle/scripts")).unwrap();
+    fs::write(
+        fixture.repo.join("bundle/scripts/profile_env.sh"),
+        "#!/bin/sh\necho profile-env-helper\n",
+    )
+    .unwrap();
+    let mut setup = vec![r#"{ task = "bundle sync" }"#.to_owned()];
+    if bundle_content_changed {
+        // A path source is re-snapshotted when its content digest differs.
+        setup.insert(0, r#"{ run = "sh -c 'date > bundle/touched'" }"#.to_owned());
+    }
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!(
+            "[bundle]\nbase = {{ type = \"path\", dir = \"bundle\" }}\n\
+             [tasks.refresh]\nmode = \"tui\"\n\
+             concurrent = [\n  {{ name = \"api\", task = \"serve\", setup = [{}] }},\n]\n\
+             [tasks.serve]\nrun = \"sh {{{{ bundle.root }}}}/scripts/profile_env.sh\"\n",
+            setup.join(", ")
+        ),
+    )
+    .unwrap();
+    fixture.run(
+        &["refresh"],
+        // The text front: no terminal, and `--headless` would be passed
+        // through to the setup step's `bundle sync` as a task argument.
+        &[("EFFIGY_MANAGED_HEADLESS", Path::new("1"))],
+        Duration::from_secs(60),
+    )
+}
+
+#[test]
+fn a_managed_process_opens_the_source_its_setup_refresh_selected() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = run_managed_bundle_helper_after_a_setup_refresh(&fixture, true);
+    assert!(ok, "{output}");
+    assert!(output.contains("profile-env-helper"), "{output}");
+    let selected = selected_source_object(&fixture);
+    assert!(
+        selected.join("scripts/profile_env.sh").is_file(),
+        "the selected source carries the helper: {}",
+        selected.display()
+    );
+}
+
+#[test]
+fn a_managed_process_opens_the_source_an_unchanged_setup_refresh_published() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = run_managed_bundle_helper_after_a_setup_refresh(&fixture, false);
+    assert!(ok, "{output}");
+    assert!(output.contains("profile-env-helper"), "{output}");
+    selected_source_object(&fixture);
+}
+
 #[test]
 fn git_acquisition_uses_main_sentinel_and_checkout_pins_are_independent() {
     let fixture = Fixture::new();

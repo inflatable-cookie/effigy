@@ -2070,8 +2070,9 @@ During v0.x, MINOR bumps may include breaking changes.
   file or directory` on a bundle-shipped helper such as
   `.effigy/cache/sources/<generation>/<source>/scripts/…` (Acowtancy, effigy#385).
   A step command, its Rhai path and a managed process command now name the
-  object the lock publishes at the moment they start, and only generations
-  nothing pins are removed (contract 020).
+  object the lock publishes at the moment they start — for a managed run, after
+  its setup steps and its environment are up — and only generations nothing
+  pins are removed (contract 020).
 - `container up` no longer fails with nerdctl's `cannot start a container that
   has stopped`. The rendered Compose file names no `restart:` policy, so the
   runtime's restart manager has nothing to settle on a container Compose has
