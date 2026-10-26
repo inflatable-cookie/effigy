@@ -758,21 +758,6 @@ fn classify_ps_rows(pid_t: i32, stdout: &[u8]) -> GatewayProcessProbe {
     }
 }
 
-/// Compatibility predicate: true only for a confirmed running process.
-///
-/// Lifecycle decisions use [`probe_gateway_process`] directly so an
-/// [`GatewayProcessProbe::Unknown`] result is never collapsed to `false`.
-#[cfg(unix)]
-pub fn process_is_running(pid: u32) -> bool {
-    probe_gateway_process(pid).is_running()
-}
-
-#[cfg(not(unix))]
-pub fn process_is_running(pid: u32) -> bool {
-    // On non-Unix, conservatively assume running.
-    checked_gateway_pid(pid).is_some()
-}
-
 #[cfg(not(unix))]
 pub fn probe_gateway_process(pid: u32) -> GatewayProcessProbe {
     // On non-Unix there is no portable probe; report a valid domain as running

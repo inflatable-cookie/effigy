@@ -788,11 +788,17 @@ Effigy interpolation value. A catalog service's Dockerfile is rendered inline
 reads `build.dockerfile` against the build context. The former mutable output
 under `.effigy/runtime/compose` is replaced automatically on the next Prepare.
 
-A shared service is rendered the same way into its own generation, so every
-checkout that shares it hands Compose the same configuration. An unchanged
-stack is therefore not recreated: a second `container up` leaves every
-container, the shared service included, exactly where it is. Only a service
-whose rendered configuration really changed is replaced.
+A shared service is rendered outside any checkout's generation, into one
+machine-wide content-addressed directory under the Effigy home
+(`~/.effigy/shared-services/<project>/<digest>/`) with absolute bind sources. So
+every checkout that shares it hands Compose byte-identical input at the same
+absolute path, and an unchanged stack is not recreated: a second `container up`
+leaves every container, the shared service included, exactly where it is, and
+deleting a checkout leaves the shared render's files in place. Only a service
+whose rendered configuration really changed is replaced; a changed shared
+service is stopped and removed before its replacement is created, so its
+published port is never held by both, and its data volume is kept. One machine
+gate per shared Compose project serialises checkouts whose `up`s overlap.
 
 Treat the object directory as runtime output, not repo-owned source.
 
@@ -983,7 +989,8 @@ Use this with `effigy.local.toml` for per-machine mounts.
 2. bring the compose environment up
 3. prove the owned binding of the primary service; readiness is every
    service Running with its own health check healthy, and the runtime restarts
-   a stopped service because the render asks it to (`restart: unless-stopped`)
+   a stopped service because `up` asked it for `restart: unless-stopped` once
+   the stack was started
 4. wait for declared environment readiness when present
 5. wait for each declared gateway service port to appear on the matching
    Compose project before registering its route
@@ -1003,7 +1010,8 @@ declares `[containers.<name>.health]` keeps that check as its final gate.
 A stopped Compose service is reported with its exit status.
 `container status` lists stopped owned services instead of omitting them.
 Effigy never hand-starts a stopped service and never stops or mutates
-nerdctl's health-check units: the render's `restart: unless-stopped` is the
+nerdctl's health-check units: the `restart: unless-stopped` policy `up` applies
+through the runtime is the
 restart path, and `effigy container retire --yes` / `effigy container retire
 --dead --yes` removes owned mutable volumes only when asked; it is not restart
 recovery. Gateway registration keeps the project, service, published-port and host-listener
@@ -1750,17 +1758,18 @@ Symptom: after the Colima VM restarts, Postgres or MySQL may stay `Exited`
 while `nerdctl compose up` returns success.
 
 Cause: a Compose service with no restart policy is never restarted by the
-runtime. Effigy renders `restart: unless-stopped` on every service that does
-not declare its own policy, so a service whose stack was rendered by a current
-Effigy comes back by itself after a VM restart, a Colima restart or a crash.
-A service that declares `restart: "no"`, or a stack rendered by an older
-Effigy, keeps the policy it has.
+runtime. `up` gives every service whose stack declares no policy of its own
+`restart: unless-stopped` through the runtime's own `update`, once the stack is
+started, so a service whose stack an installed Effigy brought up comes back by
+itself after a VM restart, a Colima restart or a crash. A service that declares
+`restart: "no"`, or a stack brought up by an older Effigy, keeps the policy it
+has.
 
-Fix: run `effigy container up`. The render now carries the policy, and the
-runtime restarts the service. Effigy starts no container by hand, and it issues
-no `systemctl` command on nerdctl's health-check units. If a service stays
-stopped, the error is the readiness failure that names the service and its own
-health check; diagnose it with:
+Fix: run `effigy container up`. `up` applies the policy through the runtime, and
+the runtime restarts the service. Effigy starts no container by hand, and it
+issues no `systemctl` command on nerdctl's health-check units. If a service
+stays stopped, the error is the readiness failure that names the service and
+its own health check; diagnose it with:
 
 ```bash
 effigy container status                 # live row, including stopped services

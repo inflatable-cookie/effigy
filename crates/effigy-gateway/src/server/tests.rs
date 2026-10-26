@@ -28,20 +28,6 @@ fn standard_config_paths() {
 }
 
 #[test]
-fn config_with_custom_addrs() {
-    let config = GatewayConfig::standard(PathBuf::from("/tmp"))
-        .with_addrs(
-            "127.0.0.1:5353".parse().unwrap(),
-            "127.0.0.1:8080".parse().unwrap(),
-        )
-        .with_tld("dev".to_string());
-
-    assert_eq!(config.dns.bind_addr.port(), 5353);
-    assert_eq!(config.proxy.bind_addr.port(), 8080);
-    assert_eq!(config.dns.tld, "dev");
-}
-
-#[test]
 fn private_config_rejects_non_loopback_privileged_and_escaped_paths() {
     let fixture = tempfile::tempdir().expect("private root fixture");
     let root = std::fs::canonicalize(fixture.path()).expect("canonical private root");
@@ -147,17 +133,6 @@ fn read_missing_pid_file_returns_not_running() {
     let result = read_pid_file(&PathBuf::from("/nonexistent/test.pid"));
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), GatewayError::NotRunning));
-}
-
-#[test]
-fn current_process_is_running() {
-    assert!(process_is_running(std::process::id()));
-}
-
-#[test]
-fn nonexistent_process_is_not_running() {
-    // PID 99999999 almost certainly doesn't exist.
-    assert!(!process_is_running(99_999_999));
 }
 
 #[test]

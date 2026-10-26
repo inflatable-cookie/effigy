@@ -220,6 +220,32 @@ pub fn run_docker_capture(
     run_compose_capture(repo_root, policy, args, label)
 }
 
+/// Ask the runtime for a restart policy on these containers. This is a runtime
+/// configuration change on the containers Compose created, not a start of
+/// anything, so it cannot race Compose's own create/start (effigy#383).
+pub fn set_restart_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    containers: &[String],
+    restart: &str,
+) -> Result<(), ContainerExecError> {
+    let mut args = vec![
+        OsString::from("update"),
+        OsString::from("--restart"),
+        OsString::from(restart),
+    ];
+    args.extend(containers.iter().map(OsString::from));
+    capture_runtime_command(
+        repo_root,
+        policy,
+        &args,
+        "runtime update",
+        Some(CONTAINER_SHUTDOWN_TIMEOUT),
+        None,
+    )
+    .map(|_| ())
+}
+
 pub fn run_compose_capture(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -261,6 +287,54 @@ pub fn list_running_compose_containers_for_policy(
             .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
             .collect(),
     )
+}
+
+/// One container of a shared service's own Compose project, with the render
+/// identity that render wrote onto it.
+pub struct SharedProjectContainer {
+    pub container_name: String,
+    pub running: bool,
+    /// `None` when no Effigy wrote the render label, which is what a container
+    /// an older Effigy created looks like (effigy#377).
+    pub render: Option<String>,
+}
+
+const SHARED_PROJECT_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Label \"com.effigy.shared-render\"}}\t{{.Label \"com.docker.compose.project\"}}";
+
+/// Every container of one shared-service Compose project, running or stopped,
+/// with the render each was created from. A shared project belongs to no
+/// checkout, so this reads the runtime by project name alone.
+pub fn shared_project_containers(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+) -> Result<Vec<SharedProjectContainer>, ContainerExecError> {
+    let args = vec![
+        OsString::from("ps"),
+        OsString::from("--all"),
+        OsString::from("--filter"),
+        OsString::from(format!("label=com.docker.compose.project={project_name}")),
+        OsString::from("--format"),
+        OsString::from(SHARED_PROJECT_PS_FORMAT),
+    ];
+    let output = capture_runtime_command(repo_root, policy, &args, "runtime ps --all", None, None)?;
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let container_name = fields.next()?.trim();
+            let status = fields.next().unwrap_or_default();
+            let render = fields.next().unwrap_or_default().trim();
+            let project = fields.next().unwrap_or_default().trim();
+            (!container_name.is_empty() && project == project_name).then(|| {
+                SharedProjectContainer {
+                    container_name: container_name.to_owned(),
+                    running: super::parse::compose_status_is_running(status),
+                    render: (!render.is_empty()).then(|| render.to_owned()),
+                }
+            })
+        })
+        .collect())
 }
 
 /// Runtime `ps` arguments listing one Compose project's containers. The label

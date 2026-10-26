@@ -207,6 +207,10 @@ pub struct SharedServiceBinding {
     pub container_port: u16,
     pub host_env_vars: Vec<String>,
     pub port_env_vars: Vec<String>,
+    /// Identity of this shared service's render, written onto the container it
+    /// creates. A later `up` compares it with the one the runtime reports to
+    /// decide whether the shared service has to be replaced (effigy#377).
+    pub render_digest: String,
 }
 
 impl SharedServiceBinding {
@@ -227,6 +231,21 @@ impl SharedServiceBinding {
         );
         vars
     }
+}
+
+/// One shared service's rendered Compose input and the files it binds, at one
+/// machine-wide content-addressed directory.
+///
+/// A shared service belongs to no checkout, so its render cannot name a
+/// checkout either: two checkouts with the same shared declaration publish the
+/// same bytes at the same absolute path, and Compose therefore keeps one
+/// shared container instead of recreating it per checkout (effigy#377).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedRender {
+    /// Machine-wide directory, named by the digest of what it holds.
+    pub directory: PathBuf,
+    /// Files to write under `directory`, keyed by their relative path.
+    pub files: std::collections::BTreeMap<PathBuf, Vec<u8>>,
 }
 
 #[derive(Debug)]

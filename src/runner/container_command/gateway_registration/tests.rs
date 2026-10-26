@@ -113,6 +113,7 @@ fn shared_service(
         container_port,
         host_env_vars: Vec::new(),
         port_env_vars: Vec::new(),
+        render_digest: "shared-render".to_owned(),
     }
 }
 

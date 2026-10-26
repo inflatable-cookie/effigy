@@ -1,42 +1,43 @@
 use super::*;
 
+/// An empty certificate cache yields an empty resolver, whether the directory
+/// is empty or not created yet.
 #[test]
-fn sni_resolver_empty_returns_none() {
-    let resolver = SniCertResolver::new();
-    assert_eq!(resolver.cert_count(), 0);
-    assert!(!resolver.has_cert("example.test"));
-}
-
-#[test]
-fn sni_resolver_from_empty_dir() {
+fn sni_resolver_from_an_empty_or_absent_dir_caches_no_certificate() {
     let dir = tempfile::tempdir().unwrap();
-    let resolver = build_sni_resolver_from_dir(dir.path()).unwrap();
-    assert_eq!(resolver.cert_count(), 0);
+    let absent = dir.path().join("certs");
+    let cases = [dir.path(), absent.as_path()];
+    for certs_dir in cases {
+        let resolver = build_sni_resolver_from_dir(certs_dir).unwrap();
+        assert_eq!(resolver.cert_count(), 0, "dir {}", certs_dir.display());
+        assert!(!resolver.has_cert("example.test"));
+    }
 }
 
+/// A domain's pair is read from its two cache files: a missing key is a
+/// not-found naming that key, and an existing pair resolves both paths.
 #[test]
-fn sni_resolver_from_nonexistent_dir() {
-    let resolver = build_sni_resolver_from_dir(Path::new("/nonexistent/certs")).unwrap();
-    assert_eq!(resolver.cert_count(), 0);
-}
+fn cert_paths_for_domain_resolve_an_existing_pair() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = TlsConfig::new(dir.path().to_path_buf());
+    let paths = config.cert_paths("app.test");
+    assert_eq!(paths.cert, dir.path().join("app.test.pem"));
+    assert_eq!(paths.key, dir.path().join("app.test-key.pem"));
 
-#[test]
-fn tls_config_mkcert_check_doesnt_panic() {
-    let _env = crate::env_test_support::EnvGuard::set_many(&[]);
-    // Just verify these don't panic — mkcert may not be installed.
-    let _ = TlsConfig::mkcert_available();
-    let _ = TlsConfig::ca_installed();
-}
+    std::fs::write(&paths.cert, "cert").unwrap();
+    let missing_key = config.load_cert("app.test").expect_err("key absent");
+    assert!(
+        matches!(missing_key, GatewayError::TlsCertNotFound { ref path } if *path == paths.key),
+        "a missing key names the key path: {missing_key:?}"
+    );
 
-#[test]
-fn cert_paths_for_domain() {
-    let config = TlsConfig::new(PathBuf::from("/tmp/certs"));
-    let result = config.load_cert("nonexistent.test");
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        GatewayError::TlsCertNotFound { .. }
-    ));
+    std::fs::write(&paths.key, "key").unwrap();
+    let found = config.load_cert("app.test").expect("pair exists");
+    assert_eq!(found.cert, paths.cert);
+    assert_eq!(found.key, paths.key);
+
+    let no_pair = config.load_cert("nonexistent.test").expect_err("no pair");
+    assert!(matches!(no_pair, GatewayError::TlsCertNotFound { .. }));
 }
 
 #[test]

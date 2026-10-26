@@ -23,8 +23,6 @@
 //! ```
 
 mod atomic_write;
-#[cfg(target_os = "linux")]
-mod linux_net;
 mod locks;
 #[cfg(target_os = "macos")]
 mod macos_socket;

@@ -202,28 +202,47 @@ mod tests {
         }
     }
 
-    /// A live holder keeps the running stack and names itself, so the caller
-    /// can report the deferred edit (effigy#371).
+    /// The holder states an `up` can see: a live holder defers the apply and
+    /// names itself, an interrupted holder is settled before this list is
+    /// built (`a_transition_settles_an_interrupted_holder_before_acting`), an
+    /// unreadable list is unknown rather than held (so the apply proceeds,
+    /// Q-011), and no holder applies immediately.
     #[test]
-    fn a_live_holder_defers_the_apply_and_names_itself() {
+    fn holder_states_decide_whether_an_apply_proceeds() {
         let run = RunId::new(1_760_000_000_000, [3; 10]).expect("run id");
-        assert_eq!(
-            live_holders(Observed::Verified(vec![holder(run)], evidence())),
-            vec![run]
-        );
-    }
-
-    /// A holder list that cannot be read is unknown, not held, so the apply
-    /// proceeds rather than silently reporting success for an unapplied edit
-    /// (Q-011).
-    #[test]
-    fn an_unreadable_holder_list_proceeds() {
-        assert!(
-            live_holders(Observed::Unknown(UnknownReason::StoreUnreadable(
-                "fixture".to_owned()
-            )))
-            .is_empty()
-        );
-        assert!(live_holders(Observed::Verified(Vec::new(), evidence())).is_empty());
+        type Row = (&'static str, Observed<Vec<Holder>>, Vec<RunId>);
+        let states: [Row; 4] = [
+            (
+                "a live holder",
+                Observed::Verified(vec![holder(run)], evidence()),
+                vec![run],
+            ),
+            (
+                // Settling removes it upstream. If one were read here it is
+                // still named, never silently dropped from the deferral.
+                "an interrupted holder that reached the list",
+                Observed::Verified(
+                    vec![Holder {
+                        run,
+                        liveness: Observed::Verified(Liveness::Interrupted, evidence()),
+                    }],
+                    evidence(),
+                ),
+                vec![run],
+            ),
+            (
+                "an unreadable holder list",
+                Observed::Unknown(UnknownReason::StoreUnreadable("fixture".to_owned())),
+                Vec::new(),
+            ),
+            (
+                "no holder",
+                Observed::Verified(Vec::new(), evidence()),
+                Vec::new(),
+            ),
+        ];
+        for (name, holders, expected) in states {
+            assert_eq!(live_holders(holders), expected, "{name}");
+        }
     }
 }

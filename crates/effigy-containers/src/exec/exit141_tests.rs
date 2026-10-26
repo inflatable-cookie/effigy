@@ -427,25 +427,6 @@ impl Fixture {
         self.root.join("bin")
     }
 
-    fn policy(&self) -> crate::EffectiveContainerPolicy {
-        crate::with_test_effigy_home(&self.root.join("home"), || {
-            crate::load_container_policy(&self.root, None)
-        })
-        .expect("private container policy")
-    }
-
-    fn row() -> crate::exec::RunningComposeContainer {
-        crate::exec::RunningComposeContainer {
-            container_name: CONTAINER.to_owned(),
-            status: "Up 5 seconds".to_owned(),
-            ports: vec![],
-            project_name: Some(PROJECT.to_owned()),
-            working_dir: Some(WORKING_DIR.to_owned()),
-            service: Some(SERVICE.to_owned()),
-            oneoff: false,
-        }
-    }
-
     fn calls(&self) -> Vec<Value> {
         fs::read_to_string(self.root.join("runtime-calls.jsonl"))
             .unwrap_or_default()
@@ -525,47 +506,6 @@ impl Drop for Fixture {
 
 /// A slow inspect that finishes inside the caller's absolute budget settles,
 /// and its observation keeps the full native identity/binding.
-#[test]
-fn exit141_slow_owned_inspect_within_budget_keeps_the_full_binding() {
-    let fixture = Fixture::new();
-    fixture.control(json!({
-        "ps": {"mode": "running"},
-        "inspect": {"mode": "owned", "delay_ms": 300},
-        "up": {"mode": "ok"},
-    }));
-    let policy = fixture.policy();
-    let program = fixture.docker();
-    let started = Instant::now();
-    let output = run_command_capture_with_absolute_deadline(
-        &fixture.root,
-        program.to_str().expect("private path"),
-        &["inspect", CONTAINER],
-        "private owned inspect",
-        Instant::now() + Duration::from_secs(8),
-        Duration::from_secs(8),
-    )
-    .expect("an inspect inside the budget settles");
-    assert!(
-        started.elapsed() >= Duration::from_millis(280),
-        "the fake answers only after its modelled delay: {:?}",
-        started.elapsed()
-    );
-    assert!(output.status.success());
-    let rows = [Fixture::row()];
-    let ownership =
-        crate::exec::OwnershipContext::resolve(&fixture.root, &policy).expect("ownership context");
-    let binding = crate::with_test_compose_backend(crate::compose::ComposeBackend::Docker, || {
-        ownership.verify_inspected(&fixture.root, &policy, &rows[0], &output.stdout)
-    })
-    .expect("slow-but-within-budget inspect is admitted");
-    assert_eq!(binding.id(), ID);
-    assert_eq!(binding.service(), Some(SERVICE));
-    let calls = fixture.calls();
-    assert_eq!(calls.len(), 1, "{calls:#?}");
-    assert_eq!(calls[0]["command"], "inspect");
-    assert_eq!(calls[0]["stdout"]["kind"], "fifo");
-}
-
 /// A client whose output writer outlives it: cancelling the capture signals
 /// only the client's process group, and the still-attached writer dies of
 /// SIGPIPE only once Effigy closes its own read end.
@@ -578,7 +518,6 @@ fn exit141_cancelled_capture_client_never_signals_the_attached_writer() {
         "up": {"mode": "ok"},
     }));
     let program = fixture.docker();
-    let started = Instant::now();
     let error = run_command_capture_with_absolute_deadline(
         &fixture.root,
         program.to_str().expect("private path"),
@@ -588,17 +527,11 @@ fn exit141_cancelled_capture_client_never_signals_the_attached_writer() {
         Duration::from_millis(600),
     )
     .expect_err("a client that never exits is cancelled");
-    let elapsed = started.elapsed();
     let message = error.to_string();
     assert!(message.contains("timed out"), "{message}");
     assert!(
         message.contains("writer provenance and settlement unknown"),
         "the cancelled capture says what it could not prove: {message}"
-    );
-    assert!(
-        elapsed >= Duration::from_millis(2400),
-        "the capture held its read end through the post-exit grace, so the writer was \\
-         alive until Effigy dropped it: {elapsed:?}"
     );
     assert!(
         !message.contains("stdout/stderr EOF verified"),

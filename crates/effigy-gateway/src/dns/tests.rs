@@ -203,31 +203,22 @@ fn response_preserves_query_id() {
 
 // ── Cache tests ──────────────────────────────────────────────────
 
+/// A cached answer keeps both halves of what the lookup decided: whether the
+/// name resolved, and the route's own DNS address when it declares one.
 #[test]
-fn cache_stores_and_retrieves() {
+fn cache_stores_and_retrieves_the_answer_and_its_route_address() {
     let cache = DnsCache::new(Duration::from_secs(60));
     assert!(cache.get("myapp.test").is_none());
 
-    cache.put("myapp.test".to_string(), true, None);
-    assert_eq!(cache.get("myapp.test"), Some((true, None)));
-
-    cache.put("other.test".to_string(), false, None);
-    assert_eq!(cache.get("other.test"), Some((false, None)));
-}
-
-#[test]
-fn cache_stores_route_specific_dns_ip() {
-    let cache = DnsCache::new(Duration::from_secs(60));
-    cache.put(
-        "db.myapp.test".to_string(),
-        true,
-        Some(Ipv4Addr::new(127, 1, 0, 7)),
-    );
-
-    assert_eq!(
-        cache.get("db.myapp.test"),
-        Some((true, Some(Ipv4Addr::new(127, 1, 0, 7))))
-    );
+    let cases = [
+        ("myapp.test", true, None),
+        ("other.test", false, None),
+        ("db.myapp.test", true, Some(Ipv4Addr::new(127, 1, 0, 7))),
+    ];
+    for (domain, resolved, dns_ip) in cases {
+        cache.put(domain.to_string(), resolved, dns_ip);
+        assert_eq!(cache.get(domain), Some((resolved, dns_ip)), "domain {domain}");
+    }
 }
 
 #[test]
@@ -250,32 +241,11 @@ fn cache_clear_invalidates_all() {
     assert!(cache.get("b.test").is_none());
 }
 
+/// A route's own DNS address never outlives its route: a reload clears the
+/// cache, so a withdrawn domain falls back to the loopback answer instead of
+/// the address the closed route named.
 #[test]
-fn cached_lookup_avoids_route_table() {
-    let config = test_config();
-    let table = route_table_with("myapp.test");
-    let query = build_query("myapp.test.", RecordType::A);
-
-    let cache = DnsCache::new(Duration::from_secs(60));
-
-    // First query populates the cache.
-    let (resp1, resolved1) = handle_dns_query(&query, &config, &table, &cache);
-    assert!(resolved1);
-    assert!(resp1.is_some());
-
-    // Verify the cache was populated.
-    assert_eq!(cache.get("myapp.test"), Some((true, None)));
-
-    // Second query should use the cache (even if we clear the
-    // route table, the cached result is still valid).
-    let empty_table = Arc::new(RwLock::new(RouteTable::new()));
-    let (resp2, resolved2) = handle_dns_query(&query, &config, &empty_table, &cache);
-    assert!(resolved2, "should resolve from cache");
-    assert!(resp2.is_some());
-}
-
-#[test]
-fn cached_lookup_preserves_route_specific_dns_ip() {
+fn a_withdrawn_route_stops_resolving_after_the_reload_clears_the_cache() {
     let config = test_config();
     let dns_ip = Ipv4Addr::new(127, 1, 0, 7);
     let table = route_table_with_dns_ip("db.myapp.test", dns_ip);
@@ -284,19 +254,28 @@ fn cached_lookup_preserves_route_specific_dns_ip() {
 
     let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
     assert!(resolved);
+    assert_eq!(cache.get("db.myapp.test"), Some((true, Some(dns_ip))));
     let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
     match &response.answers[0].data {
         RData::A(a) => assert_eq!(a.0, dns_ip),
         other => panic!("expected A record, got {other:?}"),
     }
 
-    let empty_table = Arc::new(RwLock::new(RouteTable::new()));
-    let (cached_response_bytes, cached_resolved) =
-        handle_dns_query(&query, &config, &empty_table, &cache);
-    assert!(cached_resolved, "should resolve from cache");
-    let cached_response = Message::from_bytes(&cached_response_bytes.unwrap()).unwrap();
-    match &cached_response.answers[0].data {
-        RData::A(a) => assert_eq!(a.0, dns_ip),
+    // The watcher installs a table that no longer names the domain and clears
+    // the cache in the same step.
+    let withdrawn = Arc::new(RwLock::new(RouteTable::new()));
+    cache.clear();
+    assert!(cache.get("db.myapp.test").is_none());
+
+    let (response_bytes, resolved) = handle_dns_query(&query, &config, &withdrawn, &cache);
+    assert!(!resolved, "a withdrawn domain must not count as resolved");
+    let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
+    match &response.answers[0].data {
+        RData::A(a) => assert_eq!(
+            a.0,
+            Ipv4Addr::LOCALHOST,
+            "falls back to loopback, not the withdrawn route's address"
+        ),
         other => panic!("expected A record, got {other:?}"),
     }
 }

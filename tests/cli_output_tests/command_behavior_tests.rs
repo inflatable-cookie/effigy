@@ -2166,7 +2166,7 @@ case "$*" in
     subcmd=""
     for arg in "$@"; do
       case "$arg" in
-        up|down|ps|logs|exec|kill|run|volume|info|start|inspect)
+        up|down|ps|logs|exec|kill|run|volume|info|start|inspect|update)
           subcmd="$arg"
           break
           ;;
@@ -2174,6 +2174,25 @@ case "$*" in
     done
     case "$subcmd" in
       up)
+        # Acowtancy #756's race: nerdctl's restart manager settled a container
+        # between Compose's create and start when the file it was handed named a
+        # restart policy, and Compose reported the create as failed.
+        if [ -n "${EFFIGY_TEST_RACE_ON_RENDERED_RESTART:-}" ]; then
+          race_file=""
+          race_pending=0
+          for race_arg in "$@"; do
+            if [ "$race_pending" = 1 ]; then
+              race_file="$race_arg"
+              race_pending=0
+              continue
+            fi
+            if [ "$race_arg" = "-f" ]; then race_pending=1; fi
+          done
+          if [ -n "$race_file" ] && /usr/bin/grep -q "restart:" "$race_file"; then
+            printf 'OCI runtime start failed: cannot start a container that has stopped\n' >&2
+            exit 1
+          fi
+        fi
         if [ -n "${EFFIGY_TEST_SERVICE_STATE_FILE:-}" ]; then
           : > "$EFFIGY_TEST_SERVICE_STATE_FILE"
         fi
@@ -2355,6 +2374,12 @@ case "$*" in
       kill)
         printf "compose-kill\n"
         ;;
+      update)
+        if [ -n "${EFFIGY_TEST_RESTART_UPDATE_FILE:-}" ]; then
+          printf "%s\n" "$*" >> "$EFFIGY_TEST_RESTART_UPDATE_FILE"
+        fi
+        printf "updated\n"
+        ;;
       run)
         case "$*" in
           *" czf "*)
@@ -2436,7 +2461,7 @@ printf "%s\n" "$*" >> "$EFFIGY_TEST_DOCKER_ARGS_FILE"
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|logs|exec|kill|run|start|inspect)
+    up|down|ps|logs|exec|kill|run|start|inspect|update)
       subcmd="$arg"
       break
       ;;
@@ -2588,6 +2613,12 @@ case "$subcmd" in
     ;;
   down)
     printf "compose-down\n"
+    ;;
+  update)
+    if [ -n "${EFFIGY_TEST_RESTART_UPDATE_FILE:-}" ]; then
+      printf "%s\n" "$*" >> "$EFFIGY_TEST_RESTART_UPDATE_FILE"
+    fi
+    printf "updated\n"
     ;;
   kill)
     printf "compose-kill\n"
@@ -3513,6 +3544,128 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
         compose_up.contains(" up -d"),
         "the fallback starts the environment detached: {compose_up}"
     );
+}
+
+/// The Compose inputs one fake runtime was handed, as `-f` names them.
+fn compose_inputs(log: &str) -> std::collections::BTreeSet<String> {
+    let mut files = std::collections::BTreeSet::new();
+    for line in log.lines() {
+        let mut pending = false;
+        for arg in line.split(' ').skip(1) {
+            if pending {
+                if arg.ends_with(".yml") || arg.ends_with(".yaml") {
+                    files.insert(arg.to_owned());
+                }
+                pending = false;
+            } else if arg == "-f" {
+                pending = true;
+            }
+        }
+    }
+    files
+}
+
+/// Acowtancy #756: a render that carried `restart: unless-stopped` let nerdctl's
+/// restart manager settle a container between Compose's create and start, and
+/// `dev` exited 1 with `cannot start a container that has stopped`. The fake
+/// runtime reproduces exactly that: it fails `compose up` whenever the file it
+/// is handed names a restart policy. `up` therefore has to start the stack with
+/// a file that names none, and apply the policy with the runtime's own `update`
+/// afterwards — which the same fake records.
+#[test]
+fn cli_container_up_applies_the_restart_policy_after_compose_started_the_stack() {
+    let private = effigy_test_support::Fixture::workspace("effigy-383-private-")
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind health");
+    let port = listener.local_addr().expect("addr").port();
+    write_container_fixture(
+        &root,
+        Some(&format!("tcp://127.0.0.1:{port}")),
+        "./app:/workspace",
+    );
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let restart_updates = root.join("restart-updates.log");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let up = || {
+        Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("container")
+            .arg("up")
+            .arg("--repo")
+            .arg(&root)
+            .arg("--detach")
+            .arg("--json")
+            .env("NO_COLOR", "1")
+            .env("HOME", private_home(&root))
+            .env(
+                "EFFIGY_TEST_CONTAINERS_HOME",
+                private_home(&root).join(".effigy"),
+            )
+            .env("PATH", &path)
+            .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+            .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+            .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+            .env(
+                "EFFIGY_TEST_SERVICE_STATE_FILE",
+                root.join("service-running"),
+            )
+            .env("EFFIGY_TEST_RESTART_UPDATE_FILE", &restart_updates)
+            .env("EFFIGY_TEST_RACE_ON_RENDERED_RESTART", "1")
+            .output()
+            .expect("run effigy")
+    };
+
+    let first = up();
+    assert!(
+        first.status.success(),
+        "the restart policy must not reach Compose's create: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first_inputs = compose_inputs(&fs::read_to_string(&colima_args).expect("read colima args"));
+    assert!(
+        !first_inputs.is_empty(),
+        "the up named its Compose inputs: {first_inputs:?}"
+    );
+
+    // A second `up` on the same render: the file, its directory and therefore
+    // its Compose config-hash are unchanged, so Compose recreates nothing.
+    let second = up();
+    assert!(
+        second.status.success(),
+        "a re-up must not recreate a service for its restart policy: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second_inputs =
+        compose_inputs(&fs::read_to_string(&colima_args).expect("read colima args"));
+    assert_eq!(
+        second_inputs, first_inputs,
+        "the render is content-addressed, so an unchanged stack is the same files"
+    );
+    for file in &first_inputs {
+        let body = fs::read_to_string(file).unwrap_or_else(|error| panic!("{file}: {error}"));
+        assert!(
+            !body.contains("restart:"),
+            "{file} names no restart policy, so the restart manager cannot race Compose"
+        );
+    }
+
+    // The policy is the runtime's, applied once per `up` after the stack started.
+    let updates = fs::read_to_string(&restart_updates).expect("read restart updates");
+    let updates = updates.lines().collect::<Vec<_>>();
+    assert_eq!(updates.len(), 2, "one update per up: {updates:?}");
+    for update in updates {
+        assert!(
+            update.contains("update --restart unless-stopped fixture-web-dev-app-1"),
+            "the runtime keeps the started container up: {update}"
+        );
+    }
 }
 
 /// Every named child of the managed run's journal started and exited 0, and

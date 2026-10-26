@@ -268,13 +268,6 @@ mod tests {
         );
     }
     #[test]
-    fn staged_broker_image_bound_accepts_a_dev_size_helper() {
-        // The privileged helper is a copy of this binary; a dev build with
-        // debug info is far past the old 128 MiB bound (#392).
-        assert!(super::super::staged_executable_fits(300 << 20));
-        assert!(!super::super::staged_executable_fits(Image::MAX_BYTES + 1));
-    }
-    #[test]
     fn loaded_foreign_job_and_unknown_observation_never_bootout() {
         crate::setup::tests::with_run(|run, cx, home| {
             for code in [0, 1] {

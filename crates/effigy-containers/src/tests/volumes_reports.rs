@@ -294,6 +294,7 @@ primary_service = "app"
         container_port: 3306,
         host_env_vars: vec!["DB_HOST".to_owned(), "MYSQL_HOST".to_owned()],
         port_env_vars: vec!["DB_PORT".to_owned(), "MYSQL_PORT".to_owned()],
+        render_digest: "shared-render".to_owned(),
     }];
 
     let report = status_report(&policy, "containerd", true, None, Some(true), None, None);

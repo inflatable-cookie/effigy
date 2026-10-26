@@ -164,13 +164,14 @@ and `effigy container render` shows it.
 Readiness is Running plus the service's own health check. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
 one-shot job does not fail the stack's readiness; a failed exit is unready. A service's declared
-`restart:` always wins, `"no"` included; the generated service gets
-`restart: unless-stopped` only where the stack declares none, so a one-shot job
-stays down and a service that stops after a VM restart, a Colima restart or a
-crash comes back by itself. The policy is written into the file that defines the
-service (it names an `image`, a `build` or an `extends`) and never into an
-override file: a later `-f` file wins Compose's merge, so Effigy's own runtime
-DNS override would otherwise override the stack's choice. Effigy never probes exec readiness, hand-starts an exited service or
+`restart:` always wins, `"no"` included; a service whose stack declares none
+keeps running because `up` asks the runtime for `restart: unless-stopped` with
+its own `update` once the stack is started (effigy#383), so a one-shot job stays
+down and a service that stops after a VM restart, a Colima restart or a crash
+comes back by itself. The rendered Compose file names no restart policy at all:
+a policy there let nerdctl's restart manager settle a container between
+Compose's create and start, which failed the create, and it would also make the
+Compose config-hash depend on the policy Effigy applied. Effigy never probes exec readiness, hand-starts an exited service or
 restarts one to repair it: an unlabelled, foreign or wrong-checkout primary
 fails the owned-binding check, and a user's own `effigy exec` reports its own
 error (a `working_dir` the image does not have fails that command, not `up`).
@@ -380,11 +381,19 @@ first `-f` input — so no Effigy value is interpolated into the stack and no
 container environment carries one. Internal policy readers resolve those
 relative inputs to the generation's own paths before parsing bind syntax or
 estimating mount budgets; the immutable file bytes keep the relative spelling.
-A shared service is read by its own invocation and names its own directory the
-same way, so its configuration is identical in every checkout that shares it. A
-catalog file a shared fragment binds (MariaDB and Postgres init SQL) is
-published inside the generation at the path that fragment names, so a fresh home
-directory works and a changed `databases` value reaches the server.
+A shared service belongs to no checkout, so it is not part of a generation. Its
+Compose input and every file its fragment binds (MariaDB and Postgres init SQL)
+are published at one machine-wide, content-addressed directory under the Effigy
+home — `<effigy home>/shared-services/<project>/<digest>/` — with absolute bind
+sources. Two checkouts with the same shared declaration therefore hand Compose
+byte-identical input at the same absolute path, and its config-hash does not
+change with the checkout. That render also names itself on the service it
+creates (`com.effigy.shared-render`). `up` reads the label from the runtime: a
+shared container from another render is stopped and removed before Compose
+creates the new one, so its published host port is never held twice, and its
+named data volume is kept. An unchanged shared container is not touched. One
+machine gate per shared Compose project serialises the ensure, so two checkouts'
+`up`s never interleave a replacement.
 `build.dockerfile` is the one relative input Compose reads against the *build
 context* rather than the project directory, so a catalog Dockerfile is rendered
 inline as `dockerfile_inline` from the generation's own content: the stack names
@@ -1357,10 +1366,16 @@ belong to a health check still in flight, so it is kept.
 ## Restarting a stopped service
 
 A running Colima VM can still leave Compose containers stopped after the VM
-restarts, a Colima restart or a crash. The rendered Compose file answers that,
-not Effigy: every service without a `restart:` of its own is rendered with
-`restart: unless-stopped`, and a declared policy (`no`, `always`,
-`on-failure`, …) wins. The runtime restarts the service; Effigy issues no
+restarts, a Colima restart or a crash. The runtime answers that, not Effigy:
+once `up` has started the stack it asks the runtime for
+`restart: unless-stopped` on every container whose stack declares no policy of
+its own, and a declared policy (`no`, `always`, `on-failure`, …) wins. The
+rendered Compose file names no restart policy, so the restart manager cannot
+settle a container between Compose's create and start (effigy#383) and a re-up
+finds an unchanged render and recreates nothing. Detached `up` and `dev` apply it
+as soon as the stack is up; an attached `up` applies it when the attached run
+ends, because Compose offers no started hook. The runtime restarts the
+service; Effigy issues no
 hand-start, no recovery start of an exited container by name, and no
 `systemctl` command on nerdctl's health-check units. A stack the runtime has
 not restarted reports the readiness failure that names the service and its own
@@ -1413,9 +1428,9 @@ reporting, exact project/service/container ownership and fresh published-port
 evidence. An unavailable inventory cannot authorize a route or be treated as
 an empty or ready stack. A later exposure reconciliation must preserve sibling
 routes and running exec sessions rather than require whole-stack recreation.
-Effigy recreates no service to restart it: the render's `restart:
-unless-stopped` and the runtime do that. Existing retirement confirmation does
-not authorize agents to delete the reported live stack.
+Effigy recreates no service to restart it: the `restart: unless-stopped`
+policy `up` applies through the runtime does that. Existing retirement
+confirmation does not authorize agents to delete the reported live stack.
 
 Detached publication retains the originally admitted context across probes and
 requires it at the locked route save. A publication refusal does not rewrite
@@ -1444,8 +1459,9 @@ is retained.
 Restore that admitted context before supported reconciliation; unavailable
 context cannot authorize recreation, cleanup or guessed exposure.
 
-Effigy does not recreate a stopped service to repair it: the render's
-`restart: unless-stopped` is the restart path, and `container retire --yes`
+Effigy does not recreate a stopped service to repair it: the `restart:
+unless-stopped` policy `up` applies through the runtime is the restart path, and
+`container retire --yes`
 removes owned mutable volumes only when the operator asks. Retained file
 markers establish only fixture non-mutation, not real engine volume preservation
 or live exec/session continuity.
