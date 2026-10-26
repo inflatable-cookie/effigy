@@ -1874,6 +1874,11 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A service whose every runtime network alias an effective route already claims
+  renders no `networks` block at all, so a primary checkout's generated DNS
+  override stays valid Compose. Previously it wrote `aliases:` with nothing
+  under it, and `container stack up` and `container hybrid down` failed with
+  `services.<name>.networks.default.aliases must be a array` (effigy#365).
 - A catalog service with a `build:` section builds from the Dockerfile in the
   rendered generation again. Compose resolves `build.dockerfile` against the
   build context (the checkout), not the project directory, so the generation's
