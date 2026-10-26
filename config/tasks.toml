@@ -754,6 +754,10 @@
 # Docker backend only.
 "test:managed:adapterless-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-adapterless-listener", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_adapterless_) | test(managed_host_listener_pre_bound_port_) | test(managed_host_listener_adapter_env_) | test(managed_host_listener_is_ready_) | test(managed_host_listener_watch_mode_) | test(managed_host_listener_double_forked_) | test(managed_host_listener_probe_miss_) | test(managed_host_listener_republishes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  # A child that is alive and never opens its port: `up` reports progress and a
+  # `down` from another process ends the wait instead of blocking on the
+  # environment (effigy#370).
+  { id = "managed-hung-listener-down", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(hung_listener_does_not_block_down_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "proof:managed:host-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-host-listener-cli-proof", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },

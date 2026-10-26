@@ -853,7 +853,8 @@ fn recorded_listener_bind(dir: &Path, name: &str) -> Option<String> {
 }
 
 /// A port the OS reports as free on `ip`, released before it is handed over.
-fn free_loopback_port(ip: std::net::IpAddr) -> Result<u16, RunnerError> {    let probe = std::net::TcpListener::bind(SocketAddr::new(ip, 0)).map_err(|error| {
+fn free_loopback_port(ip: std::net::IpAddr) -> Result<u16, RunnerError> {
+    let probe = std::net::TcpListener::bind(SocketAddr::new(ip, 0)).map_err(|error| {
         RunnerError::task_invocation(format!(
             "could not ask the OS for a free listener port on {ip}: {error}"
         ))
@@ -1091,7 +1092,8 @@ fn stop_resource_run(
     }))
 }
 
-fn describe_signals(report: &CustodyStop) -> String {    if report.signals.is_empty() {
+fn describe_signals(report: &CustodyStop) -> String {
+    if report.signals.is_empty() {
         return "no signal needed".to_owned();
     }
     let names = report
@@ -1554,8 +1556,7 @@ mod tests {
 
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
         let dir = tempfile::tempdir().expect("runtime dir");
-        let binds =
-            reserve_listener_binds(dir.path(), &policy, &mut facts).expect("allocate");
+        let binds = reserve_listener_binds(dir.path(), &policy, &mut facts).expect("allocate");
         let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
         assert_ne!(bind.port(), 0, "a dynamic bind receives a concrete port");
         assert_eq!(
@@ -1585,8 +1586,7 @@ mod tests {
         );
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
         let dir = tempfile::tempdir().expect("runtime dir");
-        let binds = reserve_listener_binds(dir.path(), &policy, &mut facts)
-            .expect("no allocation");
+        let binds = reserve_listener_binds(dir.path(), &policy, &mut facts).expect("no allocation");
         assert!(binds.is_empty());
         assert_eq!(
             resolved_host_process_listener(&policy.host_processes[0], &binds)
@@ -1634,8 +1634,7 @@ mod tests {
 
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
         let dir = tempfile::tempdir().expect("runtime dir");
-        let binds =
-            reserve_listener_binds(dir.path(), &policy, &mut facts).expect("reservation");
+        let binds = reserve_listener_binds(dir.path(), &policy, &mut facts).expect("reservation");
         let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
         let env = resolved_host_process_environment(&policy.host_processes[1], &facts)
             .expect("references resolve");

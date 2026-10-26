@@ -1141,9 +1141,11 @@ fn supervise_generations(
         match end {
             GenerationEnd::Stopped => break,
             GenerationEnd::DependencyChanged => {
-                wait_or_break(&shutdown, Duration::from_millis(spec.restart_delay_ms), || {
-                    stop_requested(run, watch)
-                });
+                wait_or_break(
+                    &shutdown,
+                    Duration::from_millis(spec.restart_delay_ms),
+                    || stop_requested(run, watch),
+                );
             }
             GenerationEnd::Exited(code) => {
                 if !spec.restart.restarts_after(code) {
@@ -2966,7 +2968,10 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             HostProcessRestart::Never,
         );
         consumer.depends_on = vec!["app".to_owned()];
-        consumer.env = vec![("API_URL".to_owned(), "${host_process.app.internal_url}".to_owned())];
+        consumer.env = vec![(
+            "API_URL".to_owned(),
+            "${host_process.app.internal_url}".to_owned(),
+        )];
         policy.host_processes.push(consumer);
         let state_path = listener_state(&policy);
         let url_path = fixture.checkout.join("consumer-url.txt");
@@ -3006,9 +3011,10 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             address.as_str(),
             "the state record keeps the published address"
         );
-        wait_until("the restarted dependent to record the same endpoint", || {
-            fs::read_to_string(&url_path).is_ok_and(|text| text == format!("http://{address}"))
-        });
+        wait_until(
+            "the restarted dependent to record the same endpoint",
+            || fs::read_to_string(&url_path).is_ok_and(|text| text == format!("http://{address}")),
+        );
 
         let stop = super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
         assert!(stop.complete(), "{stop:?}");
@@ -3042,7 +3048,10 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         })
         .expect("a host-process-only environment restarts");
         assert_eq!(
-            report.iter().map(|process| process.name.as_str()).collect::<Vec<_>>(),
+            report
+                .iter()
+                .map(|process| process.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["app"]
         );
         assert!(

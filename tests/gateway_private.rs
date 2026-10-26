@@ -5798,6 +5798,128 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
     );
 }
 
+/// A hung child - alive, port never opens - must not hold a bring-up: `down`
+/// from a second shell stops the run and ends the wait instead of blocking on
+/// the environment for its whole gate wait (effigy#370). This is the shape a
+/// consumer's API takes when it waits on a database that never comes up.
+#[test]
+fn hung_listener_does_not_block_down_from_another_shell() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("hung listener checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Hung Listener Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "hung-listener@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let profile = "fixture";
+    let domain = "hung.host.test";
+    let hung_run = "exec python3 -c 'import time\ntime.sleep(120)'";
+    let listener = format!(
+        "[containers.web.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 60\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = false\n",
+        toml_quote(domain)
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = {hung_run}\nrestart = \"never\"\n\n{listener}",
+        profile = toml_quote(profile),
+        hung_run = toml_quote(hung_run),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the hung listener config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let state_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("api.listener.json");
+
+    let state_now = || {
+        fs::read(&state_path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+    };
+    let mut up = spawn_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while state_now().is_none_or(|state| state["status"] != "starting") {
+        assert!(
+            Instant::now() < deadline,
+            "the hung listener never published its starting generation: {:?}",
+            state_now()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let started = Instant::now();
+    let down = run_container_cli(&checkout, &cleanup, &["down"]);
+    let elapsed = started.elapsed();
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed against a hung start: {down_text}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(60),
+        "`down` waits out the environment instead of stopping the start: {elapsed:?}\n{down_text}"
+    );
+    assert!(
+        !down_text.contains("holds its gate") && !down_text.contains("busy"),
+        "the stop is taken, not refused as busy: {down_text}"
+    );
+    assert_eq!(
+        read_json_file(&state_path)["status"],
+        "stopped",
+        "the waiting start settles its listener state"
+    );
+    // The waiting `up` saw the stop and returned instead of waiting forever.
+    let status = up.wait().expect("the waiting `up` returns");
+    assert!(
+        !status.success(),
+        "a bring-up stopped before readiness does not report success"
+    );
+}
+
 /// The headless managed supervisor stays alive while its session runs and its
 /// lifecycle child outlives the test on panic, so the guard stops the whole
 /// owned process tree on drop.

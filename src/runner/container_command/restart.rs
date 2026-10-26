@@ -57,10 +57,7 @@ pub(super) fn run_container_restart(
 /// declares only host processes has no container rows to prove, and a stack the
 /// inventory cannot read is not a refusal either. Either way the restart names
 /// the observation and proceeds (effigy#370).
-fn environment_up_notice(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Option<String> {
+fn environment_up_notice(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
     environment_up_notice_from(
         environment::running(repo_root, policy).map_err(|error| error.to_string()),
         &policy.name,
