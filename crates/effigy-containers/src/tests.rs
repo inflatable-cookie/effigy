@@ -11,7 +11,7 @@ use super::{
 };
 use crate::compose::ComposeBackend;
 use effigy_catalog::volumes::VolumeClassification;
-use effigy_manifest::{load_task_manifest, ManifestInlineWorkspaceContainerConfig};
+use effigy_manifest::ManifestInlineWorkspaceContainerConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
 

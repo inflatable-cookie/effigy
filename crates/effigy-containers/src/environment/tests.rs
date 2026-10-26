@@ -379,44 +379,6 @@ fn up_applies_once_and_keeps_an_explicit_retention() {
 }
 
 #[test]
-fn a_failed_integration_leaves_nothing_to_clean_up_and_the_next_up_applies() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    let render = closure("one");
-    assert_eq!(
-        reconcile(
-            &ctx,
-            &stack,
-            Up {
-                render: Some(&render),
-                project: PROJECT,
-                backend: &selection(),
-                retention: Retention::Persistent,
-            },
-            || fake.apply(),
-        )
-        .unwrap(),
-        Applied::Reconciled
-    );
-    // The command's integrations run between the apply and the activation and
-    // can fail; nothing is recorded for them to repair.
-    let failed: Result<(), EnvError> = Err(EnvError::Invalid("route registration failed".into()));
-    assert!(failed.is_err());
-    assert!(!record(&ctx, &stack).active());
-    // The next bring-up reconciles from what is running and activates.
-    assert_eq!(
-        bring_up(&ctx, &stack, &fake, &render, Retention::Persistent, &[]).unwrap(),
-        Applied::Reconciled
-    );
-    assert!(record(&ctx, &stack).active());
-    assert_eq!(fake.calls(), ["apply", "apply"]);
-    assert_store_sound(&ctx);
-}
-
-#[test]
 fn backend_outcomes_are_journalled_without_manufacturing_success() {
     for (outcome, applied_calls) in [
         // The engine may have acted: the call is recorded, and the retry
@@ -461,7 +423,8 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
             bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
             let mut task = holder(&ctx, "dev", 1);
             hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
-            let task = match liveness {
+            let holder_run = task.id();
+            let mut task = match liveness {
                 "live" => Some(task),
                 "interrupted" => {
                     // The holder's process died: its gate is free, its row open.
@@ -503,11 +466,13 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                             return;
                         }
                         match applied {
-                            // A live holder keeps the running stack; the
-                            // deferred edit names it (effigy#371).
-                            Applied::HeldByRuns(holders) => {
-                                assert_eq!(holders.len(), 1, "{holders:?}")
-                            }
+                            // A live or unknown holder keeps the running
+                            // stack, and the up names it (effigy#371 F8).
+                            Applied::HeldByRuns(holders) => assert_eq!(
+                                holders,
+                                vec![holder_run],
+                                "the deferred apply names its holder"
+                            ),
                             other => panic!("recreate against a {liveness} holder: {other:?}"),
                         }
                     }),
@@ -546,6 +511,17 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                     record(&ctx, &stack).protected(),
                     "{liveness} holder lost protection"
                 );
+            }
+            if liveness == "live" && transition == "recreate" {
+                // The edit an explicit `up` reported as held applies once its
+                // holder releases, without a further declaration change.
+                task.take();
+                assert_eq!(
+                    bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[])
+                        .unwrap(),
+                    Applied::Reconciled
+                );
+                assert_eq!(fake.calls().len(), before + 1, "{transition}");
             }
             drop(task);
             assert_store_sound_except_holders(&ctx);
@@ -919,7 +895,6 @@ fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
         read.reason,
         BackendReason::Recorded("driver-default".into())
     );
-    assert!(read.describe().contains("chosen by: driver-default"));
     let mut foreign = metadata.clone();
     foreign.engine = "podman".into();
     assert!(matches!(

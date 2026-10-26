@@ -13,8 +13,8 @@ pub use publication::{prepare, reset, verify};
 mod vm;
 pub use vm::compose_invocation_args;
 
-mod healthcheck;
-mod restart;
+pub(crate) mod healthcheck;
+pub(crate) mod restart;
 
 fn error(error: impl std::fmt::Display) -> ContainerPolicyError {
     ContainerPolicyError::TaskInvocation(format!("container render: {error}"))
@@ -24,6 +24,9 @@ fn error(error: impl std::fmt::Display) -> ContainerPolicyError {
 pub struct Rendered {
     pub closure: Closure,
     pub path: PathBuf,
+    /// Shared services render outside the checkout's generation: one
+    /// machine-wide, content-addressed directory each (effigy#377).
+    pub shared: Vec<crate::SharedRender>,
     pub(crate) request: Request,
 }
 
@@ -102,7 +105,7 @@ impl EffectiveContainerPolicy {
                         .compose_files
                         .first()
                         .is_some_and(|first| first == path);
-                    resolve_generation_paths(&mut document, self.project_directory(path), defining);
+                    resolve_generation_paths(&mut document, self.project_directory(), defining);
                     return serde_yaml::to_string(&document).map_err(error);
                 }
             }
@@ -113,19 +116,14 @@ impl EffectiveContainerPolicy {
         })
     }
 
-    /// The Compose project directory of the invocation that reads `file`: the
+    /// The Compose project directory of the generation's invocation: the
     /// directory of its first `-f` input, which is where Compose resolves every
-    /// relative path. A shared service is read by its own invocation.
-    fn project_directory(&self, file: &Path) -> &Path {
-        project_input(
-            file,
-            self.compose_files.first(),
-            self.shared_services
-                .iter()
-                .map(|service| &service.compose_file),
-        )
-        .and_then(Path::parent)
-        .unwrap_or(Path::new("."))
+    /// relative path.
+    fn project_directory(&self) -> &Path {
+        self.compose_files
+            .first()
+            .and_then(|input| input.parent())
+            .unwrap_or(Path::new("."))
     }
 }
 
@@ -135,8 +133,38 @@ impl EffectiveContainerPolicy {
 pub(crate) struct Draft {
     files: BTreeMap<PathBuf, Vec<u8>>,
     inputs: BTreeMap<String, Vec<u8>>,
+    shared: Vec<PendingSharedRender>,
+}
+
+/// A shared service's assembled input. `Draft::finish` completes it, because
+/// the backend decides part of its normalisation and the digest covers the
+/// bytes Compose reads.
+#[derive(Debug)]
+pub(crate) struct PendingSharedRender {
+    pub project_name: String,
+    /// `<effigy home>/shared-services/<project>`: the digest names the
+    /// subdirectory the files are published in.
+    pub directory: PathBuf,
+    pub compose_yaml: String,
+    pub config_files: std::collections::HashMap<String, String>,
 }
 impl Draft {
+    /// Defer one shared service's render. It belongs to no checkout, so it is
+    /// published outside the generation (effigy#377).
+    pub(crate) fn shared_render(
+        &mut self,
+        project_name: String,
+        directory: PathBuf,
+        compose_yaml: String,
+        config_files: std::collections::HashMap<String, String>,
+    ) {
+        self.shared.push(PendingSharedRender {
+            project_name,
+            directory,
+            compose_yaml,
+            config_files,
+        });
+    }
     pub(crate) fn declarations(&mut self, paths: &[PathBuf]) -> Result<(), ContainerPolicyError> {
         for (index, path) in paths.iter().enumerate() {
             self.inputs.insert(
@@ -193,17 +221,7 @@ impl Draft {
     ) -> Result<(), ContainerPolicyError> {
         // User overrides and direct Compose are inputs too, not mutable files
         // referenced from outside the admitted generation.
-        let compose = policy
-            .compose_files
-            .iter()
-            .cloned()
-            .chain(
-                policy
-                    .shared_services
-                    .iter()
-                    .map(|s| s.compose_file.clone()),
-            )
-            .collect::<Vec<_>>();
+        let compose = policy.compose_files.clone();
         for path in &compose {
             self.read(path)?;
         }
@@ -218,21 +236,17 @@ impl Draft {
             .files
             .keys()
             .map(|path| {
-                let name = if let Ok(relative) = path.strip_prefix(&policy.repo_root) {
-                    format!("checkout/{}", relative.display())
-                } else {
-                    let home = crate::effigy_home().ok_or_else(|| error("HOME is required"))?;
-                    let relative = path.strip_prefix(home).map_err(error)?;
-                    format!("shared/{}", relative.display())
+                let name = match path.strip_prefix(&policy.repo_root) {
+                    Ok(relative) => format!("checkout/{}", relative.display()),
+                    Err(_) => {
+                        let home = crate::effigy_home().ok_or_else(|| error("HOME is required"))?;
+                        let relative = path.strip_prefix(home).map_err(error)?;
+                        format!("external/{}", relative.display())
+                    }
                 };
                 Ok((path.clone(), name))
             })
             .collect::<Result<BTreeMap<_, _>, ContainerPolicyError>>()?;
-        let shared_inputs = policy
-            .shared_services
-            .iter()
-            .map(|service| service.compose_file.clone())
-            .collect::<Vec<_>>();
         let first_input = policy.compose_files.first().cloned();
         let mut files = self.inputs;
         for (path, bytes) in self.files {
@@ -243,7 +257,8 @@ impl Draft {
                 // Compose resolves every relative input against the directory
                 // of the invocation's first `-f` file, so that directory is how
                 // this document names the rest of the generation.
-                let directory = project_input(&path, first_input.as_ref(), shared_inputs.iter())
+                let directory = first_input
+                    .as_ref()
                     .and_then(|input| names.get(input))
                     .and_then(|name| Path::new(name).parent())
                     .unwrap_or(Path::new(""));
@@ -260,8 +275,7 @@ impl Draft {
                 // are relative to the project directory. Normalize first.
                 replacements.sort_by_key(|(path, _)| std::cmp::Reverse(path.len()));
                 let mut value: serde_yaml::Value = serde_yaml::from_slice(&bytes).map_err(error)?;
-                let defining = project_input(&path, first_input.as_ref(), shared_inputs.iter())
-                    .is_some_and(|input| input == path);
+                let defining = first_input.as_deref() == Some(path.as_path());
                 super::super::workspace::normalize_runtime_rewrite_paths(
                     &mut value,
                     path.parent()
@@ -295,15 +309,122 @@ impl Draft {
         for file in &mut policy.compose_files {
             *file = path.join(&names[&*file]);
         }
-        for shared in &mut policy.shared_services {
-            shared.compose_file = path.join(&names[&shared.compose_file]);
+        let mut shared = Vec::new();
+        for pending in self.shared {
+            let project = pending.project_name.clone();
+            let (render, digest, compose_file) = finish_shared_render(pending, backend)?;
+            if let Some(binding) = policy
+                .shared_services
+                .iter_mut()
+                .find(|service| service.project_name == project)
+            {
+                binding.compose_file = compose_file;
+                binding.render_digest = digest;
+            }
+            shared.push(render);
         }
         policy.render = Some(Rendered {
             closure,
             path,
+            shared,
             request: Request::Named(None),
         });
         Ok(())
+    }
+}
+
+/// Finish a shared service's render at its machine-wide directory.
+///
+/// `directory` is `<effigy home>/shared-services/<project>` and the digest names
+/// its subdirectory, so the render a checkout publishes is the one every other
+/// checkout computes: same bytes, same absolute path, same Compose config-hash
+/// (effigy#377). The bind sources stay absolute, inside that directory.
+fn finish_shared_render(
+    pending: PendingSharedRender,
+    backend: crate::compose::ComposeBackend,
+) -> Result<(crate::SharedRender, String, PathBuf), ContainerPolicyError> {
+    let compose_name = format!("{}.generated.compose.yml", pending.project_name);
+    let mut document: serde_yaml::Value = serde_yaml::from_str(&pending.compose_yaml)
+        .map_err(|e| error(format!("shared {}: {e}", pending.project_name)))?;
+    // The rules the environment's own render applies, because this file is
+    // what Compose reads.
+    super::super::workspace::normalize_runtime_rewrite_paths(
+        &mut document,
+        &pending.directory,
+        true,
+    );
+    if backend == crate::compose::ComposeBackend::ColimaNerdctl {
+        healthcheck::normalize_exec_form(&mut document);
+    }
+    restart::apply(&mut document);
+    let mut content = serde_yaml::to_string(&document)
+        .map_err(error)?
+        .into_bytes();
+    let mut configs = pending.config_files.iter().collect::<Vec<_>>();
+    configs.sort_by(|left, right| left.0.cmp(right.0));
+    for (name, body) in &configs {
+        content.extend_from_slice(name.as_bytes());
+        content.push(0);
+        content.extend_from_slice(body.as_bytes());
+        content.push(0);
+    }
+    let digest = effigy_gateway::ports::sha256_hex(&content);
+    label_shared_render(&mut document, &digest);
+    let directory = pending.directory.join(&digest);
+    relocate(
+        &mut document,
+        &[(
+            pending.directory.display().to_string(),
+            directory.display().to_string(),
+        )],
+    );
+    let mut files = BTreeMap::new();
+    files.insert(
+        PathBuf::from(&compose_name),
+        serde_yaml::to_string(&document)
+            .map_err(error)?
+            .into_bytes(),
+    );
+    for (name, body) in pending.config_files {
+        files.insert(
+            Path::new(crate::GENERATED_RUNTIME_COMPOSE_DIR).join(name),
+            body.into_bytes(),
+        );
+    }
+    let compose_file = directory.join(&compose_name);
+    Ok((
+        crate::SharedRender { directory, files },
+        digest,
+        compose_file,
+    ))
+}
+
+/// The render names itself on the service it creates, so `up` reads from the
+/// runtime whether the shared container it finds is this render (effigy#377).
+fn label_shared_render(document: &mut serde_yaml::Value, digest: &str) {
+    let Some(services) = document
+        .get_mut("services")
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    else {
+        return;
+    };
+    for service in services.values_mut() {
+        let Some(service) = service.as_mapping_mut() else {
+            continue;
+        };
+        let key = serde_yaml::Value::String("labels".into());
+        if !matches!(service.get(&key), Some(serde_yaml::Value::Mapping(_))) {
+            service.insert(
+                key.clone(),
+                serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+            );
+        }
+        if let Some(serde_yaml::Value::Mapping(labels)) = service.get_mut(&key) {
+            labels.insert(
+                serde_yaml::Value::String(crate::SHARED_RENDER_LABEL.into()),
+                serde_yaml::Value::String(digest.to_owned()),
+            );
+        }
     }
 }
 
@@ -400,20 +521,6 @@ fn relocate(value: &mut serde_yaml::Value, replacements: &[(String, String)]) {
         }
         _ => {}
     }
-}
-
-/// The first `-f` input of the Compose invocation that reads `file`, which is
-/// what decides its project directory. A shared service brings its own.
-fn project_input<'a>(
-    file: &Path,
-    first: Option<&'a PathBuf>,
-    shared: impl Iterator<Item = &'a PathBuf>,
-) -> Option<&'a Path> {
-    shared
-        .into_iter()
-        .find(|compose| compose.parent().is_some_and(|dir| file.starts_with(dir)))
-        .or(first)
-        .map(PathBuf::as_path)
 }
 
 /// `name` relative to the generation's `directory`, spelled the way Compose

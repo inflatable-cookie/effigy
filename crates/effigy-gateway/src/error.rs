@@ -21,10 +21,6 @@ pub enum GatewayError {
     #[error("failed to write route table at {path}: {reason}")]
     RouteTableWriteError { path: PathBuf, reason: String },
 
-    /// A route for the given domain already exists.
-    #[error("route already registered for domain '{domain}'")]
-    DuplicateRoute { domain: String },
-
     /// Another checkout still serves this domain, so the claim is live.
     #[error("gateway domain `{domain}` is owned by checkout `{project}`, which still serves it; stop that checkout with `effigy container down` there, or configure a distinct domain for this worktree")]
     ForeignRoute { domain: String, project: String },

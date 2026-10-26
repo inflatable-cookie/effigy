@@ -27,6 +27,7 @@ pub(in crate::runner) use control::{
 pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
+pub(in crate::runner) use kernel::shared_service_gate;
 pub(in crate::runner) use legacy::legacy_families;
 pub(in crate::runner) use process::environment as process_environment;
 pub(in crate::runner) use process::{

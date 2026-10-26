@@ -814,31 +814,29 @@ fn resolve_shared_service_bindings(
             .copied()
             .find(|binding| binding.host != binding.container)
             .unwrap_or(parsed_bindings[0]);
-        // Shared services live outside any one environment's generated
-        // payload; key their output by the shared project so every renderer
-        // of the same shared project converges on one file.
-        // A shared fragment names its own catalog files relative to the state
-        // directory it was rendered with, so publish them at that same
-        // relative path instead of leaving the declared bind source missing
-        // (effigy#371). A fresh home then works: nothing depends on a file an
-        // older Effigy left behind.
-        let compose_path = draft.assembly(
-            &output_dir,
-            &output_dir.join(GENERATED_RUNTIME_COMPOSE_DIR),
-            &shared_project_name,
-            &assembly,
-        )?;
+        // A shared service belongs to no checkout, so its render is not part of
+        // this generation: `Draft::finish` publishes it at one machine-wide
+        // content-addressed directory under the Effigy home, with absolute bind
+        // sources, so every checkout that shares it hands Compose the same
+        // bytes and the same config-hash (effigy#377).
+        draft.shared_render(
+            shared_project_name.clone(),
+            output_dir,
+            assembly.compose_yaml,
+            assembly.config_files,
+        );
         bindings.push(SharedServiceBinding {
             service_name: service_name.clone(),
             catalog: service.catalog.clone(),
             domain_label: contract.domain_label,
             project_name: shared_project_name,
-            compose_file: compose_path,
+            compose_file: PathBuf::new(),
             host: SHARED_SERVICE_HOST.to_owned(),
             host_port: binding.host,
             container_port: binding.container,
             host_env_vars: contract.shared_host_env_vars,
             port_env_vars: contract.shared_port_env_vars,
+            render_digest: String::new(),
         });
     }
     bindings.sort_by(|left, right| left.service_name.cmp(&right.service_name));
@@ -1384,8 +1382,11 @@ mod tests {
         assert_ne!(Some(actual), real_home);
     }
 
+    /// The shared service's Compose project name is pinned: an existing
+    /// consumer's shared MariaDB keeps its volume because this build derives
+    /// the same project name v0.14.1 wrote (Q-012 volume continuity).
     #[test]
-    fn shared_service_project_name_is_pinned_to_current_default_hasher() {
+    fn shared_service_project_name_is_pinned_to_the_shipped_identity() {
         let service: ManifestContainerServiceConfig = serde_json::from_value(serde_json::json!({
             "catalog": "mariadb",
             "database": "acowtancy",
@@ -1393,17 +1394,10 @@ mod tests {
         }))
         .expect("real catalog-shaped shared MariaDB service");
 
-        let name = shared_service_project_name(&service);
-        assert_eq!(name, "effigy-shared-mariadb-0721de3e");
-
-        let mut std_hasher = std::collections::hash_map::DefaultHasher::new();
-        hash_shared_service_identity(&service, &mut std_hasher);
-        let std_name = format!(
-            "effigy-shared-{}-{:08x}",
-            service.catalog,
-            (std_hasher.finish() & 0xffff_ffff) as u32
+        assert_eq!(
+            shared_service_project_name(&service),
+            "effigy-shared-mariadb-0721de3e"
         );
-        assert_eq!(name, std_name);
     }
 
     #[test]
@@ -1434,6 +1428,7 @@ services:
                 container_port: 3306,
                 host_env_vars: vec!["DB_HOST".to_owned()],
                 port_env_vars: vec!["DB_PORT".to_owned()],
+                render_digest: "shared-render".to_owned(),
             }],
             &clients,
             "192.168.5.2",
@@ -1496,6 +1491,7 @@ services:
                 container_port: 3306,
                 host_env_vars: vec!["DB_HOST".to_owned()],
                 port_env_vars: vec!["DB_PORT".to_owned()],
+                render_digest: "shared-render".to_owned(),
             }],
             &std::collections::BTreeSet::new(),
             "192.168.5.2",
@@ -1599,8 +1595,10 @@ services:
         assert!(matches!(&ports[1], GeneratedComposePort::Other(_)));
     }
 
+    /// An undeclared container port is left to the OS. Nothing else is written:
+    /// the render and the route table are the only records of a port.
     #[test]
-    fn a_custom_publish_address_is_honoured() {
+    fn an_unpinned_port_is_assigned_by_the_os() {
         let mut compose_document = GeneratedComposeDocument::parse(
             "acme",
             "test parse",
@@ -1610,6 +1608,7 @@ services:
     image: php:8.4-fpm
     ports:
       - "8080:80"
+      - "9000:9000"
 "#,
         )
         .expect("parse generated compose");
@@ -1621,14 +1620,14 @@ services:
                 host: 18080,
                 container: 80,
             }],
-            std::net::Ipv4Addr::UNSPECIFIED,
+            std::net::Ipv4Addr::LOCALHOST,
             false,
             false,
             &mut compose_document,
         )
         .expect("apply port policy");
 
-        assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
+        assert_eq!(effective_ports, vec!["18080:80", "127.0.0.1::9000"]);
 
         let ports = compose_document
             .services
@@ -1637,59 +1636,12 @@ services:
             .expect("service ports");
         assert!(matches!(
             &ports[0],
-            GeneratedComposePort::String(raw) if raw == "0.0.0.0:18080:80"
+            GeneratedComposePort::String(raw) if raw == "127.0.0.1:18080:80"
         ));
-    }
-
-    #[test]
-    fn an_unpinned_port_is_assigned_by_the_os_and_nothing_is_recorded() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        with_test_effigy_home(tempdir.path(), || {
-            let mut compose_document = GeneratedComposeDocument::parse(
-                "acme",
-                "test parse",
-                r#"
-services:
-  app:
-    image: php:8.4-fpm
-    ports:
-      - "8080:80"
-      - "9000:9000"
-"#,
-            )
-            .expect("parse generated compose");
-
-            let effective_ports = apply_generated_compose_port_policy(
-                Path::new("/tmp/acme"),
-                "acme",
-                &[PortBinding {
-                    host: 18080,
-                    container: 80,
-                }],
-                std::net::Ipv4Addr::LOCALHOST,
-                false,
-                false,
-                &mut compose_document,
-            )
-            .expect("apply port policy");
-
-            assert_eq!(effective_ports, vec!["18080:80", "127.0.0.1::9000"]);
-            assert!(!tempdir.path().join("ports.json").exists());
-
-            let ports = compose_document
-                .services
-                .get("app")
-                .and_then(|service| service.ports.clone())
-                .expect("service ports");
-            assert!(matches!(
-                &ports[0],
-                GeneratedComposePort::String(raw) if raw == "127.0.0.1:18080:80"
-            ));
-            assert!(matches!(
-                &ports[1],
-                GeneratedComposePort::String(raw) if raw == "127.0.0.1::9000"
-            ));
-        });
+        assert!(matches!(
+            &ports[1],
+            GeneratedComposePort::String(raw) if raw == "127.0.0.1::9000"
+        ));
     }
 
     /// Two worktrees of one project must not ask for the same host port. The
@@ -1743,39 +1695,6 @@ services:
 
     /// An environment that opts into `stable_ports` gets a port derived from
     /// its checkout path. It is the same on every run and nothing is recorded.
-    #[test]
-    fn an_opted_in_environment_gets_a_stable_probed_port() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        with_test_effigy_home(tempdir.path(), || {
-            let mut compose_document = GeneratedComposeDocument::parse(
-                "acme",
-                "test parse",
-                "services:\n  app:\n    image: php:8.4-fpm\n    ports:\n      - \"8080:80\"\n",
-            )
-            .expect("parse generated compose");
-            let observed = apply_generated_compose_port_policy(
-                Path::new("/tmp/acme"),
-                "acme",
-                &[],
-                std::net::Ipv4Addr::LOCALHOST,
-                false,
-                true,
-                &mut compose_document,
-            )
-            .expect("apply port policy");
-            let host: u16 = observed[0]
-                .split(':')
-                .next()
-                .and_then(|port| port.parse().ok())
-                .expect("concrete host port");
-            assert!(host >= 20000);
-            assert!(!tempdir.path().join("ports.json").exists());
-
-            let again = effigy_gateway::ports::stable_host_port("/tmp/acme", 80, &mut Vec::new());
-            assert_eq!(host, again, "the derived port is stable per checkout");
-        });
-    }
-
     #[test]
     fn typed_generated_compose_mount_policy_detects_repo_root_and_preserves_non_string_volumes() {
         let repo_root = "/tmp/acme";

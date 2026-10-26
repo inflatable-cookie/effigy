@@ -788,11 +788,17 @@ Effigy interpolation value. A catalog service's Dockerfile is rendered inline
 reads `build.dockerfile` against the build context. The former mutable output
 under `.effigy/runtime/compose` is replaced automatically on the next Prepare.
 
-A shared service is rendered the same way into its own generation, so every
-checkout that shares it hands Compose the same configuration. An unchanged
-stack is therefore not recreated: a second `container up` leaves every
-container, the shared service included, exactly where it is. Only a service
-whose rendered configuration really changed is replaced.
+A shared service is rendered outside any checkout's generation, into one
+machine-wide content-addressed directory under the Effigy home
+(`~/.effigy/shared-services/<project>/<digest>/`) with absolute bind sources. So
+every checkout that shares it hands Compose byte-identical input at the same
+absolute path, and an unchanged stack is not recreated: a second `container up`
+leaves every container, the shared service included, exactly where it is, and
+deleting a checkout leaves the shared render's files in place. Only a service
+whose rendered configuration really changed is replaced; a changed shared
+service is stopped and removed before its replacement is created, so its
+published port is never held by both, and its data volume is kept. One machine
+gate per shared Compose project serialises checkouts whose `up`s overlap.
 
 Treat the object directory as runtime output, not repo-owned source.
 

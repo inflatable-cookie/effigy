@@ -466,3 +466,20 @@ Tom's rulings:
 2. **Admission:** the hook-liveness re-verification (`verify_hook`/`verify_held`, the inheritance capsule) is removed. The `HELD` markers and the advisory `EFFIGY_ADMITTED` stay. This is a narrow exception to Q-011's admission-v2 freeze.
 3. **Upgrade path:** the v0.14.1 environment importer and the PID-only v0.14 refusals are deleted. A consumer upgrading straight from v0.14.1 gets one container recreate per stack. Condition (Tom, 2026-10-26, for Dan and other v0.14.1 users): the importer goes only after a live proof shows v0.15 reusing v0.14.1's named volumes with data intact. If any volume or project name differs, the naming compatibility (or the importer) stays. Guide 085 documents the validated upgrade steps.
 4. **Isolated dirs and Oxide output links:** Effigy keeps refusing to follow a symlink on an isolated dir. The fix is on the Oxide side: projects adopt Oxide's profile member links, so `target` stays a real directory. Tom is running that adoption sweep across all projects. Effigy's refusal message names `oxide outputs adopt`.
+
+## Q-013: Test-suite value before v0.15 qualification
+
+Status: answered
+Asked: 2026-10-26
+Answered: 2026-10-26 by Tom
+
+A read-only test-value audit (planner, main 9adacdd; reports under `~/.local/share/northstar/release-audits/effigy/test-audit-20261026/`) covered about 5,500 tests. It found:
+- about 440 to delete, about 1,000 to merge into about 220 tables, and about 345 to rewrite. That's around 27k test LOC, plus about 3.3k LOC of dead production code that only tests keep alive;
+- container fakes that never check rendered Compose, and gateway tests that only run the private-state-root path. None of the 2026-10-26 consumer breaks would have failed a test;
+- 45% of the kernel tests sitting behind a `fault-injection` feature that nothing enables.
+
+Tom asked whether everything "is actually testing something useful". His rulings:
+
+1. **Prune before qualification.** Four prune batches run before the selector/proof work and milestone QA.
+2. **Managed matrix.** The end-to-end `managed_matrix_*` tests are trimmed to one cell per front end and stop kind. The full cross product stays in the kernel model test (contract 052 §12.3).
+3. **Fault-injection tests run at milestone QA.** A `fault-injection` selector joins the milestone `qa` group. Whether to cut the fault framework is decided after one milestone shows what it catches.

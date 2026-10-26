@@ -356,11 +356,33 @@ pub(super) fn ensure_pinned_host_ports_available(
 
 /// Shared services come up through the same one apply as the environment's
 /// own stack: `compose up -d --remove-orphans`, with failures propagated.
+///
+/// A shared service belongs to no checkout, so its ensure first takes the one
+/// machine-wide gate for that Compose project: two checkouts never interleave
+/// a replacement (effigy#377). When the runtime reports a container from a
+/// different render than the one about to be applied, that container is
+/// stopped and removed before Compose creates its replacement, so a published
+/// host port is never held twice (`port is already allocated`). Its named data
+/// volume is untouched. An unchanged render is left exactly where it is.
 pub(in crate::runner) fn ensure_shared_services_running(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
     let mut notes = Vec::new();
     for service in &policy.shared_services {
+        // Held until this service's ensure is complete; a gate that cannot be
+        // taken is named and the ensure proceeds, because the service still
+        // has to run.
+        let _gate = match crate::runner::task_engine::shared_service_gate(&service.project_name) {
+            Ok(gate) => Some(gate),
+            Err(error) => {
+                eprintln!(
+                    "[warn] shared {} ran without its machine gate: {error}",
+                    service.service_name
+                );
+                None
+            }
+        };
+        let replaced = replace_stale_shared_render(policy, service)?;
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
@@ -370,12 +392,84 @@ pub(in crate::runner) fn ensure_shared_services_running(
             &shared_compose_args(service, ["up", "-d", "--remove-orphans"]),
             &format!("docker compose up (shared {})", service.service_name),
         )?;
-        notes.push(format!(
-            "{} [{}] -> {}:{}",
-            service.service_name, service.catalog, service.host, service.host_port
-        ));
+        notes.push(match replaced {
+            true => format!("replaced shared {} (render changed)", service.service_name),
+            false => format!(
+                "{} [{}] -> {}:{}",
+                service.service_name, service.catalog, service.host, service.host_port
+            ),
+        });
     }
     Ok(notes)
+}
+
+/// Stop and remove every container of a shared project the runtime says came
+/// from a different render, so Compose creates the new one against a free
+/// port. An unreadable runtime is named and left to Compose rather than
+/// stopping a service this run cannot see.
+fn replace_stale_shared_render(
+    policy: &EffectiveContainerPolicy,
+    service: &effigy_containers::SharedServiceBinding,
+) -> Result<bool, RunnerError> {
+    let containers = match effigy_containers::exec::shared_project_containers(
+        &policy.repo_root,
+        policy,
+        &service.project_name,
+    ) {
+        Ok(containers) => containers,
+        Err(error) => {
+            eprintln!(
+                "[warn] cannot read the runtime's shared {} containers: {error}",
+                service.service_name
+            );
+            return Ok(false);
+        }
+    };
+    let stale = containers
+        .iter()
+        .filter(|container| container.render.as_deref() != Some(service.render_digest.as_str()))
+        .collect::<Vec<_>>();
+    if stale.is_empty() {
+        return Ok(false);
+    }
+    for container in stale {
+        stop_and_remove_container(
+            &policy.repo_root,
+            &policy.profile,
+            &container.container_name,
+        )
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot replace shared {}: {error}",
+                service.service_name
+            ))
+        })?;
+    }
+    Ok(true)
+}
+
+/// Stop a container, then remove it (effigy#376). A forced remove of a running
+/// container is a kill the runtime's restart manager undoes for the
+/// `restart: unless-stopped` policy every render declares; an explicit stop is
+/// recorded as a user stop, so the removal holds. A stop that finds nothing
+/// running is not a failure.
+pub(super) fn stop_and_remove_container(
+    cwd: &Path,
+    profile: &str,
+    name: &str,
+) -> Result<(), RunnerError> {
+    let stop = DockerCommand {
+        program: "docker".to_owned(),
+        args: vec!["stop".to_owned(), name.to_owned()],
+        description: format!("stop owned container {name}"),
+    };
+    let _ = run_runtime_volume_capture(cwd, profile, &stop);
+    let remove = DockerCommand {
+        program: "docker".to_owned(),
+        args: vec!["rm".to_owned(), "-f".to_owned(), name.to_owned()],
+        description: format!("remove owned container {name}"),
+    };
+    run_runtime_volume_capture(cwd, profile, &remove).map(|_| ())
 }
 
 /// Remove only volumes whose labels prove this environment owns them, on its
@@ -432,9 +526,12 @@ pub(super) fn annotate_shared_service_notes(
     }
     for note in notes {
         report.success_text.push('\n');
-        report
-            .success_text
-            .push_str(&format!("[shared] ensured {note}"));
+        match note.starts_with("replaced shared ") {
+            true => report.success_text.push_str(&format!("[shared] {note}")),
+            false => report
+                .success_text
+                .push_str(&format!("[shared] ensured {note}")),
+        }
     }
 }
 
@@ -559,9 +656,10 @@ fn shared_compose_args<'a>(
 }
 
 /// Shared services start on the dependent environment's exact backend, never
-/// a hard-coded engine.
+/// a hard-coded engine. They run from the shared render's own machine-wide
+/// directory, so the invocation names no checkout (effigy#377).
 fn run_shared_compose_capture(
-    repo_root: &Path,
+    cwd: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
     label: &str,
@@ -570,7 +668,7 @@ fn run_shared_compose_capture(
         effigy_containers::backend::exact_backend(&policy.repo_root, &policy.name, policy.driver)
             .id;
     let profile = policy.profile.as_str();
-    let request = ContainerManagerRequest::new(repo_root)
+    let request = ContainerManagerRequest::new(&policy.repo_root)
         .backend_override(backend.clone())
         .interrupt_policy(ContainerInterruptPolicy::Forward);
     let mut detection = ContainerBackendDetection::from_env_and_path();
@@ -602,7 +700,7 @@ fn run_shared_compose_capture(
     })?;
     plan.args = resolved_args;
     let mut command = std::process::Command::new(&plan.program);
-    command.current_dir(repo_root).args(&plan.args);
+    command.current_dir(cwd).args(&plan.args);
     command
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
@@ -1217,6 +1315,7 @@ mod tests {
                 container_port: 3306,
                 host_env_vars: Vec::new(),
                 port_env_vars: Vec::new(),
+                render_digest: "shared-render".to_owned(),
             }]);
         let routes = vec![super::RegisteredGatewayRoute {
             domain: "db.demo.test".to_owned(),
@@ -1244,5 +1343,182 @@ mod tests {
         assert!(script.contains("return 0"));
         assert!(script.contains("awk -v alias=\"$alias\""));
         assert!(script.contains("printf '%s %s\\n' \"$ip\" \"$alias\" >> /etc/hosts"));
+    }
+
+    struct SharedFixture {
+        _fixture: effigy_test_support::Fixture,
+        root: PathBuf,
+    }
+
+    impl SharedFixture {
+        /// A private checkout whose runtime is a script recording every call,
+        /// listing one container of `project` rendered from `container_render`.
+        fn new(name: &str, project: &str, container: &str, container_render: &str) -> Self {
+            let fixture = effigy_test_support::Fixture::workspace(name).unwrap();
+            let root = fixture.path().canonicalize().unwrap();
+            let bin = root.join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            let log = root.join("calls");
+            let script = format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'--format'*)\n    printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' '{container_render}' '{project}'\n    ;;\nesac\n",
+                log = log.display(),
+                container = container,
+                container_render = container_render,
+                project = project,
+            );
+            for name in ["docker", "colima"] {
+                let executable = bin.join(name);
+                std::fs::write(&executable, &script).unwrap();
+                std::fs::set_permissions(
+                    executable,
+                    std::os::unix::fs::PermissionsExt::from_mode(0o700),
+                )
+                .unwrap();
+            }
+            std::fs::write(root.join("effigy.toml"), "[tasks]\nbuild = \"true\"\n").unwrap();
+            let shared = root.join("shared");
+            std::fs::create_dir_all(&shared).unwrap();
+            std::fs::write(shared.join("compose.yml"), "services: {}\n").unwrap();
+            Self {
+                _fixture: fixture,
+                root,
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            std::fs::read_to_string(self.root.join("calls"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        fn policy(&self, project: &str, render_digest: &str) -> EffectiveContainerPolicy {
+            let mut policy = test_policy();
+            policy.repo_root = self.root.clone();
+            policy.shared_services = vec![effigy_containers::SharedServiceBinding {
+                service_name: "legacy_mysql".to_owned(),
+                catalog: "mariadb".to_owned(),
+                domain_label: "mysql".to_owned(),
+                project_name: project.to_owned(),
+                compose_file: self.root.join("shared/compose.yml"),
+                host: "host.docker.internal".to_owned(),
+                host_port: 23306,
+                container_port: 3306,
+                host_env_vars: Vec::new(),
+                port_env_vars: Vec::new(),
+                render_digest: render_digest.to_owned(),
+            }];
+            policy
+        }
+    }
+
+    /// A changed shared render is replaced in the one order that frees its
+    /// published host port before the new container is created (effigy#377).
+    #[test]
+    fn a_changed_shared_render_stops_then_removes_before_it_starts_the_new_one() {
+        use crate::contract_test_support::EnvGuard;
+        let project = "effigy-shared-mariadb-probe";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-replace-",
+            project,
+            &container,
+            "previous-render",
+        );
+        let _env = EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    fixture.root.join("bin").display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("HOME", Some(fixture.root.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+        ]);
+        let policy = fixture.policy(project, "this-render");
+
+        let notes = super::ensure_shared_services_running(&policy).expect("ensure succeeds");
+
+        assert_eq!(
+            notes,
+            vec!["replaced shared legacy_mysql (render changed)".to_owned()]
+        );
+        let calls = fixture.calls();
+        let position = |needle: &str| {
+            calls
+                .iter()
+                .position(|call| call.split(' ').any(|arg| arg == needle))
+                .unwrap_or_else(|| panic!("`{needle}` was never run: {}", calls.join("; ")))
+        };
+        let listed = calls
+            .iter()
+            .position(|call| call.starts_with("ps "))
+            .expect("the runtime is asked which render is running");
+        assert!(calls[listed].contains("--all"), "{}", calls[listed]);
+        assert!(
+            position("stop") < position("rm") && position("rm") < position("up"),
+            "stop, remove, then up: {calls:?}"
+        );
+        assert!(
+            calls[position("stop")].ends_with(&container),
+            "the stale container is stopped by name: {calls:?}"
+        );
+        assert!(
+            calls[position("rm")].contains(&format!("rm -f {container}")),
+            "the stale container is removed by name: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call.contains("volume rm")),
+            "the shared data volume is kept: {calls:?}"
+        );
+    }
+
+    /// An unchanged shared render is never touched, so a second `up` leaves a
+    /// healthy shared data service and its connections alone (effigy#377).
+    #[test]
+    fn an_unchanged_shared_render_is_left_alone() {
+        use crate::contract_test_support::EnvGuard;
+        let project = "effigy-shared-mariadb-probe";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-unchanged-",
+            project,
+            &container,
+            "this-render",
+        );
+        let _env = EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    fixture.root.join("bin").display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("HOME", Some(fixture.root.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+        ]);
+        let policy = fixture.policy(project, "this-render");
+
+        let notes = super::ensure_shared_services_running(&policy).expect("ensure succeeds");
+
+        assert_eq!(
+            notes,
+            vec!["legacy_mysql [mariadb] -> host.docker.internal:23306".to_owned()]
+        );
+        let calls = fixture.calls();
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("stop ") || call.starts_with("rm ")),
+            "an unchanged shared service is not stopped or removed: {calls:?}"
+        );
+        assert!(
+            calls.iter().any(|call| call.contains(" up ")),
+            "the unchanged service still gets its one apply: {calls:?}"
+        );
     }
 }
