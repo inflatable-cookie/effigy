@@ -1887,6 +1887,12 @@ During v0.x, MINOR bumps may include breaking changes.
   The Dockerfile is now rendered as `dockerfile_inline` from the generation's
   own content, so no path is resolved at all and no copy of it is published
   (effigy#364).
+- A catalog Dockerfile reaches BuildKit unchanged. Compose interpolates every
+  string in a Compose file, `dockerfile_inline` included, so the catalog
+  Dockerfile's own `WORKDIR ${…}` and its shell `$line` were blanked and the
+  build failed with `WORKDIR requires exactly one argument`. Every `$` in the
+  inlined content is now doubled (Compose's literal dollar), so `container up`
+  builds the Dockerfile the catalog declares (effigy#366).
 - A failed detached backend keeps the lines it ended with. Folding a long
   evidence list keeps the first lines and the newest ones instead of only the
   first, so the backend's `level=fatal` line reaches stderr and the JSON

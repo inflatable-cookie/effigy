@@ -351,10 +351,18 @@ fn inline_catalog_dockerfiles(
         build.remove(&key);
         build.insert(
             serde_yaml::Value::String("dockerfile_inline".into()),
-            serde_yaml::Value::String(content.clone()),
+            serde_yaml::Value::String(compose_literal(content)),
         );
     }
     serde_yaml::to_string(&document).unwrap_or_else(|_| assembly.compose_yaml.clone())
+}
+
+/// Compose interpolates every string in a Compose file, `dockerfile_inline`
+/// included, so a Dockerfile's own `$VAR` and `${VAR}` would be substituted or
+/// blanked before BuildKit saw it. `$$` is Compose's literal dollar, so the
+/// content reaches the build byte for byte (effigy#366).
+fn compose_literal(content: &str) -> String {
+    content.replace('$', "$$")
 }
 
 fn relocate(value: &mut serde_yaml::Value, replacements: &[(String, String)]) {

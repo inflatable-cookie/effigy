@@ -374,8 +374,11 @@ Effigy ownership:
   container receives it
 - a catalog Dockerfile is rendered as `dockerfile_inline` from the generation's
   own content, because Compose resolves `build.dockerfile` against the build
-  context (the checkout) rather than the project directory. Both backends read
-  it: `nerdctl compose` 2.3.1 and Docker Compose v2.17 and later
+  context (the checkout) rather than the project directory. Every `$` in that
+  content is doubled, Compose's literal dollar, because interpolation runs over
+  every string in the file and would otherwise blank the Dockerfile's own
+  `${…}` and shell `$VAR`. Both backends read it: `nerdctl compose` 2.3.1 and
+  Docker Compose v2.17 and later
 - only the plan's forwarded secret values travel in the file; the shared
   invocation transform in `policy::render` (reached by attached, detached,
   `config`, `ps`, `logs`, `restart` and shared-service invocations) writes them
