@@ -545,8 +545,9 @@ fn gateway_identity_legacy_active_record_refused_by_status_up_down_and_managed_s
         .expect_err("managed start must refuse the unauthenticated process")
         .to_string();
 
-    for message in [&status, &up, &down, &managed] {
-        assert!(message.contains("gateway setup"), "{message}");
+    assert!(status.contains("gateway setup"), "{status}");
+    for message in [&up, &down, &managed] {
+        assert!(message.contains("private gateway root"), "{message}");
     }
     assert!(!marker.exists(), "managed startup command must not run");
     assert!(
@@ -596,12 +597,12 @@ fn gateway_identity_legacy_version_only_record_refused_by_status_up_down_and_man
         .expect_err("managed start must refuse a version-only record")
         .to_string();
 
-    for message in [&status, &up, &down, &managed] {
-        assert!(message.contains("gateway"), "{message}");
-        assert!(
-            message.contains("version") || message.contains("unsafe"),
-            "{message}"
-        );
+    assert!(
+        status.contains("version") || status.contains("unsafe"),
+        "{status}"
+    );
+    for message in [&up, &down, &managed] {
+        assert!(message.contains("private gateway root"), "{message}");
     }
     assert!(!marker.exists(), "managed startup command must not run");
     assert!(
@@ -654,12 +655,12 @@ fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed
         .expect_err("managed start must refuse a symlink version")
         .to_string();
 
-    for message in [&status, &up, &down, &managed] {
-        assert!(message.contains("gateway"), "{message}");
-        assert!(
-            message.contains("version") || message.contains("unsafe"),
-            "{message}"
-        );
+    assert!(
+        status.contains("version") || status.contains("unsafe"),
+        "{status}"
+    );
+    for message in [&up, &down, &managed] {
+        assert!(message.contains("private gateway root"), "{message}");
     }
     assert!(!marker.exists(), "managed startup command must not run");
     assert!(
