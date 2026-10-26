@@ -350,6 +350,20 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- **A run's scratch directory is no longer a kernel effect.** It is a plain
+  directory with one marker file, removed when the run succeeds and kept for 24
+  hours when it fails, and a bounded sweep at a later run's start retires it
+  from the marker and a process-liveness check alone. The `scratch:run-dir`
+  effect kind, its settle and release hooks, its journal record and the
+  reconcile-residue path are gone, so no run's start reads another checkout's
+  journal and scratch can never refuse or fail a run (effigy#361).
+- **The scratch root's volume and ownership proofs.** `[scratch] root` is taken
+  as given: the separate-volume requirement, the mounted-volume proof, the
+  volume UUID pin, the owner/mode/ACL check and the refusal that followed them
+  are gone, and a root Effigy cannot create or write now degrades to the default
+  temp directory with one warning. `volume_uuid` and `require_separate_volume`
+  are still accepted in an existing user config and no longer check anything
+  (effigy#361).
 - The `EFFIGY_RENDER_ROOT` interpolation value and the Compose interpolation
   file's generation-root entry. A rendered generation names its own assets
   relatively and Compose resolves them against its project directory, so no
@@ -1415,6 +1429,16 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **Scratch is decided by its own marker.** A successful run removes its
+  directory at the engine's normal completion, and a failed, cancelled or
+  timed-out run records `keep: true` and a conclusion time in the directory's
+  marker and keeps it for 24 hours. A killed run leaves its directory until the
+  next sweep: a directory with no conclusion goes once the process that created
+  it is gone, an unmarked entry under the root is never touched, and nothing
+  outlives seven days. The marker now also records the creating process and its
+  start identity and the checkout, so a retained tree names what left it. The
+  sweep is bounded in time, entries and removals, and opens no journal
+  (effigy#361).
 - **An unchanged stack is not recreated.** `container up` on a running,
   unchanged environment leaves every container, shared services included, in
   place: the render is byte-identical, every service keeps its

@@ -218,26 +218,19 @@ The `Root Resolution` section reports:
 
 Test and QA runs write a lot of scratch data. By default that lands in the
 operating system's temp directory, which on a laptop is the internal SSD. The
-user-global `[scratch]` block moves it to a volume you name, one directory per
-run, and Effigy removes it again.
+user-global `[scratch]` block moves it to a directory you name, one directory
+per run, and Effigy removes it again.
 
 ```toml
 # ~/.effigy/config.toml
 [scratch]
 root = "/Volumes/Builds/scratch"
-volume_uuid = "A6AC3ED7-33EA-46B4-8082-7254CF291ED2"
-require_separate_volume = true
 ```
 
-`root` may be any directory on the drive, not only the volume's mount point:
-Effigy proves the volume that holds it, not the path's depth. Point it at a
-subdirectory with room for builds (`/Volumes/Builds/scratch`), or at the mount
-point itself — both work.
-
-If `root` does not exist, Effigy creates it — and any missing parent below the
-nearest existing directory — with mode `0700`, provided that nearest existing
-directory passes the volume proof. A mount point is never created: if the
-drive is absent, the proof fails and nothing is created.
+`root` is any directory: a subdirectory with room for builds, or a volume's
+mount point. A missing `root` — and any missing parent above it — is created by
+the run that needs it, the root itself with mode `0700`; an existing directory
+keeps its own mode.
 
 With that block set, every host-placed run gets its own `<root>/<8-character
 run directory>/`, named from the run's whole identity (so two runs started in
@@ -249,51 +242,38 @@ never rewrites the temp environment, and a command that would hold no scratch
 directory (including `effigy test`) opens no run at all, so it needs no Effigy
 state home.
 
-**Recommendation: always set `volume_uuid`.** Without the pin, a volume that
-happens to be mounted at the same path is accepted as long as the other checks
-pass. `diskutil info /Volumes/<name> | grep "Volume UUID"` prints the value;
-Effigy compares it case-insensitively against the volume that actually holds
-the root.
+The directory is a plain directory with one marker file inside it,
+`.effigy-scratch.json`. It is not a kernel record and no journal is involved, so
+nothing about scratch can refuse a run, and no run's start waits on another
+checkout.
 
-### What Effigy refuses
+If the root cannot be created or written — the drive is gone, the path is a
+file, permissions say no — Effigy prints one warning and the run continues on
+the operating system's temp directory. `effigy doctor` reports the same
+observation.
 
-Every condition is checked before a run creates anything, on an opened
-descriptor of the root (or of its nearest existing ancestor, when the root is
-missing). A failure falls back to the default temp directory and `effigy
-doctor` reports the reason, so the run still works — it just writes to the
-internal disk:
+### Retention
 
-- the nearest existing ancestor is on the boot volume `/` or on
-  `/System/Volumes/Data` (`require_separate_volume = true`, the default) — this
-  is what refuses a stale `/Volumes/<name>` directory left on the internal disk
-  after the drive went away;
-- no mount point holds the path, so nothing proves it is on a mounted volume;
-- the volume UUID is unreadable, or different from `volume_uuid`;
-- the root is owned by neither the account running Effigy nor `root`;
-- the root is group- or world-writable, or carries an ACL;
-- the root is missing and cannot be created: its ancestor is not on the
-  volume, or a missing component exists but cannot be resolved (a dangling
-  symlink, a loop) — Effigy then creates nothing.
-
-The ownership rule is what makes the root trustworthy against another local
-account. The directory Effigy creates is already yours and `0700`. For an
-existing directory, make sure it is yours (or root's) and closed to group and
-world writes:
-
-```sh
-# An existing directory on the drive, owned by you.
-chmod 0700 /Volumes/Builds/scratch
-```
-
-Group write is refused as well as world write (`0755` and `0750` are fine,
-`0775` and `0777` are not), so another account cannot replace a run directory
-under the root.
-
-`require_separate_volume = false` relaxes only the two volume-identity checks
-(boot/data volume and the mounted-volume requirement, so a directory on the
-internal disk is accepted); the UUID pin, when set, and the ownership checks
-still apply. It exists for an explicitly trusted directory, not as a way to
-keep scratch on the internal disk by accident.
+- A run that succeeded removes its directory. Removal restores owner write
+  permission through the tree first, so a tree holding state objects an older
+  build published read-only — mode-`0500` directories, mode-`0400` files — is
+  still cleared. It never follows a symlink and never crosses a mount.
+- A run that failed, was cancelled or timed out keeps it for 24 hours, and the
+  failure output names the path. The 24 hours start when the run ended, not when
+  it started, so a long run that fails late keeps its full window.
+- A run that loses its directory — the path is gone, or something else now
+  occupies the name without Effigy's marker for that run — never writes a
+  conclusion into it and never removes it.
+- A run killed outright leaves its directory until a later sweep removes it.
+  That costs disk until then, never correctness.
+- A bounded sweep at a later run's start removes a directory Effigy marked when
+  its conclusion is more than 24 hours old, when it has no conclusion and the
+  process that created it is gone, or when it is more than 7 days old. It reads
+  only the marker and a process-liveness check — never a journal — and stops at
+  its own time and count bounds; whatever it did not reach is a later run's. An
+  entry it did not mark itself, and any entry it cannot decide, is left alone.
+- Only the run that opened a directory concludes it, so a step's or a nested
+  run's success never removes the parent's tree.
 
 ### Precedence
 
@@ -313,13 +293,13 @@ keep scratch on the internal disk by accident.
   for one invocation.
 - Each host suite of the built-in `effigy test` route runs as a child run of
   that route's run, so its whole process group is custody the run settles
-  before the directory is released — a suite's backgrounded descendant does not
+  before the directory is removed — a suite's backgrounded descendant does not
   outlive it. Because the multi-suite TUI spawns processes of its own, `effigy
   test` streams its suites instead of opening the TUI while a scratch run holds
   them.
 - That route's run carries a sentinel, like a task run: if Effigy is killed
-  outright, the sentinel settles the run and its suites, so the directory is
-  retained with a close time and the sweep can expire it later.
+  outright, the sentinel settles the run and its suites, and the directory is
+  left for the sweep like any other killed run's.
 
 ### What follows the scratch directory
 
@@ -358,42 +338,6 @@ What does not follow the scratch directory:
 - A host path that must fit a bounded Unix socket and is deliberately pinned
   to a short fixed directory, such as the gateway bind broker's
   `/private/var/run` socket.
-
-### Retention
-
-- A run that succeeded releases its directory at settle. Removal restores owner
-  write permission through the tree first, so a tree holding state objects an
-  older build published read-only — mode-`0500` directories, mode-`0400` files —
-  is still cleared. The repair never follows a symlink and never leaves the tree;
-  a symlink, a mount point inside it or an entry owned by another user stops it.
-- A run that failed, was cancelled or timed out keeps it for 24 hours, and the
-  failure output names the path. The 24 hours start when the run ended, not
-  when it started, so a long run that fails late keeps its full window.
-- A run that loses its directory — the path is gone, or something else now
-  occupies the name without Effigy's marker for that run — keeps no authority
-  over what is there: it never writes a verdict into it and never removes it.
-- A run killed outright leaves the effect open; the sentinel's settle keeps
-  the directory rather than guessing, and its 24 hours run from the close the
-  sentinel recorded.
-- A directory Effigy still cannot remove — another owner's entry, another
-  device, a tree deeper than the removal walk — is reported once, by name, with
-  the path and the entry that stopped it, and left for a later sweep. It never
-  refuses the task's next run.
-- A bounded sweep during a later run's Prepare step removes retained
-  directories whose run is closed and whose 24 hours have passed. The sweep
-  only touches a directory Effigy can prove it named: the marker inside it must
-  name the run whose derived name the directory carries. Only the run that owns
-  the directory ever writes that marker, so a step's or a nested run's result
-  can never decide the parent's retention, and a directory that some other
-  process put at that path is never removed.
-
-The sweep is bounded in time as well as in work, because a run start must never
-wait for scratch: it decides from the marker wherever the marker is enough,
-reads another checkout's journal only for a directory whose run died before
-recording a verdict (a few reads, each in its own bounded observation), and
-stops at its budget. A journal it cannot read — typically a busy sibling
-worktree's under a continuous writer — is skipped and retried on a later run,
-never waited for.
 
 ### Interaction with Oxide
 

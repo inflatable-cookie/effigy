@@ -52,7 +52,6 @@
     "src/runner/managed_run/engine.rs": 3,
     "src/runner/managed_run/settlement.rs": 1,
     "src/runner/qa_group_command/execute.rs": 2,
-    "src/runner/scratch.rs": 3,
     "src/runner/state_command_artifact.rs": 1,
     "src/runner/task_engine/checkout.rs": 1,
     "src/runner/task_engine/control.rs": 8,

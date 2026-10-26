@@ -576,8 +576,8 @@ impl<'a> Run<'a> {
     }
     /// Whether this run holds a sentinel, so its death is settled from the
     /// journal. An engine that admits a run with an obligation to settle (a
-    /// scratch directory, a process group) must have one: without it, a killed
-    /// owner leaves the run `starting` forever and nothing is cleaned up.
+    /// process group) must have one: without it, a killed owner leaves the run
+    /// `starting` forever and nothing is cleaned up.
     pub fn owns_sentinel(&self) -> bool {
         self.sentinel.is_some()
     }

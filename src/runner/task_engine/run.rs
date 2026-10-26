@@ -504,7 +504,7 @@ impl TaskRun {
             // opinion on scratch; the built-in test route asks for one and
             // holds the same scratch a task run does.
             if request.scratch {
-                run.scratch = crate::runner::scratch::for_run(&mut run, true);
+                run.scratch = crate::runner::scratch::for_run(&run, true);
                 run.programs = crate::runner::program_fallback::for_run().map_err(|error| {
                     RunnerError::task_invocation(format!("program fallback: {error}"))
                 })?;
@@ -574,10 +574,10 @@ impl TaskRun {
             keyed: request.key.is_some(),
         };
         run.admit(request.admission, admission, request.cwd)?;
-        // The run's scratch is its own effect, recorded before the first
-        // workload runs and settled with the run. A nested run reuses the
+        // The run's own scratch directory is opened before the first workload
+        // runs and removed or kept when the run ends. A nested run reuses the
         // scratch its parent already opened.
-        run.scratch = crate::runner::scratch::for_run(&mut run, request.scratch);
+        run.scratch = crate::runner::scratch::for_run(&run, request.scratch);
         // A per-program fallback shim is created for the run that activates
         // it, inside the run's scratch when it has one, and settles with it.
         run.programs = crate::runner::program_fallback::for_run()
@@ -941,9 +941,9 @@ impl TaskRun {
         }
     }
 
-    /// Records the run's scratch decision before the settle reads it. A kept
-    /// directory is a warning here, not a failure: the task's own result is
-    /// already decided.
+    /// Concludes the run's scratch: a successful run removes its directory and
+    /// a failed one records the 24 hours it is kept for. A kept directory is a
+    /// warning here, not a failure: the task's own result is already decided.
     fn conclude_scratch(&mut self, workload: &WorkloadOutcome) -> Vec<String> {
         let Some(scratch) = self.scratch.take() else {
             return Vec::new();
