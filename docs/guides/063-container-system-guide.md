@@ -1942,8 +1942,9 @@ host port back from the running container into its route. Nothing is reserved
 between runs, so two worktrees of one project come up together and `down`
 followed by `up` is immediate. A manifest pin in `[containers.<NAME>.host].ports`
 is used as written; a collision fails naming the process that holds it.
-`[containers.<NAME>.host].stable_ports = true` derives one probed port per
-published container port from the checkout path and never records it.
+`[containers.<NAME>.host].stable_ports = true` derives one port per published
+container port from the checkout path, never records and never probes it, so an
+unchanged stack renders the same port on every `up`.
 
 ## Loopback aliases
 

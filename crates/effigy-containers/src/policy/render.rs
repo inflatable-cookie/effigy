@@ -93,7 +93,7 @@ impl EffectiveContainerPolicy {
                     .get(&name.to_string_lossy().to_string())
                 {
                     let content = String::from_utf8(bytes.clone()).map_err(error)?;
-                    if !content.contains("./") {
+                    if !content.contains("./") && !content.contains("../") {
                         return Ok(content);
                     }
                     let mut document: serde_yaml::Value =

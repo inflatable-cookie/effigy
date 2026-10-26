@@ -1486,10 +1486,12 @@ naming the holder. A runtime-scoped checkout takes an OS-assigned port for that
 binding instead of competing for the primary's pin.
 
 `[containers.<NAME>.host].stable_ports = true` opts into a stable port: one
-derived from the checkout path and the published container port, probed at
-`up`, and never stored. A shared backing service uses the same derivation
-because the environment variables an app render injects need its port before
-the app starts.
+derived from the checkout path and the published container port, and never
+stored. Deriving reads nothing but those inputs, so an unchanged stack renders
+the same port every time and a re-up recreates nothing; if the derived port is
+taken, the runtime's bind failure names it. A shared backing service uses the
+same derivation because the environment variables an app render injects need
+its port before the app starts.
 
 Prepare allocates no port and no loopback alias: a generated environment's
 alias address belongs to the routes registered at `up`.

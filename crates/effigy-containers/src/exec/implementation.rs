@@ -1560,7 +1560,8 @@ fn take_stale_owned_container(
     let Some(claimed) = name_store_conflict(&format!("{stdout}\n{stderr}")) else {
         return Ok(false);
     };
-    let Ok(observed) = inspect_containers_for_policy(repo_root, policy, &[claimed.clone()], None)
+    let Ok(observed) =
+        inspect_containers_for_policy(repo_root, policy, std::slice::from_ref(&claimed), None)
     else {
         return Ok(false);
     };

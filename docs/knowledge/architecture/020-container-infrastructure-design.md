@@ -1085,8 +1085,8 @@ Host ports come from the OS or Compose: a generated service publishes
 running container into its route. Several environments therefore run together
 without hand-assigned ports and without a machine-wide registry. A manifest pin
 in `[containers.<NAME>.host].ports` is used as written and a collision names the
-process holding it; `[containers.<NAME>.host].stable_ports = true` derives a
-probed, unrecorded port from the checkout path instead.
+process holding it; `[containers.<NAME>.host].stable_ports = true` derives an
+unrecorded port from the checkout path instead, without probing the runtime.
 
 `container status --global`,
 `container stats --global`, `container cache list --global`, and
