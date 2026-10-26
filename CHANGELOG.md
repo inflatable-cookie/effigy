@@ -1517,7 +1517,9 @@ During v0.x, MINOR bumps may include breaking changes.
   The process ledger, `ProcessReceipt` registrations, launch nonces, the
   pre-exec socket barrier, `effigy-fixture-process`,
   `tests/scripts/fixture_hygiene.py` and the fixture directory ledger are
-  gone.
+  gone. The sweep's marker reaches every helper except a kernel-custody payload
+  and its anchor, whose descriptor plan closes inherited descriptors on purpose;
+  those stay owned by custody settlement.
 - Test fixtures no longer fall back to the internal `/tmp`: `short_tempdir`
   and `Fixture::short_home` use the run's temporary directory or its parent on
   the configured scratch volume, and `Fixture::workspace` uses the run's

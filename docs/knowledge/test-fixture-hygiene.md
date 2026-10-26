@@ -31,6 +31,15 @@ TERM and HUP and then panics, and a runner killed mid-test. Both require the
 failure report to name the child and the child to be gone afterwards.
 `test:fixtures:hygiene:guards` runs them.
 
+### What the sweep cannot see
+
+A helper the kernel spawns through `custody::spawn` inherits no suite descriptor:
+that child's descriptor plan overwrites slots 3 and 4 and closes everything above
+them, on purpose, so no sibling's barrier or sentinel writer leaks in. Those
+workloads and their `__kernel-anchor` are owned by custody settlement instead.
+Helpers started any other way — `__kernel-sentinel`, the gateway daemon, the
+supervisors — inherit the marker and are swept.
+
 ## In-test ownership
 
 `effigy-test-support::process` gives a fixture child its own group and stops
