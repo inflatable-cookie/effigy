@@ -1251,44 +1251,34 @@ fn new_run_id() -> Result<RunId, RunnerError> {
         .map_err(|error| RunnerError::task_invocation(format!("run id: {error}")))
 }
 
+/// The message a person reads for a run that could not be admitted, with the
+/// kernel's own category beside it: a supervisor that relays it never calls a
+/// busy store a refusal (K4, effigy#360).
 fn begin_error(
     error: RunError,
     target: &TaskTarget,
     lock_wait_ms: u64,
     started: Instant,
 ) -> RunnerError {
-    match error {
+    // A held gate keeps its structured conflict details, which already name
+    // the holder and every command that inspects or stops it.
+    let category = error.category();
+    let message = match error {
         RunError::Gate(GateError::Busy { id, holder }) => {
-            conflict(target, &id, *holder, None, started)
+            return conflict(target, &id, *holder, None, started)
         }
-        RunError::Gate(GateError::TimedOut { id, holder, waited }) => conflict(
-            target,
-            &id,
-            *holder,
-            Some((lock_wait_ms, waited.as_millis() as u64)),
-            started,
-        ),
-        RunError::Store(error @ StoreError::Busy { .. }) => RunnerError::task_invocation(format!(
-            "`{}` could not be admitted: {error}.\nnext: nothing was started and no task failed; \
-             another Effigy process was writing the run journal. Rerun when it finishes.",
-            target.label
-        )),
-        RunError::PredecessorUnsettled { run, effects } => RunnerError::task_invocation(format!(
-            "`{}` cannot start: its previous run {run} left {} unsettled effect(s) that could not \
-             be proven stopped. Inspect with `effigy tasks status {}`; nothing was started",
-            target.label,
-            effects.len(),
-            target.label
-        )),
-        RunError::Gate(GateError::HostAuthorityRequired) => RunnerError::task_invocation(format!(
-            "`{}` needs host authority; run it on the host",
-            target.label
-        )),
-        other => RunnerError::task_invocation(format!(
-            "`{}` could not be admitted: {}",
-            target.label, other
-        )),
-    }
+        RunError::Gate(GateError::TimedOut { id, holder, waited }) => {
+            return conflict(
+                target,
+                &id,
+                *holder,
+                Some((lock_wait_ms, waited.as_millis() as u64)),
+                started,
+            )
+        }
+        other => format!("`{}` could not be admitted: {other}", target.label),
+    };
+    RunnerError::RunAdmission { category, message }
 }
 
 /// The run-inventory command this repository actually reaches, if any.

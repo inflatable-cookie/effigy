@@ -75,7 +75,9 @@ pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunErro
             Err(error) => error.to_string(),
             Ok(_) => "the invocation did not resolve to a managed run".to_owned(),
         };
-        owner.session.refused(Category::Refused, &reason);
+        owner
+            .session
+            .refused_message(Category::Refused, reason.clone());
         return Err(RunError::refused(reason));
     }
     Ok(())
@@ -174,7 +176,7 @@ pub(in crate::runner) fn own(
     }) {
         Ok(run) => run,
         Err(error) => {
-            session.refused(Category::Refused, &error.to_string());
+            session.refused_message(error.category(), error.to_string());
             return Err(error);
         }
     };

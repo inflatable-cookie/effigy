@@ -917,7 +917,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     ) {
         Ok(run) => run,
         Err(error) => {
-            session.refused(error.category(), &error.to_string());
+            session.refused_message(error.category(), error.to_string());
             return Err(error);
         }
     };

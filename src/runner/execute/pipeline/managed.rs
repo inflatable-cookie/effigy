@@ -722,7 +722,9 @@ fn own_managed_run(
     let (secrets, env_schema_resolved, container_repo_root, owned) = match inputs {
         Ok(inputs) => inputs,
         Err(error) => {
-            owner.session.refused(Category::Refused, &error.to_string());
+            owner
+                .session
+                .refused_message(Category::Refused, error.to_string());
             return Err(error);
         }
     };

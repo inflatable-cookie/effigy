@@ -2012,8 +2012,17 @@ a destructive repair (effigy#360).
 
 A busy store, a locked database, `SQLITE_CANTOPEN` and a permission refusal are
 `Unavailable`, naming the path: they are environment conditions, and retrying
-after the cause is fixed is safe. A failed step renders as
-`RunError::unavailable(step, cause)`.
+after the cause is fixed is safe. A journal mode that is not the write-ahead log
+Effigy sets is `Broken`: the file is readable, so it is an invariant failure and
+never a repair. A failed step renders as `RunError::unavailable(step, cause)`.
+
+A run that helper processes admit crosses a process boundary, so a refusal does
+too: the helper renders its category's sentence, sends it with the category, and
+the client prints it verbatim (`RunError::Reported`). A refusal is therefore
+framed exactly once, by the process that read it — a busy store at managed start
+stays `Unavailable` instead of being wrapped in a refusal. A managed supervisor
+that cannot admit its run carries the kernel's own category
+(`RunnerError::RunAdmission`), so relaying it never relabels it either.
 
 There is no invalid-request error in the kernel. A name this checkout does not
 route is resolved before the kernel reaches admission, and the message that

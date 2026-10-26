@@ -1419,11 +1419,16 @@ During v0.x, MINOR bumps may include breaking changes.
   checkout-token split that offered to move `kernel.db` aside and the #337
   reboot pin can no longer do that (effigy#360).
 - **A helper's refusal crosses the process boundary with its category.** The
-  supervisor's refusal event carries the category and the detail, so a client
-  renders its helper's refusal as that helper read it, instead of relabelling a
-  refusal as a failed step. A helper that dies before acknowledging is
-  `Unavailable`, naming the helper, how it ended, the handshake cause and its
-  stderr tail.
+  helper renders its category's sentence, sends it with the category, and the
+  client prints it verbatim, so a refusal is framed once, by the process that
+  read it: a busy store at a managed run's start stays `Unavailable` instead of
+  being wrapped in a refusal, and a supervisor that cannot admit its run carries
+  the kernel's own category (`RunnerError::RunAdmission`). A helper that dies
+  before acknowledging is `Unavailable`, naming the helper, how it ended, the
+  handshake cause and its stderr tail.
+- **A journal mode that is not Effigy's write-ahead log is `Broken`, not
+  `Corrupt`.** The file is readable, so an invariant failure never suggests
+  moving `kernel.db` aside.
 - **A racing first open of a checkout journal no longer refuses.** A held
   `checkout-binding` gate now defers: the binding is provenance, not a gate, so
   the journal opens by its location and the next effect writes the binding. A

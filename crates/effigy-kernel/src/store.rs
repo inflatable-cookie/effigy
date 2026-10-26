@@ -439,10 +439,13 @@ impl Store {
                 // Another connection keeps the old mode until it closes.
                 Ok(_) if !left.is_zero() => {}
                 Ok(mode) => {
-                    return Err(StoreError::Corrupt(format!(
-                        "it runs in journal mode {mode} instead of the write-ahead log Effigy \
-                         sets"
-                    )))
+                    // The file is readable; only its mode differs from what
+                    // Effigy sets, so this is an invariant failure and never
+                    // corruption that moves the store aside (effigy#360).
+                    return Err(StoreError::Broken(format!(
+                        "kernel.db runs in journal mode {mode} instead of the write-ahead log \
+                         Effigy sets"
+                    )));
                 }
                 Err(error) => match StoreError::from(error) {
                     StoreError::Busy { .. } if !left.is_zero() => {}

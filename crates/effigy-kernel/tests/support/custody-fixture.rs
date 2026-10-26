@@ -581,7 +581,7 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
     ) {
         Ok(run) => run,
         Err(error) => {
-            session.refused(error.category(), &error.to_string());
+            session.refused_message(error.category(), error.to_string());
             return Err(error);
         }
     };

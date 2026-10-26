@@ -1143,11 +1143,9 @@ fn launch(
         }
         Ok(Event::Refused { category, detail }) => {
             // The supervisor refused to admit its run and said why, with the
-            // category it read to a person. Nothing ran on its behalf.
-            return Err(RunError::reported(
-                category,
-                format!("supervisor admission: {detail}"),
-            ));
+            // category it read to a person. Nothing ran on its behalf, and its
+            // sentence is printed as it stands.
+            return Err(RunError::reported(category, detail));
         }
         Ok(_) => return Err(RunError::broken("invalid admission event")),
         Err(error) => return Err(helper_failed(SUPERVISOR, &mut result.child, &log, error)),
@@ -1354,19 +1352,26 @@ impl EngineSession {
         release_helper_log();
         Ok(())
     }
-    /// Admission refused: the client reports `category` and `detail`; nothing
-    /// ran. The detail also reaches the client's helper log tail, so a refusal
-    /// too long for one event frame still names itself.
+    /// Admission refused: the client reads the category's own sentence around
+    /// `detail`; nothing ran. The sentence also reaches the client's helper log
+    /// tail, so a refusal too long for one event frame still names itself.
     pub fn refused(&self, category: Category, detail: &str) {
-        let rendered = category.render("the run", detail);
-        let _ = writeln!(io::stderr(), "{rendered}");
-        let mut end = detail.len().min(3072);
-        while !detail.is_char_boundary(end) {
+        self.refused_message(category, category.render("the run", detail));
+    }
+
+    /// Admission refused with a sentence this process already rendered (its own
+    /// `RunError`, or a supervisor's refusal): the client prints it verbatim,
+    /// so a refusal is framed exactly once.
+    pub fn refused_message(&self, category: Category, message: impl Into<String>) {
+        let message = message.into();
+        let _ = writeln!(io::stderr(), "{message}");
+        let mut end = message.len().min(3072);
+        while !message.is_char_boundary(end) {
             end -= 1;
         }
         self.emit(&Event::Refused {
             category,
-            detail: detail[..end].into(),
+            detail: message[..end].into(),
         });
     }
     pub fn active(&self) {

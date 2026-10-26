@@ -59,6 +59,13 @@ pub enum RunnerError {
     RunKeyExists {
         run: String,
     },
+    /// A run could not be admitted. `message` is the sentence a person reads
+    /// and `category` is the kernel's own read of it, so a supervisor relaying
+    /// this refusal never calls a busy store a refusal (K4, effigy#360).
+    RunAdmission {
+        category: effigy_kernel::human::Category,
+        message: String,
+    },
     /// The admission hook denied, failed or timed out: the heavy task did
     /// not run (Q-006). Details carry `effigy.admission.v1`.
     AdmissionRefused {
@@ -265,6 +272,16 @@ impl RunnerError {
             }
             RunnerError::TaskLockConflict(_) => 75,
             _ => 1,
+        }
+    }
+
+    /// The kernel's category a person reads for this failure. The runner's own
+    /// errors refuse the request; an admission refusal keeps the category the
+    /// kernel read for the run it could not start.
+    pub fn category(&self) -> effigy_kernel::human::Category {
+        match self {
+            RunnerError::RunAdmission { category, .. } => *category,
+            _ => effigy_kernel::human::Category::Refused,
         }
     }
 

@@ -171,6 +171,13 @@ pub enum RunError {
     HeldBy(Vec<Holder>),
     /// Its environment is not active at the current generation: ensure it.
     EnvNotActive,
+    /// A helper's own refusal, with the category it read and the sentence it
+    /// already rendered. A parent prints it verbatim, so a helper's refusal is
+    /// never framed twice (K4).
+    Reported {
+        category: Category,
+        message: String,
+    },
 }
 impl RunError {
     /// The request was well formed and a rule said no; `rule` names the rule and
@@ -190,15 +197,14 @@ impl RunError {
     pub fn broken(check: impl Into<String>) -> Self {
         Self::Broken(check.into())
     }
-    /// The error a helper reported over its event pipe. A helper's category and
-    /// detail cross the process boundary, so a child's refusal is never
-    /// relabelled by its parent.
-    pub fn reported(category: Category, detail: impl Into<String>) -> Self {
-        let detail = detail.into();
-        match category {
-            Category::Refused => Self::Refused(detail),
-            Category::Unavailable => Self::Unavailable(detail),
-            Category::Broken => Self::Broken(detail),
+    /// The refusal a helper reported over its event pipe: the category it read
+    /// and the sentence it rendered, which this process prints verbatim. A
+    /// child's refusal is therefore never relabelled or re-framed by its
+    /// parent.
+    pub fn reported(category: Category, message: impl Into<String>) -> Self {
+        Self::Reported {
+            category,
+            message: message.into(),
         }
     }
     pub fn category(&self) -> Category {
@@ -212,6 +218,7 @@ impl RunError {
                 Category::Refused
             }
             Self::Unavailable(_) => Category::Unavailable,
+            Self::Reported { category, .. } => *category,
             Self::Broken(_) => Category::Broken,
         }
     }
@@ -258,6 +265,7 @@ impl std::fmt::Display for RunError {
             }
             Self::Store(error) => return write!(f, "{error}"),
             Self::Gate(error) => return write!(f, "{error}"),
+            Self::Reported { message, .. } => return f.write_str(message),
         };
         f.write_str(&self.category().render("the run", &detail))
     }

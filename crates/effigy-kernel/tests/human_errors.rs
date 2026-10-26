@@ -165,6 +165,30 @@ fn a_cancelled_run_reads_as_refused_and_names_the_signal() {
 }
 
 #[test]
+fn a_helper_refusal_prints_the_one_sentence_it_reported() {
+    // A supervisor's refusal is already one category with one next step. A
+    // parent prints it as it stands instead of framing it again, so a busy
+    // store at managed start never reads as a refusal around an unavailable
+    // store (effigy#360).
+    let refusals = [
+        RunError::from(StoreError::Busy {
+            waited: Duration::from_secs(30),
+            holder: Box::new(Observed::Unknown(UnknownReason::Busy {
+                phase: "store write".into(),
+            })),
+        }),
+        RunError::from(StoreError::Corrupt("bad page".into())),
+    ];
+    for refusal in refusals {
+        let sentence = refusal.to_string();
+        let reported = RunError::reported(refusal.category(), sentence.clone());
+        assert_eq!(reported.to_string(), sentence);
+        assert_eq!(reported.category(), refusal.category());
+        assert!(sentence.matches("retrying").count() <= 1, "{sentence}");
+    }
+}
+
+#[test]
 fn an_unreadable_store_names_the_store_and_the_next_step() {
     let observed: Observed<&str> = Observed::Unknown(UnknownReason::StoreUnreadable(
         "kernel.db is unreadable (the file is not a database)".to_owned(),

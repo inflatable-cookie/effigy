@@ -160,6 +160,29 @@ fn container_surface_selection_variants_render_stably() {
 }
 
 #[test]
+fn an_admission_refusal_carries_the_kernel_category() {
+    // effigy#360: a supervisor relays an admission failure with the kernel's
+    // own category, so a busy store at managed start is unavailable and never
+    // a refusal.
+    let unavailable = RunnerError::RunAdmission {
+        category: effigy_kernel::human::Category::Unavailable,
+        message: "`dev` could not be admitted: the state store could not proceed".into(),
+    };
+    assert_eq!(
+        unavailable.category(),
+        effigy_kernel::human::Category::Unavailable
+    );
+    assert_eq!(
+        unavailable.to_string(),
+        "`dev` could not be admitted: the state store could not proceed"
+    );
+    assert_eq!(
+        RunnerError::task_invocation("a request failure").category(),
+        effigy_kernel::human::Category::Refused
+    );
+}
+
+#[test]
 fn an_unknown_task_name_is_the_only_error_that_names_effigy_tasks() {
     // effigy#360: the invalid-request wording belongs to exactly this case, so
     // a held run, a revoked capability or a broken record never reads as one.

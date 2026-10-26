@@ -160,6 +160,7 @@ pub(super) fn fmt_runner_error(
             stderr,
         } => write_task_command_failure(f, command, code, stdout, stderr),
         RunnerError::TaskLockConflict(details) => write_lock_conflict(f, details),
+        RunnerError::RunAdmission { message, .. } => f.write_str(message),
         RunnerError::AdmissionRefused { detail, .. }
         | RunnerError::RunControl { detail, .. }
         | RunnerError::EnvironmentBusy { detail, .. } => f.write_str(detail),
