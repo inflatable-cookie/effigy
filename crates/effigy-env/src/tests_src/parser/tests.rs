@@ -238,76 +238,84 @@ fn parse_template_single_var() {
     );
 }
 
-#[test]
-fn parse_error_invalid_key() {
-    let err = parse_err("123BAD=value");
-    assert!(err.contains("invalid variable name"), "got: {err}");
+/// A schema source the parser must refuse, and the phrase its error must name.
+struct ParseErrorCase {
+    name: &'static str,
+    content: &'static str,
+    expected: &'static str,
 }
 
+/// Every malformed key, value expression and annotation is refused with the
+/// remedy in the message rather than dropped.
 #[test]
-fn parse_error_empty_key() {
-    let err = parse_err("=value");
-    assert!(err.contains("empty variable name"), "got: {err}");
-}
+fn malformed_schema_sources_are_refused_with_their_reason() {
+    let cases = [
+        ParseErrorCase {
+            name: "invalid-key",
+            content: "123BAD=value",
+            expected: "invalid variable name",
+        },
+        ParseErrorCase {
+            name: "empty-key",
+            content: "=value",
+            expected: "empty variable name",
+        },
+        ParseErrorCase {
+            name: "no-equals",
+            content: "NOEQUALS",
+            expected: "expected KEY=VALUE",
+        },
+        ParseErrorCase {
+            name: "unclosed-template",
+            content: "URL=https://${HOST/path",
+            expected: "unclosed",
+        },
+        ParseErrorCase {
+            name: "empty-template-variable",
+            content: "URL=prefix${}suffix",
+            expected: "empty variable reference",
+        },
+        ParseErrorCase {
+            name: "unknown-annotation",
+            content: "# @bogus\nPORT=3000",
+            expected: "unknown annotation",
+        },
+        ParseErrorCase {
+            name: "unknown-type",
+            content: "# @type=integer\nPORT=3000",
+            expected: "unknown type",
+        },
+        ParseErrorCase {
+            name: "min-requires-an-integer",
+            content: "# @type=string @min=abc\nNAME=hello",
+            expected: "@min requires a non-negative integer",
+        },
+        ParseErrorCase {
+            name: "bounds-require-string-type",
+            content: "# @type=port @min=2\nPORT=3000",
+            expected: "@min`/`@max` require `@type=string`",
+        },
+        ParseErrorCase {
+            name: "min-exceeds-max",
+            content: "# @type=string @min=8 @max=3\nNAME=hello",
+            expected: "cannot exceed",
+        },
+        ParseErrorCase {
+            name: "invalid-pattern-regex",
+            content: "# @pattern=[a-\nNAME=hello",
+            expected: "invalid `@pattern` regex",
+        },
+    ];
 
-#[test]
-fn parse_error_no_equals() {
-    let err = parse_err("NOEQUALS");
-    assert!(err.contains("expected KEY=VALUE"), "got: {err}");
-}
-
-#[test]
-fn parse_error_unclosed_template() {
-    let err = parse_err("URL=https://${HOST/path");
-    assert!(err.contains("unclosed"), "got: {err}");
-}
-
-#[test]
-fn parse_error_empty_template_var() {
-    let err = parse_err("URL=prefix${}suffix");
-    assert!(err.contains("empty variable reference"), "got: {err}");
-}
-
-#[test]
-fn parse_error_unknown_annotation() {
-    let err = parse_err("# @bogus\nPORT=3000");
-    assert!(err.contains("unknown annotation"), "got: {err}");
-}
-
-#[test]
-fn parse_error_unknown_type() {
-    let err = parse_err("# @type=integer\nPORT=3000");
-    assert!(err.contains("unknown type"), "got: {err}");
-}
-
-#[test]
-fn parse_error_string_constraint_requires_integer() {
-    let err = parse_err("# @type=string @min=abc\nNAME=hello");
-    assert!(
-        err.contains("@min requires a non-negative integer"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn parse_error_string_constraints_require_string_type() {
-    let err = parse_err("# @type=port @min=2\nPORT=3000");
-    assert!(
-        err.contains("@min`/`@max` require `@type=string`"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn parse_error_string_min_cannot_exceed_max() {
-    let err = parse_err("# @type=string @min=8 @max=3\nNAME=hello");
-    assert!(err.contains("cannot exceed"), "got: {err}");
-}
-
-#[test]
-fn parse_error_invalid_pattern_regex() {
-    let err = parse_err("# @pattern=[a-\nNAME=hello");
-    assert!(err.contains("invalid `@pattern` regex"), "got: {err}");
+    for case in cases {
+        let error = parse_err(case.content);
+        assert!(
+            error.contains(case.expected),
+            "{}: expected `{}` in `{error}`",
+            case.name,
+            case.expected
+        );
+    }
 }
 
 #[test]

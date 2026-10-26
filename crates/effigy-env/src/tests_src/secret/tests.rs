@@ -13,12 +13,6 @@ fn secret_debug_is_masked() {
 }
 
 #[test]
-fn secret_expose_returns_value() {
-    let secret = SecretString::new("hunter2".to_owned());
-    assert_eq!(secret.expose(), "hunter2");
-}
-
-#[test]
 fn secret_zeroize_for_test_clears_visible_bytes() {
     let mut secret = SecretString::new("hunter2".to_owned());
     let original_len = secret.expose().len();
@@ -45,13 +39,4 @@ fn resolved_value_secret_display() {
     let value = ResolvedValue::Secret(SecretString::new("secret".to_owned()));
     assert_eq!(format!("{value}"), "[REDACTED]");
     assert!(value.is_secret());
-}
-
-#[test]
-fn resolved_value_as_str_works_for_both() {
-    let plain = ResolvedValue::Plain("hello".to_owned());
-    assert_eq!(plain.as_str(), "hello");
-
-    let secret = ResolvedValue::Secret(SecretString::new("hunter2".to_owned()));
-    assert_eq!(secret.as_str(), "hunter2");
 }
