@@ -755,9 +755,15 @@ fn acquire_and_publish(
     for (name, selection) in selections {
         let pinned = pins.get(name).cloned();
         let mut reason = match plans.get(name) {
-            // A source whose v0.14.1 bytes this run just imported already has a
-            // usable pin: it is neither acquired nor refused, on any path.
-            Some(SourcePlan::Acquire(_)) if imported_now.contains(name) => None,
+            // A task run that just imported this source's v0.14.1 bytes already
+            // has a usable pin, so it is neither acquired nor refused. A
+            // Prepare path still refreshes what is behind: the import is its
+            // safety net if the update fails.
+            Some(SourcePlan::Acquire(_))
+                if mode == Mode::Missing && imported_now.contains(name) =>
+            {
+                None
+            }
             Some(SourcePlan::Acquire(reason)) => Some(*reason),
             _ => None,
         };
