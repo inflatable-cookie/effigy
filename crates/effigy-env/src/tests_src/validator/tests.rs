@@ -286,7 +286,10 @@ fn typed_and_patterned_entries_validate_by_type() {
             Expectation::Valid => {
                 assert!(errors.is_empty(), "{}: {errors:?}", case.name);
             }
-            Expectation::Invalid { errors: count, expected } => {
+            Expectation::Invalid {
+                errors: count,
+                expected,
+            } => {
                 assert_eq!(errors.len(), count, "{}: {errors:?}", case.name);
                 if let Some(fragment) = expected {
                     assert!(

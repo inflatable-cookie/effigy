@@ -20,7 +20,8 @@ mod data_from;
 mod policies;
 mod volumes_reports;
 
-pub(super) fn temp_repo(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-containers-{name}-"))
+pub(super) fn temp_repo(name: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-containers-{name}-"))
         .expect("fixture directory")
 }
 

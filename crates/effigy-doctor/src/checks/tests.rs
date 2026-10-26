@@ -35,4 +35,3 @@ fn doctor_check_registry_progress_labels_are_stable() {
         ]
     );
 }
-

@@ -609,7 +609,15 @@ run = [{ run = "true", task = "validate" }]
 [test.suites.empty_route]
 run = [{ task = "" }]
 "#,
-        evidence: &["test.suites.empty_command.run", "test.suites.empty_array.run", "test.suites.missing_run.run", "test.suites.bad_step.run[1]", "test.suites.missing_route.run[0]", "test.suites.multiple_routes.run[0]", "test.suites.empty_route.run[0].task"],
+        evidence: &[
+            "test.suites.empty_command.run",
+            "test.suites.empty_array.run",
+            "test.suites.missing_run.run",
+            "test.suites.bad_step.run[1]",
+            "test.suites.missing_route.run[0]",
+            "test.suites.multiple_routes.run[0]",
+            "test.suites.empty_route.run[0].task",
+        ],
         remediation: &[],
         findings: None,
     },
@@ -670,7 +678,11 @@ kind = "npm"
 task = "qa"
 stage = "afterwards"
 "#,
-        evidence: &["release.identities.core.kind", "release.targets.npm.kind", "release.gates.qa.stage"],
+        evidence: &[
+            "release.identities.core.kind",
+            "release.targets.npm.kind",
+            "release.gates.qa.stage",
+        ],
         remediation: &[],
         findings: None,
     },

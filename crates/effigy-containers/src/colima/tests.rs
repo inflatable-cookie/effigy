@@ -259,7 +259,9 @@ fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos())).expect("fixture directory");
+            .as_nanos()
+    ))
+    .expect("fixture directory");
     std::fs::create_dir_all(&root).expect("mkdir home");
     let previous_home = std::env::var_os("HOME");
     unsafe {
@@ -404,7 +406,9 @@ fn managed_drift_reads_the_profiles_own_config_file() {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos())).expect("fixture directory");
+            .as_nanos()
+    ))
+    .expect("fixture directory");
     let profile_dir = root.join(".colima/effigy-release");
     std::fs::create_dir_all(&profile_dir).expect("mkdir profile");
     std::fs::write(profile_dir.join("colima.yaml"), "forwardAgent: false\n").expect("write config");
@@ -468,7 +472,9 @@ fn managed_profile_prepare_writes_both_agent_forwarding_keys() {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos())).expect("fixture directory");
+            .as_nanos()
+    ))
+    .expect("fixture directory");
     std::fs::create_dir_all(&root).expect("mkdir home");
     let previous_home = std::env::var_os("HOME");
     unsafe {

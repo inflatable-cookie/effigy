@@ -180,7 +180,9 @@ mod hydration_tests {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos())).expect("fixture directory");
+                .as_nanos()
+        ))
+        .expect("fixture directory");
         let app = root.join("app");
         std::fs::create_dir_all(&app).unwrap();
         std::fs::write(root.join("bun.lock"), "").unwrap();

@@ -837,5 +837,4 @@ fn end_to_end_php_stack_assembles_every_service_asset() {
     assert!(assembly.volumes.iter().any(|volume| volume.name
         == "client-project-app-var-www-html-node-modules"
         && !volume.persist));
-
 }

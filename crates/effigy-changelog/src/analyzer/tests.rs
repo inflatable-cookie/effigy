@@ -221,13 +221,21 @@ fn suggested_bumps_follow_the_category_and_the_base_version() {
         let analysis = analyze_str(case.input);
         assert_eq!(analysis.suggested_bump, case.bump, "{}", case.name);
         assert_eq!(
-            analysis.current_version.as_ref().map(ToString::to_string).as_deref(),
+            analysis
+                .current_version
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
             case.current,
             "{}",
             case.name
         );
         assert_eq!(
-            analysis.next_version.as_ref().map(ToString::to_string).as_deref(),
+            analysis
+                .next_version
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
             case.next,
             "{}",
             case.name

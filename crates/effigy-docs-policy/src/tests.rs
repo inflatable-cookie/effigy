@@ -26,7 +26,9 @@ impl DocsFixture {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos())).expect("fixture directory");
+                .as_nanos()
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir");
         Self { root }
     }

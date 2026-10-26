@@ -526,8 +526,10 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    fn temp_root(label: &str) -> PathBuf {    let root = effigy_test_support::Fixture::process_lifetime(&format!("effigy-ownership-{label}-"))
-            .expect("fixture directory");
+    fn temp_root(label: &str) -> PathBuf {
+        let root =
+            effigy_test_support::Fixture::process_lifetime(&format!("effigy-ownership-{label}-"))
+                .expect("fixture directory");
         fs::create_dir_all(root.join("infra/dev")).expect("mkdir");
         root
     }

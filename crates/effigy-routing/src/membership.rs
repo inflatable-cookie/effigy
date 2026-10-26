@@ -754,7 +754,8 @@ mounts = [{ source = "../inline", catalog = true }]
         let _ = fs::remove_dir_all(fixture);
     }
 
-    fn temp_root(prefix: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("{prefix}-"))
+    fn temp_root(prefix: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!("{prefix}-"))
             .expect("fixture directory")
     }
 }

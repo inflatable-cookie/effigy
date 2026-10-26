@@ -6,7 +6,8 @@ use super::{
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn temp_dir() -> PathBuf {    effigy_test_support::Fixture::process_lifetime("effigy-state-artifact-")
+fn temp_dir() -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime("effigy-state-artifact-")
         .expect("fixture directory")
 }
 

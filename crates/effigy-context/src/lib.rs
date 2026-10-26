@@ -414,7 +414,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    fn temp_repo() -> PathBuf {    let root = effigy_test_support::Fixture::process_lifetime("effigy-context-")
+    fn temp_repo() -> PathBuf {
+        let root = effigy_test_support::Fixture::process_lifetime("effigy-context-")
             .expect("fixture directory");
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"ctx\"\n").expect("write manifest");
         root
@@ -476,8 +477,11 @@ mod tests {
 
     #[test]
     fn lossy_capture_falls_back_to_cwd_when_root_is_unresolved() {
-        let root =
-            effigy_test_support::Fixture::process_lifetime(&format!("effigy-context-no-root-{}", std::process::id())).expect("fixture directory");
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-context-no-root-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir unresolved root");
 
         let context = EffigyRuntimeContext::builder()

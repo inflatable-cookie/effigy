@@ -159,7 +159,8 @@ fn portfolio_error(path: &Path, detail: impl Into<String>) -> ManifestError {
 mod tests {
     use super::*;
 
-    fn temp_dir(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-portfolio-{name}-"))
+    fn temp_dir(name: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-portfolio-{name}-"))
             .expect("fixture directory")
     }
 

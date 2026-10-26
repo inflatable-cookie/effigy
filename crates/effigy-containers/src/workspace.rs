@@ -469,7 +469,9 @@ mod optional_source_tests {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos())).expect("fixture directory");
+                .as_nanos()
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir temp dir");
         path
     }

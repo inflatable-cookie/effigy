@@ -18,69 +18,68 @@ mod record;
 pub(crate) fn plan_prepare_mutations(
     plan: &ReleasePipelinePlan,
 ) -> Result<Vec<FileMutationPlan>, ReleaseError> {
-        let mut mutations = Vec::new();
-        for identity in plan.identities.clone() {
-            if identity.kind != IdentityKind::Semver {
-                continue;
-            }
-            let (Some(source), Some(next)) = (&identity.version_source, &identity.next_version)
-            else {
-                continue;
-            };
-            if identity.current_version.as_ref() == Some(next) {
-                continue;
-            }
-            let before = std::fs::read_to_string(&source.path).map_err(|error| {
-                ReleaseError::TaskInvocation(format!(
-                    "failed to read release version file {}: {error}",
-                    source.path.display()
-                ))
-            })?;
-            let after = render_updated_version_contents(source, next)?;
-            mutations.push(version_write_mutation(
-                source,
-                &before,
+    let mut mutations = Vec::new();
+    for identity in plan.identities.clone() {
+        if identity.kind != IdentityKind::Semver {
+            continue;
+        }
+        let (Some(source), Some(next)) = (&identity.version_source, &identity.next_version) else {
+            continue;
+        };
+        if identity.current_version.as_ref() == Some(next) {
+            continue;
+        }
+        let before = std::fs::read_to_string(&source.path).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to read release version file {}: {error}",
+                source.path.display()
+            ))
+        })?;
+        let after = render_updated_version_contents(source, next)?;
+        mutations.push(version_write_mutation(
+            source,
+            &before,
+            &after,
+            identity.current_version.as_ref(),
+            next,
+        ));
+    }
+
+    let semver = semver_identities(plan);
+    let Some(primary) = semver
+        .first()
+        .and_then(|identity| identity.next_version.clone())
+    else {
+        return Ok(mutations);
+    };
+
+    if plan.changelog_in_use {
+        let raw = std::fs::read_to_string(&plan.changelog_path).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to read changelog {}: {error}",
+                plan.changelog_path.display()
+            ))
+        })?;
+        let parsed = changelog::parse(&raw)
+            .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+        let date = Utc::now().date_naive().to_string();
+        let after = render_prepared_changelog_contents(&parsed, &primary, &date)?;
+        if after != raw {
+            mutations.push(changelog_write_mutation(
+                &plan.changelog_path,
+                &raw,
                 &after,
-                identity.current_version.as_ref(),
-                next,
+                &primary,
+                &date,
             ));
         }
+    }
 
-        let semver = semver_identities(plan);
-        let Some(primary) = semver
-            .first()
-            .and_then(|identity| identity.next_version.clone())
-        else {
-            return Ok(mutations);
-        };
-
-        if plan.changelog_in_use {
-            let raw = std::fs::read_to_string(&plan.changelog_path).map_err(|error| {
-                ReleaseError::TaskInvocation(format!(
-                    "failed to read changelog {}: {error}",
-                    plan.changelog_path.display()
-                ))
-            })?;
-            let parsed = changelog::parse(&raw)
-                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
-            let date = Utc::now().date_naive().to_string();
-            let after = render_prepared_changelog_contents(&parsed, &primary, &date)?;
-            if after != raw {
-                mutations.push(changelog_write_mutation(
-                    &plan.changelog_path,
-                    &raw,
-                    &after,
-                    &primary,
-                    &date,
-                ));
-            }
-        }
-
-        let sync_files = plan_sync_files(plan);
-        if !sync_files.is_empty() {
-            for identity in semver.iter().skip(1) {
-                if identity.next_version.as_ref() != Some(&primary) {
-                    return Err(ReleaseError::TaskInvocation(format!(
+    let sync_files = plan_sync_files(plan);
+    if !sync_files.is_empty() {
+        for identity in semver.iter().skip(1) {
+            if identity.next_version.as_ref() != Some(&primary) {
+                return Err(ReleaseError::TaskInvocation(format!(
                         "release identities `{}` and `{}` have different next versions ({primary} and {}), and the release declares `sync-files`; a lockfile carries one version, so remove `release.sync-files` or give the identities the same version with `follows`",
                         semver[0].name,
                         identity.name,
@@ -90,17 +89,16 @@ pub(crate) fn plan_prepare_mutations(
                             .map(ToString::to_string)
                             .unwrap_or_else(|| "none".to_owned())
                     )));
-                }
             }
-            mutations.extend(build_sync_mutations(
-                &plan.repo_root,
-                &sync_files,
-                &primary,
-            )?);
         }
-        Ok(mutations)
+        mutations.extend(build_sync_mutations(
+            &plan.repo_root,
+            &sync_files,
+            &primary,
+        )?);
     }
-
+    Ok(mutations)
+}
 
 /// The `semver` identities a pipeline plans versions for (contract 054 §4.3).
 fn semver_identities(plan: &ReleasePipelinePlan) -> Vec<ReleaseIdentityPlan> {
@@ -1884,12 +1882,7 @@ fn version_write_mutation(
                 .unwrap_or_else(|| "unknown".to_owned())
         ),
         after_preview: format!("version {next}"),
-        detail_lines: build_version_mutation_detail_lines(
-            source,
-            next,
-            before,
-            after,
-        ),
+        detail_lines: build_version_mutation_detail_lines(source, next, before, after),
         diff_preview: crate::build_diff_preview(before, after),
         apply: FileMutationApply::Write {
             after_contents: after.to_owned(),

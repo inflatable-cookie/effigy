@@ -1,14 +1,14 @@
 use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
-    apply_release_mutations, collect_release_gate_run, collect_release_status,
-    gate_outcome_word, git_create_tag, git_modified_files,
-    is_optional_next_version_blocker, load_release_config, load_release_context,
-    plan_release_pipeline, render_release_gate_run_json, render_release_gate_run_text,
-    render_release_status_json, render_release_status_text, restore_mutation_snapshots,
-    run::plan_prepare_mutations, run_release_gates, run_release_gates_with_lookup,
-    run_release_gates_with_observer, run_release_gates_with_progress, snapshot_mutation_paths,
-    test_support, FileMutationApply, FileMutationPlan, GateExecutionReport, GateObserver,
-    GateResult, HostedEvidenceLookup, HostedEvidenceSpec, HostedRun, ResolvedGate,
+    apply_release_mutations, collect_release_gate_run, collect_release_status, gate_outcome_word,
+    git_create_tag, git_modified_files, is_optional_next_version_blocker, load_release_config,
+    load_release_context, plan_release_pipeline, render_release_gate_run_json,
+    render_release_gate_run_text, render_release_status_json, render_release_status_text,
+    restore_mutation_snapshots, run::plan_prepare_mutations, run_release_gates,
+    run_release_gates_with_lookup, run_release_gates_with_observer,
+    run_release_gates_with_progress, snapshot_mutation_paths, test_support, FileMutationApply,
+    FileMutationPlan, GateExecutionReport, GateObserver, GateResult, HostedEvidenceLookup,
+    HostedEvidenceSpec, HostedRun, ResolvedGate,
 };
 use std::collections::BTreeMap;
 
@@ -16,7 +16,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn temp_repo(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-release-{name}-"))
+fn temp_repo(name: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-release-{name}-"))
         .expect("fixture directory")
 }
 
@@ -281,7 +282,8 @@ serde = "1"
     let plan = plan_release_pipeline(&root).expect("release plan");
     assert!(plan.ready, "{:?}", plan.blockers);
     assert_eq!(
-        plan.primary_identity().and_then(|identity| identity.next_version.clone()),
+        plan.primary_identity()
+            .and_then(|identity| identity.next_version.clone()),
         Some(semver::Version::new(0, 3, 2))
     );
     let mutations = plan_prepare_mutations(&plan).expect("prepare mutations");

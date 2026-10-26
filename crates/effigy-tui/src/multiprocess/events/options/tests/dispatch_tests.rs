@@ -168,6 +168,7 @@ fn quit_hotkey_requests_quit() {
     assert!(matches!(control, Some(LoopControl::Quit)));
 }
 
-fn export_test_root(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-tui-{name}-"))
+fn export_test_root(name: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-tui-{name}-"))
         .expect("fixture directory")
 }

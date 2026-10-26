@@ -339,7 +339,8 @@ fn resolve_capture_request_rejects_missing_required_fields_without_profile() {
     );
 }
 
-fn temp_state_repo(label: &str) -> std::path::PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-state-{label}-"))
+fn temp_state_repo(label: &str) -> std::path::PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-state-{label}-"))
         .expect("fixture directory")
 }
 

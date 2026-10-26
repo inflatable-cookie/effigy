@@ -35,7 +35,13 @@ fn no_context_even_for_tasks() {
 #[test]
 fn effigy_controls_are_always_host_native() {
     for command in [
-        "doctor", "container", "gateway", "release", "tasks", "help", "version",
+        "doctor",
+        "container",
+        "gateway",
+        "release",
+        "tasks",
+        "help",
+        "version",
     ] {
         let decision = route(command, &running_context(), &no_overrides());
         assert!(decision.is_host(), "`{command}` must run on the host");

@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
-        #[test]
+    #[test]
     fn scope_reads_leave_a_fresh_ephemeral_checkout_uninitialized() {
         let fixture = tempfile::tempdir().unwrap();
         let root = fixture.path().join("checkout");

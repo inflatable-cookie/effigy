@@ -134,7 +134,7 @@ mod tests {
 
     static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-        struct ScopedEnvVar {
+    struct ScopedEnvVar {
         key: &'static str,
         previous: Option<String>,
         _lock: std::sync::MutexGuard<'static, ()>,

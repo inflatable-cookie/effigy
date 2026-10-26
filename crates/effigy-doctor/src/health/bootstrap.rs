@@ -667,7 +667,8 @@ mod tests {
         load_task_manifest(&path).expect("manifest")
     }
 
-    fn temp_root(label: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!(
+    fn temp_root(label: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-doctor-health-bootstrap-{label}-"
         ))
         .expect("fixture directory")

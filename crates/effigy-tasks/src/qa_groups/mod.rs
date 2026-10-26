@@ -578,7 +578,11 @@ members = [{ id = "tests", kind = "test", surface = "published", task = "smoke",
 
     #[test]
     fn group_resolution_never_falls_through_to_same_named_task_or_draft() {
-        let base = effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-sel-{}", std::process::id())).expect("fixture directory");
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-sel-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let catalogs = two_catalog_fixture(&base);
@@ -596,7 +600,11 @@ members = [{ id = "tests", kind = "test", surface = "published", task = "smoke",
 
     #[test]
     fn unqualified_group_resolution_prefers_cwd_nearest_then_shallowest() {
-        let base = effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-cwd-{}", std::process::id())).expect("fixture directory");
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-cwd-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let catalogs = two_catalog_fixture(&base);
@@ -618,7 +626,11 @@ members = [{ id = "tests", kind = "test", surface = "published", task = "smoke",
 
     #[test]
     fn ambiguous_group_names_error_with_qualified_candidates() {
-        let base = effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-amb-{}", std::process::id())).expect("fixture directory");
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-amb-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("elsewhere")).expect("mkdir");
         // Two same-depth catalogs both declaring the group name; cwd is in
@@ -659,7 +671,11 @@ members = [{ id = "tests", kind = "test", surface = "published", task = "t", tar
 
     #[test]
     fn temporary_file_requires_matching_name_declared_catalog_and_root_containment() {
-        let base = effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-tmp-{}", std::process::id())).expect("fixture directory");
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-tmp-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("config/qa-groups")).expect("mkdir");
         fs::write(
@@ -724,8 +740,11 @@ members = [{ id = "one", kind = "proof", surface = "published", task = "smoke", 
 
     #[test]
     fn temporary_file_rejects_a_maintained_definition_end_to_end() {
-        let base =
-            effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-maint-file-{}", std::process::id())).expect("fixture directory");
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-maint-file-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let file = base.join("wrong-place.toml");
@@ -752,7 +771,11 @@ members = [{ id = "m", kind = "test", surface = "published", task = "t", targets
 
     #[test]
     fn temporary_file_loader_rejects_outside_root_and_bad_shape() {
-        let base = effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-out-{}", std::process::id())).expect("fixture directory");
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-out-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let outside_directory = effigy_test_support::Fixture::process_lifetime(&format!(
@@ -781,7 +804,11 @@ members = [{ id = "m", kind = "test", surface = "published", task = "t", targets
 
     #[test]
     fn temporary_file_with_unknown_catalog_alias_fails_selection() {
-        let base = effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-alias-{}", std::process::id())).expect("fixture directory");
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-alias-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let file = base.join("one.toml");

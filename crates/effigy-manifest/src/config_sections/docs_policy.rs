@@ -563,7 +563,9 @@ mod committed_sources_tests {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
-                .as_nanos())).expect("fixture directory");
+                .as_nanos()
+        ))
+        .expect("fixture directory");
         std::fs::create_dir_all(&root).expect("mkdir");
         root
     }

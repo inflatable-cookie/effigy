@@ -47,7 +47,8 @@ impl Drop for EnvGuard {
     }
 }
 
-fn temp_repo(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!(
+fn temp_repo(name: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-sequence-env-resolution-{name}-"
     ))
     .expect("fixture directory")

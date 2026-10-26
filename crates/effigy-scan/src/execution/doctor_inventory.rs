@@ -830,10 +830,7 @@ fn git_budget_error() -> ScanError {
 }
 
 #[cfg(unix)]
-fn terminate_git_tree(
-    pid: u32,
-    #[cfg(test)] evidence: Option<&DoctorGitProcessEvidence>,
-) {
+fn terminate_git_tree(pid: u32, #[cfg(test)] evidence: Option<&DoctorGitProcessEvidence>) {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
     let Ok(pid) = i32::try_from(pid) else {

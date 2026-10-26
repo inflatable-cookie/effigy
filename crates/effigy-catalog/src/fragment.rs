@@ -762,5 +762,4 @@ mod tests {
         );
         assert_eq!(bundled_fragment_name_from_asset_path("service.toml"), None);
     }
-
-    }
+}

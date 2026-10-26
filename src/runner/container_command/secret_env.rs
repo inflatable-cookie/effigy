@@ -810,7 +810,7 @@ catalog = "php-fpm"
         root
     }
 
-        struct ScopedEnvVar {
+    struct ScopedEnvVar {
         key: String,
         previous: Option<String>,
         _lock: crate::contract_test_support::ReentrantTestLockGuard,

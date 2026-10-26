@@ -749,8 +749,10 @@ mod tests {
         ExecutionSelectionPlan, ExecutionSurface, TaskExecutionRequestBuilder,
     };
 
-    fn temp_repo(name: &str) -> PathBuf {    let root = effigy_test_support::Fixture::process_lifetime(&format!("effigy-execution-{name}-"))
-            .expect("fixture directory");
+    fn temp_repo(name: &str) -> PathBuf {
+        let root =
+            effigy_test_support::Fixture::process_lifetime(&format!("effigy-execution-{name}-"))
+                .expect("fixture directory");
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"ctx\"\n").expect("manifest");
         root
     }

@@ -264,7 +264,7 @@ mod tests {
         ACTIVE_VERSION_ENV,
     };
 
-        #[test]
+    #[test]
     fn read_active_version_file_trims_and_ignores_empty_values() {
         let temp = tempfile::tempdir().expect("tempdir");
         let executable = temp.path().join("effigy");
@@ -607,7 +607,7 @@ mod tests {
 
     static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-        /// Restores one process-environment key while holding the crate env lock.
+    /// Restores one process-environment key while holding the crate env lock.
     struct ProcessEnvRestore {
         key: &'static str,
         previous: Option<String>,

@@ -268,7 +268,7 @@ mod tests {
         assert!(!process_start_identity_matches(u32::MAX - 1, "whatever"));
     }
 
-        #[test]
+    #[test]
     fn boot_session_uuid_parser_rejects_missing_failed_and_malformed() {
         use super::parse_boot_session_uuid;
         let canonical = "5c42afa5-6f5c-420b-b203-86a715e66c68";

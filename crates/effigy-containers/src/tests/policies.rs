@@ -927,7 +927,9 @@ fn validate_container_policy_rejects_mounts_outside_repo() {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos())).expect("fixture directory");
+            .as_nanos()
+    ))
+    .expect("fixture directory");
     let root = parent.join("repo");
     let outside = parent.join("outside");
     fs::create_dir_all(&root).expect("mkdir repo");

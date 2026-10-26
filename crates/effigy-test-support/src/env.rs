@@ -16,7 +16,9 @@ fn process_lock() -> &'static Mutex<()> {
 
 /// Take the process environment lock for the caller's own scoped mutations.
 pub fn lock() -> MutexGuard<'static, ()> {
-    process_lock().lock().unwrap_or_else(|poison| poison.into_inner())
+    process_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 /// Whether the environment lock is currently free, without waiting.
@@ -82,7 +84,10 @@ mod tests {
         let first = ScopedEnv::set(KEY, "first");
         let (attempted_tx, attempted_rx) = mpsc::channel();
         let second = std::thread::spawn(move || {
-            assert!(try_lock().is_none(), "a held guard must exclude a second mutator");
+            assert!(
+                try_lock().is_none(),
+                "a held guard must exclude a second mutator"
+            );
             attempted_tx.send(()).unwrap();
             let _second = ScopedEnv::set(KEY, "second");
             assert_eq!(std::env::var(KEY).unwrap(), "second");

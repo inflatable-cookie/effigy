@@ -107,5 +107,4 @@ mod tests {
         assert_eq!(sanitize_cache_segment("host:path\\leaf"), "host_path_leaf");
         assert_eq!(sanitize_cache_segment(""), "_");
     }
-
-    }
+}

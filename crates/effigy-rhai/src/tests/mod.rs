@@ -32,7 +32,8 @@ mod storage_retirement;
 mod string_values;
 mod utility;
 
-fn temp_root(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-rhai-{name}-"))
+fn temp_root(name: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-rhai-{name}-"))
         .expect("fixture directory")
 }
 

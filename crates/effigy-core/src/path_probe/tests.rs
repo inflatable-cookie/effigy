@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use super::*;
 
-fn make_temp_dir(test_name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-path-probe-{test_name}-"))
+fn make_temp_dir(test_name: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-path-probe-{test_name}-"))
         .expect("fixture directory")
 }
 

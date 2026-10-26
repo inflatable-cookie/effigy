@@ -100,7 +100,6 @@ fn ratchet_counts_every_construct_and_loophole() {
         counts("use std::fs; fn ordinary_file(){fs::write(\"user.txt\",\"data\");}").is_empty()
     );
     assert!(scan_source("this is not rust", false).is_err());
-
 }
 /// Merged proof: ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total, ratchet_type_aliases_function_references_and_typed_parameters_are_counted, ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files.
 #[test]
@@ -174,7 +173,6 @@ fn ratchet_compares_baselines_and_semantics() {
     assert_eq!(found.production["src/cache/store.rs"]["std::fs::write"], 1);
     assert!(!found.production.contains_key("src/ordinary/store.rs"));
     assert!(counts("/// pkill and .effigy are documentation, not code.\nfn f(){std::fs::write(\"user.txt\",\"data\");}").is_empty());
-
 }
 /// Merged proof: ratchet_vault_parameter_paths_cannot_hide_raw_writes, ratchet_accounts_for_external_boundaries_by_name_and_ceiling, ratchet_inventory_refuses_an_external_boundary_above_its_ceiling.
 #[test]
@@ -258,5 +256,4 @@ fn ratchet_reports_each_command_shape() {
     .expect("source");
     let error = inventory(root.path()).expect_err("two raw writes exceed the ceiling");
     assert!(error.contains("exceeds its accounted ceiling"), "{error}");
-
 }

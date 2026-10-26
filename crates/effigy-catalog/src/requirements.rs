@@ -169,7 +169,7 @@ mod tests {
         assert!(check(toml, "0.15.0").is_ok());
     }
 
-        #[test]
+    #[test]
     fn newer_schema_and_unknown_capability_are_refused() {
         let error = check(
             "[requires]\neffigy = \">=0.17\"\nschema = 2\ncapabilities = [\"gpu\"]\n",

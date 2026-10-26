@@ -4,7 +4,8 @@ mod structured_mount_tests {
     use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};
     use std::fs;
 
-    fn temp_dir(label: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-structured-mount-{label}-"))
+    fn temp_dir(label: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-structured-mount-{label}-"))
             .expect("fixture directory")
     }
 
@@ -167,7 +168,9 @@ mod library_mount_tests {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos())).expect("fixture directory");
+                .as_nanos()
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir");
         path
     }
@@ -257,7 +260,9 @@ mod host_git_mount_tests {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos())).expect("fixture directory");
+                .as_nanos()
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir");
         path
     }
@@ -789,7 +794,7 @@ mod host_git_mount_tests {
         assert!(mount.is_none());
     }
 
-        struct RestoreEnvironmentVariable {
+    struct RestoreEnvironmentVariable {
         variable: &'static str,
         previous: Option<std::ffi::OsString>,
         _lock: std::sync::MutexGuard<'static, ()>,
@@ -1015,7 +1020,9 @@ mod worktree_git_mount_tests {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos())).expect("fixture directory");
+                .as_nanos()
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir");
         path
     }

@@ -7,7 +7,8 @@ use crate::init::scaffold;
 use std::fs;
 use std::path::PathBuf;
 
-fn temp_root(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-init-inventory-{name}-"))
+fn temp_root(name: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-init-inventory-{name}-"))
         .expect("fixture directory")
 }
 

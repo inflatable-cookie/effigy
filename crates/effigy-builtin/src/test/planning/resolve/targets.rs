@@ -269,7 +269,9 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
                 .as_nanos(),
-            COUNTER.fetch_add(1, Ordering::Relaxed),)).expect("fixture directory");
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir temp manifest root");
         let path = root.join("effigy.toml");
         fs::write(&path, body).expect("write manifest");

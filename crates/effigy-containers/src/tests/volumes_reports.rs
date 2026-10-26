@@ -8,7 +8,9 @@ fn load_workspace_ownership_targets_collects_named_volume_targets() {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos())).expect("fixture directory");
+            .as_nanos()
+    ))
+    .expect("fixture directory");
     let root = parent.join("workspace-app-reference");
     let platform = parent.join("platform");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");

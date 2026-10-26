@@ -794,7 +794,7 @@ mod tests {
         assert_eq!(plan.change, IgnoreFileChange::None);
     }
 
-        #[test]
+    #[test]
     fn foreign_registration_is_not_claimed_and_conflicts_are_refused() {
         let temp = tempdir().expect("tempdir");
         let repo = absolute(temp.path());
@@ -927,5 +927,4 @@ mod tests {
             & 0o777;
         assert_eq!(lock_mode, 0o600);
     }
-
-    }
+}

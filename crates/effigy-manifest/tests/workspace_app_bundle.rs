@@ -231,7 +231,9 @@ fn workspace_app_bundle_renders_defaults_overrides_and_bootstraps() {
         let health_tasks: Vec<&str> = health_steps
             .iter()
             .map(|step| match step {
-                ManifestManagedRunStep::Step(step) => step.task.as_deref().expect("health step task"),
+                ManifestManagedRunStep::Step(step) => {
+                    step.task.as_deref().expect("health step task")
+                }
                 ManifestManagedRunStep::Command(_) => {
                     panic!("health should not use bare command steps")
                 }
@@ -249,14 +251,17 @@ fn workspace_app_bundle_renders_defaults_overrides_and_bootstraps() {
         );
 
         let validate = manifest.tasks.get("validate").expect("validate task");
-        let ManifestManagedRun::Sequence(validate_steps) = validate.run.as_ref().expect("validate run")
+        let ManifestManagedRun::Sequence(validate_steps) =
+            validate.run.as_ref().expect("validate run")
         else {
             panic!("validate should use a managed sequence");
         };
         let validate_tasks: Vec<&str> = validate_steps
             .iter()
             .map(|step| match step {
-                ManifestManagedRunStep::Step(step) => step.task.as_deref().expect("validate step task"),
+                ManifestManagedRunStep::Step(step) => {
+                    step.task.as_deref().expect("validate step task")
+                }
                 ManifestManagedRunStep::Command(_) => {
                     panic!("validate should not use bare command steps")
                 }
@@ -282,7 +287,9 @@ fn workspace_app_bundle_renders_defaults_overrides_and_bootstraps() {
             .iter()
             .map(|step| match step {
                 ManifestManagedRunStep::Step(step) => step.task.as_deref().expect("qa step task"),
-                ManifestManagedRunStep::Command(_) => panic!("qa should not use bare command steps"),
+                ManifestManagedRunStep::Command(_) => {
+                    panic!("qa should not use bare command steps")
+                }
             })
             .collect();
         assert_eq!(

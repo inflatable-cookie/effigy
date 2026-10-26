@@ -136,4 +136,3 @@ fn render_conditional_depends_on() {
     assert!(result.contains("depends_on:"));
     assert!(result.contains("database:"));
 }
-

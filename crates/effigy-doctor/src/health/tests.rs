@@ -55,10 +55,9 @@ impl DoctorRuntimePorts for RecordingPorts {
     }
 }
 
-fn temp_root(label: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!(
-        "effigy-doctor-health-task-{label}-"
-    ))
-    .expect("fixture directory")
+fn temp_root(label: &str) -> PathBuf {
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-doctor-health-task-{label}-"))
+        .expect("fixture directory")
 }
 
 fn write(path: &Path, contents: &str) {

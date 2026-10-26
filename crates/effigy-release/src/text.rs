@@ -484,4 +484,3 @@ pub fn render_release_gate_run_text(run: &ReleaseGateRun) -> String {
 
     lines.join("\n")
 }
-

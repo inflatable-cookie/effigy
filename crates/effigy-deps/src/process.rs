@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(output.status, Some(0));
     }
 
-        #[test]
+    #[test]
     fn failing_child_reports_process_failure_not_timeout() {
         let process = BoundedReadOnlyProcess::new(
             Instant::now()
