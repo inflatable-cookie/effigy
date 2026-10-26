@@ -237,8 +237,16 @@ fn prepare(
         .map(|(name, selection)| {
             let plan = match mode {
                 Mode::Sync => SourcePlan::Acquire(RefreshReason::Missing),
-                Mode::Missing if old.sources.contains_key(name) => SourcePlan::Keep,
-                Mode::Missing => SourcePlan::Acquire(RefreshReason::Missing),
+                Mode::Missing => match old.sources.get(name) {
+                    // A lock entry whose recorded object is gone is not a usable
+                    // pin: a copied checkout brings the lock without its objects,
+                    // and the read path would refuse `pinned source` instead of
+                    // running the task (contract 020 §Behaviour rule 1).
+                    Some(pin) if parent(&manifest).join(".effigy").join(&pin.object).is_dir() => {
+                        SourcePlan::Keep
+                    }
+                    _ => SourcePlan::Acquire(RefreshReason::Missing),
+                },
                 Mode::Refresh => plan_source(
                     &manifest,
                     name,

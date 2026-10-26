@@ -802,23 +802,93 @@ fn a_plain_task_run_acquires_only_the_missing_pins() {
     assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
 }
 
-/// Read-only paths keep today's refusal and acquire nothing, even in a fresh
-/// checkout that a task run would prepare.
+/// Read paths acquire only what a fresh checkout is missing (contract 020
+/// §Behaviour rule 1): an agent's first `effigy tasks` works, and no read
+/// moves a pin.
 #[test]
-fn read_only_paths_in_a_fresh_checkout_never_acquire() {
+fn read_paths_in_a_fresh_checkout_acquire_only_the_missing_pins() {
+    for args in [&["tasks"][..], &["hello", "--plan"][..]] {
+        let fixture = Fixture::new();
+        let source = fixture.owner.path().join("source");
+        let first = init_git_bundle(&source, &fixture.home, "one");
+        git_bundle_manifest(&fixture, &source, None);
+        let (ok, output) = fixture.run(args, &[], Duration::from_secs(60));
+        assert!(ok, "{args:?}: {output}");
+        assert_eq!(pinned_revision(&fixture), first, "{args:?}: {output}");
+        // A newer upstream commit never moves a read path's pin.
+        commit_git_bundle(&source, &fixture.home, "two");
+        let (ok, output) = fixture.run(args, &[], Duration::from_secs(60));
+        assert!(ok, "{args:?}: {output}");
+        assert_eq!(pinned_revision(&fixture), first, "{args:?}: {output}");
+        assert!(
+            !fixture.repo.join(".effigy/sources.update.json").exists(),
+            "{args:?} checked a remote: {output}"
+        );
+    }
+}
+
+/// A lock entry whose recorded object is gone is not a usable pin: a copied
+/// checkout or a deleted cache re-acquires it instead of refusing the task.
+#[test]
+fn a_lock_pin_whose_object_is_gone_is_acquired_again() {
     let fixture = Fixture::new();
     let source = fixture.owner.path().join("source");
     init_git_bundle(&source, &fixture.home, "one");
     git_bundle_manifest(&fixture, &source, None);
-    for args in [&["tasks"][..], &["hello", "--plan"][..]] {
-        let (ok, output) = fixture.run(args, &[], Duration::from_secs(20));
-        assert!(!ok, "{args:?}: {output}");
-        assert!(output.contains("is not prepared"), "{args:?}: {output}");
-        assert!(
-            !fixture.repo.join(".effigy/sources.lock.json").exists(),
-            "{args:?} acquired a source: {output}"
-        );
-    }
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap())
+            .unwrap();
+    let object = lock["sources"]["bundle"]["object"]
+        .as_str()
+        .expect("the lock names its object")
+        .to_owned();
+    fs::remove_dir_all(fixture.repo.join(".effigy").join(&object)).unwrap();
+
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(60));
+    assert!(ok, "a pin without its object is re-acquired: {output}");
+    assert!(output.contains("hello one"), "{output}");
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap())
+            .unwrap();
+    let object = lock["sources"]["bundle"]["object"].as_str().unwrap();
+    assert!(fixture.repo.join(".effigy").join(object).is_dir());
+}
+
+/// A pinned `[sources.*]` git URL that needs a credential prompt fails the task
+/// quickly and non-interactively, and leaves no half checkout behind.
+#[test]
+fn a_pinned_source_that_needs_a_prompt_fails_without_one() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        "[sources.book]\ngit = \"ssh://git@127.0.0.1:1/book.git\"\nrev = \"0123456789abcdef0123456789abcdef01234567\"\npath = \"book\"\n\n[tasks.hello]\nrun = \"echo hello local\"\n",
+    )
+    .unwrap();
+    // A stand-in for ssh that would prompt: it records how it was called and
+    // fails instead of waiting for an answer.
+    let tools = fixture.owner.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    let ssh = tools.join("ssh");
+    fs::write(&ssh, "#!/bin/sh\nprintf '%s ' \"$@\" > \"$HOME/ssh-called\"\nexit 255\n")
+        .unwrap();
+    fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")])
+        .unwrap();
+
+    let (ok, output) = fixture.run(&["hello"], &[("PATH", Path::new(&path))], Duration::from_secs(60));
+    assert!(!ok, "an unreachable pinned source fails the task: {output}");
+    assert!(output.contains("book"), "{output}");
+    let called = fs::read_to_string(fixture.home.join("ssh-called")).unwrap_or_default();
+    assert!(
+        called.contains("BatchMode=yes"),
+        "the acquisition was non-interactive: {called}"
+    );
+    assert!(
+        !fixture.repo.join("book").exists(),
+        "a failed acquisition leaves no half checkout: {output}"
+    );
 }
 
 /// A first acquisition that cannot reach its source fails the task with the
