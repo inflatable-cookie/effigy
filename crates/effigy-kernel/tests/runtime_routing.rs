@@ -99,6 +99,41 @@ fn runtime_checkout_binds_a_database_that_has_no_binding() {
 }
 
 #[test]
+fn runtime_concurrent_checkout_binding_defers_instead_of_refusing() {
+    // A second invocation on a fresh checkout races the first one's binding
+    // write. The binding is provenance, so a held gate defers: the journal
+    // opens by its location and the next effect writes the binding.
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, checkout.path()).unwrap();
+    let id = ResourceId::store(
+        Scope::Checkout(
+            StateRoot::filesystem_checkout(&observe(), &location(checkout.path())).unwrap(),
+        ),
+        "checkout-binding",
+    )
+    .unwrap();
+    let held = Gate::acquire(&cx, &root, std::slice::from_ref(&id), Wait::FailFast).unwrap();
+    let opened = StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path()))
+        .expect("a concurrently held binding gate is not a refusal");
+    assert!(
+        !checkout.path().join(".effigy/state/checkout.json").exists(),
+        "the deferred invocation writes no binding"
+    );
+    drop(opened);
+    drop(held);
+    drop(StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap());
+    assert!(
+        checkout
+            .path()
+            .join(".effigy/state/checkout.json")
+            .is_file(),
+        "the next open binds it in place"
+    );
+}
+
+#[test]
 fn runtime_old_migration_records_are_ignored() {
     let machine = home();
     let checkout = home();

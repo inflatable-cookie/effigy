@@ -1394,6 +1394,11 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **A racing first open of a checkout journal no longer refuses.** A held
+  `checkout-binding` gate now defers: the binding is provenance, not a gate, so
+  the journal opens by its location and the next effect writes the binding. A
+  competing `--run-id` invocation reaches the run gate and attaches as
+  `RunKeyExists`, as before.
 - **Only `.effigy/state` itself is owner- and mode-checked.** The path walk
   reopens every ancestor no-follow but no longer consults an ancestor's owner
   or mode, so a umask-002 checkout, a CI container or `/Users/Shared` opens.

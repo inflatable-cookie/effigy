@@ -2858,7 +2858,7 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 ## 11. Migration
 
 A v0.14.1 user updates and everything keeps working with no manual steps
-(vision). Importers accept both v0.14.1 and main `bcb5bf40e` shapes.
+(vision). Importers accept v0.14.1 shapes.
 
 | # | Principle |
 | --- | --- |

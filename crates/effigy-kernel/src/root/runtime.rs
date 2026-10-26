@@ -101,7 +101,16 @@ impl StateRoot {
             ),
             "checkout-binding",
         )?;
-        let guard = Gate::acquire(cx, &root, &[id], Wait::FailFast)?;
+        let guard = match Gate::acquire(cx, &root, &[id], Wait::FailFast) {
+            Ok(guard) => guard,
+            // A concurrent first open is binding this checkout right now. The
+            // binding is provenance, not a gate: the journal opens by its
+            // location and the next effect writes the binding.
+            Err(crate::gate::GateError::Busy { .. } | crate::gate::GateError::TimedOut { .. }) => {
+                return Ok(root)
+            }
+            Err(error) => return Err(error.into()),
+        };
         if !bound(&observe, &root, &name, &expected) {
             let bytes =
                 serde_json::to_vec(&expected).map_err(|error| unreadable(error.to_string()))?;

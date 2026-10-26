@@ -1172,9 +1172,10 @@ fn check_bound_key(
     match effigy_kernel::run::summary(reader, key.id()) {
         Observed::Absent(_) => Ok(()),
         Observed::Verified(existing, _) => {
-            let same = existing.invocation.as_ref().is_some_and(|invocation| {
-                invocation.spec().task.resource() == task.resource()
-            });
+            let same = existing
+                .invocation
+                .as_ref()
+                .is_some_and(|invocation| invocation.spec().task.resource() == task.resource());
             if same {
                 Err(RunnerError::RunKeyExists {
                     run: key.id().to_string(),
