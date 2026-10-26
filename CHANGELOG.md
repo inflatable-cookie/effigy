@@ -351,6 +351,24 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- **The retired release prepare/execute machinery is gone.** `ReleasePreparePlan`,
+  `ReleaseExecutePlan`, `ReleasePreparedState` and their renderers, review menus
+  and prepared-state helpers are deleted with the tests that kept them alive;
+  `effigy release run` is the only release path, and the version-bump and
+  sync-file planning they exercised now lives in the Run's own prepare stage
+  (`effigy-release`). `release status` says `Ready to run:`, and a missing git
+  work tree, branch, HEAD or remote reports that the release run requires it.
+  The Rhai `cache::` and `unlock::` modules are removed with the retired
+  commands they forwarded to (`effigy-rhai`, effigy#378).
+- **A kernel claim is only `MachineFacts`.** The `run::Claims` API
+  (`reserve`/`commit`/`publish_retained`/`release`) and its reservation token are
+  deleted; gateway endpoints publish machine facts, and their publication,
+  refusal, ownership transfer and boot-clock quarantine stay covered
+  (`effigy-kernel`, effigy#378).
+- **`effigy config` no longer documents a retired key.** The tasks example stops
+  emitting `[tasks.build.cache]`, which the runtime refuses, and its `[tasks.api]`
+  alternatives are comments so the emitted example loads: a new test loads the
+  emitted file through the manifest loader (`effigy-builtin`, effigy#378).
 - **No record of a checkout's or a machine home's generation.** `checkout.json`
   and `machine-format.json` are gone: a checkout journal opens by its location
   and a machine store is a location, so a renumbered volume, a recreated `.git`
