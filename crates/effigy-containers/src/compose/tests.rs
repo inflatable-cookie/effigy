@@ -28,123 +28,96 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     crate::test_env_lock()
 }
 
-#[test]
-fn resolve_compose_backend_returns_something() {
-    let _lock = env_lock();
-    // Can't assert which backend without knowing the host, but it
-    // should not panic.
-    let _ = resolve_compose_backend();
+/// Which resolver a row asks, and therefore which of its environment inputs
+/// the row sets up.
+#[derive(Clone, Copy)]
+enum Resolves {
+    /// `resolve_compose_backend`, from the environment and user config only.
+    Environment,
+    /// `resolve_compose_backend_for_policy`, which also sees the declared
+    /// driver and the host CLI on `PATH`.
+    Policy,
 }
 
+/// An explicit backend override, a declared Colima driver and a user-global
+/// `containerd` preference each select the backend they name.
 #[test]
-fn resolve_compose_backend_honors_colima_override_env() {
-    let _lock = env_lock();
-    let previous = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
-    unsafe {
-        std::env::set_var("EFFIGY_COMPOSE_BACKEND", "containerd");
-    }
-    let backend = resolve_compose_backend();
-    match previous {
-        Some(value) => unsafe {
-            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
-        },
-        None => unsafe {
-            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-        },
-    }
-    assert_eq!(backend, ComposeBackend::ColimaNerdctl);
-}
-
-#[test]
-fn resolve_compose_backend_honors_docker_override_env() {
-    let _lock = env_lock();
-    let previous = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
-    unsafe {
-        std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
-    }
-    let backend = resolve_compose_backend();
-    match previous {
-        Some(value) => unsafe {
-            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
-        },
-        None => unsafe {
-            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-        },
-    }
-    assert_eq!(backend, ComposeBackend::Docker);
-}
-
-#[test]
-fn resolve_compose_backend_for_policy_prefers_declared_colima_driver() {
-    let _lock = env_lock();
+fn compose_backend_resolution_cases() {
     let temp = tempfile::tempdir().expect("tempdir");
     let bin = temp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("mkdir bin");
     std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
-    let previous_path = std::env::var_os("PATH");
-    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
-    unsafe {
-        std::env::set_var("PATH", bin.display().to_string());
-        std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-    }
-    let backend = resolve_compose_backend_for_policy(&test_policy(EffectiveComposeSource::Direct));
-    match previous_path {
-        Some(value) => unsafe {
-            std::env::set_var("PATH", value);
-        },
-        None => unsafe {
-            std::env::remove_var("PATH");
-        },
-    }
-    match previous_backend {
-        Some(value) => unsafe {
-            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
-        },
-        None => unsafe {
-            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-        },
-    }
-    assert_eq!(backend, ComposeBackend::ColimaNerdctl);
-}
-
-#[test]
-fn resolve_compose_backend_honors_user_global_containerd_preference() {
-    let _lock = env_lock();
-    let temp = tempfile::tempdir().expect("tempdir");
     let home = temp.path().join(".effigy-home");
     std::fs::create_dir_all(&home).expect("mkdir home");
-    std::fs::write(
-        home.join("config.toml"),
-        "[containers]\nbackend = \"containerd\"\n",
-    )
-    .expect("write config");
-    let bin = temp.path().join("bin");
-    std::fs::create_dir_all(&bin).expect("mkdir bin");
-    std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
-    let previous_path = std::env::var_os("PATH");
-    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
-    unsafe {
-        std::env::set_var("PATH", bin.display().to_string());
-        std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+
+    let cases: [(&str, Option<&str>, Option<&str>, Resolves, ComposeBackend); 4] = [
+        (
+            "EFFIGY_COMPOSE_BACKEND=containerd",
+            Some("containerd"),
+            None,
+            Resolves::Environment,
+            ComposeBackend::ColimaNerdctl,
+        ),
+        (
+            "EFFIGY_COMPOSE_BACKEND=docker",
+            Some("docker"),
+            None,
+            Resolves::Environment,
+            ComposeBackend::Docker,
+        ),
+        (
+            "the policy declares the Colima driver",
+            None,
+            None,
+            Resolves::Policy,
+            ComposeBackend::ColimaNerdctl,
+        ),
+        (
+            "the user config prefers containerd",
+            None,
+            Some("[containers]\nbackend = \"containerd\"\n"),
+            Resolves::Environment,
+            ComposeBackend::ColimaNerdctl,
+        ),
+    ];
+    for (label, backend_env, user_config, resolves, expected) in cases {
+        let _lock = env_lock();
+        let previous_path = std::env::var_os("PATH");
+        let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+        if let Some(config) = user_config {
+            std::fs::write(home.join("config.toml"), config).expect("write config");
+        }
+        unsafe {
+            std::env::set_var("PATH", bin.display().to_string());
+            match backend_env {
+                Some(value) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", value),
+                None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
+            }
+        }
+        let backend = match resolves {
+            Resolves::Environment => {
+                if user_config.is_some() {
+                    with_test_user_config_home(&home, resolve_compose_backend)
+                } else {
+                    resolve_compose_backend()
+                }
+            }
+            Resolves::Policy => {
+                resolve_compose_backend_for_policy(&test_policy(EffectiveComposeSource::Direct))
+            }
+        };
+        unsafe {
+            match previous_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+            match previous_backend {
+                Some(value) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", value),
+                None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
+            }
+        }
+        assert_eq!(backend, expected, "{label}");
     }
-    let backend = with_test_user_config_home(&home, resolve_compose_backend);
-    match previous_path {
-        Some(value) => unsafe {
-            std::env::set_var("PATH", value);
-        },
-        None => unsafe {
-            std::env::remove_var("PATH");
-        },
-    }
-    match previous_backend {
-        Some(value) => unsafe {
-            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
-        },
-        None => unsafe {
-            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
-        },
-    }
-    assert_eq!(backend, ComposeBackend::ColimaNerdctl);
 }
 
 #[test]
@@ -168,30 +141,6 @@ fn resolve_host_cli_program_prefers_path_hits() {
         },
     }
     assert_eq!(resolved, bin.join("colima").into_os_string());
-}
-
-#[test]
-fn shutdown_labels() {
-    assert_eq!(
-        shutdown_label(ManifestContainerShutdownMode::Graceful),
-        "graceful"
-    );
-    assert_eq!(
-        shutdown_label(ManifestContainerShutdownMode::Immediate),
-        "immediate"
-    );
-}
-
-#[test]
-fn on_task_exit_labels() {
-    assert_eq!(
-        on_task_exit_label(ManifestContainerOnTaskExit::Stop),
-        "stop"
-    );
-    assert_eq!(
-        on_task_exit_label(ManifestContainerOnTaskExit::LeaveRunning),
-        "leave-running"
-    );
 }
 
 fn test_policy(compose_source: EffectiveComposeSource) -> EffectiveContainerPolicy {

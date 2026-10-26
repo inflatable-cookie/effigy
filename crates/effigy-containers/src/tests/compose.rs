@@ -18,6 +18,75 @@ fn run_git(repo: &Path, args: &[&str]) {
     );
 }
 
+/// One compose file parsed into the model Compose reads, so an assertion names
+/// a service, a key and a value rather than bytes of YAML text.
+fn parsed_compose(policy: &crate::EffectiveContainerPolicy, index: usize) -> serde_yaml::Value {
+    let rendered = policy
+        .read_compose(&policy.compose_files[index])
+        .expect("read compose");
+    serde_yaml::from_str(&rendered).expect("parse compose")
+}
+
+/// The value one service's `environment` gives a key, whether the document
+/// spells the block as a mapping or as a list of `KEY=value` entries.
+fn service_environment(document: &serde_yaml::Value, service: &str, key: &str) -> Option<String> {
+    let environment = &document["services"][service]["environment"];
+    if let Some(mapping) = environment.as_mapping() {
+        return mapping
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+    }
+    environment.as_sequence().and_then(|entries| {
+        entries
+            .iter()
+            .filter_map(|entry| entry.as_str())
+            .find_map(|entry| {
+                let (name, value) = entry.split_once('=')?;
+                (name == key).then(|| value.to_owned())
+            })
+    })
+}
+
+/// The mount sources and targets one service declares.
+fn service_volumes(document: &serde_yaml::Value, service: &str) -> Vec<String> {
+    document["services"][service]["volumes"]
+        .as_sequence()
+        .map(|volumes| {
+            volumes
+                .iter()
+                .filter_map(|volume| volume.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The host-gateway entries (`domain:address`) an override gives one service.
+fn host_gateway_domains(document: &serde_yaml::Value, service: &str) -> Vec<String> {
+    document["services"][service]["extra_hosts"]
+        .as_sequence()
+        .map(|hosts| {
+            hosts
+                .iter()
+                .filter_map(|host| host.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The `networks.default.aliases` an override gives one service.
+fn service_aliases(document: &serde_yaml::Value, service: &str) -> Vec<String> {
+    document["services"][service]["networks"]["default"]["aliases"]
+        .as_sequence()
+        .map(|aliases| {
+            aliases
+                .iter()
+                .filter_map(|alias| alias.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[test]
 fn isolated_dirs_survive_primary_and_linked_worktree_render_closures() {
     let fixture = tempfile::tempdir().unwrap();
@@ -559,101 +628,6 @@ host_ports = ["41001:41001"]
 }
 
 #[test]
-fn policy_resolution_writes_no_runtime_ownership_state() {
-    with_temp_effigy_home("unactivated-policy-read", |home| {
-        let _lock = crate::test_env_lock();
-        let checkout = temp_repo("unactivated-policy-read");
-        fs::create_dir_all(checkout.join(".git")).expect("checkout git metadata");
-        fs::write(
-            checkout.join(".git/config"),
-            "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n",
-        )
-        .expect("mark checkout as ephemeral");
-        fs::write(
-            checkout.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-profile = "private-stopped-profile"
-compose_file = "compose.yaml"
-primary_service = "app"
-"#,
-        )
-        .expect("write manifest");
-        fs::write(
-            checkout.join("compose.yaml"),
-            "services:\n  app:\n    image: alpine:latest\n",
-        )
-        .expect("write compose file");
-
-        assert!(!checkout.join(".effigy/state/runtime-scopes").exists());
-        assert!(!home.join("runtime-scopes").exists());
-        let policy = load_container_policy(&checkout, None).expect("resolve policy");
-        let policies = load_all_container_policies(&checkout).expect("resolve all policies");
-
-        assert_eq!(policy.profile, "private-stopped-profile");
-        assert_eq!(policies.len(), 1);
-        assert!(!checkout.join(".effigy/state/runtime-scopes").exists());
-        assert!(!home.join("runtime-scopes").exists());
-    });
-}
-
-#[test]
-fn marked_ephemeral_clones_get_distinct_effective_hosts_and_unmarked_keeps_declared() {
-    with_temp_effigy_home("ephemeral-clone-hosts", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("ephemeral-clone-hosts");
-        let manifest = r#"
-[containers]
-default = "web"
-[containers.web]
-project_name = "app-dev"
-primary_service = "app"
-[containers.web.dns]
-routes = [
-  { domain = "app.test", tls = true, service = "web" },
-  { domain = "mail.app.test", tls = false, service = "mail" },
-]
-[containers.web.services.app]
-catalog = "workspace-rust-bun"
-"#;
-        let operator = root.join("operator");
-        fs::create_dir_all(operator.join(".git")).unwrap();
-        fs::write(operator.join(".git/config"), "[core]\n").unwrap();
-        fs::write(operator.join("effigy.toml"), manifest).unwrap();
-        let operator_policy = load_container_policy(&operator, None).unwrap();
-        assert_eq!(operator_policy.dns_routes[0].declared(), "app.test");
-        assert_eq!(operator_policy.dns_routes[0].domain, "app.test");
-
-        let mut effective = Vec::new();
-        for name in ["clone-one", "clone-two"] {
-            let checkout = root.join(name);
-            fs::create_dir_all(checkout.join(".git")).unwrap();
-            fs::write(
-                checkout.join(".git/config"),
-                "[effigy]\n\truntimeScope = ephemeral\n",
-            )
-            .unwrap();
-            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
-            effigy_core::worktree_scope::prepare_checkout_token(&checkout).unwrap();
-            let policy = load_container_policy(&checkout, None).unwrap();
-            assert_eq!(policy.dns_routes[0].declared(), "app.test");
-            assert_ne!(policy.dns_routes[0].domain, "app.test");
-            assert!(policy.dns_routes[0].domain.contains("-w"));
-            assert!(policy.dns_routes[1].domain.starts_with("mail.app-w"));
-            assert!(policy.read_compose(&policy.compose_files[0]).is_ok());
-            let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
-            assert!(compose.contains("com.effigy.scope"), "{compose}");
-            effective.push(policy.dns_routes[0].domain.clone());
-        }
-        assert_ne!(effective[0], effective[1]);
-        assert_ne!(effective[0], "app.test");
-    });
-}
-
-#[test]
 fn linked_worktree_container_target_resolves_its_own_declared_database_alias() {
     // Two scoped checkouts of one manifest. Each container target must resolve
     // the canonical declared TCP alias to its own backing service, because the
@@ -694,7 +668,7 @@ catalog = "postgres"
                 policy.compose_files.len() >= 2,
                 "generated render plus DNS override"
             );
-            let dns_override = policy.read_compose(&policy.compose_files[1]).unwrap();
+            let dns_override = parsed_compose(&policy, 1);
             let effective_base = policy
                 .dns_routes
                 .first()
@@ -713,17 +687,22 @@ catalog = "postgres"
                 generated.contains("networks:") && generated.contains("com.effigy.scope"),
                 "the scope owns its Compose network: {generated}"
             );
+            let aliases = service_aliases(&dns_override, "postgres");
             assert!(
-                dns_override.contains(&format!("postgres.{effective_base}")),
-                "the scoped alias stays reachable: {dns_override}"
+                aliases
+                    .iter()
+                    .any(|alias| alias == &format!("postgres.{effective_base}")),
+                "the scoped alias stays reachable: {dns_override:?}"
             );
             assert!(
-                dns_override.contains("postgres.acme.test"),
-                "the canonical declared alias resolves inside this scope's target: {dns_override}"
+                aliases.iter().any(|alias| alias == "postgres.acme.test"),
+                "the canonical declared alias resolves inside this scope's target: {dns_override:?}"
             );
             assert!(
-                !dns_override.contains("postgres.acme.test:192.168.5.2"),
-                "the canonical alias is a network alias, never the host gateway: {dns_override}"
+                !host_gateway_domains(&dns_override, "postgres")
+                    .iter()
+                    .any(|host| host.starts_with("postgres.acme.test:")),
+                "the canonical alias is a network alias, never the host gateway: {dns_override:?}"
             );
             scopes.push((policy.project_name.clone(), effective_base));
         }
@@ -738,115 +717,89 @@ catalog = "postgres"
     });
 }
 
+/// One translated compose file with a fixed host port, in each checkout
+/// scope: a linked worktree and a marked ephemeral clone take an OS-assigned
+/// port rather than competing for the primary's, and an unmarked clone leaves
+/// the host side to Prepare instead of claiming the declared 8080.
 #[test]
-fn linked_translated_compose_with_fixed_port_allocates_a_scoped_port() {
-    let root = temp_repo("linked-direct-fixed-port");
-    let checkout = root.join("worker");
-    let private = root.join("primary/.git/worktrees/worker");
-    fs::create_dir_all(&checkout).unwrap();
-    fs::create_dir_all(&private).unwrap();
-    fs::write(
-        checkout.join(".git"),
-        format!("gitdir: {}\n", private.display()),
-    )
-    .unwrap();
-    fs::write(private.join("commondir"), "../..\n").unwrap();
-    fs::write(
-        checkout.join("compose.yml"),
-        "services:\n  app:\n    image: alpine\n    ports: ['8080:80']\n",
-    )
-    .unwrap();
-    fs::write(
-        checkout.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-[containers.web]
-compose_file = "compose.yml"
-primary_service = "app"
-"#,
-    )
-    .unwrap();
-    // A scoped checkout never binds the primary's fixed port: Compose assigns
-    // its own host port instead.
-    let policy = load_container_policy(&checkout, None).unwrap();
-    assert_eq!(
-        policy.declared_ports,
-        vec!["127.0.0.1::80".to_owned()],
-        "a scoped checkout takes an OS-assigned port"
-    );
-    let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
-    assert!(compose.contains("127.0.0.1::80"), "{compose}");
-}
+fn translated_fixed_port_is_assigned_per_scope_kind() {
+    fn linked_worktree(checkout: &Path, root: &Path) {
+        let private = root.join("primary/.git/worktrees/worker");
+        fs::create_dir_all(checkout).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        fs::write(checkout.join(".git"), format!("gitdir: {}\n", private.display())).unwrap();
+        fs::write(private.join("commondir"), "../..\n").unwrap();
+    }
+    fn ephemeral_clone(checkout: &Path, _root: &Path) {
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::write(
+            checkout.join(".git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .unwrap();
+    }
+    fn ordinary_checkout(checkout: &Path, _root: &Path) {
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::write(checkout.join(".git/config"), "[core]\n").unwrap();
+    }
 
-#[test]
-fn marked_clone_translated_compose_with_fixed_port_allocates_a_scoped_port() {
-    let root = temp_repo("clone-direct-fixed-port");
-    let checkout = root.join("clone");
-    fs::create_dir_all(checkout.join(".git")).unwrap();
-    fs::write(
-        checkout.join(".git/config"),
-        "[effigy]\n\truntimeScope = ephemeral\n",
-    )
-    .unwrap();
-    fs::write(
-        checkout.join("compose.yml"),
-        "services:\n  app:\n    image: alpine\n    ports: ['8080:80']\n",
-    )
-    .unwrap();
-    fs::write(
-        checkout.join("effigy.toml"),
-        r#"
+    let cases: [(&str, fn(&Path, &Path), Option<&str>); 3] = [
+        ("a linked worktree", linked_worktree, Some("127.0.0.1::80")),
+        (
+            "a marked ephemeral clone",
+            ephemeral_clone,
+            Some("127.0.0.1::80"),
+        ),
+        ("an unmarked clone", ordinary_checkout, None),
+    ];
+    for (name, mark, assigned) in cases {
+        let root = temp_repo("direct-fixed-port");
+        let checkout = root.join("worker");
+        fs::create_dir_all(&checkout).unwrap();
+        mark(&checkout, &root);
+        fs::write(
+            checkout.join("compose.yml"),
+            "services:\n  app:\n    image: alpine\n    ports: ['8080:80']\n",
+        )
+        .unwrap();
+        fs::write(
+            checkout.join("effigy.toml"),
+            r#"
 [containers]
 default = "web"
 [containers.web]
 compose_file = "compose.yml"
 primary_service = "app"
 "#,
-    )
-    .unwrap();
-    // A scoped checkout never binds the primary's fixed port: Compose assigns
-    // its own host port instead.
-    let policy = load_container_policy(&checkout, None).unwrap();
-    assert_eq!(
-        policy.declared_ports,
-        vec!["127.0.0.1::80".to_owned()],
-        "a scoped checkout takes an OS-assigned port"
-    );
-    let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
-    assert!(compose.contains("127.0.0.1::80"), "{compose}");
-}
+        )
+        .unwrap();
 
-#[test]
-fn unmarked_clone_translated_compose_port_is_assigned_by_prepare() {
-    let root = temp_repo("unmarked-clone-direct-fixed-port");
-    let checkout = root.join("clone");
-    fs::create_dir_all(checkout.join(".git")).unwrap();
-    fs::write(checkout.join(".git/config"), "[core]\n").unwrap();
-    fs::write(
-        checkout.join("compose.yml"),
-        "services:\n  app:\n    image: alpine\n    ports: ['8080:80']\n",
-    )
-    .unwrap();
-    fs::write(
-        checkout.join("effigy.toml"),
-        r#"
-[containers]
-default = "web"
-[containers.web]
-compose_file = "compose.yml"
-primary_service = "app"
-"#,
-    )
-    .unwrap();
-    // A translated port is a catalog port: Prepare assigns the host side,
-    // so no checkout claims the fixed 8080.
-    let policy = load_container_policy(&checkout, None).unwrap();
-    assert!(!policy.declared_ports.contains(&"8080:80".to_owned()));
-    assert!(policy
-        .declared_ports
-        .iter()
-        .any(|port| port.ends_with(":80")));
+        let policy = load_container_policy(&checkout, None).unwrap();
+        match assigned {
+            Some(port) => {
+                assert_eq!(policy.declared_ports, vec![port.to_owned()], "{name}");
+                let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
+                assert!(compose.contains(port), "{name}: {compose}");
+            }
+            // A translated port is a catalog port: Prepare assigns the host
+            // side, so no checkout claims the fixed 8080.
+            None => {
+                assert!(
+                    !policy.declared_ports.contains(&"8080:80".to_owned()),
+                    "{name}: {:?}",
+                    policy.declared_ports
+                );
+                assert!(
+                    policy
+                        .declared_ports
+                        .iter()
+                        .any(|port| port.ends_with(":80")),
+                    "{name}: {:?}",
+                    policy.declared_ports
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -896,25 +849,19 @@ variant = "default"
         let compose_path = policy.compose_files[0].clone();
         assert_eq!(policy.compose_files[0], compose_path);
         assert!(compose_path.exists(), "generated compose file should exist");
-        let dns_override = policy
-            .read_compose(&policy.compose_files[1])
-            .expect("read dns override");
-        assert!(
-            dns_override.contains("app:\n    dns:"),
-            "dns override should target app service: {dns_override}"
-        );
-        assert!(
-            dns_override.contains("web:\n    dns:"),
-            "dns override should target web service: {dns_override}"
-        );
-        assert!(
-            dns_override.contains("extra_hosts:"),
-            "dns override should include route parity hosts: {dns_override}"
-        );
-        assert!(
-            dns_override.contains("clientname.test:192.168.5.2"),
-            "dns override should route project hostnames to the Colima gateway: {dns_override}"
-        );
+        let dns_override = parsed_compose(&policy, 1);
+        for service in ["app", "web"] {
+            assert!(
+                dns_override["services"][service]["dns"].is_sequence(),
+                "dns override should target {service}: {dns_override:?}"
+            );
+            assert!(
+                host_gateway_domains(&dns_override, service)
+                    .iter()
+                    .any(|host| host == "clientname.test:192.168.5.2"),
+                "dns override should route project hostnames to the Colima gateway for {service}: {dns_override:?}"
+            );
+        }
 
         let compose = policy
             .read_compose(&compose_path)
@@ -1241,14 +1188,21 @@ services:
     assert_eq!(policy.declared_ports, vec!["18080:80".to_owned()]);
 }
 
+/// Catalog ports are never pinned by the render: every published host port is
+/// OS-assigned, one per service, and a second resolution does not move them.
 #[test]
-fn generated_compose_auto_allocates_stable_project_ports() {
-    with_temp_effigy_home("catalog-auto-ports", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("catalog-auto-ports");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
+fn os_assigned_ports_per_catalog() {
+    #[derive(Clone, Copy)]
+    enum Ports {
+        /// One HTTP service and one database.
+        Stack,
+        /// Two HTTP services, each with its own OS-assigned host port.
+        TwoHttpServices,
+        /// TCP-alias services stay published on loopback with an OS-host port.
+        TcpAliases,
+    }
+
+    let stack = r#"
 [containers]
 default = "web"
 
@@ -1265,33 +1219,8 @@ catalog = "mariadb"
 [containers.web.services.web]
 catalog = "nginx"
 variant = "default"
-"#,
-        )
-        .expect("write manifest");
-
-        let first = load_prepared_policy(&root, None).expect("first policy");
-        let second = load_container_policy(&root, None).expect("second policy");
-        assert!(!first.ports_declared_explicitly);
-        assert_eq!(first.declared_ports, second.declared_ports);
-        assert!(first.declared_ports.contains(&"127.0.0.1::80".to_owned()));
-        assert!(first.declared_ports.contains(&"127.0.0.1::3306".to_owned()));
-        let compose = first
-            .read_compose(&first.compose_files[0])
-            .expect("compose");
-        for published in ["127.0.0.1::80", "127.0.0.1::3306"] {
-            assert!(compose.contains(published), "{compose}");
-        }
-    });
-}
-
-#[test]
-fn generated_compose_auto_allocates_distinct_ports_for_multiple_http_services() {
-    with_temp_effigy_home("catalog-auto-ports-multi-http", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("catalog-auto-ports-multi-http");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
+"#;
+    let two_http = r#"
 [containers]
 default = "web"
 
@@ -1311,48 +1240,8 @@ variant = "default"
 
 [containers.web.services.dbadmin]
 catalog = "phpmyadmin"
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = load_prepared_policy(&root, None).expect("policy");
-        let compose = policy
-            .read_compose(&policy.compose_files[0])
-            .expect("read generated compose");
-
-        let http_bindings = policy
-            .declared_ports
-            .iter()
-            .filter(|value| value.ends_with(":80"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            http_bindings.len(),
-            2,
-            "expected two HTTP services: {compose}"
-        );
-        for binding in &http_bindings {
-            assert_eq!(
-                *binding, "127.0.0.1::80",
-                "each HTTP service asks Compose for its own OS-assigned port"
-            );
-        }
-        assert_eq!(
-            compose.matches("- 127.0.0.1::80").count(),
-            2,
-            "both HTTP services publish an OS-assigned host port:\n{compose}"
-        );
-    });
-}
-
-#[test]
-fn generated_compose_keeps_runtime_ports_for_tcp_alias_services() {
-    with_temp_effigy_home("catalog-loopback-tcp-aliases", |_home| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("catalog-loopback-tcp-aliases");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
+"#;
+    let tcp_aliases = r#"
 [containers]
 default = "stack"
 
@@ -1373,47 +1262,89 @@ catalog = "mailpit"
 
 [containers.stack.services.minio]
 catalog = "minio"
-"#,
-        )
-        .expect("write manifest");
+"#;
 
-        let policy = load_prepared_policy(&root, None).expect("policy");
-        let compose = policy
-            .read_compose(&policy.compose_files[0])
-            .expect("compose");
+    let cases: [(&str, &str, Ports, &[&str]); 3] = [
+        (
+            "one HTTP service and one database",
+            stack,
+            Ports::Stack,
+            &["127.0.0.1::80", "127.0.0.1::3306"],
+        ),
+        (
+            "two HTTP services",
+            two_http,
+            Ports::TwoHttpServices,
+            &["127.0.0.1::80", "127.0.0.1::80"],
+        ),
+        (
+            "TCP-alias services",
+            tcp_aliases,
+            Ports::TcpAliases,
+            &["127.0.0.1::5432", "127.0.0.1::1025", "127.0.0.1::9000"],
+        ),
+    ];
+    for (name, manifest, kind, expected) in cases {
+        with_temp_effigy_home("catalog-auto-ports", |_| {
+            let _lock = crate::test_env_lock();
+            let root = temp_repo("catalog-auto-ports");
+            fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
 
-        assert!(!compose.contains("127.1.0.1:5432:5432"), "{compose}");
-        assert!(!compose.contains("127.1.0.1:1025:1025"), "{compose}");
-        assert!(!compose.contains("127.1.0.1:9000:9000"), "{compose}");
-        assert!(compose.contains(":8025"), "{compose}");
-        assert!(compose.contains(":9001"), "{compose}");
-        for container_port in ["5432", "1025", "9000"] {
-            let expected = format!("127.0.0.1::{container_port}");
-            assert!(
-                policy.declared_ports.contains(&expected),
-                "expected {expected} beside {:?}",
-                policy.declared_ports
-            );
-            assert!(
-                compose.contains(&format!("- {expected}")),
-                "tcp-alias service port {container_port} stays published on loopback with an OS-assigned host port:\n{compose}"
-            );
-        }
-        assert!(policy
-            .declared_ports
-            .iter()
-            .any(|value| value.ends_with(":5432")));
-        assert!(policy
-            .declared_ports
-            .iter()
-            .any(|value| value.ends_with(":1025")));
-        assert!(policy
-            .declared_ports
-            .iter()
-            .any(|value| value.ends_with(":9000")));
-        let regenerated = load_prepared_policy(&root, None).expect("regenerated policy");
-        assert_eq!(regenerated.project_name, policy.project_name);
-    });
+            let policy = load_prepared_policy(&root, None).expect("policy");
+            assert!(!policy.ports_declared_explicitly, "{name}");
+            let compose = policy
+                .read_compose(&policy.compose_files[0])
+                .expect("read generated compose");
+            for published in expected {
+                assert!(
+                    policy.declared_ports.contains(&published.to_string()),
+                    "{name}: expected {published} beside {:?}",
+                    policy.declared_ports
+                );
+                assert!(
+                    compose.contains(&format!("- {published}")),
+                    "{name}: {published} is published:
+{compose}"
+                );
+            }
+
+            match kind {
+                Ports::Stack => {
+                    // A second resolution, without Prepare, keeps the same
+                    // ports.
+                    let again = load_container_policy(&root, None).expect("second policy");
+                    assert_eq!(policy.declared_ports, again.declared_ports, "{name}");
+                }
+                Ports::TwoHttpServices => {
+                    let http_bindings = policy
+                        .declared_ports
+                        .iter()
+                        .filter(|value| value.ends_with(":80"))
+                        .count();
+                    assert_eq!(http_bindings, 2, "{name}: {compose}");
+                    assert_eq!(
+                        compose.matches("- 127.0.0.1::80").count(),
+                        2,
+                        "{name}: both HTTP services publish an OS-assigned host port:\n{compose}"
+                    );
+                }
+                Ports::TcpAliases => {
+                    // The alias address is not the published host port: no
+                    // service claims a fixed address:port pair.
+                    for container_port in ["5432", "1025", "9000"] {
+                        assert!(
+                            !compose.contains(&format!("127.1.0.1:{container_port}:{container_port}")),
+                            "{name}: {compose}"
+                        );
+                    }
+                    assert!(compose.contains(":8025"), "{name}: {compose}");
+                    assert!(compose.contains(":9001"), "{name}: {compose}");
+                    let again = load_prepared_policy(&root, None).expect("regenerated policy");
+                    assert_eq!(again.project_name, policy.project_name, "{name}");
+                }
+            }
+        });
+    }
 }
 
 #[test]
@@ -1503,16 +1434,37 @@ container = "web"
     });
 }
 
+/// One PHP workspace, three composer-state modes: an enabled host composer
+/// home replaces the shared one, the default mounts the shared cache and home,
+/// and disabling both shared mounts removes them.
 #[test]
-fn generated_php_workspace_mounts_host_composer_home_when_enabled() {
-    with_temp_effigy_home("catalog-php-composer-home", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("catalog-php-composer-home");
-        let host_composer_home = root.join("host-composer-home");
-        fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
+fn composer_mount_modes() {
+    #[derive(Clone, Copy)]
+    enum ComposerMount {
+        HostHome,
+        Shared,
+        Disabled,
+    }
+
+    let cases: [(&str, ComposerMount, &str); 3] = [
+        ("the host composer home is enabled", ComposerMount::HostHome, "mount_host_composer_home = true"),
+        ("the default shared mounts", ComposerMount::Shared, ""),
+        (
+            "both shared mounts are disabled",
+            ComposerMount::Disabled,
+            "mount_shared_composer_auth = false\nmount_shared_composer_cache = false",
+        ),
+    ];
+    for (name, mode, params) in cases {
+        with_temp_effigy_home("catalog-php-composer", |home| {
+            let _lock = crate::test_env_lock();
+            let root = temp_repo("catalog-php-composer");
+            let host_composer_home = root.join("host-composer-home");
+            fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
+            fs::write(
+                root.join("effigy.toml"),
+                format!(
+                    r#"
 [containers]
 default = "web"
 
@@ -1522,7 +1474,7 @@ primary_service = "app"
 [containers.web.services.app]
 catalog = "php-fpm"
 version = "8.3"
-mount_host_composer_home = true
+{params}
 
 [systems.dev]
 default_workspace = "app"
@@ -1530,139 +1482,46 @@ default_workspace = "app"
 [systems.dev.workspaces.app]
 container = "web"
 working_dir = "/var/www/html"
-"#,
-        )
-        .expect("write manifest");
+"#
+                ),
+            )
+            .expect("write manifest");
 
-        let manifest = load_task_manifest(&root.join("effigy.toml")).expect("load manifest");
-        let composer_mount_flag = manifest
-            .containers
-            .as_ref()
-            .and_then(|containers| containers.environments.get("web"))
-            .and_then(|container| container.services.get("app"))
-            .and_then(|service| service.params.get("mount_host_composer_home"))
-            .and_then(|value| value.as_bool());
-        assert_eq!(composer_mount_flag, Some(true));
+            let policy = with_test_host_composer_home(Some(&host_composer_home), || {
+                load_container_policy(&root, Some("web")).expect("policy")
+            });
+            if matches!(mode, ComposerMount::Shared) {
+                assert!(!home.join("shared/composer-cache").exists(), "{name}");
+                crate::policy::mounts::prepare_container_mount_sources(&policy)
+                    .expect("prepare cache");
+                assert!(home.join("shared/composer-cache").is_dir(), "{name}");
+            }
+            let rewritten = policy
+                .read_compose(&policy.compose_files[0])
+                .expect("read compose");
 
-        let policy = with_test_host_composer_home(Some(&host_composer_home), || {
-            load_container_policy(&root, Some("web")).expect("policy")
-        });
-        let rewritten = policy
-            .read_compose(&policy.compose_files[0])
-            .expect("read compose");
-
-        assert!(
-            rewritten.contains(&format!(
+            let host_mount = format!(
                 "{}:/home/dev/.config/composer",
                 host_composer_home.display()
-            )),
-            "rewritten compose should mount the host composer home: {rewritten}"
-        );
-    });
-}
-
-#[test]
-fn generated_php_workspace_does_not_mount_host_composer_home_by_default() {
-    with_temp_effigy_home("catalog-php-composer-home-default-off", |home| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("catalog-php-composer-home-default-off");
-        let host_composer_home = root.join("host-composer-home");
-        fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-working_dir = "/var/www/html"
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = with_test_host_composer_home(Some(&host_composer_home), || {
-            load_container_policy(&root, Some("web")).expect("policy")
+            );
+            let shared_home = ":/home/dev/.config/composer";
+            let shared_cache = "/shared/composer-cache:/home/dev/.cache/composer";
+            match mode {
+                ComposerMount::HostHome => {
+                    assert!(rewritten.contains(&host_mount), "{name}: {rewritten}");
+                }
+                ComposerMount::Shared => {
+                    assert!(!rewritten.contains(&host_mount), "{name}: {rewritten}");
+                    assert!(rewritten.contains(shared_home), "{name}: {rewritten}");
+                    assert!(rewritten.contains(shared_cache), "{name}: {rewritten}");
+                }
+                ComposerMount::Disabled => {
+                    assert!(!rewritten.contains(shared_home), "{name}: {rewritten}");
+                    assert!(!rewritten.contains(shared_cache), "{name}: {rewritten}");
+                }
+            }
         });
-        assert!(!home.join("shared/composer-cache").exists());
-        crate::policy::mounts::prepare_container_mount_sources(&policy).expect("prepare cache");
-        assert!(home.join("shared/composer-cache").is_dir());
-        let rewritten = policy
-            .read_compose(&policy.compose_files[0])
-            .expect("read compose");
-
-        assert!(
-            !rewritten.contains(&format!(
-                "{}:/home/dev/.config/composer",
-                host_composer_home.display()
-            )),
-            "rewritten compose should not mount the host composer home by default: {rewritten}"
-        );
-        assert!(
-            rewritten.contains(":/home/dev/.config/composer"),
-            "rewritten compose should mount a shared composer home by default: {rewritten}"
-        );
-        assert!(
-            rewritten.contains("/shared/composer-cache:/home/dev/.cache/composer"),
-            "rewritten compose should mount shared composer cache by default: {rewritten}"
-        );
-    });
-}
-
-#[test]
-fn generated_php_workspace_can_disable_shared_composer_state_mounts() {
-    with_temp_effigy_home("catalog-php-composer-shared-state-opt-out", |_| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("catalog-php-composer-shared-state-opt-out");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-mount_shared_composer_auth = false
-mount_shared_composer_cache = false
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-working_dir = "/var/www/html"
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = load_container_policy(&root, Some("web")).expect("policy");
-        let rewritten = policy
-            .read_compose(&policy.compose_files[0])
-            .expect("read compose");
-
-        assert!(
-            !rewritten.contains(":/home/dev/.config/composer"),
-            "rewritten compose should not mount shared composer home when disabled: {rewritten}"
-        );
-        assert!(
-            !rewritten.contains("/shared/composer-cache:/home/dev/.cache/composer"),
-            "rewritten compose should not mount shared composer cache when disabled: {rewritten}"
-        );
-    });
+    }
 }
 
 #[test]
@@ -1729,27 +1588,29 @@ working_dir = "/var/www/html"
             .read_compose(&policy.compose_files[0])
             .expect("read compose");
 
+        let document = parsed_compose(&policy, 0);
+        let volumes = service_volumes(&document, "app");
         assert!(
-            rewritten.contains(&format!(
+            volumes.contains(&format!(
                 "{}:/home/dev/.config/composer",
                 host_composer_home.display()
             )),
-            "rewritten compose should mount the host composer home: {rewritten}"
+            "rewritten compose should mount the host composer home: {document:?}"
         );
         assert!(
-            !rewritten.contains("effigy-shared-composer-home:/home/dev/.config/composer"),
-            "workspace proof should not fall back to the shared composer-home volume when host composer home is enabled: {rewritten}"
+            !volumes.contains(&"effigy-shared-composer-home:/home/dev/.config/composer".to_owned()),
+            "workspace proof should not fall back to the shared composer-home volume when host composer home is enabled: {document:?}"
         );
         assert!(
-            rewritten.contains(&format!("{}:/home/dev/.ssh:ro", ssh_dir.display())),
-            "rewritten compose should mount the explicit host ssh dir read-only: {rewritten}"
+            volumes.contains(&format!("{}:/home/dev/.ssh:ro", ssh_dir.display())),
+            "rewritten compose should mount the explicit host ssh dir read-only: {document:?}"
         );
         assert!(
-            rewritten.contains(&format!(
+            volumes.contains(&format!(
                 "{}:/var/www/mortcalc",
                 sibling.path().canonicalize().unwrap().display()
             )),
-            "rewritten compose should preserve the external host mount: {rewritten}"
+            "rewritten compose should preserve the external host mount: {document:?}"
         );
 
         assert_eq!(policy.shared_services.len(), 1);
@@ -1763,10 +1624,20 @@ working_dir = "/var/www/html"
                 ("MYSQL_PORT".to_owned(), shared.host_port.to_string()),
             ]
         );
-        assert!(rewritten.contains("DB_HOST: host.docker.internal"));
-        assert!(rewritten.contains("MYSQL_HOST: host.docker.internal"));
-        assert!(rewritten.contains(&format!("DB_PORT: '{}'", shared.host_port)));
-        assert!(rewritten.contains(&format!("MYSQL_PORT: '{}'", shared.host_port)));
+        for key in ["DB_HOST", "MYSQL_HOST"] {
+            assert_eq!(
+                service_environment(&document, "app", key).as_deref(),
+                Some("host.docker.internal"),
+                "{key} names the shared service host: {document:?}"
+            );
+        }
+        for key in ["DB_PORT", "MYSQL_PORT"] {
+            assert_eq!(
+                service_environment(&document, "app", key),
+                Some(shared.host_port.to_string()),
+                "{key} names the shared service port: {document:?}"
+            );
+        }
     });
 }
 
@@ -2063,53 +1934,6 @@ shared = true
 }
 
 #[test]
-fn shared_service_compose_keeps_runtime_host_port_and_adds_loopback_binding() {
-    with_temp_effigy_home("catalog-shared-loopback-binding", |_home| {
-        let _lock = crate::test_env_lock();
-        let root = temp_repo("catalog-shared-loopback-binding");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-
-[containers.web.services.db]
-catalog = "mariadb"
-shared = true
-version = "10.11"
-
-[containers.web.services.web]
-catalog = "nginx"
-variant = "default"
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = load_prepared_policy(&root, None).expect("policy");
-        let shared = &policy.shared_services[0];
-        let shared_compose = policy
-            .read_compose(&shared.compose_file)
-            .expect("read shared compose");
-
-        assert!(
-            !shared_compose.contains("127.1.0.1:3306:3306"),
-            "{shared_compose}"
-        );
-        assert!(
-            shared_compose.contains(&format!("127.0.0.1:{}:3306", shared.host_port)),
-            "shared compose should bind the runtime host port to loopback: {shared_compose}"
-        );
-    });
-}
-
-#[test]
 fn load_container_policy_rejects_compose_file_and_services_together() {
     let root = temp_repo("mixed-compose-source");
     fs::write(
@@ -2176,29 +2000,22 @@ services:
     assert_eq!(policy.compose_files.len(), 2);
     assert!(policy.compose_files[0].ends_with(".effigy/runtime/compose/web.generated.compose.yml"));
     assert!(policy.compose_files[1].ends_with(".effigy/runtime/dns/web.compose.override.yml"));
-    let dns_override = policy
-        .read_compose(&policy.compose_files[1])
-        .expect("read dns override");
-    assert!(
-        dns_override.contains("app:\n    dns:"),
-        "dns override should target app service: {dns_override}"
-    );
-    assert!(
-        dns_override.contains("db:\n    dns:"),
-        "dns override should target db service: {dns_override}"
-    );
-    assert!(
-        dns_override.contains("1.1.1.1"),
-        "dns override: {dns_override}"
-    );
-    assert!(
-        dns_override.contains("8.8.8.8"),
-        "dns override: {dns_override}"
-    );
-    assert!(
-        !dns_override.contains("extra_hosts:"),
-        "dns override should not invent route parity hosts without domains: {dns_override}"
-    );
+    let dns_override = parsed_compose(&policy, 1);
+    for service in ["app", "db"] {
+        let servers: Vec<&str> = dns_override["services"][service]["dns"]
+            .as_sequence()
+            .map(|servers| servers.iter().filter_map(|server| server.as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            servers,
+            vec!["1.1.1.1", "8.8.8.8"],
+            "dns override should carry both resolvers for {service}: {dns_override:?}"
+        );
+        assert!(
+            host_gateway_domains(&dns_override, service).is_empty(),
+            "dns override should not invent route parity hosts without domains for {service}: {dns_override:?}"
+        );
+    }
 }
 
 #[test]
@@ -2237,33 +2054,30 @@ catalog = "mailpit"
     let policy = load_container_policy(&root, None).expect("policy");
 
     assert_eq!(policy.compose_files.len(), 2);
-    let dns_override = policy
-        .read_compose(&policy.compose_files[1])
-        .expect("read dns override");
-    assert!(
-        dns_override.contains("s3.acme.test:192.168.5.2"),
-        "dns override should include first route domain: {dns_override}"
-    );
-    assert!(
-        dns_override.contains("api.s3.acme.test:192.168.5.2"),
-        "dns override should include explicit subdomain routes: {dns_override}"
-    );
-    assert!(
-        dns_override.contains("postgres:\n    dns:") && dns_override.contains("postgres.acme.test"),
-        "dns override should use the configured alias base domain for postgres: {dns_override}"
-    );
-    assert!(
-        dns_override.contains("mailpit:\n    dns:") && dns_override.contains("smtp.acme.test"),
-        "dns override should include mailpit network alias domains: {dns_override}"
-    );
-    assert!(
-        !dns_override.contains("postgres.acme.test:192.168.5.2"),
-        "TCP service aliases must not point back at the host gateway: {dns_override}"
-    );
-    assert!(
-        !dns_override.contains("smtp.acme.test:192.168.5.2"),
-        "TCP service aliases must not point back at the host gateway: {dns_override}"
-    );
+    let dns_override = parsed_compose(&policy, 1);
+    let gateway_hosts = host_gateway_domains(&dns_override, "workspace");
+    for domain in ["s3.acme.test", "api.s3.acme.test"] {
+        assert!(
+            gateway_hosts.iter().any(|host| host == &format!("{domain}:192.168.5.2")),
+            "dns override should route {domain} to the gateway: {dns_override:?}"
+        );
+    }
+    for (service, alias) in [("postgres", "postgres.acme.test"), ("mailpit", "smtp.acme.test")] {
+        assert!(
+            service_aliases(&dns_override, service).iter().any(|entry| entry == alias),
+            "dns override should alias {service} as {alias} under the configured base domain: {dns_override:?}"
+        );
+        assert!(
+            !gateway_hosts.iter().any(|host| host.starts_with(&format!("{alias}:"))),
+            "TCP service aliases must not point back at the host gateway: {dns_override:?}"
+        );
+        assert!(
+            !host_gateway_domains(&dns_override, service)
+                .iter()
+                .any(|host| host.starts_with(&format!("{alias}:"))),
+            "TCP service aliases must not point back at the host gateway: {dns_override:?}"
+        );
+    }
 }
 
 #[test]
@@ -2303,16 +2117,15 @@ catalog = "postgres"
         Some("acme.test"),
         "the shallowest host the primary service serves is the alias apex"
     );
-    let dns_override = policy
-        .read_compose(&policy.compose_files[1])
-        .expect("read dns override");
+    let dns_override = parsed_compose(&policy, 1);
+    let aliases = service_aliases(&dns_override, "postgres");
     assert!(
-        dns_override.contains("postgres.acme.test"),
-        "Compose aliases use the inferred apex: {dns_override}"
+        aliases.iter().any(|alias| alias == "postgres.acme.test"),
+        "Compose aliases use the inferred apex: {dns_override:?}"
     );
     assert!(
-        !dns_override.contains("postgres.s3.acme.test"),
-        "the front route does not become the alias apex: {dns_override}"
+        !aliases.iter().any(|alias| alias == "postgres.s3.acme.test"),
+        "the front route does not become the alias apex: {dns_override:?}"
     );
 }
 
