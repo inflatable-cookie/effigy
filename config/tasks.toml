@@ -761,6 +761,10 @@
 # Docker backend only.
 "test:managed:adapterless-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-adapterless-listener", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_adapterless_) | test(managed_host_listener_pre_bound_port_) | test(managed_host_listener_adapter_env_) | test(managed_host_listener_is_ready_) | test(managed_host_listener_watch_mode_) | test(managed_host_listener_double_forked_) | test(managed_host_listener_probe_miss_) | test(managed_host_listener_republishes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  # A child that is alive and never opens its port: `up` reports progress and a
+  # `down` from another process ends the wait instead of blocking on the
+  # environment (effigy#370).
+  { id = "managed-hung-listener-down", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(hung_listener_does_not_block_down_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "proof:managed:host-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-host-listener-cli-proof", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
@@ -891,6 +895,10 @@
 # inject negative observation/wait outcomes; no consumer runtime is started.
 "test:host-process:owned-stop" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "owned-stop-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_owned_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  # The Acow shape: the process Effigy supervises is a real nested `effigy
+  # <task>`, whose own workload group drains before the environment's stop
+  # reports closure (effigy#357, effigy#370).
+  { id = "owned-stop-nested-effigy", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(nested_effigy_host_process_stops_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "format:host-process:owned-stop" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs tests/gateway_private.rs" }
 # An environment-owned host-process supervisor started by a task's

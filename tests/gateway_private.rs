@@ -5835,6 +5835,288 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     );
 }
 
+/// The app one nested-effigy host process serves: it records its pid and, on
+/// SIGTERM, takes three seconds to finish before it exits. That drain is longer
+/// than the outer supervisor's escalation is comfortable with, so the stop has
+/// to observe the whole closure rather than cut the workload short or call the
+/// evidence inconsistent.
+const NESTED_EFFIGY_APP: &str = r#"
+import os, signal, sys, time
+pid_file, drained = sys.argv[1], sys.argv[2]
+open(pid_file, "w").write(str(os.getpid()))
+def stop(*_):
+    time.sleep(3)
+    open(drained, "w").write("drained\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+while True:
+    time.sleep(1)
+"#;
+
+/// Acow's API shape: the host process's `run` is a real nested `effigy` task,
+/// so the stop crosses two custody layers - the outer supervisor's group and
+/// the nested run's own workload group. The stop reports closure verified,
+/// never "the evidence contradicts itself", and the workload drains rather
+/// than being cut short by the requester's own window (effigy#357, #370).
+#[test]
+fn nested_effigy_host_process_stops_with_closure_verified() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("nested effigy checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Nested Effigy Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "nested-effigy@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let control = fixture.path().join("nested-effigy-control");
+    fs::create_dir(&control).expect("nested effigy control directory");
+    let app = control.join("app.py");
+    fs::write(&app, NESTED_EFFIGY_APP).expect("write the fixture app");
+    let pid_file = control.join("app-pid");
+    let drained = control.join("drained");
+    let profile = "fixture";
+    let task = "fixture:api";
+    let task_run = format!(
+        "exec python3 {} {} {}",
+        toml_quote(&app.display().to_string()),
+        toml_quote(&pid_file.display().to_string()),
+        toml_quote(&drained.display().to_string())
+    );
+    // The Acow shape: the process Effigy supervises is Effigy itself.
+    let host_run = format!("exec '{}' {task}", EFFIGY);
+    let host_process = format!(
+        "[[containers.web.host_processes]]\nname = \"api\"\nrun = {}\nrestart = \"never\"\nshutdown_grace_secs = 6\n\n",
+        toml_quote(&host_run)
+    );
+    let task_declaration = format!(
+        "[tasks.{}]\ndurable = true\nrun = {}\n",
+        toml_quote(task),
+        toml_quote(&task_run)
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n{host_process}{task_declaration}",
+        profile = toml_quote(profile),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the nested effigy config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let log_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("api.log");
+
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let up_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    assert!(
+        up.status.success(),
+        "`container web up --detach` failed: {up_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    wait_for_path_exists(&pid_file, Duration::from_secs(60), "the nested task's app");
+    let app_pid: i32 = fs::read_to_string(&pid_file)
+        .expect("the app records its pid")
+        .trim()
+        .parse()
+        .expect("the app pid is a number");
+
+    let started = Instant::now();
+    let down = run_container_cli(&checkout, &cleanup, &["down"]);
+    let elapsed = started.elapsed();
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed: {down_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    assert!(
+        !down_text.contains("contradicts itself")
+            && !down_text.contains("group closure unverified"),
+        "a stop within its grace reports closure, not inconsistent evidence: {down_text}"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(11),
+        "the stop settles within its grace plus five seconds: {elapsed:?}\n{down_text}"
+    );
+    assert!(
+        drained.exists(),
+        "the nested workload drained instead of being cut short: {down_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    assert!(
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(app_pid), None).is_err(),
+        "the nested task's app is gone after the stop"
+    );
+}
+
+/// A hung child - alive, port never opens - must not hold a bring-up: `down`
+/// from a second shell stops the run and ends the wait instead of blocking on
+/// the environment for its whole gate wait (effigy#370). This is the shape a
+/// consumer's API takes when it waits on a database that never comes up.
+#[test]
+fn hung_listener_does_not_block_down_from_another_shell() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("hung listener checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Hung Listener Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "hung-listener@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let profile = "fixture";
+    let domain = "hung.host.test";
+    let hung_run = "exec python3 -c 'import time\ntime.sleep(120)'";
+    let listener = format!(
+        "[containers.web.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 60\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = false\n",
+        toml_quote(domain)
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = {hung_run}\nrestart = \"never\"\n\n{listener}",
+        profile = toml_quote(profile),
+        hung_run = toml_quote(hung_run),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the hung listener config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let state_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("api.listener.json");
+
+    let state_now = || {
+        fs::read(&state_path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+    };
+    let mut up = spawn_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while state_now().is_none_or(|state| state["status"] != "starting") {
+        assert!(
+            Instant::now() < deadline,
+            "the hung listener never published its starting generation: {:?}",
+            state_now()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let started = Instant::now();
+    let down = run_container_cli(&checkout, &cleanup, &["down"]);
+    let elapsed = started.elapsed();
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed against a hung start: {down_text}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(60),
+        "`down` waits out the environment instead of stopping the start: {elapsed:?}\n{down_text}"
+    );
+    assert!(
+        !down_text.contains("holds its gate") && !down_text.contains("busy"),
+        "the stop is taken, not refused as busy: {down_text}"
+    );
+    assert_eq!(
+        read_json_file(&state_path)["status"],
+        "stopped",
+        "the waiting start settles its listener state"
+    );
+    // The waiting `up` saw the stop and returned instead of waiting forever.
+    let status = up.wait().expect("the waiting `up` returns");
+    assert!(
+        !status.success(),
+        "a bring-up stopped before readiness does not report success"
+    );
+}
+
 /// The headless managed supervisor stays alive while its session runs and its
 /// lifecycle child outlives the test on panic, so the guard stops the whole
 /// owned process tree on drop.

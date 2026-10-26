@@ -457,8 +457,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   streams logs and rejects `--json`.
 - `container <NAME> restart <process>...` replaces only the named host
   processes and the processes that `depends_on` them, leaving the containers and
-  every other host process running; an unknown name or an environment that is
-  not up fails before any process changes.
+  every other host process running; an unknown name fails before any process
+  changes, a listener keeps its published address, and an environment that is
+  not up is one warning rather than a refusal.
 - `container profile repair` and `container profile reset-runtime` are the
   recovery surfaces for half-up substrate state; they keep the
   `effigy.system.recover.v1` JSON envelope and accept `--repo` and `--system`
