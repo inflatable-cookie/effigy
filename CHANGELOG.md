@@ -1850,6 +1850,13 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A binary this checkout builds while `effigy-containers` carries the
+  `test-support` feature no longer resolves a per-process temporary Effigy home.
+  That home moved every rendered path under it and re-derived the shared-service
+  port from it, so `container up` recreated an unchanged stack every time. Only
+  this crate's own unit tests borrow a default private home; a fixture names its
+  own with `EFFIGY_TEST_CONTAINERS_HOME`, and every other process uses the
+  operator's `~/.effigy` (effigy#362).
 - A second `effigy container up` no longer recreates every service and fails
   with `name "…" is already used by ID …`. The generation root no longer
   reaches Compose as an interpolation value, so a container environment has no
