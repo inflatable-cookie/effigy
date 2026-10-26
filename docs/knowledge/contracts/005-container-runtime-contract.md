@@ -1372,7 +1372,9 @@ once `up` has started the stack it asks the runtime for
 its own, and a declared policy (`no`, `always`, `on-failure`, …) wins. The
 rendered Compose file names no restart policy, so the restart manager cannot
 settle a container between Compose's create and start (effigy#383) and a re-up
-finds an unchanged render and recreates nothing. The runtime restarts the
+finds an unchanged render and recreates nothing. Detached `up` and `dev` apply it
+as soon as the stack is up; an attached `up` applies it when the attached run
+ends, because Compose offers no started hook. The runtime restarts the
 service; Effigy issues no
 hand-start, no recovery start of an exited container by name, and no
 `systemctl` command on nerdctl's health-check units. A stack the runtime has
