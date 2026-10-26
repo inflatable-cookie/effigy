@@ -29,6 +29,16 @@ pub enum Category {
 }
 
 impl Category {
+    /// The word `--json` carries as `error.kind`: one of the three kinds, so a
+    /// machine reader gets the same classification a person does.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Refused => "refused",
+            Self::Unavailable => "unavailable",
+            Self::Broken => "broken",
+        }
+    }
+
     /// The one next step this category carries.
     pub fn next_step(self) -> &'static str {
         match self {

@@ -217,12 +217,10 @@ fn journal_root(repo_root: &Path) -> Result<&'static effigy_kernel::root::StateR
     crate::runner::task_engine::checkout_effects_root(repo_root)
 }
 
-fn location(repo_root: &Path) -> Result<effigy_kernel::migration::CheckoutLocation, RunnerError> {
-    Ok(effigy_kernel::migration::CheckoutLocation {
+fn location(repo_root: &Path) -> effigy_kernel::location::CheckoutLocation {
+    effigy_kernel::location::CheckoutLocation {
         root: effigy_core::worktree_scope::checkout_root(repo_root),
-        git_directory: effigy_core::worktree_scope::git_directory(repo_root)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
-    })
+    }
 }
 
 fn observe_root(repo_root: &Path) -> Option<Observed<effigy_kernel::root::StateRoot>> {
@@ -236,7 +234,7 @@ fn observe_root_in(
     home: &Path,
     repo_root: &Path,
 ) -> Option<Observed<effigy_kernel::root::StateRoot>> {
-    let location = location(repo_root).ok()?;
+    let location = location(repo_root);
     Some(effigy_kernel::root::StateRoot::checkout_observe_in(
         &observe(),
         home,

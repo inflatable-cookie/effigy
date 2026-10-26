@@ -348,7 +348,6 @@ trait ProcessOwner {
     fn closure_pin(&self) -> Result<Option<crate::closure::ClosurePin>, RunError> {
         Ok(None)
     }
-    fn verify_custody(&self) -> Result<(), RunError>;
     fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError>;
     fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError>;
     fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError>;
@@ -373,9 +372,6 @@ impl ProcessOwner for Run<'_> {
     }
     fn has_sentinel(&self) -> bool {
         self.has_sentinel()
-    }
-    fn verify_custody(&self) -> Result<(), RunError> {
-        self.verify_custody()
     }
     fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         self.verify_custody()?;
@@ -415,11 +411,7 @@ impl ProcessOwner for crate::run::ForegroundRun {
     fn has_sentinel(&self) -> bool {
         self.has_guard()
     }
-    fn verify_custody(&self) -> Result<(), RunError> {
-        self.verify_custody()
-    }
     fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
-        self.verify_custody()?;
         self.record_mut().intend_process(spec)
     }
     fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
@@ -766,7 +758,6 @@ impl Custody {
                 registration,
             }));
             run.retain_process(ticket.sequence(), core.clone());
-            run.verify_custody()?;
             pending.transfer();
             crate::fault_point!(SpawnBeforeGo)?;
             pending.go()?;

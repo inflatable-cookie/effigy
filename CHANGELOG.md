@@ -351,6 +351,36 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- **No record of a checkout's or a machine home's generation.** `checkout.json`
+  and `machine-format.json` are gone: a checkout journal opens by its location
+  and a machine store is a location, so a renumbered volume, a recreated `.git`
+  directory, a `git worktree repair` or a moved checkout writes nothing and
+  refuses nothing. The in-memory pins went with them: `RetainedCheckout`, the
+  `.git` locator stamp, `verify_binding` and its re-walks on every open and
+  read are gone, so a linked worktree's group-writable `.git` file is user data
+  rather than operator state (effigy#372).
+- **A checkout has one gate spelling.** A checkout-scoped gate is named by a
+  digest of the checkout's canonical path, for the persisted-token spelling and
+  the path spelling alike; the second and third alias spellings and the
+  "different checkout generation" refusal are gone. A helper reopens the
+  journal by path and takes the same spelling, so recovery still meets its
+  owner's locks (effigy#372).
+- **A foreground run no longer refuses on durable residue.** It reads no
+  journal: the owner flock it holds already proves no predecessor can be live,
+  so a crashed durable run's unsettled row neither blocks the foreground form of
+  the same task nor makes a damaged journal warn or refuse it (effigy#372).
+- **Admission keeps no hook identity.** `verify_hook`, `verify_held` and the
+  `AdmissionInheritance` capsule are gone; a held admission is the advisory
+  marker alone, so a task that is not `admission = "heavy"` never consults the
+  hook and an unreadable hook identity cannot refuse a light task (F10, Q-012).
+- **`StateRoot`'s legacy adoption surface.** The `adoption` flag,
+  `legacy_observe`, `legacy_source`, `unpublished` and the vacuous foreground
+  `verify_custody` are gone, and `CheckoutLocation` is the checkout path:
+  `migration.rs` becomes `location.rs` and no caller resolves a Git directory for
+  the kernel (effigy#372).
+- **`RetainedCheckout`'s refusals are gone**, including "checkout Git locator
+  changed", "checkout Git directory changed" and "resolved Git directory
+  disagrees with checkout".
 - **Automatic Colima repair.** Effigy no longer stops and restarts the shared
   Colima profile to "repair" it: the runtime-state and registry-DNS heuristics
   and their retries are gone from the capture, streaming and liveness paths. A
@@ -1473,6 +1503,34 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **Pinned `[sources.*]` working copies cost a task run nothing when they are
+  present.** A task run clones a pinned source only when its path is missing,
+  bounded to 120 seconds and non-interactive (`GIT_TERMINAL_PROMPT=0`, and an
+  SSH command with `BatchMode=yes` when `GIT_SSH_COMMAND` is unset), and a
+  failed clone removes the half checkout it created. `effigy tasks`, `--plan`
+  and `--help` now acquire a missing pin the same way (rule 1 only: no refresh)
+  instead of refusing, and a lock entry whose recorded object directory is gone
+  counts as missing, so a copied checkout or a cleared cache re-acquires it
+  (contract 020, effigy#372).
+- **Scratch removal keeps its marker last.** A tree Effigy removes is emptied
+  with its marker still in place, so a Finder `.DS_Store` written during
+  removal leaves a marked tree for the next sweep instead of leaking an
+  unmarked directory forever; an ENOTEMPTY retries after deleting only Finder
+  metadata, bounded. A seven-day-old directory whose run is alive is kept, and
+  liveness uses the kernel's `ident::process_identity` rather than `ps`, so two
+  Effigy processes with different `TZ` or `LC_TIME` agree (papercut aa4471e9).
+- **The three error kinds hold outside the kernel.** Ctrl-C renders as
+  `cancelled by SIGINT` instead of a refusal with "nothing ran";
+  `RunnerError::category()` maps every runner failure to refused, unavailable or
+  broken; a supervisor relays the category it read; `--json` carries it as
+  `error.kind` with the error's own type in `error.type`. A helper frame's
+  protocol is read before its shape, so a frame an update changed reads "Effigy
+  was updated; rerun the command". A journal written by a newer Effigy never
+  suggests moving `kernel.db` aside, and `effigy runs` renders observation
+  reasons instead of their `Debug` form (F7, F8, F16, F19, F20).
+- **A scratch tree's removal progress is now visible in its marker.** A failed
+  removal rewrites the marker, so the tree stays Effigy's and is retired by a
+  later sweep.
 - **A service's declared `restart:` always wins, including `"no"`.** The
   generated service still gets `restart: unless-stopped` where the stack
   declares none, but the policy is written only into the file that defines the

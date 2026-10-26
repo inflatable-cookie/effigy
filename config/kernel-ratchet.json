@@ -144,7 +144,7 @@
     },
     "crates/effigy-manifest/src/sources.rs": {
       "std.process.Command.new": 1,
-      "std.process.Command.output": 1
+      "std.process.Command.spawn": 1
     },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 1
@@ -351,7 +351,8 @@
       "std.process.Command.output": 1
     },
     "src/runner/scratch.rs": {
-      "std::fs::File::create": 1
+      "std::fs::File::create": 1,
+      "std::fs::remove_file": 1
     },
     "src/runner/secret_session.rs": {
       "std::env::remove_var": 1

@@ -36,7 +36,8 @@ On error:
   },
   "result": null,
   "error": {
-    "kind": "RunnerError",
+    "kind": "refused",
+    "type": "RunnerError",
     "message": "...",
     "details": { ... }
   }
@@ -48,6 +49,9 @@ Key invariants:
 - `schema` is always `effigy.command.v1`.
 - Either `result` or `error` is non-null, never both.
 - `result` carries the command-specific data.
+- `error.kind` is one of the three kinds a person reads: `refused`,
+  `unavailable` or `broken`; `error.type` names the error's own type (for
+  example `RunnerError`, `CliParseError`).
 - `error.details` is structured (object), not a string.
 - A failed command may place useful command-specific report data under
   `error.details`.

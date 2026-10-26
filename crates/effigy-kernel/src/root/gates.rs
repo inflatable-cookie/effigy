@@ -38,8 +38,7 @@ impl StateRoot {
             owner: directory.clone(),
             writable: true,
             database: super::Database::Checkout,
-            adoption: false,
-            checkout: None,
+            checkout: false,
             machine_gates: None,
         })
     }
@@ -61,7 +60,7 @@ impl StateRoot {
     pub fn checkout_observe_in(
         cx: &ObserveContext,
         home: &Path,
-        location: &crate::migration::CheckoutLocation,
+        location: &crate::location::CheckoutLocation,
     ) -> Observed<Self> {
         // Under Q-010 the state home's `.effigy/state` is the machine store, so
         // the state home itself is never a checkout. Reading it as one opens the
@@ -137,9 +136,9 @@ impl StateRoot {
         cx.operation()
             .check("store mutex identity")
             .map_err(StoreError::Interrupted)?;
-        let local = !self.is_machine() && (self.checkout.is_some() || self.machine_gates.is_some());
+        let local = !self.is_machine() && (self.checkout || self.machine_gates.is_some());
         let scope = if local {
-            Scope::Checkout(self.directory_gate_identity()?)
+            Scope::Checkout(self.checkout_gate_identity())
         } else {
             Scope::Machine
         };
@@ -155,7 +154,7 @@ impl StateRoot {
             &domain.address.home
         } else if self.is_machine() {
             self.owner.path()
-        } else if self.checkout.is_none() {
+        } else if !self.checkout {
             return if create {
                 self.family(Family::Gates)
             } else {
@@ -182,7 +181,7 @@ impl StateRoot {
 
     pub(crate) fn machine_gate_effects(&self, cx: &EffectContext) -> Result<Option<Self>, FsError> {
         let Some(domain) = &self.machine_gates else {
-            return if self.is_machine() || self.checkout.is_none() {
+            return if self.is_machine() || !self.checkout {
                 Ok(None)
             } else {
                 Err(FsError::untrusted(
@@ -195,7 +194,7 @@ impl StateRoot {
             .map_err(|_| FsError::HostAuthorityRequired)?;
         domain.verify_home()?;
         if let Some(held) = domain.state.get() {
-            held.as_ref().map_err(Clone::clone)?.verify_binding()?;
+            held.as_ref().map_err(Clone::clone)?;
         }
         // New machine gate namespaces carry the new-format seal before a
         // gate is held, so peers cannot mistake them for legacy DB writers.
@@ -206,7 +205,6 @@ impl StateRoot {
             .get_or_init(|| Ok(Box::new(current)))
             .as_ref()
             .map_err(Clone::clone)?;
-        root.verify_binding()?;
         root.dir.require_local()?;
         let mut root = root.as_ref().clone();
         root.writable = true;
@@ -218,7 +216,7 @@ impl StateRoot {
             return Observed::Unknown(UnknownReason::HostAuthorityRequired);
         }
         let Some(domain) = &self.machine_gates else {
-            return if self.is_machine() || self.checkout.is_none() {
+            return if self.is_machine() || !self.checkout {
                 Observed::Verified(
                     None,
                     Evidence::new("explicit primitive gate root".into(), None)
@@ -232,7 +230,7 @@ impl StateRoot {
         };
         let root = if let Some(held) = domain.state.get() {
             match held {
-                Ok(root) => match domain.verify_home().and_then(|()| root.verify_binding()) {
+                Ok(root) => match domain.verify_home() {
                     Ok(()) => Observed::Verified(
                         root.as_ref().clone(),
                         Evidence::new("retained machine gate root".into(), None)

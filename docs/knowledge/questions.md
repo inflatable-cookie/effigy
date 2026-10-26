@@ -420,17 +420,15 @@ The ruling is the location-only rule, recorded in
 [052 §7.1](contracts/052-runtime-kernel-contract.md#71-location-trust-and-clocks):
 
 - A journal opens by its location, `<checkout>/.effigy/state/`. No recorded
-  device or inode can refuse it.
-- `checkout.json` is provenance: a record from an earlier boot, or one that no
-  longer matches, is rewritten to the current values by the next effect and the
-  journal keeps its history. Old import records are ignored entirely.
+  device, inode, checkout or Git generation can refuse it.
+- No record follows: `checkout.json` and `machine-format.json` were deleted on
+  2026-10-26 (effigy#372), so nothing is rewritten and a moved checkout, a
+  recreated `.git` directory and a reboot all just work. Old import records are
+  ignored entirely.
 - Prior-boot runs are already history through the boot identity their records
   carry.
-- The refusals that remain are invariants about the current process: a live
-  custodian whose retained checkout, state directory or Git locator was replaced,
-  and a Git resolution that disagrees with the checkout's own `.git`. A
-  database with no binding is bound in place. Custody leases and socket
-  receipts are identified by inode, never by the mount-time device number.
+- Custody leases and socket receipts are identified by inode, never by the
+  mount-time device number.
 
 ## Q-011 — v0.15 simplification before qualification
 

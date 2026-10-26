@@ -126,11 +126,20 @@ that only `effigy bundle sync` moved selected bytes.
   composes the manifest from it: `effigy dev`, `effigy bootstrap`,
   `effigy container up` and the callers of container up.
 - Any other task run applies rule 1 only, before it composes the manifest: a
-  declared source with no pin at all is acquired, so a fresh checkout, worktree
-  or clone runs an ordinary task instead of refusing. An existing pin never
-  moves there - no changed declaration, path re-snapshot or floating Git check -
-  and no update record is written. A failed acquisition fails the task with the
-  acquisition error and the `effigy bundle sync` hint.
+  declared source with no **usable** pin is acquired, so a fresh checkout,
+  worktree or clone runs an ordinary task, lists its tasks and plans one
+  instead of refusing. A pin whose recorded object directory is gone is not
+  usable, so a copied checkout or a hand-deleted cache acquires it again. An
+  existing usable pin never moves there - no changed declaration, path
+  re-snapshot or floating Git check - and no update record is written. A
+  failed acquisition fails the task with the acquisition error and the
+  `effigy bundle sync` hint.
+
+Every acquisition is bounded to 120 seconds and non-interactive
+(`GIT_TERMINAL_PROMPT=0`, and an SSH command with `BatchMode=yes` when the
+operator has not set `GIT_SSH_COMMAND`), so an unreachable or credential-asking
+remote fails the task instead of holding it. A failed acquisition removes the
+half checkout it created, so a later run does not read it as silent drift.
 
 A Prepare path resolves each declared source against its pin:
 
@@ -167,10 +176,10 @@ the acquisition error. Prior bytes are preserved, no cache is deleted, and one
 checkout lock still selects every source.
 
 `--plan`, inventory, help, version, completion, config views, status, doctor,
-bundle inspection and Observe graph paths never acquire sources, run a remote
-check, create locks or register Git excludes, so a task run's `--plan` and
-`--help` forms are read only too. An unprepared remote source returns an
-actionable preparation error. When a source is behind, the read
+bundle inspection and Observe graph paths never refresh a pin, run a remote
+check, or register Git excludes. `--plan`, `--help` and `effigy tasks` still
+apply rule 1: a pin this checkout does not hold yet is acquired, so the first
+command an agent runs in a fresh worktree works. When a source is behind, the read
 notice names the locked and the available revision and says that the next
 `effigy dev` or `effigy container up` will update it. Static help and version
 remain available while source preparation is unavailable.
@@ -200,9 +209,12 @@ path = "../book"           # relative to the manifest, so siblings are normal
 - The pin is committed in the manifest. `rev` or `rev_file` must supply exactly
   one commit; declaring both or neither is a manifest error.
 - Bootstrap, the first `dev` and any task run acquire only a missing checkout:
-  clone, then check out exactly the pin.
-- An existing checkout is verified against the remote. A different HEAD or local
-  changes are reported as drift and left untouched. Nothing resets, fetches
+  clone, then check out exactly the pin. The clone is bounded to 120 seconds and
+  never prompts, and a task run leaves a source it already has alone without
+  inspecting it.
+- An existing checkout is verified against the remote on the Prepare paths. A
+  different HEAD or local changes are reported as drift and left untouched.
+  Nothing resets, fetches
   forward or cleans a developer's working copy, and nothing advances a pin
   silently. Moving a pin means editing `rev` or `rev_file`.
 - `effigy doctor` reports drift in its `sources.pinned-drift` check. Drift is

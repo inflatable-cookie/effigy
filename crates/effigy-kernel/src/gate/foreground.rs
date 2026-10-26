@@ -23,14 +23,11 @@ pub struct ForegroundHolder {
 impl ForegroundHolder {
     /// Observe release of this exact gate inode, without acquiring custody.
     /// Missing or replaced checkout authority remains Unknown.
-    pub fn released(&self, cx: &ObserveContext, root: &StateRoot) -> Observed<bool> {
+    pub fn released(&self, cx: &ObserveContext) -> Observed<bool> {
         if cx.check("foreground custody release").is_err() {
             return Observed::Unknown(UnknownReason::TimedOut {
                 phase: "foreground custody release".into(),
             });
-        }
-        if let Err(error) = root.verify_binding() {
-            return Observed::Unknown(crate::root::unknown(&error));
         }
         match fs::try_flock(&self.gate, libc::LOCK_SH) {
             Ok(free) => {
@@ -84,7 +81,6 @@ impl Gate {
             if root.is_machine() {
                 return Ok(Vec::new());
             }
-            root.verify_binding().map_err(|error| error.to_string())?;
             let Some(gates) = root
                 .family(Family::Gates)
                 .map_err(|error| error.to_string())?
@@ -144,10 +140,7 @@ impl Gate {
                     }
                     if let Scope::Checkout(owner) = coordinates.owner.scope() {
                         if owner.kind() == crate::id::CheckoutKind::Filesystem
-                            && root
-                                .local_gate_identity(cx)
-                                .map_err(|error| error.to_string())?
-                                != Some(owner)
+                            && root.checkout_gate_identity() != owner
                         {
                             return Err(
                                 "foreground holder belongs to a replaced checkout generation"
@@ -162,7 +155,6 @@ impl Gate {
                     });
                 }
             }
-            root.verify_binding().map_err(|error| error.to_string())?;
             Ok(rows)
         };
         match scan() {

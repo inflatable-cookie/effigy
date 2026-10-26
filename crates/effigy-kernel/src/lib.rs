@@ -16,7 +16,7 @@ pub mod gate;
 pub mod human;
 pub mod id;
 pub mod ident;
-pub mod migration;
+pub mod location;
 pub mod objects;
 pub mod observe;
 pub mod outcome;

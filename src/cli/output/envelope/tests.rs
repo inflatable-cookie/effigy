@@ -27,6 +27,7 @@ fn build_json_envelope_error_sets_contract_shape() {
         "doctor",
         "doctor",
         "RunnerError",
+        "unavailable",
         "boom",
         Some(json!({"code": 1})),
     );
@@ -40,7 +41,8 @@ fn build_json_envelope_error_sets_contract_shape() {
     assert_eq!(payload["command"]["kind"], "doctor");
     assert_eq!(payload["command"]["name"], "doctor");
     assert_eq!(payload["result"], serde_json::Value::Null);
-    assert_eq!(payload["error"]["kind"], "RunnerError");
+    assert_eq!(payload["error"]["kind"], "unavailable");
+    assert_eq!(payload["error"]["type"], "RunnerError");
     assert_eq!(payload["error"]["message"], "boom");
     assert_eq!(payload["error"]["details"]["code"], 1);
 }
@@ -61,12 +63,14 @@ fn build_json_envelope_error_with_human_keeps_the_machine_fields() {
         "container",
         "up",
         "RunnerError",
+        "unavailable",
         "container `web` never became healthy",
         Some(json!({"schema": "effigy.container.up.v1"})),
         human,
     );
     assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["kind"], "RunnerError");
+    assert_eq!(payload["error"]["kind"], "unavailable");
+    assert_eq!(payload["error"]["type"], "RunnerError");
     assert_eq!(
         payload["error"]["message"],
         "container `web` never became healthy"

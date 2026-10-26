@@ -5,6 +5,7 @@ use effigy_kernel::{
 };
 use std::collections::BTreeMap;
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -1595,8 +1596,12 @@ fn foreground_open_lifetime_reads_predecessors_with_a_finite_budget() {
     );
 }
 
+/// A durable run that crashed and left unsettled residue is not a refusal for
+/// the foreground form of the same task: the foreground run holds the owner
+/// flock, which proves no predecessor can still be live (F11). The residue is
+/// left for the durable path to settle and the journal is not written.
 #[test]
-fn foreground_refuses_unresolved_durable_predecessor_without_database_writes() {
+fn foreground_runs_beside_unsettled_durable_residue_without_database_writes() {
     let home = home();
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
@@ -1617,7 +1622,7 @@ fn foreground_refuses_unresolved_durable_predecessor_without_database_writes() {
     .unwrap();
     drop(previous);
     let before = std::fs::read(root.path().join("kernel.db")).unwrap();
-    let refused = ForegroundRun::begin(
+    let mut running = ForegroundRun::begin(
         &cx,
         &root,
         &invocation(),
@@ -1631,22 +1636,17 @@ fn foreground_refuses_unresolved_durable_predecessor_without_database_writes() {
                 placement: effigy_kernel::supervise::Placement::Inline,
             }),
         },
-    );
-    assert!(matches!(refused, Err(RunError::PredecessorUnsettled { run, .. }) if run == id(2)));
+    )
+    .expect("a dead predecessor's residue never blocks the foreground form");
+    running.interrupt(WorkloadOutcome::NotStarted).unwrap();
+    running
+        .settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
     assert_eq!(
         before,
-        std::fs::read(root.path().join("kernel.db")).unwrap()
+        std::fs::read(root.path().join("kernel.db")).unwrap(),
+        "a foreground run reads the residue and writes nothing"
     );
-    settle_interrupted(
-        &cx,
-        &root,
-        &invocation().spec().owner,
-        id(2),
-        next(),
-        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
-        &mut Strict,
-    )
-    .unwrap();
 }
 
 #[test]
@@ -1871,9 +1871,8 @@ fn a_foreground_child_receives_no_parent_capability_and_opens_its_own_journal() 
     let cx = context();
     let root = StateRoot::foreground_effects(
         &cx,
-        &effigy_kernel::migration::CheckoutLocation {
+        &effigy_kernel::location::CheckoutLocation {
             root: home.path().into(),
-            git_directory: None,
         },
     )
     .unwrap();
@@ -1906,21 +1905,55 @@ fn foreground_retained_git_pointer_refuses_new_workload_go() {
     std::fs::create_dir(&one).unwrap();
     std::fs::create_dir(&two).unwrap();
     std::fs::write(home.path().join(".git"), "gitdir: git-one\n").unwrap();
-    let location = effigy_kernel::migration::CheckoutLocation {
+    let location = effigy_kernel::location::CheckoutLocation {
         root: home.path().into(),
-        git_directory: Some(one),
     };
     let root = StateRoot::foreground_effects(&cx, &location).unwrap();
     let mut run = foreground_begin(&cx, &root);
+    // A Git pointer rewritten under a live run is ordinary: nothing retained is
+    // compared, so the run continues and spawns (F15).
     std::fs::write(home.path().join(".git"), "gitdir: git-two\n").unwrap();
-    assert!(
-        Custody::spawn_foreground(&mut run, spec(home.path(), "printf bad > forbidden"), &cx)
-            .is_err()
-    );
-    assert!(run.record().effects().is_empty());
-    assert!(!home.path().join("forbidden").exists());
+    let mut child =
+        Custody::spawn_foreground(&mut run, spec(home.path(), "printf went"), &cx).unwrap();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
     assert!(!root.path().join("kernel.db").exists());
-    run.interrupt(WorkloadOutcome::NotStarted).unwrap();
+    run.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+}
+
+/// A linked worktree's `.git` file is user data, not operator state: Git writes
+/// it 0664 under umask 002, and a foreground task runs (F4).
+#[test]
+fn a_foreground_task_runs_in_a_linked_worktree_with_a_group_writable_git_file() {
+    let home = home();
+    let cx = context();
+    let common = home.path().join("main-git/worktrees/linked");
+    std::fs::create_dir_all(&common).unwrap();
+    let checkout = home.path().join("linked");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let pointer = checkout.join(".git");
+    std::fs::write(&pointer, format!("gitdir: {}\n", common.display())).unwrap();
+    std::fs::set_permissions(&pointer, std::fs::Permissions::from_mode(0o664)).unwrap();
+    let location = effigy_kernel::location::CheckoutLocation {
+        root: checkout.clone(),
+    };
+    let root = StateRoot::foreground_effects(&cx, &location)
+        .expect("a worktree's `.git` pointer is user data, not operator state");
+    let mut run = foreground_begin(&cx, &root);
+    let mut child =
+        Custody::spawn_foreground(&mut run, spec(&checkout, "printf linked"), &cx).unwrap();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        std::fs::symlink_metadata(&pointer).unwrap().permissions().mode() & 0o777,
+        0o664,
+        "the worktree pointer is read and left exactly as it was"
+    );
     run.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
         .unwrap();
 }
@@ -1931,9 +1964,8 @@ fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes
     let cx = context();
     let git = home.path().join(".git");
     std::fs::create_dir(&git).unwrap();
-    let location = || effigy_kernel::migration::CheckoutLocation {
+    let location = || effigy_kernel::location::CheckoutLocation {
         root: home.path().into(),
-        git_directory: Some(git.clone()),
     };
     let observe = cx.operation().observe().unwrap();
     let old_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
@@ -1952,7 +1984,6 @@ fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes
         ForegroundRun::begin(&cx, &old_root, &invocation_at_checkout(old_id), opts(18)).unwrap();
     std::fs::rename(&git, home.path().join("git-retired")).unwrap();
     std::fs::create_dir(&git).unwrap();
-    assert!(old.verify_custody().is_err());
     // Identity is the checkout's location, not a directory generation
     // (effigy#337): replacing `.git` in place keeps the same gate, and the
     // old custody still holds it.
@@ -1978,9 +2009,8 @@ fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes
 fn foreground_filesystem_identity_cannot_be_promoted_into_a_durable_run() {
     let home = home();
     let cx = context();
-    let location = effigy_kernel::migration::CheckoutLocation {
+    let location = effigy_kernel::location::CheckoutLocation {
         root: home.path().into(),
-        git_directory: None,
     };
     let checkout =
         StateRoot::filesystem_checkout(&cx.operation().observe().unwrap(), &location).unwrap();
@@ -2021,9 +2051,8 @@ fn invocation_at_checkout(checkout: CheckoutId) -> ResolvedInvocation {
 fn foreground_and_durable_exclusion_survives_first_token_creation() {
     let home = home();
     let cx = context();
-    let location = effigy_kernel::migration::CheckoutLocation {
+    let location = effigy_kernel::location::CheckoutLocation {
         root: home.path().into(),
-        git_directory: None,
     };
     let local =
         StateRoot::filesystem_checkout(&cx.operation().observe().unwrap(), &location).unwrap();
@@ -2138,9 +2167,8 @@ fn custody_sentinel_recovery_meets_the_filesystem_gate_alias() {
         .verified()
         .unwrap()
         .clone();
-    let location = effigy_kernel::migration::CheckoutLocation {
+    let location = effigy_kernel::location::CheckoutLocation {
         root: home.path().into(),
-        git_directory: None,
     };
     let local = StateRoot::filesystem_checkout(&observe, &location).unwrap();
     let alias = invocation_at_checkout(local).spec().owner.clone();

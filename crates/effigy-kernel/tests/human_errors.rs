@@ -82,11 +82,25 @@ fn a_corrupt_journal_says_so_and_names_the_one_repair() {
     );
     assert_eq!(corrupt.category(), Category::Broken);
 
-    // An on-disk schema this Effigy cannot read is corrupt in the same way, and
+    // An on-disk schema older than this binary is corrupt in the same way, and
     // the same repair is the one next step.
-    let schema = StoreError::UnknownSchema { found: 9 };
+    let schema = StoreError::UnknownSchema { found: 0 };
     assert!(schema.to_string().contains("corrupt"), "{schema}");
     assert!(schema.to_string().contains("explicit repair"), "{schema}");
+}
+
+#[test]
+fn a_journal_from_a_newer_effigy_never_suggests_a_repair() {
+    // A schema ahead of this binary is version skew, not damage: the newer
+    // Effigy reads the file, and moving it aside would lose a healthy journal
+    // (F19).
+    let newer = StoreError::UnknownSchema { found: 9 };
+    let rendered = newer.to_string();
+    assert!(rendered.contains("Effigy was updated"), "{rendered}");
+    assert!(rendered.contains("schema version 9"), "{rendered}");
+    assert!(!rendered.contains("corrupt"), "{rendered}");
+    assert!(!rendered.contains("repair"), "{rendered}");
+    assert_eq!(newer.category(), Category::Unavailable);
 }
 
 #[test]
@@ -153,14 +167,27 @@ fn a_settle_timeout_reads_as_unavailable() {
 }
 
 #[test]
-fn a_cancelled_run_reads_as_refused_and_names_the_signal() {
-    let refused = RunError::from(StoreError::Interrupted(Interrupt::Cancelled {
+fn a_cancelled_run_reads_as_cancelled_and_never_as_refused() {
+    // Ctrl-C during a gate wait says what ended the run and asks nothing else:
+    // no category's next step applies (F7).
+    let cancelled = RunError::from(StoreError::Interrupted(Interrupt::Cancelled {
         cause: StopCause::Signal(libc::SIGINT),
     }));
-    assert_eq!(refused.category(), Category::Refused);
+    assert_eq!(cancelled.category(), Category::Unavailable);
+    assert_eq!(cancelled.to_string(), "the state store was cancelled by SIGINT");
+    let gate = effigy_kernel::gate::GateError::Interrupted(Interrupt::Cancelled {
+        cause: StopCause::Signal(libc::SIGINT),
+    });
+    assert_eq!(gate.category(), Category::Unavailable);
+    assert_eq!(gate.to_string(), "the gate was cancelled by SIGINT");
+    let run = RunError::Interrupted(Interrupt::Cancelled {
+        cause: StopCause::Signal(libc::SIGINT),
+    });
+    assert_eq!(run.to_string(), "the run was cancelled by SIGINT");
+    let rendered = run.to_string();
     assert!(
-        refused.to_string().contains("it was cancelled by SIGINT"),
-        "{refused}"
+        !rendered.contains("refused") && !rendered.contains("nothing ran"),
+        "{rendered}"
     );
 }
 

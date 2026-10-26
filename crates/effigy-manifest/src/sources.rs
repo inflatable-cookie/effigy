@@ -7,13 +7,22 @@
 //! pin. An existing working copy is never reset, fetched forward or cleaned.
 //!
 //! Inspection is pure: it reads the checkout and reports what it finds.
-//! Preparation acquires only a missing destination.
+//! Preparation acquires only a missing destination, bounded and without a
+//! prompt, so an offline or unreachable remote fails a task run instead of
+//! holding it.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::config_sections::ManifestPinnedSourceConfig;
 use crate::{load_task_manifest, ManifestError, TASK_MANIFEST_FILE};
+
+/// The bound one acquisition gets on a task run: a remote that never answers
+/// fails the run instead of holding it.
+const CLONE_BOUND: Duration = Duration::from_secs(120);
+/// How often a bounded acquisition rechecks its child.
+const CLONE_POLL: Duration = Duration::from_millis(20);
 
 /// What bootstrap or `effigy doctor` observed for one pinned source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,17 +245,40 @@ pub fn prepare_pinned_sources(
         .collect()
 }
 
+/// Acquire only the pinned sources whose path holds nothing yet, for a task
+/// run that fills a gap (contract 020 §Behaviour rule 1).
+///
+/// An existing checkout is neither inspected nor reported: a plain task pays
+/// no `git` call for a source it already has, and a fresh worktree acquires a
+/// missing one bounded and non-interactively.
+pub fn prepare_missing_pinned_sources(
+    manifest_path: &Path,
+) -> Result<(), ManifestError> {
+    for spec in resolve_pinned_sources(manifest_path)? {
+        if !spec.path.exists() {
+            clone_at_pin(&spec)?;
+        }
+    }
+    Ok(())
+}
+
 fn prepare_one(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestError> {
     if spec.path.exists() {
         return inspect_one(spec);
     }
+    clone_at_pin(spec)
+}
+
+/// Clone `spec`'s missing destination at its pin. A clone that fails leaves no
+/// half-checkout behind, so a later run does not read it as silent drift.
+fn clone_at_pin(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestError> {
     if let Some(parent) = spec.path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
             path: parent.to_path_buf(),
             error,
         })?;
     }
-    git(
+    let cloned = git(
         None,
         &[
             "clone",
@@ -254,11 +286,19 @@ fn prepare_one(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestEr
             spec.git.as_str(),
             spec.path.to_str().unwrap_or_default(),
         ],
-    )?;
-    git(
-        Some(&spec.path),
-        &["checkout", "--quiet", "--detach", spec.revision.as_str()],
-    )?;
+    )
+    .and_then(|_| {
+        git(
+            Some(&spec.path),
+            &["checkout", "--quiet", "--detach", spec.revision.as_str()],
+        )
+    });
+    if let Err(error) = cloned {
+        // The destination is Effigy's own creation from this run: nothing else
+        // has written into it yet.
+        let _ = std::fs::remove_dir_all(&spec.path);
+        return Err(error);
+    }
     let head = git(Some(&spec.path), &["rev-parse", "HEAD"]).ok();
     Ok(PinnedSourceReport {
         name: spec.name.clone(),
@@ -353,18 +393,26 @@ fn canonical_identity(remote: &str) -> String {
     effigy_core::git_source::canonical_git_cache_identity(remote)
 }
 
+/// One bounded, non-interactive `git` call. A task run is never allowed to
+/// wait on a credential prompt or an unreachable remote: an acquisition that
+/// needs one belongs on the host, on a Prepare path.
 fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, ManifestError> {
     let mut command = Command::new("git");
     if let Some(cwd) = cwd {
         command.arg("-C").arg(cwd);
     }
-    let output = command
+    command
         .args(args)
-        .output()
-        .map_err(|error| ManifestError::Read {
-            path: cwd.map(Path::to_path_buf).unwrap_or_default(),
-            error,
-        })?;
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // An operator's own SSH command wins; the bound below still ends a call
+    // that would have prompted.
+    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+        command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    }
+    let output = run_bounded(command, CLONE_BOUND, args.join(" "), cwd)?;
     if !output.status.success() {
         return Err(ManifestError::Compose {
             path: cwd.map(Path::to_path_buf).unwrap_or_default(),
@@ -376,6 +424,77 @@ fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, ManifestError> {
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// A command's collected result, as `Command::output` would report it.
+#[derive(Debug)]
+struct BoundedOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+/// Run `command` to completion or kill it at `bound`. Both streams are drained
+/// while it runs, so a verbose child never blocks on a full pipe before its
+/// bound expires.
+fn run_bounded(
+    mut command: Command,
+    bound: Duration,
+    label: String,
+    cwd: Option<&Path>,
+) -> Result<BoundedOutput, ManifestError> {
+    let path = cwd.map(Path::to_path_buf).unwrap_or_default();
+    let mut child = command.spawn().map_err(|error| ManifestError::Read {
+        path: path.clone(),
+        error,
+    })?;
+    let stdout = child.stdout.take().map(read_in_background);
+    let stderr = child.stderr.take().map(read_in_background);
+    let deadline = Instant::now() + bound;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ManifestError::Compose {
+                    path,
+                    detail: format!(
+                        "{label} did not finish within {}s and was stopped; a remote that needs a prompt or an answer cannot prepare a source during a task run (run `effigy bootstrap` or `effigy bundle sync` on the host)",
+                        bound.as_secs()
+                    ),
+                });
+            }
+            Ok(None) => std::thread::sleep(CLONE_POLL),
+            Err(error) => {
+                return Err(ManifestError::Read {
+                    path: path.clone(),
+                    error,
+                })
+            }
+        }
+    };
+    Ok(BoundedOutput {
+        status,
+        stdout: stdout.map(read_result).unwrap_or_default(),
+        stderr: stderr.map(read_result).unwrap_or_default(),
+    })
+}
+
+/// A child's stream is drained while it runs, so a verbose command never
+/// blocks on a full pipe before its bound expires.
+fn read_in_background(
+    mut stream: impl std::io::Read + Send + 'static,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stream.read_to_end(&mut bytes);
+        bytes
+    })
+}
+
+fn read_result(reader: std::thread::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    reader.join().unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -448,6 +567,48 @@ path = "../book"
             .expect_err("multi-line pin")
             .to_string();
         assert!(error.contains("must hold one non-empty commit"), "{error}");
+    }
+
+    #[test]
+    fn an_acquisition_that_never_answers_is_stopped_at_its_bound() {
+        let mut command = Command::new("sleep");
+        command.arg("60").stdin(Stdio::null()).stdout(Stdio::piped());
+        let started = Instant::now();
+        let error = run_bounded(
+            command,
+            Duration::from_millis(200),
+            "git clone never-answers".to_owned(),
+            None,
+        )
+        .expect_err("the bound stops it");
+        let message = error.to_string();
+        assert!(message.contains("did not finish within"), "{message}");
+        assert!(message.contains("effigy bundle sync"), "{message}");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the bound is honoured: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn only_a_missing_destination_is_acquired() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let present = dir.path().join("book");
+        std::fs::create_dir(&present).expect("present checkout");
+        let manifest = write_manifest(
+            dir.path(),
+            r#"
+[sources.book]
+git = "unreachable.invalid:/book.git"
+rev = "0123456789abcdef0123456789abcdef01234567"
+path = "book"
+"#,
+        );
+        // An existing path is never cloned, so an unreachable remote costs a
+        // plain task run nothing at all.
+        prepare_missing_pinned_sources(&manifest).expect("nothing to acquire");
+        assert!(present.is_dir());
     }
 
     #[test]

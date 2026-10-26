@@ -894,20 +894,8 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         }
     };
     let cx = crate::runner::task_engine::effect_context(effigy_kernel::ctx::OpenReason::DevServer);
-    let location = effigy_kernel::migration::CheckoutLocation {
+    let location = effigy_kernel::location::CheckoutLocation {
         root: effigy_core::worktree_scope::checkout_root(Path::new(&spec.project_path)),
-        git_directory: match effigy_core::worktree_scope::git_directory(Path::new(
-            &spec.project_path,
-        )) {
-            Ok(git_directory) => git_directory,
-            Err(error) => {
-                return Err(refuse(
-                    &session,
-                    Category::Unavailable,
-                    format!("the git directory is unreadable ({error})"),
-                ))
-            }
-        },
     };
     let root =
         match effigy_kernel::root::StateRoot::checkout_effects(&cx, &spec.state_home, &location) {

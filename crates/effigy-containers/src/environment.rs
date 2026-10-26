@@ -52,7 +52,7 @@ pub fn state_root(
 ) -> Result<effigy_kernel::root::StateRoot, EnvError> {
     let home = crate::policy::render::state_home()
         .map_err(|error| EnvError::Invalid(error.to_string()))?;
-    effigy_kernel::root::StateRoot::checkout_effects(cx, &home, &location(repo_root)?)
+    effigy_kernel::root::StateRoot::checkout_effects(cx, &home, &location(repo_root))
         .map_err(|error| EnvError::Invalid(format!("cannot open the Effigy state root: {error}")))
 }
 
@@ -61,14 +61,10 @@ pub fn observe_root(
     cx: &effigy_kernel::ctx::ObserveContext,
     repo_root: &std::path::Path,
 ) -> effigy_kernel::observe::Observed<effigy_kernel::root::StateRoot> {
-    match location(repo_root) {
-        Ok(location) => match state_home() {
-            Ok(home) => effigy_kernel::root::StateRoot::checkout_observe_in(cx, &home, &location),
-            Err(_) => effigy_kernel::root::StateRoot::checkout_observe(cx, &location),
-        },
-        Err(error) => effigy_kernel::observe::Observed::Unknown(
-            effigy_kernel::observe::UnknownReason::Untrusted(error.to_string()),
-        ),
+    let location = location(repo_root);
+    match state_home() {
+        Ok(home) => effigy_kernel::root::StateRoot::checkout_observe_in(cx, &home, &location),
+        Err(_) => effigy_kernel::root::StateRoot::checkout_observe(cx, &location),
     }
 }
 
@@ -78,10 +74,8 @@ pub fn observe_root(
 /// checkout's journal with the task runs that fence it.
 pub(crate) fn location(
     repo_root: &std::path::Path,
-) -> Result<effigy_kernel::migration::CheckoutLocation, EnvError> {
-    Ok(effigy_kernel::migration::CheckoutLocation {
+) -> effigy_kernel::location::CheckoutLocation {
+    effigy_kernel::location::CheckoutLocation {
         root: effigy_core::worktree_scope::checkout_root(repo_root),
-        git_directory: effigy_core::worktree_scope::git_directory(repo_root)
-            .map_err(|error| EnvError::Invalid(error.to_string()))?,
-    })
+    }
 }

@@ -126,10 +126,13 @@ pub enum StoreError {
 impl StoreError {
     pub fn category(&self) -> Category {
         match self {
+            // A newer journal is version skew, not damage: the newer Effigy
+            // reads it, and nothing here is corrupt.
+            Self::UnknownSchema { found } if *found > SCHEMA_VERSION => Category::Unavailable,
             Self::Corrupt(_) | Self::UnknownSchema { .. } | Self::Broken(_) => Category::Broken,
             Self::InTransaction => Category::Broken,
-            Self::Interrupted(Interrupt::TimedOut { .. }) => Category::Unavailable,
-            Self::Interrupted(_) => Category::Refused,
+            // A cancellation is not a rule refusing the request.
+            Self::Interrupted(_) => Category::Unavailable,
             Self::HostAuthorityRequired
             | Self::Refused(_)
             | Self::ClassRefused(_)
@@ -165,12 +168,25 @@ impl std::fmt::Display for StoreError {
                      {CORRUPT_REPAIR}"
                 )
             }
+            Self::UnknownSchema { found } if *found > SCHEMA_VERSION => {
+                return write!(
+                    f,
+                    "Effigy was updated: kernel.db was written by a newer Effigy at schema version \
+                     {found}, which this binary cannot read; nothing was changed, and running the \
+                     newer Effigy works"
+                )
+            }
             Self::UnknownSchema { found } => {
                 return write!(
                     f,
                     "Effigy is broken: kernel.db is corrupt (it records schema version {found}, \
                      which this Effigy cannot read); nothing was changed, and {CORRUPT_REPAIR}"
                 )
+            }
+            // A cancellation says what ended the work and asks nothing else of
+            // the reader (F7).
+            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
+                return write!(f, "the state store was {interrupt}")
             }
             Self::Gate(error) => return error.fmt(f),
             _ => {}
@@ -218,9 +234,6 @@ impl std::fmt::Display for StoreError {
                     .to_owned()
             }
             Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => interrupt.to_string(),
-            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
-                format!("it was {interrupt}")
-            }
             Self::Refused(rule) => rule.clone(),
             Self::TooLarge { limit } => {
                 format!("the store refused a value above its {limit}-byte limit")
@@ -235,9 +248,10 @@ impl std::fmt::Display for StoreError {
                  removed"
                     .to_owned()
             }
-            Self::Corrupt(_) | Self::UnknownSchema { .. } | Self::Gate(_) => {
-                unreachable!("rendered above")
-            }
+            Self::Corrupt(_)
+            | Self::UnknownSchema { .. }
+            | Self::Gate(_)
+            | Self::Interrupted(Interrupt::Cancelled { .. }) => unreachable!("rendered above"),
         };
         f.write_str(&self.category().render("the state store", &detail))
     }
@@ -360,7 +374,6 @@ impl Store {
             });
         }
         // A live custodian continuing through a replaced locator is refused.
-        root.verify_binding()?;
         let name = FileName::new(root.database_name())?;
         let (_, stat) = root
             .dir()
@@ -472,9 +485,6 @@ impl Store {
             return injected;
         }
         // A live custodian continuing through a replaced locator is refused.
-        if let Err(error) = root.verify_binding() {
-            return Observed::Unknown(crate::root::unknown(&error));
-        }
         if let Err(error) = check_store_files(root) {
             return Observed::Unknown(crate::root::unknown(&error));
         }
@@ -1353,8 +1363,8 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
 /// A store with a hot write-ahead log, or the index beside it, is a plain
 /// read-only connection to SQLite's own WAL: its committed frames are visible
 /// and a crashed writer's are not. A checkpointed store is an immutable open —
-/// no lock, no index and no file — which also covers the zero-length log a
-/// closed writer can leave behind (K1, Q-011).
+/// no lock, no index and no file — which is also the only form that writes
+/// nothing into a read-only or copied checkout (K1, Q-011).
 fn open_reading(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
     // A state root whose database is not created yet holds nothing, whatever
     // its side files say.

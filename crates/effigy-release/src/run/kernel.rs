@@ -166,15 +166,12 @@ fn next_invocation() -> Invocation {
 pub fn release_owner(checkout: CheckoutId) -> ResourceId {
     ResourceId::store(Scope::Checkout(checkout), "release").expect("fixed release owner")
 }
-fn location(root: &Path) -> Result<effigy_kernel::migration::CheckoutLocation, ReleaseError> {
+fn location(root: &Path) -> effigy_kernel::location::CheckoutLocation {
     // Release authority belongs to the checkout that owns the invocation root,
     // never to a nested catalog's directory (contract 052 §7.1).
-    let checkout = effigy_core::worktree_scope::checkout_root(root);
-    Ok(effigy_kernel::migration::CheckoutLocation {
-        git_directory: effigy_core::worktree_scope::git_directory(&checkout)
-            .map_err(storage_error)?,
-        root: checkout,
-    })
+    effigy_kernel::location::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(root),
+    }
 }
 fn storage_error(error: impl std::fmt::Display) -> ReleaseError {
     ReleaseError::TaskInvocation(format!("release checkout state: {error}"))
@@ -324,7 +321,7 @@ impl ReleaseSession {
             ReleaseError::TaskInvocation("release cleanup budget is unusable".into())
         })?;
         let root =
-            StateRoot::checkout_effects(&cx, home, &location(repo_root)?).map_err(storage_error)?;
+            StateRoot::checkout_effects(&cx, home, &location(repo_root)).map_err(storage_error)?;
         effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(repo_root)
             .map_err(storage_error)?;
         let checkout =
@@ -352,7 +349,6 @@ impl ReleaseSession {
     }
 
     pub fn state(&self) -> Result<ReleaseState, ReleaseError> {
-        self.root.verify_binding().map_err(storage_error)?;
         use effigy_kernel::fs::FileName;
         let release = self
             .root
@@ -387,7 +383,7 @@ impl ReleaseSession {
             .map_err(|_| {
                 ReleaseError::TaskInvocation("release state observation needs a deadline".into())
             })?;
-        let root = match StateRoot::checkout_observe(&observe, &location(&self.repo_root)?) {
+        let root = match StateRoot::checkout_observe(&observe, &location(&self.repo_root)) {
             Observed::Verified(root, _) => root,
             Observed::Absent(_) => return Ok(None),
             Observed::Unknown(reason) => {
@@ -539,7 +535,7 @@ pub fn read_release_record(
     let observe = op.observe().map_err(|_| {
         ReleaseError::TaskInvocation("release state observation needs a deadline".into())
     })?;
-    let root = match StateRoot::checkout_observe_in(&observe, home, &location(repo_root)?) {
+    let root = match StateRoot::checkout_observe_in(&observe, home, &location(repo_root)) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return Ok(None),
         Observed::Unknown(reason) => {

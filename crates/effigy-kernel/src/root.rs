@@ -39,8 +39,9 @@ pub struct StateRoot {
     owner: DirFd,
     writable: bool,
     database: Database,
-    adoption: bool,
-    checkout: Option<checkout::RetainedCheckout>,
+    /// Opened as a checkout journal rather than a primitive or derived root.
+    /// A routing fact about how this handle was opened, never a record.
+    checkout: bool,
     machine_gates: Option<std::sync::Arc<gates::MachineGates>>,
 }
 
@@ -75,8 +76,7 @@ impl StateRoot {
             owner: home,
             writable: true,
             database: Database::Checkout,
-            adoption: true,
-            checkout: None,
+            checkout: false,
             machine_gates: None,
         })
     }
@@ -101,8 +101,7 @@ impl StateRoot {
                     owner,
                     writable: false,
                     database: Database::Checkout,
-                    adoption: true,
-                    checkout: None,
+                    checkout: false,
                     machine_gates: None,
                 },
                 Evidence::new("kernel state root".into(), None).expect("fixed source"),
@@ -126,55 +125,27 @@ impl StateRoot {
             root
         })
     }
-    /// An explicitly historical, read-only source for migration and fixture
-    /// observation. This never grants authority to mutate a legacy journal.
-    pub fn legacy_observe(cx: &ObserveContext, home: &Path) -> Observed<Self> {
-        Self::observe(cx, home).map(|root| root.legacy_source())
-    }
-    pub(crate) fn legacy_source(&self) -> Self {
-        let mut root = self.unpublished();
-        root.database = Database::Checkout;
-        root
-    }
-    pub(crate) fn unpublished(&self) -> Self {
-        let mut root = self.clone();
-        root.writable = false;
-        root.adoption = false;
-        root
-    }
-    pub(crate) fn requires_adoption(&self) -> bool {
-        self.adoption
-    }
     /// Whether this handle routes shared machine facts rather than a checkout journal.
     pub fn is_machine(&self) -> bool {
         matches!(self.database, Database::Machine)
+    }
+    /// Whether this handle is a checkout journal rather than a primitive or
+    /// derived root.
+    pub(crate) fn is_checkout(&self) -> bool {
+        self.checkout
+    }
+    /// Marks a handle reopened by path as the checkout journal it belongs to.
+    /// A helper has no record to read, and every gate it takes must use the
+    /// same spelling its owner did (F22).
+    pub(crate) fn into_checkout(mut self) -> Self {
+        self.checkout = true;
+        self
     }
     pub(crate) fn database_name(&self) -> &'static str {
         match self.database {
             Database::Checkout => crate::store::DB_NAME,
             Database::Machine => "machine.db",
         }
-    }
-    /// Recheck the retained checkout, state and Git generations before an
-    /// engine continues file work through this handle.
-    pub fn verify_binding(&self) -> Result<(), FsError> {
-        if DirFd::walk(self.owner.path(), Trust::Ancestor)?.identity()? != self.owner.identity()? {
-            return Err(FsError::untrusted(
-                self.owner.path(),
-                "owning checkout directory changed",
-            ));
-        }
-        let reopened = DirFd::walk(self.path(), Trust::Private)?;
-        if self.dir.identity()? != reopened.identity()? {
-            return Err(FsError::untrusted(
-                self.path(),
-                "state root identity changed",
-            ));
-        }
-        if let Some(checkout) = &self.checkout {
-            checkout.verify(&self.owner)?;
-        }
-        Ok(())
     }
     /// Retained filesystem identity of the actual checkout or machine home.
     pub fn owning_directory(&self) -> &DirFd {

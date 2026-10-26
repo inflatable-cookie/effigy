@@ -187,7 +187,7 @@ fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
     assert_eq!(usage.status.code(), Some(1), "usage: {usage:?}");
     let payload = parse_stdout_json(&usage);
     assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["kind"], "RunnerError");
+    assert_eq!(payload["error"]["kind"], "refused");
     assert!(
         payload["error"]["message"]
             .as_str()
@@ -201,7 +201,7 @@ fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
     assert_eq!(runtime.status.code(), Some(1), "runtime: {runtime:?}");
     let payload = parse_stdout_json(&runtime);
     assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["kind"], "RunnerError");
+    assert_eq!(payload["error"]["kind"], "refused");
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&runtime);
 }

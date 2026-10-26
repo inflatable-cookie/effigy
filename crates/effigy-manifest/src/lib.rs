@@ -90,8 +90,8 @@ pub use retired_notice::{
     RetiredNoticeDelivery,
 };
 pub use sources::{
-    inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
-    PinnedSourceSpec, PinnedSourceState,
+    inspect_pinned_sources, prepare_missing_pinned_sources, prepare_pinned_sources,
+    resolve_pinned_sources, PinnedSourceReport, PinnedSourceSpec, PinnedSourceState,
 };
 use task_defs::deserialize_tasks;
 pub use task_runtime::{

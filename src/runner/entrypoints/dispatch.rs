@@ -61,24 +61,23 @@ pub(super) fn run_skill_passthrough_with_context(
 }
 
 pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, RunnerError> {
-    if let Command::Task(task) = &cmd {
-        let full_prepare = crate::runner::bundle_command::is_source_prepare_command(&cmd);
-        if full_prepare || !crate::runner::bundle_command::is_read_only_task_invocation(task) {
-            let root = crate::runner::command_context::active_runtime_context()
-                .map(|context| context.command_root().to_path_buf())
-                .unwrap_or_else(|| cwd.into());
-            if let Some(manifest) = root
-                .ancestors()
-                .map(|root| root.join("effigy.toml"))
-                .find(|manifest| manifest.is_file())
-            {
-                // A Prepare path refreshes what is behind; any other task run
-                // only fills a gap, so a fresh checkout runs instead of refusing.
-                if full_prepare {
-                    crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
-                } else {
-                    crate::runner::bundle_command::prepare_missing_sources_for_manifest(&manifest)?;
-                }
+    // Both a task run and the task listing read the checkout's sources. Neither
+    // refuses over a pin this checkout does not hold yet: a missing one is
+    // acquired (rule 1 only), and only a Prepare path refreshes what is behind.
+    let reads_sources = matches!(cmd, Command::Task(_) | Command::Tasks(_));
+    if reads_sources {
+        let root = crate::runner::command_context::active_runtime_context()
+            .map(|context| context.command_root().to_path_buf())
+            .unwrap_or_else(|| cwd.into());
+        if let Some(manifest) = root
+            .ancestors()
+            .map(|root| root.join("effigy.toml"))
+            .find(|manifest| manifest.is_file())
+        {
+            if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
+                crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
+            } else {
+                crate::runner::bundle_command::prepare_missing_sources_for_manifest(&manifest)?;
             }
         }
     }

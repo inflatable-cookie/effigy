@@ -14,15 +14,13 @@ environments and remote clients select checkout durability before their first
 effect. Status combines live foreground evidence with
 explicitly historical durable results; a missing record means `not-recorded`.
 
-A checkout journal opens by its location, `<checkout>/.effigy/state/`. The
-directory generations its `checkout.json` records are provenance, not a gate: a
-record from an earlier boot, or one that no longer matches, is rewritten by the
-next effect and the journal keeps its history (effigy#337, §7.1).
-Linked worktrees have separate journals and imported key aliases stay local.
-Legacy owner aliases join custody only until a verified cutover; unreadable or
-unresolved predecessors refuse new work. Foreground runs do not create a token
-or consult machine state unless an existing legacy owner requires that
-compatibility evidence. `runs --all` and doctor use bounded filesystem/Git and
+A checkout journal opens by its location, `<checkout>/.effigy/state/`, and
+records no checkout, Git or home generation (Q-011, §7.1). A replaced `.git`
+directory or pointer, a `git worktree repair`, a moved checkout and a reboot are
+ordinary: the journal keeps its history, and a checkout's gate names follow a
+digest of its canonical path. Linked worktrees have separate journals and
+imported key aliases stay local. Foreground runs create no token and consult no
+machine state. `runs --all` and doctor use bounded filesystem/Git and
 explicit-root discovery with visible omissions, without a central index.
 
 v0.15 ships exactly one migration path: the v0.14.1 importers in §11. The
@@ -228,18 +226,14 @@ refuse. Tom, 2026-10-25 (Q-011): "Parent-capability inheritance
 (`EFFIGY_PARENT_CAPABILITY` plus fd 9) is removed. This reverses that part of
 the Q-010 kernel design."
 
-Foreground admission reads any existing checkout journal read-only for
-unresolved predecessors. Missing journal means none, and a journal that cannot
-be read warns once, naming it and the reason, and the run proceeds: the owner
-flock is the only exclusion that matters (K1, Q-011). Recovery of a durable
-predecessor is a separate durable operation, and only a proved, live predecessor
-holding that owner gate refuses.
-Without a stored checkout token, local gate identity is a digest of the verified
-root's canonical path and its resolved per-checkout Git directory path, with a
-domain separate from persisted `CheckoutId`s. A reboot therefore cannot rename a
-checkout's gates and locks (effigy#337). The same admission checks both
-names when a persisted token exists; first durable initialization serializes
-on this local identity gate. A short run never mints a Git token, registers a
+Foreground admission reads no journal: the owner flock is the only exclusion
+that matters, so durable residue a dead run left behind is not a reason to refuse
+(K1, Q-011, F11). Settling a durable predecessor is a separate durable
+operation, and only a proved, live predecessor holding that owner gate refuses.
+Local gate identity is a digest of the root's canonical path, with a domain
+separate from persisted `CheckoutId`s, so a reboot, a renumbering or a replaced
+Git directory cannot rename a checkout's gates and locks (effigy#337). First
+durable initialization serializes on this local identity gate. A short run never mints a Git token, registers a
 checkout, appends an ignore block, creates a database, writes a run directory,
 or fsyncs run metadata. Lock-file creation and best-effort diagnostic bytes
 are transient exclusion machinery, not durable run records. Task outputs and
@@ -249,9 +243,10 @@ Admission nesting is one advisory environment fact. `EFFIGY_ADMITTED=<admitting
 run id>` is set on everything an admitted heavy run spawns; a heavy invocation
 that sees it does not call the admission hook again (contract
 [049](049-heavy-validation-admission-contract.md)). There is no liveness check
-and no other authority in it: a forged marker only lets a run skip the local
-orchestrator's queue, which is the orchestrator's risk on a single-user
-machine.
+and no other authority in it: no hook identity is retained, written down or
+re-verified, and a forged marker only lets a run skip the local orchestrator's
+queue, which is the orchestrator's risk on a single-user machine. A task that
+is not `admission = "heavy"` never consults the hook at all (F10, Q-012).
 
 Custody of a run's own descendants is unaffected by that: process groups, the
 memory guard and the sentinel settle the tree the run started. Foreground
@@ -266,16 +261,15 @@ descriptor type and access before adopting it, and group anchors receive no
 pin. A durable run with no memory guard keeps its checkout custody backup in
 the same way.
 
-Bound checkout admission always takes the filesystem owner alias alongside its
-persisted-token spelling. The sentinel derives the same filesystem alias from
-the checkout binding when it reopens the journal. Durable recovery checks predecessors under every held owner
-alias before admitting a successor. First durable initialization therefore cannot
-split exclusion from an already running token-free foreground invocation. The
-bounded admission retention sweep runs after those gates; a refused alias gate
-does not create a database for maintenance. A directory-only filesystem alias also stays held across Git locator
-replacement: the old custodian must finish cleanup before a new Git generation
-can start the same logical resource. Engines recheck their retained filesystem
-bindings while waiting and stop current custody when those bindings change.
+Bound checkout admission takes the checkout's one gate spelling: the digest of
+its canonical path. A run's persisted-token scope and that spelling are the same
+lock, so a token-free foreground invocation and a token-carrying durable run of
+the same checkout exclude each other, and first durable initialization cannot
+split exclusion from an already running foreground invocation. A helper reopens
+the journal by path and marks it as that checkout, so its recovery meets its
+owner's locks. Durable recovery checks predecessors under the held owner gate
+before admitting a successor. The bounded admission retention sweep runs after
+those gates; a refused gate does not create a database for maintenance.
 
 **Foreground custody (I-P2/I-P3).** Before workload go, the owner and its
 in-memory guard acknowledge the complete custody receipt, nonce and ready
@@ -1960,17 +1954,29 @@ failed, and never contradicts its category.
 | Category | What happened | The one next step it carries |
 | --- | --- | --- |
 | Refused | The request was well formed and a rule said no: another run holds it, a conflict, an inactive environment, a stale generation, a placement without host authority, an effect class the operation may not use. | Nothing ran; stop what holds it or change the request, then retry. |
-| Unavailable | Something environmental did not answer in time or could not be reached: a busy store, a timed-out gate, a helper that exited before acknowledging, I/O, a path that cannot be opened or permissions that deny it (both naming the path), a failed step. | Nothing is broken, and retrying once it answers is safe. |
+| Unavailable | Something environmental did not answer in time or could not be reached: a busy store, a timed-out gate, a helper that exited before acknowledging, I/O, a path that cannot be opened or permissions that deny it (both naming the path), a failed step, a run a signal or stop request cancelled. | Nothing is broken, and retrying once it answers is safe. |
 | Broken | Effigy's own record or an invariant is wrong. | This is an Effigy bug, not your request; report it with the check it names. |
 
 Only verified corruption — SQLite `NotADatabase` or `DatabaseCorrupt`,
-`PRAGMA integrity_check` or a foreign-key violation, a schema this Effigy
-cannot read, or a format Effigy wrote that it can no longer read — says
-`Corrupt` and names the one repair: `Store::repair` moves `kernel.db` and its
-`-journal`, `-wal` and `-shm` files aside, so no leftover log attaches to the
-next `kernel.db`. A journal mode, binary or binding that no longer matches is
-`Broken`, never `Corrupt`, so a pin or token mismatch cannot point a reader at
-a destructive repair (effigy#360).
+`PRAGMA integrity_check` or a foreign-key violation, or a format Effigy wrote
+that it can no longer read — says `Corrupt` and names the one repair:
+`Store::repair` moves `kernel.db` and its `-journal`, `-wal` and `-shm` files
+aside, so no leftover log attaches to the next `kernel.db`. A journal mode or
+binary that no longer matches is `Broken`, never `Corrupt`, so a pin or token
+mismatch cannot point a reader at a destructive repair (effigy#360). A journal
+written by a *newer* schema is version skew: it says `Effigy was updated`,
+reports `Unavailable`, and never suggests moving a healthy journal aside.
+
+A cancellation is not a refusal. A run, a gate wait or a store wait that a
+signal, a stop request or an owner exit ended renders as `cancelled by SIGINT`
+(and the like) with no category's next step, and reports `Unavailable` where a
+category is carried across a process boundary (F7).
+
+The same three kinds hold outside the kernel: `RunnerError::category()` maps
+every runner failure to `Refused`, `Unavailable` or `Broken` instead of
+reporting everything as a refusal, a supervisor relays the category it read,
+and `--json` carries it as `error.kind` with the error's own type in
+`error.type` (F16, K4).
 
 A busy store, a locked database, `SQLITE_CANTOPEN` and a permission refusal are
 `Unavailable`, naming the path: they are environment conditions, and retrying
@@ -2027,7 +2033,6 @@ block; foreground admission and all reads never append it.
 ```text
 <checkout>/.effigy/state/
   kernel.db                         checkout journal (+ kernel.db-wal and -shm while open)
-  checkout.json                     checkout/Git generation record (journal provenance)
   gates/<scope>.scope               scope lock
   gates/<scope>/<rid>.gate          per-resource locks, including foreground owners
   sock/<run-id>.sock                durable supervisor socket
@@ -2073,33 +2078,19 @@ A checkout whose own records cannot be read is recorded against that checkout:
 dead-owner and port recovery hold its entries only, never every owner on the
 machine.
 
-A durable checkout journal opens by its location: `<checkout>/.effigy/state/`.
-A fresh durable checkout publishes the bounded private record
-`state/checkout.json` before opening its journal as provenance: the checkout's
-and its resolved per-checkout Git directory's path and device/inode, for an
-operator reading the state root. It is not a gate. A record left by an earlier
-boot — a volume renumbered at mount, a recreated Git directory — or one that no
-longer matches is rewritten to the current values by the next effect, under the
-local binding gate, and the journal carries on with its history: its runs,
-operations, gates and objects are untouched. Prior-boot runs are already history
-through the boot identity each record carries. `st_dev` is assigned at mount, so
-no durable decision may depend on it. Tom, 2026-10-25: "I thought we had
-simplified the kernel.db dependency? This is exactly the sort of overcomplication
-and brittleness I wanted to avoid." Imported checkouts keep their migration
-seal's recorded generations as provenance; the seal proves publication, never a
-recorded device or inode. A resolution whose Git directory disagrees with the
-checkout's own `.git` is still refused, and a live custodian that sees its
-retained checkout or state directory replaced still refuses new work: those are
-facts about this process's descriptors, not about a reboot. A legacy central
-journal requires explicit migration before any fresh durable destination is
-created. A sealed or freshly bound checkout remains usable independently of
-machine-store health; local authority does not consult machine state again.
-A one-time machine `state/machine-format.json` records the new layout's home
-directory generation without creating a database. A layout whose home generation
-moved is rebound by the next machine effect rather than refused. It distinguishes
-new cache locks from old pre-run writers during bootstrap; it contains no
-checkout or run index. Initialization is measured separately from steady-state
-operations.
+A durable checkout journal opens by its location: `<checkout>/.effigy/state/`,
+and keeps no record of which checkout or Git generation it belongs to (Q-011).
+A volume renumbered at mount, a recreated Git directory, a `mv` of the checkout
+and a reboot are all ordinary: prior-boot runs are already history through the
+boot identity each record carries, and `st_dev` is assigned at mount, so no
+durable decision may depend on it. Tom, 2026-10-25: "I thought we had simplified
+the kernel.db dependency? This is exactly the sort of overcomplication and
+brittleness I wanted to avoid." A legacy central journal requires explicit
+migration before any fresh durable destination is created. A checkout remains
+usable independently of machine-store health; local authority does not consult
+machine state. A durable machine effect likewise writes no layout record: the
+machine store is a location, and a moved home is rebound by its next effect
+rather than refused.
 Fresh task and environment identities share one token; both distinct legacy
 primary tokens remain valid when imported. Non-Git durable roots persist a
 random token in `.effigy`; path hashes cannot establish ownership of old state.
@@ -2669,7 +2660,10 @@ is the binary's path. Helpers exec whatever that path names, so a build that
 replaces the running binary's path (`cargo run` of Effigy inside an Effigy
 sequence) is not a refusal. Each helper handshake frame carries
 `HELPER_PROTOCOL`; a binary that speaks another version refuses and names both
-versions, telling the operator to rerun the command. The version covers the
+versions, telling the operator to rerun the command. The version is read from
+the frame's `protocol` field *before* the rest of the frame is deserialised, so
+a frame whose shape an update changed still reads as `Effigy was updated; rerun
+the command` rather than as a broken store value (F8). The version covers the
 event frame's shape too, so a refusal event that carries a category (§6.1) is
 never decoded by a binary that predates it. There is no image pin, no clone or
 copy, and no identity check.
@@ -2927,7 +2921,7 @@ ever wrote it and v0.15 ships one migration path: the v0.14.1 importers above.
   `migration-prepared.json` are all ignored. They are never read on a durable
   open, never changed, never deleted and never a refusal. Per M3 removal is
   explicit maintenance after one minor.
-- A checkout database with no `checkout.json` binding is bound in place.
+- A checkout database opens as its checkout's journal in place.
 - `effigy run migrate --plan` only reports whether a cutover manifest exists.
   The importer's busy-writer preflight, stop controls, prepared/staged
   destinations, commit manifest publication, seal resumption, the actual-copy

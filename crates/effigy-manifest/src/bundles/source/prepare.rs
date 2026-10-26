@@ -237,8 +237,16 @@ fn prepare(
         .map(|(name, selection)| {
             let plan = match mode {
                 Mode::Sync => SourcePlan::Acquire(RefreshReason::Missing),
-                Mode::Missing if old.sources.contains_key(name) => SourcePlan::Keep,
-                Mode::Missing => SourcePlan::Acquire(RefreshReason::Missing),
+                Mode::Missing => match old.sources.get(name) {
+                    // A lock entry whose recorded object is gone is not a usable
+                    // pin: a copied checkout brings the lock without its objects,
+                    // and the read path would refuse `pinned source` instead of
+                    // running the task (contract 020 §Behaviour rule 1).
+                    Some(pin) if parent(&manifest).join(".effigy").join(&pin.object).is_dir() => {
+                        SourcePlan::Keep
+                    }
+                    _ => SourcePlan::Acquire(RefreshReason::Missing),
+                },
                 Mode::Refresh => plan_source(
                     &manifest,
                     name,
@@ -699,6 +707,7 @@ fn acquire_and_publish(
     )
     .map_err(|err| error(manifest, err.to_string()))?;
     let mut imported = old.sources.clone();
+    let mut imported_now = Vec::new();
     // Preserve the exact pre-upgrade bytes even when the first explicit sync
     // subsequently fails. No legacy cache is changed or removed.
     for (name, selection) in selections {
@@ -722,6 +731,7 @@ fn acquire_and_publish(
                     revision: legacy_version(&legacy, selection),
                 },
             );
+            imported_now.push(name.clone());
         }
     }
     if imported.len() != old.sources.len() {
@@ -745,6 +755,15 @@ fn acquire_and_publish(
     for (name, selection) in selections {
         let pinned = pins.get(name).cloned();
         let mut reason = match plans.get(name) {
+            // A task run that just imported this source's v0.14.1 bytes already
+            // has a usable pin, so it is neither acquired nor refused. A
+            // Prepare path still refreshes what is behind: the import is its
+            // safety net if the update fails.
+            Some(SourcePlan::Acquire(_))
+                if mode == Mode::Missing && imported_now.contains(name) =>
+            {
+                None
+            }
             Some(SourcePlan::Acquire(reason)) => Some(*reason),
             _ => None,
         };

@@ -211,8 +211,9 @@ impl RunError {
         match self {
             Self::Store(error) => error.category(),
             Self::Gate(error) => error.category(),
-            Self::Interrupted(Interrupt::TimedOut { .. }) => Category::Unavailable,
-            Self::Interrupted(_) => Category::Refused,
+            // A cancellation is not a rule refusing the request: the run was
+            // stopped, and nothing about it has to change (F7).
+            Self::Interrupted(_) => Category::Unavailable,
             Self::Refused(_) | Self::StaleGeneration { .. } => Category::Refused,
             Self::PredecessorUnsettled { .. } | Self::HeldBy(_) | Self::EnvNotActive => {
                 Category::Refused
@@ -225,6 +226,11 @@ impl RunError {
 }
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A cancellation says what ended the run and asks nothing else of the
+        // reader: no category's next step applies (F7).
+        if let Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) = self {
+            return write!(f, "the run was {interrupt}");
+        }
         let detail = match self {
             Self::Refused(rule) => rule.clone(),
             Self::EnvNotActive => "its environment is not active".to_owned(),
@@ -260,9 +266,8 @@ impl std::fmt::Display for RunError {
                 )
             }
             Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => interrupt.to_string(),
-            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
-                format!("it was {interrupt}")
-            }
+            // Cancellation rendered above.
+            Self::Interrupted(Interrupt::Cancelled { .. }) => unreachable!(),
             Self::Store(error) => return write!(f, "{error}"),
             Self::Gate(error) => return write!(f, "{error}"),
             Self::Reported { message, .. } => return f.write_str(message),
@@ -387,14 +392,9 @@ impl<'a> Run<'a> {
             return Err(RunError::refused("invocation class differs from context"));
         }
         cx.operation().check("begin")?;
-        let observe = cx
-            .child(std::time::Duration::from_secs(10))
-            .operation()
-            .observe()
-            .map_err(|_| RunError::unavailable("run publication observation context"))?;
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
-        let ids = aliases::gates(&observe, root, &inv.spec().owner, &ids)?;
+        let ids = aliases::gates(root, &inv.spec().owner, &ids)?;
         let mut guard = Gate::acquire(cx, root, &ids, opts.wait)?;
         crate::fault_point!(BeginGated)?;
         // Only an owner gate may span recovery callbacks or later effects (K14).
@@ -538,7 +538,6 @@ impl<'a> Run<'a> {
     }
     /// Recheck the filesystem generations retained by this run before continuing work.
     pub fn verify_custody(&self) -> Result<(), RunError> {
-        self.root.verify_binding().map_err(StoreError::from)?;
         self.verify_checkout_custody()
     }
     pub(crate) fn has_sentinel(&self) -> bool {

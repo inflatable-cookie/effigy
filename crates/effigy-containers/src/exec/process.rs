@@ -250,8 +250,7 @@ impl DetachedOutputRecord {
         let cx = op
             .effects()
             .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
-        let location = crate::environment::location(repo_root)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let location = crate::environment::location(repo_root);
         let root =
             StateRoot::foreground_effects(&cx, &location).map_err(|e| error(e.to_string()))?;
         let project = compose_project(args).unwrap_or("compose");

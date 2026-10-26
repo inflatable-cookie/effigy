@@ -1867,7 +1867,8 @@ exact captured diagnostic:
   "command": { "kind": "task", "name": "fail-rhai" },
   "result": null,
   "error": {
-    "kind": "RunnerError",
+    "kind": "refused",
+    "type": "RunnerError",
     "message": "command failed (json output available)",
     "details": {
       "schema": "effigy.task.run.v1",

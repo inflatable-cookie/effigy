@@ -25,6 +25,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use effigy_kernel::observe::Observed;
+
 use crate::runner::task_engine::TaskRun;
 
 /// Set to `0` or `false` to keep every run out of the configured scratch root.
@@ -33,7 +35,8 @@ pub(in crate::runner) const DISABLE_ENV: &str = "EFFIGY_SCRATCH";
 const MARKER: &str = ".effigy-scratch.json";
 /// A concluded failure is kept this long for inspection.
 const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
-/// Nothing Effigy left under the root outlives this, whoever owns it.
+/// A directory whose liveness cannot be decided outlives this, whoever owns
+/// it. A live run's directory is never retired on age alone.
 const EXPIRY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// Directory-name length, taken from the run id's base32 rendering.
 const NAME_LEN: usize = 8;
@@ -317,7 +320,7 @@ fn open_for(
         task: task.to_owned(),
         checkout: checkout.display().to_string(),
         pid: std::process::id(),
-        pid_start: effigy_process::process_start_identity(std::process::id()).unwrap_or_default(),
+        pid_start: start_identity(std::process::id()),
         created_ms: now_ms(),
         keep: None,
         concluded_ms: None,
@@ -346,6 +349,16 @@ fn open_for(
         dir,
         run: marker.run,
     }))
+}
+
+/// The boot-scoped start identity text a marker records, or empty when the
+/// host cannot read one. The kernel's identity is the one liveness uses, so a
+/// marker and its later probe always speak the same format.
+fn start_identity(pid: u32) -> String {
+    match effigy_kernel::ident::process_identity(pid) {
+        Observed::Verified(identity, _) => identity.start.text(),
+        _ => String::new(),
+    }
 }
 
 /// The eight-character directory name of `run`: a digest of the whole id, so
@@ -505,6 +518,10 @@ impl Unremoved {
 /// files), and a plain `remove_dir_all` fails on them with EACCES. The repair
 /// descends without following a symlink and without leaving the tree: an entry
 /// on another device (a mount point) or owned by another user ends it.
+///
+/// The marker is the last thing removed. A tree that cannot be cleared stays
+/// marked, so the next sweep retires it instead of leaving an unmarked
+/// directory behind forever (papercut aa4471e9).
 fn remove(dir: &Path) -> Result<(), Unremoved> {
     let metadata = match std::fs::symlink_metadata(dir) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -521,17 +538,109 @@ fn remove(dir: &Path) -> Result<(), Unremoved> {
         return Err(Unremoved::new(dir, "it is not a scratch directory"));
     }
     make_removable(dir, metadata.dev(), current_uid())?;
-    match std::fs::remove_dir_all(dir) {
-        Ok(()) => match std::fs::symlink_metadata(dir) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            _ => Err(Unremoved::new(dir, "it survived its removal")),
-        },
+    clear(dir, true)?;
+    let marker = read_marker(dir);
+    remove_entry(&dir.join(MARKER))?;
+    if let Err(unremoved) = remove_directory(dir) {
+        // The tree stays Effigy's: its marker comes back so a later sweep can
+        // retire it (nothing else in it was written).
+        if let Some(marker) = marker {
+            let _ = write_marker(dir, &marker);
+        }
+        return Err(unremoved);
+    }
+    match std::fs::symlink_metadata(dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        _ => Err(Unremoved::new(dir, "it survived its removal")),
+    }
+}
+
+/// Empties `dir`, leaving the marker in place at the top level.
+fn clear(dir: &Path, keep_marker: bool) -> Result<(), Unremoved> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| Unremoved::new(dir, format!("it cannot be listed: {error}")))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| Unremoved::new(dir, format!("it cannot be listed: {error}")))?;
+        let path = entry.path();
+        if keep_marker && path.file_name().and_then(|name| name.to_str()) == Some(MARKER) {
+            continue;
+        }
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            clear(&path, false)?;
+            remove_directory(&path)?;
+        } else {
+            remove_entry(&path)?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_entry(path: &Path) -> Result<(), Unremoved> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(Unremoved::new(
-            dir,
-            format!("it could not be removed: {error}"),
+            path,
+            format!("{} could not be removed: {error}", path.display()),
         )),
     }
+}
+
+/// Most times an empty directory retries after deleting Finder metadata.
+const FINDER_RETRIES: usize = 3;
+
+/// Removes an emptied directory. Finder can drop `.DS_Store` into a tree while
+/// it is removed; only that metadata is deleted, and only to retry, bounded.
+/// A tree that still cannot be emptied keeps its marker, so it stays Effigy's
+/// to retire rather than leaking unmarked.
+fn remove_directory(dir: &Path) -> Result<(), Unremoved> {
+    for _ in 0..=FINDER_RETRIES {
+        match std::fs::remove_dir(dir) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(libc::ENOTEMPTY) => {
+                if !remove_finder_metadata(dir)? {
+                    return Err(Unremoved::new(
+                        dir,
+                        "it gained entries while it was removed",
+                    ));
+                }
+            }
+            Err(error) => {
+                return Err(Unremoved::new(
+                    dir,
+                    format!("{} could not be removed: {error}", dir.display()),
+                ))
+            }
+        }
+    }
+    Err(Unremoved::new(
+        dir,
+        "Finder metadata kept arriving while it was removed",
+    ))
+}
+
+/// Deletes Finder's own metadatum (`.DS_Store`, `._*`) from an emptied
+/// directory. `false` when there was nothing of Finder's to delete.
+fn remove_finder_metadata(dir: &Path) -> Result<bool, Unremoved> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| Unremoved::new(dir, format!("it cannot be listed: {error}")))?;
+    let mut removed = false;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| Unremoved::new(dir, format!("it cannot be listed: {error}")))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == ".DS_Store" || name.starts_with("._") {
+            remove_entry(&entry.path())?;
+            removed = true;
+        }
+    }
+    Ok(removed)
 }
 
 /// Restores owner write permission through a tree Effigy owns so [`remove`] can
@@ -695,23 +804,25 @@ pub(in crate::runner) fn sweep_at(root: &Path, now_ms: i64, within: Duration) ->
     report
 }
 
-/// Whether a marked directory is past its life.
+/// Whether a marked directory is past its life. A live run keeps its
+/// directory however old it is; seven days only retires what liveness cannot
+/// decide (an unreadable boot or process identity).
 fn expired(marker: &Marker, now_ms: i64, report: &mut SweepReport, deadline: Instant) -> bool {
     let age = |since: i64| now_ms.saturating_sub(since) as u128;
-    if age(marker.created_ms) >= EXPIRY.as_millis() {
-        return true;
+    if let Some(concluded) = marker.concluded_ms {
+        // A concluded run has left the directory on purpose; retention is dated
+        // from its end.
+        return age(concluded) >= RETENTION.as_millis();
     }
-    match marker.concluded_ms {
-        Some(concluded) => age(concluded) >= RETENTION.as_millis(),
-        // No conclusion: the run was killed. Its directory goes once the
-        // process that created it is gone.
-        None => {
-            if report.probes >= SWEEP_PROBE_MAX || Instant::now() >= deadline {
-                return false;
-            }
-            report.probes += 1;
-            process_gone(marker) == Some(true)
-        }
+    if report.probes >= SWEEP_PROBE_MAX || Instant::now() >= deadline {
+        return false;
+    }
+    report.probes += 1;
+    match process_gone(marker) {
+        // Killed before it concluded: its directory goes.
+        Some(true) => true,
+        Some(false) => false,
+        None => age(marker.created_ms) >= EXPIRY.as_millis(),
     }
 }
 
@@ -721,15 +832,21 @@ fn process_gone(marker: &Marker) -> Option<bool> {
     if marker.pid == 0 {
         return None;
     }
-    if !effigy_process::process_is_running(marker.pid) {
-        return Some(true);
+    match effigy_kernel::ident::process_identity(marker.pid) {
+        Observed::Absent(_) => Some(true),
+        Observed::Verified(identity, _) => {
+            Some(recycled(&identity.start.text(), &marker.pid_start))
+        }
+        Observed::Unknown(_) => None,
     }
-    if marker.pid_start.is_empty() {
-        return Some(false);
-    }
-    // The pid is live: it must still be the process that wrote the marker, not
-    // one that recycled the number.
-    effigy_process::process_start_identity(marker.pid).map(|current| current != marker.pid_start)
+}
+
+/// Whether a live pid is a different process from the one that recorded the
+/// marker. A record from an older build (or another platform's format) cannot
+/// be compared, so a live pid counts as the same process.
+fn recycled(current: &str, recorded: &str) -> bool {
+    let style = |text: &str| text.split(':').next().unwrap_or_default().to_owned();
+    !recorded.is_empty() && style(current) == style(recorded) && current != recorded
 }
 
 /// The bounded sweep a run's admission performs: once per process, over the
@@ -813,8 +930,7 @@ mod tests {
             task: "test".to_owned(),
             checkout: "/checkout".to_owned(),
             pid: std::process::id(),
-            pid_start: effigy_process::process_start_identity(std::process::id())
-                .unwrap_or_default(),
+            pid_start: start_identity(std::process::id()),
             created_ms,
             keep: None,
             concluded_ms: None,
@@ -1026,13 +1142,14 @@ mod tests {
     }
 
     #[test]
-    fn nothing_outlives_seven_days_whoever_owns_it() {
+    fn seven_days_retires_only_what_liveness_cannot_decide() {
         let root = tempfile::tempdir().expect("root");
-        // A marker with no conclusion whose recorded process is this live one
-        // is kept by the liveness rule; seven days is the ceiling.
         let old = now_ms() - expiry_ms() - 1;
-        let stale = hold_marker(root.path(), &run_id(11), marker(&run_id(11), old));
-        // An old marker written before this change carries no pid at all.
+        // This process is alive, so its directory is kept however old it is: a
+        // run that lasts longer than a week keeps its TMPDIR.
+        let live = hold_marker(root.path(), &run_id(11), marker(&run_id(11), old));
+        // An old marker with no recorded process cannot be decided at all, so
+        // the ceiling retires it.
         let legacy = hold_marker(
             root.path(),
             &run_id(12),
@@ -1043,9 +1160,91 @@ mod tests {
             },
         );
         let report = sweep_at(root.path(), now_ms(), SWEEP_BUDGET);
-        assert_eq!(report.removed, 2);
-        assert!(!stale.exists());
+        assert_eq!(report.removed, 1);
+        assert!(live.exists(), "a live run keeps its directory");
         assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn a_scratch_tree_never_removes_its_marker_before_it_succeeds() {
+        let root = tempfile::tempdir().expect("root");
+        let id = run_id(26);
+        let dir = hold(root.path(), &id);
+        std::fs::write(dir.join("work.txt"), b"payload").expect("file");
+        // A tree whose top-level removal cannot succeed: the marker outlives
+        // every deletion attempt, so a later sweep can retire it.
+        let blocked = dir.join("blocked");
+        std::fs::create_dir(&blocked).expect("blocked dir");
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o500))
+            .expect("blocked mode");
+        let metadata = std::fs::metadata(&dir).expect("metadata");
+        // A device that does not match ends the walk before anything is
+        // deleted, and the marker is still there.
+        let error = make_removable(&dir, metadata.dev().wrapping_add(1), current_uid())
+            .expect_err("a foreign device stops the walk");
+        assert!(error.describe().contains("another device"));
+        assert!(read_marker(&dir).is_some(), "the marker survives");
+    }
+
+    #[test]
+    fn finder_metadata_that_arrives_during_removal_does_not_leak_the_tree() {
+        let root = tempfile::tempdir().expect("root");
+        let id = run_id(27);
+        let dir = hold(root.path(), &id);
+        let nested = dir.join("tmp/nested");
+        std::fs::create_dir_all(&nested).expect("nested");
+        // Finder drops its metadatum into the tree while Effigy removes it.
+        for path in [dir.join(".DS_Store"), nested.join("._payload")] {
+            std::fs::write(&path, b"finder").expect("finder metadata");
+        }
+        let writer = {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                for _ in 0..400 {
+                    let _ = std::fs::write(dir.join(".DS_Store"), b"finder");
+                    if !dir.exists() {
+                        break;
+                    }
+                }
+            })
+        };
+        let outcome = remove(&dir);
+        let _ = writer.join();
+        // Either the removal won, or the tree stays marked and a later sweep
+        // retires it: neither leaks an unmarked directory (F1).
+        if outcome.is_err() {
+            assert!(read_marker(&dir).is_some(), "a tree left behind stays marked");
+            assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 1);
+        }
+        assert!(!dir.exists(), "the tree is gone, not leaked unmarked");
+    }
+
+    #[test]
+    fn liveness_speaks_the_kernels_process_identity_not_a_locale_clock() {
+        // A marker written by this process records the kernel's boot-scoped
+        // start identity, so two Effigy processes with different TZ or LC_TIME
+        // agree about the same live pid (F12).
+        let live = marker(&run_id(28), now_ms());
+        assert!(
+            live.pid_start.starts_with("linux:") || live.pid_start.starts_with("macos:"),
+            "unexpected start identity {}",
+            live.pid_start
+        );
+        assert_eq!(process_gone(&live), Some(false));
+        // A live pid whose recorded identity names another process generation
+        // is a recycled number, not the run that wrote the marker.
+        let style = live.pid_start.split(':').next().unwrap_or_default().to_owned();
+        let recycled = Marker {
+            pid_start: format!("{style}:1"),
+            ..live
+        };
+        assert_eq!(process_gone(&recycled), Some(true));
+        // A record from an older build cannot be compared: the live pid wins.
+        let legacy = Marker {
+            pid_start: "Mon Oct 26 09:45:00 2026".to_owned(),
+            ..marker(&run_id(29), now_ms())
+        };
+        assert_eq!(process_gone(&legacy), Some(false));
     }
 
     #[test]

@@ -32,7 +32,8 @@ pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
 }
 
 /// A task invocation that only reads: `--plan`, `--help` or `-h` before any
-/// `--`. A read path never acquires a source.
+/// `--`. It still fills a missing pin like any other run, but it is not a
+/// Prepare path, so it never refreshes one.
 pub(crate) fn is_read_only_task_invocation(task: &effigy_cli::TaskInvocation) -> bool {
     task.args
         .iter()
@@ -285,6 +286,13 @@ pub(in crate::runner) fn prepare_pinned_sources_for_manifest(
     Ok(())
 }
 
+/// Clone the pinned `[sources.<name>]` working copies that are missing, and
+/// nothing else: a source this checkout already has costs no `git` call.
+fn prepare_missing_pinned_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
+    effigy_manifest::prepare_missing_pinned_sources(manifest)
+        .map_err(|err| RunnerError::task_invocation(err.to_string()))
+}
+
 /// Prepare every missing pinned source for bootstrap and the first `dev`
 /// (contract 020): bundle and catalog sources first, then extra sources.
 pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
@@ -294,13 +302,13 @@ pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result
 
 /// Any other task run acquires only what this checkout is missing and never
 /// moves a pin (contract 020 §Behaviour rule 1): a fresh worktree runs its
-/// tasks instead of refusing on an unprepared source.
+/// tasks, and lists them, instead of refusing on an unprepared source.
 pub(in crate::runner) fn prepare_missing_sources_for_manifest(
     manifest: &Path,
 ) -> Result<(), RunnerError> {
     effigy_manifest::prepare_missing_bundle_sources(manifest, &source_preparation()?)
         .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
-    prepare_pinned_sources_for_manifest(manifest)
+    prepare_missing_pinned_sources_for_manifest(manifest)
 }
 
 fn discover_bundle_manifest_path(root_or_cwd: impl AsRef<Path>) -> Result<PathBuf, RunnerError> {

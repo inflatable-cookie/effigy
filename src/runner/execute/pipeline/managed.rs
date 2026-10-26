@@ -30,7 +30,6 @@ use effigy_containers::session::{
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
-use effigy_kernel::human::Category;
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{
@@ -719,9 +718,11 @@ fn own_managed_run(
     let (secrets, env_schema_resolved, container_repo_root, owned) = match inputs {
         Ok(inputs) => inputs,
         Err(error) => {
+            // The failure's own category: an input that could not be read is
+            // not a refusal (K4, F16).
             owner
                 .session
-                .refused_message(Category::Refused, error.to_string());
+                .refused_message(error.category(), error.to_string());
             return Err(error);
         }
     };

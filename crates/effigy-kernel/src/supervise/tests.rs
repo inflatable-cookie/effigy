@@ -352,6 +352,56 @@ fn a_helper_protocol_mismatch_reaches_the_parent_stderr_tail() {
     assert!(detail.contains(&message), "{detail:?}");
 }
 
+/// The version is read before the frame's shape, so an update that changed a
+/// field still reads as a version mismatch instead of as a broken store value
+/// (F8).
+#[test]
+fn a_helper_frame_with_a_changed_shape_and_a_new_protocol_names_the_version() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let executable = Executable::capture(&fixture()).unwrap();
+    let other = HELPER_PROTOCOL + 1;
+    // A frame from a newer binary: the field this one requires is named
+    // differently, so full deserialisation cannot read it.
+    let frame = serde_json::json!({
+        "protocol": other,
+        "home": world.home(),
+        "machine": false,
+        "owner": serde_json::to_value(owner("reshaped")).unwrap(),
+        "run": RunId::new(1, [1; 10]).unwrap().to_string(),
+        "next_argv": ["recover"],
+        "executable": serde_json::to_value(executable.clone()).unwrap(),
+    });
+    let log = helper_log(&root).unwrap();
+    for entry in [SENTINEL, SUPERVISOR] {
+        let mut child = helper(&executable, entry)
+            .unwrap()
+            .stdout(Stdio::piped())
+            .stderr(log.try_clone().unwrap())
+            .spawn()
+            .unwrap();
+        let mut writer = child.stdin.take().unwrap();
+        let mut ready = child.stdout.take().unwrap();
+        let result = (|| {
+            nonblocking(writer.as_raw_fd())?;
+            write_frame(&mut writer, &frame)?;
+            nonblocking(ready.as_raw_fd())?;
+            read_exact(&mut ready, &mut [0u8])
+        })();
+        let error = helper_failed(entry, &mut child, &log, result.expect_err("refused"));
+        let detail = error.to_string();
+        assert!(
+            detail.contains(&format!("this helper speaks protocol {other}")),
+            "{entry}: {detail:?}"
+        );
+        assert!(
+            !detail.contains("not readable") && !detail.contains("Effigy is broken"),
+            "{entry}: a version mismatch never reads as a broken value: {detail:?}"
+        );
+    }
+}
+
 /// A rebuild or reinstall replaces the binary at the path during a run. The
 /// next helper execs whatever is there; with the same protocol it admits.
 #[test]
@@ -401,9 +451,8 @@ fn helper_restores_machine_resource_gate_domain_instead_of_a_checkout_shadow() {
     let root = StateRoot::checkout_effects(
         &cx,
         &world.home(),
-        &crate::migration::CheckoutLocation {
+        &crate::location::CheckoutLocation {
             root: checkout.clone(),
-            git_directory: None,
         },
     )
     .unwrap();

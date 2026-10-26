@@ -183,6 +183,62 @@ fn an_admission_refusal_carries_the_kernel_category() {
 }
 
 #[test]
+fn every_runner_failure_is_one_of_the_three_kinds() {
+    use effigy_kernel::human::Category;
+    // A request, its wiring or a holder refuses; a step, a service or a backend
+    // that did not answer is unavailable (F16).
+    assert_eq!(
+        RunnerError::TaskNotFound {
+            name: "dev".into(),
+            path: Path::new("/repo/effigy.toml").into(),
+        }
+        .category(),
+        Category::Refused
+    );
+    assert_eq!(
+        RunnerError::TaskCommandFailure {
+            command: "nextest".into(),
+            code: Some(101),
+            stdout: String::new(),
+            stderr: "a test failed".into(),
+        }
+        .category(),
+        Category::Unavailable
+    );
+    assert_eq!(
+        RunnerError::TaskManifestRead {
+            path: Path::new("/repo/effigy.toml").into(),
+            error: std::io::Error::other("the disk answered EIO"),
+        }
+        .category(),
+        Category::Unavailable
+    );
+    assert_eq!(
+        RunnerError::ContainerSurfaceNotRunning {
+            container: "web".into()
+        }
+        .category(),
+        Category::Refused
+    );
+    assert_eq!(
+        RunnerError::TaskLockConflict(Box::new(effigy_core::task_lock::TaskLockConflict {
+            scope: "task:dev".into(),
+            task: "dev".into(),
+            holder_pid: None,
+            holder_run: None,
+            holder_started_at_epoch_ms: None,
+            wait_timeout_ms: None,
+            waited_ms: None,
+            status_command: None,
+            details_json: None,
+            remediation: String::new(),
+        }))
+        .category(),
+        Category::Refused
+    );
+}
+
+#[test]
 fn an_unknown_task_name_is_the_only_error_that_names_effigy_tasks() {
     // effigy#360: the invalid-request wording belongs to exactly this case, so
     // a held run, a revoked capability or a broken record never reads as one.

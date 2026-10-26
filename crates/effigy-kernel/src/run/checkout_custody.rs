@@ -17,10 +17,7 @@ impl Run<'_> {
         checkout: crate::id::CheckoutId,
         wait: Wait,
     ) -> Result<(), RunError> {
-        if self.checkout_custody.is_some()
-            || !self.root.requires_adoption()
-            || self.root.is_machine()
-        {
+        if self.checkout_custody.is_some() || self.root.is_machine() {
             return Ok(());
         }
         let token = crate::store::token(&checkout);

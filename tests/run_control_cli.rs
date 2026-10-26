@@ -840,9 +840,10 @@ fn an_unreadable_journal_is_unknown_and_names_the_run() {
 }
 
 /// A journal that is not a store is reported, never repaired and never a
-/// reason to refuse work: the foreground run warns once and proceeds (K1).
+/// reason to refuse work. A foreground run reads no journal at all, so it runs
+/// and says nothing; `runs` names the journal as unavailable (K1, F11).
 #[test]
-fn a_damaged_journal_warns_and_the_task_still_runs() {
+fn a_damaged_journal_does_not_stop_the_task() {
     let fixture = Fixture::new();
     assert!(fixture
         .run(&["--run-id", "durable-1", "light"])
@@ -855,9 +856,6 @@ fn a_damaged_journal_warns_and_the_task_still_runs() {
     let output = fixture.run(&["light"]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(fixture.exists("light.txt"), "the task never ran");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("[warn]"), "{stderr}");
-    assert!(stderr.contains("kernel.db"), "{stderr}");
     // `runs` answers with the journal reported as unreadable.
     let listing = fixture.run(&["runs"]);
     assert!(listing.status.success(), "{}", text(&listing));

@@ -107,7 +107,6 @@ impl Gate {
             let Some(file) = open_gate(&gates, &name, false)? else {
                 return Ok(None);
             };
-            root.verify_binding()?;
             identity(&file).map(Some)
         };
         match read() {
@@ -163,7 +162,6 @@ fn checkout_fence(
         });
     }
     let name = name(token)?;
-    root.verify_binding()?;
     let gates = root
         .checkout_lease_gates(!exclusive)?
         .ok_or_else(|| GateError::Untrusted {
@@ -222,7 +220,6 @@ fn checkout_fence(
         fs::fsync(&file.file).map_err(|e| FsError::io("sync checkout fence", gates.path(), &e))?;
         gates.sync()?;
     }
-    root.verify_binding()?;
     Ok(CheckoutFenceGuard {
         guard: GateGuard {
             gates: Vec::new(),

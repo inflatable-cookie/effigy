@@ -133,7 +133,6 @@ pub fn connect_control_socket(
     run: RunId,
 ) -> crate::observe::Observed<crate::probe::ProbeIo> {
     let target = (|| -> Result<_, crate::fs::FsError> {
-        root.verify_binding()?;
         let directory = directory(root, owner)?.ok_or_else(|| crate::fs::FsError::Untrusted {
             path: root.path().into(),
             reason: "socket directory absent".into(),

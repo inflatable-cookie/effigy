@@ -54,7 +54,6 @@
     "src/runner/qa_group_command/execute.rs": 2,
     "src/runner/state_command_artifact.rs": 1,
     "src/runner/task_engine/checkout.rs": 1,
-    "src/runner/task_engine/control.rs": 8,
     "src/runner/task_engine/kernel.rs": 2,
     "src/runner/task_engine/process.rs": 2,
     "src/runner/task_engine/remote.rs": 3,

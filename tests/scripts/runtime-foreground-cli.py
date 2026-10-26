@@ -94,7 +94,6 @@ run = "touch suite-ready; sleep 300"
     def assert_memory_only():
         for project in projects:
             assert not list((project / ".git").iterdir()), "foreground minted Git identity"
-            assert not (project / ".effigy/state/checkout.json").exists()
             assert not (project / ".effigy/state/runs").exists()
         assert not list(base.rglob("*.db*")), "foreground opened a database"
         assert not list(home.iterdir()), "foreground initialized machine state"

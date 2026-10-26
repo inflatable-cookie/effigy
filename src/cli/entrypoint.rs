@@ -31,6 +31,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                     "cli",
                     "parse",
                     "CliParseError",
+                    "refused",
                     &err.to_string(),
                     Some(parse_error_json_details(&usage_hint_for(&hint_argv))),
                 );
@@ -69,6 +70,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                     "cli",
                     "parse",
                     "CliParseError",
+                    "refused",
                     &err.to_string(),
                     Some(parse_error_json_details(&usage_hint_for(&hint_argv))),
                 );
@@ -102,6 +104,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                     "cli",
                     "parse",
                     "CliParseError",
+                    "refused",
                     &err.to_string(),
                     Some(parse_error_json_details(&usage_hint_for(&hint_argv))),
                 );
@@ -162,6 +165,7 @@ pub fn run_cli(raw_args: Vec<String>) {
                     command_kind,
                     &command_name,
                     "RuntimeContextError",
+                    "unavailable",
                     &message,
                     None,
                 );
@@ -286,6 +290,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                     context.command_kind,
                     context.command_name,
                     "RunnerError",
+                    err.category().as_str(),
                     &err.to_string(),
                     err.json_error_details().map(parse_json_or_string),
                     human.to_json(),

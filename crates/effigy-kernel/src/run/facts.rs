@@ -17,17 +17,16 @@ pub struct FactOptions {
 /// Exclusive authority for one shared model. Engine callbacks prepare their
 /// complete value outside SQLite; publication changes all conflicts atomically.
 #[derive(Debug)]
-pub struct MachineFacts<'a> {
-    root: &'a StateRoot,
+pub struct MachineFacts {
     store: Store,
     _guard: GateGuard,
     cx: EffectContext,
     owner: ResourceId,
 }
-impl<'a> MachineFacts<'a> {
+impl MachineFacts {
     pub fn begin(
         cx: &EffectContext,
-        root: &'a StateRoot,
+        root: &StateRoot,
         options: FactOptions,
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
@@ -95,7 +94,6 @@ impl<'a> MachineFacts<'a> {
             guard = previous.guard;
         }
         Ok(Self {
-            root,
             store,
             _guard: guard,
             cx: cx.clone(),
@@ -103,7 +101,6 @@ impl<'a> MachineFacts<'a> {
         })
     }
     pub fn state(&self) -> Result<Option<Value>, RunError> {
-        self.root.verify_binding().map_err(StoreError::from)?;
         let state: Option<Option<String>> = self
             .store
             .conn()
@@ -119,7 +116,6 @@ impl<'a> MachineFacts<'a> {
             .transpose()?)
     }
     pub fn next_generation(&self) -> Result<Generation, RunError> {
-        self.root.verify_binding().map_err(StoreError::from)?;
         let current = self
             .store
             .conn()
