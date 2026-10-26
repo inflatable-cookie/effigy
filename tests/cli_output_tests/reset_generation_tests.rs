@@ -51,7 +51,6 @@ impl Fixture {
                 ),
             )
             .env("EFFIGY_COMPOSE_BACKEND", "docker")
-            .env("EFFIGY_RENDER_ROOT", "incorrect-caller-root")
             .env("RESET_PROOF_LOG", self.root().join("backend.jsonl"))
             .output()
             .unwrap();
@@ -143,8 +142,13 @@ if args[0] == 'compose':
  files = [Path(args[i+1]) for i, arg in enumerate(args[:-1]) if arg == '-f']
  assert files and all(p.is_file() for p in files), 'unpublished Compose generation: '+repr(files)
  roots = [p for p in files[0].parents if len(p.name)==64 and p.parent.name=='objects']
- assert len(roots)==1 and os.environ.get('EFFIGY_RENDER_ROOT')==str(roots[0]), 'wrong render root'
+ assert len(roots)==1, 'not one published generation: '+repr(roots)
+ assert 'EFFIGY_RENDER_ROOT' not in os.environ, 'an Effigy interpolation value reached Compose'
  content = [p.read_text() for p in files]
+ assert not any('EFFIGY_RENDER_ROOT' in s for s in content), 'a rendered input keeps Compose interpolation'
+ rel = [s for s in content for s in s.split() if s.startswith('./')]
+ for source in rel:
+  assert (files[0].parent / source.split(':')[0]).exists(), 'a relative input resolves outside the generation: '+source
  assert not any('EFFIGY_UNASSIGNED_PORT' in s for s in content), 'unprepared Compose inputs'
  entry.update(files=[str(p) for p in files], content=content)
 with open(os.environ['RESET_PROOF_LOG'], 'a') as log: log.write(json.dumps(entry)+'\n')

@@ -11,6 +11,9 @@ pub(crate) use participation::docker_config_current_context;
 #[cfg(all(test, unix))]
 #[path = "exec/exit141_tests.rs"]
 mod exit141_tests;
+#[cfg(all(test, unix))]
+#[path = "exec/name_store_tests.rs"]
+mod name_store_tests;
 mod process;
 mod ssh_agent_preflight;
 

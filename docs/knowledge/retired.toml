@@ -1399,3 +1399,24 @@ config_keys = []
 allow = [
   "CHANGELOG.md",
 ]
+
+[[retired]]
+id = "render-root-interpolation"
+retired = "2026-10-26; v0.15 simplification (Q-011, effigy#362)"
+replacement = "A rendered generation names the generation's other files relatively, and Compose resolves them against its project directory — the directory of the invocation's first `-f` input. Nothing is interpolated into a stack, so no container environment carries an Effigy value, and a re-up of an unchanged generation hands Compose byte-identical inputs. The shared Compose invocation therefore needs no value delivered to its VM for paths; the interpolation file that remains carries only the plan's forwarded `secrets.delivery = \"compose-env\"` values, is named by the digest of its contents rather than by a writing process, and is reclaimed by age and by count."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "EFFIGY_RENDER_ROOT",
+  "ROOT_EXPRESSION",
+  "ROOT_VARIABLE",
+  "policy::render::apply_environment",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-containers/src/policy/render/tests.rs",
+  "src/runner/container_command/support.rs",
+  "tests/cli_output_tests/reset_generation_tests.rs",
+  "tests/scripts/container-render-consumers.py",
+]

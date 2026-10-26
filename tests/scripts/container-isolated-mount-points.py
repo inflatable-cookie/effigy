@@ -89,11 +89,15 @@ elif args[0] == "compose" and "up" in args:
     for index, arg in enumerate(args[:-1]):
         if arg != "-f":
             continue
-        text = Path(args[index + 1]).read_text()
-        text = text.replace("${EFFIGY_RENDER_ROOT:?Effigy render root is required}", os.environ["EFFIGY_RENDER_ROOT"])
-        document = yaml.safe_load(text)
+        compose = Path(args[index + 1])
+        # Compose resolves a relative input against the project directory, the
+        # first Compose file's directory.
+        project = compose.parent
+        document = yaml.safe_load(compose.read_text())
         for raw in document.get("services", {}).get("workspace", {}).get("volumes", []):
             source, target, *options = raw.split(":")
+            if source.startswith("./") or source.startswith("../"):
+                source = str((project / source).resolve())
             if source.startswith("/"):
                 mounts.append({"Type":"bind", "Source":source, "Destination":target, "RW":"ro" not in options})
             else:

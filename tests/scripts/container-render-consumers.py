@@ -208,10 +208,25 @@ def prove_consumers():
                 if isinstance(value, dict):
                     return {k: normalize(v) for k, v in value.items()}
                 return value
-            def compose(content):
-                value = yaml.safe_load(content)
+            def project_of(new_path):
+                # Compose resolves a relative input against the project
+                # directory: the directory of the invocation's first Compose
+                # file. A shared service has its own invocation.
+                first = Path(new["compose_files"][0]).parent
+                return first if Path(new_path).is_relative_to(first) else Path(new_path).parent
+            def relative(value, project):
+                # The renderer writes a generation's own inputs relatively.
+                if isinstance(value, str) and project is not None and (
+                        value.startswith("./") or value.startswith("../")):
+                    return os.path.normpath(str(project / value))
+                if isinstance(value, list):
+                    return [relative(item, project) for item in value]
+                if isinstance(value, dict):
+                    return {key: relative(item, project) for key, item in value.items()}
+                return value
+            def compose(content, project):
+                value = relative(yaml.safe_load(content), project)
                 # Compose resolves dockerfile relative to its build context.
-                # The new renderer makes this host path explicit to relocate it.
                 for service in value.get("services", {}).values():
                     build = service.get("build")
                     if isinstance(build, dict) and "dockerfile" in build:
@@ -225,8 +240,8 @@ def prove_consumers():
                     logical = "shared/" + str(Path(old_path).relative_to(home / ".effigy"))
                     pairs.append((old_path, str(Path(new["path"]) / logical)))
             for i, (old_path, new_path) in enumerate(pairs):
-                old_value = compose(old["files"][old_path])
-                new_value = compose(new_files[new_path])
+                old_value = compose(old["files"][old_path], None)
+                new_value = compose(new_files[new_path], project_of(new_path))
                 if old_value != new_value:
                     import difflib
                     diff = ''.join(difflib.unified_diff(

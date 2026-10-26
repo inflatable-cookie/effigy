@@ -4,8 +4,10 @@
 //! (`127.0.0.1::<container-port>`) and read back after `up`. A binding whose
 //! value must be known before the stack starts — a shared data service, or a
 //! service that opted into `stable_ports` — derives its port from a hash of
-//! its owner path instead. The value is probed at `up` and never stored, so
-//! nothing has to be released.
+//! its owner path instead. The derivation reads nothing but its own inputs: a
+//! port is never probed, so an unchanged plan renders an unchanged stack and a
+//! re-up recreates nothing. If a derived port is taken, the runtime's bind
+//! failure names it and the caller reports that.
 
 use sha2::{Digest, Sha256};
 
@@ -13,7 +15,8 @@ use sha2::{Digest, Sha256};
 /// low end, below the ports a developer is likely to hard-code.
 const STABLE_BASE: u16 = 20000;
 
-/// How many ports above the derived candidate are probed before giving up.
+/// How many ports above the derived candidate are candidates for the next
+/// unused binding in the same plan.
 const STABLE_SPAN: u16 = 1000;
 
 /// Lowercase hex SHA-256 digest, used for render digests and evidence.
@@ -23,28 +26,18 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// A stable, unrecorded host port for `owner`'s `container_port` binding.
+/// A stable host port for `owner`'s `container_port` binding.
 ///
 /// The candidate comes from the owner path and container port, so the same
-/// checkout asks for the same port every time. It is probed here: a port this
-/// process could not bind is skipped. `taken` carries the ports a caller has
-/// already handed out in this plan, so two bindings never collide.
+/// checkout asks for the same port every time. `taken` carries the ports a
+/// caller has already handed out in this plan, so two bindings never collide.
 pub fn stable_host_port(owner: &str, container_port: u16, taken: &mut Vec<u16>) -> u16 {
     let digest = Sha256::digest(format!("{owner}\u{0}{container_port}").as_bytes());
     let offset = u16::from_be_bytes([digest[0], digest[1]]) % STABLE_SPAN;
     let start = STABLE_BASE + offset;
     for step in 0..STABLE_SPAN {
         let candidate = STABLE_BASE + (start - STABLE_BASE + step) % STABLE_SPAN;
-        if taken.contains(&candidate) || !port_is_free(candidate) {
-            continue;
-        }
-        taken.push(candidate);
-        return candidate;
-    }
-    // Every probed port was busy: fall back to the highest free port the OS
-    // gives us inside the same span, so `up` still succeeds.
-    for candidate in (STABLE_BASE..STABLE_BASE + STABLE_SPAN).rev() {
-        if !taken.contains(&candidate) && port_is_free(candidate) {
+        if !taken.contains(&candidate) {
             taken.push(candidate);
             return candidate;
         }

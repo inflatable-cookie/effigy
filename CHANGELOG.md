@@ -43,9 +43,9 @@ During v0.x, MINOR bumps may include breaking changes.
   route; nothing is reserved across runs. A `[containers.<NAME>.host].ports`
   pin is still used as written and a collision now fails naming the process
   that holds it. `[containers.<NAME>.host].stable_ports = true` derives one
-  stable, probed port per published container port from the checkout path
-  instead, and never records it. Shared backing services derive their port the
-  same way.
+  stable port per published container port from the checkout path instead, and
+  never records or probes it. Shared backing services derive their port the
+  same way, so a running stack renders the same ports every time.
 - **One endpoint table and one transaction.** The gateway keeps its route table
   in one committed snapshot written by one plain transaction.
   The second commit path, the endpoint quarantine, the v0.14.1 handback and the
@@ -350,6 +350,12 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The `EFFIGY_RENDER_ROOT` interpolation value and the Compose interpolation
+  file's generation-root entry. A rendered generation names its own assets
+  relatively and Compose resolves them against its project directory, so no
+  Effigy value is interpolated into a stack and no container environment
+  carries one. `policy::render::apply_environment` and `ROOT_VARIABLE` are gone;
+  the interpolation file now carries only the plan's forwarded secret values.
 - The startup image pin and executable identity. `Executable` is the binary's
   path, and a helper execs whatever binary is there, so rebuilding or
   reinstalling Effigy during a long run is no longer a refusal. The helper
@@ -1398,6 +1404,14 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **An unchanged stack is not recreated.** `container up` on a running,
+  unchanged environment leaves every container, shared services included, in
+  place: the render is byte-identical, every service keeps its
+  `com.docker.compose.config-hash`, and the interpolation file is named by its
+  content instead of by the writing process. A service that really changed is
+  replaced, and if nerdctl's own name store refuses the create because it still
+  holds a container from this project, Effigy removes that container and
+  retries the create once (effigy#362).
 - **A racing first open of a checkout journal no longer refuses.** A held
   `checkout-binding` gate now defers: the binding is provenance, not a gate, so
   the journal opens by its location and the next effect writes the binding. A
@@ -1805,6 +1819,13 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A second `effigy container up` no longer recreates every service and fails
+  with `name "…" is already used by ID …`. The generation root no longer
+  reaches Compose as an interpolation value, so a container environment has no
+  `EFFIGY_RENDER_ROOT` (effigy#362).
+- A shared backing service no longer moves its host port on every `up` because
+  the derived port was probed against the stack that was already running.
+  Deriving a port no longer reads the runtime (effigy#362).
 - A checkout carrying both `.git/effigy-runtime-scope` and
   `.git/effigy-checkout-id` now has one identity. Every caller reads the token
   through one reader, which prefers the runtime-scope file, so the task

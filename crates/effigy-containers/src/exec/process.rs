@@ -35,7 +35,6 @@ pub fn run_command_capture_allow_failure(
     let borrowed = args.iter().map(OsString::from).collect::<Vec<_>>();
     let args = compose_invocation_args(&resolved_program, &borrowed, &[])?;
     let mut command = Command::new(&resolved_program);
-    crate::policy::render::apply_environment(&mut command, &args);
     command
         .current_dir(repo_root)
         .args(&args)
@@ -69,7 +68,6 @@ pub(super) fn run_command_capture_os_with_env(
     for (key, value) in env {
         command.env(key, value);
     }
-    crate::policy::render::apply_environment(&mut command, &args);
     let output = capture_output_after_exit(command, PIPE_EOF_GRACE).map_err(|error| {
         ContainerExecError::Launch {
             command: format!("{program} {}", format_args(&args)),
@@ -147,7 +145,6 @@ pub(super) fn run_detached_command_streaming_with_env(
     for (key, value) in env {
         command.env(key, value);
     }
-    crate::policy::render::apply_environment(&mut command, &args);
     let mut child = command
         .spawn()
         .map_err(|error| ContainerExecError::Launch {
@@ -996,7 +993,6 @@ fn spawn_capture_child_with_env(
     for (key, value) in env {
         command.env(key, value);
     }
-    crate::policy::render::apply_environment(&mut command, &args);
     command
         .current_dir(repo_root)
         .args(&args)
@@ -1029,7 +1025,6 @@ fn spawn_stream_child(
     let args = compose_invocation_args(&resolved_program, &borrowed, &[])
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut command = Command::new(&resolved_program);
-    crate::policy::render::apply_environment(&mut command, &args);
     command
         .current_dir(repo_root)
         .args(&args)

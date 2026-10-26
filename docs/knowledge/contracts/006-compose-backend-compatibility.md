@@ -354,26 +354,33 @@ Target compatibility case:
 
 Expected product guarantee:
 
-- a rendered generation's `${EFFIGY_RENDER_ROOT}` paths interpolate on the
-  Colima backend, for every Compose command Effigy runs
+- a rendered generation carries no Effigy interpolation value, and a plan value
+  the VM-hosted backend must interpolate reaches Compose on that backend
 
 Backend status:
 
 - `colima nerdctl` runs Compose inside the VM, so the host process environment
-  (including `EFFIGY_RENDER_ROOT` and any value the plan forwards for
-  `secrets.delivery = "compose-env"`) never reaches Compose interpolation
+  (including any value the plan forwards for `secrets.delivery =
+  "compose-env"`) never reaches Compose interpolation
 - `nerdctl compose` accepts exactly one `--env-file` and resolves it against
   paths the VM can read; host paths under the user's home are mounted there
+- `nerdctl compose` also hands that file to every service's `nerdctl run`, so
+  whatever it holds lands in each container's environment
 
 Effigy ownership:
 
-- the shared invocation transform in `policy::render` (reached by attached,
-  detached, `config`, `ps`, `logs`, `restart` and shared-service invocations)
-  writes the generation root and the plan's forwarded values to
-  `<effigy home>/compose-env/<pid>-<content>.env` (0600 inside a 0700
-  directory) and inserts `--env-file` after the Compose subcommand
-- values are double quoted with `\`, `"`, newlines and `$` escaped, so Compose
-  reads each value literally instead of interpolating it again; a
+- generated assets are named relatively and resolved by Compose against the
+  project directory, so the generation root is never interpolated and no
+  container receives it
+- only the plan's forwarded secret values travel in the file; the shared
+  invocation transform in `policy::render` (reached by attached, detached,
+  `config`, `ps`, `logs`, `restart` and shared-service invocations) writes them
+  to `<effigy home>/compose-env/<content>.env` (0600 inside a 0700 directory)
+  and inserts `--env-file` after the Compose subcommand
+- the name is the digest of the contents, so an unchanged plan names the same
+  file; a value both readers can take literally stays unquoted, and anything
+  else is double quoted with `\`, `"`, newlines and `$` escaped so Compose
+  substitutes it literally and the container's copy keeps its value; a
   non-identifier name, a non-UTF-8 value or a carriage return refuses before
   spawning
 - the file is outside the immutable closure, so the generation digest never
@@ -382,16 +389,15 @@ Effigy ownership:
 - Compose's default `.env` lookup is the first Compose file's directory, which
   inside a generation is the sealed object directory and never holds one, so
   naming this file drops no interpolation the invocation had
-- a file whose writer is gone is reclaimed by the next invocation; retained
-  files are bounded and older than a day is reclaimed even while its writer
-  lives
+- a file older than a day, or beyond the retained count, is reclaimed
 
 Target compatibility cases:
 
 - `a_vm_hosted_invocation_names_a_file_the_vm_can_read`
+- `the_same_values_name_the_same_file_and_new_values_add_one`
 - `a_render_generation_matches_across_state_home_paths`
 - one real-Colima fixture whose Compose stack mounts a generated closure file
-  through the render root
+  through a relative input
 
 ## Validation direction
 

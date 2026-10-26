@@ -750,8 +750,17 @@ resolution fail before Compose up.
 
 Effigy assembles runtime Compose and assets in memory. `container render <env>`
 prints their exact paths under `~/.effigy/state/objects/<digest>`. Prepare
-publishes that complete immutable generation. The former mutable output under
+publishes that complete immutable generation; a generated asset is named
+relatively inside it, and Compose resolves that against the project directory,
+so neither a container environment nor the Compose command line carries an
+Effigy interpolation value. The former mutable output under
 `.effigy/runtime/compose` is replaced automatically on the next Prepare.
+
+A shared service is rendered the same way into its own generation, so every
+checkout that shares it hands Compose the same configuration. An unchanged
+stack is therefore not recreated: a second `container up` leaves every
+container, the shared service included, exactly where it is. Only a service
+whose rendered configuration really changed is replaced.
 
 Treat the object directory as runtime output, not repo-owned source.
 

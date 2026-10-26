@@ -362,14 +362,17 @@ Prepare imports them, host Prepare paths refresh a stale pin, and
 The Prepare stage of `up` and other Mutate commands publishes through kernel
 Objects under the environment owner gate. Published files and directories keep
 Effigy's private modes (0600 and 0700); the digest proves integrity.
-Compose receives `EFFIGY_RENDER_ROOT` for references to generated assets;
-this adapter-owned value overrides a caller's environment without changing the
-process-global environment. Internal policy readers expand this reserved root
-before parsing bind syntax or estimating mount budgets; the immutable file bytes
-retain Compose interpolation. Prepare establishes owned mount directories before
+A rendered input names the generation's other files relatively, and Compose
+resolves them against its project directory — the directory of the invocation's
+first `-f` input — so no Effigy value is interpolated into the stack and no
+container environment carries one. Internal policy readers resolve those
+relative inputs to the generation's own paths before parsing bind syntax or
+estimating mount budgets; the immutable file bytes keep the relative spelling.
+A shared service is read by its own invocation and names its own directory the
+same way, so its configuration is identical in every checkout that shares it.
+Prepare establishes owned mount directories before
 admission, so creating a cache cannot change canonical bind paths afterward.
-Relative generated asset paths, including `./` spellings, name files in that
-same generation. Relative user build contexts and Dockerfiles keep their
+Relative user build contexts and Dockerfiles keep their
 Compose meaning. `compose.override.yml` inputs are copied into the closure. Existing mutable generated files are not imported
 or rewritten; the next Prepare renders their replacement automatically.
 
@@ -377,6 +380,8 @@ or rewritten; the next Prepare renders their replacement automatically.
 its generation path and digest. The path may not exist before Prepare. JSON
 uses `effigy.container.render.v1` with `environment`, `path`, `digest`,
 `compose_files`, `environment_variables`, and `files` (`name`, `path`, `content`).
+`environment_variables` stays in the contract and is always empty: a render
+hands Effigy no value to interpolate.
 Missing allocated ports remain explicit placeholders until Prepare. Scope
 queries also leave an unprepared checkout's identity absent. Logs discover the
 selected backend's service container directly, including stopped containers,
