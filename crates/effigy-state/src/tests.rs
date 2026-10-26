@@ -339,14 +339,8 @@ fn resolve_capture_request_rejects_missing_required_fields_without_profile() {
     );
 }
 
-fn temp_state_repo(label: &str) -> std::path::PathBuf {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("effigy-state-{label}-{unique}"));
-    std::fs::create_dir_all(&dir).expect("create temp state repo");
-    dir
+fn temp_state_repo(label: &str) -> std::path::PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-state-{label}-"))
+        .expect("fixture directory")
 }
 
 fn acowtancy_fixture() -> &'static str {

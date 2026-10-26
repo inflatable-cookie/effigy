@@ -254,13 +254,12 @@ fn managed_colima_profile_resources_accept_explicit_disk_override() {
 #[test]
 fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     let _lock = env_lock();
-    let root = std::env::temp_dir().join(format!(
+    let root = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-colima-config-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos()
-    ));
+            .as_nanos())).expect("fixture directory");
     std::fs::create_dir_all(&root).expect("mkdir home");
     let previous_home = std::env::var_os("HOME");
     unsafe {
@@ -400,13 +399,12 @@ fn managed_drift_leaves_a_configured_or_unknown_profile_alone() {
 #[test]
 fn managed_drift_reads_the_profiles_own_config_file() {
     let _lock = env_lock();
-    let root = std::env::temp_dir().join(format!(
+    let root = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-colima-drift-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos()
-    ));
+            .as_nanos())).expect("fixture directory");
     let profile_dir = root.join(".colima/effigy-release");
     std::fs::create_dir_all(&profile_dir).expect("mkdir profile");
     std::fs::write(profile_dir.join("colima.yaml"), "forwardAgent: false\n").expect("write config");
@@ -465,13 +463,12 @@ fn managed_profile_notices_name_the_profile_and_what_a_deletion_lost() {
 #[test]
 fn managed_profile_prepare_writes_both_agent_forwarding_keys() {
     let _lock = env_lock();
-    let root = std::env::temp_dir().join(format!(
+    let root = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-colima-forward-agent-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos()
-    ));
+            .as_nanos())).expect("fixture directory");
     std::fs::create_dir_all(&root).expect("mkdir home");
     let previous_home = std::env::var_os("HOME");
     unsafe {

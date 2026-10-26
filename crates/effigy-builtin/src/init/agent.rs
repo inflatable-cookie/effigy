@@ -963,7 +963,7 @@ mod tests {
     #[test]
     fn init_installed_skill_status_collapses_symlink_aliases_to_one_canonical_root() {
         let home =
-            std::env::temp_dir().join(format!("effigy-init-skill-aliases-{}", std::process::id()));
+            effigy_test_support::Fixture::process_lifetime(&format!("effigy-init-skill-aliases-{}", std::process::id())).expect("fixture directory");
         let _ = std::fs::remove_dir_all(&home);
         let canonical = home.join(".agents/skills/effigy");
         std::fs::create_dir_all(&canonical).expect("canonical skill root");
@@ -999,10 +999,9 @@ mod tests {
 
     #[test]
     fn init_installed_skill_status_reports_distinct_global_roots_as_ambiguous() {
-        let home = std::env::temp_dir().join(format!(
+        let home = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-init-skill-duplicates-{}",
-            std::process::id()
-        ));
+            std::process::id())).expect("fixture directory");
         let _ = std::fs::remove_dir_all(&home);
         for root in [".agents/skills/effigy", ".cursor/skills/effigy"] {
             let skill = home.join(root);
@@ -1020,7 +1019,7 @@ mod tests {
     #[test]
     fn init_installed_skill_status_reports_missing_install_without_claiming_success() {
         let home =
-            std::env::temp_dir().join(format!("effigy-init-skill-missing-{}", std::process::id()));
+            effigy_test_support::Fixture::process_lifetime(&format!("effigy-init-skill-missing-{}", std::process::id())).expect("fixture directory");
         let _ = std::fs::remove_dir_all(&home);
 
         let status = installed_skill_status(Some(&home));

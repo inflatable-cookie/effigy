@@ -473,7 +473,6 @@ mod tests {
     use super::{default_alias, load_effective_catalogs, load_isolated_catalog};
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn default_alias_uses_workspace_directory_name_for_root_catalog() {
@@ -755,13 +754,7 @@ mounts = [{ source = "../inline", catalog = true }]
         let _ = fs::remove_dir_all(fixture);
     }
 
-    fn temp_root(prefix: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("{prefix}-{suffix}"));
-        fs::create_dir_all(&path).expect("temp root");
-        path
+    fn temp_root(prefix: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("{prefix}-"))
+            .expect("fixture directory")
     }
 }

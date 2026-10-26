@@ -4,16 +4,8 @@ mod structured_mount_tests {
     use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};
     use std::fs;
 
-    fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "effigy-structured-mount-{label}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).expect("mkdir");
-        path
+    fn temp_dir(label: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-structured-mount-{label}-"))
+            .expect("fixture directory")
     }
 
     #[test]
@@ -170,13 +162,12 @@ mod library_mount_tests {
     use std::fs;
 
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
+        let path = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-library-mount-{label}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos()
-        ));
+                .as_nanos())).expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir");
         path
     }
@@ -261,13 +252,12 @@ mod host_git_mount_tests {
     use std::fs;
 
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
+        let path = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-host-git-{label}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos()
-        ));
+                .as_nanos())).expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir");
         path
     }
@@ -1020,13 +1010,12 @@ mod worktree_git_mount_tests {
     use std::fs;
 
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
+        let path = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-worktree-git-{label}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos()
-        ));
+                .as_nanos())).expect("fixture directory");
         fs::create_dir_all(&path).expect("mkdir");
         path
     }

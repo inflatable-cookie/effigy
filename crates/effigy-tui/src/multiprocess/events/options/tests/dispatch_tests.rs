@@ -168,15 +168,6 @@ fn quit_hotkey_requests_quit() {
     assert!(matches!(control, Some(LoopControl::Quit)));
 }
 
-fn export_test_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-tui-{name}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("unix epoch")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("create temp root");
-    root
+fn export_test_root(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-tui-{name}-"))
+        .expect("fixture directory")
 }

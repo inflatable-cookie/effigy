@@ -16,16 +16,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn temp_repo(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-release-{name}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    root
+fn temp_repo(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-release-{name}-"))
+        .expect("fixture directory")
 }
 
 fn write_initial_release_repo(name: &str, opt_in: bool) -> PathBuf {

@@ -1276,13 +1276,12 @@ mod tests {
 
     fn deadline_fixture_root(label: &str) -> std::path::PathBuf {
         use std::fs;
-        let root = std::env::temp_dir().join(format!(
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-containers-deadline-{label}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos()
-        ));
+                .as_nanos())).expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir deadline fixture");
         root
     }

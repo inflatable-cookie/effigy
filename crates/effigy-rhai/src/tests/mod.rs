@@ -32,16 +32,8 @@ mod storage_retirement;
 mod string_values;
 mod utility;
 
-fn temp_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-rhai-{name}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    root
+fn temp_root(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-rhai-{name}-"))
+        .expect("fixture directory")
 }
 
 fn callbacks() -> HostCallbacks {

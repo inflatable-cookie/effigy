@@ -726,9 +726,13 @@ primary_service = "app"
         let _lock = crate::test_env_lock();
         load_container_policy(&root, None).expect("policy")
     };
+    // A compose project name is the fixture's repo name, lowercased.
     let expected = format!(
         "{}-dev",
-        root.file_name().and_then(|name| name.to_str()).unwrap()
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap()
+            .to_lowercase()
     );
 
     assert_eq!(policy.project_name, expected);
@@ -918,13 +922,12 @@ fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() 
 
 #[test]
 fn validate_container_policy_rejects_mounts_outside_repo() {
-    let parent = std::env::temp_dir().join(format!(
+    let parent = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-mount-validation-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos()
-    ));
+            .as_nanos())).expect("fixture directory");
     let root = parent.join("repo");
     let outside = parent.join("outside");
     fs::create_dir_all(&root).expect("mkdir repo");

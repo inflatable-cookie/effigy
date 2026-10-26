@@ -269,7 +269,7 @@ members = [{ id = "tests", kind = "compile", surface = "published", task = "c", 
 
     #[test]
     fn file_flag_adds_only_that_temporary_definition() {
-        let base = std::env::temp_dir().join(format!("effigy-qa-inv-{}", std::process::id()));
+        let base = effigy_test_support::Fixture::process_lifetime(&format!("effigy-qa-inv-{}", std::process::id())).expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("config/qa-groups")).expect("mkdir");
         let file = base.join("config/qa-groups/2026-10-02-binding-check.toml");

@@ -11,3 +11,6 @@ nix = { version = "0.31", default-features = false, features = ["process", "sign
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }

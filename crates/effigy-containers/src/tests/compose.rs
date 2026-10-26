@@ -2277,13 +2277,12 @@ catalog = "postgres"
 #[test]
 fn direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract() {
     let _lock = crate::test_env_lock();
-    let parent = std::env::temp_dir().join(format!(
+    let parent = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-direct-compose-workspace-mounts-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
-            .as_nanos()
-    ));
+            .as_nanos())).expect("fixture directory");
     let root = parent.join("workspace-app-reference");
     let platform = parent.join("platform");
     let poodle = parent.join("poodle");

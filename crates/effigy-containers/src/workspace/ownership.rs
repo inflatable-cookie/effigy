@@ -525,17 +525,9 @@ mod tests {
     };
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_root(label: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "effigy-ownership-{label}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
+    fn temp_root(label: &str) -> PathBuf {    let root = effigy_test_support::Fixture::process_lifetime(&format!("effigy-ownership-{label}-"))
+            .expect("fixture directory");
         fs::create_dir_all(root.join("infra/dev")).expect("mkdir");
         root
     }

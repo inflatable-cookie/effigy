@@ -11,3 +11,6 @@ effigy-core = { path = "../effigy-core" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }

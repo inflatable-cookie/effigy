@@ -7,14 +7,8 @@ use crate::init::scaffold;
 use std::fs;
 use std::path::PathBuf;
 
-fn temp_root(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "effigy-init-inventory-{name}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).expect("create temp root");
-    path
+fn temp_root(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-init-inventory-{name}-"))
+        .expect("fixture directory")
 }
 
 #[test]

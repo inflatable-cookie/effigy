@@ -738,7 +738,6 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use effigy_context::{CapturedEnv, EffigyRuntimeContext, TaskSourceContext};
 
@@ -750,14 +749,8 @@ mod tests {
         ExecutionSelectionPlan, ExecutionSurface, TaskExecutionRequestBuilder,
     };
 
-    fn temp_repo(name: &str) -> PathBuf {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "effigy-execution-{name}-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).expect("mkdir temp repo");
+    fn temp_repo(name: &str) -> PathBuf {    let root = effigy_test_support::Fixture::process_lifetime(&format!("effigy-execution-{name}-"))
+            .expect("fixture directory");
         fs::write(root.join("Cargo.toml"), "[package]\nname = \"ctx\"\n").expect("manifest");
         root
     }

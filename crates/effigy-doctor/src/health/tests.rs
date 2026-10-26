@@ -55,17 +55,10 @@ impl DoctorRuntimePorts for RecordingPorts {
     }
 }
 
-fn temp_root(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doctor-health-task-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("mkdir root");
-    root
+fn temp_root(label: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!(
+        "effigy-doctor-health-task-{label}-"
+    ))
+    .expect("fixture directory")
 }
 
 fn write(path: &Path, contents: &str) {

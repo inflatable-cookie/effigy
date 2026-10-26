@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ManagedError;
 use effigy_manifest::{
@@ -48,14 +47,10 @@ impl Drop for EnvGuard {
     }
 }
 
-fn temp_repo(name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("effigy-sequence-env-resolution-{name}-{ts}"));
-    fs::create_dir_all(&root).expect("mkdir temp repo");
-    root
+fn temp_repo(name: &str) -> PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!(
+        "effigy-sequence-env-resolution-{name}-"
+    ))
+    .expect("fixture directory")
 }
 
 fn profile_step(profile_name: &str) -> ManifestManagedRunStep {

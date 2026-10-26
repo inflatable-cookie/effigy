@@ -5,17 +5,9 @@ use super::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
-fn temp_dir() -> PathBuf {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let path = std::env::temp_dir().join(format!(
-        "effigy-state-artifact-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(&path).expect("create temp dir");
-    path
+fn temp_dir() -> PathBuf {    effigy_test_support::Fixture::process_lifetime("effigy-state-artifact-")
+        .expect("fixture directory")
 }
 
 #[test]

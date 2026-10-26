@@ -174,14 +174,13 @@ mod hydration_tests {
 
     #[test]
     fn fresh_bun_worktree_reports_frozen_preparation_route() {
-        let root = std::env::temp_dir().join(format!(
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-bun-hydration-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
-        ));
+                .as_nanos())).expect("fixture directory");
         let app = root.join("app");
         std::fs::create_dir_all(&app).unwrap();
         std::fs::write(root.join("bun.lock"), "").unwrap();

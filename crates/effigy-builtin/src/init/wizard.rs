@@ -309,12 +309,8 @@ mod tests {
     use crate::init::scaffold;
     use crate::init::wizard_test_support::WizardTestPorts;
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("effigy-init-wizard-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create temp root");
-        path
+    fn temp_root(name: &str) -> std::path::PathBuf {    effigy_test_support::Fixture::process_lifetime(&format!("effigy-init-wizard-{name}-"))
+            .expect("fixture directory")
     }
 
     #[test]
