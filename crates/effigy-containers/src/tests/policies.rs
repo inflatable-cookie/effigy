@@ -345,9 +345,13 @@ primary_service = "jobs"
                     let _lock = crate::test_env_lock();
                     load_container_policy(&root, None).expect(name)
                 };
+                // A compose project name is the fixture's repo name, lowercased.
                 let expected = format!(
                     "{}-dev",
-                    root.file_name().and_then(|name| name.to_str()).unwrap()
+                    root.file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap()
+                        .to_lowercase()
                 );
                 assert_eq!(policy.project_name, expected, "{name}");
             }
