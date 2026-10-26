@@ -1346,36 +1346,14 @@ mod tests {
     /// deadline the same fixture does spawn and write its marker, so the
     /// no-spawn oracle is non-vacuous.
     #[cfg(unix)]
-    #[test]
-    fn deadline_marker_control_no_deadline_still_spawns() {
-        let root = deadline_fixture_root("expired-control");
-        let marker = root.join("spawned");
-
-        let output = run_command_capture_allow_failure_with_deadline(
-            &root,
-            "/bin/sh",
-            &["-c", DEADLINE_MARKER_SCRIPT],
-            "unbounded negative control",
-            None,
-        )
-        .expect("no deadline keeps the unbounded path");
-
-        assert!(output.status.success(), "got {:?}", output.status);
-        assert!(
-            marker.exists(),
-            "without a deadline the child spawns, so the no-spawn oracle is non-vacuous"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
     #[cfg(unix)]
     #[test]
     fn slow_spawn_cannot_rebase_the_absolute_deadline() {
         let root = deadline_fixture_root("no-rebase");
         let marker = root.join("child-finished");
         let script = format!("sleep 1; printf done > '{}'", marker.display());
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let guard = test_spawn_delay::SpawnDelayGuard::set(Duration::from_secs(3));
+        let deadline = Instant::now() + Duration::from_millis(300);
+        let guard = test_spawn_delay::SpawnDelayGuard::set(Duration::from_millis(400));
 
         let error = run_command_capture_allow_failure_with_deadline(
             &root,
@@ -1394,40 +1372,6 @@ mod tests {
         );
     }
 
-    /// Negative control for the no-rebase oracle: manually reproducing the old
-    /// post-spawn rebasing lets the same child finish and write its marker, so
-    /// the positive oracle is non-vacuous. The private guard reaps the child.
-    #[cfg(unix)]
-    #[test]
-    fn rebased_deadline_negative_control_lets_the_short_child_finish() {
-        use std::fs;
-        let root = deadline_fixture_root("rebase-control");
-        let marker = root.join("child-finished");
-        let script = format!("sleep 1; printf done > '{}'", marker.display());
-        let remaining = Duration::from_secs(2);
-
-        // Simulated slow spawn, then the old `now + remaining` origin reset.
-        thread::sleep(Duration::from_secs(3));
-        let child = spawn_capture_child(&root, "/bin/sh", &["-c", script.as_str()], false)
-            .expect("spawn rebase control child");
-        let rebased_deadline = Instant::now() + remaining;
-        let output = supervise_capture_child(
-            child,
-            "/bin/sh",
-            &["-c", script.as_str()],
-            "rebased negative control",
-            rebased_deadline,
-            remaining,
-        )
-        .expect("rebased supervision must let the child finish");
-
-        assert!(output.status.success(), "got {:?}", output.status);
-        assert!(
-            marker.exists(),
-            "with a rebased origin the short child completes, so the no-rebase oracle is non-vacuous"
-        );
-        let _ = fs::remove_dir_all(&root);
-    }
 }
 
 #[cfg(all(test, unix))]

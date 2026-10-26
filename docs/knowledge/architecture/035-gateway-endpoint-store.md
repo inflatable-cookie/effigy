@@ -142,9 +142,10 @@ the failure; it does not claim the cause of a past unexplained refusal.
 - `test:gateway:loopback-lifecycle`: alias addresses derived from the route
   table, a new checkout taking an address no live route references, and routes
   of deleted checkouts dropped by any write.
-- `proof:gateway:endpoints:import`: reads operator registry copies, redacts
-  project paths and domains inside a fresh disposable home, then verifies
-  every imported document and unchanged backup byte.
+- `proof:gateway:operator:migration`: reads a redacted operator snapshot,
+  redacts project paths and domains inside a fresh disposable home, and
+  verifies the imported record and unchanged backup bytes. The v0.14.1
+  importer's own tests are deferred with the importer (Q-012).
 - `proof:gateway:proxy:baseline` and `proof:gateway:proxy:latency`: the same
   loopback workload records direct, plain-route and managed-route latency and
   upstream connection counts for 766 sequential requests.
