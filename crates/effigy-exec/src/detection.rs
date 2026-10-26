@@ -10,8 +10,7 @@
 //! probes during a single development session.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Result of probing a container for capabilities.
 #[derive(Debug, Clone)]
@@ -33,11 +32,6 @@ pub struct ContainerCapabilities {
 }
 
 impl ContainerCapabilities {
-    /// Whether these capabilities are stale (older than the given duration).
-    pub fn is_stale(&self, max_age: Duration) -> bool {
-        self.probed_at.elapsed() > max_age
-    }
-
     /// Whether the container supports effigy handoff.
     ///
     /// Handoff means the host effigy invokes the container effigy directly,
@@ -122,80 +116,6 @@ pub fn determine_strategy(
             working_dir: container_cwd.to_string(),
             command: raw_command.to_vec(),
         }
-    }
-}
-
-/// Cache of container capability probes.
-///
-/// Avoids repeated `docker compose exec ... which effigy` calls during a
-/// single development session. Cache entries expire after a configurable
-/// duration (default: 5 minutes).
-#[derive(Debug, Clone)]
-pub struct CapabilityCache {
-    entries: Arc<RwLock<HashMap<String, ContainerCapabilities>>>,
-    max_age: Duration,
-}
-
-impl CapabilityCache {
-    /// Create a new cache with the default max age (5 minutes).
-    pub fn new() -> Self {
-        Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
-            max_age: Duration::from_secs(300),
-        }
-    }
-
-    /// Create a new cache with a custom max age.
-    pub fn with_max_age(max_age: Duration) -> Self {
-        Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
-            max_age,
-        }
-    }
-
-    /// Get cached capabilities for a container, if fresh.
-    pub fn get(&self, container_key: &str) -> Option<ContainerCapabilities> {
-        let entries = self.entries.read().expect("capability cache lock poisoned");
-        entries.get(container_key).and_then(|cap| {
-            if cap.is_stale(self.max_age) {
-                None
-            } else {
-                Some(cap.clone())
-            }
-        })
-    }
-
-    /// Store capabilities for a container.
-    pub fn put(&self, container_key: String, capabilities: ContainerCapabilities) {
-        let mut entries = self
-            .entries
-            .write()
-            .expect("capability cache lock poisoned");
-        entries.insert(container_key, capabilities);
-    }
-
-    /// Invalidate all cached entries.
-    pub fn clear(&self) {
-        let mut entries = self
-            .entries
-            .write()
-            .expect("capability cache lock poisoned");
-        entries.clear();
-    }
-
-    /// Invalidate a specific container's cached entry.
-    pub fn invalidate(&self, container_key: &str) {
-        let mut entries = self
-            .entries
-            .write()
-            .expect("capability cache lock poisoned");
-        entries.remove(container_key);
-    }
-}
-
-impl Default for CapabilityCache {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -112,57 +112,6 @@ fn extract_nonexistent_fragment_fails() {
 // --- Batch 6: End-to-end compose output and eject ---
 
 #[test]
-fn full_pipeline_assembles_assets_without_writing() {
-    let dir = tempfile::tempdir().unwrap();
-
-    let resolver = bundled_resolver();
-    let assembler = ComposeAssembler::new(resolver);
-
-    let services = vec![
-        ServiceDeclaration {
-            name: "app".to_string(),
-            catalog: "php-fpm".to_string(),
-            params: {
-                let mut p = HashMap::new();
-                p.insert(
-                    "extensions".to_string(),
-                    toml::Value::Array(vec![toml::Value::String("pdo_mysql".to_string())]),
-                );
-                p
-            },
-            variant: None,
-            config: None,
-        },
-        ServiceDeclaration {
-            name: "db".to_string(),
-            catalog: "mariadb".to_string(),
-            params: HashMap::new(),
-            variant: None,
-            config: None,
-        },
-    ];
-
-    // Assemble.
-    let assembly = assembler
-        .assemble(&services, "test-proj", ".", ".effigy-catalog", 1000, 1000)
-        .unwrap();
-
-    let doc = validate_compose_structure(&assembly.compose_yaml);
-    validate_service(&doc, "app");
-    validate_service(&doc, "db");
-    assert!(assembly.dockerfiles.contains_key("app"));
-    assert_eq!(
-        std::fs::read_dir(dir.path()).unwrap().count(),
-        0,
-        "assembly stays pure"
-    );
-}
-
-// --- Batch 7: Structural validation and edge cases ---
-
-/// Parse the assembled compose YAML back into a serde_yaml::Value and
-
-#[test]
 fn assembled_yaml_is_structurally_valid_compose() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);

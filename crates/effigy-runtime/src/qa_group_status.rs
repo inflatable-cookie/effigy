@@ -335,7 +335,11 @@ mod tests {
 
     #[test]
     fn begin_update_finalize_round_trip() {
-        let base = std::env::temp_dir().join(format!("effigy-qa-run-{}", std::process::id()));
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-run-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
 
@@ -375,7 +379,11 @@ mod tests {
 
     #[test]
     fn member_logs_are_written_run_scoped() {
-        let base = std::env::temp_dir().join(format!("effigy-qa-log-{}", std::process::id()));
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-log-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let path = write_qa_group_member_log(&base, "log-run", "cli-tests", "captured output\n")
@@ -392,7 +400,11 @@ mod tests {
 
     #[test]
     fn missing_run_records_report_none() {
-        let base = std::env::temp_dir().join(format!("effigy-qa-none-{}", std::process::id()));
+        let base = effigy_test_support::Fixture::process_lifetime(&format!(
+            "effigy-qa-none-{}",
+            std::process::id()
+        ))
+        .expect("fixture directory");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).expect("mkdir");
         let loaded = load_qa_group_run_record(&base, "absent").expect("load");

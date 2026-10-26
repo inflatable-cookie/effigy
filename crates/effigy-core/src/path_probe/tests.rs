@@ -4,14 +4,8 @@ use std::path::PathBuf;
 use super::*;
 
 fn make_temp_dir(test_name: &str) -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
-    dir.push(format!("effigy-path-probe-{test_name}-{now}"));
-    fs::create_dir_all(&dir).expect("create temp dir");
-    dir
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-path-probe-{test_name}-"))
+        .expect("fixture directory")
 }
 
 #[test]

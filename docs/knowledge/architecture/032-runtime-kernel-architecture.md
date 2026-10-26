@@ -215,8 +215,8 @@ later operations without releasing the endpoints or retaining the old run row.
 An unpublished reservation still releases on settle. Omitted retained claims
 enter boot-clock quarantine using the engine's DNS TTL plus drain budget;
 foreign claims cannot be adopted from an empty or missing engine payload.
-`test:kernel:claims` covers persistence, refusal and faults at publication and
-ownership transfer. These APIs do not themselves cut over the gateway's JSON
+`test:kernel:machine-facts` covers publication, refusal, ownership transfer and
+boot-clock quarantine for machine endpoints. These APIs do not themselves cut over the gateway's JSON
 registries; the gateway engine owns that migration.
 
 Identity constructors consume resolved coordinates; selector grammar stays in
@@ -381,8 +381,7 @@ a release retry cannot change a successor's claim or restart quarantine. Reuse
 requires a released row or positive boot-clock expiry. Pending claims are
 resolved through their owning run's settle, never reclaimed from liveness age.
 
-`test:kernel:run`, `test:kernel:attachments` and `test:kernel:claims` cover these
-primitives. The run suite traces successful and closed-with-residue scenarios,
+`test:kernel:run` and `test:kernel:attachments` cover these primitives. The run suite traces successful and closed-with-residue scenarios,
 then injects SIGKILL, ENOSPC and EPERM at every crossed journal boundary in a
 fresh HOME. Strict fake external objects and durable call/release logs exercise
 O1a/O1b, O2, O3, O5, O11 and O13 at the adapter boundary. Local process-group

@@ -3,13 +3,14 @@ use super::*;
 #[test]
 fn load_workspace_ownership_targets_collects_named_volume_targets() {
     let _lock = crate::test_env_lock();
-    let parent = std::env::temp_dir().join(format!(
+    let parent = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-workspace-ownership-targets-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos()
-    ));
+    ))
+    .expect("fixture directory");
     let root = parent.join("workspace-app-reference");
     let platform = parent.join("platform");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");

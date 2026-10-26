@@ -22,7 +22,7 @@ fn git_status_paths(repo_root: &Path, read_only: bool) -> Result<Vec<String>, Re
     if !repo_check.status.success() || String::from_utf8_lossy(&repo_check.stdout).trim() != "true"
     {
         return Err(ReleaseError::TaskInvocation(format!(
-            "release execute requires a git work tree at {}",
+            "the release run requires a git work tree at {}",
             repo_root.display()
         )));
     }
@@ -98,7 +98,7 @@ pub fn git_current_branch(repo_root: &Path) -> Result<String, ReleaseError> {
         })?;
     if !output.status.success() {
         return Err(ReleaseError::TaskInvocation(
-            "release execute requires a checked-out branch".to_owned(),
+            "the release run requires a checked-out branch".to_owned(),
         ));
     }
     let branch = String::from_utf8(output.stdout).map_err(|error| {
@@ -107,7 +107,7 @@ pub fn git_current_branch(repo_root: &Path) -> Result<String, ReleaseError> {
     let trimmed = branch.trim();
     if trimmed.is_empty() {
         Err(ReleaseError::TaskInvocation(
-            "release execute requires a checked-out branch".to_owned(),
+            "the release run requires a checked-out branch".to_owned(),
         ))
     } else {
         Ok(trimmed.to_owned())
@@ -125,7 +125,7 @@ pub fn git_head_sha(repo_root: &Path) -> Result<String, ReleaseError> {
         })?;
     if !output.status.success() {
         return Err(ReleaseError::TaskInvocation(
-            "release execute requires a readable current HEAD".to_owned(),
+            "the release run requires a readable current HEAD".to_owned(),
         ));
     }
     let sha = String::from_utf8(output.stdout).map_err(|error| {
@@ -134,7 +134,7 @@ pub fn git_head_sha(repo_root: &Path) -> Result<String, ReleaseError> {
     let trimmed = sha.trim();
     if trimmed.is_empty() {
         Err(ReleaseError::TaskInvocation(
-            "release execute requires a readable current HEAD".to_owned(),
+            "the release run requires a readable current HEAD".to_owned(),
         ))
     } else {
         Ok(trimmed.to_owned())
@@ -154,7 +154,7 @@ pub fn git_remote_url(repo_root: &Path, remote: &str) -> Result<String, ReleaseE
         })?;
     if !output.status.success() {
         return Err(ReleaseError::TaskInvocation(format!(
-            "release execute requires a configured `{remote}` remote"
+            "the release run requires a configured `{remote}` remote"
         )));
     }
     let url = String::from_utf8(output.stdout).map_err(|error| {
@@ -163,7 +163,7 @@ pub fn git_remote_url(repo_root: &Path, remote: &str) -> Result<String, ReleaseE
     let trimmed = url.trim();
     if trimmed.is_empty() {
         Err(ReleaseError::TaskInvocation(format!(
-            "release execute requires a configured `{remote}` remote"
+            "the release run requires a configured `{remote}` remote"
         )))
     } else {
         Ok(trimmed.to_owned())

@@ -17,21 +17,6 @@ pub(super) enum WorkflowPhase {
     SummaryAndReport,
 }
 
-#[cfg(test)]
-const WORKFLOW_PHASE_ORDER: [WorkflowPhase; 6] = [
-    WorkflowPhase::RootResolution,
-    WorkflowPhase::ManifestPreparation,
-    WorkflowPhase::Checks,
-    WorkflowPhase::FixFinalization,
-    WorkflowPhase::ManifestAvailabilityFindings,
-    WorkflowPhase::SummaryAndReport,
-];
-
-#[cfg(test)]
-pub(super) fn workflow_phase_order() -> &'static [WorkflowPhase] {
-    &WORKFLOW_PHASE_ORDER
-}
-
 pub(super) trait WorkflowPhaseHandler {
     fn resolve_root(
         &mut self,

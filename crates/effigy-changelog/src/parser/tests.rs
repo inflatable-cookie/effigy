@@ -536,9 +536,22 @@ fn prose_does_not_swallow_malformed_headings() {
     }
 }
 
+/// An unsupported list marker that must be a parse error naming its line.
+struct UnsupportedMarkerCase {
+    name: &'static str,
+    input: &'static str,
+    line: Option<usize>,
+    errors: Option<usize>,
+}
+
+/// Entry lists accept `-` bullets only, in category and continuation lines
+/// alike; `+` and ordered markers are errors rather than silently ignored prose.
 #[test]
-fn unsupported_bullet_marker_in_category_is_rejected() {
-    let input = "\
+fn unsupported_list_markers_are_rejected_with_their_line() {
+    let cases = [
+        UnsupportedMarkerCase {
+            name: "category-bullet",
+            input: "\
 # Changelog
 
 ## [Unreleased]
@@ -546,57 +559,25 @@ fn unsupported_bullet_marker_in_category_is_rejected() {
 ### Added
 - Supported entry
 + Unsupported bullet item.
-";
-    let err = parse_changelog(input).unwrap_err();
-    match err {
-        ChangelogError::Parse { errors } => {
-            assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
-            assert_eq!(errors[0].line, 7);
-            assert!(
-                errors[0].message.contains("unsupported entry marker"),
-                "{}",
-                errors[0].message
-            );
-        }
-        _ => panic!("expected Parse error"),
-    }
-}
-
-#[test]
-fn unsupported_ordered_marker_is_rejected() {
-    let input = "# Changelog\n\n## [Unreleased]\n\n### Added\n1. Ordered item\n";
-    let err = parse_changelog(input).unwrap_err();
-    match err {
-        ChangelogError::Parse { errors } => {
-            assert!(
-                errors[0].message.contains("unsupported entry marker"),
-                "{}",
-                errors[0].message
-            );
-        }
-        _ => panic!("expected Parse error"),
-    }
-}
-
-#[test]
-fn unsupported_bullet_marker_at_release_level_is_rejected() {
-    let input = "# Changelog\n\n## [Unreleased]\n\n+ Not an entry.\n";
-    let err = parse_changelog(input).unwrap_err();
-    match err {
-        ChangelogError::Parse { errors } => {
-            assert!(
-                errors[0].message.contains("unsupported entry marker"),
-                "{}",
-                errors[0].message
-            );
-        }
-        _ => panic!("expected Parse error"),
-    }
-}
-
-#[test]
-fn unsupported_bullet_marker_in_continuation_is_rejected() {
-    let input = "\
+",
+            line: Some(7),
+            errors: Some(1),
+        },
+        UnsupportedMarkerCase {
+            name: "ordered",
+            input: "# Changelog\n\n## [Unreleased]\n\n### Added\n1. Ordered item\n",
+            line: None,
+            errors: None,
+        },
+        UnsupportedMarkerCase {
+            name: "release-level-bullet",
+            input: "# Changelog\n\n## [Unreleased]\n\n+ Not an entry.\n",
+            line: None,
+            errors: None,
+        },
+        UnsupportedMarkerCase {
+            name: "continuation-bullet",
+            input: "\
 # Changelog
 
 ## [Unreleased]
@@ -604,36 +585,51 @@ fn unsupported_bullet_marker_in_continuation_is_rejected() {
 ### Added
 - Supported entry
   + Unsupported nested bullet item.
-";
-    let err = parse_changelog(input).unwrap_err();
-    match err {
-        ChangelogError::Parse { errors } => {
-            assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
-            assert_eq!(errors[0].line, 7);
-            assert!(
-                errors[0].message.contains("unsupported entry marker"),
-                "{}",
-                errors[0].message
-            );
-        }
-        _ => panic!("expected Parse error"),
-    }
-}
+",
+            line: Some(7),
+            errors: Some(1),
+        },
+        UnsupportedMarkerCase {
+            name: "continuation-ordered",
+            input:
+                "# Changelog\n\n## [Unreleased]\n\n### Added\n- Supported entry\n  1. Nested ordered item\n",
+            line: None,
+            errors: None,
+        },
+        UnsupportedMarkerCase {
+            name: "next-to-a-lazy-continuation",
+            input: "\
+# Changelog
 
-#[test]
-fn unsupported_ordered_marker_in_continuation_is_rejected() {
-    let input =
-        "# Changelog\n\n## [Unreleased]\n\n### Added\n- Supported entry\n  1. Nested ordered item\n";
-    let err = parse_changelog(input).unwrap_err();
-    match err {
-        ChangelogError::Parse { errors } => {
-            assert!(
-                errors[0].message.contains("unsupported entry marker"),
-                "{}",
-                errors[0].message
-            );
+## [Unreleased]
+
+### Added
+- Supported entry
++ Unsupported nested bullet item.
+",
+            line: Some(7),
+            errors: None,
+        },
+    ];
+
+    for case in cases {
+        let err = parse_changelog(case.input).unwrap_err();
+        let ChangelogError::Parse { errors } = err else {
+            panic!("{}: expected a parse error", case.name);
+        };
+        assert!(
+            errors
+                .iter()
+                .all(|error| error.message.contains("unsupported entry marker")),
+            "{}: expected every error to name the unsupported marker, got {errors:?}",
+            case.name
+        );
+        if let Some(expected) = case.errors {
+            assert_eq!(errors.len(), expected, "{}: {errors:?}", case.name);
         }
-        _ => panic!("expected Parse error"),
+        if let Some(line) = case.line {
+            assert_eq!(errors[0].line, line, "{}: {errors:?}", case.name);
+        }
     }
 }
 
@@ -757,29 +753,4 @@ A paragraph after a blank line still belongs to the release.
     assert!(release.categories[0].entries[0]
         .continuation_lines
         .is_empty());
-}
-
-#[test]
-fn unsupported_markers_stay_errors_next_to_a_lazy_continuation() {
-    let input = "\
-# Changelog
-
-## [Unreleased]
-
-### Added
-- Supported entry
-+ Unsupported nested bullet item.
-";
-    let err = parse_changelog(input).unwrap_err();
-    match err {
-        ChangelogError::Parse { errors } => {
-            assert_eq!(errors[0].line, 7);
-            assert!(
-                errors[0].message.contains("unsupported entry marker"),
-                "{}",
-                errors[0].message
-            );
-        }
-        _ => panic!("expected Parse error"),
-    }
 }

@@ -43,13 +43,3 @@ pub(super) fn run_registered_checks(
     }
     true
 }
-
-#[cfg(test)]
-pub(super) fn for_each_check<F>(checks: &[DoctorCheckDefinition], mut visit: F)
-where
-    F: FnMut(&DoctorCheckDefinition),
-{
-    for check in checks {
-        visit(check);
-    }
-}

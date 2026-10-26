@@ -327,7 +327,7 @@ mod tests {
 
     fn parse_manifest(text: &str) -> crate::TaskManifest {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-manifest-execution-binding-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -335,7 +335,8 @@ mod tests {
                 .expect("clock")
                 .as_nanos(),
             COUNTER.fetch_add(1, Ordering::Relaxed),
-        ));
+        ))
+        .expect("fixture directory");
         fs::create_dir_all(&root).expect("mkdir root");
         let manifest_path = root.join("effigy.toml");
         fs::write(&manifest_path, text).expect("write manifest");

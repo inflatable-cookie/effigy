@@ -25,11 +25,6 @@ fn scenario(home: &Path, residue: bool) -> Result<(), RunError> {
         generation: Generation::new(1),
     };
     Attachments::attach(&mut run, &env_fence, AttachMode::Borrow, Wait::FailFast)?;
-    Claims::reserve(
-        &mut run,
-        &[ResourceId::data("fake", "local", "data").unwrap()],
-        Duration::ZERO,
-    )?;
     for key in ["owned-a", "owned-b"] {
         let ticket = run.intend(spec(&run, key, Settlement::Release(Value::Null)))?;
         crate::fault_point!(AdapterBefore)?;

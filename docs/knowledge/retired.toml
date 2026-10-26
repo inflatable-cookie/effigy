@@ -1155,19 +1155,11 @@ allow = [
   "docs/knowledge/contracts/release.md",
   "docs/guides/051-release-orchestration.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
-  "crates/effigy-cli/src/command_parsing_release.rs",
-  "src/runner/release_command/mod.rs",
   "tests/fixtures/released_surface/",
   "tests/cli_output_tests/release_platform_tests.rs",
   "tests/cli_output_tests/command_behavior_tests.rs",
   "src/tests/lib_tests_parse_tests/release_option_tests.rs",
   "tests/fixtures/released_surface/v0.3.0/transition.json",
-  "crates/effigy-release/src/lib.rs",
-  "crates/effigy-release/src/model.rs",
-  "crates/effigy-release/src/prepare_helpers.rs",
-  "crates/effigy-release/src/review.rs",
-  "crates/effigy-release/src/tests.rs",
-  "crates/effigy-release/src/text.rs",
 ]
 
 [[retired]]

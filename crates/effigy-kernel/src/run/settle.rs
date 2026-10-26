@@ -139,8 +139,6 @@ impl Run<'_> {
                     })?;
             } else if effect.spec.kind == attachments::KIND {
                 self.settle_attachment(effect, &cx)?;
-            } else if effect.spec.kind == claims::KIND {
-                self.settle_claims(effect, &cx)?;
             } else {
                 // Recording a retained or irreversible disposition calls no
                 // adapter, so holder protection (R4) has nothing to guard.

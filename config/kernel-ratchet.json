@@ -224,7 +224,7 @@
     },
     "crates/effigy-scan/src/execution/doctor_inventory.rs": {
       "nix::sys::signal::kill": 2,
-      "std.fs.OpenOptions.write": 6,
+      "std.fs.OpenOptions.write": 4,
       "std.process.Command.new": 2,
       "std::fs::remove_file": 2,
       "std::fs::rename": 1
@@ -246,6 +246,10 @@
     "crates/effigy-tasks/src/testing/oxide.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
+    },
+    "crates/effigy-test-support/src/env.rs": {
+      "std::env::remove_var": 1,
+      "std::env::set_var": 2
     },
     "crates/effigy-tui/src/multiprocess/startup_visibility.rs": {
       "libc::kill": 2,
@@ -381,6 +385,9 @@
     }
   },
   "tests": {
+    "crates/effigy-builtin/src/config/docs/tests.rs": {
+      "std::fs::write": 1
+    },
     "crates/effigy-builtin/src/init/agent.rs": {
       "std::fs::write": 2
     },
@@ -486,6 +493,9 @@
     "crates/effigy-containers/src/policy/render/tests.rs": {
       "std::fs::write": 18
     },
+    "crates/effigy-containers/src/policy/restart.rs": {
+      "std::fs::write": 1
+    },
     "crates/effigy-containers/src/session.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.status": 1
@@ -528,7 +538,7 @@
       "std.process.Command.new": 7,
       "std.process.Command.output": 6,
       "std.process.Command.status": 1,
-      "std::fs::write": 28
+      "std::fs::write": 26
     },
     "crates/effigy-core/src/worktree_scope.rs": {
       "std::fs::write": 12
@@ -637,7 +647,7 @@
       "std.process.Command.new": 13,
       "std.process.Command.output": 6,
       "std.process.Command.status": 7,
-      "std::fs::write": 59
+      "std::fs::write": 52
     },
     "crates/effigy-rhai/src/tests/copy_if_missing.rs": {
       "std.process.Command.new": 1,
@@ -672,7 +682,7 @@
     "crates/effigy-scan/src/execution/doctor_inventory.rs": {
       "nix::sys::signal::kill": 1,
       "signal_hook.registration": 1,
-      "std.fs.OpenOptions.write": 2,
+      "std.fs.OpenOptions.write": 4,
       "std.process.Command.new": 2,
       "std.process.Command.spawn": 1,
       "std.process.Command.status": 1,

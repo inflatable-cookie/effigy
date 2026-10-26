@@ -22,10 +22,103 @@ impl FindingSink for TestSink {
     }
 }
 
+/// One manifest the schema check must accept.
+struct AcceptCase {
+    name: &'static str,
+    manifest: &'static str,
+}
+
+/// One manifest the schema check must reject, with the key paths its findings
+/// must name, any remediation text they must carry, and the exact finding count
+/// when the case asserts one.
+struct RejectCase {
+    name: &'static str,
+    manifest: &'static str,
+    evidence: &'static [&'static str],
+    remediation: &'static [&'static str],
+    findings: Option<usize>,
+}
+
+fn validate(manifest: &'static str) -> TestSink {
+    let parsed: Value = toml::from_str(manifest).expect("parse manifest fixture");
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &parsed, &mut sink);
+    sink
+}
+
+/// Every shape the schema accepts validates with no findings.
 #[test]
-fn validate_manifest_schema_accepts_docs_policy_bootstrap_container_and_release_sections() {
-    let manifest: Value = toml::from_str(
-        r###"
+fn manifest_schema_accepts_every_documented_shape() {
+    for case in ACCEPT_CASES {
+        let sink = validate(case.manifest);
+        assert!(
+            sink.findings.is_empty(),
+            "{}: expected no schema findings, got {:?}",
+            case.name,
+            sink.findings
+        );
+    }
+}
+
+/// Every rejected shape reports a finding that names the offending key path.
+#[test]
+fn manifest_schema_rejects_each_bad_key_with_its_path() {
+    for case in REJECT_CASES {
+        let sink = validate(case.manifest);
+        for expected in case.evidence {
+            assert!(
+                sink.findings
+                    .iter()
+                    .any(|finding| finding.evidence.contains(expected)),
+                "{}: expected a finding naming `{expected}`, got {:?}",
+                case.name,
+                sink.findings
+            );
+        }
+        for expected in case.remediation {
+            assert!(
+                sink.findings
+                    .iter()
+                    .any(|finding| finding.remediation.contains(expected)),
+                "{}: expected remediation naming `{expected}`, got {:?}",
+                case.name,
+                sink.findings
+            );
+        }
+        if let Some(expected) = case.findings {
+            assert_eq!(
+                sink.findings.len(),
+                expected,
+                "{}: expected {expected} finding(s), got {:?}",
+                case.name,
+                sink.findings
+            );
+        }
+    }
+}
+
+#[test]
+fn validate_manifest_schema_accepts_current_repo_manifest() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("effigy.toml");
+    let manifest_text = std::fs::read_to_string(&manifest_path).expect("read repo manifest");
+    let manifest: Value = toml::from_str(&manifest_text).expect("parse repo manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(&manifest_path, &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected repo manifest to validate cleanly, got: {:?}",
+        sink.findings
+    );
+}
+
+static ACCEPT_CASES: &[AcceptCase] = &[
+    AcceptCase {
+        name: "docs-policy-bootstrap-container-release",
+        manifest: r###"
 [catalog]
 alias = "app"
 
@@ -137,88 +230,10 @@ task = "release:publish:npm"
 check = "release:check:npm"
 verify = "release:verify:npm"
 "###,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_unknown_docs_policy_graph_keys() {
-    let manifest: Value = toml::from_str(
-        r#"
-[docs_policy.graph]
-roots = ["handbook"]
-mystery = true
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("docs_policy.graph.mystery")),
-        "expected unknown graph key to be flagged, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_names_the_retired_catalog_pack_support_policy() {
-    let manifest: Value = toml::from_str(
-        r#"
-[release]
-version-file = "Cargo.toml"
-sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.iter().any(|finding| finding
-            .evidence
-            .contains("release.sync-catalog-pack-support-policy")
-            && finding.remediation.contains("catalog-pack runtime")),
-        "expected the retired key to be flagged, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_current_repo_manifest() {
-    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("effigy.toml");
-    let manifest_text = std::fs::read_to_string(&manifest_path).expect("read repo manifest");
-    let manifest: Value = toml::from_str(&manifest_text).expect("parse repo manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(&manifest_path, &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected repo manifest to validate cleanly, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_supported_test_suite_run_forms() {
-    let manifest: Value = toml::from_str(
-        r#"
+    },
+    AcceptCase {
+        name: "supported-test-suite-run-forms",
+        manifest: r#"
 [test.suites]
 legacy = "cargo test"
 
@@ -232,23 +247,347 @@ run = [
 [test.suites.single]
 run = { run = "cargo test -p app" }
 "#,
-    )
-    .expect("parse manifest");
+    },
+    AcceptCase {
+        name: "docs-policy-sources-membership",
+        manifest: r#"
+[docs_policy.sources]
+share = true
+front_doors = ["docs/README.md"]
+skill_roots = [".agents/skills"]
+"#,
+    },
+    AcceptCase {
+        name: "secret-root-and-required-task-mode",
+        manifest: r#"
+[tasks.package]
+run = "scripts/package.sh"
+secrets = "required"
 
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
+[secrets]
+backend = "effigy-vault"
 
-    assert!(
-        sink.findings.is_empty(),
-        "expected supported suite run forms to validate, got: {:?}",
-        sink.findings
-    );
-}
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
 
-#[test]
-fn validate_manifest_schema_rejects_missing_empty_and_malformed_test_suite_runs() {
-    let manifest: Value = toml::from_str(
-        r#"
+[secrets.keys.signing_identity]
+required = true
+targets = ["tasks"]
+description = "Package signing identity"
+"#,
+    },
+    AcceptCase {
+        name: "managed-readiness-timeout",
+        manifest: r#"
+[tasks.dev]
+mode = "tui"
+health_wait = true
+health_wait_timeout_secs = 90
+concurrent = [{ name = "api", run = "cargo run" }]
+"#,
+    },
+    AcceptCase {
+        name: "task-scratch-opt-out",
+        manifest: r#"
+[tasks.probe]
+run = "cargo test"
+scratch = false
+
+[tasks.build]
+run = "cargo build"
+scratch = true
+"#,
+    },
+    AcceptCase {
+        name: "compact-inline-rhai-task",
+        manifest: r#"
+[tasks]
+script = { rhai = "scripts/ok.rhai", run_in = "host" }
+qa = [
+  { task = "docs check" },
+]
+"#,
+    },
+    AcceptCase {
+        name: "catalog-backed-container-services",
+        manifest: r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+extensions = ["pdo_mysql", "redis"]
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "laravel"
+
+[containers.web.services.db]
+catalog = "mariadb"
+version = "10.11"
+shared = true
+"#,
+    },
+    AcceptCase {
+        name: "container-data-from",
+        manifest: r#"
+[containers]
+default = "hybrid"
+
+[containers.dev]
+primary_service = "app"
+
+[containers.hybrid]
+primary_service = "app"
+data_from = "dev"
+"#,
+    },
+    AcceptCase {
+        name: "container-dns-config",
+        manifest: r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.dns]
+base_domain = "acme.test"
+routes = [{ domain = "clientname.test", tls = true, port = 4173 }]
+"#,
+    },
+    AcceptCase {
+        name: "systems-and-workspace-shortcut",
+        manifest: r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = { image = "node:22", mount = "./:/workspace" }
+working_dir = "/workspace"
+
+[tasks.dev]
+workspace = "app"
+run = "npm run dev"
+"#,
+    },
+    AcceptCase {
+        name: "working-dir-for-systems-and-workspaces",
+        manifest: r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+working_dir = "/workspace"
+
+[systems.dev.workspaces.app]
+container = { image = "node:22", mount = "./:/workspace" }
+working_dir = "/workspace/app"
+
+[tasks.dev]
+workspace = "app"
+run = "npm run dev"
+"#,
+    },
+    AcceptCase {
+        name: "structured-external-host-mount",
+        manifest: r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.host]
+mounts = [
+  "./:/workspace",
+  { host = "${PERSONAL_SSH_CONFIG}",
+    container = "/home/dev/.ssh/config",
+    external = true,
+    options = ["ro"] },
+]
+"#,
+    },
+    AcceptCase {
+        name: "catalog-members-and-structured-system-mounts",
+        manifest: r#"
+[catalog.members]
+underlay = "packages/underlay"
+
+[systems.dev]
+mounts = [
+  { member = "underlay", target = "/workspace/underlay" },
+  { source = "../shared", catalog = true, options = ["ro"] },
+  "../legacy:/workspace/legacy",
+]
+"#,
+    },
+    AcceptCase {
+        name: "manifest-include-section",
+        manifest: r#"
+[manifest]
+include = [
+  "effigy.tasks.toml",
+  { path = "effigy.docs.toml", override = ["docs_policy.indexes.topic"] },
+]
+
+[tasks.dev]
+run = "printf dev"
+"#,
+    },
+    AcceptCase {
+        name: "bootstrap-one-release-spellings",
+        manifest: r#"
+[bootstrap]
+run = [
+  { task = "secrets init" },
+  { rhai = "scripts/bootstrap.rhai" },
+]
+start = [{ task = "container:up" }, { task = "dev" }]
+submodules = "recursive"
+
+[[bootstrap.children]]
+path = "../book"
+repo = "git@example.test:book.git"
+"#,
+    },
+    AcceptCase {
+        name: "contracts-section",
+        manifest: r#"
+[contracts]
+schema_index = "docs/knowledge/contracts/json-schema-index.json"
+selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
+"#,
+    },
+    AcceptCase {
+        name: "task-description-on-every-shape",
+        manifest: r#"
+[tasks.dev]
+run = "cargo run"
+description = "Run the dev stack"
+
+[tasks.capture]
+rhai = "scripts/capture.rhai"
+description = "Capture fixture output"
+
+[tasks.proof]
+task = "dev"
+description = "Alias for the dev stack"
+"#,
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-0",
+        manifest: "[shell]\nrun = \"exec zsh -i\"",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-1",
+        manifest: "[demos.checkout]\ntitle = \"Checkout\"\nrun = \"bun run demo\"",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-2",
+        manifest: "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-3",
+        manifest: "[scan.attention_markers]\nwarn = 1",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-4",
+        manifest: "[scan.comment_ratio]\nwarn = 1",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-5",
+        manifest: "[scan.generated_assets]\nwarn = 1",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-6",
+        manifest: "[scan.generated_in_src]\nwarn = 1",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-7",
+        manifest: "[scan.stale_suppressions]\nwarn = 1",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-8",
+        manifest: "[scan.boundary_violations]\nwarn = 1",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-9",
+        manifest: "[scan.dead_code]\nwarn = 1",
+    },
+    // A one-release retired section that changes nothing else: doctor must not flag
+    // it, and the manifest's own deprecation notice names it on stderr.
+    AcceptCase {
+        name: "retired-section-10",
+        manifest: "[scan.validation_gaps]\nwarn = 1",
+    },
+    // `durable` is a boolean on every task shape.
+    AcceptCase {
+        name: "task-durable-true",
+        manifest: "[tasks.probe]\nrun = \"true\"\ndurable = true\n",
+    },
+    AcceptCase {
+        name: "task-durable-false",
+        manifest: "[tasks.probe]\nrun = \"true\"\ndurable = false\n",
+    },
+];
+
+static REJECT_CASES: &[RejectCase] = &[
+    RejectCase {
+        name: "unknown-docs-policy-graph-key",
+        manifest: r#"
+[docs_policy.graph]
+roots = ["handbook"]
+mystery = true
+"#,
+        evidence: &["docs_policy.graph.mystery"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "retired-catalog-pack-support-policy",
+        manifest: r#"
+[release]
+version-file = "Cargo.toml"
+sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"
+"#,
+        evidence: &["release.sync-catalog-pack-support-policy"],
+        remediation: &["catalog-pack runtime"],
+        findings: None,
+    },
+    RejectCase {
+        name: "malformed-test-suite-runs",
+        manifest: r#"
 [test.suites.empty_command]
 run = "  "
 
@@ -270,249 +609,65 @@ run = [{ run = "true", task = "validate" }]
 [test.suites.empty_route]
 run = [{ task = "" }]
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
-    let evidence = sink
-        .findings
-        .iter()
-        .map(|finding| finding.evidence.as_str())
-        .collect::<Vec<_>>();
-
-    for expected_path in [
-        "test.suites.empty_command.run",
-        "test.suites.empty_array.run",
-        "test.suites.missing_run.run",
-        "test.suites.bad_step.run[1]",
-        "test.suites.missing_route.run[0]",
-        "test.suites.multiple_routes.run[0]",
-        "test.suites.empty_route.run[0].task",
-    ] {
-        assert!(
-            evidence.iter().any(|item| item.contains(expected_path)),
-            "expected a finding for {expected_path}, got: {evidence:?}"
-        );
-    }
-}
-
-#[test]
-fn validate_manifest_schema_checks_the_docs_policy_sources_membership_block() {
-    let manifest: Value = toml::from_str(
-        r#"
-[docs_policy.sources]
-share = true
-front_doors = ["docs/README.md"]
-skill_roots = [".agents/skills"]
-"#,
-    )
-    .expect("parse manifest");
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
-    assert!(
-        sink.findings.is_empty(),
-        "expected the membership block to validate, got: {:?}",
-        sink.findings
-    );
-
-    // Membership is read from these committed bytes alone, so a typo here is
-    // silent at query time: the repository just reports `not-shared`. The
-    // schema check is where it has to be caught.
-    let typo: Value = toml::from_str(
-        r#"
+        evidence: &[
+            "test.suites.empty_command.run",
+            "test.suites.empty_array.run",
+            "test.suites.missing_run.run",
+            "test.suites.bad_step.run[1]",
+            "test.suites.missing_route.run[0]",
+            "test.suites.multiple_routes.run[0]",
+            "test.suites.empty_route.run[0].task",
+        ],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "docs-policy-sources-typo",
+        manifest: r#"
 [docs_policy.sources]
 share = "yes"
 front_door = ["docs/README.md"]
 "#,
-    )
-    .expect("parse manifest");
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("effigy.toml"), &typo, &mut sink);
-    assert_eq!(
-        sink.findings.len(),
-        2,
-        "expected a finding for the non-boolean share and the unknown key, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_secret_root_and_required_task_mode() {
-    let manifest: Value = toml::from_str(
-        r#"
-[tasks.package]
-run = "scripts/package.sh"
-secrets = "required"
-
-[secrets]
-backend = "effigy-vault"
-
-[secrets.vault]
-path = ".effigy/secrets/local.vault"
-
-[secrets.keys.signing_identity]
-required = true
-targets = ["tasks"]
-description = "Package signing identity"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected secret declarations to validate cleanly, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_unknown_task_secret_mode() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &[],
+        remediation: &[],
+        findings: Some(2),
+    },
+    RejectCase {
+        name: "unknown-task-secret-mode",
+        manifest: r#"
 [tasks.dev]
 run = "cargo run"
 secrets = "optional"
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("tasks.dev.secrets")),
-        "expected invalid task secret mode to be flagged, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_managed_readiness_timeout() {
-    let manifest: Value = toml::from_str(
-        r#"
-[tasks.dev]
-mode = "tui"
-health_wait = true
-health_wait_timeout_secs = 90
-concurrent = [{ name = "api", run = "cargo run" }]
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected managed readiness timeout to validate, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_the_task_scratch_opt_out() {
-    let manifest: Value = toml::from_str(
-        r#"
-[tasks.probe]
-run = "cargo test"
-scratch = false
-
-[tasks.build]
-run = "cargo build"
-scratch = true
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected `scratch` to validate, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_a_non_boolean_task_scratch() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["tasks.dev.secrets"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "non-boolean-task-scratch",
+        manifest: r#"
 [tasks.probe]
 run = "cargo test"
 scratch = "never"
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("tasks.probe.scratch")),
-        "expected a boolean finding for tasks.probe.scratch, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_compact_inline_rhai_task() {
-    let manifest: Value = toml::from_str(
-        r#"
-[tasks]
-script = { rhai = "scripts/ok.rhai", run_in = "host" }
-qa = [
-  { task = "docs check" },
-]
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected compact rhai and docs sequence steps to validate, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_unknown_key_on_compact_inline_rhai_task() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["tasks.probe.scratch"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "unknown-compact-inline-rhai-key",
+        manifest: r#"
 [tasks.script]
 rhai = "scripts/ok.rhai"
 mode = "tui"
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("tasks.script.mode")),
-        "expected unknown compact-task key to be flagged, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_unknown_release_identity_and_target_values() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["tasks.script.mode"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "unknown-release-identity-and-target-values",
+        manifest: r#"
 [release.identities.core]
 kind = "calendar"
 
@@ -523,63 +678,27 @@ kind = "npm"
 task = "qa"
 stage = "afterwards"
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    let evidence = sink
-        .findings
-        .iter()
-        .map(|finding| finding.evidence.clone())
-        .collect::<Vec<_>>();
-    assert!(
-        evidence
-            .iter()
-            .any(|evidence| evidence.contains("release.identities.core.kind")),
-        "expected the identity kind to be flagged, got: {evidence:?}"
-    );
-    assert!(
-        evidence
-            .iter()
-            .any(|evidence| evidence.contains("release.targets.npm.kind")),
-        "expected the target kind to be flagged, got: {evidence:?}"
-    );
-    assert!(
-        evidence
-            .iter()
-            .any(|evidence| evidence.contains("release.gates.qa.stage")),
-        "expected the gate stage to be flagged, got: {evidence:?}"
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_non_boolean_initial_tag_current_version() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &[
+            "release.identities.core.kind",
+            "release.targets.npm.kind",
+            "release.gates.qa.stage",
+        ],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "non-boolean-initial-tag-current-version",
+        manifest: r#"
 [release]
 initial-tag-current-version = "yes"
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.iter().any(|finding| finding
-            .evidence
-            .contains("release.initial_tag_current_version")),
-        "expected invalid initial tag mode to be flagged, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_removed_ambient_catalog_config() {
-    let manifest: Value = toml::from_str(
-        r###"
+        evidence: &["release.initial_tag_current_version"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "removed-ambient-catalog-config",
+        manifest: r###"
 [catalog]
 alias = "app"
 
@@ -587,93 +706,13 @@ alias = "app"
 enabled = true
 ignore = ["tests", "fixtures"]
 "###,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("catalog.discovery")),
-        "expected removed catalog.discovery table to be flagged, got: {:?}",
-        sink.findings
-    );
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.remediation.contains("[catalog.members]")),
-        "expected explicit membership remediation, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_catalog_backed_container_services() {
-    let manifest: Value = toml::from_str(
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-extensions = ["pdo_mysql", "redis"]
-
-[containers.web.services.web]
-catalog = "nginx"
-variant = "laravel"
-
-[containers.web.services.db]
-catalog = "mariadb"
-version = "10.11"
-shared = true
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_container_data_from() {
-    let manifest: Value = toml::from_str(
-        r#"
-[containers]
-default = "hybrid"
-
-[containers.dev]
-primary_service = "app"
-
-[containers.hybrid]
-primary_service = "app"
-data_from = "dev"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-
-    let malformed: Value = toml::from_str(
-        r#"
+        evidence: &["catalog.discovery"],
+        remediation: &["[catalog.members]"],
+        findings: None,
+    },
+    RejectCase {
+        name: "container-data-from-type",
+        manifest: r#"
 [containers]
 default = "hybrid"
 
@@ -681,25 +720,13 @@ default = "hybrid"
 primary_service = "app"
 data_from = 7
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &malformed, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("containers.hybrid.data_from")),
-        "expected a data_from type finding, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_legacy_container_context_field() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["containers.hybrid.data_from"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "legacy-container-context-field",
+        manifest: r#"
 [containers]
 default = "web"
 
@@ -707,116 +734,13 @@ default = "web"
 context = "dev"
 primary_service = "app"
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("containers.web.context")),
-        "expected legacy context field finding, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_container_dns_config() {
-    let manifest: Value = toml::from_str(
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-
-[containers.web.dns]
-base_domain = "acme.test"
-routes = [{ domain = "clientname.test", tls = true, port = 4173 }]
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_systems_and_workspace_shortcut() {
-    let manifest: Value = toml::from_str(
-        r#"
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = { image = "node:22", mount = "./:/workspace" }
-working_dir = "/workspace"
-
-[tasks.dev]
-workspace = "app"
-run = "npm run dev"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_working_dir_for_systems_and_workspaces() {
-    let manifest: Value = toml::from_str(
-        r#"
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-working_dir = "/workspace"
-
-[systems.dev.workspaces.app]
-container = { image = "node:22", mount = "./:/workspace" }
-working_dir = "/workspace/app"
-
-[tasks.dev]
-workspace = "app"
-run = "npm run dev"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_non_integer_container_dns_port() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["containers.web.context"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "non-integer-dns-port",
+        manifest: r#"
 [containers]
 default = "web"
 
@@ -827,25 +751,13 @@ primary_service = "app"
 [containers.web.dns]
 routes = [{ domain = "clientname.test", port = "web" }]
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.iter().any(|finding| finding
-            .evidence
-            .contains("containers.web.dns.routes[0].port")),
-        "expected dns port finding, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_non_string_container_dns_base_domain() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["containers.web.dns.routes[0].port"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "non-string-dns-base-domain",
+        manifest: r#"
 [containers]
 default = "web"
 
@@ -856,100 +768,23 @@ primary_service = "app"
 [containers.web.dns]
 base_domain = 42
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(sink
-        .findings
-        .iter()
-        .any(|finding| finding.evidence.contains("containers.web.dns.base_domain")));
-}
-
-#[test]
-fn validate_manifest_schema_accepts_structured_external_host_mount() {
-    let manifest: Value = toml::from_str(
-        r#"
-[containers]
-default = "web"
-
-[containers.web]
-compose_file = "infra/dev/docker-compose.yml"
-primary_service = "app"
-
-[containers.web.host]
-mounts = [
-  "./:/workspace",
-  { host = "${PERSONAL_SSH_CONFIG}",
-    container = "/home/dev/.ssh/config",
-    external = true,
-    options = ["ro"] },
-]
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "structured external mount should be accepted; findings: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_catalog_members_and_structured_system_mounts() {
-    let manifest: Value = toml::from_str(
-        r#"
-[catalog.members]
-underlay = "packages/underlay"
-
-[systems.dev]
-mounts = [
-  { member = "underlay", target = "/workspace/underlay" },
-  { source = "../shared", catalog = true, options = ["ro"] },
-  "../legacy:/workspace/legacy",
-]
-"#,
-    )
-    .expect("parse manifest");
-    let mut sink = TestSink::default();
-
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(sink.findings.is_empty(), "findings: {:?}", sink.findings);
-}
-
-#[test]
-fn validate_manifest_schema_rejects_ambiguous_structured_system_mount() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["containers.web.dns.base_domain"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "ambiguous-structured-system-mount",
+        manifest: r#"
 [systems.dev]
 mounts = [{ member = "underlay", source = "../underlay", catalog = true }]
 "#,
-    )
-    .expect("parse manifest");
-    let mut sink = TestSink::default();
-
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("systems.dev.mounts[0]")),
-        "expected structured mount finding: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_unknown_field_on_structured_host_mount() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["systems.dev.mounts[0]"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "unknown-structured-host-mount-field",
+        manifest: r#"
 [containers]
 default = "web"
 
@@ -962,25 +797,13 @@ mounts = [
   { host = "./", container = "/workspace", bogus_field = "x" },
 ]
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.iter().any(|finding| finding
-            .evidence
-            .contains("containers.web.host.mounts[0].bogus_field")),
-        "expected unknown-field finding, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_non_boolean_external_on_host_mount() {
-    let manifest: Value = toml::from_str(
-        r#"
+        evidence: &["containers.web.host.mounts[0].bogus_field"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "non-boolean-host-mount-external",
+        manifest: r#"
 [containers]
 default = "web"
 
@@ -993,197 +816,37 @@ mounts = [
   { host = "./", container = "/workspace", external = "yes" },
 ]
 "#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.iter().any(|finding| finding
-            .evidence
-            .contains("containers.web.host.mounts[0].external")),
-        "expected external-type finding, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_manifest_include_section() {
-    let manifest: Value = toml::from_str(
-        r#"
-[manifest]
-include = [
-  "effigy.tasks.toml",
-  { path = "effigy.docs.toml", override = ["docs_policy.indexes.topic"] },
-]
-
-[tasks.dev]
-run = "printf dev"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_names_the_retired_draft_namespace() {
-    for manifest in [
-        "[drafts.proof]\nrun = \"echo old\"",
-        "[tasks]\nentry = [{ draft = \"proof\" }]",
-    ] {
-        let manifest: Value = toml::from_str(manifest).expect("parse manifest");
-        let mut sink = TestSink::default();
-        validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-        assert!(
-            sink.findings.iter().any(|finding| finding
-                .remediation
-                .contains("draft namespace was removed in v0.15")),
-            "expected the retired draft namespace to be named, got: {:?}",
-            sink.findings
-        );
-    }
-}
-
-#[test]
-fn validate_manifest_schema_accepts_the_one_release_retired_sections() {
-    // Retired sections that change nothing else when ignored keep loading for
-    // one release (effigy#274): doctor must not turn them into findings, and
-    // the manifest's own deprecation notice names them on stderr.
-    for manifest in [
-        "[shell]\nrun = \"exec zsh -i\"",
-        "[demos.checkout]\ntitle = \"Checkout\"\nrun = \"bun run demo\"",
-        "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true",
-        "[scan.attention_markers]\nwarn = 1",
-        "[scan.comment_ratio]\nwarn = 1",
-        "[scan.generated_assets]\nwarn = 1",
-        "[scan.generated_in_src]\nwarn = 1",
-        "[scan.stale_suppressions]\nwarn = 1",
-        "[scan.boundary_violations]\nwarn = 1",
-        "[scan.dead_code]\nwarn = 1",
-        "[scan.validation_gaps]\nwarn = 1",
-    ] {
-        let manifest: Value = toml::from_str(manifest).expect("parse manifest");
-        let mut sink = TestSink::default();
-        validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-        assert!(
-            sink.findings.is_empty(),
-            "expected the retired section to be accepted, got: {:?}",
-            sink.findings
-        );
-    }
-}
-
-#[test]
-fn validate_manifest_schema_accepts_the_one_release_bootstrap_retirement_spellings() {
-    let manifest: Value = toml::from_str(
-        r#"
-[bootstrap]
-run = [
-  { task = "secrets init" },
-  { rhai = "scripts/bootstrap.rhai" },
-]
-start = [{ task = "container:up" }, { task = "dev" }]
-submodules = "recursive"
-
-[[bootstrap.children]]
-path = "../book"
-repo = "git@example.test:book.git"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-    assert!(
-        sink.findings.is_empty(),
-        "v0.14.1 bootstrap keys must load for one release, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_contracts_section() {
-    let manifest: Value = toml::from_str(
-        r#"
-[contracts]
-schema_index = "docs/knowledge/contracts/json-schema-index.json"
-selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_rejects_unknown_contracts_keys() {
-    let manifest: Value = toml::from_str(
-        "[contracts]\nschema_index = \"index.json\"\nartifact = \"selected.json\"\n",
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-    assert!(
-        sink.findings
-            .iter()
-            .any(|finding| finding.evidence.contains("contracts.artifact")),
-        "expected contracts.artifact to be unsupported, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn validate_manifest_schema_accepts_a_task_description_on_every_shape() {
-    let manifest: Value = toml::from_str(
-        r#"
-[tasks.dev]
-run = "cargo run"
-description = "Run the dev stack"
-
-[tasks.capture]
-rhai = "scripts/capture.rhai"
-description = "Capture fixture output"
-
-[tasks.proof]
-task = "dev"
-description = "Alias for the dev stack"
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected `description` to validate, got: {:?}",
-        sink.findings
-    );
-}
-
-#[test]
-fn task_durable_declaration_has_boolean_schema() {
-    for (value, valid) in [("true", true), ("false", true), ("'yes'", false)] {
-        let manifest: Value =
-            toml::from_str(&format!("[tasks.probe]\nrun = 'true'\ndurable = {value}\n")).unwrap();
-        let mut sink = TestSink::default();
-        validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
-        assert_eq!(sink.findings.is_empty(), valid, "{:?}", sink.findings);
-    }
-}
+        evidence: &["containers.web.host.mounts[0].external"],
+        remediation: &[],
+        findings: None,
+    },
+    RejectCase {
+        name: "unknown-contracts-keys",
+        manifest: "[contracts]\nschema_index = \"index.json\"\nartifact = \"selected.json\"\n",
+        evidence: &["contracts.artifact"],
+        remediation: &[],
+        findings: None,
+    },
+    // The retired draft namespace is named in the remediation, in either spelling.
+    RejectCase {
+        name: "retired-draft-table",
+        manifest: "[drafts.proof]\nrun = \"echo old\"",
+        evidence: &[],
+        remediation: &["draft namespace was removed in v0.15"],
+        findings: None,
+    },
+    RejectCase {
+        name: "retired-draft-step",
+        manifest: "[tasks]\nentry = [{ draft = \"proof\" }]",
+        evidence: &[],
+        remediation: &["draft namespace was removed in v0.15"],
+        findings: None,
+    },
+    RejectCase {
+        name: "non-boolean-task-durable",
+        manifest: "[tasks.probe]\nrun = \"true\"\ndurable = \"yes\"",
+        evidence: &["tasks.probe.durable"],
+        remediation: &[],
+        findings: None,
+    },
+];

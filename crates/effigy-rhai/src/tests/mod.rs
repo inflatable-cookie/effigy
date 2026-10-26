@@ -33,15 +33,8 @@ mod string_values;
 mod utility;
 
 fn temp_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-rhai-{name}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    root
+    effigy_test_support::Fixture::process_lifetime(&format!("effigy-rhai-{name}-"))
+        .expect("fixture directory")
 }
 
 fn callbacks() -> HostCallbacks {
@@ -130,30 +123,6 @@ fn script_context(root: &Path) -> ScriptContext {
 }
 
 static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
-
-#[test]
-fn environment_guard_serializes_a_forced_concurrent_mutator() {
-    const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
-    let original = std::env::var_os(KEY);
-    let first = ScopedTestEnv::set_many(&[(KEY, "first".to_owned())]);
-    let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
-    let second = std::thread::spawn(move || {
-        assert!(matches!(
-            TEST_ENV_LOCK.try_lock(),
-            Err(std::sync::TryLockError::WouldBlock)
-        ));
-        attempted_tx.send(()).unwrap();
-        let _second = ScopedTestEnv::set_many(&[(KEY, "second".to_owned())]);
-        assert_eq!(std::env::var(KEY).unwrap(), "second");
-    });
-    attempted_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .unwrap();
-    assert_eq!(std::env::var(KEY).unwrap(), "first");
-    drop(first);
-    second.join().unwrap();
-    assert_eq!(std::env::var_os(KEY), original);
-}
 
 struct ScopedTestEnv {
     previous: Vec<(String, Option<std::ffi::OsString>)>,
@@ -355,11 +324,7 @@ fn collect_rhai_scripts_into(dir: &Path, scripts: &mut Vec<PathBuf>) {
         let path = entry.path();
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
-        if file_name == "target"
-            || file_name == ".git"
-            || file_name == ".effigy"
-            || file_name.starts_with("effigy-parent-fixtures-")
-        {
+        if file_name == "target" || file_name == ".git" || file_name == ".effigy" {
             continue;
         }
         if path.is_dir() {

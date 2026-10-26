@@ -3,7 +3,7 @@ use super::ConfigDocProfile;
 const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "[tasks]",
     "# Compact task command mappings.",
-    "api = \"cargo run -p api\"",
+    "serve = \"cargo run -p api\"",
     "\"db:reset\" = [\"sqlx database reset -y\", \"sqlx migrate run\"]",
     "",
     "[tasks.dev]",
@@ -84,41 +84,19 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "# Example run-array env directive: applies from this point forward in the chain.",
     "run = [{ env = \"CARGO_HOME\" }, { env = \"CARGO_TARGET_DIR\" }, { run = \"cargo run -p api\" }]",
     "# Optional dotenv fallback override for this task:",
-    "env_file = \".env.test\"",
     "env_file = [\".env.local\", \".env.test\"]",
-    "run = [{ env = \"DATABASE_URL\" }, { run = \"cargo test -p api\" }]",
     "# Or switch dotenv source mid-chain:",
-    "run = [{ env_file = \".env.local\" }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]",
-    "run = [{ env_file = [\".env.local\", \".env.test\"] }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]",
+    "# run = [{ env_file = \".env.local\" }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]",
+    "# run = [{ env_file = [\".env.local\", \".env.test\"] }, { env = \"DATABASE_URL\" }, { task = \"migrate\" }]",
     "# Cross-catalog reference example (relative to current catalog root):",
-    "run = [{ env = \"../shared/CARGO_HOME\" }, { task = \"build\" }]",
+    "# run = [{ env = \"../shared/CARGO_HOME\" }, { task = \"build\" }]",
     "",
     "[tasks.rust-build]",
     "# Task-local environment variables with {project}/{repo} path substitution.",
     "run = \"cargo build -p api\"",
     "env = { CARGO_HOME = \"{project}/.effigy/cargo-home\", CARGO_TARGET_DIR = \"{project}/.effigy/cargo-target\" }",
     "",
-    "[tasks.build.cache]",
 ];
-
-const SECTION_TASKS_CANONICAL_SUFFIX: &[&str] = &[
-    "enabled = true",
-    "inputs = [\"src/**/*.rs\", \"Cargo.toml\"]",
-    "outputs = [\"target/build-artifact\"]",
-    "env = [\"RUSTFLAGS\", \"NODE_ENV\"]",
-    "",
-];
-
-fn tasks_cache_comment(profile: ConfigDocProfile) -> &'static str {
-    match profile {
-        ConfigDocProfile::Reference => {
-            "# Phase-1 task cache contract: explicit opt-in declarations only."
-        }
-        ConfigDocProfile::Schema => {
-            "# Phase-1 cache contract: explicit opt-in only, no implicit discovery."
-        }
-    }
-}
 
 fn js_package_manager_line(profile: ConfigDocProfile) -> &'static str {
     match profile {
@@ -378,11 +356,8 @@ pub(super) fn deploy_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
 }
 
 pub(super) fn tasks_canonical_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    let mut lines = Vec::with_capacity(
-        SECTION_TASKS_CANONICAL_PREFIX.len() + 1 + SECTION_TASKS_CANONICAL_SUFFIX.len(),
-    );
+    let _ = profile;
+    let mut lines = Vec::with_capacity(SECTION_TASKS_CANONICAL_PREFIX.len());
     lines.extend(SECTION_TASKS_CANONICAL_PREFIX.iter().copied());
-    lines.push(tasks_cache_comment(profile));
-    lines.extend(SECTION_TASKS_CANONICAL_SUFFIX.iter().copied());
     lines
 }

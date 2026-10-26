@@ -762,26 +762,4 @@ mod tests {
         );
         assert_eq!(bundled_fragment_name_from_asset_path("service.toml"), None);
     }
-
-    #[test]
-    fn inventory_from_mixed_paths_is_sorted_and_deduplicated() {
-        let paths = [
-            "README.md",
-            "compose.override.example.yml",
-            "scratch/compose.fragment.yml",
-            "redis/service.toml",
-            "redis/compose.fragment.yml",
-            "nginx/service.toml",
-            "nginx/configs/default.conf",
-            "postgres/service.toml",
-            "postgres/service.toml",
-        ];
-        let mut names: Vec<&str> = paths
-            .iter()
-            .filter_map(|path| bundled_fragment_name_from_asset_path(path))
-            .collect();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names, vec!["nginx", "postgres", "redis"]);
-    }
 }

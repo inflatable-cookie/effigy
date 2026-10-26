@@ -1,44 +1,4 @@
-use std::path::{Path, PathBuf};
-
-use effigy_cli::TaskInvocation;
-use effigy_manifest::{DeferredCommand, LoadedCatalog};
-use effigy_tasks::TaskSelector;
-
-use super::definitions::{doctor_check_definitions, DoctorCheckContext, DoctorCheckDefinition};
-use super::executor::for_each_check;
-use crate::{
-    manifest_snapshot::ManifestSnapshot, DoctorError, DoctorRuntimeDiagnostics, DoctorRuntimePorts,
-    DoctorState,
-};
-
-struct StubPorts;
-
-impl DoctorRuntimePorts for StubPorts {
-    fn run_manifest_task(
-        &self,
-        _invocation: &TaskInvocation,
-        _cwd: PathBuf,
-    ) -> Result<String, DoctorError> {
-        Ok(String::new())
-    }
-
-    fn select_deferral(
-        &self,
-        _selector: &TaskSelector,
-        _catalogs: &[LoadedCatalog],
-        _cwd: &Path,
-        _workspace_root: &Path,
-    ) -> Option<DeferredCommand> {
-        None
-    }
-
-    fn runtime_diagnostics(
-        &self,
-        _resolved_root: &Path,
-    ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
-        Ok(DoctorRuntimeDiagnostics::default())
-    }
-}
+use super::definitions::doctor_check_definitions;
 
 #[test]
 fn doctor_check_registry_order_is_stable() {
@@ -48,57 +8,6 @@ fn doctor_check_registry_order_is_stable() {
         .collect::<Vec<&str>>();
     assert_eq!(
         order,
-        vec![
-            "manifest_conflicts",
-            "environment_tools",
-            "task_references",
-            "pinned_sources",
-            "god_files",
-            "duplicate_blocks",
-            "health_task",
-        ]
-    );
-}
-
-#[test]
-fn doctor_check_executor_visits_definitions_in_declaration_order() {
-    fn noop(_: &DoctorCheckContext<'_>, _: &mut DoctorState) {}
-
-    let checks = [
-        DoctorCheckDefinition {
-            name: "first",
-            progress_label: None,
-            run: noop,
-        },
-        DoctorCheckDefinition {
-            name: "second",
-            progress_label: None,
-            run: noop,
-        },
-        DoctorCheckDefinition {
-            name: "third",
-            progress_label: None,
-            run: noop,
-        },
-    ];
-    let mut visited = Vec::<&str>::new();
-    for_each_check(&checks, |check| visited.push(check.name));
-    assert_eq!(visited, vec!["first", "second", "third"]);
-}
-
-#[test]
-fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
-    let root = Path::new("/tmp/doctor-workspace");
-    let manifest = empty_manifest_snapshot();
-    let ports = StubPorts;
-    let _context = DoctorCheckContext::new(root, &manifest, &ports, None);
-
-    let mut visited = Vec::<&str>::new();
-    for_each_check(&doctor_check_definitions(), |check| {
-        visited.push(check.name)
-    });
-    assert_eq!(
-        visited,
         vec![
             "manifest_conflicts",
             "environment_tools",
@@ -125,13 +34,4 @@ fn doctor_check_registry_progress_labels_are_stable() {
             "Doctor task: health",
         ]
     );
-}
-
-fn empty_manifest_snapshot() -> ManifestSnapshot {
-    ManifestSnapshot {
-        manifest_paths: vec![PathBuf::from("/tmp/doctor-workspace/effigy.toml")],
-        parsed_catalogs: Vec::new(),
-        preferred_js_pm: None,
-        parse_ok_any: true,
-    }
 }

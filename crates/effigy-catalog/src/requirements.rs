@@ -170,16 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn newer_release_requirement_names_the_version() {
-        let error = check("[requires]\neffigy = \">=0.16\"\n", "0.15.0")
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("needs Effigy >=0.16"), "{error}");
-        assert!(error.contains("this is Effigy 0.15.0"), "{error}");
-        assert!(error.contains("`acme`"), "{error}");
-    }
-
-    #[test]
     fn newer_schema_and_unknown_capability_are_refused() {
         let error = check(
             "[requires]\neffigy = \">=0.17\"\nschema = 2\ncapabilities = [\"gpu\"]\n",

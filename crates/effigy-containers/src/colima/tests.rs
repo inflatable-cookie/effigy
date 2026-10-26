@@ -99,9 +99,30 @@ fn colima_command_cases() {
                     "{name}"
                 );
             }
-            (Run::Status, Expect::Command { args, absent, allow_failure })
-            | (Run::Start, Expect::Command { args, absent, allow_failure })
-            | (Run::Stop, Expect::Command { args, absent, allow_failure }) => {
+            (
+                Run::Status,
+                Expect::Command {
+                    args,
+                    absent,
+                    allow_failure,
+                },
+            )
+            | (
+                Run::Start,
+                Expect::Command {
+                    args,
+                    absent,
+                    allow_failure,
+                },
+            )
+            | (
+                Run::Stop,
+                Expect::Command {
+                    args,
+                    absent,
+                    allow_failure,
+                },
+            ) => {
                 let _lock = env_lock();
                 let policy = test_policy("myprofile");
                 let command = match run {
@@ -230,8 +251,7 @@ fn colima_platform_override_cases() {
         append_colima_platform_overrides(&mut args, platform, Some("aarch64"), Some("vz"));
         for flag in expected_flags {
             assert!(
-                args.windows(flag.len())
-                    .any(|window| window == *flag),
+                args.windows(flag.len()).any(|window| window == *flag),
                 "{platform}: missing {flag:?} in {args:?}"
             );
         }
@@ -362,13 +382,14 @@ fn managed_colima_profile_resource_cases() {
 #[test]
 fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
     let _lock = env_lock();
-    let root = std::env::temp_dir().join(format!(
+    let root = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-colima-config-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos()
-    ));
+    ))
+    .expect("fixture directory");
     std::fs::create_dir_all(&root).expect("mkdir home");
     let previous_home = std::env::var_os("HOME");
     unsafe {
@@ -479,13 +500,14 @@ fn managed_drift_leaves_a_configured_or_unknown_profile_alone() {
 #[test]
 fn managed_drift_reads_the_profiles_own_config_file() {
     let _lock = env_lock();
-    let root = std::env::temp_dir().join(format!(
+    let root = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-colima-drift-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos()
-    ));
+    ))
+    .expect("fixture directory");
     let profile_dir = root.join(".colima/effigy-release");
     std::fs::create_dir_all(&profile_dir).expect("mkdir profile");
     std::fs::write(profile_dir.join("colima.yaml"), "forwardAgent: false\n").expect("write config");
@@ -534,13 +556,14 @@ fn managed_profile_notices_name_the_profile_and_what_a_deletion_lost() {
 #[test]
 fn managed_profile_prepare_writes_both_agent_forwarding_keys() {
     let _lock = env_lock();
-    let root = std::env::temp_dir().join(format!(
+    let root = effigy_test_support::Fixture::process_lifetime(&format!(
         "effigy-colima-forward-agent-test-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos()
-    ));
+    ))
+    .expect("fixture directory");
     std::fs::create_dir_all(&root).expect("mkdir home");
     let previous_home = std::env::var_os("HOME");
     unsafe {

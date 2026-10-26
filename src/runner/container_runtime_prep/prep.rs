@@ -43,7 +43,14 @@ pub(super) fn run_runtime_compose_up_stage(
             "container `{}` compose up failed: {error}",
             policy.name
         ))
-    })
+    })?;
+    effigy_containers::policy::restart::apply_after_start(
+        repo_root,
+        policy,
+        &policy.project_name,
+        &policy.compose_files,
+    );
+    Ok(())
 }
 
 pub(super) fn ensure_runtime_exec_readiness_stage(

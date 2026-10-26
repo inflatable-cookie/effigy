@@ -13,7 +13,9 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("effigy-process-{name}-{ts}"));
+    let root =
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-process-{name}-{ts}"))
+            .expect("fixture directory");
     fs::create_dir_all(&root).expect("mkdir workspace");
     root
 }

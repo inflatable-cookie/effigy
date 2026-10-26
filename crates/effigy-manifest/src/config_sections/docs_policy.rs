@@ -557,14 +557,15 @@ mod committed_sources_tests {
     }
 
     fn temp_repo(name: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
+        let root = effigy_test_support::Fixture::process_lifetime(&format!(
             "effigy-committed-sources-{name}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
-        ));
+        ))
+        .expect("fixture directory");
         std::fs::create_dir_all(&root).expect("mkdir");
         root
     }

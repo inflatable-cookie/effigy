@@ -33,46 +33,21 @@ fn no_context_even_for_tasks() {
 // ── Host-native commands ─────────────────────────────────────────
 
 #[test]
-fn doctor_always_host() {
-    let d = route("doctor", &running_context(), &no_overrides());
-    assert!(d.is_host());
-    assert!(d.reason.contains("host-native"));
-}
-
-#[test]
-fn container_command_always_host() {
-    let d = route("container", &running_context(), &no_overrides());
-    assert!(d.is_host());
-}
-
-#[test]
-fn gateway_always_host() {
-    let d = route("gateway", &running_context(), &no_overrides());
-    assert!(d.is_host());
-}
-
-#[test]
-fn release_always_host() {
-    let d = route("release", &running_context(), &no_overrides());
-    assert!(d.is_host());
-}
-
-#[test]
-fn tasks_always_host() {
-    let d = route("tasks", &running_context(), &no_overrides());
-    assert!(d.is_host());
-}
-
-#[test]
-fn help_always_host() {
-    let d = route("help", &running_context(), &no_overrides());
-    assert!(d.is_host());
-}
-
-#[test]
-fn version_always_host() {
-    let d = route("version", &running_context(), &no_overrides());
-    assert!(d.is_host());
+fn effigy_controls_are_always_host_native() {
+    for command in [
+        "doctor",
+        "container",
+        "gateway",
+        "release",
+        "tasks",
+        "help",
+        "version",
+    ] {
+        let decision = route(command, &running_context(), &no_overrides());
+        assert!(decision.is_host(), "`{command}` must run on the host");
+    }
+    let doctor = route("doctor", &running_context(), &no_overrides());
+    assert!(doctor.reason.contains("host-native"), "{}", doctor.reason);
 }
 
 // ── Task overrides ───────────────────────────────────────────────
@@ -150,12 +125,6 @@ fn stopped_container_with_session_override() {
 }
 
 // ── Decision metadata ────────────────────────────────────────────
-
-#[test]
-fn decision_has_reason() {
-    let d = route("test", &running_context(), &no_overrides());
-    assert!(!d.reason.is_empty());
-}
 
 #[test]
 fn host_native_reason_mentions_command() {

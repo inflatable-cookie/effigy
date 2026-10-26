@@ -5,7 +5,6 @@
 mod aliases;
 mod attachments;
 mod children;
-mod claims;
 mod facts;
 mod foreground;
 pub use facts::{FactOptions, MachineFacts};
@@ -34,7 +33,6 @@ pub use terminal::{
 pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
 };
-pub use claims::{Claims, ReservationToken};
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
 pub(crate) use settle::settle_interrupted_wait;

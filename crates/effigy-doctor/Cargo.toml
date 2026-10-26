@@ -25,3 +25,6 @@ toml = "1"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }

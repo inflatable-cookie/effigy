@@ -15,12 +15,15 @@ During v0.x, MINOR bumps may include breaking changes.
   stays; shared services are reused in place. Proven live with the released
   v0.14.1 binary against a local plus shared `mariadb` stack. See
   [guide 085](docs/guides/085-v0.15.0-consumer-migration.md#upgrading-from-v0141).
-- **The runtime restarts a stopped service.** Every rendered Compose service
-  without a `restart:` of its own now carries `restart: unless-stopped`, so a
-  service comes back by itself after a VM restart, a Colima restart or a crash.
-  A declared policy (`no`, `always`, `on-failure`, …) is kept. Effigy no longer
-  hand-starts exited containers by name and no longer runs `systemctl stop` /
-  `reset-failed` on nerdctl's health-check timer units
+- **The runtime restarts a stopped service.** Effigy asks the runtime for
+  `restart: unless-stopped` on every container `up` started whose stack declares
+  no policy, with the runtime's own `update` after the stack is up, so a service
+  comes back by itself after a VM restart, a Colima restart or a crash. A
+  declared policy (`no`, `always`, `on-failure`, …) is kept. The rendered Compose
+  file names no restart policy, because a policy there let nerdctl's restart
+  manager settle a container between Compose's create and start (see Fixed).
+  Effigy no longer hand-starts exited containers by name and no longer runs
+  `systemctl stop` / `reset-failed` on nerdctl's health-check timer units
   (`exec::restart_recovery`, `exec::healthcheck_timer`).
 - **Readiness is Running plus the service's own health check.** The
   `exec -w <working_dir> true` readiness probe and the service restart it
@@ -354,6 +357,24 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- **The retired release prepare/execute machinery is gone.** `ReleasePreparePlan`,
+  `ReleaseExecutePlan`, `ReleasePreparedState` and their renderers, review menus
+  and prepared-state helpers are deleted with the tests that kept them alive;
+  `effigy release run` is the only release path, and the version-bump and
+  sync-file planning they exercised now lives in the Run's own prepare stage
+  (`effigy-release`). `release status` says `Ready to run:`, and a missing git
+  work tree, branch, HEAD or remote reports that the release run requires it.
+  The Rhai `cache::` and `unlock::` modules are removed with the retired
+  commands they forwarded to (`effigy-rhai`, effigy#378).
+- **A kernel claim is only `MachineFacts`.** The `run::Claims` API
+  (`reserve`/`commit`/`publish_retained`/`release`) and its reservation token are
+  deleted; gateway endpoints publish machine facts, and their publication,
+  refusal, ownership transfer and boot-clock quarantine stay covered
+  (`effigy-kernel`, effigy#378).
+- **`effigy config` no longer documents a retired key.** The tasks example stops
+  emitting `[tasks.build.cache]`, which the runtime refuses, and its `[tasks.api]`
+  alternatives are comments so the emitted example loads: a new test loads the
+  emitted file through the manifest loader (`effigy-builtin`, effigy#378).
 - **No record of a checkout's or a machine home's generation.** `checkout.json`
   and `machine-format.json` are gone: a checkout journal opens by its location
   and a machine store is a location, so a renumbered volume, a recreated `.git`
@@ -2050,6 +2071,14 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- `container up` no longer fails with nerdctl's `cannot start a container that
+  has stopped`. The rendered Compose file names no `restart:` policy, so the
+  runtime's restart manager has nothing to settle on a container Compose has
+  created but not yet started; `up` applies `restart: unless-stopped` with the
+  runtime's own `update` once the stack is started, for every service whose
+  stack declares none, and a second `up` recreates nothing because the render
+  and its Compose config-hash are unchanged. A shared service gets the same
+  post-start update.
 - A shared backing service renders identically from every checkout, and a real
   change replaces it in one attempt. A shared service's Compose input and the
   files its fragment binds are published at one machine-wide, content-addressed
