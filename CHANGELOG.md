@@ -2042,6 +2042,18 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A shared backing service whose render changed is replaced in one attempt.
+  `up` recreated the shared MariaDB by letting Compose create the new container
+  while the old one still held the published host port, so it failed twice with
+  `bind for 127.0.0.1:<port> failed: port is already allocated` and only the
+  third `up` succeeded — every install or shared-render change could hit it, and
+  two checkouts' `up`s could interleave. The render now names itself on the
+  service it creates (`com.effigy.shared-render`), and `up` reads that label
+  from the runtime: a container from a different render is stopped and removed
+  before Compose creates the new one, so the port is free and the named data
+  volume and its rows are kept. An unchanged shared service is not touched. Both
+  checkouts' `up`s are serialised on one machine gate per shared Compose project
+  (effigy#377).
 - `container retire` and `container retire --dead` remove every owned container
   every time. They deleted each container with a forced remove, which the
   runtime's restart manager treated as an exit and undid for the

@@ -792,7 +792,10 @@ A shared service is rendered the same way into its own generation, so every
 checkout that shares it hands Compose the same configuration. An unchanged
 stack is therefore not recreated: a second `container up` leaves every
 container, the shared service included, exactly where it is. Only a service
-whose rendered configuration really changed is replaced.
+whose rendered configuration really changed is replaced. A changed shared
+service is stopped and removed before its replacement is created, so its
+published port is never held by both, and its data volume is kept; one machine
+gate per shared Compose project serialises checkouts whose `up`s overlap.
 
 Treat the object directory as runtime output, not repo-owned source.
 

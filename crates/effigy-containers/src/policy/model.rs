@@ -207,6 +207,10 @@ pub struct SharedServiceBinding {
     pub container_port: u16,
     pub host_env_vars: Vec<String>,
     pub port_env_vars: Vec<String>,
+    /// Identity of this shared service's render, written onto the container it
+    /// creates. A later `up` compares it with the one the runtime reports to
+    /// decide whether the shared service has to be replaced (effigy#377).
+    pub render_digest: String,
 }
 
 impl SharedServiceBinding {

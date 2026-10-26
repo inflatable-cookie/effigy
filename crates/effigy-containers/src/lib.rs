@@ -79,7 +79,7 @@ pub use runtime::retire::{
 pub use runtime::scope::{
     named_volume_belongs_to, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL,
     MOUNT_TARGET_LABEL, PERSIST_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL, SCOPE_LABEL, SERVICE_LABEL,
-    VOLUME_NAME_LABEL,
+    SHARED_RENDER_LABEL, VOLUME_NAME_LABEL,
 };
 pub use workspace::{
     load_workspace_ownership_plan, load_workspace_ownership_targets, rust_cache_kind,

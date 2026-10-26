@@ -677,32 +677,6 @@ fn still_there<'a>(
 }
 
 fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
-    let command = match resource.kind {
-        ResourceKind::Container => {
-            // `rm -f` on a running container is a kill, which the runtime's
-            // restart manager later undoes for `restart: unless-stopped`. An
-            // explicit stop is recorded as a user stop, so the removal holds
-            // (effigy#376). A stop that finds nothing running is not an error;
-            // the removal below is what decides the outcome.
-            let stop = DockerCommand {
-                program: "docker".to_owned(),
-                args: vec!["stop".to_owned(), resource.name.clone()],
-                description: format!("stop owned container {}", resource.name),
-            };
-            let _ = run_runtime_volume_capture(cwd, &resource.profile, &stop);
-            DockerCommand {
-                program: "docker".to_owned(),
-                args: vec!["rm".to_owned(), "-f".to_owned(), resource.name.clone()],
-                description: format!("remove owned container {}", resource.name),
-            }
-        }
-        ResourceKind::Volume => remove_volume_command(&resource.name),
-        ResourceKind::Network => DockerCommand {
-            program: "docker".to_owned(),
-            args: vec!["network".to_owned(), "rm".to_owned(), resource.name.clone()],
-            description: format!("remove owned network {}", resource.name),
-        },
-    };
     let runtime_error = |error: &str| {
         let reason = runtime_reason(error).unwrap_or_else(|| {
             format!(
@@ -716,6 +690,24 @@ fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
         } else {
             format!("{}: {reason}", resource.name)
         }
+    };
+    let command = match resource.kind {
+        ResourceKind::Container => {
+            // The stop-then-remove order is the container-removal rule
+            // (effigy#376), shared with the shared-service replacement.
+            return super::support::stop_and_remove_container(
+                cwd,
+                &resource.profile,
+                &resource.name,
+            )
+            .map_err(|error| runtime_error(&error.to_string()));
+        }
+        ResourceKind::Volume => remove_volume_command(&resource.name),
+        ResourceKind::Network => DockerCommand {
+            program: "docker".to_owned(),
+            args: vec!["network".to_owned(), "rm".to_owned(), resource.name.clone()],
+            description: format!("remove owned network {}", resource.name),
+        },
     };
     match run_runtime_volume_capture(cwd, &resource.profile, &command) {
         Ok(output) if output.status.success() => Ok(()),

@@ -1893,6 +1893,22 @@ databases = ["app", "legacy"]
             sql.contains("CREATE DATABASE IF NOT EXISTS `legacy`"),
             "a declared database reaches the init SQL: {sql}"
         );
+        // The render names itself on the service it creates, so a later `up`
+        // reads from the runtime whether the shared service is this render
+        // (effigy#377).
+        assert_eq!(
+            document["services"]["db"]["labels"][crate::SHARED_RENDER_LABEL].as_str(),
+            Some(shared.render_digest.as_str()),
+            "the shared service carries the digest of the render that wrote it: {shared_compose}"
+        );
+        assert_eq!(
+            shared.render_digest,
+            load_prepared_policy(&root, None)
+                .expect("second policy")
+                .shared_services[0]
+                .render_digest,
+            "the same render is the same identity in every checkout"
+        );
     });
 }
 

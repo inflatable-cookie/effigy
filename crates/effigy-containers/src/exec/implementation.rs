@@ -263,6 +263,54 @@ pub fn list_running_compose_containers_for_policy(
     )
 }
 
+/// One container of a shared service's own Compose project, with the render
+/// identity that render wrote onto it.
+pub struct SharedProjectContainer {
+    pub container_name: String,
+    pub running: bool,
+    /// `None` when no Effigy wrote the render label, which is what a container
+    /// an older Effigy created looks like (effigy#377).
+    pub render: Option<String>,
+}
+
+const SHARED_PROJECT_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Label \"com.effigy.shared-render\"}}\t{{.Label \"com.docker.compose.project\"}}";
+
+/// Every container of one shared-service Compose project, running or stopped,
+/// with the render each was created from. A shared project belongs to no
+/// checkout, so this reads the runtime by project name alone.
+pub fn shared_project_containers(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    project_name: &str,
+) -> Result<Vec<SharedProjectContainer>, ContainerExecError> {
+    let args = vec![
+        OsString::from("ps"),
+        OsString::from("--all"),
+        OsString::from("--filter"),
+        OsString::from(format!("label=com.docker.compose.project={project_name}")),
+        OsString::from("--format"),
+        OsString::from(SHARED_PROJECT_PS_FORMAT),
+    ];
+    let output = capture_runtime_command(repo_root, policy, &args, "runtime ps --all", None, None)?;
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let container_name = fields.next()?.trim();
+            let status = fields.next().unwrap_or_default();
+            let render = fields.next().unwrap_or_default().trim();
+            let project = fields.next().unwrap_or_default().trim();
+            (!container_name.is_empty() && project == project_name).then(|| {
+                SharedProjectContainer {
+                    container_name: container_name.to_owned(),
+                    running: super::parse::compose_status_is_running(status),
+                    render: (!render.is_empty()).then(|| render.to_owned()),
+                }
+            })
+        })
+        .collect())
+}
+
 /// Runtime `ps` arguments listing one Compose project's containers. The label
 /// filter keeps the runtime from enumerating every container in a shared VM;
 /// callers still filter the parsed rows by project as the authority.

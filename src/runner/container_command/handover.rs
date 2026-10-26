@@ -899,6 +899,7 @@ domain = "switch.test"
                         container_port: 5432,
                         host_env_vars: vec![],
                         port_env_vars: vec![],
+                        render_digest: "shared-render".to_owned(),
                     }]
                 })
                 .unwrap_or_default(),

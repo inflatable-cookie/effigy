@@ -15,6 +15,11 @@ pub const MOUNT_TARGET_LABEL: &str = "com.effigy.mount-target";
 pub const REPO_ROOT_LABEL: &str = "com.effigy.repo-root";
 /// Canonical checkout path a generated Compose resource was created for.
 pub const CHECKOUT_LABEL: &str = "com.effigy.checkout";
+/// Digest of the render a shared service container was created from. The
+/// render writes it on its own service, so a later `up` reads from the runtime
+/// whether the shared service it is about to start is the one that is there
+/// (effigy#377).
+pub const SHARED_RENDER_LABEL: &str = "com.effigy.shared-render";
 pub const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
 
 /// Whether a named volume is one of a project's volumes, by the name Compose
