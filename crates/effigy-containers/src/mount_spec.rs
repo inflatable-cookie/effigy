@@ -250,6 +250,7 @@ pub(crate) fn resolve_host_mounts(
 mod tests {
     use super::*;
     use effigy_manifest::ManifestContainerHostMountTable;
+    use std::path::{Path, PathBuf};
 
     fn make_table(
         host: &str,
@@ -269,176 +270,266 @@ mod tests {
         tempfile::tempdir().expect("tempdir")
     }
 
+    /// The legacy `"host:container[:options]"` form: a repo-relative source
+    /// resolves against the checkout, options are kept, and an absolute source
+    /// is refused with the `external = true` remedy.
     #[test]
-    fn legacy_string_form_resolves_repo_relative_path() {
-        let repo = temp_repo();
-        std::fs::create_dir_all(repo.path().join("assets")).unwrap();
-        let resolved = resolve_legacy_spec(repo.path(), "web", "./assets:/srv/assets").unwrap();
-        let expected_root = repo.path().canonicalize().unwrap();
-        assert!(
-            resolved.starts_with(&format!("{}/assets:", expected_root.display())),
-            "got `{resolved}`"
-        );
-        assert!(resolved.ends_with(":/srv/assets"));
+    fn legacy_form_cases() {
+        let cases: [(&str, &str, Result<(&str, &str), &str>); 3] = [
+            (
+                "a repo-relative source resolves",
+                "./assets:/srv/assets",
+                Ok(("assets:", ":/srv/assets")),
+            ),
+            (
+                "options are kept",
+                "./assets:/srv/assets:ro",
+                Ok(("assets:", ":/srv/assets:ro")),
+            ),
+            (
+                "an absolute source is refused",
+                "/etc/foo:/etc/foo",
+                Err("must use a repo-relative source path"),
+            ),
+        ];
+        for (name, spec, expected) in cases {
+            let repo = temp_repo();
+            std::fs::create_dir_all(repo.path().join("assets")).unwrap();
+            match expected {
+                Ok((source_tail, target)) => {
+                    let resolved =
+                        resolve_legacy_spec(repo.path(), "web", spec).expect(name);
+                    let expected_root = repo.path().canonicalize().unwrap();
+                    assert!(
+                        resolved
+                            .starts_with(&format!("{}/{source_tail}", expected_root.display())),
+                        "{name}: got `{resolved}`"
+                    );
+                    assert!(resolved.ends_with(target), "{name}: got `{resolved}`");
+                }
+                Err(token) => {
+                    let err = resolve_legacy_spec(repo.path(), "web", spec).expect_err(name);
+                    let message = format!("{err}");
+                    assert!(message.contains(token), "{name}: {message}");
+                    assert!(message.contains("external = true"), "{name}: {message}");
+                }
+            }
+        }
     }
 
-    #[test]
-    fn legacy_string_form_preserves_options() {
-        let repo = temp_repo();
-        std::fs::create_dir_all(repo.path().join("assets")).unwrap();
-        let resolved = resolve_legacy_spec(repo.path(), "web", "./assets:/srv/assets:ro").unwrap();
-        assert!(resolved.ends_with(":/srv/assets:ro"));
+    /// What one structured-mount row expects from `resolve_structured`.
+    enum Expect {
+        /// A resolved bind string that starts with the canonical source and
+        /// ends with this target and options.
+        Resolved { source: String, tail: &'static str },
+        /// A refusal naming this token.
+        Refused(&'static str),
     }
 
-    #[test]
-    fn legacy_string_form_rejects_absolute_path() {
-        let repo = temp_repo();
-        let err = resolve_legacy_spec(repo.path(), "web", "/etc/foo:/etc/foo").unwrap_err();
-        let message = format!("{err}");
-        assert!(
-            message.contains("must use a repo-relative source path"),
-            "unexpected: {message}"
-        );
-        assert!(message.contains("external = true"), "unexpected: {message}");
+    struct Case {
+        host: &'static str,
+        external: bool,
+        options: Vec<&'static str>,
+        env: Option<(&'static str, String)>,
+        expect: Expect,
+        /// A host file the row's environment names, kept alive for the row.
+        keep: Option<tempfile::NamedTempFile>,
     }
 
-    #[test]
-    fn structured_form_without_external_rejects_absolute_after_expansion() {
-        let _guard = crate::test_env_lock();
-        let repo = temp_repo();
-        std::env::set_var("EFFIGY_TEST_MOUNT_ABS", "/etc/passwd");
-        let table = make_table("${EFFIGY_TEST_MOUNT_ABS}", "/etc/foo", false, Vec::new());
-        let err = resolve_structured(repo.path(), "web", &table).unwrap_err();
-        std::env::remove_var("EFFIGY_TEST_MOUNT_ABS");
-        let message = format!("{err}");
-        assert!(
-            message.contains("declare `external = true`"),
-            "unexpected: {message}"
-        );
+    /// A checkout with a repo-relative source, for the rows that resolve one.
+    fn assets_repo(root: &Path) -> PathBuf {
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join("assets")).expect("mkdir assets");
+        repo
     }
 
-    #[test]
-    fn structured_form_with_external_resolves_absolute_path() {
-        let _guard = crate::test_env_lock();
-        let repo = temp_repo();
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        let outside_path = outside.path().to_path_buf();
-        std::env::set_var("EFFIGY_TEST_MOUNT_EXT", outside_path.display().to_string());
-
-        let table = make_table(
-            "${EFFIGY_TEST_MOUNT_EXT}",
-            "/home/dev/.ssh/config",
-            true,
-            vec!["ro".to_owned()],
-        );
-        let resolved = resolve_structured(repo.path(), "web", &table).unwrap();
-        std::env::remove_var("EFFIGY_TEST_MOUNT_EXT");
-
-        let canonical_outside = outside_path.canonicalize().unwrap();
-        assert!(
-            resolved.starts_with(&format!("{}:", canonical_outside.display())),
-            "got `{resolved}`"
-        );
-        assert!(resolved.ends_with(":/home/dev/.ssh/config:ro"));
+    /// A checkout beside a sibling directory, for the escape row.
+    fn escaping_repo(root: &Path) -> PathBuf {
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join("src")).expect("mkdir src");
+        std::fs::create_dir_all(root.join("sibling/assets")).expect("mkdir sibling assets");
+        repo
     }
 
+    /// The structured `[containers.<name>.host.mounts]` form: `external = true`
+    /// admits an absolute or escaping source, options render comma-separated,
+    /// and an unexpanded or absent source is refused by name.
     #[test]
-    fn structured_form_options_render_comma_separated() {
-        let _guard = crate::test_env_lock();
-        let repo = temp_repo();
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        std::env::set_var(
-            "EFFIGY_TEST_MOUNT_OPTS",
-            outside.path().display().to_string(),
-        );
-        let table = make_table(
-            "${EFFIGY_TEST_MOUNT_OPTS}",
-            "/etc/x",
-            true,
-            vec!["ro".to_owned(), "z".to_owned()],
-        );
-        let resolved = resolve_structured(repo.path(), "web", &table).unwrap();
-        std::env::remove_var("EFFIGY_TEST_MOUNT_OPTS");
-        assert!(resolved.ends_with(":/etc/x:ro,z"), "got `{resolved}`");
+    fn structured_form_cases() {
+        let cases: [(&str, fn(&Path) -> PathBuf, fn(&Path, &Path) -> Case); 6] = [
+            (
+                "an absolute source without external",
+                assets_repo,
+                |_root, _repo| Case {
+                    host: "${EFFIGY_TEST_MOUNT_ABS}",
+                    external: false,
+                    options: Vec::new(),
+                    env: Some(("EFFIGY_TEST_MOUNT_ABS", "/etc/passwd".to_owned())),
+                    expect: Expect::Refused("declare `external = true`"),
+                    keep: None,
+                },
+            ),
+            (
+                "an external absolute source",
+                assets_repo,
+                |_root, _repo| {
+                    let file = tempfile::NamedTempFile::new().unwrap();
+                    let source = file.path().canonicalize().unwrap();
+                    Case {
+                        host: "${EFFIGY_TEST_MOUNT_EXT}",
+                        external: true,
+                        options: vec!["ro"],
+                        env: Some((
+                            "EFFIGY_TEST_MOUNT_EXT",
+                            file.path().display().to_string(),
+                        )),
+                        expect: Expect::Resolved {
+                            source: source.display().to_string(),
+                            tail: ":/etc/x:ro",
+                        },
+                        keep: Some(file),
+                    }
+                },
+            ),
+            (
+                "options render comma-separated",
+                assets_repo,
+                |_root, _repo| {
+                    let file = tempfile::NamedTempFile::new().unwrap();
+                    let source = file.path().canonicalize().unwrap();
+                    Case {
+                        host: "${EFFIGY_TEST_MOUNT_OPTS}",
+                        external: true,
+                        options: vec!["ro", "z"],
+                        env: Some((
+                            "EFFIGY_TEST_MOUNT_OPTS",
+                            file.path().display().to_string(),
+                        )),
+                        expect: Expect::Resolved {
+                            source: source.display().to_string(),
+                            tail: ":/etc/x:ro,z",
+                        },
+                        keep: Some(file),
+                    }
+                },
+            ),
+            (
+                "an absent environment variable",
+                assets_repo,
+                |_root, _repo| Case {
+                    host: "${EFFIGY_TEST_MOUNT_ABSENT}",
+                    external: true,
+                    options: Vec::new(),
+                    env: None,
+                    expect: Expect::Refused("EFFIGY_TEST_MOUNT_ABSENT"),
+                    keep: None,
+                },
+            ),
+            (
+                "an external source that does not exist",
+                assets_repo,
+                |_root, _repo| Case {
+                    host: "/definitely/not/a/real/path/effigy/12345",
+                    external: true,
+                    options: Vec::new(),
+                    env: None,
+                    expect: Expect::Refused("external mount source"),
+                    keep: None,
+                },
+            ),
+            (
+                "an external repo-relative escape",
+                escaping_repo,
+                |root, _repo| {
+                    let source = root.join("sibling/assets").canonicalize().unwrap();
+                    Case {
+                        host: "../sibling/assets",
+                        external: true,
+                        options: Vec::new(),
+                        env: None,
+                        expect: Expect::Resolved {
+                            source: source.display().to_string(),
+                            tail: ":/etc/x",
+                        },
+                        keep: None,
+                    }
+                },
+            ),
+        ];
+        for (name, setup, build) in cases {
+            let root = temp_repo();
+            let repo = setup(root.path());
+            let case = build(root.path(), &repo);
+            // The absence row needs the variable gone, not unset by accident.
+            std::env::remove_var("EFFIGY_TEST_MOUNT_ABSENT");
+            let _lock = crate::test_env_lock();
+            if let Some((variable, value)) = &case.env {
+                std::env::set_var(variable, value);
+            }
+            let table = make_table(
+                case.host,
+                "/etc/x",
+                case.external,
+                case.options.iter().map(|option| (*option).to_owned()).collect(),
+            );
+            let resolved = resolve_structured(&repo, "web", &table);
+            for (variable, _) in case.env.iter() {
+                std::env::remove_var(variable);
+            }
+            match (&case.expect, resolved) {
+                (Expect::Resolved { source, tail }, Ok(resolved)) => {
+                    assert!(
+                        resolved.starts_with(&format!("{source}:")),
+                        "{name}: got `{resolved}`, expected source `{source}`"
+                    );
+                    assert!(resolved.ends_with(tail), "{name}: got `{resolved}`");
+                }
+                (Expect::Resolved { .. }, Err(error)) => {
+                    panic!("{name}: expected a resolved mount, got `{error}`")
+                }
+                (Expect::Refused(token), Err(error)) => {
+                    let message = format!("{error}");
+                    assert!(message.contains(token), "{name}: {message}");
+                }
+                (Expect::Refused(_), Ok(resolved)) => {
+                    panic!("{name}: expected a refusal, got `{resolved}`")
+                }
+            }
+            drop(case.keep);
+        }
     }
 
+    /// `expand_host_path` expands `~` and `${VAR}` and leaves anything else
+    /// alone, refusing a malformed brace rather than guessing.
     #[test]
-    fn structured_form_missing_env_var_errors_with_var_name() {
-        let _guard = crate::test_env_lock();
-        std::env::remove_var("EFFIGY_TEST_MOUNT_ABSENT");
-        let repo = temp_repo();
-        let table = make_table("${EFFIGY_TEST_MOUNT_ABSENT}", "/etc/foo", true, Vec::new());
-        let err = resolve_structured(repo.path(), "web", &table).unwrap_err();
-        let message = format!("{err}");
-        assert!(
-            message.contains("EFFIGY_TEST_MOUNT_ABSENT"),
-            "unexpected: {message}"
-        );
-    }
-
-    #[test]
-    fn structured_form_external_with_nonexistent_path_errors() {
-        let repo = temp_repo();
-        let table = make_table(
-            "/definitely/not/a/real/path/effigy/12345",
-            "/etc/foo",
-            true,
-            Vec::new(),
-        );
-        let err = resolve_structured(repo.path(), "web", &table).unwrap_err();
-        let message = format!("{err}");
-        assert!(
-            message.contains("external mount source"),
-            "unexpected: {message}"
-        );
-    }
-
-    #[test]
-    fn structured_form_external_allows_repo_relative_escape() {
-        let root = tempfile::tempdir().unwrap();
-        let repo = root.path().join("repo");
-        let sibling = root.path().join("sibling");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::create_dir_all(sibling.join("assets")).unwrap();
-        let sibling_source = sibling.join("assets");
-        let raw = "../sibling/assets";
-        let table = make_table(raw, "/srv/assets", true, Vec::new());
-        let resolved = resolve_structured(&repo, "web", &table).unwrap();
-        let canonical = sibling_source.canonicalize().unwrap();
-        assert_eq!(resolved, format!("{}:/srv/assets", canonical.display()));
-    }
-
-    #[test]
-    fn expand_host_path_expands_tilde_against_home() {
+    fn expand_host_path_cases() {
         let _lock = crate::test_env_lock();
-        // Use the existing process HOME — mutating it races with other
-        // tests that read it. We assert structural equivalence rather
-        // than a specific path.
-        let Ok(home) = std::env::var("HOME") else {
-            // Bare-CI environments without HOME — skip rather than fail.
-            return;
-        };
-        let expanded = expand_host_path("~/some/sub/path").unwrap();
-        assert_eq!(expanded, format!("{home}/some/sub/path"));
-        let bare = expand_host_path("~").unwrap();
-        assert_eq!(bare, home);
-    }
-
-    #[test]
-    fn expand_host_path_passes_dollar_without_braces_through() {
-        let result = expand_host_path("/home/$USER/x").unwrap();
-        assert_eq!(result, "/home/$USER/x");
-    }
-
-    #[test]
-    fn expand_host_path_errors_on_unterminated_brace() {
-        let err = expand_host_path("${UNCLOSED").unwrap_err();
-        assert!(matches!(err, MountInterpolationError::UnterminatedVar(_)));
-    }
-
-    #[test]
-    fn expand_host_path_errors_on_empty_brace() {
-        let err = expand_host_path("${}").unwrap_err();
-        assert!(matches!(err, MountInterpolationError::EmptyVarName(_)));
+        let home = std::env::var("HOME").ok();
+        if let Some(home) = &home {
+            assert_eq!(
+                expand_host_path("~/some/sub/path").unwrap(),
+                format!("{home}/some/sub/path")
+            );
+            assert_eq!(expand_host_path("~").unwrap(), *home);
+        }
+        // A bare `$` needs its braces to be a variable.
+        assert_eq!(
+            expand_host_path("/home/$USER/x").unwrap(),
+            "/home/$USER/x"
+        );
+        for (raw, empty) in [("${UNCLOSED", false), ("${}", true)] {
+            let error = expand_host_path(raw).expect_err(raw);
+            if empty {
+                assert!(
+                    matches!(error, MountInterpolationError::EmptyVarName(_)),
+                    "{raw}: {error:?}"
+                );
+            } else {
+                assert!(
+                    matches!(error, MountInterpolationError::UnterminatedVar(_)),
+                    "{raw}: {error:?}"
+                );
+            }
+        }
     }
 }
