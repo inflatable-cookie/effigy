@@ -78,3 +78,24 @@ pub fn port_holder(port: u16) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One plan hands out distinct ports, and a later plan asks for the same
+    /// ones again: the derivation reads nothing about what is already running,
+    /// so a re-up of an unchanged stack renders the same services (effigy#362).
+    #[test]
+    fn a_derived_port_repeats_across_plans_and_stays_distinct_within_one() {
+        let mut plan = Vec::new();
+        let database = stable_host_port("/tmp/acme", 3306, &mut plan);
+        let cache = stable_host_port("/tmp/acme", 6379, &mut plan);
+        assert_ne!(database, cache, "two bindings in one plan never collide");
+        assert_eq!(
+            stable_host_port("/tmp/acme", 3306, &mut Vec::new()),
+            database,
+            "the same owner and port derive the same port every time"
+        );
+    }
+}
