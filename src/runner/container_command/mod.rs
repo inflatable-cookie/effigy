@@ -49,6 +49,7 @@ pub(in crate::runner) mod policy;
 mod profile;
 mod readiness;
 mod render;
+mod restart;
 mod retire;
 mod scope;
 mod secret_env;
@@ -212,6 +213,12 @@ fn run_container_with(
                 args.output_json,
             )
         }
+        ContainerSubcommand::Restart { name, processes } => restart::run_container_restart(
+            args.repo_override.clone(),
+            name.as_deref(),
+            &processes,
+            args.output_json,
+        ),
         ContainerSubcommand::Shell {
             name,
             service,

@@ -551,6 +551,32 @@ child generation.
 Fixed ports must bind exactly and fail on collision. Static `target_host` routes
 keep their existing external-target behavior.
 
+### Restart one host process
+
+`effigy container <NAME> restart <process> [<process>...]` is `up`'s start path
+for the processes you name. Each one's current generation is replaced, its
+declared readiness is awaited and its route is published again; the
+environment's containers and every other host process keep running untouched.
+It is the way to act on one process - stop `farmyard-jobs` with
+`effigy run stop <run>`, work through the API, then
+`effigy container web restart farmyard-jobs` - without paying for a whole
+`container up`. A process stopped with `run stop` is simply started again.
+
+A process that `depends_on` a restarted process is restarted after it, in
+dependency order, and named as a dependent in the output, because its readiness
+and route read that dependency. A process that does not depend on a restarted
+one is never touched. An unknown process name, or an environment that is not up
+(`effigy container <NAME> up`), fails before anything changes.
+
+```
+[host process] farmyard-jobs restarted (run 7k2…, listener 127.0.0.1:41873, route https://jobs.example.test)
+[host process] scheduler restarted (run 91x…, dependent)
+```
+
+`--json` reports the same set under the container envelope as
+`effigy.container.restart.v1`, with one `restarted` entry per process naming its
+`run`, whether it was a `dependent`, and its `listener` when it declares one.
+
 ### Host process environment
 
 A host process `env` value is literal text plus `${...}` references to facts

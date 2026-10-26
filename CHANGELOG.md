@@ -724,6 +724,15 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- **`effigy container <NAME> restart <process>...` replaces only the named host
+  processes** (effigy#367, Acow #756). Each named process's current generation
+  is settled, a new one starts with the same declared listener address, its
+  readiness is awaited and its route is published again; the containers and
+  every other host process keep running. A process that `depends_on` a named
+  one is restarted after it, in dependency order, and named as a dependent; a
+  process stopped with `effigy run stop <run>` is simply started again. `--json`
+  reports the set under the `effigy.container.restart.v1` envelope. An unknown
+  name, or an environment that is not up, fails before anything changes.
 - An admission hook can report custody back (effigy#325). Setting
   `EFFIGY_ADMISSION_PROTOCOL=2` next to `EFFIGY_ADMISSION_HOOK` opts a
   launcher in to `effigy.admission-request.v2`; the hook then receives

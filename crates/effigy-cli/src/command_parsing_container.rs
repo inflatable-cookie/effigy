@@ -18,9 +18,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 17] = [
-        "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
-        "profile", "eject", "hosts", "retire", "scope", "render", "migrate",
+    const ACTIONS: [&str; 18] = [
+        "up", "down", "status", "stats", "logs", "restart", "shell", "reset", "cache", "volume",
+        "data", "profile", "eject", "hosts", "retire", "scope", "render", "migrate",
     ];
 
     let mut args = args.into_iter();
@@ -51,6 +51,7 @@ where
         "status" => parse_container_status(name, args),
         "stats" => parse_container_stats(name, args),
         "logs" => parse_container_logs(name, args),
+        "restart" => parse_container_restart(name, args),
         "shell" => parse_container_shell(name, args),
         "reset" => parse_container_reset(name, args),
         "cache" => parse_container_cache(name, args),
@@ -1015,6 +1016,39 @@ where
     }))
 }
 
+/// `restart <process>...` names at least one environment-owned host process.
+fn parse_container_restart<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut processes: Vec<String> = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => processes.push(arg),
+        }
+    }
+
+    if processes.is_empty() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> restart` requires at least one host process name".to_owned(),
+        ));
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Restart { name, processes },
+        repo_override,
+        output_json,
+    }))
+}
+
 fn parse_container_shell<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
@@ -1159,6 +1193,39 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{parse_command, Command, ContainerSubcommand};
+
+    fn restart(args: &[&str]) -> Result<ContainerSubcommand, crate::CliParseError> {
+        let mut argv = vec!["container", "web", "restart"];
+        argv.extend_from_slice(args);
+        match parse_command(argv.into_iter().map(str::to_owned))? {
+            Command::Container(container) => Ok(container.subcommand),
+            other => panic!("unexpected command {other:?}"),
+        }
+    }
+
+    #[test]
+    fn restart_takes_one_or_more_named_processes() {
+        match restart(&["api", "farmyard-jobs", "--json"]).expect("restart parses") {
+            ContainerSubcommand::Restart { name, processes } => {
+                assert_eq!(name.as_deref(), Some("web"));
+                assert_eq!(processes, vec!["api", "farmyard-jobs"]);
+            }
+            other => panic!("unexpected restart shape {other:?}"),
+        }
+    }
+
+    #[test]
+    fn restart_requires_a_process_name() {
+        assert!(restart(&[]).is_err());
+        assert!(restart(&["--repo", "."]).is_err());
+    }
+
+    #[test]
+    fn restart_rejects_flags_it_does_not_take() {
+        for flag in ["--detach", "--system", "--global", "--follow"] {
+            assert!(restart(&["api", flag, "web"]).is_err(), "{flag}");
+        }
+    }
 
     fn shell(args: &[&str]) -> Result<ContainerSubcommand, crate::CliParseError> {
         let mut argv = vec!["container", "web", "shell"];
