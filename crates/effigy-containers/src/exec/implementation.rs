@@ -1482,6 +1482,15 @@ fn take_stale_owned_container(
     if project.as_deref() != Some(policy.project_name.as_str()) {
         return Ok(false);
     }
+    // A running container's `rm -f` is a kill the restart manager may undo for
+    // `restart: unless-stopped`; stopping first records a user stop, so the
+    // removal holds (effigy#376). A stop that finds nothing running is fine.
+    let _ = run_docker_capture(
+        repo_root,
+        policy,
+        &[OsString::from("stop"), OsString::from(&claimed)],
+        "runtime stop",
+    );
     let removed = run_docker_capture(
         repo_root,
         policy,

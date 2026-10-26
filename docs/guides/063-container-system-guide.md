@@ -834,9 +834,13 @@ retained by `--keep-data` stay.
 Nothing is recorded beside those labels: there is no
 `.effigy/state/runtime-scopes/` journal, no checkout generation and no custody
 fence, so deleting a checkout deletes nothing else and a re-cloned checkout at
-the same path needs no reconciliation. A backend that cannot list resources, or
-that returns malformed inspect output, fails instead of reporting an empty
-stack. TLS certificates for isolated routes are a cache keyed by domain:
+the same path needs no reconciliation. Each container is stopped before it is
+removed, so a `restart: unless-stopped` service does not come back while it is
+being retired. A backend that cannot list resources, or that returns malformed
+inspect output, fails instead of reporting an empty stack; a stopped Colima
+profile is a warning, because nothing on it is running and it cannot be read
+without starting its VM. TLS certificates for isolated routes are a cache keyed
+by domain:
 `down` and retirement keep them, and the gateway daemon removes a certificate
 no route names once it is seven days old.
 
