@@ -26,8 +26,7 @@ pub enum Reconciled {
     /// The engine could not finish undoing what it owns and says why, by name.
     /// The effect settles as `Retained` with this reason: it is terminal (I-R7),
     /// so a residue the engine cannot act on never blocks the owner's next run,
-    /// and the reason stays on the effect for the operator. The scratch engine
-    /// uses it for a retained directory a later sweep will retry (§5.6).
+    /// and the reason stays on the effect for the operator (§5.6).
     Residue(String),
 }
 #[derive(Debug, Clone, Copy, Serialize)]

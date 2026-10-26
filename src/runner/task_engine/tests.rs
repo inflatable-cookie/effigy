@@ -251,13 +251,10 @@ fn sequence_pending_stop_starts_no_next_workload() {
 // Per-run scratch (user config `[scratch]`)
 // ---------------------------------------------------------------------------
 
-/// A scratch configuration for a test's own directory, admitted without a
-/// probe: the volume gate itself is proved by the refusals in `scratch::tests`.
+/// A scratch configuration for a test's own directory.
 fn scratch_config(root: &Path) -> crate::runner::scratch::Config {
     crate::runner::scratch::Config {
         root: std::fs::canonicalize(root).expect("canonical scratch root"),
-        volume_uuid: None,
-        require_separate_volume: false,
     }
 }
 
@@ -309,11 +306,8 @@ fn a_host_run_uses_its_scratch_as_temp_and_the_settle_removes_it_on_success() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    let warnings = crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
+    let warnings =
+        crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
             let mut run = begin_scratching(&target);
             let (seen, wrote) = read_temp(&mut run, work.path());
             assert_eq!(
@@ -337,8 +331,7 @@ fn a_host_run_uses_its_scratch_as_temp_and_the_settle_removes_it_on_success() {
                 "the settle removed the run's scratch on success"
             );
             warnings
-        },
-    );
+        });
     assert!(warnings.is_empty(), "{warnings:?}");
 }
 
@@ -371,33 +364,28 @@ fn a_successful_run_releases_an_old_read_only_scratch_tree_and_its_task_runs_aga
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut first = begin_scratching(&target);
-            let (seen, wrote) = read_temp(&mut first, work.path());
-            assert!(wrote, "the run writes into its own scratch");
-            publish_old_read_only_objects(Path::new(&seen));
-            let warnings = first.close(WorkloadOutcome::Succeeded);
-            assert!(warnings.is_empty(), "{warnings:?}");
-            assert!(
-                !Path::new(&seen).exists(),
-                "the settle removed a tree holding read-only objects"
-            );
+    crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut first = begin_scratching(&target);
+        let (seen, wrote) = read_temp(&mut first, work.path());
+        assert!(wrote, "the run writes into its own scratch");
+        publish_old_read_only_objects(Path::new(&seen));
+        let warnings = first.close(WorkloadOutcome::Succeeded);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            !Path::new(&seen).exists(),
+            "the settle removed a tree holding read-only objects"
+        );
 
-            // The same task, admitted again: the released directory left no
-            // residue to settle and nothing to refuse this run.
-            let mut second = begin_scratching(&target);
-            let (again, wrote) = read_temp(&mut second, work.path());
-            assert!(wrote);
-            assert_ne!(again, seen, "a later run gets its own directory");
-            let warnings = second.close(WorkloadOutcome::Succeeded);
-            assert!(warnings.is_empty(), "{warnings:?}");
-            assert!(!Path::new(&again).exists());
-        },
-    );
+        // The same task, admitted again: the released directory left no
+        // residue to settle and nothing to refuse this run.
+        let mut second = begin_scratching(&target);
+        let (again, wrote) = read_temp(&mut second, work.path());
+        assert!(wrote);
+        assert_ne!(again, seen, "a later run gets its own directory");
+        let warnings = second.close(WorkloadOutcome::Succeeded);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!Path::new(&again).exists());
+    });
 }
 
 #[test]
@@ -411,18 +399,14 @@ fn a_failed_run_keeps_its_scratch_and_prints_the_path() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    let (seen, warnings) = crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
+    let (seen, warnings) =
+        crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
             let mut run = begin_scratching(&target);
             let (seen, wrote) = read_temp(&mut run, work.path());
             assert!(wrote);
             let warnings = run.close(WorkloadOutcome::Failed { code: 1 });
             (seen, warnings)
-        },
-    );
+        });
     assert!(
         Path::new(&seen).exists(),
         "a failed run keeps its scratch for 24 hours"
@@ -450,7 +434,6 @@ fn an_explicit_or_non_default_tmpdir_wins_and_no_scratch_is_created() {
     let config = scratch_config(&scratch_root);
 
     let seen = crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
         Some(config.root.clone()),
         // The run inherited an explicit `TMPDIR`, which always wins.
         false,
@@ -472,6 +455,41 @@ fn an_explicit_or_non_default_tmpdir_wins_and_no_scratch_is_created() {
     );
 }
 
+/// A root Effigy cannot create is an observation, never a refusal: the run
+/// proceeds on the default temp directory and the operator is told once.
+#[test]
+fn an_unwritable_scratch_root_leaves_the_run_on_the_system_temp_directory() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "build", &catalog);
+    // A file where a directory must be: nothing can be created below it.
+    let blocker = root.path().join("gone-volume");
+    std::fs::write(&blocker, b"not a directory").expect("blocker");
+    let configured = blocker.join("scratch");
+
+    let seen = crate::runner::scratch::with_test_scratch(Some(configured.clone()), true, || {
+        let inherited = std::env::var("TMPDIR").unwrap_or_default();
+        let mut run = begin_scratching(&target);
+        let (seen, _) = read_temp(&mut run, work.path());
+        assert!(
+            run.close(WorkloadOutcome::Succeeded).is_empty(),
+            "an unusable root never fails or warns the run itself"
+        );
+        assert_eq!(seen, inherited, "the run kept the inherited temp directory");
+        seen
+    });
+    assert!(
+        !Path::new(&seen).starts_with(&configured),
+        "the run fell back to the system temp directory: {seen}"
+    );
+    assert!(
+        !configured.exists(),
+        "nothing was created below the blocker"
+    );
+}
+
 #[test]
 fn a_nested_run_reuses_its_parents_scratch_instead_of_starting_another() {
     let _guard = crate::contract_test_support::lock_test();
@@ -483,33 +501,28 @@ fn a_nested_run_reuses_its_parents_scratch_instead_of_starting_another() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut parent = begin_scratching(&target);
-            let (parent_temp, _) = read_temp(&mut parent, work.path());
-            let mut step = parent.step(0, "step").expect("step admitted");
-            let (step_temp, _) = read_temp(&mut step, work.path());
-            assert_eq!(
-                step_temp, parent_temp,
-                "a nested run reuses its parent's scratch"
-            );
-            assert!(step.close(WorkloadOutcome::Succeeded).is_empty());
-            assert!(
-                parent_temp.ends_with(&crate::runner::scratch::name_for_tests(&parent.id())),
-                "the directory is named by the run"
-            );
-            assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
-            assert!(!Path::new(&parent_temp).exists());
-            assert_eq!(
-                std::fs::read_dir(&config.root).expect("root").count(),
-                0,
-                "one run, one scratch directory"
-            );
-        },
-    );
+    crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut parent = begin_scratching(&target);
+        let (parent_temp, _) = read_temp(&mut parent, work.path());
+        let mut step = parent.step(0, "step").expect("step admitted");
+        let (step_temp, _) = read_temp(&mut step, work.path());
+        assert_eq!(
+            step_temp, parent_temp,
+            "a nested run reuses its parent's scratch"
+        );
+        assert!(step.close(WorkloadOutcome::Succeeded).is_empty());
+        assert!(
+            parent_temp.ends_with(&crate::runner::scratch::name_for_tests(&parent.id())),
+            "the directory is named by the run"
+        );
+        assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
+        assert!(!Path::new(&parent_temp).exists());
+        assert_eq!(
+            std::fs::read_dir(&config.root).expect("root").count(),
+            0,
+            "one run, one scratch directory"
+        );
+    });
 }
 
 #[test]
@@ -523,33 +536,28 @@ fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    let seen = crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut run = begin_scratching(&target);
-            let (seen, _) = read_temp(&mut run, work.path());
-            // What a killed owner leaves: an open effect and no decision.
-            run.abandon_for_tests();
-            // The successor settles the predecessor through the same adapter
-            // the sentinel uses, and still keeps its directory.
-            let successor = TaskRun::begin(TaskRunRequest {
-                target: &target,
-                lock_wait_ms: 0,
-                custody: false,
-                scratch: false,
-                managed_run_token: None,
-                args: &[],
-                key: None,
-                admission: None,
-                cwd: None,
-            })
-            .expect("the successor is admitted");
-            assert!(successor.close(WorkloadOutcome::Succeeded).is_empty());
-            seen
-        },
-    );
+    let seen = crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut run = begin_scratching(&target);
+        let (seen, _) = read_temp(&mut run, work.path());
+        // What a killed owner leaves: an open effect and no decision.
+        run.abandon_for_tests();
+        // The successor settles the predecessor through the same adapter
+        // the sentinel uses, and still keeps its directory.
+        let successor = TaskRun::begin(TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody: false,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission: None,
+            cwd: None,
+        })
+        .expect("the successor is admitted");
+        assert!(successor.close(WorkloadOutcome::Succeeded).is_empty());
+        seen
+    });
     assert!(
         Path::new(&seen).exists(),
         "an unsettled run's scratch is not removed by its own absent decision"
@@ -573,42 +581,37 @@ fn a_successful_step_never_decides_its_parents_scratch_retention() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    let seen = crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut parent = begin_scratching(&target);
-            let (seen, _) = read_temp(&mut parent, work.path());
-            let mut step = parent.step(0, "step").expect("step admitted");
-            let (step_temp, _) = read_temp(&mut step, work.path());
-            assert_eq!(step_temp, seen);
-            // The step succeeded; the run it belongs to has not finished.
-            assert!(step.close(WorkloadOutcome::Succeeded).is_empty());
-            let undecided = std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json"))
-                .expect("marker");
-            assert!(
-                !undecided.contains("keep"),
-                "a step must not write the parent's verdict: {undecided}"
-            );
-            // The owning run dies without deciding, as a kill leaves it.
-            parent.abandon_for_tests();
-            let successor = TaskRun::begin(TaskRunRequest {
-                target: &target,
-                lock_wait_ms: 0,
-                custody: false,
-                scratch: false,
-                managed_run_token: None,
-                args: &[],
-                key: None,
-                admission: None,
-                cwd: None,
-            })
-            .expect("the successor is admitted");
-            assert!(successor.close(WorkloadOutcome::Succeeded).is_empty());
-            seen
-        },
-    );
+    let seen = crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut parent = begin_scratching(&target);
+        let (seen, _) = read_temp(&mut parent, work.path());
+        let mut step = parent.step(0, "step").expect("step admitted");
+        let (step_temp, _) = read_temp(&mut step, work.path());
+        assert_eq!(step_temp, seen);
+        // The step succeeded; the run it belongs to has not finished.
+        assert!(step.close(WorkloadOutcome::Succeeded).is_empty());
+        let undecided =
+            std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json")).expect("marker");
+        assert!(
+            !undecided.contains("keep"),
+            "a step must not write the parent's verdict: {undecided}"
+        );
+        // The owning run dies without deciding, as a kill leaves it.
+        parent.abandon_for_tests();
+        let successor = TaskRun::begin(TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody: false,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission: None,
+            cwd: None,
+        })
+        .expect("the successor is admitted");
+        assert!(successor.close(WorkloadOutcome::Succeeded).is_empty());
+        seen
+    });
     assert!(
         Path::new(&seen).exists(),
         "the interrupted run's scratch is retained, not deleted by its step's success"
@@ -629,17 +632,12 @@ fn a_scratch_failure_keeps_its_full_retention_from_the_failure() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    let seen = crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut run = begin_scratching(&target);
-            let (seen, _) = read_temp(&mut run, work.path());
-            assert!(!run.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
-            seen
-        },
-    );
+    let seen = crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut run = begin_scratching(&target);
+        let (seen, _) = read_temp(&mut run, work.path());
+        assert!(!run.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
+        seen
+    });
     let marker: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json")).expect("marker"),
     )
@@ -668,51 +666,46 @@ fn a_second_keyed_run_gets_its_own_scratch_while_the_first_is_retained() {
     let first_key = RunKey::parse("scratch-first").expect("key");
     let second_key = RunKey::parse("scratch-second").expect("key");
 
-    crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut first = TaskRun::begin(TaskRunRequest {
-                target: &target,
-                lock_wait_ms: 0,
-                custody: true,
-                scratch: true,
-                managed_run_token: None,
-                args: &[],
-                key: Some(&first_key),
-                admission: None,
-                cwd: None,
-            })
-            .expect("first keyed run");
-            let (first_temp, _) = read_temp(&mut first, work.path());
-            assert!(!first.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
+    crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut first = TaskRun::begin(TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody: true,
+            scratch: true,
+            managed_run_token: None,
+            args: &[],
+            key: Some(&first_key),
+            admission: None,
+            cwd: None,
+        })
+        .expect("first keyed run");
+        let (first_temp, _) = read_temp(&mut first, work.path());
+        assert!(!first.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
 
-            // The failed run's directory is retained; a different key still
-            // allocates its own, whatever the run ids look like.
-            let mut second = TaskRun::begin(TaskRunRequest {
-                target: &target,
-                lock_wait_ms: 0,
-                custody: true,
-                scratch: true,
-                managed_run_token: None,
-                args: &[],
-                key: Some(&second_key),
-                admission: None,
-                cwd: None,
-            })
-            .expect("second keyed run");
-            let (second_temp, _) = read_temp(&mut second, work.path());
-            assert_ne!(first_temp, second_temp);
-            assert!(
-                Path::new(&first_temp).exists(),
-                "the failure stays retained"
-            );
-            assert!(Path::new(&second_temp).starts_with(&config.root));
-            assert!(second.close(WorkloadOutcome::Succeeded).is_empty());
-            assert!(!Path::new(&second_temp).exists());
-        },
-    );
+        // The failed run's directory is retained; a different key still
+        // allocates its own, whatever the run ids look like.
+        let mut second = TaskRun::begin(TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody: true,
+            scratch: true,
+            managed_run_token: None,
+            args: &[],
+            key: Some(&second_key),
+            admission: None,
+            cwd: None,
+        })
+        .expect("second keyed run");
+        let (second_temp, _) = read_temp(&mut second, work.path());
+        assert_ne!(first_temp, second_temp);
+        assert!(
+            Path::new(&first_temp).exists(),
+            "the failure stays retained"
+        );
+        assert!(Path::new(&second_temp).starts_with(&config.root));
+        assert!(second.close(WorkloadOutcome::Succeeded).is_empty());
+        assert!(!Path::new(&second_temp).exists());
+    });
 }
 
 #[test]
@@ -723,38 +716,33 @@ fn the_builtin_test_routes_run_holds_a_sentinel_so_a_kill_still_settles_it() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            // The route's run owns host suites and the scratch directory, so it
-            // must have a sentinel: a killed owner is settled from the journal,
-            // the directory is retained, and the sweep can expire it. Without
-            // one the row stays `starting` with no cleanup and nothing expires.
-            let mut run = TaskRun::standalone_scratching(root.path(), "effigy test")
-                .expect("the built-in run is admitted");
-            let id = run.id();
-            assert!(
-                run.run_mut().expect("durable test run").owns_sentinel(),
-                "the built-in test route's run must have a sentinel"
-            );
-            let env = crate::runner::scratch::temp_env();
-            assert_eq!(env.len(), 3, "the run owns the scratch directory");
-            assert!(
-                run.close(WorkloadOutcome::Succeeded).is_empty(),
-                "the route's settle reported no residue"
-            );
-            // Nothing is left for the sweep: the route's own settle released it.
-            assert!(
-                !root
-                    .path()
-                    .join(crate::runner::scratch::name_for_tests(&id))
-                    .exists(),
-                "the settled route released its directory"
-            );
-        },
-    );
+    crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        // The route's run owns host suites and the scratch directory, so it
+        // must have a sentinel: a killed owner is settled from the journal,
+        // the directory is retained, and the sweep can expire it. Without
+        // one the row stays `starting` with no cleanup and nothing expires.
+        let mut run = TaskRun::standalone_scratching(root.path(), "effigy test")
+            .expect("the built-in run is admitted");
+        let id = run.id();
+        assert!(
+            run.run_mut().expect("durable test run").owns_sentinel(),
+            "the built-in test route's run must have a sentinel"
+        );
+        let env = crate::runner::scratch::temp_env();
+        assert_eq!(env.len(), 3, "the run owns the scratch directory");
+        assert!(
+            run.close(WorkloadOutcome::Succeeded).is_empty(),
+            "the route's settle reported no residue"
+        );
+        // Nothing is left for the sweep: the route's own settle released it.
+        assert!(
+            !root
+                .path()
+                .join(crate::runner::scratch::name_for_tests(&id))
+                .exists(),
+            "the settled route released its directory"
+        );
+    });
 }
 
 #[test]
@@ -770,45 +758,40 @@ fn a_built_in_suite_settles_its_process_tree_before_the_scratch_is_released() {
     let seen = work.path().join("suite-tmpdir.txt");
     let late = work.path().join("descendant.txt");
 
-    crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut parent = TaskRun::standalone_scratching(root.path(), "effigy test")
-                .expect("the built-in run is admitted");
-            let command = format!(
-                "printf '%s' \"$TMPDIR\" > {}; ( sleep 1; printf late > {} ) & exit 0",
-                seen.display(),
-                late.display()
-            );
-            {
-                use effigy_builtin::BuiltinRuntimePorts;
-                let ports =
-                    crate::runner::builtin_ports::RunnerBuiltinPorts::with_suite_run(&mut parent);
-                assert!(ports.custody_holds_host_suites());
-                // Exactly what the runner hands the built-in: the run's temp
-                // environment.
-                let env = ports.host_scratch_env();
-                let mut suite_env = std::collections::BTreeMap::new();
-                for (key, value) in env {
-                    suite_env.insert(key, value.to_string_lossy().into_owned());
-                }
-                let mut custody = ports
-                    .host_suite_custody("suite")
-                    .expect("custody available")
-                    .expect("a held run owns its suites");
-                let outcome = custody
-                    .run(&command, work.path(), &suite_env, false)
-                    .expect("the suite ran");
-                assert_eq!(outcome.code, Some(0));
-                // The suite's verdict closes its child run, which stops the
-                // suite's whole process group.
-                custody.settle(true);
+    crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut parent = TaskRun::standalone_scratching(root.path(), "effigy test")
+            .expect("the built-in run is admitted");
+        let command = format!(
+            "printf '%s' \"$TMPDIR\" > {}; ( sleep 1; printf late > {} ) & exit 0",
+            seen.display(),
+            late.display()
+        );
+        {
+            use effigy_builtin::BuiltinRuntimePorts;
+            let ports =
+                crate::runner::builtin_ports::RunnerBuiltinPorts::with_suite_run(&mut parent);
+            assert!(ports.custody_holds_host_suites());
+            // Exactly what the runner hands the built-in: the run's temp
+            // environment.
+            let env = ports.host_scratch_env();
+            let mut suite_env = std::collections::BTreeMap::new();
+            for (key, value) in env {
+                suite_env.insert(key, value.to_string_lossy().into_owned());
             }
-            assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
-        },
-    );
+            let mut custody = ports
+                .host_suite_custody("suite")
+                .expect("custody available")
+                .expect("a held run owns its suites");
+            let outcome = custody
+                .run(&command, work.path(), &suite_env, false)
+                .expect("the suite ran");
+            assert_eq!(outcome.code, Some(0));
+            // The suite's verdict closes its child run, which stops the
+            // suite's whole process group.
+            custody.settle(true);
+        }
+        assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
+    });
 
     let suite_temp = std::fs::read_to_string(&seen).expect("the suite saw its temp dir");
     assert!(Path::new(&suite_temp).starts_with(&config.root));
@@ -833,11 +816,8 @@ fn the_builtin_test_route_holds_and_settles_the_configured_scratch() {
     // The built-in `test` route takes this exact run before the runner hands
     // its env to the suites: one directory, settled with the built-in's own
     // outcome.
-    let (seen, warnings) = crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
+    let (seen, warnings) =
+        crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
             let run = TaskRun::standalone_scratching(root.path(), "effigy test")
                 .expect("the built-in run is admitted");
             let env = crate::runner::scratch::temp_env();
@@ -863,8 +843,7 @@ fn the_builtin_test_route_holds_and_settles_the_configured_scratch() {
                 "the suite port carries the run's scratch: {port_env:?}"
             );
             (seen, run.close(WorkloadOutcome::Succeeded))
-        },
-    );
+        });
     let _ = &catalog;
     assert!(
         !Path::new(&seen).exists(),
@@ -885,48 +864,43 @@ fn a_nested_run_that_opts_out_hides_its_parents_scratch() {
     std::fs::create_dir(&scratch_root).expect("scratch root");
     let config = scratch_config(&scratch_root);
 
-    crate::runner::scratch::with_test_scratch(
-        Some(config.clone()),
-        Some(config.root.clone()),
-        true,
-        || {
-            let mut parent = begin_scratching(&parent_target);
-            let (parent_temp, _) = read_temp(&mut parent, work.path());
-            assert!(Path::new(&parent_temp).starts_with(&config.root));
+    crate::runner::scratch::with_test_scratch(Some(config.root.clone()), true, || {
+        let mut parent = begin_scratching(&parent_target);
+        let (parent_temp, _) = read_temp(&mut parent, work.path());
+        assert!(Path::new(&parent_temp).starts_with(&config.root));
 
-            // A nested task reference on this thread: the child declares
-            // `scratch = false`, so its host processes see the inherited temp
-            // environment, not its parent's directory.
-            let _parent_scope = parent.enter();
-            let mut child = TaskRun::begin(TaskRunRequest {
-                target: &child_target,
-                lock_wait_ms: 0,
-                custody: true,
-                scratch: false,
-                managed_run_token: None,
-                args: &[],
-                key: None,
-                admission: None,
-                cwd: None,
-            })
-            .expect("the nested run is admitted");
-            assert!(
-                crate::runner::scratch::temp_env().is_empty(),
-                "an opted-out nested run hides its parent's scratch"
-            );
-            let (child_temp, _) = read_temp(&mut child, work.path());
-            assert_ne!(child_temp, parent_temp);
-            assert!(!Path::new(&child_temp).starts_with(&config.root));
-            assert!(child.close(WorkloadOutcome::Succeeded).is_empty());
-            drop(_parent_scope);
+        // A nested task reference on this thread: the child declares
+        // `scratch = false`, so its host processes see the inherited temp
+        // environment, not its parent's directory.
+        let _parent_scope = parent.enter();
+        let mut child = TaskRun::begin(TaskRunRequest {
+            target: &child_target,
+            lock_wait_ms: 0,
+            custody: true,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission: None,
+            cwd: None,
+        })
+        .expect("the nested run is admitted");
+        assert!(
+            crate::runner::scratch::temp_env().is_empty(),
+            "an opted-out nested run hides its parent's scratch"
+        );
+        let (child_temp, _) = read_temp(&mut child, work.path());
+        assert_ne!(child_temp, parent_temp);
+        assert!(!Path::new(&child_temp).starts_with(&config.root));
+        assert!(child.close(WorkloadOutcome::Succeeded).is_empty());
+        drop(_parent_scope);
 
-            // The parent's scope is back once the child ends.
-            let (restored, _) = read_temp(&mut parent, work.path());
-            assert_eq!(restored, parent_temp);
-            assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
-            assert!(!Path::new(&parent_temp).exists());
-        },
-    );
+        // The parent's scope is back once the child ends.
+        let (restored, _) = read_temp(&mut parent, work.path());
+        assert_eq!(restored, parent_temp);
+        assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
+        assert!(!Path::new(&parent_temp).exists());
+    });
 }
 
 #[test]
@@ -937,7 +911,7 @@ fn without_a_configured_root_a_host_run_sees_the_inherited_temp_environment() {
     let catalog = catalog(root.path(), "", "root", 0);
     let target = TaskTarget::for_catalog(root.path(), "build", &catalog);
 
-    crate::runner::scratch::with_test_scratch(None, None, true, || {
+    crate::runner::scratch::with_test_scratch(None, true, || {
         let mut run = begin_scratching(&target);
         let inherited = std::env::var("TMPDIR").unwrap_or_default();
         let (seen, _) = read_temp(&mut run, work.path());

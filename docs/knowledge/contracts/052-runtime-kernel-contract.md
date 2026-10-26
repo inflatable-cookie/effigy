@@ -10,8 +10,8 @@ Local shell tasks, statically resolved local sequences and local test suites,
 including the interactive test TUI, use `ForegroundRun`. Ancestor gate custody,
 verified parent grants and positive process closure preserve nested admission
 and cleanup without durable records. `--run-id`, managed runs, QA groups,
-environments, remote clients and retained scratch select checkout durability
-before their first effect. Status combines live foreground evidence with
+environments and remote clients select checkout durability before their first
+effect. Status combines live foreground evidence with
 explicitly historical durable results; a missing record means `not-recorded`.
 
 A checkout journal opens by its location, `<checkout>/.effigy/state/`. The
@@ -201,7 +201,7 @@ lifetime belongs to its invoking process/session even when it has no terminal.
 | `--detach`; managed session in TUI, attached text or `--headless`; environment-owned host sidecar | `CheckoutDurable`; detached supervisor and journal-backed sentinel. Existing managed-task refusal of `--run-id` is unchanged |
 | `container up` (attached or detached), down, handover, repair, reset, reap, retire, data mutation or environment import | `CheckoutDurable`; environment authority in its owning checkout |
 | A task that attaches to/ensures an environment, runs a container/remote workload, owns a workspace session, or publishes a route | `CheckoutDurable`; durable holder and remote-custody records before effects |
-| A workflow needing resumable checkpoints, persistent source preparation, or retained scratch metadata after the invocation | `CheckoutDurable`; the feature's authority owns the journal |
+| A workflow needing resumable checkpoints or persistent source preparation after the invocation | `CheckoutDurable`; the feature's authority owns the journal |
 | Gateway daemon lifecycle, endpoint/route publication, port allocation or release | `MachineDurable`; gateway authority, only the bounded records allowed in §7.5 |
 | Static/Observe, including `runs`, `run status`, doctor and gateway status | No run, admission, import or write (R2) |
 
@@ -954,44 +954,6 @@ Effect states:
 Settle steps: advance to `Stopping`; walk effects in reverse sequence,
 recording each result before the next; commit `Closed`; close the sentinel
 pipe; release the gates.
-
-#### Scratch effect settlement (`scratch:run-dir`)
-
-A run's scratch directory is a `Reconcile` effect of this journal (effigy#244,
-effigy#253; the operator-facing surface is
-[069](../../guides/069-workspace-host-integration.md)). Its settle decides from the
-marker the owning run wrote before it settled, never from a second journal:
-
-- `keep: false` — the run succeeded — the directory is removed. The removal
-  first restores owner write permission through the tree, without following a
-  symlink and without leaving it, because a tree an older build published can
-  hold mode-0500 directories and mode-0400 files that a plain recursive removal
-  cannot clear. A symlink, a mount point inside the tree and an entry owned by
-  another user stop the walk.
-- Anything else is retained: for 24 hours from the conclusion the marker
-  records, or from the journal's own close time when the owner died before
-  concluding.
-- A tree that is still not removable after the permission repair is reported
-  once, by name, with the path and the failing entry, and settles as
-  `Retained` with that reason (`Reconciled::Residue`). It is terminal (I-R7), so
-  the owner's next run is admitted: residue Effigy has no authority over —
-  another owner's entry, another device — costs a later sweep a retry, never a
-  refused run. The reason stays on the effect row for the operator.
-
-The sweep that removes expired retained directories is a Prepare step of a later
-run's admission, and it is bounded in cost, not only in count:
-
-- It decides from each marker wherever the marker can decide: a recorded
-  verdict plus its conclusion time is enough, so a root holding hundreds of
-  retained directories costs marker reads, not journal reads.
-- It reads a journal only for a marker that records no verdict (a run killed
-  before deciding) or no conclusion time, at most `SWEEP_JOURNAL_MAX` reads in
-  one sweep, each through an observation context bounded to
-  `SWEEP_JOURNAL_BUDGET`.
-- It stops at `SWEEP_BUDGET`; work it did not reach is a later run's. A journal
-  it cannot read — including a sibling checkout's journal under a continuous
-  writer, which reports `Unknown(Busy)` (§5.11) — skips that directory. The
-  sweep never waits and never retries inside one run's start.
 
 Status is a projection of the run row, the owner gate probe and fresh
 bounded observations. History never stands in for current state.
@@ -2697,7 +2659,7 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220). The scheduler client and its signal handler are gone (Q-006, effigy#227). |
 | Heavy admission and run control (Q-006) | Done (effigy#227). `admission = "heavy"` is metadata; `EFFIGY_ADMISSION_HOOK` runs as an auxiliary custody process held until settle; `--run-id` derives the run id; `runs`, `run status|logs|stop` read the journal, the per-stream logs (family 6) and request `Stop`. Contract [049](049-heavy-validation-admission-contract.md). |
 | QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
-| Per-run scratch directory (effigy#244, effigy#253) | Done. With user config `[scratch] root` naming any directory on a separate drive, each host-placed run — the built-in `effigy test` route too, through a standalone engine run — records a `scratch:run-dir` effect with `Reconcile` settlement before creating `<root>/<8-character run directory>/`, a name derived from the run's whole id so same-instant and keyed runs differ, and its host processes see that directory as `TMPDIR`, `TMP` and `TEMP`. Ownership is the marker plus that derived name: no other directory at that path is ever observed as this run's, given a verdict or removed, a failed creation confers no cleanup authority, and the retention sweep removes only run-named directories carrying Effigy's own marker, so foreign directories and files in the root are never touched. The built-in route's host suites are child runs of its run, so each suite's process group is custody the run settles before the directory is released; that run carries a sentinel (`Run::owns_sentinel`), which settles the run and its suites after an owner death, so the directory is retained with a close time and the sweep can expire it; the multi-suite TUI borrows the same run for its process attempts. Without configured retained scratch, local suites use an in-memory run and no state home or writable journal. The interactive test TUI borrows the invoking run for its process attempts and retains no separate journal. The settle releases the directory when the run succeeded and retains it otherwise; retention starts when the run ended (the owner's marker, or the journal's close time when the sentinel concluded) and a bounded Prepare-step sweep removes retained directories of closed runs after 24 hours. Only the run that opened the directory concludes it: a step or nested run holds an inherited handle and decides nothing, and a nested task's `scratch = false` hides its parent's directory from its own host processes. A nested run or step reuses its parent's directory, container workloads never see it, and a task's `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0` opts out. The gate proves the root's volume is a separately mounted volume — its device differs from the boot and data volumes and a mount point above it is held by another device — checks the optional UUID pin on an opened descriptor, and accepts a root owned by the current user or by root that is closed to group and world writes and carries no ACL. A missing root is created with mode 0700 only when its nearest existing ancestor passes the volume proof, and `effigy doctor` inspects without creating. A refusal falls back to the default temp directory with the reason `effigy doctor` reports. Effigy hardcodes no path, UUID or other tool's directory. The marker is run metadata on the operator's volume, outside the state root and outside this contract's families, so `qa:kernel-ratchet` accounts for its one raw write by name and ceiling rather than routing it through a kernel it does not belong to. |
+| Per-run scratch directory (effigy#244, effigy#253, effigy#361) | Done. With user config `[scratch] root` naming any directory, each host-placed run — the built-in `effigy test` route too, through a standalone engine run — gets `<root>/<8-character run directory>/`, a name derived from the run's whole id so same-instant and keyed runs differ, and its host processes see that directory as `TMPDIR`, `TMP` and `TEMP`. It is a plain directory, not a kernel effect: the run records no intent, holds no journal record for it and settles nothing through this contract. `.effigy-scratch.json` inside it records the run, task, checkout, the creating process and its start identity, and the creation time; Effigy removes the tree when the run succeeds, restoring owner write through it first without following a symlink or crossing a mount, and a run that failed or was cancelled writes `keep: true` and a conclusion time and keeps the tree for 24 hours. Only the run that opened a directory concludes it: a step or nested run holds an inherited handle and decides nothing, so a step's success never removes the parent's tree. A bounded sweep at a later run's start removes a marked directory whose conclusion is over 24 hours old, whose creating process is gone when it has no conclusion, or that is over 7 days old; it reads only the marker and a process-liveness check, never a journal, and stops at its own time and count bounds, leaving whatever it did not reach to a later run. An unmarked entry under the root is never touched, and a directory the sweep cannot decide is skipped silently. A killed Effigy leaves its directory until the next sweep: that costs disk until then, never correctness. A nested run or step reuses its parent's directory, container workloads never see it, and a task's `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0` opts out. The built-in route's host suites are child runs of its run, so each suite's process group is custody the run settles before the directory is removed. Without a configured root, local suites use an in-memory run and no state home or writable journal. A root Effigy cannot write degrades to the default temp directory with one warning; the run is never refused or failed for scratch. The marker is run metadata in the operator's directory, outside the state root and outside this contract's families, so `qa:kernel-ratchet` accounts for its one raw write by name and ceiling rather than routing it through a kernel it does not belong to. |
 
 Prerequisite kernel additions for that adoption: `run::history`,
 `run::unclosed` and `RunSummary` (§5.6 status reads); `TaskId` and
@@ -3053,7 +3015,7 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Proof | Required evidence |
 | --- | --- |
 | Classification | Table-driven CLI coverage of every §3.1 row, with text/JSON, TTY/pipe, heavy/no hook, nested scripts and late durable requests; no effect before refusal or durable admission |
-| Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences and test suites: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured retained scratch/source preparation and prove honest durable classification. QA-group runs are checkout-durable: retain their definition, member ledger, result and logs across owner exit, with zero machine-store writes for local-only members. Measure their checkout writes separately. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
+| Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences and test suites: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured source preparation and prove honest durable classification. QA-group runs are checkout-durable: retain their definition, member ledger, result and logs across owner exit, with zero machine-store writes for local-only members. Measure their checkout writes separately. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
 | Isolation/concurrency | At least 20 overlapping short runs across at least 3 independent checkouts, while long detached runs and an environment transition run; zero cross-project lock refusals, including a deliberately stalled local retention writer. Same-resource contention still returns the specified Busy result. Busy/corrupt machine store cannot block local-only foreground work |
 | Foreground custody | macOS/Linux: leader exit with live descendants, HUP/INT/TERM, owner SIGKILL, guard SIGKILL, both dead, cleared tags, escaped session, reused/foreign PGIDs and SIGSTOP; positive cleanup or explicit evidence-limited residue, no numeric recovery signal, no false persisted success, no unlock while the surviving custodian cleans up |
 | Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for QA-group runs, `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, workspace session, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |

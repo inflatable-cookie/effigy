@@ -21,8 +21,6 @@
 //!
 //! [scratch]
 //! root = "/Volumes/Builds/scratch"
-//! volume_uuid = "1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00"
-//! require_separate_volume = true
 //!
 //! [programs.oxide]
 //! fallback = "cargo"
@@ -101,26 +99,23 @@ pub struct UserProgramConfig {
 /// User-global per-run scratch directory preferences.
 ///
 /// Unset means no change: Effigy leaves the operating system's temp directory
-/// alone. A `root` moves the scratch of every host-placed run onto the drive
-/// holding that directory, and Effigy refuses a root it cannot prove sits on a
-/// separately mounted, trusted volume (see the user guide). A missing root is
-/// created (mode 0700) when its nearest existing directory passes the same
-/// proof. No path or UUID is hardcoded here: both come from this file, and
+/// alone. A `root` moves the scratch of every host-placed run into that
+/// directory (see the user guide). A missing root is created when the run needs
+/// it, and a root Effigy cannot write degrades to the default temp directory
+/// with one warning. No path is hardcoded here: it comes from this file, and
 /// Effigy knows nothing about any other tool's directories.
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserScratchConfig {
-    /// Directory that holds one subdirectory per run, on any drive. Unset
-    /// disables scratch.
+    /// Directory that holds one subdirectory per run. Unset disables scratch.
     #[serde(default)]
     pub root: Option<String>,
-    /// Volume UUID the root must live on, compared against the volume that
-    /// actually holds it. Unset skips the pin.
+    /// Accepted so an existing config keeps loading. The volume holding `root`
+    /// is not checked.
     #[serde(default)]
     pub volume_uuid: Option<String>,
-    /// Whether the root must be on a volume separate from the boot and data
-    /// volumes. Unset (or `true`) requires it; `false` accepts any directory
-    /// that passes the ownership checks.
+    /// Accepted so an existing config keeps loading. The volume holding `root`
+    /// is not checked.
     #[serde(default)]
     pub require_separate_volume: Option<bool>,
 }
@@ -226,19 +221,6 @@ impl UserScratchConfig {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(expand_user_path)
-    }
-
-    /// The UUID pin, trimmed, when configured.
-    pub fn volume_uuid(&self) -> Option<&str> {
-        self.volume_uuid
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    }
-
-    /// A root must be a separate volume unless this is explicitly `false`.
-    pub fn require_separate_volume(&self) -> bool {
-        self.require_separate_volume.unwrap_or(true)
     }
 }
 
@@ -456,16 +438,11 @@ require_separate_volume = false
             cfg.scratch.root(),
             Some(PathBuf::from("/Volumes/Builds/effigy-scratch"))
         );
-        assert_eq!(
-            cfg.scratch.volume_uuid(),
-            Some("1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00")
-        );
-        assert!(!cfg.scratch.require_separate_volume());
         assert!(!cfg.is_empty());
     }
 
     #[test]
-    fn unset_scratch_changes_nothing_and_requires_a_separate_volume_by_default() {
+    fn unset_scratch_changes_nothing() {
         let tmp = tempdir().expect("tempdir");
         let path = tmp.path().join("config.toml");
         std::fs::write(
@@ -477,8 +454,6 @@ root = "~/scratch"
         )
         .expect("write");
         let cfg = load_user_config_from(&path).expect("load");
-        assert!(cfg.scratch.volume_uuid().is_none());
-        assert!(cfg.scratch.require_separate_volume());
         assert!(cfg.scratch.root().expect("root").ends_with("scratch"));
 
         let empty = UserConfig::default();
