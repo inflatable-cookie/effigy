@@ -531,6 +531,14 @@ fn run_container_up_compose(
     );
     match output {
         Ok(_) => {
+            // The stack is started, so the runtime can be told to keep it up
+            // without racing Compose's create/start (effigy#383).
+            effigy_containers::policy::restart::apply_after_start(
+                &plan.policy.repo_root,
+                &plan.policy,
+                &plan.policy.project_name,
+                &plan.policy.compose_files,
+            );
             if compose_steps.touched() == 0 {
                 whole_stack.succeed("the stack is up");
             } else {
@@ -1608,7 +1616,9 @@ mod tests {
         let cause = sanitized_failure_cause(&RunnerError::task_invocation(long));
         assert!(cause.starts_with("first line; detail"), "{cause}");
         assert!(cause.chars().count() <= 1201, "{}", cause.chars().count());
-        assert!(cause.ends_with('…'), "{cause}");
+        // #364 keeps both ends: the middle is elided and the last line survives.
+        assert!(cause.contains('…'), "{cause}");
+        assert!(cause.ends_with("detail"), "{cause}");
     }
 
     #[test]

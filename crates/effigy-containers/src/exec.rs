@@ -49,7 +49,7 @@ pub use implementation::{
     list_running_compose_containers_profiled, owned_service_listing_args, run_backend_invocation,
     run_compose_capture, run_compose_capture_with_env, run_compose_invocation_capture,
     run_compose_invocation_capture_with_env, run_compose_invocation_streaming_with_env,
-    run_docker_capture, shared_project_containers, shutdown_container,
+    run_docker_capture, set_restart_policy, shared_project_containers, shutdown_container,
     verify_owned_running_compose_identities, verify_owned_running_compose_rows,
     verify_workspace_artifact_builder, verify_workspace_artifact_builder_declaration,
     ContainerExecError, OwnershipContext, RunningComposeContainerInventory,

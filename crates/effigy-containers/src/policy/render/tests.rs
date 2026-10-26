@@ -346,11 +346,11 @@ fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
     });
 }
 
-/// The runtime restarts a stopped service: every rendered service carries
-/// `restart: unless-stopped` unless the stack declares its own policy, and no
-/// overlay file can beat that declaration (effigy#371).
+/// The render hands Compose a file that names no restart policy at all, so the
+/// runtime's restart manager cannot settle a container between Compose's create
+/// and start (effigy#383); a policy the stack declares is what Compose reads.
 #[test]
-fn a_render_restarts_every_service_that_does_not_declare_a_policy() {
+fn a_render_names_no_restart_policy_of_its_own() {
     let (_fixture, checkout, home) = fixture();
     std::fs::write(
         checkout.join("compose.yml"),
@@ -360,29 +360,24 @@ fn a_render_restarts_every_service_that_does_not_declare_a_policy() {
     crate::with_test_effigy_home(&home, || {
         let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
         let merged = merged_compose(&policy);
-        assert_eq!(
-            merged["services"]["app"]["restart"],
-            serde_yaml::Value::String("unless-stopped".into()),
-            "a service without a policy is restarted by the runtime"
+        assert!(
+            merged["services"]["app"].get("restart").is_none(),
+            "up applies the policy with the runtime's own update, after it started the stack"
         );
         assert_eq!(
             merged["services"]["db"]["restart"],
             serde_yaml::Value::String("no".into()),
-            "a declared policy wins in the merged model, so a one-shot job stays down"
+            "a declared policy is the stack's own and stays byte for byte"
         );
-        // The runtime DNS override is a later `-f` file and names every
-        // service, so it must carry no policy of its own.
-        for file in policy.compose_files.iter().skip(1) {
-            let document: serde_yaml::Value =
-                serde_yaml::from_str(&policy.read_compose(file).unwrap()).unwrap();
-            for (name, service) in document["services"].as_mapping().unwrap() {
-                assert!(
-                    service.get("restart").is_none(),
-                    "{} in {} must not restate a restart policy",
-                    name.as_str().unwrap_or("<name>"),
-                    file.display()
-                );
-            }
+        for file in &policy.compose_files {
+            assert!(
+                !policy
+                    .read_compose(file)
+                    .unwrap()
+                    .contains("unless-stopped"),
+                "{} must name no restart policy of Effigy's",
+                file.display()
+            );
         }
     });
 }
