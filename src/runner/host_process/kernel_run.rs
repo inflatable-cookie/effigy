@@ -34,8 +34,9 @@ use serde::{Deserialize, Serialize};
 use super::{
     host_process_dir_for_policy, host_process_state_path, listener_gateway_root,
     managed_host_process_owner, order_host_processes, read_private_json,
-    remove_legacy_supervisor_records, HostListenerState, HostProcessRuntimeSpec,
-    ManagedHostListenerResult, HOST_LISTENER_STATE_SCHEMA,
+    remove_legacy_supervisor_records, HostListenerState, HostProcessRestartReport,
+    HostProcessRuntimeSpec, ManagedHostListenerResult, RestartedHostProcess,
+    HOST_LISTENER_STATE_SCHEMA,
 };
 use crate::runner::error::RunnerError;
 
@@ -312,32 +313,153 @@ pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<ManagedHostListenerResult>, RunnerError> {
-    let HostProcessStart { started, listeners } = start_host_processes_inner(repo_root, policy)?;
-    let cx = effects()?;
-    for (name, client) in started {
-        let run = client.run;
-        if let Err(error) = client.detach(&cx, run) {
-            // A process that exits before the bring-up detaches has already
-            // settled its run; there is no owner left to detach, and that is
-            // not a bring-up failure.
-            if run_is_closed(repo_root, run) {
-                continue;
-            }
-            let report = stop_host_processes_for_container(repo_root, policy);
+    let HostProcessStart { started, listeners } =
+        start_host_processes_inner(repo_root, policy, None)?;
+    detach_started(repo_root, policy, started)?;
+    Ok(listeners)
+}
+
+/// Restarts only the named host processes, and every process that depends on
+/// them, in `up`'s dependency order.
+///
+/// Each named process's current generation is settled by the same replace step
+/// `up` runs, then a new generation starts, waits for its declared readiness
+/// and publishes its route. Everything else in the environment - the
+/// containers and the other host processes - is never touched, so a process
+/// stopped with `effigy run stop <run>` is simply started again.
+///
+/// An unknown name fails before any effect, naming the processes this
+/// environment declares.
+pub(in crate::runner) fn restart_host_processes_for_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    requested: &[String],
+) -> Result<HostProcessRestartReport, RunnerError> {
+    let selection = restart_selection(policy, requested)?;
+    let selected = selection.ordered.iter().cloned().collect::<BTreeSet<_>>();
+    let HostProcessStart { started, listeners } =
+        start_host_processes_inner(repo_root, policy, Some(&selected))?;
+    let runs = detach_started(repo_root, policy, started)?
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let mut listeners = listeners
+        .into_iter()
+        .map(|listener| (listener.name.clone(), listener))
+        .collect::<BTreeMap<_, _>>();
+    Ok(HostProcessRestartReport {
+        environment: policy.name.clone(),
+        processes: selection
+            .ordered
+            .into_iter()
+            .map(|name| RestartedHostProcess {
+                run: runs.get(&name).map(ToString::to_string),
+                dependent: selection.dependent.contains(&name),
+                listener: listeners.remove(&name),
+                name,
+            })
+            .collect(),
+    })
+}
+
+/// What a restart replaces: the named processes and every process whose
+/// `depends_on` reaches one of them, in dependency order.
+struct RestartSelection {
+    ordered: Vec<String>,
+    dependent: BTreeSet<String>,
+}
+
+fn restart_selection(
+    policy: &EffectiveContainerPolicy,
+    requested: &[String],
+) -> Result<RestartSelection, RunnerError> {
+    let declared = policy
+        .host_processes
+        .iter()
+        .map(|process| process.name.as_str())
+        .collect::<BTreeSet<_>>();
+    for name in requested {
+        if !declared.contains(name.as_str()) {
             return Err(RunnerError::task_invocation(format!(
-                "host process `{name}` could not detach after readiness: {error}{}",
-                if report.complete() {
-                    String::new()
+                "environment `{}` declares no host process `{name}`; it declares {}",
+                policy.name,
+                if declared.is_empty() {
+                    "none".to_owned()
                 } else {
-                    format!(
-                        "\nhost-process rollback could not confirm every stop:\n{}",
-                        report.lines().join("\n")
-                    )
+                    declared
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 }
             )));
         }
     }
-    Ok(listeners)
+    let mut selected = requested.iter().cloned().collect::<BTreeSet<String>>();
+    // A dependent's readiness and route read its dependency, so it is
+    // restarted too. Anything that does not reach a named process stays up.
+    loop {
+        let dependents = policy
+            .host_processes
+            .iter()
+            .filter(|process| !selected.contains(&process.name))
+            .filter(|process| {
+                process
+                    .depends_on
+                    .iter()
+                    .any(|dependency| selected.contains(dependency))
+            })
+            .map(|process| process.name.clone())
+            .collect::<Vec<_>>();
+        if dependents.is_empty() {
+            break;
+        }
+        selected.extend(dependents);
+    }
+    let ordered = order_host_processes(&policy.host_processes)?
+        .into_iter()
+        .filter(|process| selected.contains(&process.name))
+        .map(|process| process.name.clone())
+        .collect();
+    let dependent = selected
+        .iter()
+        .filter(|name| !requested.iter().any(|requested| requested == *name))
+        .cloned()
+        .collect();
+    Ok(RestartSelection { ordered, dependent })
+}
+
+/// Releases the owning pipes of a bring-up that reached its readiness.
+///
+/// A process that exits before the detach has already settled its run: there
+/// is no owner left to detach, and that is not a bring-up failure.
+fn detach_started(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    started: Vec<(String, effigy_kernel::supervise::SupervisorClient)>,
+) -> Result<Vec<(String, RunId)>, RunnerError> {
+    let cx = effects()?;
+    let mut detached = Vec::with_capacity(started.len());
+    for (name, client) in started {
+        let run = client.run;
+        if let Err(error) = client.detach(&cx, run) {
+            if !run_is_closed(repo_root, run) {
+                let report = stop_host_processes_for_container(repo_root, policy);
+                return Err(RunnerError::task_invocation(format!(
+                    "host process `{name}` could not detach after readiness: {error}{}",
+                    if report.complete() {
+                        String::new()
+                    } else {
+                        format!(
+                            "\nhost-process rollback could not confirm every stop:\n{}",
+                            report.lines().join("\n")
+                        )
+                    }
+                )));
+            }
+        }
+        detached.push((name, run));
+    }
+    Ok(detached)
 }
 
 /// Starts every supervisor and keeps its owning client, without detaching.
@@ -348,7 +470,7 @@ pub(super) fn start_host_processes_owning(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
-    let HostProcessStart { started, .. } = start_host_processes_inner(repo_root, policy)?;
+    let HostProcessStart { started, .. } = start_host_processes_inner(repo_root, policy, None)?;
     Ok(started)
 }
 
@@ -362,6 +484,7 @@ struct HostProcessStart {
 fn start_host_processes_inner(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    selection: Option<&BTreeSet<String>>,
 ) -> Result<HostProcessStart, RunnerError> {
     if policy.host_processes.is_empty() {
         return Ok(HostProcessStart {
@@ -412,6 +535,11 @@ fn start_host_processes_inner(
     let mut listener_results = Vec::new();
     let start_result = (|| -> Result<(), RunnerError> {
         for hp in ordered {
+            // `up` starts every declared process; a restart names the ones it
+            // replaces and leaves the rest running.
+            if selection.is_some_and(|selection| !selection.contains(&hp.name)) {
+                continue;
+            }
             let resource = host_process_resource(policy, &hp.name)?;
             // A previous generation of this exact process (from an earlier
             // `up`) is settled before this bring-up replaces it.
@@ -541,9 +669,10 @@ fn start_host_processes_inner(
     if let Err(error) = start_result {
         // Dropping the owning pipes without a detach is the kernel's
         // owner-loss stop; settle explicitly so the refusal is complete before
-        // it returns.
+        // it returns. Only the processes this start replaced are settled: a
+        // restart leaves every other host process and its route running.
         drop(started);
-        let report = stop_host_processes_for_container(repo_root, policy);
+        let report = stop_host_processes(repo_root, policy, selection);
         let residue = report.lines();
         if report.complete() {
             return Err(error);
@@ -713,6 +842,17 @@ pub(in crate::runner) fn stop_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> HostProcessStopReport {
+    stop_host_processes(repo_root, policy, None)
+}
+
+/// [`stop_host_processes_for_container`] narrowed to one set of names: a
+/// failed restart settles what it started and leaves every other host process
+/// and its route exactly as they were.
+fn stop_host_processes(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    selection: Option<&BTreeSet<String>>,
+) -> HostProcessStopReport {
     let mut report = HostProcessStopReport {
         environment: policy.name.clone(),
         processes: Vec::new(),
@@ -730,6 +870,7 @@ pub(in crate::runner) fn stop_host_processes_for_container(
     }
     let mut ordered = order_host_processes(&policy.host_processes)
         .unwrap_or_else(|_| policy.host_processes.iter().collect::<Vec<_>>());
+    ordered.retain(|process| selection.is_none_or(|selection| selection.contains(&process.name)));
     ordered.reverse();
     let mut unsettled = BTreeSet::new();
     for hp in ordered {
@@ -762,10 +903,21 @@ pub(in crate::runner) fn stop_host_processes_for_container(
             }
         }
     }
+    // A process that is not being stopped keeps its route with its run.
+    let mut keep_routes = unsettled;
+    if let Some(selection) = selection {
+        keep_routes.extend(
+            policy
+                .host_processes
+                .iter()
+                .filter(|process| !selection.contains(&process.name))
+                .map(|process| process.name.clone()),
+        );
+    }
     // A listener route outlives the supervisor that published it. The
     // environment's own stop withdraws every route its declarations own, even
     // when that supervisor died or was refused before withdrawing it.
-    let (withdrawn, residue) = withdraw_host_listener_routes(repo_root, policy, &unsettled);
+    let (withdrawn, residue) = withdraw_host_listener_routes(repo_root, policy, &keep_routes);
     report
         .routes
         .extend(withdrawn.iter().map(describe_withdrawn_route));
@@ -1158,10 +1310,13 @@ fn run_exit(run: &RunSummary) -> Option<i32> {
 /// A process named in `failed` keeps its route: its run may still be live, and
 /// withdrawing it would leave a running listener unroutable. A failure is
 /// named, never dropped.
+/// Withdraws the routes of the environment's declared listeners, except the
+/// processes named in `keep_routes`: a live or unsettled process keeps the
+/// route it published.
 pub(in crate::runner) fn withdraw_host_listener_routes(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    failed: &BTreeSet<String>,
+    keep_routes: &BTreeSet<String>,
 ) -> (Vec<effigy_gateway::routes::Route>, Vec<String>) {
     let mut withdrawn = Vec::new();
     let mut residue = Vec::new();
@@ -1187,12 +1342,9 @@ pub(in crate::runner) fn withdraw_host_listener_routes(
         }
     };
     let project_path = checkout_root.display().to_string();
-    let names = failed;
-    for process in policy
-        .host_processes
-        .iter()
-        .filter(|process| process.listener.is_some() && !names.contains(process.name.as_str()))
-    {
+    for process in policy.host_processes.iter().filter(|process| {
+        process.listener.is_some() && !keep_routes.contains(process.name.as_str())
+    }) {
         let Ok(owner) = managed_host_process_owner(&project_path, policy, process) else {
             residue.push(format!(
                 "host process `{}` listener routes could not be withdrawn: its owner identity is unavailable",

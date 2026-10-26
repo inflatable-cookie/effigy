@@ -598,6 +598,12 @@ pub enum ContainerSubcommand {
         service: Option<String>,
         follow: bool,
     },
+    /// Restart only the named environment-owned host processes, and the
+    /// processes that depend on them.
+    Restart {
+        name: Option<String>,
+        processes: Vec<String>,
+    },
     Shell {
         name: Option<String>,
         service: Option<String>,

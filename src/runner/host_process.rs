@@ -41,8 +41,9 @@ use effigy_kernel::supervise::EngineSession;
 mod kernel_run;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
-    owns_supervise_payload, start_host_processes_for_container, stop_host_processes_for_container,
-    CustodyStop, HostProcessStopReport,
+    owns_supervise_payload, restart_host_processes_for_container,
+    start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
+    HostProcessStopReport,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
@@ -172,6 +173,26 @@ pub(in crate::runner) struct ManagedHostListenerResult {
     pub(in crate::runner) route_domain: String,
     pub(in crate::runner) route_tls: bool,
     pub(in crate::runner) state_file: String,
+}
+
+/// One restarted host process: its new run, whether it was restarted because
+/// it depends on a named process, and the listener it republished.
+#[derive(Debug, Clone, Serialize)]
+pub(in crate::runner) struct RestartedHostProcess {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    pub dependent: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<ManagedHostListenerResult>,
+}
+
+/// The environment's answer to `container <NAME> restart <process>...`.
+#[derive(Debug, Clone, Serialize)]
+pub(in crate::runner) struct HostProcessRestartReport {
+    pub environment: String,
+    /// The processes this restart replaced, in restart order.
+    pub processes: Vec<RestartedHostProcess>,
 }
 
 /// Reject listener configurations and checkout paths before container or
@@ -3520,5 +3541,440 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             !effigy_process::process_is_running(pid),
             "`never` starts no successor generation"
         );
+    }
+
+    // ---- `container <NAME> restart <process>...` --------------------------
+    //
+    // A restart is `up`'s start path narrowed to a set of names: the named
+    // processes and the processes that depend on them are replaced, and every
+    // other host process and container keeps running (effigy#367).
+
+    /// A test gateway home and a policy over `processes`, so these proofs can
+    /// declare a managed listener beside the processes they restart.
+    fn restart_policy(
+        checkout: &Path,
+        name: &str,
+        processes: Vec<EffectiveHostProcess>,
+    ) -> (
+        super::super::gateway_command::TestGatewayHomeGuard,
+        EffectiveContainerPolicy,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+        let gateway_home = checkout
+            .parent()
+            .expect("fixture root")
+            .join(format!("gateway-{name}"));
+        let gateway_dir = gateway_home.join(".effigy/gateway");
+        fs::create_dir_all(&gateway_dir).expect("gateway state directory");
+        for directory in [gateway_home.join(".effigy"), gateway_dir] {
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .expect("private gateway permissions");
+        }
+        let guard = super::super::gateway_command::set_test_gateway_home(&gateway_home);
+        let mut policy = policy(checkout, processes);
+        policy.project_name = format!("restart-{name}");
+        (guard, policy)
+    }
+
+    /// One declared process's run and leader pid, as `container status` reads
+    /// them.
+    fn running_process(
+        status: &[super::kernel_run::HostProcessStatus],
+        name: &str,
+    ) -> (String, u32) {
+        let row = status
+            .iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("host process `{name}` is declared"));
+        assert_eq!(row.state, "running", "{name}: {row:?}");
+        (
+            row.run.clone().expect("a running process has a run"),
+            row.pid.expect("a running process has a recorded leader"),
+        )
+    }
+
+    /// One readiness request to a reserved listener address.
+    fn http_get(address: &str, domain: &str) -> String {
+        use std::io::{Read as _, Write as _};
+        let address: SocketAddr = address.parse().expect("a loopback listener address");
+        let mut stream = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5))
+            .expect("the restarted listener answers its reserved address");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("listener read timeout");
+        write!(
+            stream,
+            "GET /health HTTP/1.1\r\nHost: {domain}\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write the readiness request");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("read the readiness response");
+        response
+    }
+
+    fn named_worker() -> EffectiveHostProcess {
+        host_process("worker", "exec /bin/sleep 120", HostProcessRestart::Never)
+    }
+
+    /// Two host processes are up: `restart worker` replaces only the worker.
+    /// The listener's run, pid and route stay exactly as they were.
+    #[test]
+    fn restart_replaces_only_the_named_host_process() {
+        let fixture = fixture();
+        let domain = "restart-named.host.test";
+        let bind = fixture_listener_bind("restart-named|app");
+        let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        let (_guard, policy) =
+            restart_policy(&fixture.checkout, "named", vec![app, named_worker()]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the listener and the worker start");
+        let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (app_run, app_pid) = running_process(&before, "app");
+        let (worker_run, worker_pid) = running_process(&before, "worker");
+        let route_before = published_owner(domain);
+
+        let report = super::kernel_run::restart_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            &["worker".to_owned()],
+        )
+        .expect("restart names a declared process");
+        assert_eq!(
+            report
+                .processes
+                .iter()
+                .map(|process| process.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["worker"],
+            "only the named process is replaced"
+        );
+        assert!(!report.processes[0].dependent);
+        assert!(
+            report.processes[0].listener.is_none(),
+            "a non-listener restarts without a route"
+        );
+
+        let after = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (app_run_after, app_pid_after) = running_process(&after, "app");
+        let (worker_run_after, worker_pid_after) = running_process(&after, "worker");
+        assert_eq!(
+            (app_run_after.clone(), app_pid_after),
+            (app_run, app_pid),
+            "a process that does not depend on the worker is never touched"
+        );
+        assert_ne!(
+            (worker_run_after.clone(), worker_pid_after),
+            (worker_run, worker_pid),
+            "the restarted process is a new generation with a new leader"
+        );
+        assert_eq!(
+            report.processes[0].run.as_deref(),
+            Some(worker_run_after.as_str()),
+            "the report names the new run"
+        );
+        assert_eq!(
+            published_owner(domain).generation,
+            route_before.generation,
+            "an untouched listener keeps its published route"
+        );
+
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+    }
+
+    /// A process that exited - by `effigy run stop <run>` or by crashing - is
+    /// simply started again, and the listener beside it keeps running.
+    #[test]
+    fn restart_starts_a_stopped_process_and_leaves_the_listener_running() {
+        let fixture = fixture();
+        let domain = "restart-stopped.host.test";
+        let bind = fixture_listener_bind("restart-stopped|app");
+        let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        let (_guard, policy) =
+            restart_policy(&fixture.checkout, "stopped", vec![app, named_worker()]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the listener and the worker start");
+        let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (app_run, app_pid) = running_process(&before, "app");
+        let (_worker_run, worker_pid) = running_process(&before, "worker");
+
+        // The worker's generation ends: its group is gone and its run settles
+        // closed, exactly as `effigy run stop <run>` leaves it.
+        kill(Pid::from_raw(worker_pid as i32), Signal::SIGKILL).expect("end the worker");
+        wait_until("the worker run to close", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .iter()
+                .find(|row| row.name == "worker")
+                .is_some_and(|row| row.state == "closed")
+        });
+
+        let report = super::kernel_run::restart_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            &["worker".to_owned()],
+        )
+        .expect("a stopped process is restarted by name");
+        assert_eq!(report.processes.len(), 1);
+        let after = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (app_run_after, app_pid_after) = running_process(&after, "app");
+        let (worker_run_after, worker_pid_after) = running_process(&after, "worker");
+        assert_eq!(
+            (app_run_after, app_pid_after),
+            (app_run, app_pid),
+            "the listener is untouched"
+        );
+        assert_ne!(worker_pid_after, worker_pid);
+        assert_eq!(report.processes[0].run.as_deref(), Some(&*worker_run_after));
+
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+    }
+
+    /// Restarting a listener keeps its declared address and republishes its
+    /// route for the new generation, which answers on that address.
+    #[test]
+    fn restart_of_a_listener_keeps_its_address_and_republishes_its_route() {
+        let fixture = fixture();
+        let domain = "restart-listener.host.test";
+        let bind = fixture_listener_bind("restart-listener|app");
+        let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        let (_guard, policy) = restart_policy(&fixture.checkout, "listener", vec![app]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the managed listener starts and publishes its route");
+        let before = read_json(&listener_state(&policy));
+        assert_eq!(before["status"], "ready", "{before}");
+        let address = before["address"]
+            .as_str()
+            .expect("the listener state records its address")
+            .to_owned();
+        let route_before = published_owner(domain);
+        assert_eq!(
+            serde_json::Value::String(route_before.generation.clone()),
+            before["generation"],
+            "the route serves the first generation"
+        );
+
+        let report = super::kernel_run::restart_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            &["app".to_owned()],
+        )
+        .expect("the listener restarts");
+        assert_eq!(report.processes.len(), 1);
+        let listener = report.processes[0]
+            .listener
+            .as_ref()
+            .expect("a restarted listener reports its listener");
+        assert_eq!(listener.status, "ready");
+        assert_eq!(
+            listener.address, address,
+            "a restart keeps the declared listener address"
+        );
+
+        let after = read_json(&listener_state(&policy));
+        assert_eq!(after["status"], "ready", "{after}");
+        assert_eq!(after["address"], serde_json::Value::String(address.clone()));
+        assert_ne!(
+            after["generation"], before["generation"],
+            "the restarted listener is a new generation"
+        );
+        assert_ne!(
+            after["child_pid"], before["child_pid"],
+            "the new generation is a new child"
+        );
+        let route_after = published_owner(domain);
+        assert_eq!(
+            serde_json::Value::String(route_after.generation.clone()),
+            after["generation"],
+            "the route serves the restarted generation"
+        );
+        assert_eq!(route_after.address, address);
+        let response = http_get(&address, domain);
+        assert!(
+            response.contains("200 OK"),
+            "the restarted generation answers its reserved address: {response}"
+        );
+
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+    }
+
+    /// A process that depends on a restarted process is restarted after it and
+    /// named as a dependent; a process that does not depend on it stays up.
+    #[test]
+    fn restart_restarts_a_dependent_after_its_dependency_and_names_it() {
+        let fixture = fixture();
+        let domain = "restart-dependent.host.test";
+        let bind = fixture_listener_bind("restart-dependent|app");
+        let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        let mut consumer = named_worker();
+        consumer.name = "consumer".to_owned();
+        consumer.depends_on = vec!["app".to_owned()];
+        let worker = named_worker();
+        let (_guard, policy) =
+            restart_policy(&fixture.checkout, "dependent", vec![app, consumer, worker]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the listener, its dependent and the worker start");
+        let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (_app_run, app_pid) = running_process(&before, "app");
+        let (consumer_run, consumer_pid) = running_process(&before, "consumer");
+        let (worker_run, worker_pid) = running_process(&before, "worker");
+
+        let report = super::kernel_run::restart_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            &["app".to_owned()],
+        )
+        .expect("the listener restarts with its dependent");
+        assert_eq!(
+            report
+                .processes
+                .iter()
+                .map(|process| process.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["app", "consumer"],
+            "the dependent is restarted after its dependency"
+        );
+        assert!(!report.processes[0].dependent);
+        assert!(
+            report.processes[1].dependent,
+            "a process restarted because it depends on a named one is named as a dependent"
+        );
+
+        let after = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (_app_run_after, app_pid_after) = running_process(&after, "app");
+        let (consumer_run_after, consumer_pid_after) = running_process(&after, "consumer");
+        let (worker_run_after, worker_pid_after) = running_process(&after, "worker");
+        assert_ne!(app_pid_after, app_pid);
+        assert_ne!(
+            (consumer_run_after, consumer_pid_after),
+            (consumer_run, consumer_pid),
+            "the dependent is a new generation"
+        );
+        assert_eq!(
+            (worker_run_after, worker_pid_after),
+            (worker_run, worker_pid),
+            "a process that does not depend on the restarted one is untouched"
+        );
+
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+    }
+
+    /// A restart that cannot reach readiness settles only what it replaced:
+    /// the processes that were already running keep their run, their leader
+    /// and their route.
+    #[test]
+    fn restart_failure_settles_only_what_it_replaced() {
+        let fixture = fixture();
+        let domain = "restart-failure.host.test";
+        let bind = fixture_listener_bind("restart-failure|app");
+        let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        let (_guard, up_policy) = restart_policy(
+            &fixture.checkout,
+            "restart-failure",
+            vec![app, named_worker()],
+        );
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &up_policy)
+            .expect("the listener and the worker start");
+        let before = super::kernel_run::host_process_status(&fixture.checkout, &up_policy);
+        let (app_run, app_pid) = running_process(&before, "app");
+        let (worker_run, worker_pid) = running_process(&before, "worker");
+        let route_before = published_owner(domain);
+
+        // The same environment, now also declaring a listener that answers
+        // every readiness request with 503.
+        let mut broken = listener_host_process_running(
+            "broken",
+            "restart-failure-broken.host.test",
+            &fixture_listener_bind("restart-failure|broken"),
+            REFUSING_LISTENER_CHILD,
+            1,
+        );
+        broken.name = "broken".to_owned();
+        let mut policy = up_policy;
+        policy.host_processes.push(broken);
+        let error = super::kernel_run::restart_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            &["broken".to_owned()],
+        )
+        .expect_err("a listener that never becomes ready fails the restart");
+        assert!(
+            error.to_string().contains("readiness"),
+            "the readiness error is reported: {error}"
+        );
+
+        let after = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        assert_eq!(
+            running_process(&after, "app"),
+            (app_run, app_pid),
+            "a failed restart leaves the running listener alone"
+        );
+        assert_eq!(
+            running_process(&after, "worker"),
+            (worker_run, worker_pid),
+            "a failed restart leaves every other host process alone"
+        );
+        assert_eq!(
+            published_owner(domain).generation,
+            route_before.generation,
+            "a failed restart keeps the untouched listener's route"
+        );
+
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+    }
+
+    /// An unknown process name fails before any effect, naming the processes
+    /// the environment declares.
+    #[test]
+    fn restart_refuses_an_unknown_process_and_changes_nothing() {
+        let fixture = fixture();
+        let domain = "restart-unknown.host.test";
+        let bind = fixture_listener_bind("restart-unknown|app");
+        let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        let (_guard, policy) = restart_policy(&fixture.checkout, "unknown", vec![app]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the managed listener starts");
+        let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (app_run, app_pid) = running_process(&before, "app");
+        let state_before = read_json(&listener_state(&policy));
+
+        let error = super::kernel_run::restart_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            &["nope".to_owned()],
+        )
+        .expect_err("an unknown process name is refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("declares no host process `nope`"),
+            "{message}"
+        );
+        assert!(message.contains("`app`"), "{message}");
+
+        let after = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        assert_eq!(
+            running_process(&after, "app"),
+            (app_run, app_pid),
+            "a refused restart changes nothing"
+        );
+        assert_eq!(
+            read_json(&listener_state(&policy))["generation"],
+            state_before["generation"],
+            "a refused restart republishes no route"
+        );
+
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
     }
 }

@@ -2781,6 +2781,11 @@ and `--detach` are front ends over the same run. Row by row:
   and whether or not that supervisor is still alive, and report each
   withdrawal in the `HostProcessStopReport`. A process whose stop failed keeps
   its route, because its run may still be live (effigy#335).
+  `container <env> restart <process>...` is the same start path narrowed to a
+  set of names: it settles each named process's current generation, starts a
+  new one, waits for its readiness and publishes its route, and it does the
+  same for every process that `depends_on` a named one, in dependency order,
+  while the containers and the other host processes keep running.
 - Remote stop of a bare PGID: narrowed by the nonce check above;
   `signal_session` on a registration stays open with §5.10.
 
