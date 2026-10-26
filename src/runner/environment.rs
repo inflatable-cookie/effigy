@@ -349,6 +349,36 @@ pub(in crate::runner) fn activate(
     engine::activate(&ctx, &bring_up.env, &holders).map_err(error)
 }
 
+/// A command that changes part of a running environment in place - a
+/// host-process restart - holds `Gate(Env)` for the change, exactly like a
+/// bring-up, so `up` and `down` cannot interleave with it (effigy#367).
+///
+/// The change is not a backend transition: it publishes nothing and touches no
+/// render. A run that changed nothing republishes the state it found.
+pub(in crate::runner) fn holding_environment<T>(
+    policy: &EffectiveContainerPolicy,
+    op: Operation,
+    change: impl FnOnce() -> Result<T, RunnerError>,
+) -> Result<T, RunnerError> {
+    let env = env_ref(policy)?;
+    // An environment nothing has brought up yet has no record to gate and no
+    // transition to interleave with, so the change runs unheld (effigy#370).
+    if record(policy).is_none() {
+        return change();
+    }
+    let ctx = context(&policy.repo_root)?;
+    let run = engine::EnvRun::begin(
+        &ctx,
+        &env,
+        op,
+        Wait::Until(Instant::now() + engine::GATE_WAIT),
+    )
+    .map_err(error)?;
+    let result = change();
+    run.finish(result.is_ok()).map_err(error)?;
+    result
+}
+
 fn record_mode(ctx: &EnvContext<'_>, env: &EnvRef) -> AttachMode {
     match EnvRecord::read(&ctx.observe(), ctx.root, &env.resource) {
         Observed::Verified(record, _) => engine::mode_for(&record),

@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use effigy_kernel::ctx::StopCause;
+use effigy_kernel::ctx::{OpenReason, StopCause};
 use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::probe::ProbeCommand;
@@ -22,6 +22,8 @@ use crate::runner::task_engine::{self, TaskRun};
 
 /// Poll interval for a custody child and between readiness attempts.
 const POLL: Duration = Duration::from_millis(50);
+/// How often a still-starting `up` reports progress to the console.
+const START_PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 /// Readiness retries back off to at most this.
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// One route probe's own bound.
@@ -42,8 +44,6 @@ pub(in crate::runner) struct EnvironmentPlan {
     pub(in crate::runner) exec_probe: Option<String>,
     /// `health_wait` routes, probed once the workloads have started.
     pub(in crate::runner) route_urls: Vec<String>,
-    /// Bounds `up` itself: a cold engine pulls and boots inside it.
-    pub(in crate::runner) up_budget: Duration,
     /// Bounds each readiness phase from the moment it starts.
     pub(in crate::runner) readiness_budget: Duration,
     /// Lines printed once the environment is ready.
@@ -75,14 +75,13 @@ pub(in crate::runner) fn bring_up(
         run: Some(run.id().to_string()),
     };
     println!(
-        "[environment] {} `{}`: bringing it up (deadline {}s)",
+        "[environment] {} `{}`: bringing it up",
         if plan.borrowed {
             "borrowing"
         } else {
             "starting"
         },
-        plan.name,
-        plan.up_budget.as_secs()
+        plan.name
     );
     // The bring-up is the reconciler's own journalled effect, and `up` runs
     // as this run's custody child. What this run owes from here on, whether
@@ -248,7 +247,11 @@ fn run_up(
         cwd: plan.repo.clone(),
         env,
         grace: Duration::from_secs(5),
-        lifetime: Lifetime::Finite(plan.up_budget),
+        // `up` is its own two-phase wait: the bring-up's readiness answers it,
+        // or `up` itself fails with the bounds it declares. A run-level
+        // deadline here would cap a slow first build at a number nothing in the
+        // manifest controls (effigy#370).
+        lifetime: Lifetime::Open(OpenReason::DevServer),
         terminal: Terminal::Inherit { capture: false },
         label: "environment up".to_owned(),
     };
@@ -256,20 +259,20 @@ fn run_up(
     let mut process = run
         .spawn_with_handoff(spec, false, grant.map(|grant| grant.into_reader()))
         .map_err(|error| NotReady::Failed(format!("environment up did not start: {error}")))?;
+    let mut next_progress = started + START_PROGRESS_INTERVAL;
     loop {
         run.verify_admission()
             .map_err(|error| NotReady::Failed(error.to_string()))?;
         if let Some(cause) = stop(run) {
             return Err(NotReady::Stopped(cause));
         }
-        if process.expired() {
-            return Err(NotReady::Failed(format!(
-                "environment `{}` did not come up within {}s; it was still starting. \
-                 Raise `health_wait_timeout_secs` for a slow first boot, or inspect it \
-                 with `effigy container status`",
+        if Instant::now() >= next_progress {
+            next_progress = Instant::now() + START_PROGRESS_INTERVAL;
+            println!(
+                "[environment] `{}` is still coming up after {}s; its `up` step is still running, so nothing has timed out",
                 plan.name,
-                plan.up_budget.as_secs()
-            )));
+                started.elapsed().as_secs()
+            );
         }
         if let Observed::Verified(exit, _) = process.poll() {
             let _ = process.complete(

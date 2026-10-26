@@ -142,6 +142,141 @@ fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
     );
 }
 
+/// Certificates are a cache keyed by domain, and the daemon prunes an orphan
+/// once it is older than the cache age. A route's certificate stays.
+#[cfg(unix)]
+#[test]
+fn private_gateway_prunes_an_orphan_certificate_and_keeps_a_routed_one() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let root = private_root(fixture.path(), "cert-cache");
+    parse_json_success(run_gateway(&root, "setup-tls", &effects, None, &[]));
+    let upstream = Upstream::start("private-gateway-cert-cache");
+    save_private_routes(&root, &[("kept.test", upstream.address, true)]);
+
+    let certs = root.join("certs");
+    let old = std::time::SystemTime::now() - Duration::from_secs(8 * 24 * 60 * 60);
+    for (domain, modified) in [("kept.test", old), ("orphan.test", old)] {
+        write_self_signed_cert_pair(&certs, domain, modified);
+    }
+
+    let mut child = spawn_private_gateway_daemon(&root, false);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while root.join("orphan.test.pem").exists() || root.join("orphan.test-key.pem").exists() {
+        if let Some(status) = child.try_wait().expect("check private daemon") {
+            panic!(
+                "private daemon exited before pruning ({status}); log={}",
+                fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the daemon did not prune the orphaned certificate; log={}",
+            fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        certs.join("kept.test.pem").exists() && certs.join("kept.test-key.pem").exists(),
+        "a routed domain keeps its cached certificate"
+    );
+    child.terminate_and_wait().expect("stop private daemon");
+}
+
+/// A store this build writes is readable by a pinned build. Queue and Oxide
+/// run `efc1478`, whose decoder requires the empty `imported_sha256` and
+/// `quarantined` maps; the vendored shape is checked in the crate's own tests.
+/// This proof runs when `EFFIGY_PINNED_READER_EFC1478` names that build's
+/// binary, because the pinned build is not part of this suite.
+#[cfg(unix)]
+#[test]
+fn pinned_reader_reads_a_store_this_build_wrote() {
+    let Some(pinned) = std::env::var_os("EFFIGY_PINNED_READER_EFC1478") else {
+        eprintln!("skipped: EFFIGY_PINNED_READER_EFC1478 names no pinned build");
+        return;
+    };
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let root = private_root(fixture.path(), "pinned-reader");
+    parse_json_success(run_gateway(&root, "setup-tls", &effects, None, &[]));
+    let upstream = Upstream::start("pinned-reader");
+    save_private_routes(&root, &[("pinned.test", upstream.address, true)]);
+
+    let output = Command::new(pinned)
+        .args([
+            "gateway",
+            "status",
+            "--private-state-root",
+            root.to_str().expect("UTF-8 fixture path"),
+            "--json",
+        ])
+        .env_remove(effigy_gateway::private_state::PRIVATE_STATE_ROOT_ENV)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run the pinned build");
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "the pinned build could not read this store: {rendered}"
+    );
+    assert!(
+        rendered.contains("pinned.test"),
+        "the pinned build did not list the route: {rendered}"
+    );
+}
+
+/// A route whose target is briefly down survives far past the interval the
+/// retired dead-route sweep ran on. A container restart, a Colima restart and
+/// a listener that has not bound yet all look like this, and the route has to
+/// be there when the target is back.
+#[cfg(unix)]
+#[test]
+fn private_gateway_keeps_a_route_whose_target_is_down() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
+    let effects = HostEffectSentinels::new(fixture.path());
+    let root = private_root(fixture.path(), "route-survival");
+    parse_json_success(run_gateway(&root, "setup-tls", &effects, None, &[]));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bound probe port");
+    let down = listener.local_addr().expect("probe address");
+    drop(listener);
+    save_private_routes(&root, &[("localhost", down, false)]);
+
+    let mut child = spawn_private_gateway_daemon(&root, false);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !root.join("gateway.addresses.json").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "private daemon did not start; log={}",
+            fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let routed = || {
+        let status = parse_json_success(run_gateway(&root, "status", &effects, None, &[]));
+        status["routes"]
+            .as_array()
+            .is_some_and(|routes| routes.iter().any(|route| route["domain"] == "localhost"))
+    };
+    assert!(routed(), "the route is listed while its target is down");
+
+    // The retired sweep dropped a route like this within 30 seconds.
+    thread::sleep(Duration::from_secs(60));
+
+    assert!(
+        routed(),
+        "a route whose target is briefly down must survive: {}",
+        fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
+    );
+    child.terminate_and_wait().expect("stop private daemon");
+}
+
 #[test]
 fn private_gateway_sentinel_reads_after_accept_before_client_bytes() {
     // Controlled counterexample to the inherited nonblocking arrangement:
@@ -1359,7 +1494,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         tcp_target: None,
         source: RouteSource::Manual,
         project: foreign_checkout.display().to_string(),
-        scope: None,
         managed_listener: None,
         tls: true,
         registered: Utc::now(),
@@ -3271,7 +3405,6 @@ fn save_localhost_route(root: &Path, target: SocketAddr) {
         tcp_target: None,
         source: RouteSource::Manual,
         project: root.display().to_string(),
-        scope: None,
         managed_listener: None,
         tls: true,
         registered: Utc::now(),
@@ -3279,6 +3412,71 @@ fn save_localhost_route(root: &Path, target: SocketAddr) {
     routes
         .save(&root.join("routes.json"))
         .expect("write trusted private fixture route");
+}
+
+/// Write one private fixture route table: the routes are the whole claim.
+fn save_private_routes(root: &Path, routes: &[(&str, SocketAddr, bool)]) {
+    let mut table = RouteTable::new();
+    for (domain, target, tls) in routes {
+        table.upsert(Route {
+            domain: (*domain).to_owned(),
+            target: Some(target.to_string()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            source: RouteSource::Manual,
+            project: root.display().to_string(),
+            managed_listener: None,
+            tls: *tls,
+            registered: Utc::now(),
+        });
+    }
+    table
+        .save(&root.join("routes.json"))
+        .expect("write private fixture route table");
+}
+
+/// A certificate pair the private resolver can load, with a chosen age.
+fn write_self_signed_cert_pair(certs: &Path, domain: &str, modified: std::time::SystemTime) {
+    let cert = certs.join(format!("{domain}.pem"));
+    let key = certs.join(format!("{domain}-key.pem"));
+    let output = Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "30",
+            "-subj",
+            &format!("/CN={domain}"),
+            "-addext",
+            &format!("subjectAltName=DNS:{domain}"),
+            "-keyout",
+            key.to_str().expect("UTF-8 key path"),
+            "-out",
+            cert.to_str().expect("UTF-8 cert path"),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run openssl for a fixture certificate");
+    assert!(
+        output.status.success(),
+        "openssl failed for {domain}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for path in [&cert, &key] {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open fixture certificate")
+            .set_modified(modified)
+            .expect("age the fixture certificate");
+    }
 }
 
 fn save_plain_localhost_route(root: &Path, target: SocketAddr) {
@@ -3291,7 +3489,6 @@ fn save_plain_localhost_route(root: &Path, target: SocketAddr) {
         tcp_target: None,
         source: RouteSource::Manual,
         project: root.display().to_string(),
-        scope: None,
         managed_listener: None,
         tls: false,
         registered: Utc::now(),
@@ -5635,6 +5832,288 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         read_json_file(&state_path)["status"],
         "stopped",
         "down records the terminal listener state"
+    );
+}
+
+/// The app one nested-effigy host process serves: it records its pid and, on
+/// SIGTERM, takes three seconds to finish before it exits. That drain is longer
+/// than the outer supervisor's escalation is comfortable with, so the stop has
+/// to observe the whole closure rather than cut the workload short or call the
+/// evidence inconsistent.
+const NESTED_EFFIGY_APP: &str = r#"
+import os, signal, sys, time
+pid_file, drained = sys.argv[1], sys.argv[2]
+open(pid_file, "w").write(str(os.getpid()))
+def stop(*_):
+    time.sleep(3)
+    open(drained, "w").write("drained\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+while True:
+    time.sleep(1)
+"#;
+
+/// Acow's API shape: the host process's `run` is a real nested `effigy` task,
+/// so the stop crosses two custody layers - the outer supervisor's group and
+/// the nested run's own workload group. The stop reports closure verified,
+/// never "the evidence contradicts itself", and the workload drains rather
+/// than being cut short by the requester's own window (effigy#357, #370).
+#[test]
+fn nested_effigy_host_process_stops_with_closure_verified() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("nested effigy checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Nested Effigy Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "nested-effigy@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let control = fixture.path().join("nested-effigy-control");
+    fs::create_dir(&control).expect("nested effigy control directory");
+    let app = control.join("app.py");
+    fs::write(&app, NESTED_EFFIGY_APP).expect("write the fixture app");
+    let pid_file = control.join("app-pid");
+    let drained = control.join("drained");
+    let profile = "fixture";
+    let task = "fixture:api";
+    let task_run = format!(
+        "exec python3 {} {} {}",
+        toml_quote(&app.display().to_string()),
+        toml_quote(&pid_file.display().to_string()),
+        toml_quote(&drained.display().to_string())
+    );
+    // The Acow shape: the process Effigy supervises is Effigy itself.
+    let host_run = format!("exec '{}' {task}", EFFIGY);
+    let host_process = format!(
+        "[[containers.web.host_processes]]\nname = \"api\"\nrun = {}\nrestart = \"never\"\nshutdown_grace_secs = 6\n\n",
+        toml_quote(&host_run)
+    );
+    let task_declaration = format!(
+        "[tasks.{}]\ndurable = true\nrun = {}\n",
+        toml_quote(task),
+        toml_quote(&task_run)
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n{host_process}{task_declaration}",
+        profile = toml_quote(profile),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the nested effigy config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let log_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("api.log");
+
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let up_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    assert!(
+        up.status.success(),
+        "`container web up --detach` failed: {up_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    wait_for_path_exists(&pid_file, Duration::from_secs(60), "the nested task's app");
+    let app_pid: i32 = fs::read_to_string(&pid_file)
+        .expect("the app records its pid")
+        .trim()
+        .parse()
+        .expect("the app pid is a number");
+
+    let started = Instant::now();
+    let down = run_container_cli(&checkout, &cleanup, &["down"]);
+    let elapsed = started.elapsed();
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed: {down_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    assert!(
+        !down_text.contains("contradicts itself")
+            && !down_text.contains("group closure unverified"),
+        "a stop within its grace reports closure, not inconsistent evidence: {down_text}"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(11),
+        "the stop settles within its grace plus five seconds: {elapsed:?}\n{down_text}"
+    );
+    assert!(
+        drained.exists(),
+        "the nested workload drained instead of being cut short: {down_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    assert!(
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(app_pid), None).is_err(),
+        "the nested task's app is gone after the stop"
+    );
+}
+
+/// A hung child - alive, port never opens - must not hold a bring-up: `down`
+/// from a second shell stops the run and ends the wait instead of blocking on
+/// the environment for its whole gate wait (effigy#370). This is the shape a
+/// consumer's API takes when it waits on a database that never comes up.
+#[test]
+fn hung_listener_does_not_block_down_from_another_shell() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("hung listener checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Hung Listener Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "hung-listener@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let profile = "fixture";
+    let domain = "hung.host.test";
+    let hung_run = "exec python3 -c 'import time\ntime.sleep(120)'";
+    let listener = format!(
+        "[containers.web.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 60\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = false\n",
+        toml_quote(domain)
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = {hung_run}\nrestart = \"never\"\n\n{listener}",
+        profile = toml_quote(profile),
+        hung_run = toml_quote(hung_run),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the hung listener config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let state_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("api.listener.json");
+
+    let state_now = || {
+        fs::read(&state_path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+    };
+    let mut up = spawn_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while state_now().is_none_or(|state| state["status"] != "starting") {
+        assert!(
+            Instant::now() < deadline,
+            "the hung listener never published its starting generation: {:?}",
+            state_now()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let started = Instant::now();
+    let down = run_container_cli(&checkout, &cleanup, &["down"]);
+    let elapsed = started.elapsed();
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed against a hung start: {down_text}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(60),
+        "`down` waits out the environment instead of stopping the start: {elapsed:?}\n{down_text}"
+    );
+    assert!(
+        !down_text.contains("holds its gate") && !down_text.contains("busy"),
+        "the stop is taken, not refused as busy: {down_text}"
+    );
+    assert_eq!(
+        read_json_file(&state_path)["status"],
+        "stopped",
+        "the waiting start settles its listener state"
+    );
+    // The waiting `up` saw the stop and returned instead of waiting forever.
+    let status = up.wait().expect("the waiting `up` returns");
+    assert!(
+        !status.success(),
+        "a bring-up stopped before readiness does not report success"
     );
 }
 

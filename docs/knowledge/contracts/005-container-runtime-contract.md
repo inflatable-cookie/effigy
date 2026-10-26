@@ -864,15 +864,24 @@ Repo-owned Compose files keep their own resource rules: linked worktrees fail
 closed when they contain fixed published ports, container names, or named
 external resources that Effigy cannot scope.
 
-Gateway route ownership is the checkout path plus its generation token. Route
-table claims and removals serialize under a lock separate from the atomically
-replaced table file. A live foreign owner blocks a domain claim, including
-HTTP, TLS and TCP alias routes. Teardown and stale-route pruning remove only
-routes still owned by the caller; certificate deletion follows the same
-owner-checked removal while the lock is held. A missing or replaced worktree
-generation is stale and may be claimed by another worktree. A fixed domain
-therefore refuses a second live worktree until the consumer supplies distinct
-domains. The route table never silently moves a live sibling's domain.
+Gateway route ownership is the checkout path alone. One endpoint store
+transaction is the whole write path: a claim, a takeover and a withdrawal all
+commit from it, and no separate lock or generation token is recorded. A live
+foreign owner blocks a domain claim, including HTTP, TLS and TCP alias routes.
+Withdrawal removes every route the caller's checkout path owns, listener routes
+included, and leaves a route another checkout owns. Only a *missing* checkout
+path is gone: an unreadable path (permission refusal, a stale network handle)
+and a path whose own parent is missing (a volume that is not mounted yet) are
+unknown, and their routes stay. Nothing withdraws a route because its target is
+briefly down, so a container restart, a Colima restart or a listener that has
+not bound yet keeps its route. A missing worktree path is stale and may be
+claimed by another worktree. A fixed domain therefore refuses a second live
+worktree until the consumer supplies distinct domains. The route table never
+silently moves a live sibling's domain.
+
+A TLS certificate is a cache keyed by domain. `down` and `retire` keep it, so a
+stack that comes back finds its certificate ready, and the gateway daemon
+prunes a certificate no route names once it is seven days old.
 
 A checkout may switch between its container environment and hybrid managed
 listener mode in either direction, and between any two of its environments,
@@ -1057,9 +1066,10 @@ them; without it retirement removes them with the rest of the stack. Anything
 that could not be deleted is named with the runtime's own error and retirement
 exits non-zero; it never reports a clean result while an owned resource
 survives.
-Retirement also releases the checkout's gateway routes and their certificates
-by checkout path alone, which frees its loopback address with them. A second
-retire with nothing left is success and reports `idempotent: true`.
+Retirement also releases the checkout's gateway routes by checkout path alone,
+which frees its loopback address with them. Its certificates stay as a cache
+the daemon prunes by age. A second retire with nothing left is success and
+reports `idempotent: true`.
 
 A container, volume or network of one of this checkout's Compose projects that
 carries no Effigy checkout label is reported under `kept` and left alone, never
@@ -1145,11 +1155,9 @@ skill location.
 Repo-owned Compose is classified as such: cleanup uses the scoped project
 label, not a name prefix, and named volumes in those projects stay unless
 labelled `com.effigy.persist=false`. `share_runtime_identity = true` skips
-stack deletion. Certificate removal for retired TLS routes is recorded on
-the scope first, then runs as one owner-checked operation under the
-route-table lock before the table is saved. A TLS failure leaves the route
-and the pending-cert list for retry. A pending certificate whose domain now
-has a foreign owner is left in place.
+stack deletion. A TLS certificate outlives the route that needed it: nothing
+removes one on a stop or a retirement, and the gateway daemon prunes the
+certificates no route names once they are seven days old.
 
 ## Approved ephemeral clone extension
 
@@ -1453,15 +1461,15 @@ environment, but they must not invent a separate activation model.
 A route is the whole claim on a domain: `domain -> (checkout path, target)`.
 The same checkout path always replaces its own route, so a new run, a new
 generation and a container-to-listener handover need no proof. A different
-checkout path takes the domain over when the recorded checkout path no longer
-exists, or the recorded target does not accept a TCP connection within 200 ms;
+checkout path takes the domain over when the recorded checkout path is
+missing, or the recorded target does not accept a TCP connection within 200 ms;
 the takeover is logged in one line. Otherwise the write is refused with one
 message naming the other checkout and the command that stops it there
 (`effigy container down`). `down`, `retire` and settle remove the checkout's
 routes by path, listener routes included, whether or not a supervisor is alive,
 so the domain is free immediately and a following `up` from another checkout
-takes it at once. The daemon sweeps the same dead-owner rule on a timer so
-`gateway status` lists domains something still serves.
+takes it at once. Nothing else withdraws a route: there is no timer, and a
+route whose target is briefly down stays until its checkout withdraws it.
 
 The route table is the whole record of loopback ownership: an address is in
 use exactly when some route references it, as its `dns_ip` or as its target. A

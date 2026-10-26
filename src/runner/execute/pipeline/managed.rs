@@ -42,9 +42,6 @@ use effigy_manifest::TaskSelection;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-/// `up` of an environment a managed run starts: bounded, even for a cold
-/// engine that pulls images and boots a VM inside it.
-const ENVIRONMENT_UP_BUDGET: Duration = Duration::from_secs(900);
 /// Where an exec workload's remote session leader records itself, under
 /// the checkout. Each marker carries its effect's nonce (`EXEC_NONCE`).
 const EXEC_MARKER_DIR: &str = ".effigy/runtime/managed-exec";
@@ -1064,7 +1061,6 @@ fn environment_plan(
         } else {
             Vec::new()
         },
-        up_budget: ENVIRONMENT_UP_BUDGET,
         readiness_budget: Duration::from_secs(plan.readiness.timeout_secs),
         ready_lines,
     }))

@@ -19,7 +19,6 @@ fn route(domain: &str, checkout: &std::path::Path) -> Route {
         source: RouteSource::Container,
         project: checkout.display().to_string(),
         tls: false,
-        scope: None,
         managed_listener: None,
         registered: chrono::Utc::now(),
     }
@@ -86,7 +85,12 @@ fn a_record_from_the_port_range_build_keeps_decoding_and_loses_legacy_documents_
     snapshot.set_routes(&RouteTable::new()).unwrap();
     let rewritten = serde_json::to_value(&snapshot).unwrap();
     assert!(rewritten.get("authority").is_none());
-    assert!(rewritten.get("imported_sha256").is_none());
+    assert_eq!(
+        rewritten.get("imported_sha256"),
+        Some(&json!({})),
+        "a pinned reader requires the map, so an ordinary write emits it empty"
+    );
+    assert_eq!(rewritten.get("quarantined"), Some(&json!({})));
     assert!(rewritten["documents"].get("ports").is_none());
     assert!(
         rewritten["documents"].get("loopback").is_none(),
@@ -172,4 +176,125 @@ fn a_loopback_alias_is_the_lowest_address_no_route_references() {
         crate::loopback::checkout_address(&table, &mine.display().to_string()),
         Some(first)
     );
+}
+
+/// The pinned build Queue and Oxide run (`efc1478`) decodes the store with
+/// these requirements: `imported_sha256` and `quarantined` are required maps,
+/// `authority` and `domains` default, and unknown root fields are refused.
+/// The shapes are vendored here because that build is not part of this suite.
+mod pinned_reader_efc1478 {
+    use std::collections::BTreeMap;
+
+    use serde::Deserialize;
+    use serde_json::Value;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct EndpointSnapshot {
+        pub schema: u32,
+        #[serde(default)]
+        #[allow(dead_code)]
+        pub authority: Authority,
+        #[allow(dead_code)]
+        pub revision: u64,
+        pub documents: BTreeMap<String, Value>,
+        #[serde(default)]
+        #[allow(dead_code)]
+        pub domains: BTreeMap<String, Value>,
+        pub imported_sha256: BTreeMap<String, String>,
+        pub quarantined: BTreeMap<String, Value>,
+    }
+
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Authority {
+        #[default]
+        Store,
+        Exporting,
+        Legacy,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct RouteTable {
+        pub routes: BTreeMap<String, PinnedRoute>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct PinnedRoute {
+        pub domain: String,
+        pub project: String,
+        #[serde(default)]
+        #[allow(dead_code)]
+        pub tls: bool,
+    }
+}
+
+/// A store this build writes is readable by the pinned build: the maps it
+/// requires are present and empty, the root fields it refuses are absent, and
+/// a container route still decodes into its own route shape.
+#[test]
+fn a_store_this_build_writes_decodes_with_the_pinned_reader_shape() {
+    let (dir, store) = fixture();
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    store
+        .routes(|table| {
+            let mut route = route("app.test", &checkout);
+            route.tls = true;
+            table.upsert(route);
+            Ok::<_, crate::GatewayError>(())
+        })
+        .unwrap();
+
+    let state = store.snapshot().unwrap();
+    let raw = serde_json::to_value(&state).unwrap();
+    let pinned: pinned_reader_efc1478::EndpointSnapshot =
+        serde_json::from_value(raw.clone()).expect("the pinned build decodes this store");
+    assert!(pinned.imported_sha256.is_empty());
+    assert!(pinned.quarantined.is_empty());
+    assert_eq!(pinned.schema, 1);
+
+    let routes: pinned_reader_efc1478::RouteTable =
+        serde_json::from_value(pinned.documents["routes"].clone())
+            .expect("the pinned build decodes the route document");
+    assert_eq!(routes.routes["app.test"].domain, "app.test");
+    assert_eq!(
+        routes.routes["app.test"].project,
+        checkout.display().to_string()
+    );
+}
+
+/// One row the table cannot describe degrades its own claim instead of
+/// refusing the machine-wide store's next write.
+#[test]
+fn a_bad_row_does_not_brick_the_next_write() {
+    let (dir, store) = fixture();
+    let broken = dir.path().join("broken");
+    let good = dir.path().join("good");
+    let newer = dir.path().join("newer");
+    for path in [&broken, &good, &newer] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    store
+        .routes(|table| {
+            let mut alias = route("broken.test", &broken);
+            alias.target = None;
+            alias.tcp_port = Some(5432);
+            table.upsert(alias);
+            table.upsert(route("good.test", &good));
+            Ok::<_, crate::GatewayError>(())
+        })
+        .expect("a row without an alias target does not refuse its own write");
+
+    store
+        .routes(|table| {
+            table.upsert(route("newer.test", &newer));
+            Ok::<_, crate::GatewayError>(())
+        })
+        .expect("one bad row does not refuse every other checkout's write");
+
+    let table = store.snapshot().unwrap().routes().unwrap();
+    assert!(table.lookup("broken.test").is_some());
+    assert!(table.lookup("good.test").is_some());
+    assert!(table.lookup("newer.test").is_some());
 }

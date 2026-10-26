@@ -10,15 +10,20 @@
 //! - CA installation status checking
 //! - SNI-based certificate resolver for multi-domain HTTPS
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, SystemTime};
 
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 
 use crate::error::GatewayError;
+
+/// How long a certificate whose domain no route names stays cached before the
+/// daemon removes it.
+pub const CERT_CACHE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Optional explicit mkcert program path used by private and elevated gateway runs.
 ///
@@ -233,14 +238,6 @@ impl TlsConfig {
             cert: self.certs_dir.join(format!("{domain}.pem")),
             key: self.certs_dir.join(format!("{domain}-key.pem")),
         }
-    }
-
-    /// Remove a certificate and key for a domain if they exist.
-    pub fn remove_cert(&self, domain: &str) -> Result<(), GatewayError> {
-        let paths = self.cert_paths(domain);
-        remove_file_if_exists(&paths.cert)?;
-        remove_file_if_exists(&paths.key)?;
-        Ok(())
     }
 
     fn mkcert_command(&self) -> Result<Command, String> {
@@ -557,6 +554,62 @@ fn remove_file_if_exists(path: &Path) -> Result<(), GatewayError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(GatewayError::Io(error)),
     }
+}
+
+/// Remove cached certificate pairs that no TLS route names and that have not
+/// been written within `max_age`.
+///
+/// Certificates are a cache keyed by domain: `down` and `retire` keep them, so
+/// a stack that comes back finds its certificate ready. This age prune is the
+/// only thing that removes an orphan. A younger cert, an unreadable entry and
+/// an unknown modification time are kept.
+pub fn prune_orphan_certs(
+    certs_dir: &Path,
+    routed_domains: &BTreeSet<String>,
+    max_age: Duration,
+    now: SystemTime,
+) -> Result<Vec<String>, GatewayError> {
+    let entries = match std::fs::read_dir(certs_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(GatewayError::TlsError {
+                domain: certs_dir.display().to_string(),
+                reason: format!("failed to read certs directory: {error}"),
+            })
+        }
+    };
+    let mut pruned = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".pem") || name.ends_with("-key.pem") {
+            continue;
+        }
+        let domain = name.trim_end_matches(".pem");
+        if routed_domains
+            .iter()
+            .any(|routed| routed.eq_ignore_ascii_case(domain))
+        {
+            continue;
+        }
+        // An unreadable entry or an unknown modification time is kept: the
+        // prune only removes what it can prove is old.
+        let Ok(modified) = entry.metadata().and_then(|metadata| metadata.modified()) else {
+            continue;
+        };
+        match now.duration_since(modified) {
+            Ok(age) if age >= max_age => {}
+            _ => continue,
+        }
+        remove_file_if_exists(&path)?;
+        remove_file_if_exists(&path.with_file_name(format!("{domain}-key.pem")))?;
+        pruned.push(domain.to_owned());
+    }
+    pruned.sort();
+    Ok(pruned)
 }
 
 fn mkcert_ca_exists() -> bool {
