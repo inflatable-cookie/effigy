@@ -921,6 +921,25 @@ owner, so the last writer wins between a container environment and its
 listener. `down` removes the checkout's routes by path, listener routes
 included.
 
+## Shared backing-service clients
+
+A shared backing service is reached through environment variables, so those
+variables go to the stack's own clients: services whose catalog is an exec
+target and neither publishes a loopback endpoint nor is shared-eligible itself.
+That is the workspace service and the app services. Catalog infrastructure — a
+backing service or an appliance whose own connection it declares — keeps the
+environment it declares, so a local MariaDB catalog service never honours the
+shared `MYSQL_HOST` in its own health check. A value a service already declares
+wins over the injected one.
+
+Each client that receives those variables also carries
+`extra_hosts: host.docker.internal:<host address>`. On Colima the address is the
+profile gateway address the runtime DNS override maps host gateway domains to,
+because that override replaces the VM's own resolver and with it the host
+alias. A Docker engine backend supplies `host-gateway` for the same name, which
+Docker Desktop and Linux Docker both resolve. A service that receives no shared
+environment gets no entry.
+
 ## Shared service data volumes (`data_from`)
 
 A container environment may declare `data_from = "<other-env>"`. Every service

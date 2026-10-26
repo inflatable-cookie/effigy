@@ -106,7 +106,7 @@ fn resolve_runtime_dns_servers(profile: &str) -> Vec<String> {
     }
 }
 
-fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
+pub(crate) fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
     // Rendering precedes profile startup. Its default gateway must not depend
     // on whether Colima has written colima.yaml yet (also true on Linux).
     colima_home_dir()

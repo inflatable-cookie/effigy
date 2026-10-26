@@ -1883,6 +1883,15 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- Shared backing-service environment goes only to the services that are its
+  clients, and those clients can resolve it. The generated Compose rewrite
+  injected every shared `*_HOST` into every service, so a local MariaDB catalog
+  service beside a shared one ran its own health check against
+  `host.docker.internal` and `container up` failed with `Unknown server host
+  'host.docker.internal'`. Catalog infrastructure keeps its own environment; the
+  workspace and app services take the shared variables and an
+  `extra_hosts: host.docker.internal:<host address>` entry, because the runtime
+  DNS override replaces the resolver that supplied the host alias (effigy#368).
 - A service whose every runtime network alias an effective route already claims
   renders no `networks` block at all, so a primary checkout's generated DNS
   override stays valid Compose. Previously it wrote `aliases:` with nothing
