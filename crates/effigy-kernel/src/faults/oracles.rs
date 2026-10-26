@@ -481,377 +481,382 @@ mod controls {
         }
     }
 
-    #[test]
-    fn oracle_controls_o1a_o1b_reject_surviving_processes() {
-        let mut world = World::default();
-        world.runs.push(row(1, "closed", Some("complete")));
-        world.effects.insert(run_id(1).to_string(), vec![]);
-        passes(Oracle::O1a, &world);
-        world.workloads.push(Proc {
-            pid: me(),
-            alive: true,
-            nonce: Some(format!("{}:1", run_id(1))),
-        });
-        fails(Oracle::O1a, &world);
-        // Incomplete: the survivor must be a listed residue effect.
-        let mut world = World::default();
-        world.runs.push(row(2, "closed", Some("incomplete")));
-        world.effects.insert(
-            run_id(2).to_string(),
-            vec![effect(1, "kernel:process", EffectState::Released)],
-        );
-        world.statuses.insert(
-            run_id(2).to_string(),
-            Observed::Verified(
-                RunStatus::Closed {
-                    workload: crate::outcome::WorkloadOutcome::Interrupted,
-                    complete: false,
-                    effects: vec![],
-                },
-                evidence(),
-            ),
-        );
-        world.successor_blocked.insert(run_id(2).to_string(), true);
-        passes(Oracle::O1b, &world);
-        world.workloads.push(Proc {
-            pid: me(),
-            alive: true,
-            nonce: Some(format!("{}:1", run_id(2))),
-        });
-        fails(Oracle::O1b, &world);
-        world.workloads.clear();
-        world.successor_blocked.insert(run_id(2).to_string(), false);
-        fails(Oracle::O1b, &world);
-        world.successor_blocked.insert(run_id(2).to_string(), true);
-        world.effects.insert(
-            run_id(2).to_string(),
-            vec![effect(1, "kernel:attachment", EffectState::Residue)],
-        );
-        fails(Oracle::O1b, &world);
-    }
-    #[test]
-    fn oracle_controls_o2_o3_o13_reject_open_or_parallel_runs() {
-        let mut world = World::default();
-        world.runs.push(row(1, "active", None));
-        world.statuses.insert(
-            run_id(1).to_string(),
-            Observed::Verified(RunStatus::Live(Phase::Active), evidence()),
-        );
-        fails(Oracle::O2, &world);
-        let bad = crate::outcome::Invocation::validated(vec!["other".into()], |_| true).unwrap();
-        world.statuses.insert(
-            run_id(1).to_string(),
-            Observed::Verified(
-                RunStatus::Interrupted {
-                    phase: Phase::Active,
-                    next: bad,
-                },
-                evidence(),
-            ),
-        );
-        fails(Oracle::O2, &world);
-        world.statuses.insert(
-            run_id(1).to_string(),
-            Observed::Verified(
-                RunStatus::Interrupted {
-                    phase: Phase::Active,
-                    next: next(),
-                },
-                evidence(),
-            ),
-        );
-        passes(Oracle::O2, &world);
-        passes(Oracle::O3, &world);
-        world.runs.push(row(2, "stopping", None));
-        fails(Oracle::O3, &world);
-        world.admissions.push(Admission {
-            run: "r".into(),
-            owner: "o".into(),
-            unresolved: 0,
-            open: 0,
-        });
-        passes(Oracle::O13, &world);
-        world.admissions[0].unresolved = 1;
-        fails(Oracle::O13, &world);
-    }
-    #[test]
-    fn oracle_controls_o4_rejects_a_gate_held_without_a_declared_holder() {
-        let mut world = World::default();
-        let held = |pid| GateRead {
-            file: "scope/x.gate".into(),
-            observed: Observed::Verified(
-                GateState::Held(Box::new(Observed::Verified(
-                    HolderDiag {
-                        foreground: None,
-                        run: None,
-                        pid,
-                        start: None,
-                        boot: None,
-                        argv0: None,
-                        state: Observed::Verified(ProcessState::Active, evidence()),
-                    },
-                    evidence(),
-                ))),
-                evidence(),
-            ),
-        };
-        world.gates.push(GateRead {
-            file: "scope/free.gate".into(),
-            observed: Observed::Absent(AbsenceProof::NoGateInode),
-        });
-        passes(Oracle::O4, &world);
-        world.gates.push(held(me()));
-        fails(Oracle::O4, &world);
-        world.live_holders.insert(me());
-        passes(Oracle::O4, &world);
-        world.gates.push(GateRead {
-            file: "scope/unknown.gate".into(),
-            observed: Observed::Unknown(UnknownReason::Injected),
-        });
-        fails(Oracle::O4, &world);
-        let mut world = World::default();
-        world.scopes_held.push("scope".into());
-        fails(Oracle::O4, &world);
-    }
-    #[test]
-    fn oracle_controls_o5_rejects_double_application_and_release() {
-        let mut world = World {
-            calls: vec!["apply a".into(), "release a".into()],
-            ..World::default()
-        };
-        passes(Oracle::O5, &world);
-        world.calls.push("release a".into());
-        fails(Oracle::O5, &world);
-        let mut world = World::default();
-        world
-            .attachments
-            .push(("env".into(), "run".into(), "released".into()));
-        fails(Oracle::O5, &world);
-        world.releases.push(("env".into(), "run".into()));
-        passes(Oracle::O5, &world);
-        world.releases.push(("env".into(), "run".into()));
-        fails(Oracle::O5, &world);
-        let world = World {
-            claim_releases: vec![("c".into(), Some("t".into())); 2],
-            ..World::default()
-        };
-        fails(Oracle::O5, &world);
-    }
-    #[test]
-    fn oracle_controls_o6_o7_o9_o10_reject_damage() {
-        let mut world = World {
-            integrity: Some(Err("1 foreign-key violations".into())),
-            ..World::default()
-        };
-        fails(Oracle::O6, &world);
-        world.replaced.push((
-            "t".into(),
-            vec![b"old".to_vec(), b"new".to_vec()],
-            Some(b"ne".to_vec()),
-        ));
-        fails(Oracle::O7, &world);
-        world.replaced[0].2 = None;
-        fails(Oracle::O7, &world);
-        world.outcomes.push(("CaptureWrite".into(), 0, 1));
-        fails(Oracle::O9, &world);
-        world
-            .diffs
-            .push(("status".into(), vec!["created kernel.db".into()]));
-        fails(Oracle::O10, &world);
-    }
-    #[test]
-    fn oracle_controls_o8_rejects_undo_after_unknown_or_unobserved() {
-        let mut world = World {
-            events: vec![
-                Event::Observed {
-                    subject: "a".into(),
-                    unknown: false,
-                },
-                Event::Destructive {
-                    subject: "a".into(),
-                },
-            ],
-            ..World::default()
-        };
-        passes(Oracle::O8, &world);
-        world.events.insert(
-            1,
-            Event::Observed {
-                subject: "a".into(),
-                unknown: true,
-            },
-        );
-        fails(Oracle::O8, &world);
-        world.events = vec![Event::Destructive {
-            subject: "b".into(),
-        }];
-        fails(Oracle::O8, &world);
-    }
-    #[test]
-    fn oracle_controls_o11_o12_o14_reject_unsafe_destruction() {
-        let mut world = World {
-            calls: vec!["env:down e@2 holders=0".into()],
-            ..World::default()
-        };
-        passes(Oracle::O11, &world);
-        world.calls.push("env:handover e@3 holders=1".into());
-        fails(Oracle::O11, &world);
-        world.foreign.push((
-            Proc {
-                pid: me(),
-                alive: true,
-                nonce: None,
-            },
-            vec!["TERM".into()],
-        ));
-        fails(Oracle::O12, &world);
-        world.foreign[0].1.clear();
-        world.foreign[0].0.alive = false;
-        fails(Oracle::O12, &world);
-        world.probe_bound = Some(Duration::from_millis(1));
-        world.probes.push(Proc {
-            pid: me(),
-            alive: true,
-            nonce: Some("probe".into()),
-        });
-        fails(Oracle::O14, &world);
-    }
 
     // --- Live controls: a real HOME broken the way a kernel bug would. ---
 
+
+    /// Merged proof: oracle_controls_o1a_o1b_reject_surviving_processes, oracle_controls_o2_o3_o13_reject_open_or_parallel_runs, oracle_controls_o4_rejects_a_gate_held_without_a_declared_holder, oracle_controls_o5_rejects_double_application_and_release, oracle_controls_o6_o7_o9_o10_reject_damage, oracle_controls_o8_rejects_undo_after_unknown_or_unobserved, oracle_controls_o11_o12_o14_reject_unsafe_destruction, oracle_live_controls_detect_real_violations.
     #[test]
-    fn oracle_live_controls_detect_real_violations() {
-        use super::super::scenarios::Fake;
-        use crate::gate::{Gate, Wait};
-        use crate::root::StateRoot;
-        use crate::store::Store;
-        let dir = home();
-        let home = dir.home();
-        install_audits(&home);
-        let cx = mutate();
-        let root = StateRoot::effects(&cx, &home).unwrap();
-        let owner = ResourceId::store(Scope::Machine, "control").unwrap();
-        let inv = super::super::scenarios::invocation(owner.clone(), vec![]);
-        let mut fake = Fake::new(&home);
-        let run = Run::begin(
-            &cx,
-            &root,
-            &inv,
-            BeginOpts {
-                id: run_id(1),
-                wait: Wait::FailFast,
-                acknowledge: vec![],
-                next: next(),
-                custody: None,
-            },
-            &cleanup(&cx),
-            &mut fake,
-        )
-        .unwrap();
-        run.settle(&cleanup(&cx), &mut fake).unwrap();
-        let world = || {
-            let mut world = World::capture(&home);
-            world.integrity = Some(
-                Store::open(&mutate(), &root)
-                    .unwrap()
-                    .check_integrity()
-                    .map_err(|e| format!("{e:?}")),
+    fn oracle_controls_reject_every_violating_world() {
+        // oracle_controls_o1a_o1b_reject_surviving_processes
+
+            let mut world = World::default();
+            world.runs.push(row(1, "closed", Some("complete")));
+            world.effects.insert(run_id(1).to_string(), vec![]);
+            passes(Oracle::O1a, &world);
+            world.workloads.push(Proc {
+                pid: me(),
+                alive: true,
+                nonce: Some(format!("{}:1", run_id(1))),
+            });
+            fails(Oracle::O1a, &world);
+            // Incomplete: the survivor must be a listed residue effect.
+            let mut world = World::default();
+            world.runs.push(row(2, "closed", Some("incomplete")));
+            world.effects.insert(
+                run_id(2).to_string(),
+                vec![effect(1, "kernel:process", EffectState::Released)],
             );
+            world.statuses.insert(
+                run_id(2).to_string(),
+                Observed::Verified(
+                    RunStatus::Closed {
+                        workload: crate::outcome::WorkloadOutcome::Interrupted,
+                        complete: false,
+                        effects: vec![],
+                    },
+                    evidence(),
+                ),
+            );
+            world.successor_blocked.insert(run_id(2).to_string(), true);
+            passes(Oracle::O1b, &world);
+            world.workloads.push(Proc {
+                pid: me(),
+                alive: true,
+                nonce: Some(format!("{}:1", run_id(2))),
+            });
+            fails(Oracle::O1b, &world);
+            world.workloads.clear();
+            world.successor_blocked.insert(run_id(2).to_string(), false);
+            fails(Oracle::O1b, &world);
+            world.successor_blocked.insert(run_id(2).to_string(), true);
+            world.effects.insert(
+                run_id(2).to_string(),
+                vec![effect(1, "kernel:attachment", EffectState::Residue)],
+            );
+            fails(Oracle::O1b, &world);
+
+        // oracle_controls_o2_o3_o13_reject_open_or_parallel_runs
+
+            let mut world = World::default();
+            world.runs.push(row(1, "active", None));
+            world.statuses.insert(
+                run_id(1).to_string(),
+                Observed::Verified(RunStatus::Live(Phase::Active), evidence()),
+            );
+            fails(Oracle::O2, &world);
+            let bad = crate::outcome::Invocation::validated(vec!["other".into()], |_| true).unwrap();
+            world.statuses.insert(
+                run_id(1).to_string(),
+                Observed::Verified(
+                    RunStatus::Interrupted {
+                        phase: Phase::Active,
+                        next: bad,
+                    },
+                    evidence(),
+                ),
+            );
+            fails(Oracle::O2, &world);
+            world.statuses.insert(
+                run_id(1).to_string(),
+                Observed::Verified(
+                    RunStatus::Interrupted {
+                        phase: Phase::Active,
+                        next: next(),
+                    },
+                    evidence(),
+                ),
+            );
+            passes(Oracle::O2, &world);
+            passes(Oracle::O3, &world);
+            world.runs.push(row(2, "stopping", None));
+            fails(Oracle::O3, &world);
+            world.admissions.push(Admission {
+                run: "r".into(),
+                owner: "o".into(),
+                unresolved: 0,
+                open: 0,
+            });
+            passes(Oracle::O13, &world);
+            world.admissions[0].unresolved = 1;
+            fails(Oracle::O13, &world);
+
+        // oracle_controls_o4_rejects_a_gate_held_without_a_declared_holder
+
+            let mut world = World::default();
+            let held = |pid| GateRead {
+                file: "scope/x.gate".into(),
+                observed: Observed::Verified(
+                    GateState::Held(Box::new(Observed::Verified(
+                        HolderDiag {
+                            foreground: None,
+                            run: None,
+                            pid,
+                            start: None,
+                            boot: None,
+                            argv0: None,
+                            state: Observed::Verified(ProcessState::Active, evidence()),
+                        },
+                        evidence(),
+                    ))),
+                    evidence(),
+                ),
+            };
+            world.gates.push(GateRead {
+                file: "scope/free.gate".into(),
+                observed: Observed::Absent(AbsenceProof::NoGateInode),
+            });
+            passes(Oracle::O4, &world);
+            world.gates.push(held(me()));
+            fails(Oracle::O4, &world);
+            world.live_holders.insert(me());
+            passes(Oracle::O4, &world);
+            world.gates.push(GateRead {
+                file: "scope/unknown.gate".into(),
+                observed: Observed::Unknown(UnknownReason::Injected),
+            });
+            fails(Oracle::O4, &world);
+            let mut world = World::default();
+            world.scopes_held.push("scope".into());
+            fails(Oracle::O4, &world);
+
+        // oracle_controls_o5_rejects_double_application_and_release
+
+            let mut world = World {
+                calls: vec!["apply a".into(), "release a".into()],
+                ..World::default()
+            };
+            passes(Oracle::O5, &world);
+            world.calls.push("release a".into());
+            fails(Oracle::O5, &world);
+            let mut world = World::default();
             world
-        };
-        for oracle in [
-            Oracle::O1a,
-            Oracle::O3,
-            Oracle::O4,
-            Oracle::O5,
-            Oracle::O6,
-            Oracle::O13,
-        ] {
-            passes(oracle, &world());
-        }
-        // O1a: a live process carrying the complete run's custody nonce.
-        let mut stray = std::process::Command::new(fixture_path())
-            .arg("nonce-workload")
-            .env("EFFIGY_CUSTODY_NONCE", format!("{}:1", run_id(1)))
-            .spawn()
+                .attachments
+                .push(("env".into(), "run".into(), "released".into()));
+            fails(Oracle::O5, &world);
+            world.releases.push(("env".into(), "run".into()));
+            passes(Oracle::O5, &world);
+            world.releases.push(("env".into(), "run".into()));
+            fails(Oracle::O5, &world);
+            let world = World {
+                claim_releases: vec![("c".into(), Some("t".into())); 2],
+                ..World::default()
+            };
+            fails(Oracle::O5, &world);
+
+        // oracle_controls_o6_o7_o9_o10_reject_damage
+
+            let mut world = World {
+                integrity: Some(Err("1 foreign-key violations".into())),
+                ..World::default()
+            };
+            fails(Oracle::O6, &world);
+            world.replaced.push((
+                "t".into(),
+                vec![b"old".to_vec(), b"new".to_vec()],
+                Some(b"ne".to_vec()),
+            ));
+            fails(Oracle::O7, &world);
+            world.replaced[0].2 = None;
+            fails(Oracle::O7, &world);
+            world.outcomes.push(("CaptureWrite".into(), 0, 1));
+            fails(Oracle::O9, &world);
+            world
+                .diffs
+                .push(("status".into(), vec!["created kernel.db".into()]));
+            fails(Oracle::O10, &world);
+
+        // oracle_controls_o8_rejects_undo_after_unknown_or_unobserved
+
+            let mut world = World {
+                events: vec![
+                    Event::Observed {
+                        subject: "a".into(),
+                        unknown: false,
+                    },
+                    Event::Destructive {
+                        subject: "a".into(),
+                    },
+                ],
+                ..World::default()
+            };
+            passes(Oracle::O8, &world);
+            world.events.insert(
+                1,
+                Event::Observed {
+                    subject: "a".into(),
+                    unknown: true,
+                },
+            );
+            fails(Oracle::O8, &world);
+            world.events = vec![Event::Destructive {
+                subject: "b".into(),
+            }];
+            fails(Oracle::O8, &world);
+
+        // oracle_controls_o11_o12_o14_reject_unsafe_destruction
+
+            let mut world = World {
+                calls: vec!["env:down e@2 holders=0".into()],
+                ..World::default()
+            };
+            passes(Oracle::O11, &world);
+            world.calls.push("env:handover e@3 holders=1".into());
+            fails(Oracle::O11, &world);
+            world.foreign.push((
+                Proc {
+                    pid: me(),
+                    alive: true,
+                    nonce: None,
+                },
+                vec!["TERM".into()],
+            ));
+            fails(Oracle::O12, &world);
+            world.foreign[0].1.clear();
+            world.foreign[0].0.alive = false;
+            fails(Oracle::O12, &world);
+            world.probe_bound = Some(Duration::from_millis(1));
+            world.probes.push(Proc {
+                pid: me(),
+                alive: true,
+                nonce: Some("probe".into()),
+            });
+            fails(Oracle::O14, &world);
+
+        // oracle_live_controls_detect_real_violations
+
+            use super::super::scenarios::Fake;
+            use crate::gate::{Gate, Wait};
+            use crate::root::StateRoot;
+            use crate::store::Store;
+            let dir = home();
+            let home = dir.home();
+            install_audits(&home);
+            let cx = mutate();
+            let root = StateRoot::effects(&cx, &home).unwrap();
+            let owner = ResourceId::store(Scope::Machine, "control").unwrap();
+            let inv = super::super::scenarios::invocation(owner.clone(), vec![]);
+            let mut fake = Fake::new(&home);
+            let run = Run::begin(
+                &cx,
+                &root,
+                &inv,
+                BeginOpts {
+                    id: run_id(1),
+                    wait: Wait::FailFast,
+                    acknowledge: vec![],
+                    next: next(),
+                    custody: None,
+                },
+                &cleanup(&cx),
+                &mut fake,
+            )
             .unwrap();
-        std::fs::write(home.join("pids"), stray.id().to_string()).unwrap();
-        wait_until("stray exec", Duration::from_secs(5), || {
-            crate::custody::platform::read_nonce_key(stray.id(), b"EFFIGY_CUSTODY_NONCE=")
-                .verified()
-                .is_some()
-        });
-        fails(Oracle::O1a, &world());
-        stray.kill().unwrap();
-        stray.wait().unwrap();
-        passes(Oracle::O1a, &world());
-        // O14: a probe process with readable generation evidence outliving
-        // its bound. The probe evidence is the fixture's readable nonce.
-        let mut probe = std::process::Command::new(fixture_path())
-            .arg("nonce-workload")
-            .env("EFFIGY_PROBE_NONCE", "control-probe")
-            .spawn()
-            .unwrap();
-        wait_until("probe exec", Duration::from_secs(5), || {
-            crate::custody::platform::read_nonce_key(probe.id(), b"EFFIGY_PROBE_NONCE=")
-                .verified()
-                .is_some()
-        });
-        let probes = World {
-            probes: vec![proc(probe.id(), b"EFFIGY_PROBE_NONCE=")],
-            probe_bound: Some(Duration::from_millis(1)),
-            ..World::default()
-        };
-        assert_eq!(probes.probes[0].nonce.as_deref(), Some("control-probe"));
-        fails(Oracle::O14, &probes);
-        probe.kill().unwrap();
-        probe.wait().unwrap();
-        let probes = World {
-            probes: vec![proc(probe.id(), b"EFFIGY_PROBE_NONCE=")],
-            probe_bound: Some(Duration::from_millis(1)),
-            ..World::default()
-        };
-        passes(Oracle::O14, &probes);
-        // O4: a gate held by a process the harness never declared live.
-        let guard =
-            Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast).unwrap();
-        fails(Oracle::O4, &world());
-        drop(guard);
-        passes(Oracle::O4, &world());
-        // O13 and O3: a run row inserted beside an open predecessor.
-        let store = Store::open(&cx, &root).unwrap();
-        for (n, phase) in [(7u8, "active"), (8, "active")] {
+            run.settle(&cleanup(&cx), &mut fake).unwrap();
+            let world = || {
+                let mut world = World::capture(&home);
+                world.integrity = Some(
+                    Store::open(&mutate(), &root)
+                        .unwrap()
+                        .check_integrity()
+                        .map_err(|e| format!("{e:?}")),
+                );
+                world
+            };
+            for oracle in [
+                Oracle::O1a,
+                Oracle::O3,
+                Oracle::O4,
+                Oracle::O5,
+                Oracle::O6,
+                Oracle::O13,
+            ] {
+                passes(oracle, &world());
+            }
+            // O1a: a live process carrying the complete run's custody nonce.
+            let mut stray = std::process::Command::new(fixture_path())
+                .arg("nonce-workload")
+                .env("EFFIGY_CUSTODY_NONCE", format!("{}:1", run_id(1)))
+                .spawn()
+                .unwrap();
+            std::fs::write(home.join("pids"), stray.id().to_string()).unwrap();
+            wait_until("stray exec", Duration::from_secs(5), || {
+                crate::custody::platform::read_nonce_key(stray.id(), b"EFFIGY_CUSTODY_NONCE=")
+                    .verified()
+                    .is_some()
+            });
+            fails(Oracle::O1a, &world());
+            stray.kill().unwrap();
+            stray.wait().unwrap();
+            passes(Oracle::O1a, &world());
+            // O14: a probe process with readable generation evidence outliving
+            // its bound. The probe evidence is the fixture's readable nonce.
+            let mut probe = std::process::Command::new(fixture_path())
+                .arg("nonce-workload")
+                .env("EFFIGY_PROBE_NONCE", "control-probe")
+                .spawn()
+                .unwrap();
+            wait_until("probe exec", Duration::from_secs(5), || {
+                crate::custody::platform::read_nonce_key(probe.id(), b"EFFIGY_PROBE_NONCE=")
+                    .verified()
+                    .is_some()
+            });
+            let probes = World {
+                probes: vec![proc(probe.id(), b"EFFIGY_PROBE_NONCE=")],
+                probe_bound: Some(Duration::from_millis(1)),
+                ..World::default()
+            };
+            assert_eq!(probes.probes[0].nonce.as_deref(), Some("control-probe"));
+            fails(Oracle::O14, &probes);
+            probe.kill().unwrap();
+            probe.wait().unwrap();
+            let probes = World {
+                probes: vec![proc(probe.id(), b"EFFIGY_PROBE_NONCE=")],
+                probe_bound: Some(Duration::from_millis(1)),
+                ..World::default()
+            };
+            passes(Oracle::O14, &probes);
+            // O4: a gate held by a process the harness never declared live.
+            let guard =
+                Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast).unwrap();
+            fails(Oracle::O4, &world());
+            drop(guard);
+            passes(Oracle::O4, &world());
+            // O13 and O3: a run row inserted beside an open predecessor.
+            let store = Store::open(&cx, &root).unwrap();
+            for (n, phase) in [(7u8, "active"), (8, "active")] {
+                store
+                    .conn()
+                    .execute(
+                        "INSERT INTO runs(run_id,owner,generation,kind,placement,phase,created_at,updated_at) \
+                         VALUES (?1,?2,9,'operation','host',?3,0,0)",
+                        rusqlite::params![run_id(n).to_string(), owner.name().to_string(), phase],
+                    )
+                    .unwrap();
+            }
+            fails(Oracle::O13, &world());
+            fails(Oracle::O3, &world());
+            // O5: an attachment released twice.
             store
                 .conn()
-                .execute(
-                    "INSERT INTO runs(run_id,owner,generation,kind,placement,phase,created_at,updated_at) \
-                     VALUES (?1,?2,9,'operation','host',?3,0,0)",
-                    rusqlite::params![run_id(n).to_string(), owner.name().to_string(), phase],
+                .execute_batch(
+                    "INSERT INTO attachments(environment,run_id,env_generation,mode,state) \
+                     SELECT name,(SELECT run_id FROM runs LIMIT 1),1,'\"Borrow\"','attached' FROM resources LIMIT 1;
+                     UPDATE attachments SET state='released';
+                     UPDATE attachments SET state='attached';
+                     UPDATE attachments SET state='released';",
                 )
                 .unwrap();
-        }
-        fails(Oracle::O13, &world());
-        fails(Oracle::O3, &world());
-        // O5: an attachment released twice.
-        store
-            .conn()
-            .execute_batch(
-                "INSERT INTO attachments(environment,run_id,env_generation,mode,state) \
-                 SELECT name,(SELECT run_id FROM runs LIMIT 1),1,'\"Borrow\"','attached' FROM resources LIMIT 1;
-                 UPDATE attachments SET state='released';
-                 UPDATE attachments SET state='attached';
-                 UPDATE attachments SET state='released';",
-            )
-            .unwrap();
-        fails(Oracle::O5, &world());
-        // O6: a dangling foreign key.
-        store
-            .conn()
-            .execute_batch(
-                "PRAGMA foreign_keys=OFF; \
-                 INSERT INTO events(run_id,seq,kind,state,wall_time) VALUES ('missing',1,'x','intended',0);",
-            )
-            .unwrap();
-        fails(Oracle::O6, &world());
+            fails(Oracle::O5, &world());
+            // O6: a dangling foreign key.
+            store
+                .conn()
+                .execute_batch(
+                    "PRAGMA foreign_keys=OFF; \
+                     INSERT INTO events(run_id,seq,kind,state,wall_time) VALUES ('missing',1,'x','intended',0);",
+                )
+                .unwrap();
+            fails(Oracle::O6, &world());
+
     }
 }

@@ -4,8 +4,12 @@ use ratchet::*;
 fn counts(source: &str) -> std::collections::BTreeMap<String, usize> {
     scan_source(source, false).unwrap().0
 }
+
+/// Merged proof: ratchet_negative_added_command_alias_and_macro_fail, ratchet_counts_aliases_and_all_boundary_families, ratchet_test_exclusion_is_syntax_aware_and_not_cfg_any_loophole.
 #[test]
-fn ratchet_negative_added_command_alias_and_macro_fail() {
+fn ratchet_counts_every_construct_and_loophole() {
+    // ratchet_negative_added_command_alias_and_macro_fail
+
     for source in [
         r#"fn added() { std::process::Command::new("true").status(); }"#,
         r#"use std::process::Command as Cmd; fn added() { let mut cmd=Cmd::new("true");cmd.spawn(); }"#,
@@ -26,9 +30,9 @@ fn ratchet_negative_added_command_alias_and_macro_fail() {
         .unwrap_err()
         .contains("rose"));
     }
-}
-#[test]
-fn ratchet_counts_aliases_and_all_boundary_families() {
+
+    // ratchet_counts_aliases_and_all_boundary_families
+
     let source = r#"
         use std::{process::Command as Cmd, fs::{self as disk, File as F, OpenOptions as O}, env as environment};
         use fs2::FileExt;
@@ -72,9 +76,9 @@ fn ratchet_counts_aliases_and_all_boundary_families() {
         );
     }
     assert_eq!(found["std.fs.OpenOptions.write"], 2);
-}
-#[test]
-fn ratchet_test_exclusion_is_syntax_aware_and_not_cfg_any_loophole() {
+
+    // ratchet_test_exclusion_is_syntax_aware_and_not_cfg_any_loophole
+
     let (production, tests) = scan_source(
         r#"
       // std::process::Command::new("comment");
@@ -96,9 +100,13 @@ fn ratchet_test_exclusion_is_syntax_aware_and_not_cfg_any_loophole() {
         counts("use std::fs; fn ordinary_file(){fs::write(\"user.txt\",\"data\");}").is_empty()
     );
     assert!(scan_source("this is not rust", false).is_err());
+
 }
+/// Merged proof: ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total, ratchet_type_aliases_function_references_and_typed_parameters_are_counted, ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files.
 #[test]
-fn ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total() {
+fn ratchet_compares_baselines_and_semantics() {
+    // ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total
+
     let old = Inventory {
         schema: 1,
         production: std::collections::BTreeMap::from([(
@@ -125,10 +133,9 @@ fn ratchet_baseline_rejects_unrecorded_fall_and_new_pair_at_same_total() {
     assert!(error.contains("rose"));
     assert!(error.contains("fell"));
     assert!(empty.compare(&empty).is_ok());
-}
 
-#[test]
-fn ratchet_type_aliases_function_references_and_typed_parameters_are_counted() {
+    // ratchet_type_aliases_function_references_and_typed_parameters_are_counted
+
     let found = counts(
         r#"
         type Cmd=std::process::Command;
@@ -138,10 +145,9 @@ fn ratchet_type_aliases_function_references_and_typed_parameters_are_counted() {
     );
     assert_eq!(found["std.process.Command.new"], 1);
     assert_eq!(found["std.process.Command.spawn"], 2);
-}
 
-#[test]
-fn ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files() {
+    // ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files
+
     // tempfile uses a fresh mkdtemp directory; every fixture write stays in it.
     let tree = tempfile::tempdir().unwrap();
     let root = tree.path();
@@ -168,10 +174,13 @@ fn ratchet_child_file_inherits_parent_state_path_without_gating_ordinary_files()
     assert_eq!(found.production["src/cache/store.rs"]["std::fs::write"], 1);
     assert!(!found.production.contains_key("src/ordinary/store.rs"));
     assert!(counts("/// pkill and .effigy are documentation, not code.\nfn f(){std::fs::write(\"user.txt\",\"data\");}").is_empty());
-}
 
+}
+/// Merged proof: ratchet_vault_parameter_paths_cannot_hide_raw_writes, ratchet_accounts_for_external_boundaries_by_name_and_ceiling, ratchet_inventory_refuses_an_external_boundary_above_its_ceiling.
 #[test]
-fn ratchet_vault_parameter_paths_cannot_hide_raw_writes() {
+fn ratchet_reports_each_command_shape() {
+    // ratchet_vault_parameter_paths_cannot_hide_raw_writes
+
     let root = tempfile::tempdir().expect("fresh checkout");
     for relative in [
         "src/runner/secret_vault.rs",
@@ -197,10 +206,9 @@ fn ratchet_vault_parameter_paths_cannot_hide_raw_writes() {
             ..Default::default()
         })
         .is_err());
-}
 
-#[test]
-fn ratchet_accounts_for_external_boundaries_by_name_and_ceiling() {
+    // ratchet_accounts_for_external_boundaries_by_name_and_ceiling
+
     let one = counts(
         "fn write(d: &std::path::Path) { let _ = std::fs::File::create(d.join(\".effigy-marker\")); }",
     );
@@ -236,10 +244,9 @@ fn ratchet_accounts_for_external_boundaries_by_name_and_ceiling() {
         enforce_external_ceilings("src/runner/other.rs", &two),
         Ok(())
     );
-}
 
-#[test]
-fn ratchet_inventory_refuses_an_external_boundary_above_its_ceiling() {
+    // ratchet_inventory_refuses_an_external_boundary_above_its_ceiling
+
     let root = tempfile::tempdir().expect("fresh checkout");
     std::fs::create_dir_all(root.path().join("crates")).expect("workspace root");
     let path = root.path().join("src/runner/scratch.rs");
@@ -251,4 +258,5 @@ fn ratchet_inventory_refuses_an_external_boundary_above_its_ceiling() {
     .expect("source");
     let error = inventory(root.path()).expect_err("two raw writes exceed the ceiling");
     assert!(error.contains("exceeds its accounted ceiling"), "{error}");
+
 }
