@@ -56,6 +56,17 @@ impl Run<'_> {
         let workload = record.workload.unwrap_or(WorkloadOutcome::Interrupted);
         let machine = self.root.is_machine();
         let batch = self.machine_lifecycle();
+        if machine
+            && self.owner.resource.kind() == crate::id::ResourceKind::Gateway
+            && record.phase != Phase::Closed
+        {
+            if let Some(effigy_home) = self.root.path().parent() {
+                record_gateway_stop(
+                    &effigy_home.join("gateway"),
+                    &format!("custody settlement: {workload:?}"),
+                );
+            }
+        }
         let mut dispositions = std::collections::BTreeMap::new();
         let mut stderr_tail = String::new();
         if record.phase != Phase::Closed && record.phase != Phase::Stopping && !machine {

@@ -17,7 +17,7 @@ mod logs;
 mod machine;
 mod memory;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
-pub use machine::{machine_completion, MachineCompletion};
+pub use machine::{machine_completion, record_gateway_stop, MachineCompletion};
 pub use memory::{ForegroundRecord, Incarnation};
 #[path = "../objects/run.rs"]
 mod objects;

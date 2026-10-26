@@ -808,12 +808,8 @@ During v0.x, MINOR bumps may include breaking changes.
   which shows the whole pipeline instead of only the version, tag and gate
   preview; `release --plan --version <SEMVER>` covers the old
   `simulate --version`. The refusal names the replacement.
-- **The managed gateway build-replacement path.** A managed start no longer
-  stops a gateway because its recorded build differs from the caller's, and the
-  identity handoff it used to request an elevated replacement is gone with
-  `ManagedStartState::Replacing` and the `different build` startup notice.
-  `effigy gateway down` followed by `effigy gateway up` replaces a gateway
-  (papercut 01530b7e, effigy#382).
+- Managed gateway startup no longer replaces a different build or requests an
+  elevated identity read (effigy#382).
 
 ### Added
 - **`effigy container <NAME> restart <process>...` replaces only the named host
@@ -2116,20 +2112,10 @@ During v0.x, MINOR bumps may include breaking changes.
   and `up` reads that label from the runtime, so an unchanged shared service is
   never touched. Two checkouts' `up`s are serialised on one machine gate per
   shared Compose project (effigy#377).
-- **A running gateway is never replaced by the binary that asks for one.**
-  `container up`, `dev` and every other path that ensures the gateway start
-  one only when the records prove none is running; a gateway that runs is used
-  as it is, whichever Effigy build started it, and one warning names both
-  builds. `up` admits a new run only over a stopped or interrupted one, so an
-  unreadable or changed observation can no longer supersede a live machine
-  gateway. Only `effigy gateway down` followed by `effigy gateway up` replaces
-  a running gateway. A test harness or fixture process with no private gateway
-  root refuses to start, stop or replace the machine gateway, and
-  `effigy-test-support::gateway::private_root` gives a fixture an owned private
-  root. A stop records the pid, argv and cwd of the process that asked for it in
-  the gateway's log. The operator-lifecycle cases refuse to run while the
-  machine gateway listens on 127.0.0.1:80, 443 or 15353, so they never take it
-  down (papercut 01530b7e, 06d1cd9e, effigy#382).
+- Managed startup reuses a running gateway across binary versions and warns
+  with both versions. Fixture starts and stops require a private gateway root;
+  operator lifecycle tests refuse while machine ports are in use. Command stops
+  and custody settlement log pid, argv, cwd and cause (effigy#382).
 - `container retire` and `container retire --dead` remove every owned container
   every time. They deleted each container with a forced remove, which the
   runtime's restart manager treated as an exit and undid for the

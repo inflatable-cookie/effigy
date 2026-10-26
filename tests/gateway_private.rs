@@ -47,6 +47,59 @@ fn copy_dir_all(src: &Path, dst: &Path) {
     }
 }
 
+#[test]
+fn fixture_commands_without_a_private_root_refuse_operator_mutations() {
+    let fixture = effigy_test_support::Fixture::new("g382-").unwrap();
+    for args in [
+        vec!["gateway", "up"],
+        vec!["gateway", "down"],
+        vec!["gateway", "setup", "--remove"],
+        vec!["__gateway-run"],
+        vec!["__gateway-user-run"],
+    ] {
+        let output = Command::new(EFFIGY)
+            .args(args)
+            .env("HOME", fixture.path())
+            .env("EFFIGY_TEST_SUITE", "fixture-guard")
+            .env_remove("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT")
+            .output_owned()
+            .unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("private gateway root"),
+            "{output:?}"
+        );
+        assert!(!fixture.path().join(".effigy").exists());
+    }
+}
+
+#[test]
+fn private_gateway_start_reuse_and_explicit_down_up_keep_lifecycle_control() {
+    let fixture = effigy_test_support::Fixture::new("g382-").unwrap();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let root = private_root(fixture.path(), "gateway");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).unwrap();
+    parse_json_success(run_gateway(
+        &root,
+        "setup-tls",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    ));
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    cleanup.track(&root);
+    let started = parse_json_success(run_gateway(&root, "up", &effects, Some(&foreign_ca), &[]));
+    let reused = parse_json_success(run_gateway(&root, "up", &effects, Some(&foreign_ca), &[]));
+    assert_eq!(started["pid"], reused["pid"]);
+    parse_json_success(run_gateway(&root, "down", &effects, Some(&foreign_ca), &[]));
+    assert!(!root.join("gateway.pid").exists());
+    let restarted = parse_json_success(run_gateway(&root, "up", &effects, Some(&foreign_ca), &[]));
+    assert_ne!(started["pid"], restarted["pid"]);
+    parse_json_success(run_gateway(&root, "down", &effects, Some(&foreign_ca), &[]));
+    cleanup.untrack(&root);
+}
+
 #[cfg(unix)]
 #[test]
 fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
@@ -335,6 +388,7 @@ fn spawn_private_gateway_daemon(root: &Path, inherit_ignored_term: bool) -> Priv
             "127.0.0.1:0",
         ])
         .env("EFFIGY_INTERNAL_SUPPRESS_HEADER", "1")
+        .env("HOME", root)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(stderr));
@@ -3513,6 +3567,7 @@ fn gateway_command(
         .arg(root)
         .args(extra)
         .arg("--json")
+        .env("HOME", root)
         .env(
             "EFFIGY_GATEWAY_MKCERT_BIN",
             effects.private_mkcert.as_os_str(),

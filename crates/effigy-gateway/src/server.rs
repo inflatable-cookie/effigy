@@ -973,7 +973,11 @@ async fn bind_private_gateway_listeners(
     #[cfg(target_os = "macos")]
     let direct = match direct {
         Err(error)
-            if !config.is_private() && error.kind() == std::io::ErrorKind::PermissionDenied =>
+            if !config.is_private()
+                && [config.proxy.bind_addr, https_bind_addr]
+                    .iter()
+                    .all(|addr| matches!(addr.port(), 80 | 443))
+                && error.kind() == std::io::ErrorKind::PermissionDenied =>
         {
             let endpoints = [config.proxy.bind_addr, https_bind_addr];
             let handed =

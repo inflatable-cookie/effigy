@@ -49,10 +49,10 @@
 "lint:retirements" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "test:retirements" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway --lib --test integration --test documentation_coverage_tests -E 'package(effigy-catalog) | test(retirement_) | test(command_surface) | test(parse_) | test(render_) | test(builtin_) | test(init_inventory) | test(resolver::) | test(composition::) | test(transition_lock::) | test(gateway_identity) | test(legacy_recovery_) | test(host_process_) | test(managed_headless) | test(project_local_and_distributed_effigy_skills) | test(public_help_families)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
 
-"check:gateway:operator" = { run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-gateway -p effigy-kernel -p effigy-cli --all-targets", timeout_ms = 600000 }
+"check:gateway:operator" = { run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-gateway -p effigy-kernel -p effigy-cli -p effigy-test-support --all-targets --features effigy-kernel/fault-injection", timeout_ms = 600000 }
 "lint:gateway:operator" = [
-  { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-gateway -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 },
-  { run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --lib --tests -- -D warnings", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-gateway -p effigy-cli -p effigy-test-support --all-targets --features effigy-kernel/fault-injection -- -D warnings", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel --lib --tests --features fault-injection -- -D warnings", timeout_ms = 600000 },
 ]
 "proof:gateway:setup:terminal" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },

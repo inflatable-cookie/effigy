@@ -133,6 +133,7 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         config.proxy.bind_addr = http;
         config.proxy.tls_bind_addr = Some(https);
     }
+    require_fixture_isolation(&config)?;
     crate::setup::read_receipt(&home)?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -143,6 +144,37 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         ))
         .map_err(error)
 }
+/// Library-driven operator fixtures must select their own state directory and
+/// unprivileged loopback ports. CLI fixtures use GatewayConfig::private instead.
+fn require_fixture_isolation(config: &GatewayConfig) -> io::Result<()> {
+    if !cfg!(debug_assertions)
+        || cfg!(test)
+        || !std::env::vars_os()
+            .any(|(key, _)| key.to_string_lossy().starts_with("EFFIGY_TEST_") || key == "NEXTEST")
+    {
+        return Ok(());
+    }
+    let selected =
+        std::env::var_os(crate::private_state::PRIVATE_STATE_ROOT_ENV).map(PathBuf::from);
+    if let Some(root) =
+        selected.filter(|root| Some(root.as_path()) == config.pid_file_path.parent())
+    {
+        let endpoints = [
+            Some(config.dns.bind_addr),
+            Some(config.proxy.bind_addr),
+            config.proxy.tls_bind_addr,
+        ];
+        if endpoints
+            .into_iter()
+            .flatten()
+            .all(|addr| addr.ip().is_loopback() && addr.port() >= 1024 && addr.port() != 15353)
+        {
+            return crate::private_state::validate_root(&root).map_err(error);
+        }
+    }
+    Err(error("fixture process requires a private gateway root and test-only ports; refusing operator gateway mutation"))
+}
+
 pub(crate) fn require_operator() -> io::Result<()> {
     if nix::unistd::Uid::effective().is_root() {
         return Err(error("the standard gateway runs as the operator; run `effigy gateway setup` from your user account"));
@@ -284,10 +316,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
             result.status = "stopped";
             result.reason = closed_reason(&cx, &root, id, &workload, &effects);
         }
-        // A closed run whose cleanup is incomplete and an interrupted run both
-        // left nothing serving: `up` reconciles either one.
         RunStatus::Closed { .. } | RunStatus::Interrupted { .. } => {
-            result.status = "stopped";
             result.reason =
                 Some("gateway cleanup is incomplete; run `effigy gateway up` to reconcile".into())
         }
@@ -498,6 +527,7 @@ pub fn up_with_executable_within(
     budget: StartupBudget,
 ) -> io::Result<Status> {
     require_operator()?;
+    require_fixture_isolation(config)?;
     let before = status(config)?;
     if before.ready {
         note_reused_gateway_build(&before);
@@ -508,11 +538,6 @@ pub fn up_with_executable_within(
             before
                 .reason
                 .unwrap_or_else(|| "run `effigy gateway setup`".into()),
-        ));
-    }
-    if before.status == "degraded" {
-        return Err(error(
-            "a gateway is already running but degraded; inspect `effigy gateway status`",
         ));
     }
     // Start only when the previous run is over. A gateway that is starting,
@@ -660,34 +685,9 @@ fn note_reused_gateway_build(status: &Status) {
     );
 }
 
-/// A stop is never silent: the gateway's log records the pid, argv and cwd of
-/// the process that asked for it (papercut 06d1cd9e). Best effort: a stop never
-/// fails because its record could not be written.
-pub fn record_stop_request(config: &GatewayConfig) {
-    let cwd = std::env::current_dir()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "<unknown>".into());
-    let argv = std::env::args().collect::<Vec<_>>().join(" ");
-    let line = format!(
-        "[gateway] stop requested by pid {} cwd {cwd} argv {argv}\n",
-        std::process::id()
-    );
-    let Some(directory) = config.pid_file_path.parent() else {
-        return;
-    };
-    if let Ok(mut log) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(directory.join("gateway.stderr.log"))
-    {
-        use std::io::Write;
-        let _ = log.write_all(line.as_bytes());
-    }
-    eprint!("{line}");
-}
-
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     require_operator()?;
+    require_fixture_isolation(config)?;
     let current = status(config)?;
     if current.status == "setup_required" {
         return Err(error(
@@ -697,7 +697,9 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     if current.status == "stopped" {
         return Ok(current);
     }
-    record_stop_request(config);
+    if let Some(directory) = config.pid_file_path.parent() {
+        run::record_gateway_stop(directory, "gateway down command");
+    }
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
     let root = StateRoot::runtime_machine_effects(&cx, home(config)?).map_err(error)?;
@@ -937,49 +939,6 @@ mod tests {
             "stopped"
         );
     }
-    /// A live gateway run is in use. `up` uses it as it is and admits no
-    /// second run, so no Effigy build can replace the machine gateway as a
-    /// side effect of ensuring one exists (papercut 01530b7e).
-    #[test]
-    fn up_uses_a_live_gateway_run_instead_of_replacing_it() {
-        let home = tempfile::tempdir().unwrap();
-        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
-        let op = context(Duration::from_secs(10), EffectClass::Mutate);
-        let cx = op.effects().unwrap();
-        let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
-        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
-        let live = run::Run::begin(
-            &cx,
-            &root,
-            &invocation(owner()),
-            run::BeginOpts {
-                id: run_id().unwrap(),
-                wait: effigy_kernel::gate::Wait::FailFast,
-                acknowledge: vec![],
-                next: next(),
-                custody: None,
-            },
-            &cleanup,
-            &mut Adapter,
-        )
-        .unwrap();
-        let running = status(&config).unwrap();
-        assert_eq!(
-            running.run,
-            Some(live.id()),
-            "the fixture must observe the live run: {running:?}"
-        );
-        assert_ne!(running.status, "stopped");
-
-        let reused = up(&config).unwrap();
-        assert_eq!(
-            reused.run,
-            Some(live.id()),
-            "up must use the live run instead of admitting another: {reused:?}"
-        );
-        assert_eq!(reused.status, running.status);
-    }
-
     /// A stop is never silent: the gateway's log names the pid, argv and cwd of
     /// the process that asked for it (papercut 06d1cd9e).
     #[test]
@@ -987,7 +946,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
         std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
-        record_stop_request(&config);
+        run::record_gateway_stop(
+            config.pid_file_path.parent().unwrap(),
+            "gateway down command",
+        );
         let log = std::fs::read_to_string(
             config
                 .pid_file_path
@@ -996,15 +958,19 @@ mod tests {
                 .join("gateway.stderr.log"),
         )
         .expect("the stop record is written beside the gateway records");
-        assert!(
-            log.contains(&format!("stop requested by pid {}", std::process::id())),
-            "{log}"
-        );
+        let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(record["pid"], std::process::id());
+        assert_eq!(record["cause"], "gateway down command");
         assert!(
             log.contains(&std::env::current_dir().unwrap().display().to_string()),
             "{log}"
         );
-        assert!(log.contains("argv "), "{log}");
+        assert!(
+            record["argv"]
+                .as_array()
+                .is_some_and(|args| !args.is_empty()),
+            "{log}"
+        );
     }
 
     #[test]

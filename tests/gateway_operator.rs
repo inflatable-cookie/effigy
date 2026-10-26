@@ -9,7 +9,13 @@ use std::time::{Duration, Instant};
 /// A private operator HOME with an active setup receipt and a route table, so
 /// a start has everything it needs except the daemon itself. The control
 /// socket needs a short external pathname.
-fn operator_fixture(prefix: &str) -> (effigy_test_support::Fixture, GatewayConfig) {
+fn operator_fixture(
+    prefix: &str,
+) -> (
+    effigy_test_support::Fixture,
+    GatewayConfig,
+    effigy_test_support::env::ScopedEnv,
+) {
     use std::os::unix::fs::PermissionsExt;
     let home = effigy_test_support::Fixture::short_home(prefix).expect("private operator home");
     let gateway = home.path().join(".effigy/gateway");
@@ -38,27 +44,25 @@ fn operator_fixture(prefix: &str) -> (effigy_test_support::Fixture, GatewayConfi
         std::fs::Permissions::from_mode(0o600),
     )
     .expect("receipt mode");
-    (home, config)
+    let environment =
+        effigy_test_support::env::ScopedEnv::set("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT", &gateway);
+    (home, config, environment)
 }
 
-/// A real operator daemon shares the machine's `127.0.0.1:80`/`:443` and the
-/// privileged bind broker with every HOME. These cases refuse to start one
-/// while the machine gateway listens there, and never stop a running one
-/// (papercut 06d1cd9e).
-fn machine_gateway_listener() -> Option<String> {
-    [
-        ("-iTCP:80", "TCP 80"),
-        ("-iTCP:443", "TCP 443"),
-        ("-iUDP:15353", "UDP 15353"),
-    ]
-    .into_iter()
-    .find_map(|(filter, label)| {
-        let output = std::process::Command::new("lsof")
-            .args(["-nP", filter])
-            .output()
-            .ok()?;
-        (output.status.success() && !output.stdout.is_empty()).then(|| label.to_owned())
-    })
+/// The fallback selector refuses before starting any operator fixture while
+/// the machine gateway is running. Direct test invocations use the same guard.
+fn require_machine_gateway_free() {
+    assert!(
+        std::process::Command::new("/bin/sh")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/scripts/gateway-operator-guard.sh"
+            ))
+            .status()
+            .expect("check machine gateway listeners")
+            .success(),
+        "operator fixture refused while the machine gateway is running"
+    );
 }
 
 /// Poll the private status until the run settles. A refusal must stop what it
@@ -81,11 +85,8 @@ fn settled_status(config: &GatewayConfig) -> operator::Status {
 #[test]
 fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     use std::os::unix::fs::PermissionsExt;
-    if let Some(listening) = machine_gateway_listener() {
-        eprintln!("skipping: the machine gateway already listens on {listening}; these cases start a real operator daemon and never stop a running one");
-        return;
-    }
-    let (home, config) = operator_fixture("g219-");
+    require_machine_gateway_free();
+    let (home, config, _private) = operator_fixture("g219-");
 
     // The actor gets a strict PATH. Any accidental elevation writes evidence
     // and fails; all fixture writes stay under this HOME.
@@ -215,12 +216,9 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
 #[test]
 fn operator_startup_bounds_admission_and_readiness_separately() {
     let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
-    if let Some(listening) = machine_gateway_listener() {
-        eprintln!("skipping: the machine gateway already listens on {listening}; these cases start a real operator daemon and never stop a running one");
-        return;
-    }
+    require_machine_gateway_free();
 
-    let (_unadmitted_home, unadmitted) = operator_fixture("g248a-");
+    let (_unadmitted_home, unadmitted, private) = operator_fixture("g248a-");
     let refusal = operator::up_with_executable_within(
         &unadmitted,
         executable,
@@ -238,7 +236,8 @@ fn operator_startup_bounds_admission_and_readiness_separately() {
         "a refused admission never advertises a gateway"
     );
 
-    let (_unready_home, unready) = operator_fixture("g248b-");
+    drop(private);
+    let (_unready_home, unready, _private) = operator_fixture("g248b-");
     let started = Instant::now();
     let refusal = operator::up_with_executable_within(
         &unready,

@@ -1082,6 +1082,49 @@ fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {
     assert!(!path.exists());
 }
 #[test]
+fn gateway_custody_settlement_logs_caller_and_owner_loss() {
+    let home = effigy_test_support::Fixture::new("g382-").unwrap();
+    let cx = context();
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let directory = home.path().join(".effigy/gateway");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut fake = Fake::new(home.path());
+    let resource = ResourceId::gateway("operator").unwrap();
+    let mut specification = inv(resource).spec().clone();
+    specification.task = TaskId::new(
+        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+        "",
+        Surface::Published,
+        "gateway",
+        None,
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(specification).unwrap();
+    let mut run = Run::begin(&cx, &root, &invocation, opts(82), &cleanup(&cx), &mut fake).unwrap();
+    run.interrupt(
+        &cleanup(&cx),
+        WorkloadOutcome::Cancelled {
+            cause: crate::ctx::StopCause::OwnerLost,
+            signal: None,
+        },
+    )
+    .unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let log = std::fs::read_to_string(directory.join("gateway.stderr.log")).unwrap();
+    let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+    assert_eq!(record["event"], "gateway_stop");
+    assert_eq!(record["pid"], std::process::id());
+    assert_eq!(
+        record["cwd"],
+        std::env::current_dir().unwrap().to_string_lossy().as_ref()
+    );
+    assert!(record["argv"]
+        .as_array()
+        .is_some_and(|args| !args.is_empty()));
+    assert!(record["cause"].as_str().unwrap().contains("OwnerLost"));
+}
+
+#[test]
 fn gateway_setup_replace_is_journalled_and_preserved_on_recovery() {
     use crate::fs::{DirFd, FileName};
     use crate::record::ReplaceOpts;
