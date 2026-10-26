@@ -1,20 +1,14 @@
 use super::prepare_helpers::unexpected_lockfile_change;
 use super::{
-    apply_release_mutations, build_release_prepare_plan, collect_release_execute_plan,
-    collect_release_gate_run, collect_release_status, compare_release_state_fingerprints,
-    execute_release_prepare, execute_release_prepare_with_lookup, format_release_tag,
-    gate_blockers, gate_outcome_word, git_create_tag, git_modified_files,
-    is_optional_next_version_blocker, is_release_state_file, load_release_config,
-    load_release_context, load_release_prepared_state, normalized_expected_files,
-    render_release_execute_plan_text, render_release_gate_run_json, render_release_gate_run_text,
-    render_release_prepare_plan_text, render_release_prepared_text, render_release_status_json,
-    render_release_status_text, restore_mutation_snapshots, run_release_gates,
-    run_release_gates_with_lookup, run_release_gates_with_observer,
-    run_release_gates_with_progress, snapshot_mutation_paths, test_support,
-    validate_planned_release_version, write_release_prepared_state, FileMutationApply,
-    FileMutationPlan, GateExecutionReport, GateObserver, GateResult, HostedEvidenceLookup,
-    HostedEvidenceSpec, HostedRun, ReleasePreparedFileFingerprint,
-    ReleasePreparedSourceFingerprints, ResolvedGate, ResolvedVersionSource, VersionFileKind,
+    apply_release_mutations, collect_release_gate_run, collect_release_status,
+    gate_outcome_word, git_create_tag, git_modified_files,
+    is_optional_next_version_blocker, load_release_config, load_release_context,
+    plan_release_pipeline, render_release_gate_run_json, render_release_gate_run_text,
+    render_release_status_json, render_release_status_text, restore_mutation_snapshots,
+    run::plan_prepare_mutations, run_release_gates, run_release_gates_with_lookup,
+    run_release_gates_with_observer, run_release_gates_with_progress, snapshot_mutation_paths,
+    test_support, FileMutationApply, FileMutationPlan, GateExecutionReport, GateObserver,
+    GateResult, HostedEvidenceLookup, HostedEvidenceSpec, HostedRun, ResolvedGate,
 };
 use std::collections::BTreeMap;
 
@@ -86,37 +80,6 @@ fn retired_catalog_pack_support_policy_key_is_refused() {
         error.contains("sync-catalog-pack-support-policy` was removed in v0.15"),
         "{error}"
     );
-}
-
-#[test]
-fn release_preparation_without_catalog_policy_prepares_the_version() {
-    let fixture = tempfile::tempdir().expect("private no-companion repository");
-    let root = fixture.path();
-    fs::write(
-        root.join("effigy.toml"),
-        "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\n",
-    )
-    .expect("manifest");
-    fs::write(root.join("VERSION"), "0.1.0\n").expect("version");
-    fs::write(
-        root.join("CHANGELOG.md"),
-        "# Changelog\n\n## [Unreleased]\n\n### Added\n- Initial release\n",
-    )
-    .expect("changelog");
-    let prepared = execute_release_prepare(
-        root.to_path_buf(),
-        ".release-prepared.json",
-        true,
-        None,
-        |_| {},
-    )
-    .expect("prepare without companion");
-    assert!(prepared.prepared, "{:?}", prepared.blockers);
-    assert_eq!(
-        fs::read_to_string(root.join("VERSION")).expect("version prepared"),
-        "0.1.1\n"
-    );
-    assert!(root.join(".release-prepared.json").is_file());
 }
 
 #[test]
@@ -243,11 +206,11 @@ fn initial_tag_current_version_selects_current_and_omits_version_mutation() {
     assert_eq!(context.tag.as_deref(), Some("v0.1.0"));
     assert!(context.blockers.is_empty(), "{:?}", context.blockers);
 
-    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
-        .expect("prepare plan");
+    let plan = plan_release_pipeline(&root).expect("release plan");
     assert!(plan.ready, "{:?}", plan.blockers);
+    let mutations = plan_prepare_mutations(&plan).expect("prepare mutations");
     assert_eq!(
-        plan.mutations
+        mutations
             .iter()
             .map(|mutation| mutation.kind)
             .collect::<Vec<_>>(),
@@ -323,14 +286,15 @@ serde = "1"
         .expect("git init");
     assert!(status.success());
 
-    let context = load_release_context(&root).expect("release context");
-    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
-        .expect("prepare plan");
+    let plan = plan_release_pipeline(&root).expect("release plan");
     assert!(plan.ready, "{:?}", plan.blockers);
-    assert_eq!(plan.planned_version, Some(semver::Version::new(0, 3, 2)));
+    assert_eq!(
+        plan.primary_identity().and_then(|identity| identity.next_version.clone()),
+        Some(semver::Version::new(0, 3, 2))
+    );
+    let mutations = plan_prepare_mutations(&plan).expect("prepare mutations");
 
-    let version_mutation = plan
-        .mutations
+    let version_mutation = mutations
         .iter()
         .find(|mutation| mutation.kind == "version-file")
         .expect("version mutation");
@@ -364,19 +328,23 @@ serde = "1"
     assert!(version_mutation
         .detail_lines
         .contains(&"coordinated workspace dependency: fixture-renamed -> 0.3.2".to_owned()));
-    let plan_text = super::render_release_prepare_plan_text(&plan);
-    let plan_json = super::render_release_prepare_plan_json(&plan);
     for dependency in ["fixture-core", "fixture-renamed"] {
-        assert!(plan_text.contains(dependency));
-        assert!(plan_json.contains(dependency));
+        assert!(
+            version_mutation
+                .detail_lines
+                .iter()
+                .any(|line| line.contains(dependency)),
+            "{:?}",
+            version_mutation.detail_lines
+        );
     }
-    assert!(plan.mutations.iter().any(|mutation| matches!(
+    assert!(mutations.iter().any(|mutation| matches!(
         mutation.apply,
         FileMutationApply::SyncCargoLock { ref workspace_version }
             if workspace_version == "0.3.2"
     )));
 
-    let snapshots = snapshot_mutation_paths(&plan.mutations).expect("mutation snapshots");
+    let snapshots = snapshot_mutation_paths(&mutations).expect("mutation snapshots");
     fs::write(root.join("Cargo.toml"), after_contents).expect("apply version mutation");
     assert!(restore_mutation_snapshots(&snapshots).is_empty());
     assert_eq!(
@@ -415,12 +383,10 @@ fn prepare_plan_syncs_secondary_package_json_version() {
         .expect("git init");
     assert!(status.success());
 
-    let context = load_release_context(&root).expect("release context");
-    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
-        .expect("prepare plan");
+    let plan = plan_release_pipeline(&root).expect("release plan");
     assert!(plan.ready, "{:?}", plan.blockers);
-    let package_mutation = plan
-        .mutations
+    let mutations = plan_prepare_mutations(&plan).expect("prepare mutations");
+    let package_mutation = mutations
         .iter()
         .find(|mutation| mutation.path == root.join("package.json"))
         .expect("package mutation");
@@ -430,7 +396,7 @@ fn prepare_plan_syncs_secondary_package_json_version() {
         .iter()
         .any(|line| line.contains("\"0.3.2\"")));
 
-    apply_release_mutations(&root, &plan.mutations).expect("apply release mutations");
+    apply_release_mutations(&root, &mutations).expect("apply release mutations");
     let package_json = fs::read_to_string(root.join("package.json")).expect("read package");
     assert!(package_json.contains("\"version\"  :  \"0.3.2\""));
 }
@@ -461,15 +427,11 @@ fn load_release_config_rejects_secondary_package_json_without_version() {
 fn current_version_release_requires_the_first_tag_opt_in() {
     let root = write_initial_release_repo("initial-disabled", false);
     let context = load_release_context(&root).expect("release context");
-    let current = semver::Version::new(0, 1, 0);
-    let lower = semver::Version::new(0, 0, 9);
-
-    assert!(validate_planned_release_version(&context, &current)
-        .expect_err("current version should be rejected")
-        .contains("must be greater than current version"));
-    assert!(validate_planned_release_version(&context, &lower)
-        .expect_err("lower version should be rejected")
-        .contains("must be greater than current version"));
+    // Without the opt-in the release plans a bump, never the current version.
+    assert_eq!(context.next_version, Some(semver::Version::new(0, 1, 1)));
+    let plan = plan_release_pipeline(&root).expect("release plan");
+    let app = plan.primary_identity().expect("semver identity");
+    assert_eq!(app.next_version, Some(semver::Version::new(0, 1, 1)));
 }
 
 #[test]
@@ -509,11 +471,9 @@ fn initial_tag_current_version_closes_after_the_first_changelog_release() {
 
     let context = load_release_context(&root).expect("release context");
     assert_eq!(context.next_version, Some(semver::Version::new(0, 1, 1)));
-    assert!(
-        validate_planned_release_version(&context, &semver::Version::new(0, 1, 0))
-            .expect_err("released current version should be rejected")
-            .contains("must be greater than current version")
-    );
+    let plan = plan_release_pipeline(&root).expect("release plan");
+    let app = plan.primary_identity().expect("semver identity");
+    assert_eq!(app.next_version, Some(semver::Version::new(0, 1, 1)));
 }
 
 #[test]
@@ -568,114 +528,6 @@ fn render_prepared_changelog_keeps_unreleased_prose() {
     );
 }
 
-#[test]
-fn gate_helpers_return_expected_defaults() {
-    let blockers = gate_blockers(&[GateResult {
-        name: "qa".to_owned(),
-        description: None,
-        command: "cargo test".to_owned(),
-        passed: false,
-        exit_code: Some(1),
-        stdout: String::new(),
-        stderr: String::new(),
-        launch_error: None,
-        duration_ms: 12,
-        log_path: None,
-        reused: false,
-        hosted_run_url: None,
-        hosted_head_sha: None,
-        hosted_repository: None,
-    }]);
-    assert_eq!(blockers, vec!["gate `qa` failed".to_owned()]);
-    assert_eq!(GateExecutionReport::empty().results.len(), 0);
-    assert_eq!(
-        format_release_tag("release-{version}", &semver::Version::new(0, 2, 5)),
-        "release-0.2.5"
-    );
-}
-
-#[test]
-fn prepared_state_round_trip_preserves_fingerprints() {
-    let root = temp_repo("prepared-state");
-    let version_file = root.join("VERSION");
-    fs::write(&version_file, "0.3.0\n").expect("version");
-    let state_path = root.join(".release-prepared.json");
-
-    write_release_prepared_state(crate::prepare_helpers::ReleasePreparedStateWrite {
-        path: &state_path,
-        repo_root: &root,
-        previous_version: &semver::Version::parse("0.2.9").expect("previous"),
-        suggested_version: Some(&semver::Version::parse("0.3.0").expect("suggested")),
-        prepared_version: Some(&semver::Version::parse("0.3.0").expect("prepared")),
-        suggested_tag: Some("v0.3.0"),
-        tag: Some("v0.3.0"),
-        version_override_used: false,
-        release_date: "2026-04-16",
-        gates_checked: true,
-        files_modified: std::slice::from_ref(&version_file),
-        prepared_branch: Some("main"),
-        prepared_head: Some("deadbeef"),
-        reused_gates: &[],
-    })
-    .expect("write state");
-
-    let state = load_release_prepared_state(&state_path).expect("load state");
-    assert_eq!(state.prepared_version.to_string(), "0.3.0");
-    assert_eq!(
-        state
-            .source_fingerprints
-            .as_ref()
-            .and_then(|value| value.prepared_branch.as_deref()),
-        Some("main")
-    );
-    assert_eq!(
-        state
-            .source_fingerprints
-            .as_ref()
-            .and_then(|value| value.prepared_head.as_deref()),
-        Some("deadbeef")
-    );
-    assert_eq!(
-        state
-            .source_fingerprints
-            .as_ref()
-            .map(|value| value.files.len()),
-        Some(1)
-    );
-}
-
-/// The prepared-state file must NOT be required as a working-tree change.
-///
-/// It used to be, and the presence check runs through `git status`, which
-/// honours `.gitignore` -- so in any repository that gitignores the file (both
-/// signal and swallowtail do) execute reported it permanently missing and could
-/// never run at all.
-#[test]
-fn normalized_expected_files_excludes_the_state_file() {
-    let repo_root = PathBuf::from("/tmp/repo");
-    let files = vec![
-        repo_root.join("Cargo.toml"),
-        repo_root.join("CHANGELOG.md"),
-        repo_root.join("Cargo.toml"),
-    ];
-    let normalized = normalized_expected_files(".release-prepared.json", &repo_root, &files);
-    assert_eq!(
-        normalized,
-        vec!["CHANGELOG.md".to_owned(), "Cargo.toml".to_owned()]
-    );
-    // Tolerated, not required: a repository that does track it must not have it
-    // counted as an unexpected change either.
-    assert!(is_release_state_file(
-        ".release-prepared.json",
-        ".release-prepared.json"
-    ));
-    assert!(!is_release_state_file(
-        "Cargo.toml",
-        ".release-prepared.json"
-    ));
-}
-
-/// A failed prepare must not leave the version bump on disk.
 #[test]
 fn restore_mutation_snapshots_puts_the_tree_back() {
     let root = temp_repo("rollback");
@@ -795,27 +647,6 @@ fn unexpected_lockfile_change_distinguishes_workspace_from_third_party() {
         ),
         None
     );
-}
-
-#[test]
-fn compare_release_state_fingerprints_reports_branch_head_and_file_drift() {
-    let root = temp_repo("fingerprint-drift");
-    let file = root.join("VERSION");
-    fs::write(&file, "0.3.0\n").expect("version");
-    let drift = compare_release_state_fingerprints(
-        &root,
-        &ReleasePreparedSourceFingerprints {
-            prepared_branch: Some("main".to_owned()),
-            prepared_head: Some("abc".to_owned()),
-            files: vec![ReleasePreparedFileFingerprint {
-                path: PathBuf::from("VERSION"),
-                digest: "wrong".to_owned(),
-            }],
-        },
-        Some("feature"),
-        Some("def"),
-    );
-    assert_eq!(drift.len(), 3);
 }
 
 #[test]
@@ -1038,52 +869,34 @@ fn gate_persist_ignores_effigy_so_execute_plan_does_not_see_artifacts() {
 }
 
 #[test]
-fn prepare_text_shows_failed_gate_tail_and_log_path() {
+fn status_text_shows_the_failed_gate_tail_and_log_path() {
+    let root = write_initial_release_repo("failed-gate-tail", false);
     let mut stdout_lines = Vec::new();
     for index in 1..=21 {
         stdout_lines.push(format!("line-{index:02}"));
     }
-    let gate = GateResult {
-        name: "floor".to_owned(),
-        description: None,
-        command: "printf fail".to_owned(),
-        passed: false,
-        exit_code: Some(9),
-        stdout: stdout_lines.join("\n"),
-        stderr: String::new(),
-        launch_error: None,
-        duration_ms: 4,
-        log_path: Some(PathBuf::from(".effigy/reports/release/gates/floor.log")),
-        reused: false,
-        hosted_run_url: None,
-        hosted_head_sha: None,
-        hosted_repository: None,
+    let report = GateExecutionReport {
+        results: vec![GateResult {
+            name: "floor".to_owned(),
+            description: None,
+            command: "printf fail".to_owned(),
+            passed: false,
+            exit_code: Some(9),
+            stdout: stdout_lines.join("\n"),
+            stderr: String::new(),
+            launch_error: None,
+            duration_ms: 4,
+            log_path: Some(PathBuf::from(".effigy/reports/release/gates/floor.log")),
+            reused: false,
+            hosted_run_url: None,
+            hosted_head_sha: None,
+            hosted_repository: None,
+        }],
+        ..GateExecutionReport::empty()
     };
-    let plan = super::ReleasePreparePlan {
-        repo_root: PathBuf::from("/tmp/fixture"),
-        current_version: semver::Version::new(0, 1, 0),
-        version_source: ResolvedVersionSource {
-            path: PathBuf::from("VERSION"),
-            kind: VersionFileKind::PlainText,
-            field_path: None,
-        },
-        suggested_version: Some(semver::Version::new(0, 1, 1)),
-        planned_version: Some(semver::Version::new(0, 1, 1)),
-        suggested_tag: Some("v0.1.1".to_owned()),
-        tag: Some("v0.1.1".to_owned()),
-        version_override_used: false,
-        release_date: "2026-09-05".to_owned(),
-        gates_checked: true,
-        configured_gate_count: 1,
-        gate_results: vec![gate],
-        environment_path: Some(PathBuf::from(
-            ".effigy/reports/release/gates/environment.json",
-        )),
-        blockers: vec!["gate `floor` failed".to_owned()],
-        mutations: Vec::new(),
-        ready: false,
-    };
-    let rendered = render_release_prepare_plan_text(&plan);
+    let plan = plan_release_pipeline(&root).expect("release plan");
+    let status = collect_release_status(&plan, true, report);
+    let rendered = render_release_status_text(&status);
     assert!(!rendered.contains("line-01"), "{rendered}");
     assert!(rendered.contains("line-02"), "{rendered}");
     assert!(rendered.contains("line-21"), "{rendered}");
@@ -1099,7 +912,6 @@ fn prepare_text_shows_failed_gate_tail_and_log_path() {
         1
     );
 }
-
 #[test]
 fn gate_json_adds_optional_paths_without_changing_schema_id() {
     let root = temp_repo("gate-json");
@@ -1174,32 +986,6 @@ fn gate_run_reports_the_inventory_and_per_gate_progress() {
     assert!(
         text.contains("[2/2] smoke (certify) - printf smoke-ok"),
         "{text}"
-    );
-}
-
-#[test]
-fn prepare_rolls_back_on_gate_failure_and_keeps_prepared_no() {
-    let root = write_initial_release_repo("prepare-gate-fail", false);
-    fs::write(
-        root.join("effigy.toml"),
-        "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\n[release.gates.floor]\ncommand = \"printf floor-fail >&2; exit 4\"\n",
-    )
-    .expect("manifest");
-    let prepared =
-        execute_release_prepare(root.clone(), ".release-prepared.json", true, None, |_| {})
-            .expect("prepare");
-    assert!(!prepared.prepared);
-    assert_eq!(
-        fs::read_to_string(root.join("VERSION")).expect("version"),
-        "0.1.0\n"
-    );
-    assert!(!root.join(".release-prepared.json").exists());
-    let rendered = render_release_prepared_text(&prepared);
-    assert!(rendered.contains("Prepared: no"), "{rendered}");
-    assert!(rendered.contains("floor-fail"), "{rendered}");
-    assert!(
-        rendered.contains("log: ") && rendered.contains("floor.log"),
-        "{rendered}"
     );
 }
 
@@ -1457,86 +1243,6 @@ fn hosted_reuse_fails_closed_on_repository_mismatch_failed_and_incomplete_runs()
 }
 
 #[test]
-fn prepare_and_execute_persist_reused_gate_run_links() {
-    let root = write_initial_release_repo("hosted-reuse-prepare", false);
-    fs::write(
-        root.join("effigy.toml"),
-        r#"
-[release]
-version-file = "VERSION"
-changelog = "CHANGELOG.md"
-
-[release.hosted-evidence]
-workflow = "ci.yml"
-
-[release.gates.smoke]
-command = "printf SMOKE_RAN > smoke.txt"
-
-[release.gates.test]
-command = "printf LOCAL_RAN > reused-local.txt"
-reuse-hosted-evidence = true
-"#,
-    )
-    .expect("manifest");
-    let sha = commit_and_set_origin(&root, "https://github.com/acme/demo.git");
-    let lookup = StubHostedLookup {
-        runs: Ok(vec![hosted_run(
-            "acme/demo",
-            &sha,
-            "completed",
-            Some("success"),
-            "https://github.com/acme/demo/actions/runs/11",
-        )]),
-    };
-    let prepared = execute_release_prepare_with_lookup(
-        root.clone(),
-        ".release-prepared.json",
-        true,
-        None,
-        &lookup,
-        |_| {},
-    )
-    .expect("prepare");
-    assert!(prepared.prepared, "{:?}", prepared.blockers);
-    assert_eq!(
-        fs::read_to_string(root.join("smoke.txt")).expect("smoke"),
-        "SMOKE_RAN"
-    );
-    assert!(!root.join("reused-local.txt").exists());
-    let test = prepared
-        .gate_results
-        .iter()
-        .find(|gate| gate.name == "test")
-        .expect("test gate");
-    assert!(test.reused);
-    assert_eq!(
-        test.hosted_run_url.as_deref(),
-        Some("https://github.com/acme/demo/actions/runs/11")
-    );
-
-    let state = load_release_prepared_state(&root.join(".release-prepared.json")).expect("state");
-    assert_eq!(state.reused_gates.len(), 1);
-    assert_eq!(state.reused_gates[0].name, "test");
-    assert_eq!(
-        state.reused_gates[0].run_url,
-        "https://github.com/acme/demo/actions/runs/11"
-    );
-    assert_eq!(state.reused_gates[0].head_sha, sha);
-    assert!(state.gates_passed);
-
-    let plan = collect_release_execute_plan(root.clone(), ".release-prepared.json", 3600, false)
-        .expect("execute plan");
-    assert_eq!(plan.reused_gates.len(), 1);
-    assert_eq!(plan.reused_gates[0].name, "test");
-    assert!(plan.gates_passed);
-    let rendered = render_release_execute_plan_text(&plan);
-    assert!(
-        rendered.contains("https://github.com/acme/demo/actions/runs/11"),
-        "{rendered}"
-    );
-}
-
-#[test]
 fn reuse_without_hosted_evidence_workflow_fails_at_resolve() {
     let root = temp_repo("hosted-reuse-missing-workflow");
     fs::write(
@@ -1627,7 +1333,7 @@ fn status_gate_check_passes_with_empty_unreleased_and_reports_no_next_version() 
     assert!(text.starts_with("Release Status\n"), "{text}");
     assert!(text.contains("Gate check: passed"), "{text}");
     assert!(text.contains("Next version: unavailable"), "{text}");
-    assert!(text.contains("Ready to prepare and execute: no"), "{text}");
+    assert!(text.contains("Ready to run: no"), "{text}");
 }
 
 #[test]
@@ -1678,11 +1384,9 @@ fn status_gate_check_still_fails_for_non_version_blockers() {
 }
 
 #[test]
-fn version_requiring_operations_still_reject_empty_unreleased() {
+fn an_empty_unreleased_section_blocks_the_release_plan() {
     let root = write_empty_unreleased_repo("prepare-empty-unreleased");
-    let context = load_release_context(&root).expect("release context");
-    let plan = build_release_prepare_plan(&context, true, GateExecutionReport::empty(), None)
-        .expect("prepare plan");
+    let plan = plan_release_pipeline(&root).expect("release plan");
     assert!(!plan.ready);
     assert!(
         plan.blockers
@@ -1941,11 +1645,9 @@ fn prepare_plan_reports_the_nested_sync_workspace() {
     )
     .expect("lockfile");
 
-    let context = load_release_context(&root).expect("release context");
-    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
-        .expect("prepare plan");
-    let mutation = plan
-        .mutations
+    let plan = plan_release_pipeline(&root).expect("release plan");
+    let mutations = plan_prepare_mutations(&plan).expect("prepare mutations");
+    let mutation = mutations
         .iter()
         .find(|mutation| mutation.path == root.join("prototypes/fixture/Cargo.lock"))
         .expect("nested lockfile mutation");
