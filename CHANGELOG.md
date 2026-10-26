@@ -353,6 +353,29 @@ During v0.x, MINOR bumps may include breaking changes.
   passphrase; nested commands that need the vault use the local unlock
   credential or prompt.
 
+### Changed
+- **A test suite owns one kill sweep instead of a process ledger.** Every
+  Rust test selector now runs under `tests/scripts/suite_guard.py`, which
+  exports one `EFFIGY_TEST_SUITE` value and holds a marker descriptor that
+  every descendant inherits, including a daemon that calls `setsid`. After the
+  runner ends — passing, failing, timed out or killed — the guard lists the
+  processes that still carry the suite, sends TERM, waits two seconds, KILLs
+  the survivors and fails the selector with every PID and command. A fixture
+  child keeps only local ownership: its own process group, stopped on `Drop`.
+  The process ledger, `ProcessReceipt` registrations, launch nonces, the
+  pre-exec socket barrier, `effigy-fixture-process`,
+  `tests/scripts/fixture_hygiene.py` and the fixture directory ledger are
+  gone.
+- Test fixtures no longer fall back to the internal `/tmp`: `short_tempdir`
+  and `Fixture::short_home` use the run's temporary directory or its parent on
+  the configured scratch volume, and `Fixture::workspace` uses the run's
+  temporary directory instead of `/Users/Shared`.
+
+### Fixed
+- **A leaked test helper fails its selector.** Test fixtures and loops sleep
+  between checks and have deadlines, so no fixture spins a core; a helper that
+  outlives its test is named and killed by the suite sweep.
+
 ### Removed
 - **No record of a checkout's or a machine home's generation.** `checkout.json`
   and `machine-format.json` are gone: a checkout journal opens by its location
