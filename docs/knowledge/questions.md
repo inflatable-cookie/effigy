@@ -454,3 +454,17 @@ Rules for the simplification work:
 - No new state files, records or refusal variants without a stated reason.
 - Net lines go down.
 - The planner proves each merge live on real consumer stacks (Acowtancy hybrid, inventors, a basic Effigy run, plus reboot, crash and restart, an interrupted `up`, a manifest edit and a deleted worktree) before installing it.
+## Q-012: Second audit scope before v0.15 qualification
+
+Status: answered
+Asked: 2026-10-26
+Answered: 2026-10-26 by Tom
+
+A second read-only audit after Q-011 (planner, main b94b1061a; reports under `~/.local/share/northstar/release-audits/effigy/complexity-audit-20261026/`) found 1 P0, 32 P1, 54 P2 and 19 P3. Q-011 landed partly. A new gateway dead-route sweep deletes live routes. No live proof covers the Compose shapes that broke Acowtancy on 2026-10-26. The v0.15 changelog and migration guide don't describe what consumers will meet.
+
+Tom's rulings:
+
+1. **Before milestone QA and v0.15:** the P0/P1 fixes, the proof, selector and `qa:json` gaps, the documentation work (the `[Unreleased]` changelog rewritten as the change since v0.14.1, guide 085, stale contracts), and the low-risk deletion batches D1–D4. The effect journal around compose apply, the gateway private-fixture lifecycle (`identity.rs`) and the listener handoff chain wait until after v0.15.
+2. **Admission:** the hook-liveness re-verification (`verify_hook`/`verify_held`, the inheritance capsule) is removed. The `HELD` markers and the advisory `EFFIGY_ADMITTED` stay. This is a narrow exception to Q-011's admission-v2 freeze.
+3. **Upgrade path:** the v0.14.1 environment importer and the PID-only v0.14 refusals are deleted. A consumer upgrading straight from v0.14.1 gets one container recreate per stack.
+4. **Isolated dirs and Oxide output links:** Effigy keeps refusing to follow a symlink on an isolated dir. The fix is on the Oxide side: projects adopt Oxide's profile member links, so `target` stays a real directory. Tom is running that adoption sweep across all projects. Effigy's refusal message names `oxide outputs adopt`.
