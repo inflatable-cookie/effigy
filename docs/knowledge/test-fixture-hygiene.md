@@ -31,14 +31,23 @@ TERM and HUP and then panics, and a runner killed mid-test. Both require the
 failure report to name the child and the child to be gone afterwards.
 `test:fixtures:hygiene:guards` runs them.
 
-### What the sweep cannot see
+### The kernel-custody boundary
 
-A helper the kernel spawns through `custody::spawn` inherits no suite descriptor:
-that child's descriptor plan overwrites slots 3 and 4 and closes everything above
-them, on purpose, so no sibling's barrier or sentinel writer leaks in. Those
-workloads and their `__kernel-anchor` are owned by custody settlement instead.
+Kernel custody is an explicit boundary, not a sweep target. A helper started
+through `custody::spawn` inherits no suite marker: the payload's descriptor plan
+overwrites slots 3 and 4 and closes everything above them, its environment holds
+only the custody nonce, and `__kernel-anchor` exists as positive evidence of the
+original group identity. Owner death, a settled checkout or a missing state root
+does not prove group closure, so nothing here self-exits on those grounds and
+the sweep never signals a custody anchor, supervisor, sentinel or payload.
+Contract 052 settlement owns them: it stops workload members only on that
+evidence, stops the anchor last, and then releases the shared checkout lease.
+`custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closure`
+proves the anchor and lease survive deletion until closure; the same test proves
+the anchor is gone once settlement completes.
+
 Helpers started any other way — `__kernel-sentinel`, the gateway daemon, the
-supervisors — inherit the marker and are swept.
+supervisors, fixture shells — inherit the marker and are swept.
 
 ## In-test ownership
 

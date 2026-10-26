@@ -792,6 +792,12 @@ impl OwnedProcess {
     pub fn identity(&self) -> ProcessReceipt {
         lock(&self.core).receipt.clone()
     }
+    /// The group anchor this launch recorded. Contract 052 settlement keeps it
+    /// as positive evidence of the group identity until workload closure, so a
+    /// proof must be able to observe it.
+    pub fn anchor(&self) -> Option<ProcessIdentity> {
+        lock(&self.core).anchor.clone()
+    }
     pub fn expired(&self) -> bool {
         lock(&self.core)
             .deadline
