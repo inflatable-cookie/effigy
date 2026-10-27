@@ -185,7 +185,6 @@ impl ScriptedGuard {
     pub(in crate::runner) fn deadline(&self, budget: Duration) -> Instant {
         self.runtime.base + budget
     }
-
 }
 
 impl Drop for ScriptedGuard {

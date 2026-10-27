@@ -190,7 +190,6 @@ run = "sh hold-owner.sh .effigy-test-hold-ready .effigy-test-hold-release"
     held
 }
 
-
 fn workspace_root(workspace: &str) -> PathBuf {
     super::super::harness::temp_workspace(workspace)
 }

@@ -1,6 +1,6 @@
 use crate::tests::prelude::{
-    parse_command, strip_global_json_flag, Command, DoctorArgs, HelpGroup,
-    HelpTopic, PathBuf, TaskInvocation, TasksArgs,
+    parse_command, strip_global_json_flag, Command, DoctorArgs, HelpGroup, HelpTopic, PathBuf,
+    TaskInvocation, TasksArgs,
 };
 use effigy_cli::command_surface::HELP_COMMAND_TOPICS;
 use effigy_cli::{RunsAction, RunsArgs, INTERNAL_RUN_ID_ARG};
@@ -53,10 +53,23 @@ fn leading_repo_and_version_argv_parse() {
         })
     };
     let cases: &[(&[&str], Command)] = &[
-        (&["--repo", "/tmp/workspace", "doctor"], doctor("/tmp/workspace")),
-        (&["--repo", "/tmp/global", "doctor", "--repo", "/tmp/local"], doctor("/tmp/local")),
         (
-            &["--repo", "/tmp/workspace", "--json", "tasks", "status", "api/dev"],
+            &["--repo", "/tmp/workspace", "doctor"],
+            doctor("/tmp/workspace"),
+        ),
+        (
+            &["--repo", "/tmp/global", "doctor", "--repo", "/tmp/local"],
+            doctor("/tmp/local"),
+        ),
+        (
+            &[
+                "--repo",
+                "/tmp/workspace",
+                "--json",
+                "tasks",
+                "status",
+                "api/dev",
+            ],
             Command::Tasks(TasksArgs {
                 all: false,
                 repo_override: Some(PathBuf::from("/tmp/workspace")),

@@ -212,7 +212,10 @@ mod tests {
             "level=fatal msg=\"permission denied while trying to connect to the docker API\"",
             "no such container: demo-workspace-1",
         ] {
-            assert!(!exec_error_means_runtime_not_running(&failure(stderr)), "{stderr}");
+            assert!(
+                !exec_error_means_runtime_not_running(&failure(stderr)),
+                "{stderr}"
+            );
         }
         assert!(!exec_error_means_runtime_not_running(
             &ContainerExecError::Launch {

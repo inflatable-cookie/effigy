@@ -1027,8 +1027,7 @@ mod tests {
         render_tcp_alias_hosts_script, running_container_runtime_mismatch, tcp_alias_host_pairs,
     };
     use effigy_containers::{
-        exec::RunningComposeContainer,
-        EffectiveComposeSource, EffectiveContainerPolicy,
+        exec::RunningComposeContainer, EffectiveComposeSource, EffectiveContainerPolicy,
     };
     use std::path::{Path, PathBuf};
 

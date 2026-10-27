@@ -5,14 +5,14 @@
 use super::*;
 use effigy_kernel::ctx::{CancelToken, EffectClass, Placement};
 use effigy_kernel::gate::Wait;
+use effigy_kernel::gate::{ForegroundDiag, HolderDiag};
+use effigy_kernel::id::ResourceId;
 use effigy_kernel::id::{
     CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId,
     Surface, TaskId,
 };
-use effigy_kernel::objects::Closure;
-use effigy_kernel::gate::{ForegroundDiag, HolderDiag};
-use effigy_kernel::id::ResourceId;
 use effigy_kernel::ident::ProcessState;
+use effigy_kernel::objects::Closure;
 use effigy_kernel::observe::{AbsenceProof, Evidence, Observed};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation, WorkloadOutcome};
 use effigy_kernel::root::StateRoot;
@@ -22,7 +22,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-
 
 /// The busy sentence is written from the gate's own holder diagnostics
 /// (effigy#313), never from a caller-supplied string, and it suggests one
@@ -67,7 +66,10 @@ fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
         unknown.contains("a run whose gate body is absent is transitioning it"),
         "{unknown}"
     );
-    assert!(unknown.contains("`effigy container acme-stack status`"), "{unknown}");
+    assert!(
+        unknown.contains("`effigy container acme-stack status`"),
+        "{unknown}"
+    );
 }
 
 mod adapters;
@@ -567,8 +569,7 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                 // holder releases, without a further declaration change.
                 task.take();
                 assert_eq!(
-                    bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[])
-                        .unwrap(),
+                    bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[]).unwrap(),
                     Applied::Reconciled
                 );
                 assert_eq!(fake.calls().len(), before + 1, "{transition}");

@@ -1,6 +1,5 @@
 use crate::tests::prelude::{
-    parse_command, Command, PathBuf, SkillArgs, SkillStdioMode, SkillSubcommand,
-    TaskInvocation,
+    parse_command, Command, PathBuf, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation,
 };
 
 #[test]

@@ -1438,9 +1438,8 @@ mod tests {
     use super::{
         annotate_workspace_extra_mount_decisions, detached_activation_failure,
         detached_activation_identity, ensure_up_workspace_permissions,
-        gateway_registration_failure, lifecycle_operation_plan,
-        prepare_container_up, run_container_down_command, sanitized_failure_cause,
-        DetachedOperationState, RunnerError,
+        gateway_registration_failure, lifecycle_operation_plan, prepare_container_up,
+        run_container_down_command, sanitized_failure_cause, DetachedOperationState, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{

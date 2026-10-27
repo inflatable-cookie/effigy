@@ -3,10 +3,9 @@
 //! conflict, and never unlocked by hand.
 
 use crate::runner::tests::prelude::{
-    assert_output_equals, lock_test,
-    parse_json_output_with_schema_version, run_dev, run_task_status_from_repo, run_task_with_repo,
-    start_held_dev_owner, temp_workspace, wait_for_live_task_owner, write_lock_files,
-    write_root_manifest, OwnedThread,
+    assert_output_equals, lock_test, parse_json_output_with_schema_version, run_dev,
+    run_task_status_from_repo, run_task_with_repo, start_held_dev_owner, temp_workspace,
+    wait_for_live_task_owner, write_lock_files, write_root_manifest, OwnedThread,
 };
 use crate::runner::RunnerError;
 

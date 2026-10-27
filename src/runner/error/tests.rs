@@ -35,7 +35,10 @@ fn task_invocation_path_message_constructors_are_stable() {
         // the sentence around them is not.
         assert!(message.contains(verb), "{verb}: {message}");
         assert!(message.contains("/tmp/effigy.toml"), "{verb}: {message}");
-        assert!(message.contains(&format!("{verb}-failed")), "{verb}: {message}");
+        assert!(
+            message.contains(&format!("{verb}-failed")),
+            "{verb}: {message}"
+        );
     }
 }
 
@@ -516,7 +519,10 @@ fn task_run_details_name_the_task_and_the_failing_output() {
         ["exit_code: 3", "stderr: error: widget is undefined"]
     );
     let rendered = human.render_text();
-    assert!(rendered.starts_with("[error] task `fail` failed"), "{rendered}");
+    assert!(
+        rendered.starts_with("[error] task `fail` failed"),
+        "{rendered}"
+    );
     assert!(rendered.contains("exit_code: 3"), "{rendered}");
     assert!(
         rendered.contains("stderr: error: widget is undefined"),
