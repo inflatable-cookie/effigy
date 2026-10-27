@@ -771,8 +771,8 @@ def approval_core(staging):
         "protected " + " ".join(PROTECTED),
         "machine-gateway 80 443 15353 unchanged by pid and executable sha256",
         "steps up up-again no-effigy-env build-args shared-client local-stays-local "
-        "restart-process linked-first-up scoped-hosts shared-identity down shared-delete "
-        "baseline-check",
+        "restart-process linked-first-up scoped-hosts linked-base-scoped shared-identity "
+        "down shared-delete baseline-check",
     ]
     return "\n".join(lines)
 
@@ -875,9 +875,10 @@ def print_frozen_plan():
         "                 declared hosts, which is what makes its next command a fresh first up",
         "up the linked worktree in the SAME environment; assert its containers differ from the primary's",
         "read both host maps (`container z374proof hosts --json` per checkout) and assert the linked",
-        "                 one took scope kind worktree with a token and host key, its effective hosts",
-        "                 are disjoint from the primary's declared ones, and every effective host of",
-        "                 both is registered on the fixture's own gateway",
+        "                 one took scope kind worktree with a token and host key, that its declared base",
+        "                 domain is rewritten by that host key, its effective hosts are disjoint from the",
+        "                 primary's declared ones, and every effective host of both is registered on",
+        "                 the fixture's own gateway",
         "assert both checkouts use the one shared MariaDB: the same shared project and the same",
         "                 shared container id as before the linked up",
         "down both checkouts in the same environment",
@@ -1501,6 +1502,20 @@ def live_run(staging, approval=None):
             "the linked checkout has no scope token or host key after up",
             linked_scope,
         )
+        # The declared base domain is what the gateway alias claim is built from,
+        # so it has to be scoped by the checkout host key even when the render
+        # carries no DNS routes. A declared apex that stays unscoped makes the
+        # linked first `up` collide with the primary's like-for-like alias.
+        linked_base = linked_map.get("base_domain") or {}
+        assert linked_base.get("effective") and linked_base["effective"] != linked_base.get("declared"), (
+            "the linked checkout's declared base domain was not scoped",
+            linked_base,
+        )
+        assert f"-w{linked_scope['host_key']}." in linked_base["effective"], (
+            "the linked base domain does not carry its checkout host key",
+            linked_base["effective"],
+            linked_scope["host_key"],
+        )
         primary_effective = effective_hosts(primary_map)
         linked_effective = effective_hosts(linked_map)
         assert primary_effective and linked_effective, (primary_map.get("routes"), linked_map.get("routes"))
@@ -1524,6 +1539,12 @@ def live_run(staging, approval=None):
             (
                 "both checkouts served their own scoped effective hosts at once",
                 " ".join(sorted(primary_effective | linked_effective)),
+            )
+        )
+        checks.append(
+            (
+                "the linked declared base domain is scoped by its host key",
+                f"{linked_base.get('declared')} -> {linked_base['effective']}",
             )
         )
 
