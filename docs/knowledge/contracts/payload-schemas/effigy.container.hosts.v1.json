@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.container.hosts.v1 payload",
+  "description": "Payload of `effigy container <name> hosts --json`: the host map a checkout owns, including its scope identity, base domain, cookie domain and routes.",
+  "type": "object",
+  "required": [
+    "ok",
+    "schema",
+    "schema_version",
+    "checkout",
+    "base_domain",
+    "cookie_domain",
+    "relying_party_id",
+    "scope",
+    "routes"
+  ],
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "checkout": {
+      "type": "string"
+    },
+    "base_domain": {
+      "type": "object",
+      "required": [
+        "declared",
+        "effective",
+        "inferred",
+        "warning"
+      ],
+      "properties": {
+        "declared": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effective": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inferred": {
+          "type": "boolean"
+        },
+        "warning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "cookie_domain": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "relying_party_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "kind",
+        "host_key",
+        "token",
+        "shared_runtime_identity"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "host_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shared_runtime_identity": {
+          "type": "boolean"
+        }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

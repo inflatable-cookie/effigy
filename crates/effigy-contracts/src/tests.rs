@@ -2,7 +2,6 @@ use super::{
     prepare_check_json, resolve_schema_payload, run_prepared_check_json, split_shell_like_args,
     ContractsConfig, SelectionPayload, SelectionValidation, SELECTION_PAYLOAD_SCHEMA,
 };
-use effigy_cli::ContractsCheckMode;
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -120,12 +119,11 @@ fn write_contract_repo(root: &Path, index: &Value) {
         root.join("selection.json"),
         json!({
             "type": "object",
-            "required": ["selected", "count", "changed_only_base", "mode"],
+            "required": ["selected", "count", "changed_only_base"],
             "properties": {
                 "selected": { "type": "array", "items": { "type": "string" } },
                 "count": { "type": "number" },
                 "changed_only_base": { "type": ["string", "null"] },
-                "mode": { "enum": ["full", "changed-only"] }
             }
         })
         .to_string(),
@@ -146,7 +144,6 @@ fn prepare_check_json_requires_configured_schema_index() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Skip,
         None,
@@ -183,7 +180,6 @@ fn prepare_check_json_validates_the_selection_payload_from_config() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Payload,
         None,
@@ -221,7 +217,6 @@ fn selection_validation_reports_contract_failures() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Payload,
         None,
@@ -254,7 +249,6 @@ fn artifact_selection_validation_reads_the_artifact_file() {
             "selected": ["a"],
             "count": 1,
             "changed_only_base": null,
-            "mode": "full"
         })
         .to_string(),
     )
@@ -263,7 +257,6 @@ fn artifact_selection_validation_reads_the_artifact_file() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Artifact(valid),
         None,
@@ -285,7 +278,6 @@ fn artifact_selection_validation_reads_the_artifact_file() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Artifact(invalid),
         None,
@@ -318,7 +310,6 @@ fn selection_validation_requires_a_configured_contract() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Payload,
         None,
@@ -370,7 +361,6 @@ fn payload_schemas_compile_relative_to_the_index() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Skip,
         None,
@@ -408,7 +398,6 @@ fn invalid_payload_schema_is_reported_as_an_error() {
         repo.path(),
         &ContractsConfig::load(repo.path()).expect("config"),
         None,
-        ContractsCheckMode::Full,
         None,
         &SelectionValidation::Skip,
         None,
@@ -428,7 +417,6 @@ fn render_selection_payload_json_starts_with_selected_key() {
     let payload = SelectionPayload {
         selected: vec!["a".to_owned(), "b".to_owned()],
         changed_only_base: None,
-        mode: "full".to_owned(),
     };
 
     let rendered = payload.render_json().expect("render selection payload");
@@ -592,6 +580,60 @@ fn repo_payload_schema(schema_id: &str) -> effigy_json_schema::CompiledSchema {
     }))
     .expect("parse payload schema");
     effigy_json_schema::CompiledSchema::compile(&document).expect("compile payload schema")
+}
+
+/// The index's own rows and payload schemas must agree: every row that names a
+/// payload schema points at a schema the map carries, so `qa:json` validates the
+/// payload the row claims instead of silently skipping it (effigy#374).
+#[test]
+fn every_named_payload_schema_is_in_the_index_map() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root")
+        .to_path_buf();
+    let prepared = prepare_check_json(
+        &root,
+        &ContractsConfig::load(&root).expect("config"),
+        None,
+        None,
+        &SelectionValidation::Skip,
+        None,
+    )
+    .expect("prepare the repository's own index");
+
+    let mut named = 0;
+    for row in &prepared.selected_rows {
+        if let Some(id) = row.payload_schema.as_deref() {
+            named += 1;
+            assert!(
+                prepared.payload_schemas.contains_key(id),
+                "row `{}` names payload schema `{id}`, which the index does not carry",
+                row.command
+            );
+        }
+    }
+    assert!(
+        named >= 9,
+        "expected the deps, plan, help, state-stack and container rows to name payload schemas, got {named}"
+    );
+}
+
+#[test]
+fn an_unexpected_failure_keeps_the_command_own_refusal_sentence() {
+    let stdout = serde_json::to_vec(&json!({
+        "ok": false,
+        "error": { "message": "container `web` refused: the backend is not running" },
+    }))
+    .expect("json");
+    assert_eq!(
+        super::unexpected_failure_cause(&stdout, b""),
+        "container `web` refused: the backend is not running"
+    );
+    assert_eq!(
+        super::unexpected_failure_cause(b"", b"error: nothing to run\n"),
+        "error: nothing to run"
+    );
 }
 
 #[test]

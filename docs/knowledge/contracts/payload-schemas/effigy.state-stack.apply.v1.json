@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.state-stack.apply.v1 payload",
+  "description": "Payload of `effigy state apply --json`: the applied layers, the lineage that recorded them and the report paths written.",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "stack_name",
+    "environment",
+    "lineage_id",
+    "executed",
+    "ok",
+    "layers",
+    "warnings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "effigy.state-stack.apply.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "stack_name": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "lineage_id": {
+      "type": "string"
+    },
+    "executed": {
+      "type": "boolean"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "key",
+          "role",
+          "apply_mode",
+          "source",
+          "status"
+        ]
+      }
+    },
+    "warnings": {
+      "type": "array"
+    },
+    "written_report_path": {
+      "type": "string"
+    },
+    "written_history_path": {
+      "type": "string"
+    }
+  }
+}

@@ -937,6 +937,7 @@ dependencies = [
  "effigy-cli",
  "effigy-json-schema",
  "effigy-manifest",
+ "effigy-ui",
  "serde_json",
  "tempfile",
 ]

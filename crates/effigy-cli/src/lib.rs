@@ -786,17 +786,10 @@ pub enum ContractsSubcommand {
         index_path: Option<PathBuf>,
         contract_path: Option<PathBuf>,
         artifact_path: Option<PathBuf>,
-        mode: ContractsCheckMode,
         changed_only_base: Option<String>,
         print_selected: ContractsSelectionPrintMode,
         validate_selection: bool,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContractsCheckMode {
-    Fast,
-    Full,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,5 +1,5 @@
 use crate::tests::prelude::{
-    parse_command, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
+    parse_command, Command, ContainerArgs, ContainerSubcommand, ContractsArgs,
     ContractsSelectionPrintMode, ContractsSubcommand, DocsArgs, DocsBlockRequirement,
     DocsSubcommand, PathBuf,
 };
@@ -446,7 +446,6 @@ fn parse_contracts_check_json_with_selection_validation() {
                 index_path: None,
                 contract_path: Some(PathBuf::from("docs/knowledge/contracts/selection.json")),
                 artifact_path: Some(PathBuf::from("tmp/selected.json")),
-                mode: ContractsCheckMode::Full,
                 changed_only_base: None,
                 print_selected: ContractsSelectionPrintMode::None,
                 validate_selection: true,
@@ -466,7 +465,6 @@ fn parse_contracts_check_json_with_changed_only_and_selection_json() {
         "/tmp/repo".to_owned(),
         "--index".to_owned(),
         "docs/knowledge/contracts/index.json".to_owned(),
-        "--fast".to_owned(),
         "--changed-only".to_owned(),
         "origin/main".to_owned(),
         "--print-selected=json".to_owned(),
@@ -481,7 +479,6 @@ fn parse_contracts_check_json_with_changed_only_and_selection_json() {
                 index_path: Some(PathBuf::from("docs/knowledge/contracts/index.json")),
                 contract_path: None,
                 artifact_path: None,
-                mode: ContractsCheckMode::Fast,
                 changed_only_base: Some("origin/main".to_owned()),
                 print_selected: ContractsSelectionPrintMode::Json,
                 validate_selection: false,

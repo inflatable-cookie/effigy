@@ -25,7 +25,7 @@ mod state;
 
 use crate::command_surface;
 use crate::{
-    BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
+    BundleArgs, BundleSubcommand, Command, ContractsArgs,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
     DepsSubcommand, DoctorArgs, GatewayPrivateArgs, HelpGroup, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
@@ -930,7 +930,6 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut index_path: Option<PathBuf> = None;
-    let mut mode = ContractsCheckMode::Full;
     let mut changed_only_base: Option<String> = None;
     let mut print_selected = ContractsSelectionPrintMode::None;
     let mut contract_path: Option<PathBuf> = None;
@@ -966,8 +965,6 @@ where
                     },
                 )?));
             }
-            "--fast" => mode = ContractsCheckMode::Fast,
-            "--full" => mode = ContractsCheckMode::Full,
             "--changed-only" | "--changed-only-base" => {
                 changed_only_base = Some(next_required_value(
                     &mut args,
@@ -990,7 +987,6 @@ where
             index_path,
             contract_path,
             artifact_path,
-            mode,
             changed_only_base,
             print_selected,
             validate_selection,

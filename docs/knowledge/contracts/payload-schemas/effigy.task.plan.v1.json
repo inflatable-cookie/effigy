@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.task.plan.v1 payload",
+  "description": "Payload of `effigy --plan <task> --json`: the resolved plan for a catalog task, or the routed plan for the built-in test orchestrator.",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "ok",
+    "runtime"
+  ],
+  "properties": {
+    "schema": {
+      "const": "effigy.task.plan.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "runtime": {
+      "type": "object"
+    },
+    "catalog": {
+      "type": "object"
+    },
+    "command": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "executed": {
+      "type": "boolean"
+    },
+    "selector": {
+      "type": "string"
+    },
+    "task": {
+      "type": "string"
+    },
+    "request": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "root",
+          "runtime",
+          "suite_source",
+          "available_suites",
+          "default_suites",
+          "selected_suites",
+          "commands",
+          "fallback_chain",
+          "evidence"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "object"
+          },
+          "suite_source": {
+            "type": "string"
+          },
+          "available_suites": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_suites": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "selected_suites": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "suite_details": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fallback_chain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cargo_env_match": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "excluded_targets": {
+      "type": "array"
+    },
+    "warnings": {
+      "type": "array"
+    },
+    "recovery": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "task",
+        "selector",
+        "command"
+      ]
+    },
+    {
+      "required": [
+        "request",
+        "targets"
+      ]
+    }
+  ]
+}

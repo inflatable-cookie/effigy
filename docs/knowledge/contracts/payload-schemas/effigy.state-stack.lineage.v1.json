@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.state-stack.lineage.v1 payload",
+  "description": "Payload of `effigy state plan --json`: the planned layers and lineage of a state stack.",
+  "type": "object",
+  "required": [
+    "schema",
+    "stack_name",
+    "environment",
+    "lineage_id",
+    "created_at",
+    "layers",
+    "artifact_reports",
+    "warnings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "effigy.state-stack.lineage.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "stack_name": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "lineage_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "key",
+          "role",
+          "apply_mode",
+          "source",
+          "artifact_source",
+          "environment_policy",
+          "hook",
+          "snapshot_identity"
+        ]
+      }
+    },
+    "artifact_reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "layer_key",
+          "artifact_kind",
+          "operation"
+        ]
+      }
+    },
+    "warnings": {
+      "type": "array"
+    }
+  }
+}

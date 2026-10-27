@@ -7,8 +7,7 @@
   "required": [
     "selected",
     "count",
-    "changed_only_base",
-    "mode"
+    "changed_only_base"
   ],
   "properties": {
     "selected": {
@@ -28,14 +27,6 @@
         "null"
       ],
       "description": "Git base ref or commit used for changed-only selection; null when not in changed-only mode."
-    },
-    "mode": {
-      "type": "string",
-      "enum": [
-        "fast",
-        "full"
-      ],
-      "description": "Execution mode applied by checker."
     }
   },
   "producer_guarantees": [

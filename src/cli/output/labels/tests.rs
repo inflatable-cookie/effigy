@@ -1,7 +1,7 @@
 use super::command_kind_and_name;
 use effigy_cli::{
     BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs, ContainerSubcommand,
-    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand,
+    ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand,
     DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
     ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
     TaskInvocation, TasksArgs, WorkspaceArgs,
@@ -64,7 +64,6 @@ fn command_kind_and_name_maps_command_variants() {
             index_path: None,
             contract_path: None,
             artifact_path: None,
-            mode: ContractsCheckMode::Full,
             changed_only_base: None,
             print_selected: ContractsSelectionPrintMode::None,
             validate_selection: false,

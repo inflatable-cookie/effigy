@@ -1642,10 +1642,9 @@
 ] }
 
 # JSON contract QA
-"qa:json" = { visibility = "public", group = "Validation", description = "Validate the JSON contract rows changed against the schema index.", run = "effigy contracts check-json --fast --print-selected=text" }
-"qa:json:ci" = { visibility = "internal", group = "Maintenance", run = "effigy contracts check-json --full --print-selected=json" }
+"qa:json" = { visibility = "public", group = "Validation", description = "Validate every active JSON contract row, its envelope and its payload schema.", run = "effigy contracts check-json --print-selected=text" }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
-  "effigy contracts check-json --full --print-selected=json",
+  "effigy contracts check-json --print-selected=json",
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_contracts_ -- --nocapture",
 ] }
 
@@ -1714,12 +1713,12 @@
 "qa:gates" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }] }
 "qa:ci" = { visibility = "public", group = "Validation", description = "Mirror hosted CI: docs, JSON contracts, released surface and architecture.", run = [
   { task = "qa:docs" },
-  { task = "qa:json:ci" },
+  { task = "qa:ci:json" },
   { task = "qa:released-surface" },
   { task = "qa:architecture" },
 ] }
 "prepush:ci" = { visibility = "public", group = "Validation", description = "Pre-push mirror of CI's task tests, docs and architecture checks.", run = [
-  { task = "qa:json:ci" },
+  { task = "qa:ci:json" },
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_json_mode",
   "sh scripts/oxide-selector.sh test --lib",
   "sh scripts/oxide-selector.sh test --test cli_output_tests",

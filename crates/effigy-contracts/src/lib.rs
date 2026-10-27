@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use effigy_cli::{ContractsCheckMode, ContractsSelectionPrintMode};
+use effigy_cli::ContractsSelectionPrintMode;
 use effigy_json_schema::CompiledSchema;
 use effigy_manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use serde_json::{json, Value};
@@ -84,7 +84,6 @@ impl std::error::Error for ContractsError {}
 pub struct SelectionPayload {
     pub selected: Vec<String>,
     pub changed_only_base: Option<String>,
-    pub mode: String,
 }
 
 impl SelectionPayload {
@@ -97,7 +96,6 @@ impl SelectionPayload {
             "selected": self.selected,
             "count": self.count(),
             "changed_only_base": self.changed_only_base,
-            "mode": self.mode,
         })
     }
 
@@ -112,17 +110,12 @@ impl SelectionPayload {
             .get("changed_only_base")
             .cloned()
             .unwrap_or(Value::Null);
-        let mode = payload
-            .get("mode")
-            .cloned()
-            .unwrap_or(Value::String("full".to_owned()));
 
         Ok(format!(
-            "{{\"selected\":{},\"count\":{},\"changed_only_base\":{},\"mode\":{}}}",
+            "{{\"selected\":{},\"count\":{},\"changed_only_base\":{}}}",
             serde_json::to_string(&selected)?,
             serde_json::to_string(&count)?,
             serde_json::to_string(&changed_only_base)?,
-            serde_json::to_string(&mode)?,
         ))
     }
 
@@ -187,7 +180,6 @@ impl CheckFailure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckReport {
     pub checks: usize,
-    pub skipped: usize,
     pub failures: Vec<CheckFailure>,
 }
 
@@ -232,7 +224,6 @@ impl CheckReport {
 #[derive(Debug)]
 pub struct PreparedCheckJson {
     index_path: PathBuf,
-    mode: ContractsCheckMode,
     changed_only_base: Option<String>,
     selection: SelectionPayload,
     selected_rows: Vec<ContractRow>,
@@ -264,10 +255,6 @@ impl PreparedCheckJson {
         &self.index_path
     }
 
-    pub fn mode_label(&self) -> &'static str {
-        mode_label(self.mode)
-    }
-
     pub fn changed_only_base(&self) -> Option<&str> {
         self.changed_only_base.as_deref()
     }
@@ -287,7 +274,6 @@ impl PreparedCheckJson {
             "schema_version": 1,
             "ok": report.failures.is_empty(),
             "index": self.index_path.display().to_string(),
-            "mode": self.mode_label(),
             "changed_only_base": self.changed_only_base(),
             "selection": self.selection.to_json_value(),
             "selection_contract": self
@@ -300,7 +286,6 @@ impl PreparedCheckJson {
                 .and_then(|check| check.artifact.as_ref())
                 .map(|artifact| artifact.display().to_string()),
             "checks": report.checks,
-            "skipped": report.skipped,
             "failures": report.failures.iter().map(CheckFailure::to_json).collect::<Vec<_>>(),
         })
     }
@@ -313,6 +298,8 @@ struct ContractRow {
     command: String,
     expect_failure: bool,
     isolated_home: bool,
+    /// The payload's own schema id, when the payload does not carry one.
+    payload_schema: Option<String>,
     raw: Value,
 }
 
@@ -327,7 +314,6 @@ pub fn prepare_check_json(
     repo_root: &Path,
     config: &ContractsConfig,
     index_override: Option<&PathBuf>,
-    mode: ContractsCheckMode,
     changed_only_base: Option<&str>,
     selection_validation: &SelectionValidation,
     contract_override: Option<&PathBuf>,
@@ -350,7 +336,6 @@ pub fn prepare_check_json(
             .map(|row| row.schema.clone())
             .collect::<Vec<_>>(),
         changed_only_base: changed_only_base.map(ToOwned::to_owned),
-        mode: mode_label(mode).to_owned(),
     };
     let selection_check = prepare_selection_check(
         repo_root,
@@ -362,7 +347,6 @@ pub fn prepare_check_json(
 
     Ok(PreparedCheckJson {
         index_path,
-        mode,
         changed_only_base: changed_only_base.map(ToOwned::to_owned),
         selection,
         selected_rows,
@@ -443,7 +427,6 @@ pub fn run_prepared_check_json(
 ) -> Result<CheckReport, ContractsError> {
     let mut report = CheckReport {
         checks: 0,
-        skipped: 0,
         failures: Vec::new(),
     };
     let mut fixtures = ContractFixtures::new(repo_root);
@@ -473,14 +456,6 @@ pub fn run_prepared_check_json(
     }
 
     for row in &prepared.selected_rows {
-        if prepared.mode == ContractsCheckMode::Fast && is_heavy_json_contract_schema(&row.schema) {
-            if emit_progress {
-                println!("[skip] {} :: skipped in --fast mode", row.schema);
-            }
-            report.skipped += 1;
-            continue;
-        }
-
         if emit_progress {
             println!(
                 "[check] {} v{} :: {}",
@@ -593,6 +568,19 @@ fn load_active_contract_rows(index: &Value) -> Result<Vec<ContractRow>, Contract
                 Some(value) => value.as_bool().ok_or_else(|| {
                     ContractsError::Message("schema row `isolated_home` must be a boolean".into())
                 })?,
+            },
+            payload_schema: match row.get("payload_schema") {
+                None => None,
+                Some(value) => Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| {
+                            ContractsError::Message(
+                                "schema row `payload_schema` must be a schema id string".into(),
+                            )
+                        })?
+                        .to_owned(),
+                ),
             },
             raw: row.clone(),
         });
@@ -712,16 +700,18 @@ fn run_contract_row(
             });
         }
     } else if !output.status.success() {
+        let status = output
+            .status
+            .code()
+            .map_or("signal".to_owned(), |code| code.to_string());
+        let cause = unexpected_failure_cause(&output.stdout, &output.stderr);
         return Err(CheckFailure {
             schema: row.schema.clone(),
             command: row.command.clone(),
-            reason: format!(
-                "command failed unexpectedly (status={})",
-                output
-                    .status
-                    .code()
-                    .map_or("signal".to_owned(), |code| code.to_string())
-            ),
+            reason: match cause.is_empty() {
+                true => format!("command failed unexpectedly (status={status})"),
+                false => format!("command failed unexpectedly (status={status}): {cause}"),
+            },
         });
     }
 
@@ -775,7 +765,54 @@ fn run_contract_row(
             });
         }
     }
+    // A row that names its payload schema validates the command's result
+    // payload against it. The index cannot claim coverage the payload schema
+    // map does not carry, which is what left the field unread.
+    if let Some(id) = row.payload_schema.as_deref() {
+        let payload_schema = payload_schemas.get(id).ok_or_else(|| CheckFailure {
+            schema: row.schema.clone(),
+            command: row.command.clone(),
+            reason: format!("payload_schema `{id}` is not in the index `payload_schemas` map"),
+        })?;
+        let result = payload
+            .get("result")
+            .filter(|value| !value.is_null())
+            .unwrap_or(&payload);
+        let errors = payload_schema.validate(result);
+        if !errors.is_empty() {
+            return Err(CheckFailure {
+                schema: row.schema.clone(),
+                command: row.command.clone(),
+                reason: format!(
+                    "payload does not satisfy the {id} JSON Schema: {}",
+                    errors.join("; ")
+                ),
+            });
+        }
+    }
     Ok(())
+}
+
+/// Why a row's command failed unexpectedly: its own refusal sentence when it
+/// printed one, else a bounded fold of both output streams. The cause is the
+/// point of the failure, so it is never dropped in favour of a bare status.
+fn unexpected_failure_cause(stdout: &[u8], stderr: &[u8]) -> String {
+    if let Ok(payload) = serde_json::from_slice::<Value>(stdout) {
+        if let Some(message) = payload
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+        {
+            return effigy_ui::human::bound_text(message, 512);
+        }
+    }
+    let mut output = String::from_utf8_lossy(stderr).into_owned();
+    let stdout = String::from_utf8_lossy(stdout);
+    if !stdout.trim().is_empty() {
+        output.push('\n');
+        output.push_str(&stdout);
+    }
+    effigy_ui::human::bound_output(&output).join("; ")
 }
 
 fn resolve_schema_payload(expected_schema: &str, payload: &Value) -> ResolvedSchemaPayload {
@@ -837,10 +874,6 @@ fn value_to_schema_version(value: &Value) -> String {
     }
 }
 
-fn is_heavy_json_contract_schema(schema: &str) -> bool {
-    schema == "effigy.test.results.v1"
-}
-
 fn expand_contract_fixture_tokens(
     command: &str,
     fixtures: &mut ContractFixtures,
@@ -900,15 +933,21 @@ fn expand_contract_fixture_tokens(
     }
     if args
         .iter()
-        .any(|arg| arg.contains("<fixture_container_render>"))
+        .any(|arg| arg.contains("<fixture_container_render>") || arg.contains("<fixture_container_runtime>"))
     {
-        let fixture = create_contract_fixture(fixtures,
-            "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\n[containers.web.services.app]\ncatalog='redis'\n")
+        let manifest = "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\n[containers.web.services.app]\ncatalog='redis'\n";
+        let fixture = create_contract_fixture(fixtures, manifest).map_err(|error| error.to_string())?;
+        let runtime_fixture = create_contract_fixture_at(fixtures, manifest, FixturePlacement::Execution)
             .map_err(|error| error.to_string())?;
         replace_contract_token(
             &mut args,
             "<fixture_container_render>",
             &fixture.to_string_lossy(),
+        );
+        replace_contract_token(
+            &mut args,
+            "<fixture_container_runtime>",
+            &runtime_fixture.to_string_lossy(),
         );
     }
     if args
@@ -1270,6 +1309,17 @@ fn create_contract_fixture(
     create_contract_fixture_files(fixtures, &[("effigy.toml", manifest)])
 }
 
+fn create_contract_fixture_at(
+    fixtures: &mut ContractFixtures,
+    manifest: &str,
+    placement: FixturePlacement,
+) -> Result<PathBuf, std::io::Error> {
+    let fixture_dir = fixtures.directory("effigy-contract-", placement)?;
+    std::fs::write(fixture_dir.join("effigy.toml"), manifest)?;
+    std::fs::write(fixture_dir.join("package.json"), "{}\n")?;
+    Ok(fixture_dir)
+}
+
 fn create_contract_fixture_files(
     fixtures: &mut ContractFixtures,
     files: &[(&str, &str)],
@@ -1332,13 +1382,6 @@ fn resolve_effigy_executable() -> Result<PathBuf, String> {
     std::env::var_os("CARGO_BIN_EXE_effigy")
         .map(PathBuf::from)
         .ok_or_else(|| "failed to resolve effigy executable for contract checks".to_owned())
-}
-
-fn mode_label(mode: ContractsCheckMode) -> &'static str {
-    match mode {
-        ContractsCheckMode::Fast => "fast",
-        ContractsCheckMode::Full => "full",
-    }
 }
 
 #[cfg(test)]
