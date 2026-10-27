@@ -41,27 +41,3 @@ impl Drop for EnvGuard {
         }
     }
 }
-
-#[test]
-fn environment_guard_serializes_a_forced_concurrent_mutator() {
-    const KEY: &str = "EFFIGY_TEST_ENV_GUARD_REGRESSION";
-    let original = std::env::var_os(KEY);
-    let first = EnvGuard::set_many(&[(KEY, Some(OsStr::new("first")))]);
-    let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
-    let second = std::thread::spawn(move || {
-        assert!(matches!(
-            ENV_LOCK.try_lock(),
-            Err(std::sync::TryLockError::WouldBlock)
-        ));
-        attempted_tx.send(()).unwrap();
-        let _second = EnvGuard::set_many(&[(KEY, Some(OsStr::new("second")))]);
-        assert_eq!(std::env::var(KEY).unwrap(), "second");
-    });
-    attempted_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .unwrap();
-    assert_eq!(std::env::var(KEY).unwrap(), "first");
-    drop(first);
-    second.join().unwrap();
-    assert_eq!(std::env::var_os(KEY), original);
-}

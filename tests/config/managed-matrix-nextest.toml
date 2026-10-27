@@ -1,7 +1,8 @@
 [profile.default]
-# Each parameterised test covers nine cases (three priors × zero to two
-# failed children), each with an immediate restart; one takes about 300s on a
-# quiet host. Force termination and fail leaked handles.
-slow-timeout = { period = "600s", terminate-after = 1, grace-period = "2s" }
+# One representative end-to-end cell per front end and stop (Q-013 ruling 2):
+# a partial prior, one failed child and an immediate restart, about 15-30s on
+# a quiet host. The full prior × children cross product is the kernel model
+# test. Force termination and fail leaked handles.
+slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 leak-timeout = { period = "2s", result = "fail" }
-global-timeout = "3500s"
+global-timeout = "900s"

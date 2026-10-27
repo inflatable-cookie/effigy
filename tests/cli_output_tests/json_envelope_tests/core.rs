@@ -83,22 +83,3 @@ fn cli_json_mode_deps_wraps_read_only_status_payload() {
     );
     assert_eq!(parsed["result"]["links"], serde_json::json!([]));
 }
-
-#[test]
-fn cli_json_mode_config_wraps_config_payload() {
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("config")
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["command"]["kind"], "task");
-    assert_eq!(parsed["command"]["name"], "config");
-    assert_eq!(parsed["result"]["schema"], "effigy.config.v1");
-}

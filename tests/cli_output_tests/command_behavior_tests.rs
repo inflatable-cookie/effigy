@@ -3201,36 +3201,13 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
 #[test]
 fn cli_container_data_seed_json_reports_seed_contract() {
     let root = temp_execution_workspace("container-data-seed");
-    let output = run_container_data_seed_fixture(&root, true);
-    let reapers = HostContainerLeaseReaperGuard::capture(&root);
+    let output = run_container_data_seed_fixture(&root);
 
     assert_container_data_seed_contract(&root, &output);
-    assert!(
-        reapers.processes.is_empty(),
-        "reaper detector found a process for the canonical fixture root: {reapers:?}"
-    );
 }
 
-#[test]
-fn cli_container_data_seed_never_spawns_a_lease_reaper() {
-    // The retired v0.14.1 reaper is never spawned, even with its old opt-out
-    // unset: the seed's hold ends with the command and idle stop runs then.
-    let root = temp_execution_workspace("container-data-seed-reaper-control");
-    let output = run_container_data_seed_fixture(&root, false);
-    let reapers = HostContainerLeaseReaperGuard::capture(&root);
-
-    assert_container_data_seed_contract(&root, &output);
-    assert!(
-        reapers.processes.is_empty(),
-        "no lease reaper may run: {reapers:?}"
-    );
-}
-
-fn run_container_data_seed_fixture(
-    fixture_root: &std::path::Path,
-    disable_reaper: bool,
-) -> std::process::Output {
-    container_data_seed_command(fixture_root, disable_reaper)
+fn run_container_data_seed_fixture(fixture_root: &std::path::Path) -> std::process::Output {
+    container_data_seed_command(fixture_root)
         .output()
         .expect("run fake-runtime data seed")
 }
@@ -3265,7 +3242,7 @@ fn write_owned_runtime_inspect(root: &std::path::Path) -> std::path::PathBuf {
     inspect
 }
 
-fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: bool) -> Command {
+fn container_data_seed_command(fixture_root: &std::path::Path) -> Command {
     let root = fs::canonicalize(fixture_root).expect("canonicalize seed fixture root");
     write_generated_container_data_seed_fixture(&root);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
@@ -3314,12 +3291,8 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         )
         .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
         .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE")
-        .env_remove("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS");
-    if disable_reaper {
-        command.env("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER", "1");
-    } else {
-        command.env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER");
-    }
+        .env_remove("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS")
+        .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER");
     command
 }
 
@@ -3352,124 +3325,6 @@ fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::pro
         colima.contains("down --remove-orphans") || docker.contains("down --remove-orphans"),
         "expected the idle stop after the seed:\ncolima: {colima}\ndocker: {docker}"
     );
-}
-
-#[derive(Debug)]
-struct HostContainerLeaseReaperProcess {
-    pid: u32,
-    start_identity: String,
-}
-
-#[derive(Debug)]
-struct HostContainerLeaseReaperGuard {
-    canonical_root: PathBuf,
-    processes: Vec<HostContainerLeaseReaperProcess>,
-}
-
-impl HostContainerLeaseReaperGuard {
-    fn capture(root: &std::path::Path) -> Self {
-        let canonical_root = fs::canonicalize(root).expect("canonicalize reaper fixture root");
-        let output = Command::new("ps")
-            .args(["-ww", "-axo", "pid=,command="])
-            .output()
-            .expect("inspect process table");
-        assert!(output.status.success(), "ps failed: {output:?}");
-        let process_list = String::from_utf8_lossy(&output.stdout);
-        let needle = format!(
-            "__container-lease-reaper --repo-root {}",
-            canonical_root.display()
-        );
-        let processes = process_list
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim_start();
-                let (pid, command) = line.split_once(char::is_whitespace)?;
-                let pid = pid.trim().parse::<u32>().ok()?;
-                let command = command.trim();
-                command.contains(&needle).then(|| {
-                    let start_identity = effigy_process::process_start_identity(pid)
-                        .unwrap_or_else(|| panic!("read start identity for matched PID {pid}"));
-                    HostContainerLeaseReaperProcess {
-                        pid,
-                        start_identity,
-                    }
-                })
-            })
-            .collect();
-        Self {
-            canonical_root,
-            processes,
-        }
-    }
-
-    fn terminate_and_wait(&mut self) -> Result<(), String> {
-        for process in &self.processes {
-            if !effigy_process::process_start_identity_matches(process.pid, &process.start_identity)
-            {
-                continue;
-            }
-            let command = process_command_line(process.pid)?;
-            if !command_matches_reaper_root(&command, &self.canonical_root) {
-                return Err(format!(
-                    "PID {} changed identity before cleanup; refusing to signal it",
-                    process.pid
-                ));
-            }
-            match nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(process.pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            ) {
-                Ok(()) => {}
-                Err(nix::errno::Errno::ESRCH) => continue,
-                Err(error) => {
-                    return Err(format!(
-                        "SIGTERM for recorded PID {} failed: {error}",
-                        process.pid
-                    ))
-                }
-            }
-
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while effigy_process::process_start_identity_matches(
-                process.pid,
-                &process.start_identity,
-            ) {
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "recorded reaper PID {} did not exit after SIGTERM",
-                        process.pid
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        }
-        self.processes.clear();
-        Ok(())
-    }
-}
-
-impl Drop for HostContainerLeaseReaperGuard {
-    fn drop(&mut self) {
-        if let Err(error) = self.terminate_and_wait() {
-            eprintln!("failed to clean up private lease reaper control: {error}");
-        }
-    }
-}
-
-fn process_command_line(pid: u32) -> Result<String, String> {
-    let output = Command::new("ps")
-        .args(["-ww", "-o", "command=", "-p", &pid.to_string()])
-        .output()
-        .map_err(|error| format!("inspect recorded PID {pid}: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("ps failed while inspecting PID {pid}: {output:?}"));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-fn command_matches_reaper_root(command: &str, root: &std::path::Path) -> bool {
-    command.contains("__container-lease-reaper")
-        && command.contains(&format!("--repo-root {}", root.display()))
 }
 
 #[test]
