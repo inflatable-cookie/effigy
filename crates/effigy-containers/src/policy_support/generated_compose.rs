@@ -1400,6 +1400,30 @@ mod tests {
         );
     }
 
+    /// The v0.14.1 release binary's name for the R2A8D cross-version fixture.
+    ///
+    /// `/opt/homebrew/bin/effigy` v0.14.1 wrote this Compose project name for
+    /// exactly this manifest service (independent proof log `cycle-ab-v5.log`,
+    /// cycle A: catalog `mariadb`, database `r2a8dsh`, shared, password
+    /// `secret`). It pins the name only: that run's container then failed its
+    /// known init-file render, so it does not prove the shared data volume
+    /// survived an upgrade.
+    #[test]
+    fn shared_service_project_name_matches_the_v0141_r2a8d_fixture() {
+        let service: ManifestContainerServiceConfig = serde_json::from_value(serde_json::json!({
+            "catalog": "mariadb",
+            "database": "r2a8dsh",
+            "shared": true,
+            "password": "secret"
+        }))
+        .expect("v0.14.1 fixture-shaped shared MariaDB service");
+
+        assert_eq!(
+            shared_service_project_name(&service),
+            "effigy-shared-mariadb-77a732d5"
+        );
+    }
+
     #[test]
     fn typed_generated_compose_env_policy_converts_sequence_entries() {
         let mut compose_document = GeneratedComposeDocument::parse(
