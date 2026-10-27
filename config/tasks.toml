@@ -45,7 +45,7 @@
 "test:retirements:docs" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib -E 'test(render_docs_help_shows_validation_options) | test(render_init_help_shows_phase_scope) | test(builtin_completion_json_contract_has_versioned_shape)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 # Wave-A retirement compatibility and retained lifecycle boundaries.
 "test:retirements:ci-fixtures" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_tasks_text_output_matches_canonical_fixture_tail) | test(cli_tasks_text_output_managed_profiles_matches_canonical_fixture_tail)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
-"test:retirements:json-routing" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-cli --lib -E 'test(global_json::) | test(builtin_init_) | test(builtin_entrypoint_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
+"test:retirements:json-routing" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-cli --lib -E 'test(json_mode_tests::) | test(builtin_init_) | test(builtin_entrypoint_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:retirements:fixes" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-catalog --lib --test documentation_coverage_tests -E 'test(gateway_identity_legacy_active_record_refused) | test(builtin_init_checklist_json_contract) | test(builtin_entrypoint_help_json_contract_table) | test(builtin_help_topics_render_expected_content) | test(builtin_init_apply_actions_can_run_contextual_setup_jobs) | test(builtin_init_checklist_json_reports_setup_inventory) | test(builtin_init_checklist_reports_contextual_bundle_and_secrets_jobs) | test(public_builtin_registry_routes)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:retirements:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(retirement_tests::) | test(json_envelope_tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:retirements:gateway" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_host_listener_) | test(container_hybrid_) | test(managed_host_dependent_replacement_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
@@ -64,7 +64,7 @@
 ] }
 "test:gateway:operator" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-gateway -p effigy-kernel -p effigy-cli --lib --filterset '(test(bind_broker::) | test(operator::) | test(setup::) | test(gateway_option_tests::) | test(gateway_command::tests::) | test(run::tests::gateway_) | test(store_latest_run))' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:gateway:operator:identity" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(identity::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
-"test:gateway:operator:ci-regressions" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-gateway --lib -E 'test(render_gateway_help_shows_lifecycle_examples) | test(listener_handoff_daemon_startup_refuses_without_launchd_and_writes_no_record) | test(run_gateway_propagates_proxy_bind_failure)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
+"test:gateway:operator:ci-regressions" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-gateway --lib -E 'test(listener_handoff_daemon_startup_refuses_without_launchd_and_writes_no_record) | test(run_gateway_propagates_proxy_bind_failure)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 "test:gateway:operator:rebase" = { durable = true, run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(run::tests::gateway_) | test(run_store_record_) | test(source_directory_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }
 # The machine gateway shares 127.0.0.1:80/:443 and the privileged bind
 # broker with every HOME, so these real-daemon cases refuse to run while a
@@ -104,7 +104,7 @@
 "test:bundles:presentation-cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(help_and_flags_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:bundles:header" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli -p effigy-core -p effigy --lib -E 'test(header::) | test(help_render_tests::) | test(build_info::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:bundles:consumers" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "sh scripts/oxide-selector.sh exec -- cargo build --profile discovery-proof -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh exec -- cargo build --cargo-profile discovery-proof -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_BUNDLE_CONSUMERS=$HOME/Dev/legacy/sites/cbs:$HOME/Dev/legacy/libraries/decodelabs/archetype:$HOME/Dev/projects/acowtancy EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/discovery-proof/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --run-ignored only -E 'test(consumer_effective_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 
@@ -132,8 +132,6 @@
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deploy_tests::run_deploy_status_reads_legacy_report_after_refused_redeploy) | test(deploy_tests::run_deploy_plan_materializes_git_provider_package_under_shared_cache_identity) | test(deploy_tests::run_deploy_plan_reuses_pinned_rev_without_network_access) | test(deploy_tests::run_deploy_plan_rejects_invalid_provider_report_status) | test(deploy_tests::run_deploy_plan_rejects_invalid_provider_check_status) | test(deploy_model_json_contract_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 
-# Graph storage and CLI refresh contract; nextest bounds each case and leaks.
-"test:bundles:legacy-signal" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:docs:parity" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test documentation_coverage_tests --filterset 'test(project_local_and_distributed_effigy_skills_have_semantic_parity) | test(public_help_families_and_current_contract_paths_are_documented)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }] }
 
 # The route table is the only record of loopback ownership: an address is in
@@ -203,7 +201,7 @@
 ] }
 
 "test:containers:generations:catalog" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog --test integration -E 'test(end_to_end_php_stack_assembles_every_service_asset)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }] }
-"test:containers:generations:callers" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_runtime_prep::tests::) | test(exec_command::tests::) | test(execute::pipeline::standard::tests::) | test(workspace_command::session::tests::) | test(deferral::tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1200000 }] }
+"test:containers:generations:callers" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_runtime_prep::tests::) | test(exec_command::tests::) | test(execute::pipeline::standard::tests::) | test(workspace_command::session::tests::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1200000 }] }
 "test:containers:generations:gateway-ci" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --no-fail-fast --retries 0 --no-tests fail -j 1 {args}", timeout_ms = 1200000 }] }
 "test:containers:generations:cli-ci" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --no-fail-fast --retries 0 --no-tests fail -j 1 {args}", timeout_ms = 1200000 }] }
 "test:containers:generations:focus" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy-core -p effigy-runtime -p effigy --lib --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1 {args}", timeout_ms = 1200000 }] }
@@ -237,14 +235,14 @@
 ] }
 "test:environment:ci:isolated:runner" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
-  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(bounded_exec::tests::) | test(runner::environment::tests::) | test(builder_recovery::)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(bounded_exec::tests::) | test(runner::environment::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
 ] }
 "test:environment:ci:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "effigy test:environment:ci:shared:runner", timeout_ms = 7200000 },
 ] }
 "test:environment:ci:shared:runner" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy -p effigy-containers --lib --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::render::tests:: workspace::tests::host_git_mount_tests:: bounded_exec::tests:: runner::environment::tests:: builder_recovery::", timeout_ms = 1200000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib --no-fail-fast -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(bounded_exec::tests::) | test(runner::environment::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 1200000 },
 ] }
 "test:environment:ci" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { task = "test:environment:ci:isolated" },
@@ -257,15 +255,10 @@
 ] }
 "test:environment:builder-recovery" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "effigy test:environment:builder-recovery:isolated", timeout_ms = 1800000 },
-  { run = "effigy test:environment:builder-recovery:shared", timeout_ms = 1800000 },
 ] }
 "test:environment:builder-recovery:isolated" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy --lib -E 'test(builder_recovery::)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
-] }
-"test:environment:builder-recovery:shared" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --lib --no-fail-fast -- --test-threads=8 builder_recovery::", timeout_ms = 1200000 },
 ] }
 
 "check:environment:ci" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-containers --all-targets", timeout_ms = 900000 }] }
@@ -350,7 +343,6 @@
 "fmt:runtime-storage" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true src/runner/execute/pipeline/managed.rs src/runner/managed_run/control.rs src/runner/container_command/handover.rs crates/effigy-kernel/src/socket_at.rs crates/effigy-kernel/src/probe/io.rs crates/effigy-kernel/src/lib.rs crates/effigy-kernel/src/run/socket.rs crates/effigy-kernel/src/supervise.rs src/tests/runner_tests/managed_and_locking_tests/managed_headless_tests.rs src/runner/execute/sequence_run.rs src/tests/runner_tests/tasks_listing_tests/status_query_tests.rs src/tests/json_contract_tests/tasks_contract_tests.rs crates/effigy-kernel/src/run/history.rs src/tests/runner_tests/managed_and_locking_tests/locking_tests.rs crates/effigy-kernel/src/gate/foreground.rs crates/effigy-kernel/src/faults/oracles.rs src/runner/tasks_command/status.rs src/tests/runner_tests/runner_core_tests/direct_task_dispatch_tests.rs src/runner/task_engine/run/foreground.rs src/runner/task_engine/process.rs src/runner/task_engine/admission.rs src/runner/managed_run/engine.rs src/runner/managed_run/environment.rs src/runner/task_engine/remote.rs src/runner/execute/pipeline/standard.rs crates/effigy-kernel/src/run/aliases.rs crates/effigy-kernel/src/run/settle.rs crates/effigy-kernel/src/root/checkout.rs crates/effigy-kernel/src/root.rs crates/effigy-kernel/src/root/runtime.rs crates/effigy-kernel/src/id.rs crates/effigy-kernel/src/gate.rs crates/effigy-kernel/src/run/mod.rs crates/effigy-kernel/src/run/foreground.rs crates/effigy-kernel/tests/runtime_routing.rs crates/effigy-kernel/src/custody/tests.rs crates/effigy-kernel/src/custody.rs crates/effigy-kernel/src/custody/spawn.rs crates/effigy-kernel/tests/custody.rs crates/effigy-kernel/tests/support/custody-fixture.rs crates/effigy-kernel/src/run/tests.rs crates/effigy-kernel/src/store.rs crates/effigy-kernel/tests/store.rs crates/effigy-contracts/src/lib.rs crates/effigy-contracts/src/tests.rs crates/effigy-cli/src/command_parsing.rs crates/effigy-cli/src/lib.rs crates/effigy-cli/src/help/topics/runs.rs crates/effigy-manifest/src/user_config.rs src/runner/task_engine.rs src/runner/task_engine/checkout.rs src/runner/task_engine/discovery.rs src/runner/run_control.rs crates/effigy-core/src/worktree_scope.rs src/runner/task_engine/kernel.rs src/runner/task_engine/run.rs src/runner/task_engine/status.rs src/runner/task_engine/control.rs src/runner/task_engine/holders.rs src/runner/task_engine/tests.rs src/runner/task_engine/remote/tests.rs src/runner/run_control/tests.rs src/runner/scratch.rs tests/run_control_cli.rs tests/task_engine_kill_matrix.rs tests/gateway_operator.rs tests/bundle_pins.rs crates/effigy-containers/src/environment.rs crates/effigy-containers/src/environment/tests.rs crates/effigy-containers/src/tests/compose.rs crates/effigy-runtime/src/write/planning.rs crates/effigy-containers/src/environment/view.rs crates/effigy-containers/src/policy/render.rs crates/effigy-containers/src/policy/render/publication.rs src/runner/environment.rs src/runner/container_runtime_prep/mod.rs src/runner/container_runtime_prep/tests.rs crates/effigy-gateway/src/operator.rs crates/effigy-gateway/src/setup.rs crates/effigy-gateway/src/endpoint_store/mod.rs crates/effigy-gateway/src/private_state.rs crates/effigy-manifest/src/bundles/source.rs crates/effigy-manifest/src/bundles/source/prepare.rs src/runner/container_command/workspace_artifact_builder.rs src/runner/container_command/lifecycle.rs" }
 "test:kernel:socket-paths" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --lib -E 'test(socket_at::) | test(run_control_socket_long_checkout_path)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 180000 }] }
 "test:kernel:machine-facts" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --lib -E 'test(/^run::facts::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 180000 }] }
-"measure:machine-store:writes" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(machine_store_write_budget)' --run-ignored only --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "proof:runtime-managed:cli" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "python3 tests/scripts/runtime-managed-cli.py ./target/debug/effigy", timeout_ms = 180000 }] }
 "proof:runtime-foreground:cli" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "python3 tests/scripts/runtime-foreground-cli.py ./target/debug/effigy", timeout_ms = 180000 }] }
 "test:runtime-storage:builtin-test" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin --lib -E 'test(/^test::/) | test(/^runner::execute::sequence_run::/) | test(/^runner::execute::selection::fallback::/) | test(/^runner::task_engine::admission::/) | test(/^runner::builtin_ports::test_session::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
@@ -358,7 +350,7 @@
 "proof:runtime-test-tui:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/runtime-test-tui-cli.py target/debug/effigy", timeout_ms = 180000 }] }
 "build:runtime-storage" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 }] }
 "test:runtime-storage:contracts" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-contracts --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:runtime-storage" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli -p effigy-manifest --lib -E 'test(runtime_migration_) | test(user_config::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:runtime-storage" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli -p effigy-manifest --lib -E 'test(user_config::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:runtime-storage:identities" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-core --lib -E 'test(worktree_scope::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:runtime-routing" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove runtime routing, in-place checkout binding, old migration records and one local journal per checkout.", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test runtime_routing --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:identity" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(identity_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
@@ -368,7 +360,7 @@
 "test:kernel:platform" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test platform -E 'not test(/^fault_tests::/) & not test(/^custody::tests::/) & not test(/^signal::tests::/) & not test(/^run::lifecycle::tests::/) & not test(/^probe::/) & not test(/^remote::tests::/) & not test(/^strict_fake::tests::/) & not test(/^faults::/) & not test(/^supervise::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:gate" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test gate -E 'test(gate_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 # Match CI's concurrent libtest process; Effigy bounds the runner's lifetime.
-"test:kernel:gate:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy-kernel --test gate -- --test-threads=8", timeout_ms = 600000 }] }
+"test:kernel:gate:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test gate --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 600000 }] }
 "test:kernel:gate:shared:linux" = { durable = true, visibility = "internal", group = "Maintenance",  admission = "heavy", run = [{ id = "linux-shared-gate", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh gate-shared", timeout_ms = 1800000 }] }
 "test:containers:retire-dead" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::retire::dead::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
@@ -413,7 +405,7 @@
 # Repository-script policy must ignore generated fixture inputs in every runner mode.
 "test:task-engine:script-policy" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib -E 'test(script_policy::) | test(first_party_rhai_scripts_compile_on_configured_engine)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:task-engine:sequences" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build --bin effigy && EFFIGY_EXECUTABLE=\"$PWD/target/debug/effigy\" sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-manifest -p effigy-managed --lib -E 'test(run_array_tests::) | test(sequence_run::) | test(run_spec::sequence::) | test(references::) | test(task_engine::) | test(pipeline::command::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
-"test:task-engine:shared-sequences" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "EFFIGY_EXECUTABLE=\"$PWD/target/discovery-proof/effigy\" RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh exec -- cargo test --profile discovery-proof -p effigy --lib run_array_tests::rhai_script_tests:: -- --test-threads=8", timeout_ms = 900000 }] }
+"test:task-engine:shared-sequences" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "EFFIGY_EXECUTABLE=\"$PWD/target/discovery-proof/effigy\" RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh exec -- cargo test --cargo-profile discovery-proof -p effigy --lib run_array_tests::rhai_script_tests:: -- --test-threads=8", timeout_ms = 900000 }] }
 
 "test:task-engine:admission" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --test run_control_cli -E 'test(run_deep_doctor_executes_health_task_that_reaches_qa) | binary(run_control_cli)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 
@@ -451,7 +443,7 @@
 "lint:programs:fallback" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-manifest -p effigy-cli --all-targets -- -D warnings", timeout_ms = 900000 }] }
 # Runner secrets tests in one shared process, as hosted CI's shared-process
 # lane runs them: the in-process passphrase cache must not leak between tests.
-"test:task-engine:shared-secrets" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --lib secrets_tests:: -- --test-threads=8", timeout_ms = 1800000 }] }
+"test:task-engine:shared-secrets" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(secrets_tests::)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 1800000 }] }
 # The exec adapter's remote group stop under bash and dash (a leaderless group).
 "test:task-engine:remote-stop" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(/exec::managed_stop::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 # Per-run scratch on a configured external volume (effigy#244): the volume gate's
@@ -472,7 +464,7 @@
 
 "test:secrets:manifest" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --test secrets_config --test workspace_app_bundle -E 'binary(secrets_config) | binary(workspace_app_bundle) | test(composition::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:secrets:policy:compatibility" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "sh scripts/oxide-selector.sh exec -- bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-doctor -p effigy-cli --lib --test cli_output_tests --test documentation_coverage_tests -E 'test(state_apply_hook_receives_declared_state_secret) | test(/^manifest_schema::tests::manifest_schema_(accepts_every_documented_shape|rejects_each_bad_key_with_its_path)/) | test(cli_container_status_succeeds_with_unrelated_required_container_secrets) | test(cli_container_reset_succeeds_with_unrelated_required_container_secrets) | test(member_logs_inherit_pipeline_secret_redaction) | test(project_local_and_distributed_effigy_skills) | test(public_help_families) | test(render_secrets) | test(builtin_help_topics_render_expected_content)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh exec -- bash tests/scripts/vault-validation.sh cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-doctor -p effigy-cli --lib --test cli_output_tests --test documentation_coverage_tests -E 'test(state_apply_hook_receives_declared_state_secret) | test(/^manifest_schema::tests::manifest_schema_(accepts_every_documented_shape|rejects_each_bad_key_with_its_path)/) | test(cli_container_status_succeeds_with_unrelated_required_container_secrets) | test(cli_container_reset_succeeds_with_unrelated_required_container_secrets) | test(member_logs_inherit_pipeline_secret_redaction) | test(project_local_and_distributed_effigy_skills) | test(public_help_families) | test(builtin_help_topics_render_expected_content)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
 ] }
 
 "test:secrets:policy:consumers" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ task = "test:secrets:callers" }, { task = "test:secrets:cli" }, { task = "test:secrets:policy:compatibility" }, { task = "test:secrets:policy:config-help" }] }
@@ -517,9 +509,9 @@
 
 # All maintained JSON contract rows and their authority/ownership controls.
 "test:audit:contracts" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-contracts --lib -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-json-schema --lib -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_contracts_ -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-contracts --lib --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-json-schema --lib --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_contracts_)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "check:audit:contracts" = { visibility = "internal", group = "Maintenance", run = [
   { task = "fmt:check" },
@@ -535,14 +527,14 @@
 ] }
 "lint:audit:yaml" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-catalog -p effigy-containers -p effigy-doctor -p effigy-rhai -p effigy-runtime --all-targets -- -D warnings" }
 "test:audit:yaml" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-catalog -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-doctor --lib health::bootstrap:: -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-rhai --lib tests::utility:: -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-runtime --lib write::planning:: -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib container_runtime_prep::tests:: -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib gateway_registration -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib container_command::lifecycle -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor --lib -E 'test(health::bootstrap::)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib -E 'test(tests::utility::)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-runtime --lib -E 'test(write::planning::)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_runtime_prep::tests::)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(gateway_registration)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::lifecycle)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 
 # Managed TUI startup must render and remain cancellable while ordered child
@@ -603,15 +595,14 @@
 
 # Scoped runtime inventory, participation, backend selection and loopback
 "test:containers:scope-lifecycle" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib policy_resolution_writes_no_runtime_ownership_state -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib scope_query_reports_linked_worktree_identity -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib scope_query_reports_primary_checkout_and_unmarked_clone_as_unscoped -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests retire_of_a_checkout_with_no_labelled_resources_is_a_no_op -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(scope_query_reports_linked_worktree_identity)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(scope_query_reports_primary_checkout_and_unmarked_clone_as_unscoped)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(retire_of_a_checkout_with_no_labelled_resources_is_a_no_op)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "test:containers:retire-selection" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib container_command::retire:: -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests retire_label_tests -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_retire_named_environment_refuses_before_effects -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::retire::)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(retire_label_tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_container_retire_named_environment_refuses_before_effects)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "test:worktree:lifecycle-hooks" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh tests/scripts/worktree-lifecycle-hooks.sh" }
 # The selector must reuse the real shared Oxide pool when a harness overrides
@@ -632,7 +623,7 @@
   { run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli --all-targets", timeout_ms = 900000 },
   { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli --all-targets -- -D warnings", timeout_ms = 900000 },
 ] }
-"test:catalog:sources" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli -p effigy --lib --test integration --test catalog_sources --test service_list_cli_tests --test cli_output_tests -E 'package(effigy-catalog) | (package(effigy-manifest) & test(bundles::)) | package(effigy-containers) | (package(effigy-release) & (test(retired_catalog_pack_support_policy_key_is_refused) | test(load_release_config_reads_manifest_release_settings))) | (package(effigy-doctor) & test(manifest_schema::)) | (package(effigy-cli) & test(service)) | (package(effigy) & (test(service_command::) | test(parse_service_) | test(render_service_help) | test(doctor_command_tests::core::) | test(doctor_text_output_tests::snapshot_layout_tests::) | binary(catalog_sources) | binary(service_list_cli_tests) | test(retirement_user_catalog) | test(genuine_command_owned_subcommands_stay_nested)))' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1800000 }] }
+"test:catalog:sources" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli -p effigy --lib --test integration --test catalog_sources --test service_list_cli_tests --test cli_output_tests -E 'package(effigy-catalog) | (package(effigy-manifest) & test(bundles::)) | package(effigy-containers) | (package(effigy-release) & (test(retired_catalog_pack_support_policy_key_is_refused) | test(load_release_config_reads_manifest_release_settings))) | (package(effigy-doctor) & test(manifest_schema::)) | (package(effigy-cli) & test(service)) | (package(effigy) & (test(service_command::) | test(parse_service_) | test(doctor_command_tests::core::) | test(doctor_text_output_tests::snapshot_layout_tests::) | binary(catalog_sources) | binary(service_list_cli_tests) | test(retirement_user_catalog) | test(genuine_command_owned_subcommands_stay_nested)))' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1800000 }] }
 "check:containers:scope-compile" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-containers -p effigy-runtime -p effigy-managed -p effigy --all-targets",
   "sh scripts/oxide-selector.sh clippy -p effigy-containers -p effigy-runtime -p effigy-managed -p effigy --all-targets -- -D warnings",
@@ -642,13 +633,13 @@
   "sh scripts/oxide-selector.sh clippy -p effigy-cli -p effigy --all-targets -- -D warnings",
 ] }
 "test:containers:runtime-inventory" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-containers inventory_tests:: -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-containers participation::tests:: -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -E 'test(inventory_tests::)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -E 'test(participation::tests::)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "test:containers:linked-compose" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib linked_worktrees_generate_distinct_compose_resources_and_source_mounts -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib invalid_linked_worktree_admin_directory_is_refused -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(linked_worktrees_generate_distinct_compose_resources_and_source_mounts)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(linked_worktrees_get_distinct_effective_hosts_and_primary_keeps_declared)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(invalid_linked_worktree_admin_directory_is_refused)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "test:containers:data-from" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --filterset 'test(container_data_from)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -662,13 +653,13 @@
 # carries the SIGPIPE classification and its genuine-service-failure negative
 # control, plus the live-holder refusal that forbids recreating a service under
 # an active run. Native pipes and processes only; no shared stack or VM.
-"test:containers:exit141" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(exit141_) | test(sigpipe) | test(transitions_refuse_against_live_interrupted_and_unknown_holders)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
+"test:containers:exit141" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(exit141_) | test(transitions_refuse_against_live_interrupted_and_unknown_holders)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "check:containers:exit141" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy-containers --all-targets", timeout_ms = 900000 }] }
 "lint:containers:exit141" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }] }
 # Machine-wide generated-container port registry recovery: exhaustion and
 # reclaim in a private registry, status/dry-run non-mutation, digest-confirmed
 # locked apply, retirement releasing only its own allocation in the isolated
-"test:containers:backend-selection" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-containers manager::tests:: -- --nocapture" }
+"test:containers:backend-selection" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -E 'test(manager::tests::)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 "test:gateway:registration-loopback" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "gateway-registration-loopback", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration::tests::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
@@ -702,7 +693,7 @@
   "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-containers -p effigy-runtime -p effigy-cli --all-targets -- -D warnings",
 ] }
 "test:gateway:pid-domain" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-pid-domain", run = "sh scripts/oxide-selector.sh test -p effigy-gateway -p effigy --lib pid_domain -- --nocapture", timeout_ms = 240000 },
+  { id = "gateway-pid-domain", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib -E 'test(pid_domain)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
 ] }
 "check:gateway:pid-domain" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-gateway -p effigy --all-targets",
@@ -719,11 +710,11 @@
   "sh scripts/oxide-selector.sh clippy -p effigy-gateway -p effigy --all-targets -- -D warnings",
 ] }
 "test:gateway:private" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-private-state-startup", run = "sh scripts/oxide-selector.sh test -p effigy-gateway --lib private_ -- --nocapture --test-threads=1", timeout_ms = 240000 },
-  { id = "gateway-private-tls", run = "sh scripts/oxide-selector.sh test -p effigy-gateway --lib tls::tests:: -- --nocapture --test-threads=1", timeout_ms = 240000 },
-  { id = "gateway-private-container-propagation", run = "sh scripts/oxide-selector.sh test -p effigy-containers private_gateway_does_not_resolve -- --nocapture --test-threads=1", timeout_ms = 240000 },
-  { id = "gateway-private-runner-policy", run = "sh scripts/oxide-selector.sh test -p effigy --lib private_gateway -- --nocapture --test-threads=1", timeout_ms = 240000 },
-  { id = "gateway-private-cli-parse", run = "sh scripts/oxide-selector.sh test -p effigy --lib parse_gateway -- --nocapture --test-threads=1", timeout_ms = 240000 },
+  { id = "gateway-private-state-startup", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(private_)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 1", timeout_ms = 240000 },
+  { id = "gateway-private-tls", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(tls::tests::)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 1", timeout_ms = 240000 },
+  { id = "gateway-private-container-propagation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -E 'test(private_gateway_does_not_resolve)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 1", timeout_ms = 240000 },
+  { id = "gateway-private-runner-policy", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(private_gateway)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 1", timeout_ms = 240000 },
+  { id = "gateway-private-cli-parse", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(parse_gateway)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 1", timeout_ms = 240000 },
 ] }
 "proof:gateway:private" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "gateway-private-cli-https", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -762,7 +753,7 @@
 # matching DNS/listener declarations. Disposable loopback fixtures only.
 "test:managed:scoped-host-routes" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-scoped-host-routes-runtime", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(scoped_host_routes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "managed-scoped-host-routes-policy", run = "sh scripts/oxide-selector.sh test -p effigy-containers --lib listener_routes -- --nocapture", timeout_ms = 600000 },
+  { id = "managed-scoped-host-routes-policy", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(listener_routes)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
 ] }
 # An ordinary server needs no adapter (effigy#334): readiness is the reserved
 # port answering its own probe. A plain
@@ -786,19 +777,6 @@
 ] }
 "proof:managed:host-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-host-listener-cli-proof", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_scoped_host_routes_follow_checkout_identity)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-] }
-# Controlled listener transitions through the public container CLI plus the
-# production wait boundary: selected causes, dependency assignments, teardown,
-# ready-only tuple replacement, inspection failure and secret allowlist control.
-# Disposable loopback fixtures and owned child processes only.
-# Isolated HTTP readiness compatibility and terminal diagnostic counterexamples
-# for managed host listeners. Disposable loopback fixtures only; no consumer
-# runtime, route table or host state is touched.
-# Process-inventory owner parsing for listener exclusivity: signed `ps` UID
-# presentation, effective-UID aliasing, boundaries and malformed rows through the
-# production row parser. Read-only inventory; no process is signaled.
-"test:managed:process-inventory" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-process-inventory-rows", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(process_inventory_row_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 # One dev session (effigy#322): a plain managed task bound to a hybrid
 # environment (one container service, two host processes) shows the host
@@ -840,8 +818,8 @@
 # Same supervisor front-end family as :unit and :faults, routed through
 # Oxide on 2026-10-23.
 "test:supervisor:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy-tui --lib --no-fail-fast -- --test-threads=8 multiprocess::", timeout_ms = 1200000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --test gateway_private --no-fail-fast -- --test-threads=8 managed_matrix_death_", timeout_ms = 3600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib --no-fail-fast -E 'test(multiprocess::)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 1200000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --no-fail-fast -E 'test(managed_matrix_death_)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 3600000 },
 ] }
 
 # The supervisor SIGKILLed at every kernel journal crossing it makes, each
@@ -867,7 +845,7 @@
   { id = "managed-exec-readiness-render", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(session::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
   { id = "managed-up-workspace-prep", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::up_workspace_permission)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
   { id = "managed-handoff-local-exec", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::tests::handoff_local_tests::handoff_container_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { id = "managed-inline-exec-render", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(execute::pipeline::managed::tests::inline_managed) | test(concurrent_configuration_tests::plan_rendering_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
+  { id = "managed-inline-exec-render", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(runner::execute::pipeline::managed::tests::) | test(concurrent_configuration_tests::plan_rendering_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
   { id = "managed-headless-controls", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-headless-healthy-stack", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_lifecycle_reaches_running_on_healthy_stack) | test(cli_managed_headless_streams_workload_output_by_name)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-headless-settle-e2e", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_stop_settles_remote_exec_children_and_locks)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -896,10 +874,10 @@
   { id = "readiness-closeout-forward-handover", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "test:gateway:readiness-closeout:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "readiness-closeout-shared-cases", run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --test gateway_private --no-fail-fast -- --include-ignored --test-threads=8 managed_host_dependent_replacement_ managed_host_listeners_scoped_host_routes_follow_checkout_identity container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over", timeout_ms = 1800000 },
+  { id = "readiness-closeout-shared-cases", run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private --no-fail-fast -E 'test(managed_host_dependent_replacement_) | test(managed_host_listeners_scoped_host_routes_follow_checkout_identity) | test(container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over)' --no-fail-fast --retries 0 --no-tests fail --run-ignored all -j 8", timeout_ms = 1800000 },
 ] }
 "test:gateway:readiness-closeout:self-test" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "readiness-closeout-http-self-test", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(http_self_test_) | test(unobservable_listener_identity)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "readiness-closeout-http-self-test", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(http_self_test_)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "readiness-closeout-activation-barrier", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(listener_activation_barrier)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "proof:managed:host-readiness" = { durable = true, visibility = "internal", group = "Maintenance", run = [
@@ -934,7 +912,7 @@
 # republished, a `never` listener settles closed, and the exited leader is never
 # counted as a surviving member of its own group (effigy#336).
 "test:host-process:leader-exit" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "leader-exit-group-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_leader_exit_observation_) | test(host_process_group_observation_) | test(host_process_signal_refuses_) | test(host_process_restart_policy_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "leader-exit-group-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_leader_exit_observation_) | test(host_process_group_observation_) | test(host_process_restart_policy_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "leader-exit-restart", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listener_leader_exit_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "format:host-process:leader-exit" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs crates/effigy-process/src/signal.rs crates/effigy-process/src/lib.rs tests/gateway_private.rs" }
@@ -952,7 +930,7 @@
 # Exercise the default CI resource reservation (the focused listener profile
 # deliberately uses a separate configuration).
 "test:host-process:dependent-replacement:ci" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 600000 }] }
-"test:host-process:dependent-replacement:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --test gateway_private managed_host_dependent_replacement_ -- --nocapture --test-threads=8", timeout_ms = 600000 }] }
+"test:host-process:dependent-replacement:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_host_dependent_replacement_)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 8", timeout_ms = 600000 }] }
 "test:host-process:exit-observation:matrix" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { task = "test:host-process:exit-observation" },
   { task = "test:host-process:dependent-replacement" },
@@ -964,7 +942,7 @@
   { task = "test:host-process:owned-stop:remaining" },
 ] }
 "test:host-process:owned-stop:remaining" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "owned-stop-other-native-callers", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset '(test(host_process) | test(managed_host_transitions_)) - test(host_process_owned_) - test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "owned-stop-other-native-callers", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset '(test(host_process)) - test(host_process_owned_) - test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "owned-stop-generation-identity", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(identity::tests::) | test(managed_listener_routes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   # The 108-cell managed matrix has its own selector, its own nextest profile
   # and roughly 300s per parameterised test; sweeping it here exceeded this
@@ -978,7 +956,7 @@
   { id = "owned-stop-clippy", run = "sh scripts/oxide-selector.sh clippy -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
 ] }
 "proof:managed:lifecycle" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-lifecycle-native", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process) | test(managed_host_transitions_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-lifecycle-native", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-lifecycle-identity", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(identity::tests::) | test(managed_listener_routes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-lifecycle-public", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'not test(managed_listener_fixture_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
@@ -987,7 +965,7 @@
   { id = "managed-host-listener-clippy", run = "sh scripts/oxide-selector.sh clippy -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
 ] }
 "test:gateway:identity" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-identity", run = "sh scripts/oxide-selector.sh test -p effigy-gateway -p effigy-cli -p effigy --lib gateway_identity -- --nocapture", timeout_ms = 240000 },
+  { id = "gateway-identity", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy-cli -p effigy --lib -E 'test(gateway_identity)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
 ] }
 "check:gateway:identity" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets",
@@ -1000,7 +978,7 @@
 # uncached proof, and legacy `kern.boottime` compatibility. Private fixtures
 # only; no host mutation.
 "test:gateway:boot-identity" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-boot-identity", run = "sh scripts/oxide-selector.sh test -p effigy-process --lib identity -- --nocapture", timeout_ms = 120000 },
+  { id = "gateway-boot-identity", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-process --lib -E 'test(identity)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 120000 },
 ] }
 "check:gateway:boot-identity" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-process --all-targets",
@@ -1010,7 +988,7 @@
 # bounded elevated reader while stdout/stderr diagnostics stay captured. Real
 # private PTY; noninteractive controls refuse without running the body.
 "test:gateway:managed-tty" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-managed-tty-and-bounded-handoff", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_up_for_managed_task) | test(gateway_down_permission_denied_uses_one_lifecycle_handoff_or_preserves_unknown) | test(gateway_lifecycle_timeout_kills_and_reaps_only_its_owned_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+  { id = "gateway-managed-tty-and-bounded-handoff", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_up_for_managed_task) | test(permission_reuse_denied_reader_stays_unknown_and_preserves_records) | test(gateway_lifecycle_timeout_kills_and_reaps_only_its_owned_child)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ] }
 # Privileged gateway permission-reuse boundary: deterministic permission-denied
 # refusal plus genuine private owned-process reuse through the production
@@ -1037,7 +1015,7 @@
 # and one native loopback-lowport bind proof. Synthetic fixtures and owned
 # children only; no live gateway state, sudo, or cross-UID proof is claimed.
 "test:install:previous-binary-preservation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "install-previous-binary-preservation", run = "sh scripts/oxide-selector.sh test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
+  { id = "install-previous-binary-preservation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib -E 'test(previous_binary_preservation)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 120000 },
 ] }
 # Local installer contract (task 303): the optimized release artifact is built
 # through Oxide and its exact uplifted output is activated; customized launchers
@@ -1050,9 +1028,8 @@
   { id = "install-local-fixture", run = "sh tests/scripts/install-local-bin.sh", timeout_ms = 900000 },
 ] }
 "test:container:fake-runtime-lease-isolation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_workspace_binding_handoff_stops_environment_after_return -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_container_data_seed_json_reports_seed_contract)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_workspace_binding_handoff_stops_environment_after_return)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 # Opt-in bounded finite container-command capture: strict bound parsing and the
 # default non-opt-in command shell path, plus the bounded reader and owned-group
@@ -1062,11 +1039,11 @@
 # started.
 "test:workspace:effigy-build" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh build --bin effigy" }
 "test:container:bounded-exec" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "bounded-exec-parser", run = "sh scripts/oxide-selector.sh test -p effigy-cli --lib command_parsing::container::tests:: -- --nocapture", timeout_ms = 600000 },
-  { id = "bounded-exec-reader", run = "sh scripts/oxide-selector.sh test -p effigy --lib exec_command::bounded:: -- --nocapture", timeout_ms = 600000 },
+  { id = "bounded-exec-parser", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli --lib -E 'test(command_parsing::container::tests::)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
+  { id = "bounded-exec-reader", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(exec_command::bounded::)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
   { id = "bounded-exec-public-entry", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::) and not test(refusal_accounting)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { id = "bounded-exec-default-path", run = "sh scripts/oxide-selector.sh test -p effigy --lib container_command::lifecycle::tests:: -- --nocapture", timeout_ms = 600000 },
-  { id = "bounded-exec-help", run = "sh scripts/oxide-selector.sh test -p effigy --lib render_container_help -- --nocapture", timeout_ms = 600000 },
+  { id = "bounded-exec-default-path", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::lifecycle::tests::)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
+  { id = "bounded-exec-help", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(render_container_help)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
 ] }
 # Secret-free versioned refusal accounting: every bounded transport refusal
 # carries explicit structural observations from the original operation clock.
@@ -1090,24 +1067,24 @@
 ] }
 
 # Bounded QA-group proofs (contract 051 implementation)
-"test:qa-groups:manifest" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-manifest --lib qa_groups -- --nocapture" }
-"test:qa-groups:surface" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-tasks --lib qa_groups -- --nocapture" }
-"test:qa-groups:runtime" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-runtime --lib qa_group_status -- --nocapture" }
-"test:qa-groups:identity" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-process --lib identity -- --nocapture" }
-"test:qa-groups:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test --test cli_output_tests qa_groups_tests -- --nocapture" }
-"test:qa-groups:json-clean" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test --test cli_output_tests qa_group_json_forms_emit_one_banner_free_document -- --nocapture" }
-"test:qa-groups:parse" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy --lib qa_group_option_tests -- --nocapture" }
-"test:cli:command-surface" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-cli --lib command_surface -- --nocapture" }
+"test:qa-groups:manifest" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(qa_groups)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+"test:qa-groups:surface" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tasks --lib -E 'test(qa_groups)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+"test:qa-groups:runtime" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-runtime --lib -E 'test(qa_group_status)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+"test:qa-groups:identity" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-process --lib -E 'test(identity)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+"test:qa-groups:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(qa_groups_tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+"test:qa-groups:json-clean" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(qa_group_json_forms_emit_one_banner_free_document)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+"test:qa-groups:parse" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(qa_group_option_tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
+"test:cli:command-surface" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli --lib -E 'test(command_surface)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 # Built-in names a repository task may shadow (#293). Covers the classification
 # table, parse-time deferral, fmt task resolution and the `fmt-rust` escape.
 "test:cli:builtin-shadowing" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "classification", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli --lib -E 'test(command_surface) | test(parse_fmt)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "classification", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli --lib -E 'test(command_surface)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
   { id = "parse-and-deferral", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(deferred_builtins) | test(parse_command_with_builtin_deferral) | test(catalog_task_plan_json_contract)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
   { id = "completion", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-builtin --lib -E 'test(completion)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
   { id = "shadowed-resolution", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(flat_command_execution_tests::fmt_task_shadows) | test(flat_command_execution_tests::shadowed_fmt_plan) | test(flat_command_execution_tests::fmt_builtin_still) | test(flat_command_execution_tests::every_shadowable_builtin) | test(selector_plan_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
 ] }
 "test:cli:lock-conflict" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "lock-conflict", run = "sh scripts/oxide-selector.sh test --test cli_output_tests lock_conflict -- --nocapture", timeout_ms = 600000 },
+  { id = "lock-conflict", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(lock_conflict)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
 ] }
 "check:cli:lock-conflict" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy --test cli_output_tests",
@@ -1119,15 +1096,6 @@
 "check:task-status:publication" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy -p effigy-runtime --lib --tests",
   "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-runtime --all-targets -- -D warnings",
-] }
-# In-process sequence and managed-cleanup timeout descendant reap. Private
-# tempfile fixtures only; exact recorded PIDs/groups; no process-name kills.
-"test:runner:timeout-descendants" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "timeout-descendants", run = "sh scripts/oxide-selector.sh test -p effigy --lib timeout_descendants -- --nocapture", timeout_ms = 240000 },
-] }
-"check:runner:timeout-descendants" = { visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh check -p effigy --all-targets",
-  "sh scripts/oxide-selector.sh clippy -p effigy --all-targets -- -D warnings",
 ] }
 # v0.14.0 Rust unsafe-invariant and safe-diagnostics wave (strict audit091
 # findings). Compiles every touched target, lints the root all-target surface
@@ -1148,7 +1116,7 @@
 # proofs live in effigy-process; containers all-target lint covers the
 # reported test idioms.
 "test:rust:postfork-safety" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "postfork-safety", run = "sh scripts/oxide-selector.sh test -p effigy-process --lib postfork -- --nocapture", timeout_ms = 240000 },
+  { id = "postfork-safety", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-process --lib -E 'test(postfork)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
 ] }
 "check:rust:postfork-safety" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-process -p effigy-scan -p effigy-deps -p effigy-runtime -p effigy-containers -p effigy --all-targets",
@@ -1156,11 +1124,10 @@
   "sh scripts/oxide-selector.sh clippy -p effigy-containers --all-targets -- -D warnings",
 ] }
 "test:rust:release-invariants" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "route-table-lock-debug", run = "sh scripts/oxide-selector.sh test -p effigy-gateway --lib route_table_lock_debug_is_available_and_redacts_the_lock_descriptor -- --nocapture", timeout_ms = 600000 },
-  { id = "live-route-table-debug", run = "sh scripts/oxide-selector.sh test -p effigy-gateway --lib live_route_table_debug_does_not_lock_or_print_route_contents -- --nocapture", timeout_ms = 600000 },
-  { id = "script-context-debug", run = "sh scripts/oxide-selector.sh test -p effigy-rhai --lib script_context_debug_is_available_for_diagnostics -- --nocapture", timeout_ms = 600000 },
+  { id = "live-route-table-debug", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(live_route_table_debug_does_not_lock_or_print_route_contents)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
+  { id = "script-context-debug", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib -E 'test(script_context_debug_is_available_for_diagnostics)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
 ] }
-"test:init:upstream-guidance" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy --lib init_upstream_guidance -- --nocapture" }
+"test:init:upstream-guidance" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(init_upstream_guidance)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 "check:init:upstream-guidance" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-builtin -p effigy --lib --bin effigy --tests" }
 # Built-in suite child evidence ports must remain usable from test builds and
 # warning-clean across every target in their crate.
@@ -1168,30 +1135,29 @@
   "sh scripts/oxide-selector.sh check -p effigy-builtin --all-targets",
   "sh scripts/oxide-selector.sh clippy -p effigy-builtin --all-targets -- -D warnings",
 ] }
-"test:docs:skill-parity" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test --test documentation_coverage_tests project_local_and_distributed_effigy_skills_have_semantic_parity -- --nocapture" }
+"test:docs:skill-parity" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test documentation_coverage_tests -E 'test(project_local_and_distributed_effigy_skills_have_semantic_parity)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 # Workspace rust/cache ownership: mount classification, permission prep,
 # doctor diagnosis, and the activation routing that must fail closed before
 # lease refresh. Includes fake-runtime container data-seed routes that run
 # permission prep (numeric id -u/-g probe) before exec. Private fixtures
 # only; no live VM/container/cache mutation.
 "test:workspace:rust-ownership" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib workspace::ownership -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib workspace_ownership_finding_is_named_and_actionable -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib task_activation_surfaces_workspace_permission_failure_before_lease_refresh -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib run_command_capture_until -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib run_manifest_task_php_app_bundle_defers_inside_container -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-doctor --lib runtime_diagnostics_run_when_budget_already_expired -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(workspace::ownership)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::workspace_command::permissions)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(workspace_ownership_finding_is_named_and_actionable)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(task_activation_surfaces_workspace_permission_failure)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_command_capture_until)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_bundle_defers_inside_container)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_container_data_seed_json_reports_seed_contract)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor --lib -E 'test(runtime_diagnostics_run_when_budget_already_expired)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 # Plain exec workspace prep stays down-stack-safe and batches live checks by
 # plan; private in-memory backends only, with no VM or host mount access.
 "test:exec:workspace-preparation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib exec_preparation -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(exec_preparation)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 # Dependency volumes with one writer and read-only consumers: writer-set
 # volume classification, prepared-target inclusion, numeric-user prep and
@@ -1200,25 +1166,25 @@
 # in-memory, scripted and fake-runtime fixtures only; no live VM, container
 # or volume is touched.
 "test:workspace:dependency-volume-ownership" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib workspace::ownership -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib dependency_volume_wrong_permissions_stay_a_path_specific_finding -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib shared_dependency_volume_wrong_permissions_stay_reported -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib task_activation_surfaces_workspace_permission_failure_before_lease_refresh -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib task_activation_surfaces_dependency_volume_failure_before_lease_refresh -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(workspace::ownership)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::workspace_command::permissions)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(dependency_volume_wrong_permissions_stay_a_path_specific_finding)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(shared_dependency_volume_wrong_permissions_stay_reported)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(task_activation_surfaces_workspace_permission_failure)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(task_activation_surfaces_dependency_volume_failure)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "test:exec:workspace-preparation:bulk-guards" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib bulk_ -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(bulk_)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "check:exec:workspace-preparation" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy --lib --tests" }
 # Nested host bind mount boundaries and numeric-user access checks. Private
 # fixtures only; Effigy does not mutate host bind sources or start a runtime.
 "test:workspace:nested-mounts" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "nested-bind-preparation", run = "sh scripts/oxide-selector.sh test -p effigy --lib nested_host_bind -- --nocapture", timeout_ms = 240000 },
-  { id = "nested-volume-scope", run = "sh scripts/oxide-selector.sh test -p effigy --lib nested_owned_volume_is_pruned_from_parent_then_repaired_in_its_own_scope -- --nocapture", timeout_ms = 240000 },
-  { id = "named-rust-volume-classification", run = "sh scripts/oxide-selector.sh test -p effigy-containers --lib named_cargo_and_target_volumes_are_owned_disposable -- --nocapture", timeout_ms = 240000 },
-  { id = "mount-plan-classification", run = "sh scripts/oxide-selector.sh test -p effigy-containers --lib bind_mounted_rust_target_is_verify_only -- --nocapture", timeout_ms = 240000 },
+  { id = "nested-bind-preparation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(nested_host_bind)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
+  { id = "nested-volume-scope", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(nested_owned_volume_is_pruned_from_parent_then_repaired_in_its_own_scope)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
+  { id = "named-rust-volume-classification", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(named_cargo_and_target_volumes_are_owned_disposable)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
+  { id = "mount-plan-classification", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(bind_mounted_rust_target_is_verify_only)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
 ] }
 "check:workspace:nested-mounts" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-containers -p effigy --all-targets",
@@ -1231,33 +1197,32 @@
 # effective create spec through the selected Compose backend plan.
 "test:workspace:extra-mount-creation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "container-policy-mount-decisions", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(creation_policy_) | test(structured_mount_tests) | test(optional_source_tests) | test(absent_sibling_mount_is_skipped_instead_of_aborting) | test(absent_catalog_member_mount_still_fails)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
-  { id = "runner-create-backend-capture", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(creation_refresh_is_captured_by_compose_backend_plan) | test(running_direct_primary_keeps_loaded_mount_spec)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
   { id = "data-pull-mount-decision-report", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-runtime --lib --filterset 'test(data_pull_workspace_mount_decisions_are_bounded_and_explicit)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
 ] }
 # Bulk ownership repair (papercut dab293be): O(volumes) runtime round trips
 # for owned Rust volumes, deadline/identity/protected-scope failures. Private
 # in-memory numeric-user backend only; no live VM/container/chown.
 "test:workspace:rust-ownership:bulk" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions::tests::bulk -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions::tests::compose_bulk -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::workspace_command::permissions::tests::bulk)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::workspace_command::permissions::tests::compose_bulk)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
   # Full-size GNU findutils + native chown + numeric-user proof in a private
   # disposable container (already-running effigy Colima profile, already-local
   # image, no host mounts or network). Fails, never skips, if unavailable.
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions::gnu_accept::bulk_gnu_container_full_acceptance -- --ignored --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::workspace_command::permissions::gnu_accept::bulk_gnu_container_full_acceptance)' --no-fail-fast --retries 0 --no-tests fail --run-ignored only --no-capture",
 ] }
 "check:workspace:rust-ownership:bulk" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy --lib --tests",
   "sh scripts/oxide-selector.sh clippy -p effigy --lib -- -D warnings",
 ] }
 "test:workspace:rust-ownership:fake-runtime-identity" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "php-app-bundle-deferral-fake-runtime", run = "sh scripts/oxide-selector.sh test -p effigy --lib run_manifest_task_php_app_bundle_defers -- --nocapture", timeout_ms = 240000 },
-  { id = "php-app-library-bundle-fake-runtime", run = "sh scripts/oxide-selector.sh test -p effigy --lib run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec -- --nocapture", timeout_ms = 240000 },
+  { id = "php-app-bundle-deferral-fake-runtime", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_bundle_defers)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
+  { id = "php-app-library-bundle-fake-runtime", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 240000 },
 ] }
 # Deadline/reap proof uses only a fresh private temp root, a fake Docker command,
 # and exact fixture PIDs: the production constructor's caller deadline bounds and
 # reaps the hung bulk child.
 "test:workspace:rust-ownership:bulk-deadline" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib bulk_production_constructor -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(bulk_production_constructor)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "check:workspace:rust-ownership:bulk-deadline" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh clippy -p effigy --all-targets -- -D warnings",
@@ -1305,7 +1270,7 @@
   { id = "owned-gateway-container-callers", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:workspace:artifact-managed-callers" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-container-callers", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_stream_tests::) | test(managed_tui_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-container-callers", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_tui_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:workspace:artifact-diagnostics" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "unchanged-diagnosis-and-permission-transport", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(doctor_ports::tests::) | test(deferral_tests::token_and_implicit_tests::run_manifest_task_php_app)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -1318,7 +1283,7 @@
 ] }
 "test:workspace:artifact-builder-recovery" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { task = "test:workspace:effigy-build" },
-  { id = "builder-recovery", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(builder_recovery::) | test(workspace_artifact_build_helper)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "builder-recovery", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib --filterset 'test(workspace_artifact_build_helper)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "check:workspace:artifact-builder-recovery" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh clippy -p effigy-rhai --all-targets -- -D warnings",
@@ -1341,15 +1306,15 @@
 # running/stopped/unavailable distinction survives, and the ownership probe
 # shares one budget instead of getting a fresh one per subprocess.
 "test:doctor:workspace-liveness" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::doctor_ports::tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "test:doctor:ownership-latency" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::healthy_named_volume_ownership_batches_probes_within_doctor_budget -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::named_volume_batch_keeps_wrong_permissions_as_path_specific_finding -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::doctor_batches_keep_bind_and_shared_volumes_verify_only -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::expired_ownership_deadline_does_not_spawn_identity_probe -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions::tests::doctor -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::healthy_named_volume_ownership_batches_probes_within_doctor_budget)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::named_volume_batch_keeps_wrong_permissions_as_path_specific_finding)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::doctor_batches_keep_bind_and_shared_volumes_verify_only)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::expired_ownership_deadline_does_not_spawn_identity_probe)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::workspace_command::permissions::tests::doctor)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 # Doctor hung workspace-ownership batch proof (papercut d773ae06). Private
 # fake-runtime fixture only: the metadata batch must record its own leader and
@@ -1357,8 +1322,8 @@
 # must report only its own unavailable context with no metadata reap claim. No
 # production budget, readiness, or incomplete semantics change.
 "test:doctor:ownership-hang" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::ownership_preflight_hang_is_unavailable_without_metadata_reap_claim -- --exact --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::ownership_preflight_hang_is_unavailable_without_metadata_reap_claim)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "check:doctor:ownership-latency" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins" }
 "check:doctor:workspace-liveness" = { visibility = "internal", group = "Maintenance", run = [
@@ -1370,13 +1335,13 @@
 # orchestration, argv construction and parsers with zero real subprocess
 # launches.
 "test:doctor:fixture-contract" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::expired_deadline_never_spawns_the_colima_liveness_probe -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::expired_ownership_deadline_does_not_spawn_identity_probe -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::hung_compose_ps_probe_is_bounded_by_the_shared_deadline -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::healthy_named_volume_ownership_batches_probes_within_doctor_budget -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::named_volume_batch_keeps_wrong_permissions_as_path_specific_finding -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::doctor_batches_keep_bind_and_shared_volumes_verify_only -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::doctor_ports::tests::successful_and_stopped_liveness_distinctions_survive_a_deadline -- --exact --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::expired_deadline_never_spawns_the_colima_liveness_probe)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::expired_ownership_deadline_does_not_spawn_identity_probe)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::hung_compose_ps_probe_is_bounded_by_the_shared_deadline)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::healthy_named_volume_ownership_batches_probes_within_doctor_budget)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::named_volume_batch_keeps_wrong_permissions_as_path_specific_finding)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::doctor_batches_keep_bind_and_shared_volumes_verify_only)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::doctor_ports::tests::successful_and_stopped_liveness_distinctions_survive_a_deadline)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 # CI-equivalent lint coverage for the touched doctor fixture targets. The
 # hosted `cargo clippy --all-targets -- -D warnings` lints the root `effigy`
@@ -1391,9 +1356,6 @@
 # identity-tree hang; the direct inventory fixture keeps its existing 800 ms
 # deadline origin (it has no earlier phases to spend it).
 "test:doctor:git-timeout-proof" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "cold-cli-git-timeout-proof", run = "sh scripts/oxide-selector.sh nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(cli_deep_doctor_timeout_terminates_git_identity_tree)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
-  { id = "serial-observer-readiness-counterexample", run = "sh scripts/oxide-selector.sh nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(doctor_git_cli_serial_observer_counterexample)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
-  { id = "late-descendant-readiness-control", run = "sh scripts/oxide-selector.sh nextest run -p effigy --test cli_output_tests --profile doctor-process --filter-expr 'test(doctor_git_cli_deliberately_late_descendant)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "inventory-git-timeout-proof", run = "sh scripts/oxide-selector.sh nextest run -p effigy-scan --lib --profile doctor-process --filter-expr 'test(doctor_git_timeout_process_group_evidence)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "inventory-slow-prelude-negative", run = "sh scripts/oxide-selector.sh nextest run -p effigy-scan --lib --profile doctor-process --filter-expr 'test(doctor_git_timeout_before_status_is_incomplete_evidence)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
 ] }
@@ -1413,13 +1375,13 @@
 
 # Rhai storage retirement (contract 043): negative proofs that the removed
 # surface stays absent and neighbouring modules still work.
-"test:rhai:storage-retirement" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-rhai --lib storage_retirement -- --nocapture" }
+"test:rhai:storage-retirement" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib -E 'test(storage_retirement)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 "check:rhai:storage-retirement" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-rhai -p effigy --lib --bin effigy" }
 
 # Rhai copy_if_missing atomic publication (contract 050): concurrent winners,
 # occupied entries, independent copy, and failure cleanup. Compile the
 # touched crate's lib/tests, then lint all of its targets.
-"test:rhai:copy-if-missing" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-rhai --lib copy_if_missing -- --nocapture" }
+"test:rhai:copy-if-missing" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib -E 'test(copy_if_missing)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 "check:rhai:copy-if-missing" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-rhai --lib --tests",
   "sh scripts/oxide-selector.sh clippy -p effigy-rhai --all-targets -- -D warnings",
@@ -1443,7 +1405,7 @@
 "test:fixtures:environment" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai -p effigy-test-support --lib --filterset 'package(effigy-rhai) | test(/^build_info::tests::/) | test(/^header::tests::/) | (package(effigy-builtin) & test(/^completion::/)) | (package(effigy-gateway) & test(/^tls::tests::/)) | (package(effigy-containers) & test(/mount_spec::tests::|workspace::.*host.*tests::/)) | test(env_resolution::tests::) | test(failing_and_passing_gates_persist_logs_and_redacted_environment) | test(/^runner::bootstrap_command::tests::/) | test(/^runner::container_command::secret_env::tests::/) | test(/^runner::state_command::tests::/) | test(permission_reuse_headless_flag_grants_no_privilege_and_implies_no_tty) | test(generation_flag_is_cleared_after_the_hook_succeeds_or_fails)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:fixtures:environment:gateway" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:fixtures:environment:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy-rhai --lib -- --test-threads=8", timeout_ms = 600000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 600000 },
 ] }
 "check:fixtures:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai -p effigy-test-support --all-targets", timeout_ms = 600000 }] }
 "lint:fixtures:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-builtin -p effigy-cli -p effigy-containers -p effigy-core -p effigy-gateway -p effigy-managed -p effigy-release -p effigy-rhai -p effigy-test-support --all-targets -- -D warnings", timeout_ms = 600000 }] }
@@ -1464,11 +1426,11 @@
 # own process group, and cache hits still skip discovery. Real process
 # supervision is retained; no live runtime, VM or container is touched.
 "test:runtime:deadline-continuity" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "containers-absolute-deadline", run = "sh scripts/oxide-selector.sh test -p effigy-containers --lib exec::process::tests -- --nocapture", timeout_ms = 300000 },
-  { id = "colima-discovery-deadline", run = "sh scripts/oxide-selector.sh test -p effigy --lib runner::exec_command::transport::colima::tests -- --nocapture", timeout_ms = 300000 },
+  { id = "containers-absolute-deadline", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(exec::process::tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 300000 },
+  { id = "colima-discovery-deadline", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::exec_command::transport::colima::tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 300000 },
 ] }
 "test:containers:deadline-marker-controls" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "deadline-marker-controls", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(deadline_marker_control_expired_deadline_never_spawns) | test(deadline_marker_control_no_deadline_still_spawns)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 300000 },
+  { id = "deadline-marker-controls", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(deadline_marker_control_expired_deadline_never_spawns)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 300000 },
 ] }
 "check:runtime:deadline-continuity" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-containers -p effigy --all-targets",
@@ -1485,19 +1447,19 @@
 # nextest forces termination/leak failure; the libtest step additionally proves
 # the competing PATH fixtures together in one process under a task timeout.
 "test:shared-process:env-races" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "environment-race-fixtures", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bootstrap_command::tests::) | test(container_runtime_prep::tests::) | test(output_mode_behavior_tests::) | test(release_preparation_fixture_env_isolation_) | test(release_preparation_fixture_signal_proof_lock_order_serializes_in_process)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "shared-path-mutators", run = "sh scripts/oxide-selector.sh test -p effigy --lib shared_process_ -- --nocapture --test-threads=8", timeout_ms = 240000 },
+  { id = "environment-race-fixtures", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bootstrap_command::tests::) | test(container_runtime_prep::tests::) | test(output_mode_behavior_tests::) | test(release_preparation_fixture_env_isolation_)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "shared-path-mutators", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(shared_process_)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 8", timeout_ms = 240000 },
 ] }
 "check:shared-process:env-races" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh check -p effigy --lib --tests", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh clippy -p effigy --lib --tests -- -D warnings", timeout_ms = 600000 },
 ] }
 
-"test:env-isolation:build-info" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-core --lib build_info::tests::env_isolation -- --nocapture" }
+"test:env-isolation:build-info" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-core --lib -E 'test(build_info::tests::env_isolation)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 "test:env-isolation:runner" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::tests::env_isolation_tests -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib stay_in_shell -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib deferral::policy -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::tests::env_isolation_tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(stay_in_shell)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(deferral::policy)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 
 "check:env-isolation" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-core -p effigy --lib" }
@@ -1506,14 +1468,13 @@
 # and signal proofs together in one libtest process so their
 # process-global locks contend under the same model as `cargo test --workspace`.
 # The Effigy step timeout bounds a hung in-process fixture run.
-"test:release:runtime-storage:isolation" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release --lib -E 'test(a_missing_release_record_) | test(checkout_release_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 600000 }] }
 "test:release:runtime-storage" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release --lib -E 'test(/^run::/)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 900000 }] }
 "check:release:runtime-storage" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-release --all-targets -- -D warnings", timeout_ms = 600000 }] }
 "test:release:platform" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release -p effigy-contracts -p effigy-manifest -p effigy-doctor -p effigy --lib --test cli_output_tests -E 'package(effigy-release) | package(effigy-contracts) | (package(effigy-manifest) & test(config_sections::)) | (package(effigy-doctor) & test(manifest_schema::)) | (package(effigy) & (test(release_platform_tests::) | test(parse_release_) | test(render_release_) | (test(command_behavior_tests::) & test(cli_release_)) | test(released_surface_) | test(retirement_tests::)))' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1800000 }] }
 "check:release:platform" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-release -p effigy-contracts -p effigy-manifest -p effigy-doctor -p effigy-cli --all-targets", timeout_ms = 900000 }] }
 "lint:release:platform" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-release -p effigy-contracts -p effigy-manifest -p effigy-doctor -p effigy-cli --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "test:release:prepared-tree-fixture-coordination" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "prepared-tree-fixture-coordination", run = "sh scripts/oxide-selector.sh test -p effigy --lib release_preparation_fixture -- --nocapture --test-threads=8", timeout_ms = 240000 },
+  { id = "prepared-tree-fixture-coordination", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(release_preparation_fixture)' --no-fail-fast --retries 0 --no-tests fail --no-capture -j 8", timeout_ms = 240000 },
 ] }
 "test:release:preparation-environment-isolation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "preparation-environment-isolation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_handoff_readers_wait_for_scoped_writer) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
@@ -1531,13 +1492,13 @@
   { task = "test:exec:runtime-paths:transport" },
 ] }
 "test:exec:runtime-paths:cwd" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "runtime-cwd-containment", run = "sh scripts/oxide-selector.sh test -p effigy-exec --lib cwd::tests -- --nocapture", timeout_ms = 600000 },
+  { id = "runtime-cwd-containment", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-exec --lib -E 'test(cwd::tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
 ] }
 "test:exec:runtime-paths:renderer" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "runtime-path-rendering", run = "sh scripts/oxide-selector.sh test -p effigy --lib container_command_root -- --nocapture", timeout_ms = 600000 },
+  { id = "runtime-path-rendering", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command_root)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
 ] }
 "test:exec:runtime-paths:transport" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "runtime-env-transport", run = "sh scripts/oxide-selector.sh test -p effigy --lib exec_command::tests -- --nocapture", timeout_ms = 600000 },
+  { id = "runtime-env-transport", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(exec_command::tests)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 600000 },
 ] }
 "format:exec:runtime-paths" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true src/runner/execute/pipeline/command.rs src/runner/exec_command/transport.rs src/runner/exec_command/tests.rs" }
 "check:exec:runtime-paths" = { visibility = "internal", group = "Maintenance", run = [
@@ -1618,7 +1579,7 @@
   { id = "runner-planes", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::bootstrap_command::tests::) | test(runner::bundle_command::tests::) | test(runner::release_command::tests::) | test(runner::deploy_command::provider_package::tests::) | test(runner::execute::sequence_run::tests::) | test(runner::task_engine::admission::tests::) | test(runner::secret_vault::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
   { id = "manifest-sources", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(bundles::source::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "secrets-vault", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-secrets --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "release-gates", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release --lib -E 'test(gate_run_reports) | test(gate_observer) | test(gate_persist) | test(gate_json) | test(failing_and_passing_gates) | test(gate_run_text_shows_the_failed_gate_tail) | test(named_hosted_reuse)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "release-gates", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release --lib -E 'test(gate_run_reports) | test(gate_observer) | test(gate_persist) | test(gate_json) | test(failing_and_passing_gates) | test(status_text_shows_the_failed_gate_tail_and_log_path) | test(named_hosted_reuse)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
 ]}
 # Argument errors and suggested commands (effigy#318): the targeted usage a
 # mistyped argument gets, a guard that parses every `effigy …` form a message
@@ -1645,12 +1606,12 @@
 "qa:json" = { visibility = "public", group = "Validation", description = "Validate every active JSON contract row, its envelope and its payload schema.", run = "effigy contracts check-json --print-selected=text" }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
   "effigy contracts check-json --print-selected=json",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_contracts_ -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_contracts_)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 
 # Run the Rhai library together so process-wide fixture leaks are observable.
 "test:release:rhai-generation-isolation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "shared-rhai-library", run = "sh scripts/oxide-selector.sh test -p effigy-rhai --lib -- --test-threads=8", timeout_ms = 600000 },
+  { id = "shared-rhai-library", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-rhai --lib --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 600000 },
   { id = "production-hook-cli", run = "sh scripts/oxide-selector.sh nextest run -p effigy --test secrets_vault_generate_cli_tests --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "hook-cleanup", run = "sh scripts/oxide-selector.sh nextest run -p effigy --lib --filterset 'test(vault_generate_hook_tests)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
@@ -1671,17 +1632,17 @@
 # fixture. Disposable trees only; no live runtime.
 "test:architecture:runtime-container-drift-controls" = { durable = true, visibility = "internal", group = "Maintenance", run = { rhai = "scripts/check-runtime-container-drift-controls.rhai" } }
 "test:architecture:compose-backend-identity" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-runtime --lib container_manager::tests::lifecycle_operation_report_does_not_apply_policy_backend_detection -- --exact --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::execute::pipeline::standard::tests::inline_workspace_started_and_removed_facts_share_compose_plan_backend -- --exact --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-runtime --lib -E 'test(=container_manager::tests::lifecycle_operation_report_does_not_apply_policy_backend_detection)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::execute::pipeline::standard::tests::inline_workspace_activation_keeps_the_stack_it_starts)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
-"test:architecture:qa-group-member-cwd" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy --lib runner::qa_group_command::execute::tests::member_request_discovers_from_resolved_root_not_process_cwd -- --exact --nocapture" }
+"test:architecture:qa-group-member-cwd" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(=runner::qa_group_command::execute::tests::member_request_discovers_from_resolved_root_not_process_cwd)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 "check:architecture:runtime-container-drift" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-runtime -p effigy --lib --tests",
   "sh scripts/oxide-selector.sh clippy -p effigy --all-targets -- -D warnings",
 ] }
 "qa:architecture:container-exec-readiness" = { visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-containers status_report_includes_primary_service_exec_ready_state -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy-runtime read::tests::primary_service_exec_readiness_ -- --nocapture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -E 'test(status_report_includes_primary_service_exec_ready_state)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-runtime -E 'test(read::tests::primary_service_exec_readiness_)' --no-fail-fast --retries 0 --no-tests fail --no-capture",
 ] }
 "qa:architecture" = { visibility = "public", group = "Validation", description = "Guard the kernel ratchet, runtime-container drift and container exec readiness.", run = [
   { task = "qa:kernel-ratchet" },
@@ -1690,7 +1651,7 @@
 ] }
 
 # CI mirrors and release gates
-"qa:released-surface" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test --test cli_output_tests released_surface_ -- --nocapture" }
+"qa:released-surface" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(released_surface_)' --no-fail-fast --retries 0 --no-tests fail --no-capture" }
 "qa:ci:fast".description = "Run the workspace test suite, doc tests and JSON contracts."
 "qa:ci:fast".admission = "heavy"
 "qa:ci:fast".run = [
@@ -1719,9 +1680,9 @@
 ] }
 "prepush:ci" = { visibility = "public", group = "Validation", description = "Pre-push mirror of CI's task tests, docs and architecture checks.", run = [
   { task = "qa:ci:json" },
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_json_mode",
-  "sh scripts/oxide-selector.sh test --lib",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(cli_json_mode)' --no-fail-fast --retries 0 --no-tests fail",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --lib --no-fail-fast --retries 0 --no-tests fail",
+  "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests --no-fail-fast --retries 0 --no-tests fail",
   { task = "qa:docs" },
   { task = "qa:architecture" },
 ] }
@@ -1746,7 +1707,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 "qa:ci:local".visibility = "public"
 "qa:ci:local".group = "Validation"
-"test:tasks:visibility:crates" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-routing -p effigy-managed -p effigy-doctor -p effigy-builtin -p effigy --lib -E 'package(effigy-manifest) | package(effigy-tasks) | package(effigy-cli) | package(effigy-routing) | test(run_spec::) | test(manifest_schema) | test(task_graph) | test(semantic::) | test(completion) | test(tasks_contract_tests) | test(retired_keys::) | test(selector_env_names)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1200000 }] }
+"test:tasks:visibility:crates" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-routing -p effigy-managed -p effigy-doctor -p effigy-builtin -p effigy --lib -E 'package(effigy-manifest) | package(effigy-tasks) | package(effigy-cli) | package(effigy-routing) | test(run_spec::) | test(manifest_schema) | test(task_graph) | test(completion) | test(tasks_contract_tests) | test(retired_keys::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1200000 }] }
 "test:tasks:visibility:runtime" = { durable = true, visibility = "internal", run = [ { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 }, { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(visibility_tests::) | test(qa_groups_tests::) | test(tasks_rendering_tests::) | test(task_description_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 } ] }
 "test:tasks:visibility:fixes" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy --lib --test cli_output_tests -E 'test(top_level_keys_match_task_manifest_fields) | test(builtin_completion_json_contract_has_versioned_shape) | test(retired_drafts_table_is_refused_with_the_task_namespace_replacement)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:tasks:visibility:execution" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor -p effigy --lib --test cli_output_tests -E 'test(internal_and_referenced_tasks_run_directly) | (package(effigy-doctor) & test(checks::))' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
@@ -1768,7 +1729,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "lint:fixtures:hygiene" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-bootstrap -p effigy-containers -p effigy-kernel -p effigy-test-support -p effigy-scan --lib --tests --bins --features effigy-kernel/fault-injection,effigy-containers/fault-injection -- -D warnings", timeout_ms = 900000 }] }
 "test:fixtures:hygiene:guards" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:fixtures:hygiene:leak-assertion" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --test suite_guard --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:fixtures:hygiene:guards:shared" = { durable = true, visibility = "internal", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy-test-support -- --test-threads=8", timeout_ms = 900000 }] }
+"test:fixtures:hygiene:guards:shared" = { durable = true, visibility = "internal", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 900000 }] }
 
 "test:fixtures:hygiene:environment" = { durable = true, visibility = "internal", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --features fault-injection --lib -E 'test(environment::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
@@ -1798,10 +1759,10 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   { task = "test:fixtures:hygiene:acceptance:once" },
 ] }
 "test:fixtures:hygiene:acceptance:once" = { durable = true, visibility = "internal", admission = "heavy", run = [
-  { run = "sh scripts/oxide-selector.sh nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test gateway_private --test gateway_operator --test cli_output_tests -E 'binary(gateway_private) | binary(gateway_operator) | binary(cli_output_tests) | test(builder_recovery::)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 3100000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test gateway_private --test gateway_operator --test cli_output_tests -E 'binary(gateway_private) | binary(gateway_operator) | binary(cli_output_tests)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 2", timeout_ms = 3100000 },
 ] }
 "test:fixtures:hygiene:cwd" = { durable = true, visibility = "internal", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --lib tasks_json_contract_catalog_payload_uses_expected_top_level_fields -- --test-threads=8", timeout_ms = 900000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(tasks_json_contract_catalog_payload_uses_expected_top_level_fields)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 900000 },
 ] }
 
 "test:fixtures:hygiene:migrated:crates" = { durable = true, visibility = "internal", admission = "heavy", run = [
@@ -1813,14 +1774,13 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "test:fixtures:hygiene:shared" = { durable = true, visibility = "internal", admission = "heavy", run = [
   # Match nextest's exclusive runner slots for deadline-sensitive doctor proofs.
   # The disjoint CLI partitions retain every case and unchanged assertions.
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test --profile fixture-proof -p effigy --test cli_output_tests doctor -- --test-threads=1", timeout_ms = 1300000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test --profile fixture-proof -p effigy --test cli_output_tests -- --skip doctor --test-threads=8", timeout_ms = 3100000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test --profile fixture-proof -p effigy --test gateway_private --test gateway_operator --no-fail-fast -- --test-threads=8", timeout_ms = 3100000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --cargo-profile fixture-proof -p effigy --test cli_output_tests -E 'test(doctor)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1300000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --cargo-profile fixture-proof -p effigy --test cli_output_tests -E '(all()) - (test(doctor))' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 3100000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --cargo-profile fixture-proof -p effigy --test gateway_private --test gateway_operator --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 3100000 },
   { task = "test:fixtures:hygiene:shared:recovery" },
 ] }
 
 "test:fixtures:hygiene:shared:recovery" = { durable = true, visibility = "internal", admission = "heavy", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test --profile fixture-proof -p effigy --lib builder_recovery:: -- --test-threads=8", timeout_ms = 900000 },
 ] }
 
 "test:fixtures:hygiene:regressions" = { durable = true, visibility = "internal", admission = "heavy", run = [
@@ -1842,7 +1802,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 
 "test:fixtures:hygiene:runner-regressions" = { durable = true, visibility = "internal", admission = "heavy", run = [
-  { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(hung_ownership_batch_is_bounded_and_reaps_its_process_group) | test(ownership_preflight_hang_is_unavailable_without_metadata_reap_claim) | test(managed_namespace_builds_without_adopting_any_legacy_shape) | test(migration_failures_never_accept_stale_output_and_reuse_the_new_builder_on_retry) | test(task_engine_equivalent_spellings_from_two_processes_serialize)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
+  { run = "EFFIGY_EXECUTABLE=$PWD/target/discovery-proof/effigy sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(hung_ownership_batch_is_bounded_and_reaps_its_process_group) | test(ownership_preflight_hang_is_unavailable_without_metadata_reap_claim) | test(migration_failures_never_accept_stale_output_and_reuse_the_new_builder_on_retry) | test(task_engine_equivalent_spellings_from_two_processes_serialize)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
 ] }
 
 "test:fixtures:hygiene:run-control" = { durable = true, visibility = "internal", run = [
@@ -1862,17 +1822,8 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   { run = "EFFIGY_EXECUTABLE=$PWD/target/fixture-proof/effigy sh scripts/oxide-selector.sh nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --lib --test task_engine_kill_matrix -E 'test(both_handoffs_automatically_build_through_changed_input_partial_recovery) | test(changed_input_partial_builder_recovers_through_the_maintained_artifact_task) | test(interrupted_successful_backend_cannot_publish_task_success)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1900000 },
 ] }
 
-"test:fixtures:hygiene:doctor-git" = { durable = true, visibility = "internal", run = [
-  { run = "sh scripts/oxide-selector.sh nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_deep_doctor_timeout_terminates_git_identity_tree) | test(doctor_git_cli_serial_observer_counterexample) | test(doctor_git_cli_deliberately_late_descendant)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 900000 },
-] }
-
-"test:fixtures:hygiene:startup-authority" = { durable = true, visibility = "internal", run = [
-  { run = "sh scripts/oxide-selector.sh nextest run --cargo-profile fixture-proof --config-file .config/nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(managed_matrix_unsettled_previous_record_under_live_startup)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 900000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test --profile fixture-proof -p effigy --test gateway_private managed_matrix_unsettled_previous_record_under_live_startup -- --test-threads=8", timeout_ms = 900000 },
-] }
-
 "test:fixtures:hygiene:signal-recovery" = { durable = true, visibility = "internal", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test --profile fixture-proof -p effigy --lib interrupted_successful_backend_cannot_publish_task_success -- --test-threads=8", timeout_ms = 900000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --cargo-profile fixture-proof -p effigy --lib -E 'test(interrupted_successful_backend_cannot_publish_task_success)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 900000 },
 ] }
 
 "test:fixtures:hygiene:detached" = { durable = true, visibility = "internal", run = [
@@ -1898,8 +1849,8 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 ] }
 "test:fixtures:hygiene:ci-gateway" = { durable = true, visibility = "internal", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 900000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy-kernel --test store", timeout_ms = 900000 },
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --test gateway_private detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response -- --test-threads=8", timeout_ms = 900000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test store --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response)' --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 900000 },
 ] }
 
 "test:fixtures:hygiene:ci-closeout" = { durable = true, visibility = "internal", run = [
@@ -1916,7 +1867,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 "lint:release:runtime-storage" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-release -p effigy-secrets --all-targets --features effigy-secrets/fault-injection -- -D warnings", timeout_ms = 900000 }] }
 
-"test:runtime-storage:surfaces" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-execution --lib --test cli_output_tests -E 'test(qa_group) | test(qa_groups) | test(parse_container_retire)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 }] }
+"test:runtime-storage:surfaces" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-execution --lib --test cli_output_tests -E 'test(qa_group) | test(qa_groups) | test(cli_container_retire_named_environment_refuses_before_effects)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 }] }
 
 "lint:runtime-storage:surfaces" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-execution --all-targets -- -D warnings", timeout_ms = 900000 }] }
 
