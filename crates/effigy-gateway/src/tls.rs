@@ -160,10 +160,21 @@ impl TlsConfig {
     ///
     /// Returns the paths to the certificate and key files.
     pub fn generate_cert(&self, domain: &str) -> Result<CertPaths, GatewayError> {
-        std::fs::create_dir_all(&self.certs_dir).map_err(|e| GatewayError::TlsError {
-            domain: domain.to_string(),
-            reason: format!("failed to create certs directory: {e}"),
-        })?;
+        if self.ca_root.is_some() {
+            // A private root's certificate directory is owner-only, created and
+            // re-set explicitly so the caller's umask cannot widen it.
+            crate::private_state::create_owner_only_directory(&self.certs_dir).map_err(
+                |error| GatewayError::TlsError {
+                    domain: domain.to_string(),
+                    reason: format!("failed to create certs directory: {error}"),
+                },
+            )?;
+        } else {
+            std::fs::create_dir_all(&self.certs_dir).map_err(|e| GatewayError::TlsError {
+                domain: domain.to_string(),
+                reason: format!("failed to create certs directory: {e}"),
+            })?;
+        }
 
         let CertPaths {
             cert: cert_path,
@@ -178,12 +189,16 @@ impl TlsConfig {
             });
         }
 
-        let output = self
+        let mut command = self
             .mkcert_command()
             .map_err(|reason| GatewayError::TlsError {
                 domain: domain.to_owned(),
                 reason,
-            })?
+            })?;
+        if self.ca_root.is_some() {
+            narrow_private_child_umask(&mut command);
+        }
+        let output = command
             .arg("-cert-file")
             .arg(&cert_path)
             .arg("-key-file")
@@ -204,6 +219,10 @@ impl TlsConfig {
                     format_command_output(&output.stdout, &output.stderr)
                 ),
             });
+        }
+
+        if let Some(ca_root) = &self.ca_root {
+            enforce_private_tls_artifact_modes(ca_root, &cert_path, &key_path)?;
         }
 
         Ok(CertPaths {
@@ -251,6 +270,93 @@ impl TlsConfig {
         command.env("CAROOT", ca_root);
         Ok(command)
     }
+}
+
+/// Narrow the umask a private TLS subprocess inherits.
+///
+/// `mkcert` creates its root CA, the CA serial file and each certificate pair
+/// itself, so a caller's permissive umask (Linux commonly `0002`) would leave
+/// group-writable artifacts that private state validation refuses. The umask
+/// change is scoped to the spawned child: `pre_exec` runs in the forked child
+/// between fork and exec, so no other thread's file creation is affected.
+#[cfg(unix)]
+fn narrow_private_child_umask(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: `umask` is async-signal-safe, which is all a `pre_exec` closure
+    // may call before exec. It changes only this subprocess and its children.
+    unsafe {
+        command.pre_exec(|| {
+            libc::umask(0o077);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn narrow_private_child_umask(_command: &mut Command) {}
+
+/// Give the artifacts a private TLS subprocess just created an explicit final
+/// mode inside the owned private root. The narrowed child umask already keeps a
+/// new artifact free of group and other permissions; this pins the known files
+/// so the final mode never depends on what the subprocess chose to create.
+#[cfg(unix)]
+fn enforce_private_tls_artifact_modes(
+    ca_root: &Path,
+    cert: &Path,
+    key: &Path,
+) -> Result<(), GatewayError> {
+    for artifact in [
+        ca_root.join("rootCA.pem"),
+        ca_root.join("rootCA-key.pem"),
+        ca_root.join("rootCA.srl"),
+        cert.to_path_buf(),
+        key.to_path_buf(),
+    ] {
+        set_private_artifact_mode(&artifact)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn enforce_private_tls_artifact_modes(
+    _ca_root: &Path,
+    _cert: &Path,
+    _key: &Path,
+) -> Result<(), GatewayError> {
+    Ok(())
+}
+
+/// Set one private-root artifact to its owner-only mode without following a
+/// symlink. A missing artifact is left alone; the caller's own existence checks
+/// decide whether that is acceptable.
+#[cfg(unix)]
+fn set_private_artifact_mode(path: &Path) -> Result<(), GatewayError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tls_error = |reason: String| GatewayError::TlsError {
+        domain: path.display().to_string(),
+        reason,
+    };
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(tls_error(format!(
+                "failed to inspect a generated TLS artifact: {error}"
+            )))
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(tls_error(
+            "generated TLS artifact is not a regular file".to_owned(),
+        ));
+    }
+    if metadata.permissions().mode() & 0o777 == 0o600 {
+        return Ok(());
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| tls_error(format!("failed to set a TLS artifact mode: {error}")))
 }
 
 /// Paths to a TLS certificate and its private key.

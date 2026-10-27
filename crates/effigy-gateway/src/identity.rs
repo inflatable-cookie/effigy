@@ -659,7 +659,10 @@ pub fn ensure_trusted_gateway_parent(pid_path: &Path) -> Result<u32, GatewayErro
         Ok(_) => false,
     };
     if parent_missing {
-        fs::create_dir_all(parent).map_err(GatewayError::Io)?;
+        // The gateway directory is created owner-only so the trust check below
+        // cannot depend on the caller's umask: a permissive Linux umask such as
+        // `0002` would otherwise leave it group-writable and refused.
+        crate::private_state::create_owner_only_directory(parent)?;
     }
     trusted_directory_owner(pid_path)
 }
@@ -1123,8 +1126,10 @@ pub(crate) fn write_test_record(pid_path: &Path, pid: u32) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(sidecar, fs::Permissions::from_mode(0o600))
-            .expect("protect private gateway identity fixture");
+        for path in [pid_path, sidecar.as_path()] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("protect private gateway identity fixture");
+        }
     }
 }
 
@@ -1147,6 +1152,53 @@ pub fn read_gateway_version(pid_path: &Path) -> Result<Option<String>, GatewayEr
 mod tests {
     use super::*;
 
+    /// Gateway state fixtures need an owner-only directory with an explicit
+    /// mode. `tempfile::tempdir` inherits the ambient umask, so a Linux caller
+    /// whose umask is `0002` gets a group-writable directory that every trust
+    /// check here refuses; the intended mode is stated instead.
+    fn private_fixture_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700))
+                .expect("fixture directory mode");
+        }
+        dir
+    }
+
+    /// Fixture files inside a gateway directory state their intended mode.
+    /// `fs::write` inherits the ambient umask, so a Linux caller whose umask is
+    /// `0002` would get a group-writable record that trusted reads refuse.
+    fn write_private_fixture(path: &Path, bytes: impl AsRef<[u8]>) {
+        fs::write(path, bytes).expect("write fixture file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("fixture file mode");
+        }
+    }
+
+    /// A missing gateway parent is created owner-only with its final mode set,
+    /// so the trust check accepts Effigy's own directory whatever the caller's
+    /// umask is.
+    #[cfg(unix)]
+    #[test]
+    fn gateway_parent_creation_is_owner_only() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = private_fixture_dir();
+        let parent = dir.path().join(".effigy").join("gateway");
+        let pid_path = parent.join("gateway.pid");
+        let owner = ensure_trusted_gateway_parent(&pid_path).expect("create gateway parent");
+        assert_eq!(owner, fs::metadata(&parent).unwrap().uid());
+        assert_eq!(fs::metadata(&parent).unwrap().mode() & 0o777, 0o700);
+        let state_parent = parent.parent().expect("state parent");
+        assert_eq!(fs::metadata(state_parent).unwrap().mode() & 0o022, 0);
+        // The created directory passes the same trust check a reader uses.
+        assert_eq!(trusted_directory_owner(&pid_path).unwrap(), owner);
+    }
+
     fn publish_current_fixture(dir: &Path) -> (PathBuf, GatewayRecordSnapshot) {
         let pid_path = dir.join("gateway.pid");
         #[cfg(unix)]
@@ -1164,7 +1216,7 @@ mod tests {
     #[test]
     fn gateway_identity_publication_is_atomic_private_and_operator_readable() {
         use std::os::unix::fs::MetadataExt;
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let (pid_path, published) = publish_current_fixture(dir.path());
         let snapshot = read_snapshot(&pid_path)
             .expect("trusted read")
@@ -1183,7 +1235,7 @@ mod tests {
     #[test]
     fn gateway_identity_root_writer_validates_owner_before_chown_or_publish() {
         use std::os::unix::fs::MetadataExt;
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
         let owner_uid = fs::metadata(dir.path()).unwrap().uid();
         let wrong_uid = owner_uid.wrapping_add(1);
@@ -1212,9 +1264,9 @@ mod tests {
 
     #[test]
     fn gateway_identity_legacy_and_malformed_bytes_remain_unmodified() {
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
-        fs::write(&pid_path, "4242\n").unwrap();
+        write_private_fixture(&pid_path, "4242\n");
         let legacy_before = fs::read(&pid_path).unwrap();
         let legacy = read_snapshot(&pid_path).unwrap().unwrap();
         assert!(legacy.record().is_none());
@@ -1243,7 +1295,7 @@ mod tests {
     fn gateway_identity_reader_never_observes_an_in_flight_publication() {
         use std::os::unix::fs::MetadataExt;
         use std::sync::mpsc;
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
         let owner_uid = fs::metadata(dir.path()).expect("fixture metadata").uid();
         let (go_tx, go_rx) = mpsc::channel();
@@ -1277,7 +1329,7 @@ mod tests {
 
     #[test]
     fn gateway_identity_interrupted_pair_is_unknown_and_preserved() {
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
         let sidecar = identity_path(&pid_path);
         fs::write(&sidecar, br#"{"format_version":1}"#).unwrap();
@@ -1293,10 +1345,10 @@ mod tests {
 
     #[test]
     fn legacy_recovery_version_without_pid_is_unknown_and_preserved() {
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
         let version = version_path(&pid_path);
-        fs::write(&version, b"v0.13.1+local.test\n").unwrap();
+        write_private_fixture(&version, b"v0.13.1+local.test\n");
         let before = fs::read(&version).unwrap();
         let error = read_snapshot(&pid_path).expect_err("version-only is unknown");
         assert!(error
@@ -1311,7 +1363,7 @@ mod tests {
     #[test]
     fn legacy_recovery_version_symlink_is_rejected_without_following() {
         use std::os::unix::fs::{symlink, PermissionsExt};
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
         let version = version_path(&pid_path);
         let outside = dir.path().join("outside-version");
@@ -1335,7 +1387,7 @@ mod tests {
     #[test]
     fn gateway_identity_symlink_and_unsafe_mode_are_rejected_without_following() {
         use std::os::unix::fs::{symlink, PermissionsExt};
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
         fs::write(&pid_path, "4242").unwrap();
         let sidecar = identity_path(&pid_path);
@@ -1355,7 +1407,7 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn gateway_identity_boot_and_precise_start_mismatches_are_not_matches() {
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let (_, snapshot) = publish_current_fixture(dir.path());
         let record = snapshot.record().expect("published identity");
         // v0.14.1 sysctl text can differ in UUID casing from the kernel's
@@ -1470,16 +1522,12 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn gateway_identity_compare_remove_preserves_new_generation_and_is_idempotent() {
-        #[cfg(unix)]
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let (pid_path, old) = publish_current_fixture(dir.path());
         let mut newer = old.record().expect("record").clone();
         newer.boot_identity.push_str("-new-generation");
         let sidecar = identity_path(&pid_path);
-        fs::write(&sidecar, serde_json::to_vec(&newer).unwrap()).unwrap();
-        #[cfg(unix)]
-        fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o600)).unwrap();
+        write_private_fixture(&sidecar, serde_json::to_vec(&newer).unwrap());
         assert!(!remove_if_unchanged(&old).unwrap());
         assert!(pid_path.exists());
         let current = read_snapshot(&pid_path).unwrap().unwrap();
@@ -1632,7 +1680,7 @@ mod tests {
     #[test]
     fn gateway_identity_operator_dir_trust_across_modeled_elevation() {
         use std::os::unix::fs::MetadataExt;
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let pid_path = dir.path().join("gateway.pid");
         fs::write(&pid_path, "4242\n").unwrap();
         let owner = fs::metadata(dir.path()).unwrap().uid();
@@ -1659,7 +1707,7 @@ mod tests {
     #[test]
     fn gateway_identity_modeled_root_reads_operator_publication() {
         use std::os::unix::fs::MetadataExt;
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         // Ordinary operator publishes; the modeled elevated root with the
         // same authenticated context reads the identical trusted snapshot.
         let (pid_path, published) = publish_current_fixture(dir.path());
@@ -1698,7 +1746,7 @@ mod tests {
     #[test]
     fn gateway_identity_modeled_root_preserves_legacy_and_rejects_unsafe_dirs() {
         use std::os::unix::fs::{symlink, PermissionsExt};
-        let dir = tempfile::tempdir().expect("fixture directory");
+        let dir = private_fixture_dir();
         let owner = {
             use std::os::unix::fs::MetadataExt;
             fs::metadata(dir.path()).unwrap().uid()
@@ -1706,7 +1754,7 @@ mod tests {
         // Legacy numeric-only pair remains record-less (fail closed) under
         // the authenticated elevated context, with bytes preserved.
         let legacy_path = dir.path().join("gateway.pid");
-        fs::write(&legacy_path, "4242\n").unwrap();
+        write_private_fixture(&legacy_path, "4242\n");
         let before = fs::read(&legacy_path).unwrap();
         let legacy = read_snapshot_with(&legacy_path, 0, Some(owner))
             .unwrap()
