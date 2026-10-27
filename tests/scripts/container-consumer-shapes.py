@@ -333,15 +333,6 @@ def effigy(*args, cwd=None, env=None, timeout=600):
     return run([candidate, *args], cwd or root, env=env, timeout=timeout)
 
 
-def refuse_existing(path):
-    """The fixture never adopts or deletes a directory it did not create."""
-    if Path(path).exists():
-        raise SystemExit(
-            "refusing to run: %s already exists. This proof never adopts or deletes a "
-            "pre-existing directory; remove it yourself or pick another staging root." % path
-        )
-
-
 def live_paths(staging):
     repo = staging / PRIMARY_DIR
     worktree = staging / WORKTREE_DIR
@@ -482,31 +473,31 @@ def protected_baseline():
 
 
 def fixture_names(identity):
-    """Every exact name this proof owns: the primary and linked containers, and
-    the shared project's container, volume and network."""
-    containers = set(identity["shared"]["containers"])
-    for project in (identity["primary_project"], identity["linked_project"]):
-        for rendered in (identity["primary_files"], identity["linked_files"]):
-            for service in rendered:
-                containers.add(f"{project}-{service}-1")
-    return {
-        "containers": sorted(containers),
+    """Every exact name this proof owns.
+
+    The primary and linked containers belong to their own checkouts and only
+    `down` removes them; the shared project's container, volume and network are
+    host-global and are deleted by exact name after their labels prove the
+    fixture's own shared project."""
+    local = set()
+    for project, services in (
+        (identity["primary_project"], identity["primary_files"]),
+        (identity["linked_project"], identity["linked_files"]),
+    ):
+        for service in services:
+            local.add(f"{project}-{service}-1")
+    shared = {
+        "containers": identity["shared"]["containers"],
         "volumes": identity["shared"]["volumes"],
         "networks": identity["shared"]["networks"],
     }
-
-
-def runtime_residue(names):
-    """Anything already carrying this proof's exact names. Never removed: a
-    proof that adopts residue could delete another run's state."""
-    existing = {
-        "containers": sorted(
-            name for _, name in runtime_containers(include_stopped=True) if name in set(names["containers"])
-        ),
-        "volumes": sorted(name for name in runtime_named("volume") if name in set(names["volumes"])),
-        "networks": sorted(name for name in runtime_named("network") if name in set(names["networks"])),
+    return {
+        "local_containers": sorted(local),
+        "shared": shared,
+        "containers": sorted(local | set(shared["containers"])),
+        "volumes": shared["volumes"],
+        "networks": shared["networks"],
     }
-    return existing
 
 
 def shared_project_of(result):
@@ -664,9 +655,10 @@ def print_frozen_plan():
     print(f"projects:          primary={identity['primary_project']} linked={identity['linked_project']}")
     print("services:          client (catalog z374-client, build: busybox:latest + ARG/${VAR}/$var),")
     print("                   db (local mariadb:10.11), backing (shared mariadb:10.11)")
-    print("owned names, deleted by exact name only after their labels prove the project:")
-    for kind, values in names.items():
-        print(f"  {kind:10} {', '.join(values)}")
+    print("owned names:")
+    print(f"  down removes  {', '.join(names['local_containers'])}")
+    for kind, values in names["shared"].items():
+        print(f"  delete {kind:9} {', '.join(values)}  (labels proved first)")
     print(f"shared project:    {shared['project']}")
     print("host process:      listener, bind 127.0.0.1:0 (reserved at up), readiness GET / 200")
     print(f"listener route:    {LISTENER_DOMAIN} (operator gateway, tls false)")
@@ -705,7 +697,7 @@ def print_frozen_plan():
     print("cleanup (always, in this order, each name checked against the hard deny and its labels):")
     print(f"  - effigy container {ENVIRONMENT} down --repo {repo}")
     print(f"  - effigy container {ENVIRONMENT} down --repo {worktree}")
-    for kind, values in names.items():
+    for kind, values in names["shared"].items():
         verb = {"containers": "nerdctl rm -f", "volumes": "nerdctl volume rm", "networks": "nerdctl network rm"}[kind]
         print(f"  - {verb} {' '.join(values)}")
     print("  - stop only PIDs this run recorded, after re-checking each PID's own command line")
@@ -831,33 +823,36 @@ def stop_own_pid(pid, fixture_root, env):
     return "signalled"
 
 
-def owned_containers(names, include_stopped=True):
+def owned_containers(local_containers, include_stopped=True):
     return sorted(
         (container_id, name)
         for container_id, name in runtime_containers(include_stopped)
-        if name in set(names["containers"])
+        if name in set(local_containers)
     )
 
 
 def residue(names):
+    """Anything still carrying one of the proof's exact names, stopped
+    containers included. Used by the preflight and by the final assertion."""
     return {
-        "containers": sorted(name for _, name in owned_containers(names)),
+        "containers": sorted(name for _, name in owned_containers(names["containers"])),
         "volumes": sorted(name for name in runtime_named("volume") if name in set(names["volumes"])),
         "networks": sorted(name for name in runtime_named("network") if name in set(names["networks"])),
     }
 
 
-def remove_owned(names, project):
-    """Delete only names that are provably the fixture's own, labels first."""
+def remove_owned(shared, project):
+    """Delete the fixture's own shared project, labels first. Local containers
+    are `down`'s to remove and are never deleted here."""
     deleted = []
-    for kind, names_ in (
-        ("containers", names["containers"]),
-        ("volumes", names["volumes"]),
-        ("networks", names["networks"]),
-    ):
-        present = [name for name in names_ if name in set(runtime_named(kind if kind != "containers" else "container"))]
+    for kind in ("containers", "volumes", "networks"):
+        wanted = set(shared[kind])
+        if not wanted:
+            continue
         if kind == "containers":
-            present = [name for _, name in owned_containers(names)]
+            present = [name for _, name in owned_containers(sorted(wanted), include_stopped=True)]
+        else:
+            present = [name for name in runtime_named(kind) if name in wanted]
         for name in present:
             for marker in PROTECTED:
                 assert marker not in name, "refusing to delete protected %s" % name
@@ -934,10 +929,10 @@ def live_run(staging, approval=None):
 
         effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo, env=env)
         started = True
-        first = owned_containers(names, include_stopped=False)
+        first = owned_containers(names["local_containers"], include_stopped=False)
         assert first, "up started no fixture container"
         effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo, env=env)
-        second = owned_containers(names, include_stopped=False)
+        second = owned_containers(names["local_containers"], include_stopped=False)
         assert first == second, ("a second up replaced a container", first, second)
         checks.append(("re-up keeps every container ID", len(second)))
 
@@ -973,7 +968,7 @@ def live_run(staging, approval=None):
             assert after_listener["pid"] != before_listener.get("pid"), (
                 "restart left the listener process in place", before_listener, after_listener
             )
-        assert [cid for cid, _ in owned_containers(names, include_stopped=False)] == [
+        assert [cid for cid, _ in owned_containers(names["local_containers"], include_stopped=False)] == [
             cid for cid, _ in second
         ], "restarting a host process replaced a container"
         checks.append(("container restart restarted the host-process listener", after_listener or "pid not exposed"))
@@ -997,14 +992,15 @@ def live_run(staging, approval=None):
 
         down(repo)
         down(worktree)
-        assert owned_containers(names) == [], ("down left fixture containers", owned_containers(names))
+        left_local = owned_containers(names["local_containers"])
+        assert left_local == [], ("down left a checkout's own container", left_local)
         hosts = json.loads(
             effigy("container", ENVIRONMENT, "hosts", "--json", "--repo", repo, cwd=repo, env=env)
         )
         assert hosts.get("result", {}).get("routes") == [], hosts.get("result", {}).get("routes")
         checks.append(("down left no container and no route", 0))
 
-        remove_owned(names, shared["project"])
+        remove_owned(names["shared"], shared["project"])
         left = residue(names)
         assert not any(left.values()), ("the owned names were not all deleted", left)
         checks.append(("the fixture's own shared container, volume and network are deleted", shared["project"]))
@@ -1022,7 +1018,7 @@ def live_run(staging, approval=None):
                 except Exception as failure_reason:
                     print(f"[warn] down {repo_root} failed: {failure_reason}", flush=True)
             try:
-                remove_owned(names, shared["project"])
+                remove_owned(names["shared"], shared["project"])
             except Exception as failure_reason:
                 print(f"[warn] owned cleanup failed: {failure_reason}", flush=True)
         try:
@@ -1060,8 +1056,10 @@ def live_run(staging, approval=None):
     assert not any(left.values()), ("owned residue remains", left)
     assert baseline_kept, "the protected baseline containers changed"
     print(f"[ok] the {len(baseline)} baseline containers kept their ID, start time and mounts", flush=True)
-    print(f"[ok] no owned name remains ({len(names['containers'])} containers, "
-          f"{len(names['volumes'])} volumes, {len(names['networks'])} networks)", flush=True)
+    print(f"[ok] no owned name remains ({len(names['local_containers'])} checkout containers, "
+          f"{len(names['shared']['containers'])} shared containers, "
+          f"{len(names['shared']['volumes'])} volumes, {len(names['shared']['networks'])} networks)",
+          flush=True)
 
 
 def compose_shapes():
