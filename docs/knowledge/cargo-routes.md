@@ -97,6 +97,15 @@ routes and never need a row.
 | `tests/scripts/container-render-consumers.py` | pending one-use | 7 | One-use workspace: it copies the tree into a fresh fixture, sets its own `CARGO_TARGET_DIR`, and writes fixture `effigy.toml` routes that build a baseline example. Waits on Oxide one-use workspace support. |
 | `tests/scripts/sequence-consumer-baseline.py` | pending one-use | 7 | One-use workspace: it extracts a commit into a private fixture checkout and builds `--profile discovery-proof` there with its own `CARGO_TARGET_DIR`. Waits on Oxide one-use workspace support. |
 
+## Vault-backed Linux proof build
+
+The Parallels Ubuntu arm64 proof VM builds an exact Effigy candidate with plain
+Cargo inside the guest. This is a deliberate proof-build exception, not a Mac
+selector route: the guest VM and its build output live on Vault, Oxide is not
+available there, and the build does not write to the Mac's internal SSD. Record
+the source commit and built binary checksum with each Linux proof. The release
+workflow is separate and is not invoked for this build.
+
 ## Host note: permanent-drive outputs and multi-step runs
 
 With Oxide's permanent-drive placement (`target` is a link to the build
