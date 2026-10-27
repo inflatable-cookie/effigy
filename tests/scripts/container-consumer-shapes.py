@@ -804,6 +804,9 @@ def print_frozen_plan():
         print(f"  {container_id[:12]}  {name}  started {started}")
     print("  hard deny: no container, volume or network name containing "
           + " or ".join(PROTECTED) + " is ever stopped or deleted")
+    print(f"discovery stems:   {', '.join(names['stems'])}  (fixture-unique; a linked project is")
+    print("                   <worktree stem>-<scope>, so the stem survives the rename and no")
+    print("                   broader project matching is used)")
     print("linked worktree:   its Compose project is derived at `up` from the scope that")
     print("                   run prepares, so cleanup discovers its containers, volume and")
     print("                   network by com.effigy.checkout and com.docker.compose.project")
@@ -1017,19 +1020,31 @@ def labels_of(kind, name):
         return {}
 
 
-def labels_own(labels, name, projects, checkouts):
-    """Whether the runtime's own labels (or the exact name prefix) attribute a
-    container, volume or network to this fixture."""
+def labels_own(labels, name, projects, checkouts, stems=()):
+    """Whether the runtime's own labels (or a fixture-unique stem) attribute a
+    container, volume or network to this fixture.
+
+    A linked worktree's project is `<worktree dir>-<scope>`, and the scope is
+    only known after `up`, so a predicted name cannot prefix it. The stems are
+    fixture-unique directory names and the fixture's own shared project, which
+    do survive that rename; nothing broader is matched, and the protected
+    identities are denied before any of this is consulted."""
     for key in ("com.docker.compose.project", "com.effigy.project"):
-        if labels.get(key) and labels.get(key) in projects:
+        value = labels.get(key)
+        if value and value in projects:
+            return True
+        if value and any(value == stem or value.startswith(f"{stem}-") for stem in stems):
             return True
     for key in ("com.effigy.checkout", "com.effigy.repo-root"):
         if labels.get(key) and labels.get(key) in checkouts:
             return True
-    return any(name.startswith(f"{project}-") or name.startswith(f"{project}_") for project in projects)
+    return any(
+        name.startswith(f"{stem}-") or name.startswith(f"{stem}_")
+        for stem in (*projects, *stems)
+    )
 
 
-def discover_owned(repo, worktree, shared_project, predicted_projects=(), checkouts=()):
+def discover_owned(repo, worktree, shared_project, predicted_projects=(), checkouts=(), stems=()):
     """Everything this fixture actually owns, found by the runtime's labels.
 
     The linked worktree's Compose project is derived at `up` from the scope the
@@ -1042,23 +1057,24 @@ def discover_owned(repo, worktree, shared_project, predicted_projects=(), checko
     containers = []
     for container_id, name in runtime_containers(include_stopped=True):
         labels = labels_of("containers", container_id)
-        if labels_own(labels, name, projects, checkouts):
+        if labels_own(labels, name, projects, checkouts, stems):
             containers.append((container_id, name))
             for key in ("com.docker.compose.project", "com.effigy.project"):
                 if labels.get(key):
                     projects.add(labels[key])
     volumes = sorted(
         name for name in runtime_named("volume")
-        if labels_own(labels_of("volume", name), name, projects, checkouts)
+        if labels_own(labels_of("volume", name), name, projects, checkouts, stems)
     )
     networks = sorted(
         name for name in runtime_named("network")
-        if labels_own(labels_of("network", name), name, projects, checkouts)
+        if labels_own(labels_of("network", name), name, projects, checkouts, stems)
     )
     return {
         "containers": sorted(containers),
         "projects": sorted(projects),
         "checkouts": sorted(checkouts),
+        "stems": sorted(set(stems)),
         "volumes": volumes,
         "networks": networks,
     }
@@ -1084,6 +1100,7 @@ def remove_owned(discovered, shared_project):
     deleted = []
     checkouts = set(discovered.get("checkouts") or ())
     projects = set(discovered["projects"])
+    stems = set(discovered.get("stems") or ())
     shared_containers = [
         name for container_id, name in discovered["containers"]
         if labels_of("containers", container_id).get("com.docker.compose.project") == shared_project
@@ -1112,7 +1129,7 @@ def remove_owned(discovered, shared_project):
         for name in present:
             for marker in PROTECTED:
                 assert marker not in name, "refusing to delete protected %s" % name
-            assert labels_own(labels_of(resource, name), name, projects, checkouts), (
+            assert labels_own(labels_of(resource, name), name, projects, checkouts, stems), (
                 "refusing to delete %s: its labels do not prove it belongs to this fixture" % name
             )
         if not present:
@@ -1166,6 +1183,7 @@ def live_run(staging, approval=None):
             shared["project"],
             sorted(observed["projects"]),
             checkouts=(repo, worktree),
+            stems=names["stems"],
         )
         observed["projects"].update(snapshot["projects"])
         return snapshot
