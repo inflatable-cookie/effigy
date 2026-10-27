@@ -1234,7 +1234,7 @@ allow = [
 [[retired]]
 id = "unreleased-main-central-store-importer"
 retired = "2026-10-24"
-replacement = "v0.15 ships one migration path: the v0.14.1 importers in contract 052 §11, which read legacy files on first use. The importer for the current-main central ~/.effigy/state/kernel.db is gone (effigy#307, Tom 2026-10-24). That schema existed only on unreleased main between 8fc1b9663 and #276, and the one machine that held it migrated once with Effigy main 7b82d26. Effigy ignores kernel.db, any cutover manifest and any old per-checkout import record entirely: they are never read on a durable open, never changed, never deleted and never a refusal (M3). effigy run migrate --plan is a read-only report of that state and stages, imports, stops and deletes nothing."
+replacement = "v0.15 imports nothing, from any earlier release. The central ~/.effigy/state/kernel.db existed only on unreleased main between 8fc1b9663 and #276, so no released version wrote it, and the importer for it is gone (effigy#307, Tom 2026-10-24). Effigy ignores kernel.db, any cutover manifest and any old per-checkout import record entirely: they are never read on a durable open, never changed, never deleted and never a refusal (M3). There is no migration command and no migration report."
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
 terms = [
   "proof:runtime-migration:actual-copy",

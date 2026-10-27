@@ -433,14 +433,12 @@ so later commands, probes and holds use its final identity and paths.
 Detached admission pins the kernel's desired object reference and verifies its
 complete immutable closure; it never fingerprints mutable declarations and
 renderer outputs, and it writes no receipt file. The environment record
-([053](053-environment-reconciler-contract.md)) keeps the admitted generation
-across invocations. Canonical checkout identity and scope remain fenced,
-including a checkout moved behind a symlink. Source edits leave an admitted
-snapshot intact; a later Prepare publishes a new desired generation and
-supersedes that admission. A v0.14.1 v2 or v3 receipt is read only by the
-marker importer's adoption check and is never rewritten. Attached workflows use the same
+([053](053-environment-reconciler-contract.md)) holds the object reference the
+environment points at, and every Prepare publishes a new desired generation.
+Canonical checkout identity and scope remain fenced,
+including a checkout moved behind a symlink. Attached workflows use the same
 immutable render path. Execution-only workspace builder recovery compares fresh
-source render references while retaining its original stack admission.
+source render references against the running stack.
 
 Reset and bootstrap fresh-session teardown resolve Prepare inputs and publish
 the selected generation before planning Compose or removing generated images,
