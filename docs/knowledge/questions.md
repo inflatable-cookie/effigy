@@ -452,6 +452,17 @@ Rules for the simplification work:
 - No new state files, records or refusal variants without a stated reason.
 - Net lines go down.
 - The planner proves each merge live on real consumer stacks (Acowtancy hybrid, inventors, a basic Effigy run, plus reboot, crash and restart, an interrupted `up`, a manifest edit and a deleted worktree) before installing it.
+
+The effect journal around Compose apply stays deferred only if the exact
+candidate's live interrupted-`up` proof passes without manual repair. A failure
+reopens that mechanism before v0.15 release. Shared-service named-volume
+continuity is a separate pre-release proof on Acow's existing MariaDB during
+its authorized install window, with `shared-replace-proof.sh`; a matching
+project-name hash alone does not prove the data survived. The installed gateway
+must also run through a normal working day with stop attribution: every stop
+needs an explained cause before release gates run. A recurring unexplained
+stop gets a diagnosis task and only an evidence-scoped reopening of the parked
+private-gateway-fixture lifecycle.
 ## Q-012: Second audit scope before v0.15 qualification
 
 Status: answered
@@ -469,6 +480,12 @@ Tom's rulings:
 4. **Isolated dirs and Oxide output links:** Effigy keeps refusing to follow a symlink on an isolated dir. The fix is on the Oxide side: projects adopt Oxide's profile member links, so `target` stays a real directory. Tom is running that adoption sweep across all projects. Effigy's refusal message names `oxide outputs adopt`.
 
 Tom, 2026-10-27 (decision 4dd2e8b8), amended Audit2 L's live-proof gate: prove the local catalog MariaDB named volume and row survive the v0.14.1-to-v0.15 upgrade first; track shared-volume continuity separately. The fresh v0.14.1 shared MariaDB baseline failed before any row could be written: its render wrote the init SQL file at the shared render root while its Compose bind named a missing nested path, which became a directory and made MariaDB exit. The failed attempt grants no data-continuity credit. The local proof covers both down-first and running-stack recreate with the same volume and rows; it does not cover shared services. Evidence: `/Volumes/Builds/scratch/effigy/r2a8d-live/logs/cycle-ab-v6.log` (SHA-256 `ab087bbd8eacfd446e5997637d88465181e89fe7f4f204720ec5428dee1a4a20`).
+
+The separate shared-volume proof remains a v0.15 pre-release gate: use the
+existing Acow shared MariaDB, retain its named volume through the authorized
+install-window replacement, and run `shared-replace-proof.sh` on the exact
+candidate. The golden old-binary project-name vector is a unit compatibility
+check, not live volume-continuity evidence.
 
 ## Q-013: Test-suite value before v0.15 qualification
 
