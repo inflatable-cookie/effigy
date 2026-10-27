@@ -296,7 +296,7 @@ pub fn run_release_with_observer(
         Ok(prepared) => prepared,
         Err(error) => {
             let finished = run.finish(WorkloadOutcome::Failed { code: 1 });
-            let settled = run.settle(session.cleanup(), &mut adapter);
+            let settled = run.settle(&session.cleanup()?, &mut adapter);
             if let Err(cleanup) = finished.and(settled.map(|_| ())) {
                 return Err(ReleaseError::TaskInvocation(format!(
                     "{error}; release preparation cleanup: {cleanup}"
@@ -309,7 +309,7 @@ pub fn run_release_with_observer(
         Continuation::Nothing(record) => {
             run.finish(WorkloadOutcome::Succeeded)
                 .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
-            run.settle(session.cleanup(), &mut adapter)
+            run.settle(&session.cleanup()?, &mut adapter)
                 .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
             return Ok(ReleaseRunOutcome {
                 messages: vec![format!(
@@ -361,7 +361,7 @@ pub fn run_release_with_observer(
         ))
     })?;
     let settled = run
-        .settle(session.cleanup(), &mut adapter)
+        .settle(&session.cleanup()?, &mut adapter)
         .map_err(|error| {
             ReleaseError::TaskInvocation(format!(
             "the release Run could not be settled: {error}; `effigy release resume {}` settles it",

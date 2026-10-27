@@ -286,10 +286,10 @@ impl effigy_kernel::record::Record for ReleaseRecord {
     }
 }
 
-/// One kernel session: the capability, the state root and the cleanup budget.
+/// One kernel session: the capability and the state root.
+/// Each settlement gets a fresh bounded cleanup context.
 pub struct ReleaseSession {
     cx: EffectContext,
-    cleanup: CleanupContext,
     root: StateRoot,
     checkout: CheckoutId,
     pub owner: ResourceId,
@@ -317,9 +317,6 @@ impl ReleaseSession {
         let cx = op.effects().map_err(|_| {
             ReleaseError::TaskInvocation("release runs need write capability".into())
         })?;
-        let cleanup = op.cleanup(CLEANUP_BUDGET).map_err(|_| {
-            ReleaseError::TaskInvocation("release cleanup budget is unusable".into())
-        })?;
         let root =
             StateRoot::checkout_effects(&cx, home, &location(repo_root)).map_err(storage_error)?;
         effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(repo_root)
@@ -340,7 +337,6 @@ impl ReleaseSession {
         };
         Ok(Self {
             cx,
-            cleanup,
             root,
             checkout,
             owner,
@@ -432,14 +428,16 @@ impl ReleaseSession {
                 next: next_invocation(),
                 custody: None,
             },
-            &self.cleanup,
+            &self.cleanup()?,
             adapter,
         )
         .map_err(|error| begin_error(&self.repo_root, error))
     }
 
-    pub fn cleanup(&self) -> &CleanupContext {
-        &self.cleanup
+    pub fn cleanup(&self) -> Result<CleanupContext, ReleaseError> {
+        operation().cleanup(CLEANUP_BUDGET).map_err(|_| {
+            ReleaseError::TaskInvocation("release cleanup budget is unusable".into())
+        })
     }
 
     /// The kernel run id of the last invocation, when the journal knows it.
