@@ -306,6 +306,20 @@ fn container_argv_parses() {
             }),
         ),
         (
+            &["container", "retire", "--dead", "--yes"],
+            Command::Container(ContainerArgs {
+                subcommand: ContainerSubcommand::Retire {
+                    name: None,
+                    scope: None,
+                    dead: true,
+                    keep_data: false,
+                    yes: true,
+                },
+                repo_override: None,
+                output_json: false,
+            }),
+        ),
+        (
             &["container", "status", "--global", "--json"],
             Command::Container(ContainerArgs {
                 subcommand: ContainerSubcommand::Status {
@@ -1137,6 +1151,16 @@ fn container_argv_refuses() {
         (
             &["container", "volume", "prune", "--yes"],
             "requires either `--dormant` or `--global --orphans`",
+        ),
+        (
+            &[
+                "container",
+                "profile",
+                "prune-health-pid-files",
+                "--repo",
+                "demo",
+            ],
+            "--repo",
         ),
     ];
     for (args, needle) in cases {
