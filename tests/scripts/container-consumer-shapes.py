@@ -509,10 +509,10 @@ def execute_live():
     checks = []
     recorded_pids = []
 
-    def fixture_containers():
+    def fixture_containers(include_stopped=True):
         return sorted(
             (container_id, name)
-            for container_id, name in runtime_containers()
+            for container_id, name in runtime_containers(include_stopped)
             if name.startswith(f"{PRIMARY_DIR}-") or name.startswith(f"{WORKTREE_DIR}-")
         )
 
@@ -525,10 +525,10 @@ def execute_live():
     try:
         # 1. Idempotent re-up keeps every container ID.
         effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo)
-        first = fixture_containers()
+        first = fixture_containers(include_stopped=False)
         assert first, "up started no fixture container"
         effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo)
-        second = fixture_containers()
+        second = fixture_containers(include_stopped=False)
         assert first == second, ("a second up replaced a container", first, second)
         checks.append(("re-up keeps every container ID", len(second)))
 
@@ -573,7 +573,7 @@ def execute_live():
                 before_listener,
                 after_listener,
             )
-        assert [cid for cid, _ in fixture_containers()] == [cid for cid, _ in second], (
+        assert [cid for cid, _ in fixture_containers(include_stopped=False)] == [cid for cid, _ in second], (
             "restarting a host process replaced a container"
         )
         checks.append(("container restart restarted the host-process listener", after_listener or "route-only"))
@@ -611,7 +611,10 @@ def execute_live():
         leftovers = fixture_containers()
         if leftovers:
             print(f"[warn] fixture containers left behind: {leftovers}", flush=True)
-        run(["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)], root, timeout=120)
+        try:
+            run(["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)], root, timeout=120)
+        except Exception as error:
+            print(f"[warn] worktree removal failed: {error}", flush=True)
         shutil.rmtree(staging, ignore_errors=True)
 
     for label, count in checks:
