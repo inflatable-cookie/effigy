@@ -55,6 +55,7 @@ fn schema_fixtures_parse_and_resolve_their_declared_contract() {
                 ("NODE_ENV", "development"),
                 ("HOSTNAME", "api"),
                 ("API_BASE", "https://api.example.test:3000/v1"),
+                ("SESSION_SECRET", "from-dotenv-secret"),
             ],
             sources: &[
                 ("HOSTNAME", ResolvedSource::ExecCommand),
@@ -94,7 +95,7 @@ fn schema_fixtures_parse_and_resolve_their_declared_contract() {
             BTreeMap::new()
         };
         let resolved = resolve(&copy, dir.path(), &dotenv);
-        assert_eq!(resolved.len(), case.resolved.len(), "{}", case.fixture);
+        assert_eq!(resolved.len(), case.entries.len(), "{}", case.fixture);
         for (key, value) in case.resolved {
             assert_eq!(
                 resolved.get_value(key),

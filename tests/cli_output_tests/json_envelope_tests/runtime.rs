@@ -671,10 +671,14 @@ fn cli_doctor_lists_v014_task_state_families_in_json_and_text() {
             "json doctor misses {family}: {rendered}"
         );
     }
-    assert!(
-        !rendered.contains("delete the directory"),
-        "doctor advises deleting live cache directories: {rendered}"
-    );
+    // The retired lock directory's own advice is a delete; the live caches are
+    // never named by the check at all (contract 052 §11).
+    for live in ["cache/sources", "cache/bundles"] {
+        assert!(
+            !rendered.contains(live),
+            "doctor lists a live cache path ({live}): {rendered}"
+        );
+    }
 
     let text = run_cli_command(&root, &["doctor"]);
     let stdout = String::from_utf8_lossy(&text.stdout);

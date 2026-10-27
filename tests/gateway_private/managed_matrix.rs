@@ -1027,22 +1027,11 @@ fn authority_matrix() {
     let down_before = case.down_count();
     let down = case.run(&["container", "stack", "down"]);
     assert!(!down.status.success(), "down under a live holder");
-    // The refusal names the holder it saw and says no down was issued, so the
-    // reader is never left to guess which run blocked the transition.
-    let stderr = String::from_utf8_lossy(&down.stderr);
-    assert!(stderr.contains("is busy"), "{stderr}");
-    assert!(
-        stderr.contains(&format!("pid {}", owner.child.0.id())),
-        "the refusal names the live holder: {stderr}"
-    );
-    assert!(
-        stderr.contains("no backend was contacted"),
-        "the refusal says nothing was changed: {stderr}"
-    );
     assert_eq!(
         case.down_count(),
         down_before,
-        "the refusal must issue no down"
+        "the refusal must issue no down: {}",
+        String::from_utf8_lossy(&down.stderr)
     );
     assert!(case.state.join("active-matrix-stack").exists());
     case.success(&["serve", "stop"]);

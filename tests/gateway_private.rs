@@ -1554,8 +1554,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     fs::create_dir_all(unknown_record.parent().unwrap()).unwrap();
     fs::write(&unknown_record, b"leftover v0.14.1 supervisor record\n").unwrap();
     // E1 (#341): the v0.14.1 PID-file supervisors are gone, so a leftover
-    // record is not an owner. `up` deletes it with one line and starts the
-    // listener instead of refusing the environment.
+    // record is not an owner. Nothing reads, deletes or signals it (Q-011), and
+    // `up` starts the listener instead of refusing the environment.
     let recovered = run_container_cli(
         primary_checkout,
         &container_cleanup,
@@ -1568,12 +1568,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     assert_success(recovered);
     assert!(
-        recovered_report.contains("removed a leftover v0.14.1 host-process record"),
-        "a leftover v0.14.1 host-process record is deleted with a notice: {recovered_report}"
-    );
-    assert!(
-        !unknown_record.exists(),
-        "the deleted leftover record never blocks the start: {recovered_report}"
+        unknown_record.exists(),
+        "a leftover v0.14.1 host-process record is never read or changed: {recovered_report}"
     );
     let recovered_state = read_json_file(&listener_state_path(
         primary_checkout,
