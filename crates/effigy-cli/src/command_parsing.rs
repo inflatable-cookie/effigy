@@ -25,12 +25,12 @@ mod state;
 
 use crate::command_surface;
 use crate::{
-    BundleArgs, BundleSubcommand, Command, ContractsArgs,
-    ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
-    DepsSubcommand, DoctorArgs, GatewayPrivateArgs, HelpGroup, HelpTopic,
-    InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
-    InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, RunsAction, RunsArgs, SkillArgs,
-    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
+    BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsSelectionPrintMode,
+    ContractsSubcommand, DeferArgs, DepsArgs, DepsManager, DepsSubcommand, DoctorArgs,
+    GatewayPrivateArgs, HelpGroup, HelpTopic, InternalContainerLeaseReaperArgs,
+    InternalGatewayArgs, InternalGatewayIdentityArgs, InternalScriptRunArgs, RhaiArgs,
+    RhaiSubcommand, RunsAction, RunsArgs, SkillArgs, SkillStdioMode, SkillSubcommand,
+    TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
 };
 use bootstrap::parse_bootstrap_command;
 use changelog::parse_changelog_command;

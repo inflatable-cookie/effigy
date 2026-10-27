@@ -591,13 +591,10 @@ fn cli_contracts_check_json_validates_the_selection_payload() {
     let root = temp_workspace("contracts-selection-payload");
     write_contract_repo(
         &root,
-        "{\n  \"required\": [\"selected\", \"count\", \"changed_only_base\", \"mode\"],\n  \"properties\": {\n    \"selected\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"count\": { \"type\": \"number\" },\n    \"changed_only_base\": { \"type\": [\"string\", \"null\"] },\n    \"mode\": { \"enum\": [\"fast\", \"full\"] }\n  }\n}\n",
+        "{\n  \"required\": [\"selected\", \"count\", \"changed_only_base\"],\n  \"properties\": {\n    \"selected\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"count\": { \"type\": \"number\" },\n    \"changed_only_base\": { \"type\": [\"string\", \"null\"] }\n  }\n}\n",
     );
 
-    let output = run_json_cli_command(
-        &root,
-        &["contracts", "check-json", "--fast", "--print-selected=json"],
-    );
+    let output = run_json_cli_command(&root, &["contracts", "check-json", "--print-selected=json"]);
     assert!(output.status.success());
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.contracts.check-json.v1");
@@ -617,7 +614,7 @@ fn cli_contracts_check_json_rejects_an_unconfigured_project() {
     let root = temp_workspace("contracts-unconfigured");
     fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"bare\"\n").expect("write manifest");
 
-    let output = run_json_cli_command(&root, &["contracts", "check-json", "--fast"]);
+    let output = run_json_cli_command(&root, &["contracts", "check-json"]);
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
     let message = parsed["error"]["message"]

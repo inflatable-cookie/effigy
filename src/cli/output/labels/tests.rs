@@ -1,9 +1,9 @@
 use super::command_kind_and_name;
 use effigy_cli::{
     BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs, ContainerSubcommand,
-    ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand,
-    DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
-    ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
+    ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand, DeployArgs, DeploySubcommand,
+    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs,
+    ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
     TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 

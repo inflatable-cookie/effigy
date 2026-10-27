@@ -480,19 +480,31 @@ mod tests {
         assert_eq!(lines[3], "(4 lines omitted)");
         assert_eq!(
             &lines[4..],
-            ["eighth", "ninth", "tenth", "eleventh", "twelfth", "thirteenth"],
+            [
+                "eighth",
+                "ninth",
+                "tenth",
+                "eleventh",
+                "twelfth",
+                "thirteenth"
+            ],
             "the last lines say how it finished"
         );
     }
 
     #[test]
     fn a_cause_in_the_middle_of_a_long_output_survives_the_fold() {
-        let mut lines: Vec<String> = (0..30).map(|step| format!("Compiling crate {step}")).collect();
+        let mut lines: Vec<String> = (0..30)
+            .map(|step| format!("Compiling crate {step}"))
+            .collect();
         lines.insert(15, "error[E0308]: mismatched types".to_owned());
         let output = lines.join("\n");
         let error = HumanError::new("task `build` failed").evidence_output("stdout", &output);
         let rendered = error.render_text();
-        assert!(rendered.contains("error[E0308]: mismatched types"), "{rendered}");
+        assert!(
+            rendered.contains("error[E0308]: mismatched types"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Compiling crate 29"), "{rendered}");
         assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
     }

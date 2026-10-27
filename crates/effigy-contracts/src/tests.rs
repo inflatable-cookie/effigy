@@ -270,8 +270,7 @@ fn artifact_selection_validation_reads_the_artifact_file() {
     let invalid = repo.path().join("invalid.json");
     std::fs::write(
         &invalid,
-        json!({ "selected": [7], "count": 1, "changed_only_base": null, "mode": "full" })
-            .to_string(),
+        json!({ "selected": [7], "count": 1, "changed_only_base": null }).to_string(),
     )
     .expect("write artifact");
     let prepared = prepare_check_json(
@@ -423,7 +422,7 @@ fn render_selection_payload_json_starts_with_selected_key() {
     assert!(rendered.starts_with("{\"selected\":"));
     assert_eq!(
         rendered,
-        "{\"selected\":[\"a\",\"b\"],\"count\":2,\"changed_only_base\":null,\"mode\":\"full\"}"
+        "{\"selected\":[\"a\",\"b\"],\"count\":2,\"changed_only_base\":null}"
     );
 }
 

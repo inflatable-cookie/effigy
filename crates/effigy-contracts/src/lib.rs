@@ -933,21 +933,15 @@ fn expand_contract_fixture_tokens(
     }
     if args
         .iter()
-        .any(|arg| arg.contains("<fixture_container_render>") || arg.contains("<fixture_container_runtime>"))
+        .any(|arg| arg.contains("<fixture_container_render>"))
     {
         let manifest = "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\n[containers.web.services.app]\ncatalog='redis'\n";
-        let fixture = create_contract_fixture(fixtures, manifest).map_err(|error| error.to_string())?;
-        let runtime_fixture = create_contract_fixture_at(fixtures, manifest, FixturePlacement::Execution)
-            .map_err(|error| error.to_string())?;
+        let fixture =
+            create_contract_fixture(fixtures, manifest).map_err(|error| error.to_string())?;
         replace_contract_token(
             &mut args,
             "<fixture_container_render>",
             &fixture.to_string_lossy(),
-        );
-        replace_contract_token(
-            &mut args,
-            "<fixture_container_runtime>",
-            &runtime_fixture.to_string_lossy(),
         );
     }
     if args
@@ -1307,17 +1301,6 @@ fn create_contract_fixture(
     manifest: &str,
 ) -> Result<PathBuf, std::io::Error> {
     create_contract_fixture_files(fixtures, &[("effigy.toml", manifest)])
-}
-
-fn create_contract_fixture_at(
-    fixtures: &mut ContractFixtures,
-    manifest: &str,
-    placement: FixturePlacement,
-) -> Result<PathBuf, std::io::Error> {
-    let fixture_dir = fixtures.directory("effigy-contract-", placement)?;
-    std::fs::write(fixture_dir.join("effigy.toml"), manifest)?;
-    std::fs::write(fixture_dir.join("package.json"), "{}\n")?;
-    Ok(fixture_dir)
 }
 
 fn create_contract_fixture_files(
