@@ -29,7 +29,7 @@ fn standard_config_paths() {
 
 #[test]
 fn private_config_rejects_non_loopback_privileged_and_escaped_paths() {
-    let fixture = tempfile::tempdir().expect("private root fixture");
+    let fixture = gateway_dir();
     let root = std::fs::canonicalize(fixture.path()).expect("canonical private root");
     set_private_test_root_permissions(&root);
 
@@ -48,7 +48,7 @@ fn private_config_rejects_non_loopback_privileged_and_escaped_paths() {
 
 #[tokio::test]
 async fn private_startup_refuses_missing_ca_and_cert_before_publishing_identity() {
-    let fixture = tempfile::tempdir().expect("private root fixture");
+    let fixture = gateway_dir();
     let root = std::fs::canonicalize(fixture.path()).expect("canonical private root");
     set_private_test_root_permissions(&root);
     crate::private_state::prepare_root(&root).expect("prepare private root");
@@ -64,8 +64,7 @@ async fn private_startup_refuses_missing_ca_and_cert_before_publishing_identity(
     assert!(!root.join("gateway.pid").exists());
     assert!(!root.join("gateway.addresses.json").exists());
 
-    std::fs::write(root.join("ca/rootCA.pem"), b"fixture CA sentinel\n")
-        .expect("write fixture CA sentinel");
+    write_private_fixture_file(&root.join("ca/rootCA.pem"), b"fixture CA sentinel\n");
     let missing_cert = run_gateway(config)
         .await
         .expect_err("private startup requires a server certificate");
@@ -85,9 +84,31 @@ fn set_private_test_root_permissions(root: &Path) {
     }
 }
 
+/// Gateway state fixtures need an owner-only directory with an explicit mode.
+/// `tempfile::tempdir` inherits the ambient umask, so a Linux caller whose umask
+/// is `0002` gets a group-writable directory that the gateway trust checks
+/// refuse.
+fn gateway_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("gateway fixture directory");
+    set_private_test_root_permissions(dir.path());
+    dir
+}
+
+/// Fixture files inside a gateway directory state their intended mode instead
+/// of inheriting the ambient umask.
+fn write_private_fixture_file(path: &Path, bytes: impl AsRef<[u8]>) {
+    std::fs::write(path, bytes).expect("write private fixture file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .expect("private fixture file mode");
+    }
+}
+
 #[test]
 fn pid_file_roundtrip() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let pid_path = dir.path().join("test.pid");
     let version_path = pid_path.with_extension("version");
 
@@ -106,7 +127,7 @@ fn pid_file_roundtrip() {
 #[test]
 fn legacy_recovery_version_publication_refuses_symlink_without_following() {
     use std::os::unix::fs::symlink;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let pid_path = dir.path().join("gateway.pid");
     let version_path = pid_path.with_extension("version");
     let outside = dir.path().join("outside-version");
@@ -146,7 +167,7 @@ fn server_pid_domain_accepts_only_positive_non_init_pid_t_values() {
 
 #[test]
 fn read_pid_file_rejects_invalid_pid_domain_and_malformed_values() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let pid_path = dir.path().join("gateway.pid");
 
     for value in [
@@ -172,7 +193,7 @@ fn read_pid_file_rejects_invalid_pid_domain_and_malformed_values() {
 
 #[test]
 fn server_pid_domain_caller_pid_is_not_reported_as_gateway() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     write_pid_file(&config.pid_file_path).unwrap();
 
@@ -286,11 +307,11 @@ fn server_probe_state_classifies_running_absent_zombie_and_unknown() {
 
 #[test]
 fn server_probe_state_status_unknown_preserves_pid_and_version_records() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
-    std::fs::write(&version_path, "v0.13.1\n").unwrap();
+    write_private_fixture_file(&version_path, "v0.13.1\n");
     let before_pid = std::fs::read(&config.pid_file_path).unwrap();
     let before_version = std::fs::read(&version_path).unwrap();
 
@@ -306,11 +327,11 @@ fn server_probe_state_status_unknown_preserves_pid_and_version_records() {
 
 #[test]
 fn gateway_identity_legacy_record_requires_migration_and_unknown_probe_stays_distinct() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
-    std::fs::write(&config.pid_file_path, "4242\n").unwrap();
+    write_private_fixture_file(&config.pid_file_path, "4242\n");
     let version_path = config.pid_file_path.with_extension("version");
-    std::fs::write(&version_path, "v0.13.1\n").unwrap();
+    write_private_fixture_file(&version_path, "v0.13.1\n");
     let before_pid = std::fs::read(&config.pid_file_path).unwrap();
     let before_version = std::fs::read(&version_path).unwrap();
 
@@ -351,11 +372,11 @@ fn gateway_identity_legacy_record_requires_migration_and_unknown_probe_stays_dis
 
 #[test]
 fn server_probe_state_status_confirmed_absent_preserves_records() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
-    std::fs::write(&version_path, "v0.13.1").unwrap();
+    write_private_fixture_file(&version_path, "v0.13.1");
     let before_pid = std::fs::read(&config.pid_file_path).unwrap();
     let before_version = std::fs::read(&version_path).unwrap();
 
@@ -368,11 +389,11 @@ fn server_probe_state_status_confirmed_absent_preserves_records() {
 
 #[test]
 fn server_probe_state_start_refuses_unknown_and_preserves_records() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
-    std::fs::write(&version_path, "v0.13.1").unwrap();
+    write_private_fixture_file(&version_path, "v0.13.1");
 
     let unknown = check_existing_gateway_pid(&config, |_| GatewayProcessProbe::Unknown);
     assert!(matches!(
@@ -483,7 +504,7 @@ fn gateway_identity_matching_private_child_is_reported_running() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, pid);
 
@@ -535,7 +556,7 @@ fn gateway_identity_legacy_boot_time_sidecar_stays_running_across_drift() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, pid);
     let identity_path = config.pid_file_path.with_extension("identity");
@@ -603,7 +624,7 @@ fn gateway_identity_ambiguous_legacy_boot_time_preserves_live_record() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, pid);
     let identity_path = config.pid_file_path.with_extension("identity");
@@ -677,7 +698,7 @@ fn gateway_identity_reused_live_pid_is_not_running_and_is_not_signalled() {
         assert!(Instant::now() < deadline, "private child readiness timeout");
         std::thread::sleep(Duration::from_millis(10));
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, pid);
     let identity_path = config.pid_file_path.with_extension("identity");
@@ -687,7 +708,7 @@ fn gateway_identity_reused_live_pid_is_not_running_and_is_not_signalled() {
     record["boot_identity"] =
         serde_json::Value::String("00000000-0000-0000-0000-000000000000".to_owned());
     std::fs::write(&identity_path, serde_json::to_vec(&record).unwrap()).unwrap();
-    std::fs::write(&version_path, b"v0.13.1+local.test\n").unwrap();
+    write_private_fixture_file(&version_path, b"v0.13.1+local.test\n");
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -739,12 +760,12 @@ fn gateway_identity_mismatch_clears_only_under_locked_start() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, pid);
     let identity_path = config.pid_file_path.with_extension("identity");
     let version_path = config.pid_file_path.with_extension("version");
-    std::fs::write(&version_path, b"v0.13.1+local.test\n").unwrap();
+    write_private_fixture_file(&version_path, b"v0.13.1+local.test\n");
     let old = crate::identity::read_snapshot(&config.pid_file_path)
         .unwrap()
         .expect("authenticated fixture snapshot");
@@ -784,7 +805,7 @@ fn gateway_identity_mismatch_clears_only_under_locked_start() {
 
 #[tokio::test]
 async fn run_gateway_propagates_proxy_bind_failure() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let occupied_port = listener.local_addr().unwrap().port();
     let dns_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -857,10 +878,11 @@ fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
 /// route: setting up the watcher creates the store directory it watches.
 #[test]
 fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() {
-    let fixture = tempfile::tempdir().expect("fresh home");
+    let fixture = gateway_dir();
     let home = fixture.path();
     let routes_path = home.join(".effigy/gateway/routes.json");
-    std::fs::create_dir_all(routes_path.parent().unwrap()).expect("gateway directory");
+    crate::private_state::create_owner_only_directory(routes_path.parent().unwrap())
+        .expect("gateway directory");
     assert!(
         !home.join(".effigy/state").exists(),
         "the store directory starts absent"
@@ -966,11 +988,11 @@ fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
 #[cfg(unix)]
 #[test]
 fn permission_reuse_denied_identity_is_unknown_and_preserves_records() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, 4242);
     let version_path = config.pid_file_path.with_extension("version");
-    std::fs::write(&version_path, "v0.14.1+local.test\n").unwrap();
+    write_private_fixture_file(&version_path, "v0.14.1+local.test\n");
     let identity_path = config.pid_file_path.with_extension("identity");
     let before_pid = std::fs::read(&config.pid_file_path).unwrap();
     let before_identity = std::fs::read(&identity_path).unwrap();
@@ -1051,7 +1073,7 @@ fn permission_reuse_private_owned_generation_is_reusable_without_replacement() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, pid);
     let identity_path = config.pid_file_path.with_extension("identity");
@@ -1097,7 +1119,7 @@ fn permission_reuse_private_owned_generation_is_reusable_without_replacement() {
 fn permission_reuse_structural_diagnosis_distinguishes_each_gate() {
     // Unavailable ps with an authenticated record: process unknown, identity
     // not checked. Distinct from permission-denied identity.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().to_path_buf());
     crate::identity::write_test_record(&config.pid_file_path, 4242);
     let unknown_ps = diagnose_gateway_status_with(
@@ -1113,9 +1135,9 @@ fn permission_reuse_structural_diagnosis_distinguishes_each_gate() {
     assert_eq!(malformed, GatewayProcessProbe::Unknown);
 
     // Legacy numeric-only record never reaches identity.
-    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_dir = gateway_dir();
     let legacy_config = GatewayConfig::standard(legacy_dir.path().to_path_buf());
-    std::fs::write(&legacy_config.pid_file_path, "4242\n").unwrap();
+    write_private_fixture_file(&legacy_config.pid_file_path, "4242\n");
     let legacy = diagnose_gateway_status_with(
         &legacy_config,
         |_| GatewayProcessProbe::Running,
@@ -1149,12 +1171,13 @@ fn permission_reuse_structural_diagnosis_distinguishes_each_gate() {
 #[test]
 fn gateway_status_diagnosis_distinguishes_an_unreadable_record() {
     use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = gateway_dir();
     let config = GatewayConfig::standard(dir.path().join("gateway"));
-    std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
-    std::fs::write(&config.pid_file_path, "4242\n").unwrap();
+    crate::private_state::create_owner_only_directory(config.pid_file_path.parent().unwrap())
+        .expect("owner-only gateway directory");
+    write_private_fixture_file(&config.pid_file_path, "4242\n");
     let identity = config.pid_file_path.with_extension("identity");
-    std::fs::write(&identity, b"{}").unwrap();
+    write_private_fixture_file(&identity, b"{}");
     std::fs::set_permissions(&identity, std::fs::Permissions::from_mode(0o000)).unwrap();
     let diagnosis = diagnose_gateway_status_with(
         &config,

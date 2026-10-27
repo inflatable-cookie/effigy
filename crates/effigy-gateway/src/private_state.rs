@@ -59,8 +59,7 @@ pub fn prepare_root(path: &Path) -> Result<(), GatewayError> {
                 validate_private_metadata(&directory, &metadata, true)?;
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                std::fs::create_dir(&directory).map_err(GatewayError::Io)?;
-                set_private_permissions(&directory)?;
+                create_owner_only_directory(&directory)?;
             }
             Err(error) => return Err(GatewayError::Io(error)),
         }
@@ -182,6 +181,41 @@ fn validate_private_metadata(
             "private gateway state currently requires Unix ownership and permission checks",
         )))
     }
+}
+
+/// Create a directory only this user may use, with its final mode set
+/// explicitly.
+///
+/// `mkdir`'s mode argument is masked by the process umask, so a caller running
+/// with a permissive Linux umask such as `0002` would otherwise get a
+/// group-writable directory that this module's own validation refuses. The
+/// directory is created owner-only and then re-set, so the result never
+/// depends on the inherited umask and no unsafe window is needed.
+#[cfg(unix)]
+pub(crate) fn create_owner_only_directory(path: &Path) -> Result<(), GatewayError> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(unsafe_child(path, "expected a real directory"));
+            }
+            return Ok(());
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(GatewayError::Io(error)),
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    builder.create(path).map_err(GatewayError::Io)?;
+    set_private_permissions(path)
+}
+
+/// Non-Unix placeholder: private state already refuses to run without Unix
+/// ownership and permission checks.
+#[cfg(not(unix))]
+pub(crate) fn create_owner_only_directory(path: &Path) -> Result<(), GatewayError> {
+    std::fs::create_dir_all(path).map_err(GatewayError::Io)
 }
 
 fn set_private_permissions(path: &Path) -> Result<(), GatewayError> {

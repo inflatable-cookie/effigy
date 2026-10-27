@@ -79,7 +79,7 @@ fn private_gateway_start_reuse_and_explicit_down_up_keep_lifecycle_control() {
     let effects = HostEffectSentinels::new(fixture.path());
     let root = private_root(fixture.path(), "gateway");
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).unwrap();
+    private_directory(&foreign_ca);
     parse_json_success(run_gateway(
         &root,
         "setup-tls",
@@ -100,6 +100,190 @@ fn private_gateway_start_reuse_and_explicit_down_up_keep_lifecycle_control() {
     cleanup.untrack(&root);
 }
 
+/// A permissive Linux umask must not leave private gateway state that its own
+/// trust validator refuses. First setup, start, reuse and restart create the CA,
+/// the serial file, the certificate pair and every private directory with a
+/// safe explicit mode, under `0002` and under `0022` alike, while a foreign
+/// group-writable file and a symlinked entry are still refused.
+#[cfg(unix)]
+#[test]
+fn private_gateway_setup_and_start_are_safe_under_a_permissive_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for umask in [0o002, 0o022] {
+        let fixture = effigy_test_support::Fixture::new("g382-").unwrap();
+        let effects = HostEffectSentinels::new(fixture.path());
+        let root = private_root(fixture.path(), "gateway");
+        let foreign_ca = fixture.path().join("foreign-ca");
+        private_directory(&foreign_ca);
+
+        let setup = parse_json_success(run_gateway_with_umask(
+            &root,
+            "setup-tls",
+            &effects,
+            Some(&foreign_ca),
+            &[],
+            umask,
+        ));
+        assert_eq!(setup["result"], "private_ca_created", "umask {umask:o}");
+        let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+        cleanup.track(&root);
+        assert_private_state_modes(&root, umask);
+
+        let started = parse_json_success(run_gateway_with_umask(
+            &root,
+            "up",
+            &effects,
+            Some(&foreign_ca),
+            &[],
+            umask,
+        ));
+        let reused = parse_json_success(run_gateway_with_umask(
+            &root,
+            "up",
+            &effects,
+            Some(&foreign_ca),
+            &[],
+            umask,
+        ));
+        assert_eq!(started["pid"], reused["pid"], "umask {umask:o}");
+        for record in ["gateway.pid", "gateway.identity", "gateway.addresses.json"] {
+            let mode = fs::metadata(root.join(record))
+                .unwrap_or_else(|error| panic!("record {record} missing: {error}"))
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "record {record} must deny group and other access under umask {umask:o}: {mode:o}"
+            );
+            assert_ne!(mode & 0o400, 0, "record {record} stays owner-readable");
+        }
+        // Reusing an existing private CA validates the same artifacts again.
+        let reused_setup = parse_json_success(run_gateway_with_umask(
+            &root,
+            "setup-tls",
+            &effects,
+            Some(&foreign_ca),
+            &[],
+            umask,
+        ));
+        assert_eq!(
+            reused_setup["result"], "already_configured",
+            "umask {umask:o}"
+        );
+
+        parse_json_success(run_gateway_with_umask(
+            &root,
+            "down",
+            &effects,
+            Some(&foreign_ca),
+            &[],
+            umask,
+        ));
+        assert!(!root.join("gateway.pid").exists(), "umask {umask:o}");
+        let restarted = parse_json_success(run_gateway_with_umask(
+            &root,
+            "up",
+            &effects,
+            Some(&foreign_ca),
+            &[],
+            umask,
+        ));
+        assert_ne!(started["pid"], restarted["pid"], "umask {umask:o}");
+        parse_json_success(run_gateway_with_umask(
+            &root,
+            "down",
+            &effects,
+            Some(&foreign_ca),
+            &[],
+            umask,
+        ));
+        cleanup.untrack(&root);
+
+        // The validator still refuses externally unsafe state: creation paths
+        // must not have loosened it.
+        let foreign_write = root.join("foreign-note.txt");
+        fs::write(&foreign_write, b"group writable fixture\n").unwrap();
+        fs::set_permissions(&foreign_write, fs::Permissions::from_mode(0o664)).unwrap();
+        let loose =
+            run_gateway_with_umask(&root, "setup-tls", &effects, Some(&foreign_ca), &[], umask);
+        assert!(
+            !loose.status.success(),
+            "group-writable state must be refused under umask {umask:o}: {loose:?}"
+        );
+        assert!(
+            command_text(&loose).contains("group and other writes"),
+            "refusal must name the mode rule: {}",
+            command_text(&loose)
+        );
+        fs::remove_file(&foreign_write).unwrap();
+
+        let linked_entry = root.join("linked-entry");
+        std::os::unix::fs::symlink(root.join("certs"), &linked_entry).unwrap();
+        let linked =
+            run_gateway_with_umask(&root, "setup-tls", &effects, Some(&foreign_ca), &[], umask);
+        assert!(
+            !linked.status.success(),
+            "symlinked state must be refused under umask {umask:o}: {linked:?}"
+        );
+        assert!(
+            command_text(&linked).contains("symlinks are not supported"),
+            "refusal must name the symlink rule: {}",
+            command_text(&linked)
+        );
+        fs::remove_file(&linked_entry).unwrap();
+    }
+}
+
+/// Assert the modes first private setup leaves behind, independent of the
+/// umask the caller ran with.
+#[cfg(unix)]
+fn assert_private_state_modes(root: &Path, umask: u32) {
+    use std::os::unix::fs::PermissionsExt;
+
+    for directory in [root.to_path_buf(), root.join("ca"), root.join("certs")] {
+        let mode = fs::metadata(&directory)
+            .unwrap_or_else(|error| panic!("directory {} missing: {error}", directory.display()))
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode,
+            0o700,
+            "private directory {} under umask {umask:o}",
+            directory.display()
+        );
+    }
+    for artifact in [
+        "ca/rootCA.pem",
+        "ca/rootCA-key.pem",
+        "ca/rootCA.srl",
+        "certs/localhost.pem",
+        "certs/localhost-key.pem",
+    ] {
+        let path = root.join(artifact);
+        let mode = fs::metadata(&path)
+            .unwrap_or_else(|error| panic!("artifact {artifact} missing: {error}"))
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "generated artifact {artifact} under umask {umask:o}"
+        );
+    }
+}
+
+/// Both streams of one fixture command, for a refusal assertion.
+fn command_text(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
 #[cfg(unix)]
 #[test]
 fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
@@ -429,7 +613,7 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
         effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
     let effects = HostEffectSentinels::new(fixture.path());
     let foreign_ca_root = fixture.path().join("default-ca-sentinel");
-    fs::create_dir(&foreign_ca_root).expect("foreign default CA fixture");
+    private_directory(&foreign_ca_root);
     fs::write(foreign_ca_root.join("sentinel.pem"), b"preserve me\n")
         .expect("write foreign sentinel");
     let foreign_before = fingerprint(&foreign_ca_root);
@@ -847,9 +1031,9 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     write_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -1884,9 +2068,9 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     write_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -2443,8 +2627,8 @@ fn fresh_linked_hybrid_dev_prepares_scope_before_policy() {
     write_fake_docker(&docker_dir.join("docker"));
     let home = fixture.path().join("home");
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&home).unwrap();
-    fs::create_dir(&foreign_ca).unwrap();
+    private_directory(&home);
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -2701,10 +2885,10 @@ fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
     write_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let private_gateway = private_root(fixture.path(), "readiness-failure-gateway");
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let tls = run_gateway(
         &private_gateway,
         "setup-tls",
@@ -2842,9 +3026,9 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
     write_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -3050,13 +3234,21 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
 
 fn private_root(parent: &Path, name: &str) -> PathBuf {
     let root = parent.join(name);
-    fs::create_dir(&root).expect("create private root");
+    private_directory(&root);
+    fs::canonicalize(root).expect("canonical private root")
+}
+
+/// Create a fixture directory whose mode is stated rather than inherited from
+/// the ambient umask. A Linux caller with umask `0002` would otherwise get a
+/// group-writable directory, which private-root rules refuse.
+fn private_directory(path: &Path) {
+    fs::create_dir(path).expect("create fixture directory");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("private root mode");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .expect("fixture directory mode");
     }
-    fs::canonicalize(root).expect("canonical private root")
 }
 
 fn write_fake_docker(path: &Path) {
@@ -3836,6 +4028,16 @@ fn write_self_signed_cert_pair(certs: &Path, domain: &str, modified: std::time::
         String::from_utf8_lossy(&output.stderr)
     );
     for path in [&cert, &key] {
+        // The pair is a fixture-created private-root artifact, so its mode is
+        // stated rather than inherited from the ambient umask: a Linux caller
+        // with umask 0002 would otherwise write group-writable files that
+        // private state validation refuses.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .expect("private fixture certificate mode");
+        }
         fs::File::options()
             .write(true)
             .open(path)
@@ -3906,6 +4108,39 @@ fn run_gateway(
     extra: &[&str],
 ) -> Output {
     gateway_command(root, subcommand, effects, foreign_ca_root, extra)
+        .spawn_owned()
+        .expect("public gateway CLI")
+        .wait_with_output()
+        .expect("run public effigy CLI")
+}
+
+/// Run the public gateway CLI with a chosen inherited umask.
+///
+/// `umask` is per-process kernel state, so the value is set in the forked child
+/// before `exec`: the fixture process and every descendant inherit it, and no
+/// other test thread in this runner is affected.
+#[cfg(unix)]
+fn run_gateway_with_umask(
+    root: &Path,
+    subcommand: &str,
+    effects: &HostEffectSentinels,
+    foreign_ca_root: Option<&Path>,
+    extra: &[&str],
+    umask: u32,
+) -> Output {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = gateway_command(root, subcommand, effects, foreign_ca_root, extra);
+    // SAFETY: `umask` is async-signal-safe and `pre_exec` runs in the child
+    // between fork and exec, so only this CLI process and its descendants are
+    // affected.
+    unsafe {
+        command.pre_exec(move || {
+            libc::umask(umask as libc::mode_t);
+            Ok(())
+        });
+    }
+    command
         .spawn_owned()
         .expect("public gateway CLI")
         .wait_with_output()
@@ -4427,9 +4662,9 @@ fn container_up_waits_for_slow_service_health_before_host_processes() {
     write_slow_health_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -4578,7 +4813,7 @@ impl PlainEnvironmentFixture {
         write_slow_health_fake_docker(&docker_dir.join("docker"));
 
         let home = fixture.join("home");
-        fs::create_dir(&home).expect("fixture home");
+        private_directory(&home);
         let checkout = fixture.join("plain-environment");
         fs::create_dir(&checkout).expect("plain environment checkout");
         fs::write(
@@ -4703,7 +4938,7 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -4798,7 +5033,7 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -4902,9 +5137,9 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
     write_switch_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -5256,9 +5491,9 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
     write_switch_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -5618,7 +5853,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     )
     .expect("write fixture login profile");
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -5998,9 +6233,9 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     write_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -6236,9 +6471,9 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
     write_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -6377,9 +6612,9 @@ fn hung_listener_does_not_block_down_from_another_shell() {
     write_fake_docker(&docker_dir.join("docker"));
 
     let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, _https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
@@ -6746,7 +6981,7 @@ fn detached_gateway_failure_actor() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).unwrap();
+    private_directory(&foreign_ca);
     let root = private_root(fixture.path(), "managed-listener-gateway");
     parse_json_success(run_gateway(
         &root,

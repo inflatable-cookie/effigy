@@ -2111,6 +2111,16 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- **Private gateway state is created safe under a permissive Linux umask.** A
+  first `gateway setup-tls` and start under umask `0002` left the state root
+  group-writable: `mkcert` created `ca/rootCA.srl`, `ca/rootCA.pem` and each
+  certificate pair itself, and the gateway parent directory was made through
+  the inherited umask, so private state validation then refused Effigy's own
+  artifacts (effigy#396). A private root's directories are now created
+  owner-only with an explicit final mode, the `mkcert` subprocess runs with a
+  child-scoped umask that no other thread inherits, and the CA and certificate
+  files are pinned to `0600` before validation. The symlink, owner and
+  group/other-write refusals for pre-existing or foreign state are unchanged.
 - Prepare a fresh linked worktree’s runtime scope before resolving container startup policy, so its first `up` uses its own hosts and identity.
 - Release settlement receives a fresh 60-second budget after stages; `release settle <run>` recovers an interrupted invocation without advancing stages.
 - A run step opens the bundle source the checkout lock selects when it runs.

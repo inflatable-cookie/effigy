@@ -335,6 +335,17 @@ every use; the shared gateway directory is the operator's own state and is not
 validated as a private root. Route claims, generation binding and owner-checked
 withdrawal are the same in both.
 
+A private root's directories are owner-only (`0700`) and its files deny group
+and other writes. Creation paths state that mode instead of inheriting the
+process umask: the state root's subdirectories and a created gateway parent are
+made owner-only explicitly, and the `mkcert` subprocess that writes the CA, the
+CA serial file and each certificate pair runs with a child-scoped umask, so a
+Linux caller's default `0002` cannot leave group-writable state that Effigy's
+own validation then refuses. The files it leaves are pinned to `0600` before
+validation. The refusals themselves are unchanged: a pre-existing group- or
+other-writable file or directory, a symlink, or a foreign owner is still
+refused rather than repaired.
+
 Gateway route publication and withdrawal write the owner-checked route table
 without gating on daemon identity. Managed startup reuses a running daemon and
 warns when its build differs; only positive absence starts one. An unavailable
