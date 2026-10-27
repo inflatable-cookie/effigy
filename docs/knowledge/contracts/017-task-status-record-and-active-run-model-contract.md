@@ -71,6 +71,14 @@ reclaims or unlocks a gate.
   this host refuses its task until that process exits. Dead, foreign or
   corrupt records are ignored and never deleted; `doctor` lists them.
 
+Q-015 (Tom, 2026-10-27) authorizes a pending, opt-in exception for
+`test:focused` only. Its exclusion key includes the resolved selector and
+normalized task arguments, so different filters can overlap while identical
+invocations still exclude one another. An identical second invocation waits
+about two minutes by default; an explicit wait option takes precedence. This
+does not introduce a general shared/read-only lock mode or change other task
+gates. Until implementation, the task gate above remains the running behavior.
+
 ## Run record
 
 The phase table below describes durable runs. Foreground runs keep admission,

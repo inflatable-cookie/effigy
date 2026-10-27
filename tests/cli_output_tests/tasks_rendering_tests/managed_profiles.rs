@@ -54,17 +54,3 @@ General
     );
     assert_eq!(extract_tail(&stdout, "\nCatalogs\n────────\n"), expected);
 }
-
-#[test]
-fn cli_tasks_text_output_lists_managed_profiles_inline_with_tasks() {
-    let root = temp_workspace("cli-text-managed-inline");
-    write_managed_profiles_manifest(&root);
-
-    let stdout = run_effigy(&["tasks"], Some(&root), false);
-    assert!(stdout.contains("Tasks"));
-    assert!(stdout.contains("- dev : effigy.toml"));
-    assert!(stdout.contains("- dev front : effigy.toml"));
-    assert!(stdout.contains("- dev admin : effigy.toml"));
-    assert!(!stdout.contains("- dev default : effigy.toml"));
-    assert!(!stdout.contains("Managed Profiles"));
-}

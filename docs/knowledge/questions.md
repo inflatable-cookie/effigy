@@ -468,7 +468,7 @@ Tom's rulings:
 
 4. **Isolated dirs and Oxide output links:** Effigy keeps refusing to follow a symlink on an isolated dir. The fix is on the Oxide side: projects adopt Oxide's profile member links, so `target` stays a real directory. Tom is running that adoption sweep across all projects. Effigy's refusal message names `oxide outputs adopt`.
 
-Tom, 2026-10-27 (decision 4dd2e8b8), amended Audit2 L's live-proof gate: prove the local catalog MariaDB named volume and row survive the v0.14.1-to-v0.15 upgrade first; track shared-volume continuity separately. The fresh v0.14.1 shared MariaDB baseline failed before any row could be written: its render wrote the init SQL file at the shared render root while its Compose bind named a missing nested path, which became a directory and made MariaDB exit. The failed attempt grants no data-continuity credit. Audit2 L remains unmerged until the amended live proof and independent review pass. Evidence: `/Volumes/Builds/scratch/effigy/r2a8d-live/logs/cycle-ab-v5.log` (SHA-256 `101c66ac369c56aa96f71fe92c3c0c350a7cecc20b08dabccb0e69afbf84aecc`).
+Tom, 2026-10-27 (decision 4dd2e8b8), amended Audit2 L's live-proof gate: prove the local catalog MariaDB named volume and row survive the v0.14.1-to-v0.15 upgrade first; track shared-volume continuity separately. The fresh v0.14.1 shared MariaDB baseline failed before any row could be written: its render wrote the init SQL file at the shared render root while its Compose bind named a missing nested path, which became a directory and made MariaDB exit. The failed attempt grants no data-continuity credit. The local proof covers both down-first and running-stack recreate with the same volume and rows; it does not cover shared services. Evidence: `/Volumes/Builds/scratch/effigy/r2a8d-live/logs/cycle-ab-v6.log` (SHA-256 `ab087bbd8eacfd446e5997637d88465181e89fe7f4f204720ec5428dee1a4a20`).
 
 ## Q-013: Test-suite value before v0.15 qualification
 
@@ -486,3 +486,52 @@ Tom asked whether everything "is actually testing something useful". His rulings
 1. **Prune before qualification.** Four prune batches run before the selector/proof work and milestone QA.
 2. **Managed matrix.** The end-to-end `managed_matrix_*` tests are trimmed to one cell per front end and stop kind. The full cross product stays in the kernel model test (contract 052 §12.3).
 3. **Fault-injection tests run at milestone QA.** A `fault-injection` selector joins the milestone `qa` group. Whether to cut the fault framework is decided after one milestone shows what it catches.
+
+## Q-014: Custody anchor lifetime
+
+Status: answered
+Asked: 2026-10-27
+Answered: 2026-10-27 by Tom
+Owner: [contract 052 §5.7](contracts/052-runtime-kernel-contract.md#57-ownedprocess-and-signalrouter)
+
+Tom authorized custody anchors to exit on SIGTERM or once their run settles.
+The earlier rule that anchors ignore TERM indefinitely is no longer the target
+behavior. Their positive group-identity evidence remains necessary until
+settlement proves closure; losing an anchor earlier leaves the existing
+`Unknown` outcome for still-live members. This ruling adds no machine-wide
+sweep or new state. It covers direct Effigy proof invocations as well as marked
+test selectors; Queue lead `d7ddb7fe-adc4-40e2-a9f7-1d5b98043830` records the
+observed gap.
+
+## Q-015: Argument-scoped task lock for focused tests
+
+Status: answered, implementation pending
+Asked: 2026-10-27
+Answered: 2026-10-27 by Tom
+Owner: [contract 017 §Exclusion](contracts/017-task-status-record-and-active-run-model-contract.md#exclusion-k2)
+
+Tom chose an opt-in lock key consisting of the resolved selector and normalized
+task arguments. Enable it only for `test:focused`: different test filters may
+run concurrently, while identical normalized invocations serialize. The
+second identical run waits about two minutes by default, with the existing
+explicit wait option retaining precedence. Do not add a general shared or
+read-only lock mode. Until the queued implementation lands, the current task
+gate still excludes every invocation of the same declared task.
+
+## Q-016: Colima visibility for Builds scratch
+
+Status: answered, host change pending
+Asked: 2026-10-27
+Answered: 2026-10-27 by Tom
+Owner: [guide 069 §Per-Run Scratch On An External Volume](../guides/069-workspace-host-integration.md#per-run-scratch-on-an-external-volume)
+
+Add one writable `/Volumes/Builds/scratch` mount to the `effigy` Colima
+profile during the separately authorized Effigy install window, after Acow
+authorizes that window. Do not mount `/Volumes/Builds` as a whole: the VM must
+not gain access to `oxide-pool`, `oxide-outputs`, `caches` or `queue`. A missing
+scratch mount at VM start must fail loudly, without fallback. The install
+receipt records the exact change and undo, plus before/after `colima list` and
+mount evidence. Until then live Colima fixtures keep the bounded `~/.cache`
+staging exception. Once the mount works, move those fixtures to Builds scratch
+and close papercut `62e6b400-03df-411b-9368-846ccffbad4a`. Barge may later
+own this under Barge Q-009; that does not change the interim install gate.

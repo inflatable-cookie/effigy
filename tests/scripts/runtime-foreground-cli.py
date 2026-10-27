@@ -61,8 +61,8 @@ run = "touch inner.txt"
 [tasks.hold]
 admission = "heavy"
 run = "touch ready; sleep 300"
-[tasks.late]
-run = "\\\"$EFFIGY_TEST_BIN\\\" --run-id forbidden short1"
+[tasks.nested]
+run = "\\\"$EFFIGY_TEST_BIN\\\" short1"
 [tasks.test_ref]
 run = [{task = "test local"}]
 [tasks.outer_test]
@@ -179,7 +179,12 @@ exec sleep 300
     assert view["state"] == "not-recorded" and view["current"] is None, view
     result = run(project, "run", "status", run_id, "--json", success=False)
     assert "not-recorded" in result.stdout or "not recorded" in result.stderr, result
-    run(project, "late", success=False)
+    # Q-011: a nested invocation is ordinary, so a child run from a foreground
+    # task runs and the whole tree still records nothing for it. The retained
+    # variant (a `--run-id` child that journals in its own checkout) is
+    # `secrets_hook_admission_cli_tests::an_undeclared_late_durable_child_runs_and_journals`.
+    nested = run(project, "nested")
+    assert "short-1" in nested.stdout, nested.stdout
     assert_memory_only()
     # Stop a separate foreground owner through its fresh gate identity. No
     # stop request, result, checkout token or database is retained.
@@ -204,8 +209,9 @@ exec sleep 300
         if child.poll() is None:
             child.terminate()
             child.communicate(timeout=30)
-    # Replacing Git metadata changes the checkout generation while its owner
-    # is waiting. It must stop native custody before a successor can proceed.
+    # Replacing Git metadata writes nothing and refuses nothing (Q-011): a
+    # checkout is identified by its canonical path, so a recreated `.git`
+    # neither stops a live foreground owner nor records a generation.
     project = projects[2]
     child = subprocess.Popen([str(binary), "hold"], cwd=project, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -217,12 +223,20 @@ exec sleep 300
             time.sleep(0.02)
         (project / ".git").rename(project / "git-retired")
         (project / ".git").mkdir()
-        out, err = child.communicate(timeout=15)
-        assert child.returncode != 0 and "filesystem authority changed" in err, (out, err)
+        time.sleep(0.5)
+        assert child.poll() is None, (
+            "replacing Git metadata stopped a live foreground owner", child.communicate())
+        view = frame(json.loads(run(project, "tasks", "status", "hold", "--json").stdout),
+                     "effigy.tasks-status.v3")
+        assert view["state"] == "running" and view["current"]["pid"] == child.pid, view
+        assert not list((project / ".git").iterdir()), "replacing Git metadata recorded a generation"
+        assert_memory_only()
     finally:
         if child.poll() is None:
+            # The owner is ours; end it and let the CLI settle its own custody.
             child.terminate()
-            child.communicate(timeout=30)
+            out, err = child.communicate(timeout=30)
+            print(f"owned replacement owner exit={child.returncode}")
     run(project, "short0")
     project = projects[1]
     child = subprocess.Popen([str(binary), "test", "hold"], cwd=project, env=env,
@@ -266,4 +280,4 @@ run = 'touch completed'
                       "database_files_created": 0, "retained_run_records": 0,
                       "sequence": "passed", "nested_hook_count": 1,
                       "builtin_suites": "passed", "suite_stop": "released", "suite_hook_count": 1,
-                      "hook_loss": "stopped", "checkout_replacement": "stopped", "late_durable_effect": "refused", "declared_durable_descendant": "passed"}, sort_keys=True))
+                      "hook_loss": "stopped", "checkout_replacement": "survived", "nested_foreground_child": "ran", "declared_durable_descendant": "passed"}, sort_keys=True))

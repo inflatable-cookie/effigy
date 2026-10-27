@@ -1159,7 +1159,6 @@ allow = [
   "tests/cli_output_tests/release_platform_tests.rs",
   "tests/cli_output_tests/command_behavior_tests.rs",
   "src/tests/lib_tests_parse_tests/release_option_tests.rs",
-  "tests/fixtures/released_surface/v0.3.0/transition.json",
 ]
 
 [[retired]]

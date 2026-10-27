@@ -92,7 +92,6 @@ routes and never need a row.
 | `tests/scripts/worktree-lifecycle-hooks.sh` | genuine exception | 8 | Cargo is the subject: every case runs against a stub `cargo` that records the pinned target directory and the arguments. |
 | `tests/scripts/install-local-bin.sh` | genuine exception | 8 | Cargo is the subject: a stub `cargo` records and refuses any fallback so the fixture can prove `install:local` uses the Oxide-routed release build, and the assertions name that stub. |
 | `tests/scripts/assurance-boundary-tests.sh` | genuine exception | 8 | Cargo is the subject: `cargo nextest list --message-format json` is the membership oracle the proof asserts against. |
-| `tests/scripts/doctor-fixture-scheduling.py` | genuine exception | 8 | Cargo is the subject: it supervises `cargo nextest` runs to prove scheduling controls, and gives each fixture crate a private `CARGO_TARGET_DIR`. |
 | `tests/scripts/gateway-linux-adapter.sh` | genuine exception | 8 | Container/VM guest build: the proof deliberately builds and executes inside a Linux container, with a container-local target directory. |
 | `crates/effigy-kernel/tests/scripts/linux-custody.sh` | genuine exception | 8 | Container/VM guest build: eight `test:kernel:*:linux` and `proof:runtime-*:linux` routes run this script, which builds and runs `cargo test`/`build`/`clippy`/`nextest` inside a disposable Colima VM with a VM-local `CARGO_TARGET_DIR`. Three more routes use its `task-engine-fixtures` mode for the root task-engine kill matrix and the fixture ledger's foreign-generation refusal (`test:task-engine:kill-matrix:linux`, `test:fixtures:foreign-generation:linux`, `test:task-engine:fixtures:linux`). |
 | `tests/scripts/container-render-consumers.py` | pending one-use | 7 | One-use workspace: it copies the tree into a fresh fixture, sets its own `CARGO_TARGET_DIR`, and writes fixture `effigy.toml` routes that build a baseline example. Waits on Oxide one-use workspace support. |
@@ -104,8 +103,8 @@ With Oxide's permanent-drive placement (`target` is a link to the build
 volume), a multi-step Effigy task whose first step rebuilds `effigy` admits its
 next step from whatever binary the path names; a state root on another volume
 is irrelevant. This is host state, not routing. The routes that used to expose
-cross-volume pinning are `proof:containers:isolated-dirs`,
-`proof:containers:isolated-mount-points`, `test:containers:generations:cli`,
+cross-volume pinning are `proof:containers:isolated-mount-points`,
+`test:containers:generations:cli`,
 `test:containers:generations:consumers` and `test:doctor:git-timeout-proof`;
 they are the ones to re-check on a host that links `target` to another volume.
 
