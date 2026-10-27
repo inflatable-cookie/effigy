@@ -283,7 +283,8 @@ the other fixtures cannot:
 - a client of a shared MariaDB resolves `host.docker.internal` while a local
   MariaDB of the same engine stays local;
 - a primary checkout and a linked worktree of the same fixture keep distinct
-  project identities.
+  project identities: each declares its own environment, domain and listener, so
+  both stay up at the same time.
 
 It runs under `/Volumes/Builds/scratch/effigy/` with private scratch checkouts
 and removes what it created. It never starts, stops or reconfigures a runtime,
@@ -301,10 +302,11 @@ The listener publishes its route into the fixture's own private gateway root
 (`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`, loopback DNS/HTTP/HTTPS with its own CA),
 so this proof never uses the machine gateway that the operator-path test owns;
 it re-verifies the machine gateway's listeners, PIDs and executables afterwards.
-It deletes the fixture's own shared-service container, volume and network by
-exact name and only after their labels prove the project, never touches the
-protected shared MariaDBs, and fails (keeping the staging root) if any owned
-name survives.
+It deletes the fixture's own shared-service container, volume and network: it
+asks the runtime for that project's containers by label, removes each by exact
+id, and touches a volume or network only once the label query reports no
+container left. It never touches the protected shared MariaDBs, and fails
+(keeping the staging root) if any owned name survives.
 
 Three modes exist for the operator: no mode runs both halves (what the selector
 does), `compose` runs only the Compose-checked render proof, and `plan` prints
