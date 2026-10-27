@@ -265,6 +265,7 @@ default = "%(environment)s"
 
 [containers.%(environment)s]
 primary_service = "client"
+working_dir = "/workspace"
 
 [containers.%(environment)s.services.client]
 catalog = "z374-client"
@@ -304,6 +305,11 @@ CLIENT_SERVICE = """[service]
 name = "z374-client"
 description = "Consumer-shapes proof client: a small build image and a shared-service client."
 
+[params.working_dir]
+type = "string"
+default = "/workspace"
+description = "Directory the checkout is mounted at"
+
 [capabilities]
 exec_target = true
 shell = "/bin/sh"
@@ -317,6 +323,9 @@ CLIENT_FRAGMENT = """services:
       args:
         MARKER: "z374-build"
         SUFFIX: "{{ project_name }}"
+    working_dir: {{ working_dir }}
+    volumes:
+      - {{ repo_root }}:{{ working_dir }}
 """
 
 CLIENT_DOCKERFILE = """FROM busybox:latest
@@ -536,6 +545,20 @@ def container_identity(container_id):
     return listing
 
 
+def assert_protected_unchanged(before, owned_containers_now=()):
+    """Every container that existed before the run is still the same container,
+    and nothing new appeared that the proof does not own."""
+    after = {(container_id, name): identity for container_id, name, identity in protected_baseline()}
+    for container_id, name, identity in before:
+        assert after.get((container_id, name)) == identity, (
+            "a container that existed before the run changed or disappeared", name
+        )
+    known = {(container_id, name) for container_id, name, _ in before}
+    owned = set(owned_containers_now)
+    unexpected = sorted(name for (_, name) in after if (_, name) not in known and name not in owned)
+    assert not unexpected, ("the run started a container it does not own", unexpected)
+
+
 def protected_baseline():
     """The containers that are running before the proof. They must be the same
     containers, with the same ID, start time and mounts, after it finishes."""
@@ -672,6 +695,11 @@ def approval_core(staging):
     identity = live_identity(planning)
     names = fixture_names(identity)
     digest = run(["shasum", "-a", "256", str(candidate)], root, timeout=120).split()[0]
+    import hashlib
+
+    fixture_digest = hashlib.sha256(
+        "\n".join([LIVE_MANIFEST, CLIENT_SERVICE, CLIENT_FRAGMENT, CLIENT_DOCKERFILE]).encode()
+    ).hexdigest()
     head = run(["git", "rev-parse", "HEAD"], Path(__file__).resolve().parents[2], timeout=120).strip()
     lines = [
         "qa:live:consumer-shapes live half",
@@ -688,6 +716,7 @@ def approval_core(staging):
         "containers " + " ".join(names["containers"]),
         "volumes " + " ".join(names["volumes"]),
         "networks " + " ".join(names["networks"]),
+        f"fixture inputs sha256 {fixture_digest}",
         "protected " + " ".join(PROTECTED),
         "machine-gateway 80 443 15353 unchanged by pid and executable sha256",
         "steps up up-again no-effigy-env build-args shared-client local-stays-local "
@@ -989,7 +1018,7 @@ def live_run(staging, approval=None):
     names = fixture_names(identity)
     shared = identity["shared"]
     failure = None
-    started = False
+    mutating = False
     started_gateway = False
 
     def status(repo_root):
@@ -1027,8 +1056,8 @@ def live_run(staging, approval=None):
         assert gateway_up.get("ok"), gateway_up.get("error")
         started_gateway = True
 
+        mutating = True
         effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo, env=env)
-        started = True
         first = owned_containers(names["local_containers"], include_stopped=False)
         assert first, "up started no fixture container"
         effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo, env=env)
@@ -1114,7 +1143,7 @@ def live_run(staging, approval=None):
     except BaseException as exc:  # re-raised after cleanup
         failure = exc
     finally:
-        if not started and not started_gateway:
+        if not mutating and not started_gateway:
             print("[info] no runtime action was taken: the preflight refused before any up", flush=True)
         if started_gateway:
             try:
@@ -1123,7 +1152,7 @@ def live_run(staging, approval=None):
                 print(f"[warn] private gateway down failed: {failure_reason}", flush=True)
         for pid in recorded_pids:
             print(f"[info] listener pid {pid}: {stop_own_pid(pid, staging, env)}", flush=True)
-        if started:
+        if mutating:
             for repo_root in (repo, worktree):
                 try:
                     down(repo_root)
@@ -1150,13 +1179,11 @@ def live_run(staging, approval=None):
     # The protected baseline is checked on both paths: a failure must not hide
     # a container the proof disturbed.
     try:
-        after = protected_baseline()
+        assert_protected_unchanged(baseline, names["containers"])
+        baseline_kept = True
     except Exception as failure_reason:
-        print(f"[fail] the protected baseline could not be re-read: {failure_reason}", flush=True)
-        after = None
-    baseline_kept = after == baseline
-    if not baseline_kept:
-        print("[fail] the protected baseline changed", flush=True)
+        print(f"[fail] the protected baseline changed: {failure_reason}", flush=True)
+        baseline_kept = False
     machine_after = machine_gateway_baseline()
     machine_kept = machine_after == machine_baseline
     if not machine_kept:
