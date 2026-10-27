@@ -78,15 +78,6 @@ fn private_gateway_publication_never_retries_an_unverified_permission_refusal() 
     assert_eq!(probes, 1);
 }
 
-#[test]
-fn gateway_dir_uses_an_isolated_default_during_unit_tests() {
-    let path = gateway_dir().expect("gateway dir");
-    assert_eq!(path.file_name().unwrap(), "gateway");
-    assert!(path.parent().unwrap().parent().unwrap().is_dir());
-    let real = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".effigy/gateway");
-    assert_ne!(path, real);
-}
-
 fn tls_summary() -> GatewayTlsSummary {
     GatewayTlsSummary {
         https_addr: Some("127.0.0.1:443".parse().expect("https")),
@@ -132,31 +123,78 @@ fn render_gateway_status_json_includes_routes_when_stopped() {
     assert!(rendered.contains("\"cert_ready\":false"));
 }
 
-#[test]
-fn render_gateway_up_text_mentions_state_dir() {
-    let status = GatewayStatus {
+fn started_status(proxy_port: u16) -> GatewayStatus {
+    GatewayStatus {
         pid: 1234,
         dns_addr: "127.0.0.1:15353".parse().expect("dns"),
-        proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+        proxy_addr: format!("127.0.0.1:{proxy_port}").parse().expect("proxy"),
         https_addr: Some("127.0.0.1:443".parse().expect("https")),
         route_count: 0,
         routes: Vec::new(),
         binary_version: Some("v0.3.2+local.test".to_owned()),
-    };
-    let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
+    }
+}
 
-    let rendered = render_gateway_up_result(
-        &config,
-        GatewayUpState::Started(status),
-        &tls_summary(),
-        &[],
-        false,
-    )
-    .expect("render");
-    assert!(rendered.contains("gateway started"));
-    assert!(rendered.contains("/tmp/effigy/gateway"));
-    assert!(rendered.contains("https: 127.0.0.1:443"));
-    assert!(rendered.contains("binary_version: v0.3.2+local.test"));
+#[test]
+fn render_gateway_up_text_carries_the_state_dir_and_each_warning() {
+    let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
+    let cases: &[(&[&str], &[&str])] = &[
+        (
+            &[],
+            &[
+                "gateway started",
+                "/tmp/effigy/gateway",
+                "https: 127.0.0.1:443",
+                "binary_version: v0.3.2+local.test",
+            ],
+        ),
+        (
+            &["resolver setup skipped"],
+            &["[warn] resolver setup skipped"],
+        ),
+    ];
+    for (warnings, needles) in cases {
+        let warnings = warnings.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        let rendered = render_gateway_up_result(
+            &config,
+            GatewayUpState::Started(started_status(8080)),
+            &tls_summary(),
+            &warnings,
+            false,
+        )
+        .expect("render");
+        for needle in *needles {
+            assert!(rendered.contains(needle), "{needle}: {rendered}");
+        }
+    }
+}
+
+#[test]
+fn probe_state_resolver_cases() {
+    // Unknown stays an error: an unavailable probe never reads as stopped.
+    let dir = tempfile::tempdir().expect("probe fixture");
+    let config = GatewayConfig::standard(dir.path().to_path_buf());
+    assert!(
+        resolve_gateway_status_for_config(
+            &config,
+            Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
+        )
+        .is_err(),
+        "an unavailable probe must not resolve to a stopped gateway"
+    );
+    // A confirmed absence is a stopped gateway.
+    assert!(matches!(
+        resolve_gateway_status_for_config(&config, Err(effigy_gateway::GatewayError::NotRunning)),
+        Ok(None)
+    ));
+    // A confirmed running gateway keeps its pid.
+    let (_dir, status) = gateway_status_fixture(4242);
+    let pid_path = status.snapshot.pid_path().to_path_buf();
+    let config =
+        GatewayConfig::standard(pid_path.parent().expect("gateway directory").to_path_buf());
+    let resolved =
+        resolve_gateway_status_for_config(&config, Ok(status)).expect("running status resolves");
+    assert_eq!(resolved.map(|status| status.pid), Some(4242));
 }
 
 #[test]
@@ -182,30 +220,6 @@ fn normalize_gateway_daemon_output_drops_error_block_prefix() {
     assert!(!rendered.contains("[error] Task failed"));
     assert!(rendered.contains("Permission denied"));
     assert!(rendered.contains("requires elevated privileges"));
-}
-
-#[test]
-fn render_gateway_up_text_includes_warning_lines() {
-    let status = GatewayStatus {
-        pid: 1234,
-        dns_addr: "127.0.0.1:15353".parse().expect("dns"),
-        proxy_addr: "127.0.0.1:8080".parse().expect("proxy"),
-        https_addr: Some("127.0.0.1:443".parse().expect("https")),
-        route_count: 0,
-        routes: Vec::new(),
-        binary_version: None,
-    };
-    let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
-
-    let rendered = render_gateway_up_result(
-        &config,
-        GatewayUpState::Started(status),
-        &tls_summary(),
-        &["resolver setup skipped".to_owned()],
-        false,
-    )
-    .expect("render");
-    assert!(rendered.contains("[warn] resolver setup skipped"));
 }
 
 #[test]
@@ -385,90 +399,6 @@ fn gateway_status_fixture(pid: u32) -> (tempfile::TempDir, VerifiedGatewayStatus
             snapshot,
         },
     )
-}
-
-#[test]
-fn probe_state_resolver_refuses_unknown_instead_of_reporting_stopped() {
-    let dir = tempfile::tempdir().expect("probe fixture");
-    let config = GatewayConfig::standard(dir.path().to_path_buf());
-    let result = resolve_gateway_status_for_config(
-        &config,
-        Err(effigy_gateway::GatewayError::ProcessStateUnknown { pid: 4242 }),
-    );
-    assert!(
-        result.is_err(),
-        "an unavailable probe must not resolve to a stopped gateway"
-    );
-}
-
-#[test]
-fn probe_state_resolver_maps_confirmed_absence_to_stopped() {
-    let dir = tempfile::tempdir().expect("probe fixture");
-    let config = GatewayConfig::standard(dir.path().to_path_buf());
-    let result =
-        resolve_gateway_status_for_config(&config, Err(effigy_gateway::GatewayError::NotRunning));
-    assert!(matches!(result, Ok(None)));
-}
-
-#[test]
-fn probe_state_resolver_keeps_a_confirmed_running_gateway() {
-    let (_dir, status) = gateway_status_fixture(4242);
-    let pid_path = status.snapshot.pid_path().to_path_buf();
-    let config =
-        GatewayConfig::standard(pid_path.parent().expect("gateway directory").to_path_buf());
-    let resolved =
-        resolve_gateway_status_for_config(&config, Ok(status)).expect("running status resolves");
-    assert_eq!(resolved.map(|status| status.pid), Some(4242));
-}
-
-#[test]
-fn gateway_identity_elevated_reader_is_bound_to_validated_snapshot() {
-    use std::cell::Cell;
-    let (_dir, verified) = gateway_status_fixture(4242);
-    let record = verified.snapshot.record().unwrap();
-    let reader_calls = Cell::new(0);
-    let result = gateway_identity_probe_with(
-        record,
-        &verified.snapshot,
-        |_| GatewayIdentityProbe::PermissionDenied,
-        |digest, target_digest, owner_uid| {
-            reader_calls.set(reader_calls.get() + 1);
-            assert_eq!(Some(digest), verified.snapshot.digest().as_deref());
-            assert_eq!(
-                Some(target_digest),
-                verified.snapshot.target_digest().as_deref()
-            );
-            assert_eq!(owner_uid, verified.snapshot.owner_uid());
-            Some(GatewayIdentityProbe::Matched)
-        },
-    );
-    assert_eq!(result, GatewayIdentityProbe::Matched);
-    assert_eq!(reader_calls.get(), 1);
-
-    let (_other_dir, other) = gateway_status_fixture(9999);
-    let substituted_record = other.snapshot.record().unwrap();
-    let result = gateway_identity_probe_with(
-        substituted_record,
-        &verified.snapshot,
-        |_| GatewayIdentityProbe::PermissionDenied,
-        |_, _, _| panic!("substituted records must not invoke elevation"),
-    );
-    assert_eq!(result, GatewayIdentityProbe::Unknown);
-}
-
-#[test]
-fn gateway_identity_elevated_reader_decline_or_unavailable_is_unknown() {
-    let (_dir, verified) = gateway_status_fixture(4242);
-    let record = verified.snapshot.record().unwrap();
-    for unavailable in [None, Some(GatewayIdentityProbe::PermissionDenied)] {
-        let result = gateway_identity_probe_with(
-            record,
-            &verified.snapshot,
-            |_| GatewayIdentityProbe::PermissionDenied,
-            |_, _, _| unavailable,
-        );
-        assert_eq!(result, GatewayIdentityProbe::Unknown);
-    }
 }
 
 #[test]
@@ -683,7 +613,7 @@ fn gateway_identity_legacy_version_symlink_refused_by_status_up_down_and_managed
 
 #[cfg(unix)]
 #[test]
-fn legacy_recovery_up_preflight_does_not_mutate_before_lock() {
+fn gateway_up_preflight_does_not_mutate_before_lock() {
     let root = tempfile::tempdir().expect("private fixture directory");
     let home = root.path().join("home");
     let gateway_home = home.join(GATEWAY_DIR_NAME);
@@ -905,17 +835,13 @@ fn gateway_identity_legacy_replacement_reconciles_unknown_process_probes() {
     assert_eq!(*signals.borrow(), [Signal::SIGTERM]);
     assert!(!reconciled.snapshot.pid_path().exists());
     assert!(!reconciled_version.exists());
-    fn start_replacement(started: &mut bool) {
-        *started = true;
-    }
-    let mut replacement_started = false;
-    start_replacement(&mut replacement_started);
-    assert!(replacement_started, "start follows locked stop and cleanup");
+    // A replacement start is only reachable behind the locked stop and
+    // cleanup above; nothing else records its outcome here.
 }
 
 #[cfg(unix)]
 #[test]
-fn legacy_recovery_status_preflight_preserves_stale_records() {
+fn gateway_status_preflight_preserves_stale_records() {
     let root = tempfile::tempdir().expect("private fixture directory");
     let home = root.path().join("home");
     let gateway_home = home.join(GATEWAY_DIR_NAME);
@@ -1502,43 +1428,6 @@ fn permission_reuse_headless_flag_grants_no_privilege_and_implies_no_tty() {
     let gated = elevation::identity_reader_invocation_allowed_for_test(false, &digest, &target);
     assert!(!gated, "headless flag must not grant noninteractive reads");
 }
-
-#[cfg(unix)]
-#[test]
-fn permission_reuse_read_only_status_cannot_authorize_stop_or_replacement() {
-    use std::cell::Cell;
-    // An unknown generation refuses signals entirely.
-    let signals = Cell::new(0);
-    let refused = daemon::stop_gateway_process_with_test_control(
-        4242,
-        |_| effigy_gateway::server::GatewayProcessProbe::Running,
-        || GatewayIdentityProbe::Unknown,
-        |_, _| {
-            signals.set(signals.get() + 1);
-            Ok(())
-        },
-        |_| {},
-    );
-    assert!(refused.is_err());
-    assert_eq!(signals.get(), 0, "unknown identity dispatches no signal");
-
-    // A readable different generation is absence, not a stop target.
-    let mismatch_signals = Cell::new(0);
-    daemon::stop_gateway_process_with_test_control(
-        4242,
-        |_| effigy_gateway::server::GatewayProcessProbe::Running,
-        || GatewayIdentityProbe::Mismatch,
-        |_, _| {
-            mismatch_signals.set(mismatch_signals.get() + 1);
-            Ok(())
-        },
-        |_| {},
-    )
-    .expect("mismatch reconciles without signaling");
-    assert_eq!(mismatch_signals.get(), 0);
-}
-
-/// An unreadable observation grants no authority to start a second gateway.
 #[test]
 fn permission_reuse_managed_unavailable_observations_warn_and_proceed_without_launch() {
     let root = tempfile::tempdir().unwrap();

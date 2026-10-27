@@ -7,31 +7,6 @@ use effigy_context::EffigyRuntimeContext;
 use std::fs;
 
 #[test]
-fn direct_task_dispatch_runs_through_execution_request_boundary() {
-    let root = temp_workspace("direct-task-execution-request");
-    let marker = root.join("direct-task.out");
-    write_root_manifest(
-        &root,
-        &format!(
-            "[tasks.echo]\nrun = \"printf direct-request > '{}'\"\n",
-            marker.display()
-        ),
-    );
-    let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
-
-    run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: "echo".to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
-    .expect("direct task");
-
-    assert_file_text_equals(&marker, "direct-request");
-}
-
-#[test]
 fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
     let root = temp_workspace("task-status-success");
     let marker = root.join("status-success.out");

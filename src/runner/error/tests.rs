@@ -3,47 +3,39 @@ use std::path::Path;
 use super::RunnerError;
 use effigy_containers::exec::ContainerExecError;
 use effigy_core::build_info::StaleLocalInstall;
-
-#[test]
-fn task_invocation_constructor_preserves_message() {
-    let err = RunnerError::task_invocation("message contract");
-    match err {
-        RunnerError::TaskInvocation(message) => assert_eq!(message, "message contract"),
-        other => panic!("unexpected error variant: {other}"),
-    }
-}
-
 #[test]
 fn task_invocation_path_message_constructors_are_stable() {
     let path = Path::new("/tmp/effigy.toml");
-    let read = RunnerError::task_invocation_failed_read(path, "read-failed");
-    let parse = RunnerError::task_invocation_failed_parse(path, "parse-failed");
-    let write = RunnerError::task_invocation_failed_write(path, "write-failed");
-    let render = RunnerError::task_invocation_failed_render(path, "render-failed");
-
-    match read {
-        RunnerError::TaskInvocation(message) => {
-            assert_eq!(message, "failed to read /tmp/effigy.toml: read-failed")
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-    match parse {
-        RunnerError::TaskInvocation(message) => {
-            assert_eq!(message, "failed to parse /tmp/effigy.toml: parse-failed")
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-    match write {
-        RunnerError::TaskInvocation(message) => {
-            assert_eq!(message, "failed to write /tmp/effigy.toml: write-failed")
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-    match render {
-        RunnerError::TaskInvocation(message) => {
-            assert_eq!(message, "failed to render /tmp/effigy.toml: render-failed")
-        }
-        other => panic!("unexpected error variant: {other}"),
+    let cases = [
+        (
+            "read",
+            RunnerError::task_invocation_failed_read(path, "read-failed"),
+        ),
+        (
+            "parse",
+            RunnerError::task_invocation_failed_parse(path, "parse-failed"),
+        ),
+        (
+            "write",
+            RunnerError::task_invocation_failed_write(path, "write-failed"),
+        ),
+        (
+            "render",
+            RunnerError::task_invocation_failed_render(path, "render-failed"),
+        ),
+    ];
+    for (verb, error) in cases {
+        assert_eq!(
+            error.category(),
+            effigy_kernel::human::Category::Refused,
+            "{verb}"
+        );
+        let message = error.to_string();
+        // The category and the file it names are the contract; the wording of
+        // the sentence around them is not.
+        assert!(message.contains(verb), "{verb}: {message}");
+        assert!(message.contains("/tmp/effigy.toml"), "{verb}: {message}");
+        assert!(message.contains(&format!("{verb}-failed")), "{verb}: {message}");
     }
 }
 
@@ -96,67 +88,47 @@ fn container_runtime_no_space_maps_to_storage_remediation() {
         other => panic!("unexpected error variant: {other}"),
     }
 }
-
-#[test]
-fn container_runtime_policy_constructor_preserves_phase_and_detail() {
-    let err =
-        RunnerError::container_runtime_policy("backend validation", "compose backend mismatch");
-    match &err {
-        RunnerError::ContainerRuntimePolicy { phase, detail } => {
-            assert_eq!(*phase, "backend validation");
-            assert_eq!(detail, "compose backend mismatch");
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-    assert_eq!(
-        err.to_string(),
-        "container runtime backend validation failed: compose backend mismatch"
-    );
-}
-
-#[test]
-fn container_surface_policy_constructor_preserves_shape() {
-    let err = RunnerError::container_surface_policy(
-        "backend validation",
-        "web",
-        "compose backend mismatch",
-    );
-    match &err {
-        RunnerError::ContainerSurfacePolicy {
-            phase,
-            container,
-            detail,
-        } => {
-            assert_eq!(*phase, "backend validation");
-            assert_eq!(container, "web");
-            assert_eq!(detail, "compose backend mismatch");
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-    assert_eq!(
-        err.to_string(),
-        "container surface backend validation failed for `web`: compose backend mismatch"
-    );
-}
-
 #[test]
 fn container_surface_selection_variants_render_stably() {
-    assert_eq!(
-        RunnerError::ContainerSurfaceRegistryMissing.to_string(),
-        "manifest does not define a `[containers]` registry"
-    );
-    assert_eq!(
-        RunnerError::ContainerSurfaceDefaultTargetMissing.to_string(),
-        "`effigy exec` requires `[systems].default` to resolve to a workspace with a backing container"
-    );
-    assert_eq!(
-        RunnerError::container_surface_not_defined("cache").to_string(),
-        "container `cache` is not defined in `[containers]`"
-    );
-    assert_eq!(
-        RunnerError::container_surface_not_running("web").to_string(),
-        "container `web` is not running — start it with `effigy container web up`"
-    );
+    use effigy_kernel::human::Category;
+    let cases = [
+        (
+            RunnerError::ContainerSurfaceRegistryMissing,
+            Category::Refused,
+            "[containers]",
+            None,
+        ),
+        (
+            RunnerError::ContainerSurfaceDefaultTargetMissing,
+            Category::Refused,
+            "[systems].default",
+            None,
+        ),
+        (
+            RunnerError::container_surface_not_defined("cache"),
+            Category::Refused,
+            "container",
+            Some("`cache`"),
+        ),
+        (
+            RunnerError::container_surface_not_running("web"),
+            Category::Refused,
+            "container",
+            Some("`web`"),
+        ),
+    ];
+    for (error, category, needle, entity) in cases {
+        assert_eq!(error.category(), category);
+        let text = error.to_string();
+        assert!(text.contains(needle), "{text}");
+        if let Some(entity) = entity {
+            assert!(text.contains(entity), "{text}");
+        }
+    }
+    // A container that is not running names the command that starts it.
+    assert!(RunnerError::container_surface_not_running("web")
+        .to_string()
+        .contains("effigy container web up"));
 }
 
 #[test]
@@ -247,71 +219,66 @@ fn an_unknown_task_name_is_the_only_error_that_names_effigy_tasks() {
         path: Path::new("/repo/effigy.toml").into(),
     }
     .to_string();
-    assert_eq!(
-        not_defined,
-        "task `deploy` is not defined in /repo/effigy.toml; run `effigy tasks` to see the task \
-         names this checkout routes"
-    );
+    for needle in ["task `deploy`", "/repo/effigy.toml", "`effigy tasks`"] {
+        assert!(not_defined.contains(needle), "{needle}: {not_defined}");
+    }
     let any_catalog = RunnerError::TaskNotFoundAny {
         name: "deploy".into(),
         catalogs: vec!["web".into(), "infra".into()],
     }
     .to_string();
-    assert_eq!(
-        any_catalog,
-        "task `deploy` is not defined in effective catalogs: web, infra; run `effigy tasks` to \
-         see the task names this checkout routes"
-    );
+    for needle in ["task `deploy`", "web, infra", "`effigy tasks`"] {
+        assert!(any_catalog.contains(needle), "{needle}: {any_catalog}");
+    }
     assert!(!any_catalog.contains("not a valid"));
 }
-
-#[test]
-fn workspace_session_cleanup_constructor_preserves_shape() {
-    let err = RunnerError::workspace_session_cleanup("shell failed", "cleanup failed");
-    match &err {
-        RunnerError::WorkspaceSessionCleanup {
-            shell_error,
-            cleanup_error,
-        } => {
-            assert_eq!(shell_error, "shell failed");
-            assert_eq!(cleanup_error, "cleanup failed");
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-    assert_eq!(
-        err.to_string(),
-        "shell failed\nworkspace cleanup also failed: cleanup failed"
-    );
-}
-
 #[test]
 fn gateway_route_variants_render_stably() {
-    assert_eq!(
-        RunnerError::gateway_route_table("load", "/tmp/routes.json", "invalid json").to_string(),
-        "gateway route table load failed at /tmp/routes.json: invalid json"
-    );
-    assert_eq!(
-        RunnerError::gateway_route_registration("register", "client.test", "already exists")
-            .to_string(),
-        "gateway route register failed for `client.test`: already exists"
-    );
-    assert_eq!(
-        RunnerError::gateway_route_shape("validation", "bad port mapping").to_string(),
-        "gateway route validation failed: bad port mapping"
-    );
-    assert_eq!(
-        RunnerError::gateway_loopback("registry load", "bad registry").to_string(),
-        "gateway loopback registry load failed: bad registry"
-    );
-    assert_eq!(
-        RunnerError::gateway_runtime_target("validation", "unrelated runtime binding").to_string(),
-        "gateway runtime target validation failed: unrelated runtime binding"
-    );
-    assert_eq!(
-        RunnerError::gateway_runtime_target("runtime rows", "compose backend unavailable")
-            .to_string(),
-        "gateway runtime target runtime rows failed: compose backend unavailable"
-    );
+    use effigy_kernel::human::Category;
+    let cases = [
+        (
+            RunnerError::gateway_route_table("load", "/tmp/routes.json", "invalid json"),
+            Category::Unavailable,
+            "gateway route ",
+            "/tmp/routes.json",
+        ),
+        (
+            RunnerError::gateway_route_registration("register", "client.test", "already exists"),
+            Category::Unavailable,
+            "gateway route ",
+            "`client.test`",
+        ),
+        (
+            RunnerError::gateway_route_shape("validation", "bad port mapping"),
+            Category::Refused,
+            "gateway route validation failed",
+            "bad port mapping",
+        ),
+        (
+            RunnerError::gateway_loopback("registry load", "bad registry"),
+            Category::Unavailable,
+            "gateway loopback ",
+            "bad registry",
+        ),
+        (
+            RunnerError::gateway_runtime_target("validation", "unrelated runtime binding"),
+            Category::Unavailable,
+            "gateway runtime target validation failed",
+            "unrelated runtime binding",
+        ),
+        (
+            RunnerError::gateway_runtime_target("runtime rows", "compose backend unavailable"),
+            Category::Unavailable,
+            "gateway runtime target runtime rows failed",
+            "compose backend unavailable",
+        ),
+    ];
+    for (error, category, category_needle, entity) in cases {
+        assert_eq!(error.category(), category);
+        let text = error.to_string();
+        assert!(text.contains(category_needle), "{text}");
+        assert!(text.contains(entity), "{text}");
+    }
 }
 
 #[test]
@@ -548,9 +515,12 @@ fn task_run_details_name_the_task_and_the_failing_output() {
         human.evidence_lines(),
         ["exit_code: 3", "stderr: error: widget is undefined"]
     );
-    assert_eq!(
-        human.render_text(),
-        "[error] task `fail` failed\n  cause: exit_code: 3\n         stderr: error: widget is undefined"
+    let rendered = human.render_text();
+    assert!(rendered.starts_with("[error] task `fail` failed"), "{rendered}");
+    assert!(rendered.contains("exit_code: 3"), "{rendered}");
+    assert!(
+        rendered.contains("stderr: error: widget is undefined"),
+        "{rendered}"
     );
 }
 

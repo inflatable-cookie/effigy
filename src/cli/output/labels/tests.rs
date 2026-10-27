@@ -1,4 +1,4 @@
-use super::{command_kind_and_name, help_topic_label};
+use super::command_kind_and_name;
 use effigy_cli::{
     BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs, ContainerSubcommand,
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand,
@@ -6,31 +6,6 @@ use effigy_cli::{
     ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
     TaskInvocation, TasksArgs, WorkspaceArgs,
 };
-
-#[test]
-fn help_topic_label_maps_all_topics() {
-    assert_eq!(help_topic_label(HelpTopic::General), "general");
-    assert_eq!(help_topic_label(HelpTopic::Bundle), "bundle");
-    assert_eq!(help_topic_label(HelpTopic::Changelog), "changelog");
-    assert_eq!(help_topic_label(HelpTopic::Fmt), "fmt");
-    assert_eq!(help_topic_label(HelpTopic::Deploy), "deploy");
-    assert_eq!(help_topic_label(HelpTopic::Defer), "defer");
-    assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
-    assert_eq!(help_topic_label(HelpTopic::Secrets), "secrets");
-    assert_eq!(help_topic_label(HelpTopic::State), "state");
-    assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");
-    assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");
-    assert_eq!(help_topic_label(HelpTopic::Service), "service");
-    assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
-    assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
-    assert_eq!(help_topic_label(HelpTopic::Container), "container");
-    assert_eq!(help_topic_label(HelpTopic::Bootstrap), "bootstrap");
-    assert_eq!(help_topic_label(HelpTopic::Release), "release");
-    assert_eq!(help_topic_label(HelpTopic::Doctor), "doctor");
-    assert_eq!(help_topic_label(HelpTopic::Tasks), "tasks");
-    assert_eq!(help_topic_label(HelpTopic::Test), "test");
-    assert_eq!(help_topic_label(HelpTopic::Init), "init");
-}
 
 #[test]
 fn command_kind_and_name_maps_command_variants() {

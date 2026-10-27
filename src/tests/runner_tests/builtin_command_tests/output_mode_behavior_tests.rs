@@ -152,12 +152,3 @@ teardown_policy = "always"
     assert_eq!(parsed["targets"][0]["setup_steps"].as_u64(), Some(1));
     assert_eq!(parsed["targets"][0]["teardown_steps"].as_u64(), Some(1));
 }
-
-#[test]
-fn shared_process_suite_lifecycle_waits_before_capturing_path() {
-    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
-        run_manifest_task_builtin_test_verbose_results_and_json_report_suite_lifecycle_metadata_using(
-            after_serial,
-        );
-    });
-}

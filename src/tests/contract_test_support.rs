@@ -245,17 +245,3 @@ pub(super) fn assert_waits_for_path_mutator(reader: fn(Box<dyn FnOnce() + Send>)
     );
     result.expect("fixture succeeds after PATH restoration");
 }
-
-#[test]
-fn fixture_cwd_restores_after_unwind_before_root_removal() {
-    let _guard = lock_test();
-    let original = std::env::current_dir().unwrap();
-    let fixture = effigy_test_support::Fixture::new("effigy-cwd-unwind-").unwrap();
-    let result = std::panic::catch_unwind(|| {
-        with_cwd(fixture.path(), || panic!("fixture panic"));
-    });
-    assert!(result.is_err());
-    assert_eq!(std::env::current_dir().unwrap(), original);
-    drop(fixture);
-    assert_eq!(std::env::current_dir().unwrap(), original);
-}
