@@ -30,110 +30,31 @@
     "detach_timeout_secs"
   ],
   "properties": {
-    "ok": {
-      "type": "boolean"
-    },
-    "container": {
-      "type": "string"
-    },
-    "project_name": {
-      "type": "string"
-    },
-    "driver": {
-      "type": "string"
-    },
-    "backend": {
-      "type": "string"
-    },
-    "backend_source": {
-      "type": "string"
-    },
-    "manifest_driver": {
-      "type": "string"
-    },
-    "compose_file": {
-      "type": "string"
-    },
-    "primary_service": {
-      "type": "string"
-    },
-    "primary_service_exec_ready": {
-      "type": [
-        "object",
-        "null",
-        "boolean"
-      ]
-    },
-    "runtime_running": {
-      "type": [
-        "boolean",
-        "null"
-      ]
-    },
-    "health": {
-      "type": [
-        "object",
-        "null"
-      ]
-    },
-    "ports": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "mounts": {
-      "type": "array"
-    },
-    "media_mounts": {
-      "type": "array"
-    },
-    "services": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    },
-    "shared_services": {
-      "type": "array"
-    },
-    "warnings": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
+    "ok": {"type": "boolean"},
+    "container": {"type": "string"},
+    "project_name": {"type": "string"},
+    "driver": {"type": "string"},
+    "backend": {"type": "string"},
+    "backend_source": {"type": "string"},
+    "manifest_driver": {"type": "string"},
+    "compose_file": {"type": "string"},
+    "primary_service": {"type": "string"},
+    "primary_service_exec_ready": {"type": ["object", "null", "boolean"]},
+    "runtime_running": {"type": ["boolean", "null"]},
+    "health": {"type": ["object", "null"]},
+    "ports": {"type": "array", "items": {"type": "string"}},
+    "mounts": {"type": "array"},
+    "media_mounts": {"type": "array"},
+    "services": {"type": "array", "items": {"type": "object"}},
+    "shared_services": {"type": "array"},
+    "warnings": {"type": "array", "items": {"type": "string"}},
     "environment": {
       "type": "object",
-      "required": [
-        "backend"
-      ],
-      "properties": {
-        "backend": {
-          "type": "object"
-        },
-        "record": {
-          "type": [
-            "object",
-            "null"
-          ]
-        }
-      }
+      "required": ["backend"],
+      "properties": {"backend": {"type": "object"}, "record": {"type": ["object", "null"]}}
     },
-    "profile": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "compose_ps": {
-      "type": [
-        "object",
-        "null"
-      ]
-    },
-    "detach_timeout_secs": {
-      "type": "integer"
-    }
+    "profile": {"type": ["string", "null"]},
+    "compose_ps": {"type": ["object", "null"]},
+    "detach_timeout_secs": {"type": "integer"}
   }
 }

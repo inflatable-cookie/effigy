@@ -3,37 +3,13 @@
   "title": "effigy.help.v1 payload",
   "description": "Payload of `effigy <task> --help --json`: one rendered help topic and the text a person reads.",
   "type": "object",
-  "required": [
-    "schema",
-    "schema_version",
-    "topic",
-    "text",
-    "ok"
-  ],
+  "required": ["schema", "schema_version", "topic", "text", "ok"],
   "properties": {
-    "schema": {
-      "const": "effigy.help.v1"
-    },
-    "schema_version": {
-      "const": 1
-    },
-    "topic": {
-      "type": "string"
-    },
-    "text": {
-      "type": "string"
-    },
-    "ok": {
-      "type": "boolean"
-    },
-    "binary": {
-      "type": "object",
-      "required": [
-        "name",
-        "version",
-        "active_version",
-        "display_version"
-      ]
-    }
+    "schema": {"const": "effigy.help.v1"},
+    "schema_version": {"const": 1},
+    "topic": {"type": "string"},
+    "text": {"type": "string"},
+    "ok": {"type": "boolean"},
+    "binary": {"type": "object", "required": ["name", "version", "active_version", "display_version"]}
   }
 }

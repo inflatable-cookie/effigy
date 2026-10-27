@@ -20,47 +20,17 @@
     "warnings"
   ],
   "properties": {
-    "schema": {
-      "const": "effigy.state-stack.capture.v1"
-    },
-    "schema_version": {
-      "const": 1
-    },
-    "stack_name": {
-      "type": "string"
-    },
-    "source_environment": {
-      "type": "string"
-    },
-    "capture_role": {
-      "type": "string"
-    },
-    "capture_mode": {
-      "type": "string"
-    },
-    "parent_lineage_id": {
-      "type": "string"
-    },
-    "created_at": {
-      "type": "string"
-    },
-    "executed": {
-      "type": "boolean"
-    },
-    "ok": {
-      "type": "boolean"
-    },
-    "capture_artifacts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "layer_key",
-          "operation",
-          "ref"
-        ]
-      }
-    },
+    "schema": {"const": "effigy.state-stack.capture.v1"},
+    "schema_version": {"const": 1},
+    "stack_name": {"type": "string"},
+    "source_environment": {"type": "string"},
+    "capture_role": {"type": "string"},
+    "capture_mode": {"type": "string"},
+    "parent_lineage_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "executed": {"type": "boolean"},
+    "ok": {"type": "boolean"},
+    "capture_artifacts": {"type": "array", "items": {"type": "object", "required": ["layer_key", "operation", "ref"]}},
     "produced_layers": {
       "type": "array",
       "items": {
@@ -77,17 +47,9 @@
         ]
       }
     },
-    "tasks": {
-      "type": "array"
-    },
-    "warnings": {
-      "type": "array"
-    },
-    "written_report_path": {
-      "type": "string"
-    },
-    "written_history_path": {
-      "type": "string"
-    }
+    "tasks": {"type": "array"},
+    "warnings": {"type": "array"},
+    "written_report_path": {"type": "string"},
+    "written_history_path": {"type": "string"}
   }
 }

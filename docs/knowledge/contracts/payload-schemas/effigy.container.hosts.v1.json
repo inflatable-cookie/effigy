@@ -15,90 +15,30 @@
     "routes"
   ],
   "properties": {
-    "ok": {
-      "type": "boolean"
-    },
-    "checkout": {
-      "type": "string"
-    },
+    "ok": {"type": "boolean"},
+    "checkout": {"type": "string"},
     "base_domain": {
       "type": "object",
-      "required": [
-        "declared",
-        "effective",
-        "inferred",
-        "warning"
-      ],
+      "required": ["declared", "effective", "inferred", "warning"],
       "properties": {
-        "declared": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "effective": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "inferred": {
-          "type": "boolean"
-        },
-        "warning": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
+        "declared": {"type": ["string", "null"]},
+        "effective": {"type": ["string", "null"]},
+        "inferred": {"type": "boolean"},
+        "warning": {"type": ["string", "null"]}
       }
     },
-    "cookie_domain": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "relying_party_id": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
+    "cookie_domain": {"type": ["string", "null"]},
+    "relying_party_id": {"type": ["string", "null"]},
     "scope": {
       "type": "object",
-      "required": [
-        "kind",
-        "host_key",
-        "token",
-        "shared_runtime_identity"
-      ],
+      "required": ["kind", "host_key", "token", "shared_runtime_identity"],
       "properties": {
-        "kind": {
-          "type": "string"
-        },
-        "host_key": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "token": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "shared_runtime_identity": {
-          "type": "boolean"
-        }
+        "kind": {"type": "string"},
+        "host_key": {"type": ["string", "null"]},
+        "token": {"type": ["string", "null"]},
+        "shared_runtime_identity": {"type": "boolean"}
       }
     },
-    "routes": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    }
+    "routes": {"type": "array", "items": {"type": "object"}}
   }
 }

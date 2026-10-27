@@ -290,6 +290,22 @@ and removes what it created. It never starts, stops or reconfigures a runtime,
 and it does not touch another checkout's shared services: the fixture's shared
 service owns its own project name.
 
+The live half is a separate mode, `container-consumer-shapes.py <effigy> plan`
+and `... execute`. It brings the same fixture up on the Colima profile: a build
+service whose Dockerfile uses `ARG`/`${VAR}`/`$var`, a shared MariaDB beside a
+local one of the same engine with a client resolving `host.docker.internal`,
+a primary and a linked worktree with distinct project names, a second `up` that
+keeps every container ID, no `EFFIGY_` value in any container,
+`container <env> restart <process>` on a host-process listener, and a `down`
+that leaves no container, listener or route.
+
+`plan` prints the frozen plan — exact fixture paths, project and container
+names, port policy, the binary's identity, the protected container baseline and
+the cleanup — and performs no container action. `execute` refuses unless
+`EFFIGY_CONSUMER_SHAPES_APPROVED` names the approved staging root, because the
+profile's VM mounts only `/Users/tom`, so the checkout has to be staged there
+and that staging decision belongs to the owner.
+
 ## Related Guides
 
 - [`077-local-dependency-linking.md`](077-local-dependency-linking.md)

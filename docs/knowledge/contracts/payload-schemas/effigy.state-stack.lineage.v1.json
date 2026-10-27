@@ -14,24 +14,12 @@
     "warnings"
   ],
   "properties": {
-    "schema": {
-      "const": "effigy.state-stack.lineage.v1"
-    },
-    "schema_version": {
-      "const": 1
-    },
-    "stack_name": {
-      "type": "string"
-    },
-    "environment": {
-      "type": "string"
-    },
-    "lineage_id": {
-      "type": "string"
-    },
-    "created_at": {
-      "type": "string"
-    },
+    "schema": {"const": "effigy.state-stack.lineage.v1"},
+    "schema_version": {"const": 1},
+    "stack_name": {"type": "string"},
+    "environment": {"type": "string"},
+    "lineage_id": {"type": "string"},
+    "created_at": {"type": "string"},
     "layers": {
       "type": "array",
       "items": {
@@ -51,17 +39,8 @@
     },
     "artifact_reports": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "layer_key",
-          "artifact_kind",
-          "operation"
-        ]
-      }
+      "items": {"type": "object", "required": ["layer_key", "artifact_kind", "operation"]}
     },
-    "warnings": {
-      "type": "array"
-    }
+    "warnings": {"type": "array"}
   }
 }
