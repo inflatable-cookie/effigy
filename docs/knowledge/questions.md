@@ -502,3 +502,36 @@ settlement proves closure; losing an anchor earlier leaves the existing
 sweep or new state. It covers direct Effigy proof invocations as well as marked
 test selectors; Queue lead `d7ddb7fe-adc4-40e2-a9f7-1d5b98043830` records the
 observed gap.
+
+## Q-015: Argument-scoped task lock for focused tests
+
+Status: answered, implementation pending
+Asked: 2026-10-27
+Answered: 2026-10-27 by Tom
+Owner: [contract 017 §Exclusion](contracts/017-task-status-record-and-active-run-model-contract.md#exclusion-k2)
+
+Tom chose an opt-in lock key consisting of the resolved selector and normalized
+task arguments. Enable it only for `test:focused`: different test filters may
+run concurrently, while identical normalized invocations serialize. The
+second identical run waits about two minutes by default, with the existing
+explicit wait option retaining precedence. Do not add a general shared or
+read-only lock mode. Until the queued implementation lands, the current task
+gate still excludes every invocation of the same declared task.
+
+## Q-016: Colima visibility for Builds scratch
+
+Status: answered, host change pending
+Asked: 2026-10-27
+Answered: 2026-10-27 by Tom
+Owner: [guide 069 §Per-Run Scratch On An External Volume](../guides/069-workspace-host-integration.md#per-run-scratch-on-an-external-volume)
+
+Add one writable `/Volumes/Builds/scratch` mount to the `effigy` Colima
+profile during the separately authorized Effigy install window, after Acow
+authorizes that window. Do not mount `/Volumes/Builds` as a whole: the VM must
+not gain access to `oxide-pool`, `oxide-outputs`, `caches` or `queue`. A missing
+scratch mount at VM start must fail loudly, without fallback. The install
+receipt records the exact change and undo, plus before/after `colima list` and
+mount evidence. Until then live Colima fixtures keep the bounded `~/.cache`
+staging exception. Once the mount works, move those fixtures to Builds scratch
+and close papercut `62e6b400-03df-411b-9368-846ccffbad4a`. Barge may later
+own this under Barge Q-009; that does not change the interim install gate.
