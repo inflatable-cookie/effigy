@@ -135,6 +135,7 @@ pub(super) fn policy(root: &Path) -> crate::EffectiveContainerPolicy {
         primary_service: "app".to_owned(),
         dns_domain: None,
         dns_base_domain: None,
+        runtime_host_key: None,
         dns_tls: false,
         dns_port: None,
         dns_routes: vec![],
