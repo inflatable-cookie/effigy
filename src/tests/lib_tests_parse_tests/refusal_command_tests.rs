@@ -80,10 +80,18 @@ fn every_command_a_refusal_suggests_parses() {
     // here every suggestion comes from a refusal this CLI actually renders.
     let text = held_environment_refusal(vec![&held, &background]);
     let commands = suggested_commands(&text);
+    // A held environment names the run to stop and the status command that
+    // shows each holder; both must be commands this CLI accepts.
     assert!(
         commands
             .iter()
-            .any(|command| command == "effigy container stack status"),
+            .any(|command| command.starts_with("effigy run stop ")),
+        "{commands:?}"
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| command == "effigy container inventors status"),
         "{commands:?}"
     );
     for command in commands {
