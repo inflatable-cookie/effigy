@@ -907,6 +907,7 @@ domain = "switch.test"
             primary_service: "app".to_owned(),
             dns_domain: Some("switch.test".to_owned()),
             dns_base_domain: None,
+            runtime_host_key: None,
             dns_tls: false,
             dns_port: Some(80),
             dns_routes: domain

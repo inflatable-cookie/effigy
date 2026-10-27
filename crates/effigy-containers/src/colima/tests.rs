@@ -617,6 +617,7 @@ fn test_policy(profile: &str) -> EffectiveContainerPolicy {
         primary_service: "app".to_string(),
         dns_domain: None,
         dns_base_domain: None,
+        runtime_host_key: None,
         dns_tls: false,
         dns_port: None,
         dns_routes: vec![],

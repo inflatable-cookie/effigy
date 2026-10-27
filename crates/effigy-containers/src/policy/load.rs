@@ -549,6 +549,7 @@ fn build_effective_policy(
         primary_service,
         dns_domain: dns_routes.first().map(|route| route.domain.clone()),
         dns_base_domain,
+        runtime_host_key: runtime_host_key.map(str::to_owned),
         dns_tls: dns_routes.first().is_some_and(|route| route.tls),
         dns_port: dns_routes.first().and_then(|route| route.port),
         dns_routes,

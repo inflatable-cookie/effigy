@@ -48,6 +48,8 @@ pub struct EffectiveContainerPolicy {
     pub primary_service: String,
     pub dns_domain: Option<String>,
     pub dns_base_domain: Option<String>,
+    /// Checkout host key resolved during policy loading, even without DNS routes.
+    pub runtime_host_key: Option<String>,
     pub dns_tls: bool,
     pub dns_port: Option<u16>,
     pub dns_routes: Vec<EffectiveDnsRoute>,
@@ -300,6 +302,7 @@ pub(crate) fn test_policy(repo_root: &std::path::Path) -> EffectiveContainerPoli
         primary_service: "app".to_owned(),
         dns_domain: Some("app-wabcdef01.test".to_owned()),
         dns_base_domain: None,
+        runtime_host_key: None,
         dns_tls: true,
         dns_port: Some(80),
         dns_routes: vec![EffectiveDnsRoute {

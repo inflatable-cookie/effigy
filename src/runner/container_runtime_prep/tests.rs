@@ -38,6 +38,7 @@ fn test_policy(compose_file: PathBuf) -> EffectiveContainerPolicy {
         primary_service: "app".to_owned(),
         dns_domain: None,
         dns_base_domain: None,
+        runtime_host_key: None,
         dns_tls: false,
         dns_port: None,
         dns_routes: vec![],
