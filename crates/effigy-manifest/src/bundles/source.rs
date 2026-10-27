@@ -454,13 +454,33 @@ const IMPORTED_OBJECT_PREFIX: &str = "import-";
 /// Text that names no cached source path, or a source this checkout no longer
 /// pins, is returned unchanged. Reading the lock is local and bounded.
 pub fn relocate_source_paths(manifest: &Path, text: &str) -> String {
+    relocate_source_paths_through(manifest, &[], text)
+}
+
+/// The same rule for text written against another name for this checkout.
+///
+/// `roots` are checkout roots this checkout's source cache is reachable
+/// through — a managed container route rewrites the host checkout root to its
+/// mount before a process starts, so the generation its command names must be
+/// resolved in that namespace too.
+pub fn relocate_source_paths_through(manifest: &Path, roots: &[&Path], text: &str) -> String {
     if !text.contains(SOURCE_CACHE) {
         return text.to_owned();
     }
     let Some(live) = live_source_objects(manifest) else {
         return text.to_owned();
     };
-    let cache = format!("{}/{SOURCE_CACHE}", parent(manifest).display());
+    let mut relocated = text.to_owned();
+    for root in std::iter::once(parent(manifest)).chain(roots.iter().copied()) {
+        relocated = relocate_below(&relocated, root, &live);
+    }
+    relocated
+}
+
+/// Rewrite every `<root>/.effigy/cache/sources/<generation>/<source>` spelling
+/// in `text` to the generation the lock selects for that source.
+fn relocate_below(text: &str, root: &Path, live: &BTreeMap<String, String>) -> String {
+    let cache = format!("{}/{SOURCE_CACHE}", root.display());
     let mut relocated = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(&cache) {
@@ -907,6 +927,25 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
         assert_eq!(
             relocate_source_paths(&manifest, &format!("sh {}", imported.display())),
             format!("sh {}", selected.display())
+        );
+    }
+
+    #[test]
+    fn a_container_route_resolves_the_generation_under_its_own_mount() {
+        let (_home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
+        let mount = Path::new("/workspace");
+        let command = "cd /workspace && sh /workspace/.effigy/cache/sources/generation-a/bundle-object/scripts/dev/profile_env.py";
+        let selected = "cd /workspace && sh /workspace/.effigy/cache/sources/generation-b/bundle-object/scripts/dev/profile_env.py";
+        assert_eq!(
+            relocate_source_paths_through(&manifest, &[mount], command),
+            selected
+        );
+        // Only the roots the caller names are recognised: the host spelling of
+        // the same command is not a mount path, and neither is another mount.
+        assert_eq!(relocate_source_paths(&manifest, command), command);
+        assert_eq!(
+            relocate_source_paths_through(&manifest, &[Path::new("/elsewhere")], command),
+            command
         );
     }
 

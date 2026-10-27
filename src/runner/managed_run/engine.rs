@@ -116,6 +116,21 @@ pub(in crate::runner) struct ExecGroupSpec {
     pub(in crate::runner) marker: PathBuf,
 }
 
+/// The command a workload starts with: the source the lock selects now.
+///
+/// A setup step and the environment `up` are Prepare paths and can publish a
+/// new source generation, removing the one the plan's command names. A
+/// container-routed command was already translated to the checkout's mount, so
+/// that spelling of the same source resolves as well.
+fn live_workload_command(
+    source_manifest: &std::path::Path,
+    container_repo_root: Option<&std::path::Path>,
+    command: &str,
+) -> String {
+    let roots = container_repo_root.into_iter().collect::<Vec<_>>();
+    effigy_manifest::relocate_source_paths_through(source_manifest, &roots, command)
+}
+
 /// Everything a supervisor needs to own one managed run.
 pub(in crate::runner) struct OwnedRun {
     pub(in crate::runner) target: TaskTarget,
@@ -129,6 +144,9 @@ pub(in crate::runner) struct OwnedRun {
     /// The catalog manifest whose pins this run's process commands resolve
     /// against, read again as each process starts.
     pub(in crate::runner) source_manifest: PathBuf,
+    /// Where that checkout's root appears inside a container route's command:
+    /// the translation a container-routed process command went through.
+    pub(in crate::runner) container_repo_root: Option<PathBuf>,
     pub(in crate::runner) environment: Option<EnvironmentPlan>,
     pub(in crate::runner) fail_on_non_zero: bool,
     /// Whether the session's host processes may use the configured per-run
@@ -215,6 +233,7 @@ pub(in crate::runner) fn own(
         workloads: Vec::new(),
         holds_environment: plan.environment.is_some(),
         source_manifest: plan.source_manifest.clone(),
+        container_repo_root: plan.container_repo_root.clone(),
         terminal: payload.terminal,
         lost_while_blocked: false,
         health: None,
@@ -235,6 +254,9 @@ struct Owner {
     /// rendered: a setup step and the environment `up` are Prepare paths
     /// (contract 020) and can replace the source generation a command names.
     source_manifest: PathBuf,
+    /// The container mount `source_manifest`'s checkout root is rewritten to
+    /// for a container-routed command, so its source path resolves too.
+    container_repo_root: Option<PathBuf>,
     terminal: Option<(u16, u16)>,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
@@ -424,8 +446,9 @@ impl Owner {
         // setup step (`bundle sync`) or the environment's own `up` publishes a
         // new one and removes it. The process opens the generation the lock
         // selects now, including on a restart.
-        let mut command = effigy_manifest::relocate_source_paths(
+        let mut command = live_workload_command(
             &self.source_manifest,
+            self.container_repo_root.as_deref(),
             &self.workloads[index].spec.command,
         );
         let workload = &mut self.workloads[index];
@@ -823,4 +846,74 @@ pub(in crate::runner) fn workload_env(
                 .map(|(key, value)| (key.clone(), EnvOverride::Secret(value.clone()))),
         )
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::live_workload_command;
+    use std::fs;
+    use std::path::Path;
+
+    /// A container-routed process command is translated to the checkout's mount
+    /// before the supervisor starts it, and the generation a Prepare pruned
+    /// still has to resolve. `container_exec_command` is that translation, so
+    /// this drives the production pair in the order a managed run uses them.
+    #[test]
+    fn a_container_routed_command_resolves_the_generation_the_lock_selects() {
+        let home = tempfile::tempdir().expect("fixture directory");
+        let repo = home.path().join("repo");
+        fs::create_dir_all(&repo).expect("mkdir repo");
+        let manifest = repo.join("effigy.toml");
+        fs::write(
+            &manifest,
+            "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n",
+        )
+        .expect("write manifest");
+        // The environment `up`'s Prepare published generation `b` and removed
+        // the `a` this plan's command names.
+        let lock = repo.join(".effigy/sources.lock.json");
+        fs::create_dir_all(lock.parent().expect("lock parent")).expect("mkdir .effigy");
+        fs::write(
+            &lock,
+            serde_json::json!({
+                "version": 1,
+                "sources": {"bundle": {
+                    "declaration": {"type": "path", "dir": "bundle"},
+                    "object": "cache/sources/generation-b/1e6ed65d",
+                    "version": "sha256:selected",
+                }},
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+        let host_command = format!(
+            "sh {}/.effigy/cache/sources/generation-a/1e6ed65d/scripts/profile_env.sh",
+            repo.display()
+        );
+        let translated = effigy_containers::session::container_exec_command(
+            &host_command,
+            &repo,
+            &repo,
+            Some(Path::new("/workspace")),
+        );
+        assert!(
+            translated.contains("/workspace/.effigy/cache/sources/generation-a"),
+            "{translated}"
+        );
+        let started = live_workload_command(&manifest, Some(Path::new("/workspace")), &translated);
+        assert!(
+            started.contains(
+                "/workspace/.effigy/cache/sources/generation-b/1e6ed65d/scripts/profile_env.sh"
+            ),
+            "{started}"
+        );
+        assert!(!started.contains("generation-a"), "{started}");
+        // A host-routed command keeps its own namespace.
+        let host_started = live_workload_command(&manifest, None, &host_command);
+        assert!(
+            host_started
+                .contains("/.effigy/cache/sources/generation-b/1e6ed65d/scripts/profile_env.sh"),
+            "{host_started}"
+        );
+    }
 }
