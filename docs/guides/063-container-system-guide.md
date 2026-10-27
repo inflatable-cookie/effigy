@@ -1539,6 +1539,12 @@ effigy gateway status --json
 effigy gateway down
 ```
 
+`gateway up` starts the daemon when none is running, and `gateway down`
+followed by `gateway up` is what replaces a running one: `container up`, `dev`
+and every other path that needs the gateway only start it when it is absent and
+otherwise use the running daemon, printing one warning that names both builds
+when it is a different Effigy build.
+
 Setup includes suffixes already present in the route table and the managed
 `test` suffix. Re-run setup when adding a new resolver suffix. macOS receives
 scoped `/etc/resolver` files and a native loopback alias boot job. If direct
