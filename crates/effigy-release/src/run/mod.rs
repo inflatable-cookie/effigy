@@ -266,7 +266,22 @@ pub fn run_release_with_observer(
     effects: &mut dyn ReleaseEffects,
     observer: &mut dyn GateObserver,
 ) -> Result<ReleaseRunOutcome, ReleaseError> {
-    let session = ReleaseSession::open(&request.home, &request.repo_root)?;
+    run_release_with_budget(
+        request,
+        effects,
+        observer,
+        std::time::Duration::from_secs(60),
+    )
+}
+
+fn run_release_with_budget(
+    request: &ReleaseRunRequest,
+    effects: &mut dyn ReleaseEffects,
+    observer: &mut dyn GateObserver,
+    cleanup_budget: std::time::Duration,
+) -> Result<ReleaseRunOutcome, ReleaseError> {
+    let session =
+        ReleaseSession::open_with_budget(&request.home, &request.repo_root, cleanup_budget)?;
     let state = session.state()?;
     let receipt_path = state.record_path.with_file_name(RELEASE_RECEIPT_FILE);
     let run_id = new_run_id()?;
@@ -296,8 +311,17 @@ pub fn run_release_with_observer(
         Ok(prepared) => prepared,
         Err(error) => {
             let finished = run.finish(WorkloadOutcome::Failed { code: 1 });
-            let settled = run.settle(session.cleanup(), &mut adapter);
-            if let Err(cleanup) = finished.and(settled.map(|_| ())) {
+            let settled = run.settle(&session.cleanup()?, &mut adapter);
+            let settled = settled.and_then(|outcome| {
+                if outcome.cleanup() == effigy_kernel::outcome::CleanupOutcome::Complete {
+                    Ok(())
+                } else {
+                    Err(effigy_kernel::run::RunError::refused(
+                        "incomplete release settlement",
+                    ))
+                }
+            });
+            if let Err(cleanup) = finished.and(settled) {
                 return Err(ReleaseError::TaskInvocation(format!(
                     "{error}; release preparation cleanup: {cleanup}"
                 )));
@@ -309,8 +333,18 @@ pub fn run_release_with_observer(
         Continuation::Nothing(record) => {
             run.finish(WorkloadOutcome::Succeeded)
                 .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
-            run.settle(session.cleanup(), &mut adapter)
-                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+            let settled = run
+                .settle(&session.cleanup()?, &mut adapter)
+                .map_err(|error| {
+                    ReleaseError::TaskInvocation(format!(
+                        "release already complete; settlement failed: {error}"
+                    ))
+                })?;
+            if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
+                return Err(ReleaseError::TaskInvocation(
+                    "release already complete; settlement incomplete".into(),
+                ));
+            }
             return Ok(ReleaseRunOutcome {
                 messages: vec![format!(
                     "release Run {} is already complete; nothing to resume",
@@ -361,17 +395,17 @@ pub fn run_release_with_observer(
         ))
     })?;
     let settled = run
-        .settle(session.cleanup(), &mut adapter)
+        .settle(&session.cleanup()?, &mut adapter)
         .map_err(|error| {
             ReleaseError::TaskInvocation(format!(
-            "the release Run could not be settled: {error}; `effigy release resume {}` settles it",
-            record.release_id
+            "release stage outcome: {}; settlement failed: {error}; `effigy release settle {}` retries settlement without advancing stages",
+            match &staged { Ok(()) => "succeeded".to_owned(), Err(stage_error) => format!("failed: {stage_error}") }, record.release_id
         ))
         })?;
     if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
         record.errors.push(format!(
-            "release Run {} left unresolved cleanup; `effigy release receipt {}` lists it",
-            record.run_id, record.release_id
+            "release stage outcome: {}; settlement incomplete for Run {}; `effigy release settle {}` retries cleanup",
+            match &staged { Ok(()) => "succeeded".to_owned(), Err(error) => format!("failed: {error}") }, record.run_id, record.release_id
         ));
         record.status = ReleaseRunStatus::Failed;
     }
@@ -381,6 +415,36 @@ pub fn run_release_with_observer(
         receipt_path,
         messages,
     })
+}
+
+/// Settle the recorded invocation without planning or executing any release stage.
+pub fn settle_release(
+    home: &Path,
+    repo_root: &Path,
+    requested: &str,
+) -> Result<ReleaseRecord, ReleaseError> {
+    let record = read_release_record(home, repo_root)?
+        .ok_or_else(|| ReleaseError::TaskInvocation("no release record to settle".into()))?;
+    if requested != record.release_id && requested != record.run_id {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "`{requested}` is not the active release Run"
+        )));
+    }
+    let session = ReleaseSession::open(home, repo_root)?;
+    let id = session
+        .known_run(&record.run_id)?
+        .ok_or_else(|| ReleaseError::TaskInvocation("missing release invocation".into()))?;
+    session.settle_interrupted(id)?;
+    let settled = read_release_record(home, repo_root)?.ok_or_else(|| {
+        ReleaseError::TaskInvocation("release record disappeared after settlement".into())
+    })?;
+    if settled.run_id != record.run_id {
+        return Err(ReleaseError::TaskInvocation(
+            "a newer release invocation replaced the record during settlement; inspect its receipt"
+                .into(),
+        ));
+    }
+    Ok(settled)
 }
 
 enum Continuation {
@@ -611,7 +675,9 @@ impl<'a, 's> Runner<'a, 's> {
                 stage.label()
             ));
             if let Err(error) = self.run_stage(stage) {
-                self.record.errors.push(error.to_string());
+                self.record
+                    .errors
+                    .push(format!("release stage outcome: failed: {error}"));
                 self.record.status = ReleaseRunStatus::Failed;
                 self.record.waiting_on = None;
                 self.persist()?;

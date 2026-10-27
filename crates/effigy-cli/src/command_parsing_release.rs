@@ -20,6 +20,7 @@ where
         "gates" => parse_release_gates(args),
         "run" => parse_release_run(args),
         "resume" => parse_release_resume(args),
+        "settle" => parse_release_settle(args),
         "approve" => parse_release_approve(args),
         "decide" | "decision" => parse_release_decide(args),
         "receipt" => parse_release_receipt(args),
@@ -170,6 +171,37 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::ResumeRun { run },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_release_settle<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override = None;
+    let mut output_json = false;
+    let mut run = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other if run.is_none() => run = Some(other.to_owned()),
+            _ => {
+                return Err(CliParseError::InvalidArguments(
+                    "`release settle` takes one Run id".into(),
+                ))
+            }
+        }
+    }
+    let run = run
+        .ok_or_else(|| CliParseError::InvalidArguments("`release settle` needs a Run id".into()))?;
+    Ok(Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::Settle { run },
         repo_override,
         output_json,
     }))

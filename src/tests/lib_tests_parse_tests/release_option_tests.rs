@@ -268,3 +268,31 @@ fn parse_release_plan_replaces_the_retired_simulate_command() {
     assert!(message.contains("retired"), "{message}");
     assert!(message.contains("effigy release --plan"), "{message}");
 }
+
+#[test]
+fn parse_release_settle_requires_exactly_one_run() {
+    assert!(parse_command(vec!["release".into(), "settle".into()]).is_err());
+    assert!(parse_command(vec![
+        "release".into(),
+        "settle".into(),
+        "one".into(),
+        "two".into()
+    ])
+    .is_err());
+    assert_eq!(
+        parse_command(vec![
+            "release".into(),
+            "settle".into(),
+            "run-id".into(),
+            "--json".into()
+        ])
+        .unwrap(),
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Settle {
+                run: "run-id".into()
+            },
+            repo_override: None,
+            output_json: true
+        })
+    );
+}
