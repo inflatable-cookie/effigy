@@ -260,9 +260,11 @@ they start, not at the generation the manifest load or plan resolved. In a
 managed run the process commands are rendered only after its setup steps and
 its environment `up` have run — both Prepare paths — so a container `up` that
 publishes a generation is never rendered around. A container route's per-process
-setup is its own exec, run by the supervisor before that process's command is
-resolved, and each command is resolved again as the process starts, including on
-a restart. A container-routed process
+setup is its own exec, resolved from the same lock and run by the supervisor
+before that process's command is resolved, and each command is resolved again as
+the process starts, including on a restart. The supervisor observes a stop, a
+stop request or the owning client's death while that setup runs, as it does
+during the run's own setup steps. A container-routed process
 command has been rewritten to the checkout's mount by then, so the same source
 resolves under that spelling too. The run continues on the newly selected
 bytes, exactly as it does after its own Prepare, and nothing records an

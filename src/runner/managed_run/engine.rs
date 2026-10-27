@@ -139,9 +139,10 @@ fn live_workload_command(
 
 /// The command a workload starts with.
 ///
-/// Its setup runs first — a container route's setup is its own exec — and the
-/// process command is resolved only afterwards, so a setup that publishes a
-/// source generation leaves nothing naming the generation it pruned.
+/// Its setup runs first — a container route's setup is its own exec — and both
+/// the setup and the process command are resolved from the lock as the process
+/// starts: the setup opens the same sources, and it is the Prepare that may
+/// publish a generation, so the command is resolved only after it returns.
 fn workload_start_command(
     source_manifest: &std::path::Path,
     container_repo_root: Option<&std::path::Path>,
@@ -150,7 +151,8 @@ fn workload_start_command(
     run_setup: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<String, String> {
     if let Some(setup) = setup {
-        run_setup(setup)?;
+        let resolved = live_workload_command(source_manifest, container_repo_root, setup);
+        run_setup(&resolved)?;
     }
     Ok(live_workload_command(
         source_manifest,
@@ -268,6 +270,7 @@ pub(in crate::runner) fn own<T>(
         holds_environment: plan.environment.is_some(),
         source_manifest: plan.source_manifest.clone(),
         container_repo_root: plan.container_repo_root.clone(),
+        watch: None,
         terminal: payload.terminal,
         lost_while_blocked: false,
         health: None,
@@ -291,6 +294,9 @@ struct Owner {
     /// The container mount `source_manifest`'s checkout root is rewritten to
     /// for a container-routed command, so its source path resolves too.
     container_repo_root: Option<PathBuf>,
+    /// The owning client's death, observed during the blocking phases this
+    /// owner runs itself (a setup step, a process setup).
+    watch: Option<OwnerWatch>,
     terminal: Option<(u16, u16)>,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
@@ -309,15 +315,17 @@ impl Owner {
         prepare: impl FnOnce(&mut TaskRun) -> Result<T, RunnerError>,
         workloads: impl FnOnce(&mut TaskRun, T) -> Result<Vec<WorkloadSpec>, RunnerError>,
     ) -> Result<(), End> {
-        let watch = self.session.owner_watch().ok();
+        self.watch = self.session.owner_watch().ok();
         let id = run.id();
         // A blocking setup step reads stop requests on its parent run; the
         // owning client's death becomes such a request.
         let filed = std::sync::atomic::AtomicBool::new(false);
         let result = std::thread::scope(|scope| {
-            let stop_filer = scope.spawn(|| {
-                while !filed.load(std::sync::atomic::Ordering::Acquire) {
-                    if watch.as_ref().is_some_and(OwnerWatch::lost) {
+            let watch = self.watch.as_ref();
+            let filed_ref = &filed;
+            let stop_filer = scope.spawn(move || {
+                while !filed_ref.load(std::sync::atomic::Ordering::Acquire) {
+                    if watch.is_some_and(OwnerWatch::lost) {
                         let _ = task_engine::request_run_stop(id);
                         return true;
                     }
@@ -335,31 +343,31 @@ impl Owner {
         let prepared = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
-                return Err(match pending_stop(run, watch.as_ref()) {
+                return Err(match pending_stop(run, self.watch.as_ref()) {
                     Some(cause) => End::Stopped(self.cause(cause)),
                     None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
                 })
             }
         };
-        if let Some(cause) = pending_stop(run, watch.as_ref()) {
+        if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
             return Err(End::Stopped(self.cause(cause)));
         }
         if let Some(environment) = &plan.environment {
-            let mut stop = |run: &mut TaskRun| pending_stop(run, watch.as_ref());
+            let mut stop = |run: &mut TaskRun| pending_stop(run, self.watch.as_ref());
             match environment::bring_up(run, environment, &plan.token, &mut stop) {
                 Ok(()) => self.health = Some(RouteHealth::new(environment)),
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
                 Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason, None)),
             }
         }
-        self.lost_while_blocked |= watch.as_ref().is_some_and(OwnerWatch::lost);
+        self.lost_while_blocked |= self.watch.as_ref().is_some_and(OwnerWatch::lost);
         // The environment's `up` is itself a Prepare path (contract 020): it
         // can publish a source generation and remove the one an earlier render
         // named. The commands are therefore rendered here, after it.
         let specs = match workloads(run, prepared) {
             Ok(specs) => specs,
             Err(error) => {
-                return Err(match pending_stop(run, watch.as_ref()) {
+                return Err(match pending_stop(run, self.watch.as_ref()) {
                     Some(cause) => End::Stopped(self.cause(cause)),
                     None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
                 })
@@ -602,7 +610,10 @@ impl Owner {
                 }
                 return Ok(());
             }
-            if let Some(cause) = pending_stop(run, None) {
+            if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
+                if matches!(cause, StopCause::OwnerLost) {
+                    self.lost_while_blocked = true;
+                }
                 return Err(format!("`{name}` setup stopped: {}", describe(&cause)));
             }
             std::thread::sleep(TURN);
@@ -1029,14 +1040,27 @@ mod tests {
     }
 
     /// A container route's setup is its own exec, run by the supervisor before
-    /// the process command is resolved. A setup that publishes generation `b`
-    /// — as `bundle sync` does — and prunes `a` therefore leaves the helper on
-    /// `b`; resolving before the setup would leave it on the removed `a`.
+    /// the process command is resolved. The setup opens the same sources, so it
+    /// is resolved too: the generation an earlier Prepare pruned is never
+    /// opened by the setup, and a setup that publishes generation `c` — as
+    /// `bundle sync` does — leaves the helper on `c`.
     #[test]
-    fn a_setup_that_publishes_a_generation_leaves_the_command_on_the_new_one() {
-        let (_home, repo, manifest) = pinned_checkout("cache/sources/generation-a/1e6ed65d");
-        let stale = repo.join(".effigy/cache/sources/generation-a/1e6ed65d/scripts");
-        fs::create_dir_all(&stale).expect("mkdir generation a");
+    fn a_setup_that_publishes_a_generation_keeps_setup_and_command_on_live_sources() {
+        // The lock selects `b`; both the setup and the command still name `a`,
+        // which an earlier Prepare pruned.
+        let (_home, repo, manifest) = pinned_checkout("cache/sources/generation-b/1e6ed65d");
+        fs::create_dir_all(repo.join(".effigy/cache/sources/generation-b/1e6ed65d"))
+            .expect("mkdir generation b");
+        let host_setup = format!(
+            "sh {}/.effigy/cache/sources/generation-a/1e6ed65d/scripts/setup.sh && effigy bundle sync",
+            repo.display()
+        );
+        let stale_setup = effigy_containers::session::container_exec_command(
+            &host_setup,
+            &repo,
+            &repo,
+            Some(Path::new("/workspace")),
+        );
         let translated = effigy_containers::session::container_exec_command(
             &format!(
                 "sh {}/.effigy/cache/sources/generation-a/1e6ed65d/scripts/profile_env.sh",
@@ -1050,18 +1074,25 @@ mod tests {
         let started = workload_start_command(
             &manifest,
             Some(Path::new("/workspace")),
-            Some("effigy container shell --command 'effigy bundle sync'"),
+            Some(&stale_setup),
             &translated,
             |setup| {
                 assert!(
-                    setup.contains("bundle sync"),
+                    setup.contains("effigy bundle sync"),
                     "the route's setup exec reaches the supervisor: {setup}"
                 );
-                // The setup publishes generation `b` and removes the one the
-                // plan's command names, exactly as `bundle sync` prunes it.
-                fs::remove_dir_all(repo.join(".effigy/cache/sources/generation-a"))
-                    .expect("prune generation a");
-                write_lock(&manifest, "cache/sources/generation-b/1e6ed65d");
+                assert!(
+                    setup.contains(
+                        "/workspace/.effigy/cache/sources/generation-b/1e6ed65d/scripts/setup.sh"
+                    ),
+                    "the setup opens the generation the lock selects: {setup}"
+                );
+                assert!(!setup.contains("generation-a"), "{setup}");
+                // The setup publishes generation `c` and prunes `b`, exactly
+                // as `bundle sync` does.
+                fs::remove_dir_all(repo.join(".effigy/cache/sources/generation-b"))
+                    .expect("prune generation b");
+                write_lock(&manifest, "cache/sources/generation-c/1e6ed65d");
                 setup_ran = true;
                 Ok(())
             },
@@ -1070,14 +1101,15 @@ mod tests {
         assert!(setup_ran, "the setup ran");
         assert!(
             started.contains(
-                "/workspace/.effigy/cache/sources/generation-b/1e6ed65d/scripts/profile_env.sh"
+                "/workspace/.effigy/cache/sources/generation-c/1e6ed65d/scripts/profile_env.sh"
             ),
             "{started}"
         );
         assert!(!started.contains("generation-a"), "{started}");
+        assert!(!started.contains("generation-b"), "{started}");
         assert!(
-            !repo.join(".effigy/cache/sources/generation-a").exists(),
-            "the generation the command named is gone"
+            !repo.join(".effigy/cache/sources/generation-b").exists(),
+            "the generation the setup's Prepare pruned is gone"
         );
     }
 }
