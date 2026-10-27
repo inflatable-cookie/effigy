@@ -254,10 +254,10 @@ mount. This ruling changes no scheduler credential or admission boundary.
 
 `[[containers.<name>.host_processes]]` may opt a process into Effigy's
 language-neutral listener contract. The manifest selects the process, bind
-address, HTTP readiness request and browser route. Effigy verifies that the
-declared address answers, and publishes the route. An ordinary server
-that listens on the declared `HOST`/`PORT` needs no Effigy-specific convention:
-the answering port is the whole readiness and ownership story.
+address, HTTP readiness request and browser route. Effigy gives the listener
+its address, verifies that it answers, and publishes the route. An ordinary
+server that listens on the `HOST`/`PORT` it receives needs no Effigy-specific
+convention: the answering port is the whole readiness and ownership story.
 
 ```toml
 [[containers.web.host_processes]]
@@ -280,7 +280,7 @@ domain = "frontend.example.test"
 tls = true
 ```
 
-`readiness.timeout_secs` bounds only the wait after the declared port first
+`readiness.timeout_secs` bounds only the wait after the listener's port first
 answers; a child still building has not opened its port, so the supervisor and
 the `up` that waits on it carry no deadline and the child's own exit is the
 failure that ends the wait.
@@ -291,15 +291,20 @@ the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
 and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` that shipped adapter scripts
 read. Those two are only for existing adapter scripts; a new host process needs
 no adapter, and Effigy never reads that report back. `HOST`/`PORT` are the
-declared address:
+listener's own address:
 they replace an ambient value inherited from the caller's environment, because
 a process reading them must bind the port the published route targets. Only a
-value the manifest declares outranks them. The declared address is handed to
-the child unchanged, so it carries a concrete unprivileged loopback port: a
-port `0` would leave the OS to pick one Effigy cannot learn, and that listener
-never reads as ready. The address is the manifest's own, is never reserved, and
-must be bound exactly; a port another process already answers fails the start
-naming that port.
+value the manifest declares outranks them.
+
+A declared port is the manifest's own: it is used untouched, is never reserved
+and must be bound exactly, and a port another process already answers fails the
+start naming that port. A `bind` whose port is `0` asks Effigy for one: before
+any child launches, Effigy takes the address this process last published (so a
+restart or a re-`up` keeps every `internal_url` a dependent resolved) or, when
+there is none, asks the OS for a free loopback port; the child receives the
+result as its bind, `HOST` and `PORT`, and the `internal_url` fact carries it.
+There is no port range and no endpoint-store reservation behind that choice,
+and nothing is recorded beside the listener's own state file.
 
 ## Host process environment
 
@@ -319,12 +324,12 @@ Each process also receives the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`.
 `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in only when the operator
 has not exported them and the process does not declare them, so an operator
 trust store is never replaced. The gateway contract records which runtimes read
-which variable and why. Effigy reads no adapter report: only the reserved
+which variable and why. Effigy reads no adapter report: only the listener
 address answering publishes the route, and the report path is a write-only
 courtesy for shipped adapters, removed when the generation stops. A child that
-binds a different address never answers the reserved one, so its generation
-stays in the no-deadline phase until that child exits, and the failure names the
-reserved address, the readiness request it never answered and the exit code.
+binds a different address never answers the one it was given, so its generation
+stays in the no-deadline phase until that child exits, and the failure names
+that address, the readiness request it never answered and the exit code.
 
 Routes publish to the caller's private gateway when
 `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` selects one, and otherwise to the shared
@@ -601,7 +606,7 @@ connection: the gateway forwards the route to its published target like any
 other route.
 
 A published listener stays published while the supervisor's run is alive and
-the reserved port answers. The supervisor connects to that port every five
+the listener port answers. The supervisor connects to that port every five
 seconds; three consecutive misses withdraw the route and record `unavailable`,
 and the next answer republishes it and records `ready` again. A probe miss never
 kills or restarts the child, and never replaces a dependent: the child's own
@@ -609,7 +614,7 @@ exit drives restarts, and a dependent is replaced only when its dependency's
 supervisor generation changes. A restart, a watch-mode respawn that replaces the
 process serving the port, a double fork and a long compile are all ordinary.
 
-Readiness is one bounded HTTP/1.1 `GET` on the reserved loopback socket. Effigy
+Readiness is one bounded HTTP/1.1 `GET` on the listener's loopback socket. Effigy
 reads the first status line and accepts only the configured status. The line
 must be `HTTP/1.<digit>`, a space, a three-digit code, and a space before the
 reason phrase. The reason phrase may be empty and may contain only tabs,
@@ -627,7 +632,7 @@ repeated attempts, so a cold build's compile time is never spent against it.
 
 A generation that fails keeps a one-line `diagnostic` string in its state file
 after its child is cleaned up, and a settling supervisor does not replace that
-evidence with a blank terminal record. The line names the reserved address, the
+evidence with a blank terminal record. The line names the listener address, the
 readiness path and status, and the last probe outcome (`connect_failed`,
 `write_failed`, `no_status_line`, `malformed_status` or `status_mismatch`); a
 start refused because the port already answered names that port, and one whose

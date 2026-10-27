@@ -48,11 +48,15 @@ During v0.x, MINOR bumps may include breaking changes.
   `EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS`,
   `EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER` and the hidden
   `__container-lease-reaper` command are gone.
-- **A managed listener declares a concrete loopback port.** The declared
-  `bind` address is handed to the child unchanged and Effigy verifies the port
-  answers its readiness request, so declare an unprivileged port such as
-  `bind = "127.0.0.1:4173"`. A port `0` leaves the OS to pick one Effigy never
-  learns, so that listener never reads as ready and its route never publishes.
+- **A managed listener's `bind` may ask for a port, and keeps the one it gets.**
+  A declared port such as `bind = "127.0.0.1:4173"` is used untouched. A `bind`
+  whose port is `0` asks Effigy for one: before any child launches, Effigy takes
+  the address the process last published or asks the OS for a free loopback
+  port, hands that address to the child as `EFFIGY_MANAGED_HOST_LISTENER_BIND`,
+  `HOST` and `PORT`, verifies it answers the readiness request, and publishes
+  the route on it. A restart or a re-`up` keeps that published address, so a
+  dependent's `internal_url` stays valid; there is no port range, no endpoint
+  store reservation and no port registry behind it.
 - **Task runs are kernel runs, and Effigy's flags go before the task.**
   `effigy [--json] [--plan] [--repo <PATH>] [--lock-wait-ms <MS>] [--env-schema <PATH>] <task> [args]`.
   Everything after the task name belongs to the task, so `effigy lint --json`

@@ -304,9 +304,11 @@ Effigy ownership:
   depends on the state-home path; an activation that this failure interrupted
   is reconciled by a plain `effigy container up`
 - Compose's default `.env` lookup is the first Compose file's directory, which
-  inside a generation is the sealed object directory and never holds one, so
-  naming this file drops no interpolation the invocation had
-- a file older than a day, or beyond the retained count, is reclaimed
+  inside a generation is the object directory and never holds one, so naming
+  this file drops no interpolation the invocation had
+- nothing prunes the directory: the name is content-addressed, so an unchanged
+  plan reuses one file and a changed one adds one more; deleting the directory
+  by hand costs only a rewrite of the current plan's file
 
 Target compatibility cases:
 

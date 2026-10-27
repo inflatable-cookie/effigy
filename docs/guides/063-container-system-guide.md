@@ -370,12 +370,16 @@ If the question is instead:
 ### Managed host listeners
 
 Host processes that serve a browser route can declare the listener they own.
-Effigy verifies the child generation's own listening socket against the
-address its declaration names: no adapter is needed. Declare a concrete
-unprivileged loopback port, for example `bind = "127.0.0.1:4173"`. A `bind`
-whose port is `0` is handed to the child unchanged, so the OS picks the port
-and Effigy never learns it: that listener is never ready and its route is never
-published. A declared port is the manifest's own and is never reserved.
+Effigy gives the listener its address and verifies the child generation's own
+listening socket against it: no adapter is needed. Declare a fixed unprivileged
+loopback port such as `bind = "127.0.0.1:4173"`, or declare port `0` to let
+Effigy choose one: before any child launches it takes the address that process
+last published (a restart or a re-`up` keeps it, so a dependent's
+`internal_url` stays valid) or, on a first start, asks the OS for a free
+loopback port. There is no port range behind that choice, and nothing else
+records it.
+A declared port is the manifest's own: it is used untouched and is never
+reserved.
 For disposable profiles, point `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` at an owned
 private root and start that instance with `gateway setup-tls` and `gateway up`
 using the same `--private-state-root`. This keeps trust and route state scoped
@@ -489,45 +493,46 @@ keeps the declared name. A listener result looks like this:
 }
 ```
 
-Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the declared loopback
-address, `HOST` and `PORT` to that address
+Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the listener's loopback
+address (the declared one, or the one it chose for a port `0`), `HOST` and
+`PORT` to that address
 and port, and `EFFIGY_HOST_PROCESS_PUBLIC_URL`
-and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and declared
+and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and listener
 endpoint. It supplies `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, a private path
 in the process's runtime directory beside its log, and
 `EFFIGY_MANAGED_HOST_LISTENER_GENERATION`, the current child generation token,
 only for the adapter scripts shipped bundles already carry. Effigy never reads
 that report and removes the file when the generation stops, so a new host
 process needs no adapter. Any ordinary server that listens on `$HOST`/`$PORT`
-is a managed listener: Effigy sends the readiness request to the address it
-reserved and publishes the route when that address answers.
+is a managed listener: Effigy sends the readiness request to that address and
+publishes the route when it answers.
 `run = 'exec effigy profile:api'` is enough. A server that compiles for minutes
 before it serves needs no adapter and no oversized timeout: while its port is
 closed the wait has no deadline, and a cold build's compile time is never spent
 against `readiness.timeout_secs`.
 
-`HOST` and `PORT` are the address Effigy reserved, so they replace
+`HOST` and `PORT` are the listener's address, so they replace
 an ambient `HOST`/`PORT` inherited from the shell Effigy was started in: a
 server that reads them binds the port the gateway route points at. Only a value
 the manifest itself declares outranks them (for example an adapter that must
 see a specific `HOST`), and `EFFIGY_MANAGED_HOST_LISTENER_BIND` always carries
-the reserved address unconditionally.
+that address unconditionally.
 The process must bind strictly to the requested address: a wildcard bind
-(`0.0.0.0:<port>`) is a different address, so the reserved port stays closed and
+(`0.0.0.0:<port>`) is a different address, so the port stays closed and
 the wait continues until that child exits. Readiness is an
 HTTP `GET` to the configured path with the effective route domain as `Host`;
 only the configured status makes the listener ready.
 
 Startup has two phases, and only the second one has a deadline. While the
-reserved port is still closed and the child is alive, Effigy waits with no
+listener's port is still closed and the child is alive, Effigy waits with no
 deadline at all and writes a progress line to the process log about every thirty
 seconds; the child exiting is what fails the generation. `readiness.timeout_secs`
 starts once the port first accepts a connection and bounds reaching the
 configured status from there, so a build that takes twenty minutes and a server
 that answers in a second both start. A failed startup returns an error and
 leaves a `failed` state instead of publishing an endpoint, and the diagnostic
-names the reserved address, the readiness request and the last probe outcome (or
-the child's exit code). A reserved port that another process already answers
+names the listener address, the readiness request and the last probe outcome (or
+the child's exit code). A listener address that another process already answers
 fails the start naming that port.
 
 Once published, the route stays published while the supervisor's run is alive
@@ -566,7 +571,7 @@ and route read that dependency. A process that does not depend on a restarted
 one is never touched. An unknown process name fails before anything changes. An
 environment that is not up is named in one warning and the named processes start
 anyway: an environment that declares only host processes has no containers to
-prove. A restarted listener binds the address its declaration names, so a
+prove. A restarted listener keeps the address it published, so a
 dependent's `internal_url` keeps working, and the restart holds the environment
 the way `up` does, so a `down` or a bring-up never interleaves with it.
 
@@ -594,7 +599,7 @@ reported ready. `$${` writes a literal `${`.
 | `${service.<name>.port}` | the service's published host port |
 | `${route.<domain>.public_url}` | a gateway route's public origin, by declared or scoped domain (container route or managed listener) |
 | `${host_process.<name>.public_url}` | a managed host listener's own public origin (its own name included) |
-| `${host_process.<name>.internal_url}` | a managed host listener's reserved loopback endpoint |
+| `${host_process.<name>.internal_url}` | a managed host listener's loopback endpoint |
 | `${domains}` | the declared domain set, comma separated |
 | `${apex}` | the shared apex of the declared domains (the cookie domain) |
 | `${gateway.https_port}` | the active gateway's HTTPS port |
@@ -633,7 +638,7 @@ is open and the declared timeout runs. A consumer server does not need to keep
 its read side open or answer in one write.
 
 When startup fails, `<name>.listener.json` keeps a one-line `diagnostic` for
-the failed generation: the reserved address, the readiness path and status, and
+the failed generation: the listener address, the readiness path and status, and
 the last probe outcome (or the port that already answered, or the child's exit
 code). The diagnostic does not release, signal, or publish anything, and the
 top-level `status` remains the current state. It is described in the managed
