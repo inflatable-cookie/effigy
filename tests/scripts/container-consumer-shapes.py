@@ -1058,8 +1058,19 @@ def discover_owned(repo, worktree, shared_project, predicted_projects=(), checko
     return {
         "containers": sorted(containers),
         "projects": sorted(projects),
+        "checkouts": sorted(checkouts),
         "volumes": volumes,
         "networks": networks,
+    }
+
+
+def residue_names(discovered):
+    """Names only, for residue comparisons: discovery keeps container IDs for
+    identity checks, but a name is what a residue assertion compares."""
+    return {
+        "containers": sorted(name for _, name in discovered["containers"]),
+        "volumes": list(discovered["volumes"]),
+        "networks": list(discovered["networks"]),
     }
 
 
@@ -1284,9 +1295,24 @@ def live_run(staging, approval=None):
         )
         after_down = owned_snapshot()
         left_local = [
-            name for _, name in after_down["containers"]
+            name
+            for container_id, name in after_down["containers"]
+            if labels_of("containers", container_id).get("com.effigy.checkout")
+            in {str(repo), str(worktree)}
         ]
         assert left_local == [], ("down left a checkout's own container", left_local)
+        shared_after_down = [
+            name
+            for container_id, name in after_down["containers"]
+            if labels_of("containers", container_id).get("com.docker.compose.project")
+            == shared["project"]
+        ]
+        assert shared_after_down, (
+            "down did not leave the shared service running, so the explicit owned "
+            "removal below would prove nothing",
+            after_down,
+        )
+        checks.append(("down left the shared service running for explicit removal", len(shared_after_down)))
         hosts = json.loads(
             effigy("container", ENVIRONMENT, "hosts", "--json", "--repo", repo, cwd=repo, env=env)
         )
@@ -1295,8 +1321,9 @@ def live_run(staging, approval=None):
 
         remove_owned(owned_snapshot(), shared["project"])
         left = residue(names)
+        discovered_left = residue_names(owned_snapshot())
         for kind in ("containers", "volumes", "networks"):
-            left[kind] = sorted(set(left.get(kind, [])) | set(owned_snapshot()[kind]))
+            left[kind] = sorted(set(left.get(kind, [])) | set(discovered_left[kind]))
         assert not any(left.values()), ("the owned names were not all deleted", left)
         checks.append(("the fixture's own shared container, volume and network are deleted", shared["project"]))
     except BaseException as exc:  # re-raised after cleanup
@@ -1323,13 +1350,10 @@ def live_run(staging, approval=None):
                 print(f"[warn] owned cleanup failed: {failure_reason}", flush=True)
         try:
             left = residue(names)
-            discovered_left = owned_snapshot()
+            discovered_left = residue_names(owned_snapshot())
             for kind in ("containers", "volumes", "networks"):
                 if discovered_left[kind]:
-                    left[kind] = sorted(
-                        set(left.get(kind, []))
-                        | {n for n in discovered_left[kind] if isinstance(n, str)}
-                    )
+                    left[kind] = sorted(set(left.get(kind, [])) | set(discovered_left[kind]))
         except Exception as failure_reason:
             print(f"[warn] residue could not be read: {failure_reason}", flush=True)
             left = {"unreadable": [str(failure_reason)]}
@@ -1356,10 +1380,10 @@ def live_run(staging, approval=None):
         print("[fail] the machine gateway changed", flush=True)
     try:
         left = residue(names)
-        discovered_left = owned_snapshot()
+        discovered_left = residue_names(owned_snapshot())
         for kind in ("containers", "volumes", "networks"):
             if discovered_left[kind]:
-                left[kind] = sorted(set(left.get(kind, [])) | {n for n in discovered_left[kind] if isinstance(n, str)})
+                left[kind] = sorted(set(left.get(kind, [])) | set(discovered_left[kind]))
     except Exception as failure_reason:
         left = {"unreadable": [str(failure_reason)]}
     for label, count in checks:
