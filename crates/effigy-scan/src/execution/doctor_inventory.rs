@@ -1661,15 +1661,15 @@ fi
 case " $* " in
   *" status --porcelain=v1 "*)
     record_phase shim_entered
-    trap 'record_phase term_handler_entered; EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=late "$EFFIGY_TEST_DOCTOR_FIXTURE_EXE" doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>>"$EFFIGY_TEST_DOCTOR_GIT_SHELL_EVENTS" & late_pid=$!; record_phase late_child_spawn_requested "$late_pid"; while [ ! -f "$EFFIGY_TEST_DOCTOR_GIT_LATE_READY" ]; do :; done; record_phase late_child_ready_observed "$late_pid"; record_phase term_handler_exit "$late_pid"; exit 0' TERM
+    trap 'record_phase term_handler_entered; EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=late "$EFFIGY_TEST_DOCTOR_FIXTURE_EXE" doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>>"$EFFIGY_TEST_DOCTOR_GIT_SHELL_EVENTS" & late_pid=$!; record_phase late_child_spawn_requested "$late_pid"; while [ ! -f "$EFFIGY_TEST_DOCTOR_GIT_LATE_READY" ]; do /bin/sleep 0.05; done; record_phase late_child_ready_observed "$late_pid"; record_phase term_handler_exit "$late_pid"; exit 0' TERM
     EFFIGY_TEST_DOCTOR_FIXTURE_ROLE=initial "$EFFIGY_TEST_DOCTOR_FIXTURE_EXE" doctor_git_timeout_process_fixture_child --nocapture >/dev/null 2>>"$EFFIGY_TEST_DOCTOR_GIT_SHELL_EVENTS" &
     initial_pid=$!
     record_phase initial_child_spawn_requested "$initial_pid"
     record_phase initial_readiness_wait_started "$initial_pid"
-    while [ ! -f "$EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY" ]; do :; done
+    while [ ! -f "$EFFIGY_TEST_DOCTOR_GIT_INITIAL_READY" ]; do /bin/sleep 0.05; done
     record_phase initial_child_ready_observed "$initial_pid"
     record_phase busy_wait_started "$initial_pid"
-    while :; do :; done
+    while :; do /bin/sleep 0.05; done
     ;;
 esac
 exit 2

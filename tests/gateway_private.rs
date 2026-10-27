@@ -1,6 +1,6 @@
 #[path = "support/route_table_fixture.rs"]
 mod route_table_fixture;
-use effigy_test_support::process::{self, FixtureCommandExt, OwnedChild};
+use effigy_test_support::process::{FixtureCommandExt, OwnedChild};
 use route_table_fixture::RouteTableFixture;
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
@@ -6372,23 +6372,6 @@ exit 0
     }
 }
 
-#[test]
-#[ignore = "fake backend process registration helper"]
-fn register_fixture_process_child() {
-    let owner = std::env::var_os("EFFIGY_REGISTER_OWNER").expect("registration owner");
-    if std::env::var("EFFIGY_REGISTER_ACTION").as_deref() == Ok("stop-root") {
-        process::close_root(Path::new(&owner)).expect("stop registered fake workloads");
-    } else {
-        let pid = std::env::var("EFFIGY_REGISTER_PID")
-            .expect("registration PID")
-            .parse()
-            .unwrap();
-        let nonce = std::env::var("EFFIGY_REGISTER_NONCE").unwrap_or_default();
-        process::register_detached_with_nonce(pid, Path::new(&owner), &nonce)
-            .expect("register fake backend child");
-    }
-}
-
 #[cfg(debug_assertions)]
 #[test]
 #[ignore = "failure actor; launched only by its fixture cleanup proof"]
@@ -6475,47 +6458,17 @@ fn detached_gateway_failure_actor() {
 
 #[cfg(debug_assertions)]
 #[test]
-#[ignore = "separate-process sweep entrypoint for the gateway failure proof"]
-fn gateway_fixture_sweep_child() {
-    let root = std::env::var_os("EFFIGY_GATEWAY_SWEEP_ROOT").expect("sweep root");
-    let result = match std::env::var("EFFIGY_GATEWAY_SWEEP_ACTION").as_deref() {
-        Ok("sweep") => process::sweep(Path::new(&root), None),
-        Ok("wait-root") => process::wait_kernel_helpers(Path::new(&root)).map(|_| false),
-        _ => panic!("unknown gateway fixture sweep action"),
-    };
-    match result {
-        Ok(false) => (),
-        Ok(true) => std::process::exit(1),
-        Err(error) => {
-            eprintln!("gateway fixture sweep: {error}");
-            std::process::exit(2);
-        }
-    }
-}
-
-#[cfg(debug_assertions)]
-#[test]
 fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response() {
-    let wrapper = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/fixture_hygiene.py");
+    let guard = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/suite_guard.py");
     let owner = effigy_test_support::Fixture::workspace("effigy-gateway-failure-proof-").unwrap();
-    // Plain workspace test runners do not prepare the standalone helper. Use
-    // this binary's ignored entrypoint, always in a separate process, so the
-    // proof also works without an inherited selector environment.
-    let helper = owner.path().join("sweep-fixture");
-    fs::write(
-        &helper,
-        format!(
-            "#!/bin/sh\nEFFIGY_GATEWAY_SWEEP_ACTION=\"$1\" EFFIGY_GATEWAY_SWEEP_ROOT=\"$2\" exec {} --ignored --exact gateway_fixture_sweep_child --nocapture\n",
-            effigy_core::shell::shell_quote(&std::env::current_exe().unwrap().display().to_string())
-        ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
     for mode in ["panic", "exit", "timeout"] {
-        let output = Command::new("python3")
-            .arg(&wrapper)
-            .args(["--timeout", "40", "--"])
+        let mut command = Command::new("python3");
+        command.arg(&guard);
+        if mode == "timeout" {
+            command.args(["--timeout", "40"]);
+        }
+        let output = command
+            .arg("--")
             .arg(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
@@ -6524,7 +6477,6 @@ fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response()
                 "--nocapture",
             ])
             .env("EFFIGY_GATEWAY_FAILURE_MODE", mode)
-            .env("EFFIGY_TEST_PROCESS_HELPER", &helper)
             .current_dir(owner.path())
             .output_owned()
             .unwrap();
@@ -6540,81 +6492,33 @@ fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response()
                 .unwrap_or_else(|| panic!("{mode}: missing daemon report; {stdout}; {stderr}")),
         )
         .unwrap();
+        let root = Path::new(report["root"].as_str().unwrap());
         assert!(!output.status.success(), "{mode}: failure was hidden");
-        assert!(
-            !stderr.contains("unresolved fixture ownership"),
-            "{mode}: {stderr}"
-        );
-        assert!(
-            !Path::new(report["root"].as_str().unwrap()).exists(),
-            "{mode}: fixture survived; {stderr}"
-        );
         assert!(
             !fixture_gateway_is_live(&serde_json::from_value(report["identity"].clone()).unwrap()),
             "{mode}: detached gateway survived; {stderr}"
         );
+        assert!(
+            stderr.contains("leaked test process:"),
+            "{mode}: leak not named; {stderr}"
+        );
+        if mode == "panic" {
+            assert!(!root.exists(), "{mode}: fixture survived; {stderr}");
+        } else {
+            // A skipped destructor leaves the tree in the suite temp root,
+            // which the run's scratch owns; it is never outside it.
+            let temp = effigy_test_support::Fixture::new("effigy-place-probe-").unwrap();
+            let parent = temp.path().parent().unwrap().to_path_buf();
+            assert!(
+                root.starts_with(&parent),
+                "{mode}: fixture scratch outside the run temp root: {root:?}"
+            );
+            let _ = fs::remove_dir_all(root);
+        }
         if mode == "timeout" {
             assert_eq!(output.status.code(), Some(124));
         }
-        if mode == "exit" {
-            assert!(stderr.contains("leaked test process:"), "{stderr}");
-        }
     }
-}
-
-#[test]
-fn private_gateway_up_publishes_fixture_custody_in_every_profile() {
-    let fixture = managed_host_fixture();
-    let effects = HostEffectSentinels::new(fixture.path());
-    let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).unwrap();
-    let root = private_root(fixture.path(), "managed-listener-gateway");
-    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    cleanup.track(&root);
-    parse_json_success(run_gateway(
-        &root,
-        "setup-tls",
-        &effects,
-        Some(&foreign_ca),
-        &[],
-    ));
-    parse_json_success(run_gateway(
-        &root,
-        "up",
-        &effects,
-        Some(&foreign_ca),
-        &[
-            "--dns-addr",
-            "127.0.0.1:0",
-            "--proxy-addr",
-            "127.0.0.1:0",
-            "--https-addr",
-            "127.0.0.1:0",
-        ],
-    ));
-    let addresses: Value =
-        serde_json::from_slice(&fs::read(root.join("gateway.addresses.json")).unwrap()).unwrap();
-    let pid = u32::try_from(addresses["pid"].as_u64().unwrap()).unwrap();
-    let records = fs::read_dir(process::ledger().unwrap().join("processes")).unwrap();
-    let matches = records
-        .filter_map(|entry| fs::read(entry.ok()?.path()).ok())
-        .filter_map(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .filter(|record| record["receipt"]["identity"]["pid"].as_u64() == Some(u64::from(pid)))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        matches.len(),
-        1,
-        "one birth registration, without the replaced post-response writer"
-    );
-    assert_eq!(
-        matches[0]["owner"],
-        root.canonicalize().unwrap().to_str().unwrap()
-    );
-    assert!(!matches[0]["receipt"]["nonce"].as_str().unwrap().is_empty());
-    let identity = serde_json::from_value(matches[0]["receipt"]["identity"].clone()).unwrap();
-    drop(cleanup);
-    drop(fixture);
-    assert!(!fixture_gateway_is_live(&identity));
 }
 
 fn fixture_gateway_is_live(identity: &effigy_kernel::ident::ProcessIdentity) -> bool {

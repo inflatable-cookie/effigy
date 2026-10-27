@@ -38,7 +38,14 @@ case $tool in
 esac
 [ "${GITHUB_ACTIONS:-}" = "true" ] && tool=cargo
 
+# A test selector is owned by one suite sweep: every descendant carries the
+# suite identifier, and any process that outlives the runner fails the selector.
+# The Cargo command is the tool `exec` runs, because a test build's profile
+# outputs live at profile members rather than in a directory Oxide can model.
 if [ "$tool" = cargo ]; then
+  case ${1:-} in
+    nextest | test) exec python3 "$root/tests/scripts/suite_guard.py" -- cargo "$@" ;;
+  esac
   exec cargo "$@"
 fi
 
@@ -74,4 +81,11 @@ if [ -z "${OXIDE_POOL:-}" ]; then
     esac
   fi
 fi
+
+case ${1:-} in
+  nextest | test)
+    exec python3 "$root/tests/scripts/suite_guard.py" -- "$tool" exec -- cargo "$@"
+    ;;
+esac
+
 exec oxide "$@"

@@ -352,6 +352,19 @@ During v0.x, MINOR bumps may include breaking changes.
   Effigy's process environment, so task children no longer inherit the
   passphrase; nested commands that need the vault use the local unlock
   credential or prompt.
+- **Per-run scratch lives under an `effigy/` namespace of the configured root.**
+  With `[scratch] root` set, a new host-placed run's directory is
+  `<root>/effigy/<8-character run name>/`, still marked, still `TMPDIR`, `TMP`
+  and `TEMP`, and still removed on success and kept 24 hours after a failure.
+  `effigy/` is the only entry Effigy names at the top of the operator's root, so
+  a host-side reader identifies a run by its marker instead of distinguishing
+  run names from sibling project folders (effigy#386). A run an earlier build
+  left directly under the root stays where it is: it is never moved, renamed or
+  bulk-cleaned, and the ordinary bounded sweep retires it in place by the same
+  marker, liveness, 24-hour retention and seven-day expiry rules, with one set
+  of sweep bounds over both locations. Unmarked folders, files and symlinks in
+  either place are untouched, and the `effigy/` namespace itself is never
+  treated as a run.
 
 ### Removed
 - **The retired release prepare/execute machinery is gone.** `ReleasePreparePlan`,
@@ -1524,6 +1537,26 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **A test suite owns one kill sweep instead of a process ledger.** Every
+  Rust test selector now runs under `tests/scripts/suite_guard.py`, which
+  exports one `EFFIGY_TEST_SUITE` value and holds a marker descriptor that
+  every descendant inherits, including a daemon that calls `setsid`. After the
+  runner ends — passing, failing, timed out or killed — the guard lists the
+  processes that still carry the suite, sends TERM, waits two seconds, KILLs
+  the survivors and fails the selector with every PID and command. A fixture
+  child keeps only local ownership: its own process group, stopped on `Drop`.
+  The process ledger, `ProcessReceipt` registrations, launch nonces, the
+  pre-exec socket barrier, `effigy-fixture-process`,
+  `tests/scripts/fixture_hygiene.py` and the fixture directory ledger are
+  gone. Kernel custody stays an explicit boundary: a custody payload and its
+  anchor inherit no suite marker, keep only the custody nonce in their
+  environment, and remain owned by contract 052 settlement, which stops the
+  anchor last after positive group closure.
+- Test fixtures no longer fall back to the internal `/tmp`: `short_tempdir`
+  and `Fixture::short_home` use the run's temporary directory or its parent on
+  the configured scratch volume, and `Fixture::workspace` uses the run's
+  temporary directory instead of `/Users/Shared`.
+
 - **Pinned `[sources.*]` working copies cost a task run nothing when they are
   present.** A task run clones a pinned source only when its path is missing,
   bounded to 120 seconds and non-interactive (`GIT_TERMINAL_PROMPT=0`, and an
@@ -2074,6 +2107,9 @@ During v0.x, MINOR bumps may include breaking changes.
   its setup steps and its environment are up, and in the container mount a
   container-routed command was translated to — and only generations nothing
   pins are removed (contract 020).
+- **A leaked test helper fails its selector.** Test fixtures and loops sleep
+  between checks and have deadlines, so no fixture spins a core; a helper that
+  outlives its test is named and killed by the suite sweep.
 - `container up` no longer fails with nerdctl's `cannot start a container that
   has stopped`. The rendered Compose file names no `restart:` policy, so the
   runtime's restart manager has nothing to settle on a container Compose has

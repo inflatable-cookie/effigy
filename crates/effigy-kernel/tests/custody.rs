@@ -2239,6 +2239,20 @@ fn custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closu
     let expected: effigy_kernel::gate::CheckoutFenceIdentity =
         serde_json::from_value(value["identity"].clone()).unwrap();
     let process: ProcessReceipt = serde_json::from_value(value["child"].clone()).unwrap();
+    // Contract 052 keeps the anchor as positive evidence of the original group
+    // identity: deleting the checkout does not prove group closure.
+    let anchor: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(value["anchor"].clone()).unwrap();
+    let anchor_live = || {
+        matches!(
+            effigy_kernel::ident::process_state(anchor.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    };
     let cx = context();
     let machine = StateRoot::runtime_machine_effects(&cx, &home.path().join("machine")).unwrap();
     let token = "04040404040404040404040404040404";
@@ -2251,6 +2265,10 @@ fn custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closu
     )
     .is_err());
     std::fs::remove_dir_all(home.path().join("checkout")).unwrap();
+    assert!(
+        anchor_live(),
+        "the anchor is the group evidence a deleted checkout still needs"
+    );
     assert!(effigy_kernel::gate::Gate::checkout_retirement(
         &cx,
         &machine,
@@ -2291,6 +2309,10 @@ fn custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closu
             effigy_kernel::ident::process_state(process.identity.pid),
             Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
         )
+    );
+    assert!(
+        !anchor_live(),
+        "settlement stops the anchor once the workload group is closed"
     );
     assert!(!machine.path().join("machine.db").exists());
     assert!(!machine.path().join("kernel.db").exists());

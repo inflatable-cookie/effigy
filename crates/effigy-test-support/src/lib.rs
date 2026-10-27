@@ -5,7 +5,7 @@ pub mod process;
 use std::cell::RefCell;
 use std::fs;
 use std::io;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -21,37 +21,45 @@ pub(crate) fn drain_process_fixtures() {
 /// managed run's control socket is `<home>/.effigy/state/sock/` plus a
 /// 26-character run id and `.sock`; a gateway's is 5 bytes longer, under
 /// `.effigy/gateway/runtime/`. A short fixture path therefore stays at or
-/// below this length, which leaves room for either socket.
+/// below this length, which leaves room for either socket. Under an Effigy run
+/// the temp root is the run's scratch (under `<root>/effigy/` on the Builds
+/// drive) and its parent is the shorter namespace directory there, so a short
+/// fixture never needs the internal `/tmp`.
 pub const SHORT_PATH_MAX: usize = 47;
 
-/// The configured fixture root: `EFFIGY_TEST_FIXTURE_ROOT` when the suite
-/// wrapper supplies it, the system temporary directory otherwise.
+/// The configured fixture root: the run's temporary directory, which a
+/// `[scratch]` run places on the configured volume.
 fn configured_root() -> PathBuf {
-    std::env::var_os("EFFIGY_TEST_FIXTURE_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+    std::env::temp_dir()
 }
 
-/// The parent a short fixture belongs under: the configured root when the
-/// resulting path leaves room for a Unix control socket, else the platform's
-/// canonical `/tmp`. With `[scratch]` configured the temp root is on that
-/// volume and is shorter than macOS's default `/private/var/folders/.../T/`,
-/// so the fixture lands on the volume instead of `/tmp`.
-fn short_parent(configured: PathBuf, prefix: &str) -> PathBuf {
+/// The parent a short fixture belongs under: the run's temp root when the
+/// resulting path leaves room for a Unix control socket, else that root's
+/// parent (the `effigy/` namespace inside the scratch root, where sibling names
+/// are shorter). A harness whose temp root cannot bound a socket needs
+/// `[scratch]` or a short `TMPDIR`; it is named rather than quietly falling back
+/// to the internal `/tmp`.
+fn short_parent(configured: PathBuf, prefix: &str) -> io::Result<PathBuf> {
     // `tempfile` appends six random characters to the prefix.
-    if configured.as_os_str().len() + prefix.len() + 6 <= SHORT_PATH_MAX {
-        configured
-    } else {
-        PathBuf::from("/tmp")
+    let fits = |parent: &Path| parent.as_os_str().len() + prefix.len() + 6 <= SHORT_PATH_MAX;
+    if fits(&configured) {
+        return Ok(configured);
     }
+    if let Some(parent) = configured.parent().filter(|parent| fits(parent)) {
+        return Ok(parent.to_path_buf());
+    }
+    Err(io::Error::other(format!(
+        "temp root `{}` cannot hold a `{prefix}` fixture and its control socket; \
+         configure `[scratch]` or a shorter TMPDIR",
+        configured.display()
+    )))
 }
 
 /// A fresh temporary directory whose path stays short enough for a Unix
 /// control socket, for harnesses that need a bare `TempDir` rather than a
-/// [`Fixture`]. The parent is canonicalized, so a fixture under `/tmp` reports
-/// the same path the platform itself does (`/private/tmp` on macOS).
+/// [`Fixture`].
 pub fn short_tempdir(prefix: &str) -> io::Result<tempfile::TempDir> {
-    let parent = short_parent(std::env::temp_dir(), prefix);
+    let parent = short_parent(std::env::temp_dir(), prefix)?;
     tempfile::Builder::new()
         .prefix(prefix)
         .tempdir_in(fs::canonicalize(parent)?)
@@ -61,7 +69,6 @@ pub fn short_tempdir(prefix: &str) -> io::Result<tempfile::TempDir> {
 #[derive(Debug)]
 pub struct Fixture {
     directory: Option<tempfile::TempDir>,
-    registration: Option<tempfile::TempPath>,
 }
 
 impl Fixture {
@@ -75,7 +82,7 @@ impl Fixture {
     /// macOS's default `/private/var/folders/.../T/` is too long once the
     /// socket's own directory and run id are appended.
     pub fn short_home(prefix: &str) -> io::Result<Self> {
-        Self::in_parent(prefix, &short_parent(configured_root(), prefix))
+        Self::in_parent(prefix, &short_parent(configured_root(), prefix)?)
     }
 
     pub fn in_parent(prefix: &str, parent: &Path) -> io::Result<Self> {
@@ -90,43 +97,15 @@ impl Fixture {
         Self::adopt(tempfile::Builder::new().prefix(prefix).tempdir_in(parent)?)
     }
 
-    /// External workspace fixture on a parent shared with container transports.
+    /// External workspace fixture. Container paths stay inside the run's own
+    /// temporary directory, which a `[scratch]` run places on the Builds drive.
     pub fn workspace(prefix: &str) -> io::Result<Self> {
-        #[cfg(target_os = "macos")]
-        return Self::in_parent(prefix, Path::new("/Users/Shared"));
-        #[cfg(not(target_os = "macos"))]
         Self::new(prefix)
     }
 
     fn adopt(directory: tempfile::TempDir) -> io::Result<Self> {
-        // Registration finishes before the caller can start writing or spawning
-        // inside this root. A constructor error drops only the empty TempDir.
-        let registration = if let Some(ledger) = std::env::var_os("EFFIGY_TEST_FIXTURE_LEDGER") {
-            let record = tempfile::NamedTempFile::new_in(&ledger)?;
-            let metadata = fs::symlink_metadata(directory.path())?;
-            serde_json::to_writer(
-                record.as_file(),
-                &serde_json::json!({
-                    "path": fs::canonicalize(directory.path())?,
-                    "device": metadata.dev(), "inode": metadata.ino(),
-                }),
-            )?;
-            let destination = Path::new(&ledger).join("directories").join(
-                record
-                    .path()
-                    .file_name()
-                    .expect("directory registration name"),
-            );
-            record
-                .persist_noclobber(&destination)
-                .map_err(io::Error::other)?;
-            Some(tempfile::TempPath::try_from_path(destination)?)
-        } else {
-            None
-        };
         Ok(Self {
             directory: Some(directory),
-            registration,
         })
     }
 
@@ -145,7 +124,6 @@ impl Fixture {
                 return Err(error);
             }
         }
-        self.registration.take();
         Ok(())
     }
 
@@ -203,14 +181,10 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         if let Err(error) = self.remove() {
-            // TempDir's own destructor must not erase files while process
-            // custody is unresolved. Preserve both the tree and its ledger.
+            // TempDir's own destructor must not erase a tree a kernel helper
+            // may still be writing.
             if let Some(directory) = self.directory.take() {
                 let _ = directory.keep();
-            }
-            // Preserve the ledger entry on failure so suite closeout fails too.
-            if let Some(record) = self.registration.take() {
-                let _ = record.keep();
             }
             if std::thread::panicking() {
                 eprintln!("fixture cleanup failed: {error}");
@@ -251,15 +225,21 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     #[test]
-    fn short_parent_prefers_configured_root_until_the_socket_stops_fitting() {
-        let scratch = PathBuf::from("/Volumes/Builds/scratch/abcdefgh");
-        assert_eq!(short_parent(scratch.clone(), "e235g."), scratch);
-        let platform_default =
-            PathBuf::from("/private/var/folders/ng/5rcw8k5s24j50my4x2rqf8sm0000gn/T");
+    fn short_parent_uses_the_run_temp_root_or_its_shorter_parent() {
+        let run = PathBuf::from("/Volumes/Builds/scratch/effigy/abcdefgh");
         assert_eq!(
-            short_parent(platform_default, "e235g."),
-            PathBuf::from("/tmp")
+            short_parent(run.clone(), "kfault-").unwrap(),
+            Path::new("/Volumes/Builds/scratch/effigy")
         );
+        let roomy = PathBuf::from("/tmp");
+        assert_eq!(short_parent(roomy.clone(), "e235g.").unwrap(), roomy);
+    }
+
+    #[test]
+    fn short_parent_names_a_temp_root_that_cannot_bound_a_socket() {
+        let long = PathBuf::from("/private/var/folders/ng/5rcw8k5s24j50my4x2rqf8sm0000gn/T");
+        let error = short_parent(long.clone(), "e235g.").unwrap_err();
+        assert!(error.to_string().contains(&long.display().to_string()));
     }
 
     #[test]
