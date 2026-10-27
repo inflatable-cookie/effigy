@@ -50,7 +50,13 @@ fn compose_backend_resolution_cases() {
     let home = temp.path().join(".effigy-home");
     std::fs::create_dir_all(&home).expect("mkdir home");
 
-    type Row = (&'static str, Option<&'static str>, Option<&'static str>, Resolves, ComposeBackend);
+    type Row = (
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        Resolves,
+        ComposeBackend,
+    );
     let cases: [Row; 4] = [
         (
             "EFFIGY_COMPOSE_BACKEND=containerd",

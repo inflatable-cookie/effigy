@@ -1,8 +1,8 @@
 //! Private-fixture start-up knobs. Inert outside a private (test) gateway.
 use super::{GatewayConfig, RunnerError};
-use std::{io, process::Command};
 #[cfg(debug_assertions)]
 use std::time::Duration;
+use std::{io, process::Command};
 
 #[cfg(debug_assertions)]
 const HOLD: &str = "EFFIGY_TEST_GATEWAY_STARTUP_HOLD";

@@ -241,8 +241,6 @@ fn active_core() -> Option<Arc<AdmissionCore>> {
     CHANNELS.with(|channels| channels.borrow().iter().rev().find_map(Weak::upgrade))
 }
 
-
-
 /// The v2 report channel: the hook process both sides address, and the
 /// sequence the acknowledged prefix has reached.
 #[derive(Debug)]
@@ -651,14 +649,8 @@ pub(super) fn admit(
                         .iter()
                         .position(|byte| *byte == b'\n')
                         .map_or(stdout.len(), |end| end + 1);
-                    let handled = finish_admission(
-                        hook,
-                        run,
-                        target,
-                        &run_id,
-                        protocol,
-                        &stdout[consumed..],
-                    );
+                    let handled =
+                        finish_admission(hook, run, target, &run_id, protocol, &stdout[consumed..]);
                     match handled {
                         Ok(mut admission) => {
                             push_marker(run_id.clone());

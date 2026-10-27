@@ -174,7 +174,10 @@ fn a_cancelled_run_reads_as_cancelled_and_never_as_refused() {
         cause: StopCause::Signal(libc::SIGINT),
     }));
     assert_eq!(cancelled.category(), Category::Unavailable);
-    assert_eq!(cancelled.to_string(), "the state store was cancelled by SIGINT");
+    assert_eq!(
+        cancelled.to_string(),
+        "the state store was cancelled by SIGINT"
+    );
     let gate = effigy_kernel::gate::GateError::Interrupted(Interrupt::Cancelled {
         cause: StopCause::Signal(libc::SIGINT),
     });

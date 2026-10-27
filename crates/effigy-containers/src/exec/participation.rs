@@ -578,7 +578,11 @@ mod tests {
     #[test]
     fn colima_participation_follows_the_cli_and_leftover_state() {
         let cases: [(bool, ColimaStateEvidence, RuntimeParticipation); 6] = [
-            (true, ColimaStateEvidence::None, RuntimeParticipation::Participating),
+            (
+                true,
+                ColimaStateEvidence::None,
+                RuntimeParticipation::Participating,
+            ),
             (
                 true,
                 ColimaStateEvidence::Present,
@@ -601,7 +605,11 @@ mod tests {
                 ColimaStateEvidence::Unknown,
                 RuntimeParticipation::Participating,
             ),
-            (false, ColimaStateEvidence::None, RuntimeParticipation::Inactive),
+            (
+                false,
+                ColimaStateEvidence::None,
+                RuntimeParticipation::Inactive,
+            ),
         ];
         for (cli_available, state, expected) in cases {
             assert_eq!(
@@ -619,7 +627,10 @@ mod tests {
                 "unix:///Users/me/.docker/run/docker.sock",
                 DockerEndpoint::Unix(PathBuf::from("/Users/me/.docker/run/docker.sock")),
             ),
-            ("/tmp/docker.sock", DockerEndpoint::Unix(PathBuf::from("/tmp/docker.sock"))),
+            (
+                "/tmp/docker.sock",
+                DockerEndpoint::Unix(PathBuf::from("/tmp/docker.sock")),
+            ),
             ("tcp://10.0.0.5:2375", DockerEndpoint::Remote),
             ("ssh://builder", DockerEndpoint::Remote),
             ("npipe:////./pipe/docker", DockerEndpoint::Remote),
@@ -738,7 +749,10 @@ mod tests {
                 ConfigShape::Stored(&[], Some("missing-context"), DockerOverride::Unset),
             ),
             ("an unreadable config", ConfigShape::Raw("{ not json")),
-            ("a config that is not an object", ConfigShape::Raw("[1, 2, 3]")),
+            (
+                "a config that is not an object",
+                ConfigShape::Raw("[1, 2, 3]"),
+            ),
             (
                 "a numeric currentContext",
                 ConfigShape::Raw("{\"currentContext\": 42}"),
@@ -787,15 +801,18 @@ mod tests {
         for (name, shape) in cases {
             let candidates = candidates_for(&shape);
             assert!(
-                candidates
-                    .iter()
-                    .any(|endpoint| matches!(endpoint, DockerEndpoint::Remote | DockerEndpoint::Unresolved)),
+                candidates.iter().any(|endpoint| matches!(
+                    endpoint,
+                    DockerEndpoint::Remote | DockerEndpoint::Unresolved
+                )),
                 "{name}: expected a remote or unresolved candidate, got {candidates:?}"
             );
             assert_eq!(
-                classify_docker_participation(candidates, |_| panic!(
+                classify_docker_participation(candidates, |_| {
+                    panic!(
                     "{name}: a remote, unresolved or unreadable configuration must not be probed away"
-                )),
+                )
+                }),
                 RuntimeParticipation::Participating,
                 "{name}"
             );
@@ -1075,7 +1092,11 @@ mod tests {
 
         let cases: [(&str, Option<&Path>, ColimaStateEvidence); 7] = [
             ("no Colima home", None, ColimaStateEvidence::Unknown),
-            ("an empty Colima home", Some(&empty), ColimaStateEvidence::None),
+            (
+                "an empty Colima home",
+                Some(&empty),
+                ColimaStateEvidence::None,
+            ),
             (
                 "a lima instance directory",
                 Some(&instance),

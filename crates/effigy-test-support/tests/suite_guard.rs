@@ -73,7 +73,12 @@ fn selector_fails_and_names_a_setsid_child_that_traps_term_and_hup() {
         .arg(guard())
         .arg("--")
         .arg(std::env::current_exe().expect("test binary"))
-        .args(["suite_guard_leaks_and_panics", "--ignored", "--exact", "--nocapture"])
+        .args([
+            "suite_guard_leaks_and_panics",
+            "--ignored",
+            "--exact",
+            "--nocapture",
+        ])
         .output()
         .expect("suite guard runs");
     let (pid, stderr) = reported(&output);

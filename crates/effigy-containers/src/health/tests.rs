@@ -6,7 +6,10 @@ use super::*;
 #[test]
 fn health_check_url_cases() {
     let http = [
-        ("http://localhost:8080/health", Some(("localhost", 8080, "/health"))),
+        (
+            "http://localhost:8080/health",
+            Some(("localhost", 8080, "/health")),
+        ),
         ("http://localhost:8080", Some(("localhost", 8080, "/"))),
         ("http://localhost", Some(("localhost", 80, "/"))),
         ("tcp://localhost:3306", None),

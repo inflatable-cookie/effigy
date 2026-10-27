@@ -217,7 +217,11 @@ fn cache_stores_and_retrieves_the_answer_and_its_route_address() {
     ];
     for (domain, resolved, dns_ip) in cases {
         cache.put(domain.to_string(), resolved, dns_ip);
-        assert_eq!(cache.get(domain), Some((resolved, dns_ip)), "domain {domain}");
+        assert_eq!(
+            cache.get(domain),
+            Some((resolved, dns_ip)),
+            "domain {domain}"
+        );
     }
 }
 

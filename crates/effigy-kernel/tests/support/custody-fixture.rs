@@ -293,9 +293,7 @@ fn main() {
         StateRoot::checkout_effects(
             &cx,
             &machine,
-            &effigy_kernel::location::CheckoutLocation {
-                root: home.into(),
-            },
+            &effigy_kernel::location::CheckoutLocation { root: home.into() },
         )
         .unwrap()
     } else {

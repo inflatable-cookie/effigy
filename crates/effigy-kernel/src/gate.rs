@@ -107,9 +107,9 @@ impl GateError {
         match self {
             // A cancellation is not a rule refusing the request.
             Self::Interrupted(_) => Category::Unavailable,
-            Self::Busy { .. }
-            | Self::HostAuthorityRequired
-            | Self::ClassRefused { .. } => Category::Refused,
+            Self::Busy { .. } | Self::HostAuthorityRequired | Self::ClassRefused { .. } => {
+                Category::Refused
+            }
             Self::TimedOut { .. }
             | Self::UnsupportedFilesystem { .. }
             | Self::Untrusted { .. }

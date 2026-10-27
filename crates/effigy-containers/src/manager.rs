@@ -670,9 +670,8 @@ mod tests {
 
     use super::{
         backend_override_from_env_value, BackendId, ColimaNerdctlBackend, ContainerAction,
-        ContainerBackend, ContainerBackendDetection, ContainerBackendRegistry,
-        ContainerManager, ContainerManagerError, ContainerManagerRequest, DockerComposeBackend,
-        RuntimeInvocation,
+        ContainerBackend, ContainerBackendDetection, ContainerBackendRegistry, ContainerManager,
+        ContainerManagerError, ContainerManagerRequest, DockerComposeBackend, RuntimeInvocation,
     };
 
     /// Backend selection follows an explicit request override first, then
@@ -682,8 +681,8 @@ mod tests {
         let registry = ContainerBackendRegistry::defaults();
         let manager = ContainerManager::defaults();
 
-        let overridden = ContainerManagerRequest::new("/tmp/repo")
-            .backend_override(BackendId::colima_nerdctl());
+        let overridden =
+            ContainerManagerRequest::new("/tmp/repo").backend_override(BackendId::colima_nerdctl());
         assert_eq!(
             manager
                 .selected_backend(&overridden)
@@ -771,10 +770,7 @@ mod tests {
             ),
             (
                 &ColimaNerdctlBackend as &dyn ContainerBackend,
-                (
-                    OsString::from("colima"),
-                    nerdctl_args(&["compose", "ps"]),
-                ),
+                (OsString::from("colima"), nerdctl_args(&["compose", "ps"])),
             ),
         ] {
             assert_eq!(
@@ -867,12 +863,7 @@ mod tests {
         ] {
             assert_eq!(
                 manager
-                    .runtime_process_invocation(
-                        &detection,
-                        "effigy",
-                        "docker",
-                        &runtime_args
-                    )
+                    .runtime_process_invocation(&detection, "effigy", "docker", &runtime_args)
                     .expect("runtime invocation"),
                 (OsString::from(expected_program), expected_args.clone()),
                 "{expected_program} runtime invocation"
@@ -923,5 +914,4 @@ mod tests {
             "containerd"
         );
     }
-
 }
