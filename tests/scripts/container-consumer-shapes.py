@@ -1133,6 +1133,16 @@ def discover_owned(repo, worktree, shared_project, predicted_projects=(), checko
     }
 
 
+def residue_names(discovered):
+    """Names only, for residue comparisons: discovery keeps container IDs for
+    identity checks, but a name is what a residue assertion compares."""
+    return {
+        "containers": sorted(name for _, name in discovered["containers"]),
+        "volumes": list(discovered["volumes"]),
+        "networks": list(discovered["networks"]),
+    }
+
+
 def remove_owned(discovered, shared_project):
     """Delete what discovery found: the fixture's shared container first, then
     its volumes and networks, labels first, protected identities denied.
