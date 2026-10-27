@@ -1490,6 +1490,9 @@ container code can use the same stable names without hand-written
 
 By default, generated TCP aliases, the `container hosts` cookie apex and
 gateway service-alias registration all use the same apex.
+For a linked worktree, that effective apex includes its checkout host key even
+when the environment declares a base domain and managed listener but no DNS
+routes. The primary keeps its declared apex.
 
 An undeclared apex is inferred from the HTTP routes. Effigy picks the
 shallowest route host served by the primary service (the service of the front

@@ -329,10 +329,13 @@ impl EffectiveContainerPolicy {
         if !has_usable_base(&declared) {
             return None;
         }
-        Some(match route_scope_host_key(&self.dns_routes) {
-            Some(key) => rewrite_declared_host(&declared, &key),
-            None => declared,
-        })
+        let route_key = route_scope_host_key(&self.dns_routes);
+        Some(
+            match self.runtime_host_key.as_deref().or(route_key.as_deref()) {
+                Some(key) => rewrite_declared_host(&declared, key),
+                None => declared,
+            },
+        )
     }
 }
 
@@ -1119,6 +1122,25 @@ mod tests {
             policy.dns_effective_base_domain(),
             map.effective_base,
             "gateway and Compose aliases share the host map's apex"
+        );
+    }
+
+    #[test]
+    fn policy_base_domain_uses_loaded_host_key_without_dns_routes() {
+        let fixture = tempfile::tempdir().expect("private checkout");
+        let mut policy = crate::policy::model::test_policy(fixture.path());
+        policy.dns_base_domain = Some("acme.test".to_owned());
+        policy.runtime_host_key = Some("abcdef01".to_owned());
+        policy.dns_routes.clear();
+        assert!(policy.dns_routes.is_empty());
+        assert_eq!(
+            policy.dns_effective_base_domain().as_deref(),
+            Some("acme-wabcdef01.test")
+        );
+        policy.runtime_host_key = None;
+        assert_eq!(
+            policy.dns_effective_base_domain().as_deref(),
+            Some("acme.test")
         );
     }
 }

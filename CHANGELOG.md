@@ -2121,6 +2121,8 @@ During v0.x, MINOR bumps may include breaking changes.
   child-scoped umask that no other thread inherits, and the CA and certificate
   files are pinned to `0600` before validation. The symlink, owner and
   group/other-write refusals for pre-existing or foreign state are unchanged.
+- Linked-worktree TCP aliases use their own apex when an environment declares
+  a base domain and managed listener without DNS routes.
 - Prepare a fresh linked worktree’s runtime scope before resolving container startup policy, so its first `up` uses its own hosts and identity.
 - Release settlement receives a fresh 60-second budget after stages; `release settle <run>` recovers an interrupted invocation without advancing stages.
 - A run step opens the bundle source the checkout lock selects when it runs.

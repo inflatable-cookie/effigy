@@ -55,6 +55,7 @@ fn test_policy() -> EffectiveContainerPolicy {
         primary_service: "app".to_owned(),
         dns_domain: Some("clientname.test".to_owned()),
         dns_base_domain: None,
+        runtime_host_key: None,
         dns_tls: true,
         dns_port: None,
         dns_routes: vec![effigy_containers::EffectiveDnsRoute {
@@ -1370,6 +1371,12 @@ fn two_live_worktrees_cannot_register_one_fixed_domain() {
             error.to_string().contains(&paths[0].display().to_string()),
             "the refusal names the owning checkout: {error}"
         );
+        let other_target = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut different_target = route("app.test");
+        different_target.target = Some(other_target.local_addr().unwrap().to_string());
+        let error = reconcile_gateway_routes(&table_path, &paths[1], &[different_target])
+            .expect_err("a different target cannot adopt a live sibling domain");
+        assert!(error.to_string().contains(&paths[0].display().to_string()));
         let first = RouteTable::load(&table_path).unwrap();
         assert_eq!(
             first.lookup("app.test").unwrap().project,

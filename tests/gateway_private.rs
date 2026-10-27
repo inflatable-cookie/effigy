@@ -2015,6 +2015,292 @@ fn create_listener_worktree_fixture(
     (primary, worktrees)
 }
 
+#[test]
+fn linked_base_domain_alias_avoids_primary_claim_without_dns_routes() {
+    linked_base_domain_alias_case(true, false);
+}
+
+#[test]
+fn linked_base_domain_alias_without_shared_service() {
+    linked_base_domain_alias_case(false, false);
+}
+
+#[test]
+fn linked_base_domain_alias_with_dns_route() {
+    linked_base_domain_alias_case(true, true);
+}
+
+fn linked_base_domain_alias_case(shared: bool, dns_route: bool) {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path).next().unwrap();
+    let docker_log = fixture.path().join("docker.log");
+    let docker = docker_dir.join("docker");
+    fs::copy("tests/fixtures/gateway-scope-docker.py", &docker).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let home = fixture.path().join("home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&foreign_ca).unwrap();
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let (primary, linked) = create_listener_worktree_fixture(fixture.path(), &["linked"]);
+    let linked = &linked[0];
+    for checkout in [&primary, linked] {
+        let catalog = checkout.join("infra/dev/catalog/z374-client");
+        fs::create_dir_all(&catalog).unwrap();
+        fs::write(catalog.join("service.toml"), "[service]\nname = \"z374-client\"\ndescription = \"Consumer-shapes proof client: a small build image and a shared-service client.\"\n\n[params.working_dir]\ntype = \"string\"\ndefault = \"/workspace\"\ndescription = \"Directory the checkout is mounted at\"\n\n[capabilities]\nexec_target = true\nshell = \"/bin/sh\"\n").unwrap();
+        fs::write(catalog.join("compose.fragment.yml"), "services:\n  {{ service_name }}:\n    build:\n      context: {{ repo_root }}\n      dockerfile: {{ catalog_path }}/Dockerfile\n      args:\n        MARKER: \"z374-build\"\n        SUFFIX: \"{{ project_name }}\"\n    working_dir: {{ working_dir }}\n    volumes:\n      - {{ repo_root }}:{{ working_dir }}\n").unwrap();
+        fs::write(catalog.join("Dockerfile"), "FROM busybox:latest\nARG MARKER=unset\nARG SUFFIX=none\nRUN printf '%s/%s/%s' \"$MARKER\" \"${SUFFIX}\" \"$PWD\" > /z374-build-proof\nCMD [\"sh\", \"-c\", \"sleep infinity\"]\n").unwrap();
+        let mut manifest = r#"[containers]
+default = "z374proof"
+[containers.z374proof]
+primary_service = "client"
+working_dir = "/workspace"
+profile = "scope-fixture"
+[containers.z374proof.services.client]
+catalog = "z374-client"
+[containers.z374proof.services.db]
+catalog = "mariadb"
+[containers.z374proof.services.backing]
+catalog = "mariadb"
+shared = true
+[containers.z374proof.services.backing.params]
+database = "z374proof"
+[containers.z374proof.dns]
+base_domain = "z374-consumer-shapes.test"
+[[containers.z374proof.host_processes]]
+name = "listener"
+run = 'exec python3 -m http.server "$PORT" --bind "$HOST"'
+[containers.z374proof.host_processes.listener]
+bind = "127.0.0.1:0"
+[containers.z374proof.host_processes.listener.readiness]
+path = "/"
+status = 200
+timeout_secs = 120
+[containers.z374proof.host_processes.listener.route]
+domain = "z374-consumer-shapes.test"
+tls = false
+"#
+        .to_owned();
+        if !shared {
+            manifest = manifest.replace("[containers.z374proof.services.backing]\ncatalog = \"mariadb\"\nshared = true\n[containers.z374proof.services.backing.params]\ndatabase = \"z374proof\"\n", "");
+        }
+        if dns_route {
+            manifest = manifest.replace("base_domain = \"z374-consumer-shapes.test\"", "base_domain = \"z374-consumer-shapes.test\"\nroutes = [{ domain = \"app.z374-consumer-shapes.test\", service = \"client\", port = 3306 }]");
+        }
+        fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+    }
+    let mut cleanup = ManagedContainerCleanup {
+        checkouts: vec![primary.clone(), linked.clone()],
+        home,
+        private_gateway: gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log,
+    };
+    let target = TcpListener::bind("127.0.0.1:0").unwrap();
+    fs::write(
+        cleanup.home.join("fake-db-port"),
+        target.local_addr().unwrap().port().to_string(),
+    )
+    .unwrap();
+    let primary_up = fixture_environment_command(&primary, &cleanup)
+        .env("FAKE_CHECKOUT", fs::canonicalize(&primary).unwrap())
+        .args(["container", "z374proof", "up", "--detach", "--json"])
+        .output_owned()
+        .unwrap();
+    assert!(
+        primary_up.status.success(),
+        "primary stdout={} stderr={}",
+        String::from_utf8_lossy(&primary_up.stdout),
+        String::from_utf8_lossy(&primary_up.stderr)
+    );
+    let before = read_json_file(&cleanup.home.join("fake-runtime.json"));
+    let shared_before = before
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|r| r["project"].as_str().unwrap().starts_with("effigy-shared-"))
+        .map(|r| r["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(shared_before.len(), usize::from(shared), "{before}");
+    assert!(effigy_core::worktree_scope::load_scoped(linked)
+        .unwrap()
+        .is_none());
+    for action in ["hosts", "render", "status"] {
+        let result = fixture_environment_command(linked, &cleanup)
+            .args(["container", "z374proof", action, "--json"])
+            .output_owned()
+            .unwrap();
+        assert!(result.status.success(), "{action}: {result:?}");
+        assert!(effigy_core::worktree_scope::load_scoped(linked)
+            .unwrap()
+            .is_none());
+    }
+    let output = fresh_container_command(linked, &cleanup)
+        .args(["container", "z374proof", "up", "--detach", "--json"])
+        .output_owned()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listener_pids = [&primary, linked]
+        .iter()
+        .map(|checkout| {
+            read_json_file(&checkout.join(
+                ".effigy/runtime/host-processes/z374proof/scope-fixture/listener.listener.json",
+            ))["child_pid"]
+                .as_u64()
+                .unwrap() as u32
+        })
+        .collect::<Vec<_>>();
+    let gateway_pid: u32 = fs::read_to_string(gateway.join("gateway.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let token = effigy_core::worktree_scope::load_scoped(linked)
+        .unwrap()
+        .unwrap()
+        .1;
+    let apex = format!("z374-consumer-shapes-w{}.test", &token[..8]);
+    let alias = format!("mysql.{apex}");
+    let routes_path = gateway.join("routes.json");
+    let routes = RouteTable::load(&routes_path).unwrap();
+    let primary_alias = routes.lookup("mysql.z374-consumer-shapes.test").unwrap();
+    assert_eq!(primary_alias.project, primary.display().to_string());
+    assert_eq!(
+        primary_alias.tcp_target.as_deref(),
+        Some(target.local_addr().unwrap().to_string().as_str())
+    );
+    let linked_alias = routes.lookup(&alias).unwrap();
+    assert_eq!(linked_alias.project, linked.display().to_string());
+    let after = read_json_file(&cleanup.home.join("fake-runtime.json"));
+    let local_projects = after
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|r| r["service"] == "db")
+        .map(|r| r["project"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(local_projects.len(), 2, "{after}");
+    let shared_after = after
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|r| r["project"].as_str().unwrap().starts_with("effigy-shared-"))
+        .map(|r| r["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(shared_before, shared_after, "{after}");
+    let hosts = parse_json_success(
+        fixture_environment_command(linked, &cleanup)
+            .args(["container", "z374proof", "hosts", "--json"])
+            .output_owned()
+            .unwrap(),
+    );
+    assert!(
+        hosts["routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|route| route["effective"] == alias && route["service"] == "db"),
+        "{hosts}"
+    );
+    let render = parse_json_success(
+        fixture_environment_command(linked, &cleanup)
+            .args(["container", "z374proof", "render", "--json"])
+            .output_owned()
+            .unwrap(),
+    );
+    let content = render["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["content"].as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        content.contains(&alias),
+        "compose missing {alias}: {content}"
+    );
+    let again = fresh_container_command(linked, &cleanup)
+        .args(["container", "z374proof", "up", "--detach", "--json"])
+        .output_owned()
+        .unwrap();
+    assert!(
+        again.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&again.stdout),
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert_eq!(
+        after,
+        read_json_file(&cleanup.home.join("fake-runtime.json"))
+    );
+    let down = fixture_environment_command(linked, &cleanup)
+        .args(["container", "z374proof", "down", "--json"])
+        .output_owned()
+        .unwrap();
+    assert!(
+        down.status.success(),
+        "{}",
+        String::from_utf8_lossy(&down.stdout)
+    );
+    let routes = RouteTable::load(&routes_path).unwrap();
+    assert!(routes.lookup(&alias).is_none());
+    assert!(routes.lookup("mysql.z374-consumer-shapes.test").is_some());
+    let down = fixture_environment_command(&primary, &cleanup)
+        .args(["container", "z374proof", "down", "--json"])
+        .output_owned()
+        .unwrap();
+    assert!(
+        down.status.success(),
+        "{}",
+        String::from_utf8_lossy(&down.stdout)
+    );
+    assert!(RouteTable::load(&routes_path)
+        .unwrap()
+        .all_routes()
+        .is_empty());
+    for pid in &listener_pids {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(*pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !effigy_process::process_is_running(*pid),
+            "listener {pid} survived down"
+        );
+    }
+    cleanup.checkouts.clear();
+    assert_success(run_gateway(
+        &gateway,
+        "down",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    ));
+    gateway_cleanup.untrack(&gateway);
+    assert!(
+        !gateway.join("gateway.pid").exists(),
+        "gateway {gateway_pid} survived down"
+    );
+    assert!(!effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty());
+    println!("fixture cleanup: listener pids={listener_pids:?}; gateway pid={gateway_pid}");
+}
+
 /// Starts the disposable private HTTPS gateway shared by managed listener
 /// proofs and returns its state root and OS-assigned HTTPS address.
 fn start_managed_listener_gateway(
