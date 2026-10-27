@@ -16,10 +16,14 @@ fn operator_fixture(
     GatewayConfig,
     effigy_test_support::env::ScopedEnv,
 ) {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let home = effigy_test_support::Fixture::short_home(prefix).expect("private operator home");
     let gateway = home.path().join(".effigy/gateway");
-    std::fs::create_dir_all(gateway.join("certs")).expect("gateway cert directory");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(gateway.join("certs"))
+        .expect("gateway cert directory");
     let mut config = GatewayConfig::standard(gateway.clone());
     let dns = UdpSocket::bind("127.0.0.1:0").expect("free DNS address");
     config.dns.bind_addr = dns.local_addr().expect("DNS address");
