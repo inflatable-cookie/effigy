@@ -783,6 +783,7 @@ def print_frozen_plan():
     print("                   db (local mariadb:10.11), backing (shared mariadb:10.11)")
     print("owned names:")
     print(f"  down removes  {', '.join(names['local_containers'])}")
+    print(f"  delete first  {', '.join(names['shared']['containers'])}  (labels proved first)")
     print(f"  delete volumes  {', '.join(names['volumes'])}  (labels proved first)")
     print(f"  delete networks {', '.join(names['networks'])}  (labels proved first)")
     print(f"shared project:    {shared['project']}")
@@ -829,6 +830,7 @@ def print_frozen_plan():
     print("cleanup (always, in this order, each name checked against the hard deny and its labels):")
     print(f"  - effigy container {ENVIRONMENT} down --repo {repo}")
     print(f"  - effigy container {ENVIRONMENT} down --repo {worktree}")
+    print(f"  - nerdctl rm -f {' '.join(names['shared']['containers'])}")
     print(f"  - nerdctl volume rm {' '.join(names['volumes'])}")
     print(f"  - nerdctl network rm {' '.join(names['networks'])}")
     print("  - effigy gateway down --private-state-root <fixture>/gateway")
@@ -977,9 +979,30 @@ def residue(names):
 
 
 def remove_owned(names):
-    """Delete the fixture's own volumes and networks, labels first. Local
-    containers are `down`'s to remove and are never deleted here."""
+    """Delete the fixture's own shared container first, then its volumes and
+    networks, labels first.
+
+    `down` leaves a shared service running by design, so its container still
+    holds the shared data volume: removing the volume before the container
+    cannot succeed. Local checkout containers stay `down`'s to remove and are
+    never deleted here."""
     deleted = []
+    shared_containers = [
+        name for _, name in owned_containers(names["shared"]["containers"], include_stopped=True)
+    ]
+    for name in shared_containers:
+        for marker in PROTECTED:
+            assert marker not in name, "refusing to delete protected %s" % name
+        assert any(owned_by(name, "containers", project) for project in names["projects"]), (
+            "refusing to delete %s: its labels do not prove it belongs to this fixture" % name
+        )
+    if shared_containers:
+        run(
+            ["colima", "-p", PROFILE, "ssh", "--", "sudo", "-n", "nerdctl", "rm", "-f", *shared_containers],
+            root,
+            timeout=300,
+        )
+        deleted.extend(shared_containers)
     for kind, resource, verb in (
         ("volumes", "volume", ["volume", "rm"]),
         ("networks", "network", ["network", "rm"]),
