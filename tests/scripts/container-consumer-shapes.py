@@ -365,14 +365,20 @@ def machine_gateway_baseline():
     """Read-only: the machine gateway's listeners, PIDs and executables.
 
     Item 5's fixture uses its own private gateway root, so this baseline proves
-    the machine gateway was not touched at all."""
+    the machine gateway was not touched at all. UDP has no LISTEN state in
+    `lsof`, so UDP is queried without a state filter; and the machine gateway
+    owns all three endpoints, so an empty observation is a refusal, not a
+    baseline."""
     import hashlib
 
     baseline = {}
     for proto, port in (("TCP", 80), ("TCP", 443), ("UDP", 15353)):
-        flag = "-sTCP:LISTEN" if proto == "TCP" else "-sUDP:LISTEN"
+        query = ["lsof", "-nP", "-i%s:%d" % (proto, port)]
+        if proto == "TCP":
+            query.insert(-1, "-sTCP:LISTEN")
+        query.append("-t")
         try:
-            listing = run(["lsof", "-nP", "-i%s:%d" % (proto, port), flag, "-t"], root, timeout=60).strip()
+            listing = run(query, root, timeout=60).strip()
         except Exception:
             listing = ""
         entries = []
@@ -388,7 +394,14 @@ def machine_gateway_baseline():
                 except Exception:
                     digest = "unreadable"
             entries.append((pid, executable, digest))
-        baseline[f"{proto}:{port}"] = entries
+        baseline["%s:%d" % (proto, port)] = entries
+    empty = [endpoint for endpoint, entries in baseline.items() if not entries]
+    if empty:
+        raise SystemExit(
+            "refusing to run: the machine gateway owns %s, but no listener is visible. "
+            "Start the operator gateway, or prove the change with the mount-only run instead."
+            % ", ".join(empty)
+        )
     return baseline
 
 
@@ -676,6 +689,7 @@ def approval_core(staging):
         "volumes " + " ".join(names["volumes"]),
         "networks " + " ".join(names["networks"]),
         "protected " + " ".join(PROTECTED),
+        "machine-gateway 80 443 15353 unchanged by pid and executable sha256",
         "steps up up-again no-effigy-env build-args shared-client local-stays-local "
         "restart-process linked-worktree down shared-delete baseline-check",
     ]
