@@ -182,8 +182,9 @@ kind = "tag"
 
 /// The kernel helper binary the release Run re-execs for process custody.
 ///
-/// Custody re-execs the startup image as its sentinel and supervisor
-/// (`__kernel-sentinel`, `__kernel-supervise`; contract 052 §5.7), so the tests
+/// Custody re-execs the binary the startup path names as its sentinel and
+/// supervisor (`__kernel-sentinel`, `__kernel-supervise`; contract 052 §5.7),
+/// so the tests
 /// supply `kernel-custody-fixture` instead of the libtest binary. The selector
 /// `test:release:runtime-storage` builds it and exports
 /// `EFFIGY_KERNEL_CUSTODY_FIXTURE`; an ordinary `effigy test` run prepares it

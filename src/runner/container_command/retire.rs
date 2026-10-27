@@ -718,8 +718,8 @@ fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
 
 /// Release the checkout's gateway state by checkout path alone: its routes.
 /// The route table is the only record of loopback ownership, so removing the
-/// routes frees the checkout's alias address too. Ports are the OS's or
-/// Compose's now, so retirement releases no port registry entry, and
+/// routes frees the checkout's alias address too. Ports belong to the OS or
+/// Compose, so retirement releases none, and
 /// certificates are a cache keyed by domain: they stay for the next `up` and
 /// the gateway daemon prunes the ones no route names.
 pub(super) fn release_gateway(checkout: &str) -> Result<GatewayRelease, RunnerError> {

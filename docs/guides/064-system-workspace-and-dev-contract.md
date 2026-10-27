@@ -356,10 +356,10 @@ Behavior:
 - do package or maintenance work inside Linux
 - on shell exit, prompt to bring the system down and default the answer to yes
 - a local upgrade automatically rebuilds a stale Linux artifact through
-  `workspace:linux:artifact`. A running, strictly owned Linux builder can be
-  reused even when an older detached activation remained partial. Effigy checks
+  `workspace:linux:artifact`. A running, strictly owned Linux builder is
+  reused. Effigy checks
   the immutable container identity and writable checkout bind before building;
-  it keeps the original activation record and cache volumes, and leaves the
+  it keeps the original cache volumes, and leaves the
   builder detached for reuse. No manual down/up or marker deletion is needed
   for this supported case. The one-time move from `effigy-linux-release` to
   `effigy-artifact-builder-v1` creates a separate labelled builder with the usual

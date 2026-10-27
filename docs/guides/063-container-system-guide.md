@@ -370,14 +370,12 @@ If the question is instead:
 ### Managed host listeners
 
 Host processes that serve a browser route can declare the listener they own.
-Effigy reserves the address, finds the listening socket in the child generation
-itself, and verifies it: no adapter is needed. Port `0` asks Effigy for a
-concrete port: before anything launches, Effigy reserves one loopback port in
-the environment's generated range through the gateway endpoint store, keeps
-that reservation across supervisor restarts within the run, and releases it
-when the environment settles (`down`, `reset`, session settle). Separate
-checkouts therefore never coordinate ports by hand and never race the OS for
-one. A fixed port is the manifest's own and is never reserved.
+Effigy verifies the child generation's own listening socket against the
+address its declaration names: no adapter is needed. Declare a concrete
+unprivileged loopback port, for example `bind = "127.0.0.1:4173"`. A `bind`
+whose port is `0` is handed to the child unchanged, so the OS picks the port
+and Effigy never learns it: that listener is never ready and its route is never
+published. A declared port is the manifest's own and is never reserved.
 For disposable profiles, point `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` at an owned
 private root and start that instance with `gateway setup-tls` and `gateway up`
 using the same `--private-state-root`. This keeps trust and route state scoped
@@ -391,7 +389,7 @@ cwd = "."
 restart = "on-failure"
 
 [containers.web.host_processes.listener]
-bind = "127.0.0.1:0"
+bind = "127.0.0.1:4173"
 
 [containers.web.host_processes.listener.readiness]
 path = "/health"
@@ -491,10 +489,10 @@ keeps the declared name. A listener result looks like this:
 }
 ```
 
-Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact loopback address
-(the reserved port for a `:0` declaration), `HOST` and `PORT` to that address
+Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the declared loopback
+address, `HOST` and `PORT` to that address
 and port, and `EFFIGY_HOST_PROCESS_PUBLIC_URL`
-and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and reserved
+and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and declared
 endpoint. It supplies `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, a private path
 in the process's runtime directory beside its log, and
 `EFFIGY_MANAGED_HOST_LISTENER_GENERATION`, the current child generation token,
@@ -568,9 +566,9 @@ and route read that dependency. A process that does not depend on a restarted
 one is never touched. An unknown process name fails before anything changes. An
 environment that is not up is named in one warning and the named processes start
 anyway: an environment that declares only host processes has no containers to
-prove. A restarted listener keeps the address it published, so a dependent's
-`internal_url` keeps working, and the restart holds the environment the way `up`
-does, so a `down` or a bring-up never interleaves with it.
+prove. A restarted listener binds the address its declaration names, so a
+dependent's `internal_url` keeps working, and the restart holds the environment
+the way `up` does, so a `down` or a bring-up never interleaves with it.
 
 ```
 [host process] farmyard-jobs restarted (run 7k2…, listener 127.0.0.1:41873, route https://jobs.example.test)

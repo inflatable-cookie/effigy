@@ -447,9 +447,11 @@ sentinel identities, then Run takes the sole death-pipe writer. Closed commits
 before the writer closes and the owner gate releases. Pure metadata names missing,
 dead and replaced sentinels as gaps. Sentinel EOF uses the same Run settle writer
 with a bounded gate wait; SIGSTOP leaves the pipe and gate held.
-A helper that dies before acknowledging is a typed `HelperExited` with its exit
-and a bounded stderr tail from an unlinked private log; admission settles
-`Closed(NotStarted)`. A binary replaced during a run is exec'd as it is; the
+A helper that dies before acknowledging settles the run as an `Unavailable`
+failure that names the helper, how it ended, the parent's handshake cause and
+the helper's last 4 KiB of stderr from an unlinked private log; a helper this
+process refused before spawning settles `Closed(NotStarted)`. A binary replaced
+during a run is exec'd as it is; the
 helper handshake frame's protocol version refuses a binary that speaks another
 version, naming both versions (`test:kernel:helpers`).
 

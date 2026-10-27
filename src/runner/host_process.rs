@@ -2325,8 +2325,7 @@ mod tests {
     }
 
     /// A stop names the run, the recorded PID and the escalation the kernel
-    /// performed; the process that ignored SIGTERM is gone and no PID-file
-    /// supervisor remains.
+    /// performed, and the process that ignored SIGTERM is gone.
     #[test]
     fn host_process_owned_stop_names_pid_and_sigkill_after_grace() {
         let fixture = fixture();
@@ -3516,9 +3515,9 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         assert_eq!(plain_env(environment, "PORT").as_deref(), Some("9999"));
     }
 
-    /// A leftover v0.14.1 PID record from a supervisor that died with the
-    /// reboot never blocks `up`: it is deleted with one line, and its spec with
-    /// it (effigy#341).
+    /// A leftover v0.14.1 PID record, and the spec beside it, are never read:
+    /// no Effigy surface opens them, so a record from a supervisor that died
+    /// with the reboot cannot block `up` (effigy#341).
     #[test]
     fn host_process_environment_carries_no_internal_marker() {
         let _markers = crate::contract_test_support::EnvGuard::set_many(&[

@@ -116,10 +116,6 @@ pub fn normalize_compose_command_args(
 
 /// Build standard detached bring-up args.
 ///
-/// Uses `--build` so compose-backed services track local Dockerfile changes
-/// instead of silently reusing stale tagged images. Generated compose stacks
-/// also force recreation because some backends keep existing containers on the
-/// previous image even after a successful rebuild of the same local tag.
 /// The one apply: bring the project up without a recreate flag (`--build` is
 /// not one: it keeps a changed Dockerfile built). Compose recreates exactly
 /// the services whose rendered configuration changed.

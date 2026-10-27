@@ -593,7 +593,7 @@ correction. Refusal checks must precede handover effects. For paired
 the approved handover stops the other complete environment cleanly while
 keeping its volumes, then starts the target. An environment stopped by handover
 must restart through ordinary `up`, rather than being stranded as an
-unreconcilable partial activation. Existing ownership and effect-boundary
+incomplete environment nothing reconciles. Existing ownership and effect-boundary
 checks remain required; this ruling waives none of them.
 
 The fresh consumer proofs must use a build containing this correction as well

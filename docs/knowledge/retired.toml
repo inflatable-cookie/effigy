@@ -1395,7 +1395,7 @@ allow = [
 [[retired]]
 id = "render-root-interpolation"
 retired = "2026-10-26; v0.15 simplification (Q-011, effigy#362)"
-replacement = "A rendered generation names the generation's other files relatively, and Compose resolves them against its project directory — the directory of the invocation's first `-f` input. Nothing is interpolated into a stack, so no container environment carries an Effigy value, and a re-up of an unchanged generation hands Compose byte-identical inputs. The shared Compose invocation therefore needs no value delivered to its VM for paths; the interpolation file that remains carries only the plan's forwarded `secrets.delivery = \"compose-env\"` values, is named by the digest of its contents rather than by a writing process, and is reclaimed by age and by count."
+replacement = "A rendered generation names the generation's other files relatively, and Compose resolves them against its project directory — the directory of the invocation's first `-f` input. Nothing is interpolated into a stack, so no container environment carries an Effigy value, and a re-up of an unchanged generation hands Compose byte-identical inputs. The shared Compose invocation therefore needs no value delivered to its VM for paths; the interpolation file that remains carries only the plan's forwarded `secrets.delivery = \"compose-env\"` values and is named by the digest of its contents rather than by a writing process, so an unchanged plan reuses one file and nothing prunes it."
 owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
 terms = [
   "EFFIGY_RENDER_ROOT",
@@ -1599,6 +1599,187 @@ replacement = "Task locks are kernel gates: a run holds its task's gate exactly 
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
 terms = [
   "refuse_live_legacy_holder",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "effigy-gateway-repair-owner-checkout"
+retired = "2026-10-26; Q-011 simplification (effigy#340, effigy#369)"
+replacement = "A gateway route is one claim per domain: `domain -> (checkout path, target)`. The same checkout path always replaces its own route, and a different checkout takes the domain over automatically when the recorded path is missing or its target does not accept a TCP connection within 200 ms, naming the takeover in one line. Otherwise the write is refused with one message naming the other checkout and `effigy container down` there. A route write also drops routes whose recorded checkout path is gone, so a dead loopback assignment is collected once at allocation time; there is no repair command, no owner filter and no plan to review."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "gateway repair",
+  "--owner-checkout",
+  "GatewayRepairPlan",
+  "repair_owner_checkout",
+]
+paths = [
+  "src/runner/gateway_command/repair.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing_runtime.rs",
+  "docs/guides/063-container-system-guide.md",
+  "src/tests/lib_tests_parse_tests/gateway_option_tests.rs",
+]
+
+[[retired]]
+id = "endpoint-claim-quarantine"
+retired = "2026-10-26; Q-011 simplification (effigy#340, effigy#353)"
+replacement = "A released endpoint claim frees its route, address or port immediately: the route table is the whole record, so an address is in use exactly when some route references it, and there is no reuse period, no boot clock and no withdrawal step. Withdrawn domain claims and their quarantine columns are gone with the second endpoint table."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "reuse quarantine",
+  "claim quarantine",
+  "endpoint quarantine",
+  "quarantined columns",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/architecture/035-gateway-endpoint-store.md",
+  "docs/knowledge/contracts/005-container-runtime-contract.md",
+]
+
+[[retired]]
+id = "effigy-project-port-ranges"
+retired = "2026-10-26; Q-011 simplification (effigy#346)"
+replacement = "Host ports come from the OS or Compose: a generated service publishes `127.0.0.1::<container-port>` and `up` reads the assigned port back into its route, a manifest pin is used as written and a collision names the holder, and `[containers.<NAME>.host].stable_ports = true` derives one stable port per published container port from the checkout path. There is no 100-port project range, no registry of pins and owning checkouts, and no `effigy container ports status|reclaim` command."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "container ports status",
+  "100-port",
+  "port registry",
+  "PortRegistry",
+  "pins/ranges",
+]
+paths = [
+  "crates/effigy-gateway/src/ports/reclaim.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-gateway/src/endpoint_store/snapshot.rs",
+]
+
+[[retired]]
+id = "environment-generation-journal"
+retired = "2026-10-26; Q-011 simplification (effigy#342)"
+replacement = "Compose's own state plus the environment's labels are the truth. Every environment change is a transition run that holds `Gate(Env)`, applies once and reconciles from what is running, so there is no applied generation, no partial activation, no admission snapshot and no second change detector to repair."
+owner = "docs/knowledge/contracts/053-environment-reconciler-contract.md"
+terms = [
+  "generation journal",
+  "partial activation",
+  "admission context",
+  "PartialActivation",
+]
+paths = [
+  "crates/effigy-containers/src/environment/generation.rs",
+  "crates/effigy-containers/src/environment/admission.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/contracts/053-environment-reconciler-contract.md",
+  "docs/knowledge/questions.md",
+]
+
+[[retired]]
+id = "exec-readiness-probe"
+retired = "2026-10-26; Q-011 simplification (effigy#352)"
+replacement = "Readiness is Running plus the service's own health check. The `exec -w <working_dir> true` probe and the service restart it could trigger are gone, so `container up` no longer fails when the image lacks the declared working directory; a user's own `effigy exec` reports its own error, and a service that declares `restart: \"no\"` and exited successfully is complete rather than unready."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "ContainerRuntimeExecNotReady",
+  "exec_readiness_restart",
+  "exec_ready_probe",
+  "readiness_restart",
+]
+paths = [
+  "src/runner/container_runtime_prep/readiness.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "container-restart-recovery"
+retired = "2026-10-26; Q-011 simplification (effigy#352)"
+replacement = "The runtime restarts a stopped service, not Effigy: once `up` has started the stack it asks the runtime for `restart: unless-stopped` on every container whose stack declares no policy of its own, and a declared policy wins. There is no hand-start of an exited container by name, no `{full_id}.timer` unload surgery, no `systemctl stop`/`reset-failed` on nerdctl health-check units and no `/run` inode-pressure parsing."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "healthcheck_timer",
+  "restart_recovery",
+  "unload_proof",
+  "pre_start_observation",
+  "health-check timer surgery",
+]
+paths = [
+  "src/runner/container_command/restart_recovery.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "startup-image-pin"
+retired = "2026-10-26; Q-011 simplification (effigy#360)"
+replacement = "The supervisor and sentinel exec whatever binary the startup path names, so a rebuild or reinstall during a run is ordinary; the helper handshake frame's protocol version refuses a binary that speaks another version, naming both versions. No startup image is captured, pinned across volumes or compared."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "ImagePin",
+  "startup image",
+  "StartupIdentity",
+  "executable_identity",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+]
+
+[[retired]]
+id = "v015-cutover-and-seals"
+retired = "2026-10-26; v0.15 simplification (Q-012 §3, effigy#354)"
+replacement = "v0.15 imports nothing and seals nothing. Publication, capture and object cleanup write ordinary owner-writable modes, and the v0.14-to-v0.15 cutover machinery — helper protocol negotiation for the import, prepared and committed records, seal resumption and the import's copy proof — is gone. A machine's old `migration/` directory is ignored: never read, changed or deleted."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "ImportSeal",
+  "import_seal",
+  "cutover manifest",
+  "migration-committed.json",
+  "import seal",
+]
+paths = [
+  "crates/effigy-kernel/src/migration/cutover.rs",
+  "src/runner/run_control/migrate.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/080-host-wide-validation-admission.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/questions.md",
+  "crates/effigy-kernel/tests/runtime_routing.rs",
+]
+
+[[retired]]
+id = "cargo-selector-escapes"
+retired = "2026-10-26; Q-011 simplification (effigy#356)"
+replacement = "Every Effigy route that runs Cargo goes through Oxide, or is recorded with its rule and reason in `docs/knowledge/cargo-routes.md`. The 489 `<selector>:cargo` escape tasks are gone, so a selector never has a plain-Cargo sibling; the one escape is `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>`, which runs that selector's Cargo command exactly as written."
+owner = "docs/knowledge/cargo-routes.md"
+terms = [
+  ":cargo escape",
+  ":cargo escape tasks",
+  "selector_cargo_escape",
 ]
 paths = []
 config_keys = []

@@ -642,7 +642,7 @@ pub fn up_with_executable_within(
         EffectClass::Observe,
     );
     // Stopping and detaching are control operations, not observations, and they
-    // must not depend on the admission context's expired deadline.
+    // must not depend on the caller's expired deadline.
     let control = context(budget.readiness, EffectClass::Mutate);
     let control_cx = control.effects().map_err(error)?;
     loop {

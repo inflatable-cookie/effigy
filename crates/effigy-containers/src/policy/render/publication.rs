@@ -35,8 +35,9 @@ pub(super) fn object_directory(repo_root: &Path) -> Result<PathBuf, ContainerPol
     Ok(root.path().join(".effigy/state/objects"))
 }
 
-/// Refuse an unresolved legacy cutover before minting checkout identity or
-/// allocating render inputs. This is Prepare, never an Observe side effect.
+/// Refuse a caller inside a workspace container before minting checkout
+/// identity or allocating render inputs. This is Prepare, never an Observe
+/// side effect.
 pub(super) fn prepare_identity(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerPolicyError> {

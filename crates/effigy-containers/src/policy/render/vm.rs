@@ -12,7 +12,8 @@
 //! generation's content digest stays independent of the state-home path. Its
 //! name is the digest of its contents: the same plan names the same file, so a
 //! re-up adds nothing. It is private to this user (0600 inside a 0700
-//! directory) and reclaimed by age and by count.
+//! directory) and nothing prunes it: the name is content-addressed, so an
+//! unchanged plan reuses one file and a changed one adds one more.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
