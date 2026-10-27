@@ -28,6 +28,7 @@ never starts, stops or reconfigures the profile, and never touches a container
 that is not carrying its own checkout label.
 """
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -276,6 +277,8 @@ catalog = "mariadb"
 [containers.%(environment)s.services.backing]
 catalog = "mariadb"
 shared = true
+[containers.%(environment)s.services.backing.params]
+database = "%(environment)s"
 
 [[containers.%(environment)s.host_processes]]
 name = "listener"
@@ -801,6 +804,12 @@ def print_frozen_plan():
         print(f"  {container_id[:12]}  {name}  started {started}")
     print("  hard deny: no container, volume or network name containing "
           + " or ".join(PROTECTED) + " is ever stopped or deleted")
+    print("linked worktree:   its Compose project is derived at `up` from the scope that")
+    print("                   run prepares, so cleanup discovers its containers, volume and")
+    print("                   network by com.effigy.checkout and com.docker.compose.project")
+    print("                   labels instead of trusting the render-time name.")
+    print("shared database:   the fixture's shared MariaDB declares database=z374proof, so its")
+    print("                   project name is its own and cannot collide with a consumer's.")
     print("preflight, before the first `up`, all fail-closed:")
     for step in [
         "the staging root, its checkouts and its HOME must not exist",
@@ -811,18 +820,19 @@ def print_frozen_plan():
         print(f"  - {step}")
     print("steps:")
     for step in [
-        "up the primary environment (persistent), snapshot running container IDs",
+        "up the primary environment detached, snapshot the container IDs the runtime attributes to it",
         "up again; assert every container ID is unchanged",
         "assert no container carries an EFFIGY_ environment entry",
         "exec the client: /z374-build-proof reads back the ARG/${VAR}/$var values",
-        "exec the client: MYSQL_HOST is host.docker.internal and resolves",
+        "exec the client: MYSQL_HOST is host.docker.internal, /etc/hosts carries it, and",
+        "                 ping resolves it through libc (BusyBox nslookup bypasses /etc/hosts)",
         "exec db: the local MariaDB did not take the shared host",
         "start the fixture's own private gateway, then assert the listener route landed there",
         "container z374proof restart listener; assert its PID changed",
         "up the linked worktree; assert its containers differ from the primary's",
         "down both environments by checkout path",
-        "assert no primary or linked container remains, and the private route is gone",
-        "delete the shared project's own container, volume and network, labels first",
+        "assert down left no container the runtime attributes to either checkout, and the route is gone",
+        "delete the discovered shared container first, then the discovered volumes and networks",
         "assert none of the owned names remains, or fail and keep the staging root",
         "assert the baseline containers kept their ID, start time and mounts",
     ]:
@@ -955,7 +965,14 @@ def stop_own_pid(pid, fixture_root, env):
     except Exception:
         return "already gone"
     if str(fixture_root) not in command_line:
-        return "left alone, not this fixture: %r" % command_line[:200]
+        # A supervisor may exec the listener with a relative command; its working
+        # directory still names the fixture.
+        try:
+            cwd = run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], root, timeout=60)
+        except Exception:
+            cwd = ""
+        if str(fixture_root) not in cwd:
+            return "left alone, not this fixture: %r" % command_line[:200]
     run(["kill", str(pid)], root, env=env, timeout=60)
     return "signalled"
 
@@ -978,23 +995,93 @@ def residue(names):
     }
 
 
-def remove_owned(names):
-    """Delete the fixture's own shared container first, then its volumes and
-    networks, labels first.
+def labels_of(kind, name):
+    """Labels for one container, volume or network, read-only."""
+    if kind == "containers":
+        raw = run(
+            ["colima", "-p", PROFILE, "ssh", "--", "sudo", "-n", "nerdctl", "inspect",
+             "--format", "{{json .Config.Labels}}", name],
+            root,
+            timeout=180,
+        )
+    else:
+        raw = run(
+            ["colima", "-p", PROFILE, "ssh", "--", "sudo", "-n", "nerdctl", kind, "inspect",
+             "--format", "{{json .Labels}}", name],
+            root,
+            timeout=180,
+        )
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {}
+
+
+def labels_own(labels, name, projects, checkouts):
+    """Whether the runtime's own labels (or the exact name prefix) attribute a
+    container, volume or network to this fixture."""
+    for key in ("com.docker.compose.project", "com.effigy.project"):
+        if labels.get(key) and labels.get(key) in projects:
+            return True
+    for key in ("com.effigy.checkout", "com.effigy.repo-root"):
+        if labels.get(key) and labels.get(key) in checkouts:
+            return True
+    return any(name.startswith(f"{project}-") or name.startswith(f"{project}_") for project in projects)
+
+
+def discover_owned(repo, worktree, shared_project, predicted_projects=(), checkouts=()):
+    """Everything this fixture actually owns, found by the runtime's labels.
+
+    The linked worktree's Compose project is derived at `up` from the scope the
+    run prepares, so the render-time name is not the name its containers carry
+    afterwards. Predicted names are seeded so a failure that left only a volume
+    or a network (no container) is still discovered, and the label pass extends
+    the set from whatever the runtime reports."""
+    checkouts = {str(p) for p in checkouts} or {str(repo), str(worktree)}
+    projects = {shared_project} | {p for p in predicted_projects if p}
+    containers = []
+    for container_id, name in runtime_containers(include_stopped=True):
+        labels = labels_of("containers", container_id)
+        if labels_own(labels, name, projects, checkouts):
+            containers.append((container_id, name))
+            for key in ("com.docker.compose.project", "com.effigy.project"):
+                if labels.get(key):
+                    projects.add(labels[key])
+    volumes = sorted(
+        name for name in runtime_named("volume")
+        if labels_own(labels_of("volume", name), name, projects, checkouts)
+    )
+    networks = sorted(
+        name for name in runtime_named("network")
+        if labels_own(labels_of("network", name), name, projects, checkouts)
+    )
+    return {
+        "containers": sorted(containers),
+        "projects": sorted(projects),
+        "volumes": volumes,
+        "networks": networks,
+    }
+
+
+def remove_owned(discovered, shared_project):
+    """Delete what discovery found: the fixture's shared container first, then
+    its volumes and networks, labels first, protected identities denied.
 
     `down` leaves a shared service running by design, so its container still
-    holds the shared data volume: removing the volume before the container
-    cannot succeed. Local checkout containers stay `down`'s to remove and are
-    never deleted here."""
+    holds the shared data volume and a volume-first order cannot succeed.
+    Checkout containers stay `down`'s to remove and are never deleted here."""
     deleted = []
+    checkouts = set(discovered.get("checkouts") or ())
+    projects = set(discovered["projects"])
     shared_containers = [
-        name for _, name in owned_containers(names["shared"]["containers"], include_stopped=True)
+        name for container_id, name in discovered["containers"]
+        if labels_of("containers", container_id).get("com.docker.compose.project") == shared_project
     ]
     for name in shared_containers:
         for marker in PROTECTED:
             assert marker not in name, "refusing to delete protected %s" % name
-        assert any(owned_by(name, "containers", project) for project in names["projects"]), (
-            "refusing to delete %s: its labels do not prove it belongs to this fixture" % name
+        assert owned_by(name, "containers", shared_project), (
+            "refusing to delete %s: its labels do not prove it belongs to %s" % (name, shared_project)
         )
     if shared_containers:
         run(
@@ -1007,14 +1094,14 @@ def remove_owned(names):
         ("volumes", "volume", ["volume", "rm"]),
         ("networks", "network", ["network", "rm"]),
     ):
-        wanted = set(names[kind])
+        wanted = set(discovered[kind])
         if not wanted:
             continue
         present = [name for name in runtime_named(resource) if name in wanted]
         for name in present:
             for marker in PROTECTED:
                 assert marker not in name, "refusing to delete protected %s" % name
-            assert any(owned_by(name, resource, project) for project in names["projects"]), (
+            assert labels_own(labels_of(resource, name), name, projects, checkouts), (
                 "refusing to delete %s: its labels do not prove it belongs to this fixture" % name
             )
         if not present:
@@ -1056,6 +1143,21 @@ def live_run(staging, approval=None):
     failure = None
     mutating = False
     started_gateway = False
+    # Every Compose project the runtime has attributed to this fixture. Saved
+    # after each successful `up`, so a volume or network left behind when `down`
+    # already removed the containers is still discovered by its own project.
+    observed = {"projects": set(names["projects"])}
+
+    def owned_snapshot():
+        snapshot = discover_owned(
+            repo,
+            worktree,
+            shared["project"],
+            sorted(observed["projects"]),
+            checkouts=(repo, worktree),
+        )
+        observed["projects"].update(snapshot["projects"])
+        return snapshot
 
     def status(repo_root):
         return json.loads(
@@ -1093,11 +1195,11 @@ def live_run(staging, approval=None):
         started_gateway = True
 
         mutating = True
-        effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo, env=env)
-        first = owned_containers(names["local_containers"], include_stopped=False)
+        effigy("container", ENVIRONMENT, "up", "--detach", "--repo", repo, cwd=repo, env=env)
+        first = owned_snapshot()["containers"]
         assert first, "up started no fixture container"
-        effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo, env=env)
-        second = owned_containers(names["local_containers"], include_stopped=False)
+        effigy("container", ENVIRONMENT, "up", "--detach", "--repo", repo, cwd=repo, env=env)
+        second = owned_snapshot()["containers"]
         assert first == second, ("a second up replaced a container", first, second)
         checks.append(("re-up keeps every container ID", len(second)))
 
@@ -1114,7 +1216,19 @@ def live_run(staging, approval=None):
         assert exec_in(client, 'printf %s "$MYSQL_HOST"', env).strip() == "host.docker.internal", (
             "the shared-service client did not receive the shared host"
         )
-        assert "Address" in exec_in(client, "nslookup host.docker.internal | tail -2", env)
+        # BusyBox `nslookup` queries DNS directly and never reads /etc/hosts, so
+        # it cannot prove the extra_hosts entry. The glibc path is /etc/hosts,
+        # and `ping` resolves through libc before it sends anything.
+        hosts_entry = exec_in(client, "grep -c 'host.docker.internal' /etc/hosts", env).strip()
+        assert hosts_entry.isdigit() and int(hosts_entry) >= 1, (
+            "the shared-service client carries no host.docker.internal hosts entry",
+            hosts_entry,
+        )
+        resolved = exec_in(client, "ping -c1 -W1 host.docker.internal 2>&1 | head -2", env)
+        assert re.search(r"\((?:\d{1,3}\.){3}\d{1,3}\)", resolved), (
+            "host.docker.internal did not resolve through the libc resolver",
+            resolved,
+        )
         local_db = next(name for _, name in second if name.endswith("-db-1"))
         assert exec_in(local_db, 'printf %s "$MYSQL_HOST"', env).strip() != "host.docker.internal", (
             "the local MariaDB took the shared host"
@@ -1133,7 +1247,7 @@ def live_run(staging, approval=None):
             assert after_listener["pid"] != before_listener.get("pid"), (
                 "restart left the listener process in place", before_listener, after_listener
             )
-        assert [cid for cid, _ in owned_containers(names["local_containers"], include_stopped=False)] == [
+        assert [cid for cid, _ in owned_snapshot()["containers"]] == [
             cid for cid, _ in second
         ], "restarting a host process replaced a container"
         checks.append(("container restart restarted the host-process listener", after_listener or "pid not exposed"))
@@ -1143,13 +1257,17 @@ def live_run(staging, approval=None):
         )
         checks.append(("the shared MariaDB runs as its own project", shared["project"]))
 
-        effigy("container", ENVIRONMENT, "up", "--repo", worktree, cwd=worktree, env=env)
-        worktree_containers = sorted(
+        effigy("container", ENVIRONMENT, "up", "--detach", "--repo", worktree, cwd=worktree, env=env)
+        linked_owned = owned_snapshot()
+        worktree_containers = [
             (container_id, name)
-            for container_id, name in runtime_containers()
-            if name.startswith(f"{WORKTREE_DIR}-")
+            for container_id, name in linked_owned["containers"]
+            if labels_of("containers", container_id).get("com.effigy.checkout") == str(worktree)
+        ]
+        assert worktree_containers, (
+            "the linked worktree brought up nothing the runtime attributes to it",
+            linked_owned,
         )
-        assert worktree_containers, "the linked worktree brought up nothing"
         assert not ({name for _, name in second} & {name for _, name in worktree_containers}), (
             "the worktree reused the primary's container names"
         )
@@ -1164,7 +1282,10 @@ def live_run(staging, approval=None):
         assert LISTENER_DOMAIN not in private_routes(gateway_root, env), (
             "down left the listener route behind"
         )
-        left_local = owned_containers(names["local_containers"])
+        after_down = owned_snapshot()
+        left_local = [
+            name for _, name in after_down["containers"]
+        ]
         assert left_local == [], ("down left a checkout's own container", left_local)
         hosts = json.loads(
             effigy("container", ENVIRONMENT, "hosts", "--json", "--repo", repo, cwd=repo, env=env)
@@ -1172,8 +1293,10 @@ def live_run(staging, approval=None):
         assert hosts.get("result", {}).get("routes") == [], hosts.get("result", {}).get("routes")
         checks.append(("down left no container and no route", 0))
 
-        remove_owned(names)
+        remove_owned(owned_snapshot(), shared["project"])
         left = residue(names)
+        for kind in ("containers", "volumes", "networks"):
+            left[kind] = sorted(set(left.get(kind, [])) | set(owned_snapshot()[kind]))
         assert not any(left.values()), ("the owned names were not all deleted", left)
         checks.append(("the fixture's own shared container, volume and network are deleted", shared["project"]))
     except BaseException as exc:  # re-raised after cleanup
@@ -1195,11 +1318,18 @@ def live_run(staging, approval=None):
                 except Exception as failure_reason:
                     print(f"[warn] down {repo_root} failed: {failure_reason}", flush=True)
             try:
-                remove_owned(names)
+                remove_owned(owned_snapshot(), shared["project"])
             except Exception as failure_reason:
                 print(f"[warn] owned cleanup failed: {failure_reason}", flush=True)
         try:
             left = residue(names)
+            discovered_left = owned_snapshot()
+            for kind in ("containers", "volumes", "networks"):
+                if discovered_left[kind]:
+                    left[kind] = sorted(
+                        set(left.get(kind, []))
+                        | {n for n in discovered_left[kind] if isinstance(n, str)}
+                    )
         except Exception as failure_reason:
             print(f"[warn] residue could not be read: {failure_reason}", flush=True)
             left = {"unreadable": [str(failure_reason)]}
@@ -1226,6 +1356,10 @@ def live_run(staging, approval=None):
         print("[fail] the machine gateway changed", flush=True)
     try:
         left = residue(names)
+        discovered_left = owned_snapshot()
+        for kind in ("containers", "volumes", "networks"):
+            if discovered_left[kind]:
+                left[kind] = sorted(set(left.get(kind, [])) | {n for n in discovered_left[kind] if isinstance(n, str)})
     except Exception as failure_reason:
         left = {"unreadable": [str(failure_reason)]}
     for label, count in checks:
