@@ -1557,7 +1557,7 @@ def live_run(staging, approval=None):
         if mutating:
             for repo_root, environment in ((repo, ENVIRONMENT), (worktree, LINKED_ENVIRONMENT)):
                 try:
-                    down(repo_root)
+                    down(repo_root, environment)
                 except Exception as failure_reason:
                     print(f"[warn] down {repo_root} failed: {failure_reason}", flush=True)
             try:
