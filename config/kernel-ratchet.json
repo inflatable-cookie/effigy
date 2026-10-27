@@ -251,6 +251,9 @@
       "std::env::remove_var": 1,
       "std::env::set_var": 2
     },
+    "crates/effigy-test-support/src/process.rs": {
+      "libc::kill": 2
+    },
     "crates/effigy-tui/src/multiprocess/startup_visibility.rs": {
       "libc::kill": 2,
       "std.process.Command.new": 2,
@@ -326,7 +329,7 @@
     },
     "src/runner/gateway_command/daemon.rs": {
       "nix::sys::signal::kill": 1,
-      "std.fs.OpenOptions.write": 6,
+      "std.fs.OpenOptions.write": 4,
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },

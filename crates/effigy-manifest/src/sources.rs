@@ -251,9 +251,7 @@ pub fn prepare_pinned_sources(
 /// An existing checkout is neither inspected nor reported: a plain task pays
 /// no `git` call for a source it already has, and a fresh worktree acquires a
 /// missing one bounded and non-interactively.
-pub fn prepare_missing_pinned_sources(
-    manifest_path: &Path,
-) -> Result<(), ManifestError> {
+pub fn prepare_missing_pinned_sources(manifest_path: &Path) -> Result<(), ManifestError> {
     for spec in resolve_pinned_sources(manifest_path)? {
         if !spec.path.exists() {
             clone_at_pin(&spec)?;
@@ -572,7 +570,10 @@ path = "../book"
     #[test]
     fn an_acquisition_that_never_answers_is_stopped_at_its_bound() {
         let mut command = Command::new("sleep");
-        command.arg("60").stdin(Stdio::null()).stdout(Stdio::piped());
+        command
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped());
         let started = Instant::now();
         let error = run_bounded(
             command,

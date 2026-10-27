@@ -54,7 +54,10 @@ fn runtime_checkout_routing_is_local_and_writes_no_record() {
     ));
     let reopened =
         StateRoot::checkout_effects(&cx, machine.path(), &location).expect("the journal reopens");
-    assert!(matches!(Store::read(&observe(), &reopened), Observed::Verified(_, _)));
+    assert!(matches!(
+        Store::read(&observe(), &reopened),
+        Observed::Verified(_, _)
+    ));
     assert_eq!(
         StateRoot::filesystem_checkout(&observe(), &location).unwrap(),
         StateRoot::filesystem_checkout(&observe(), &location).unwrap(),
@@ -430,7 +433,9 @@ fn runtime_moved_checkout_opens_at_its_new_location() {
     std::fs::create_dir(first.join(".git")).unwrap();
     let machine = home();
     let cx = effects(EffectClass::Mutate);
-    let before = location::CheckoutLocation { root: first.clone() };
+    let before = location::CheckoutLocation {
+        root: first.clone(),
+    };
     let owner = ResourceId::store(
         Scope::Checkout(StateRoot::filesystem_checkout(&observe(), &before).unwrap()),
         "history",
@@ -445,7 +450,9 @@ fn runtime_moved_checkout_opens_at_its_new_location() {
     }
     let second = space.path().join("second");
     std::fs::rename(&first, &second).unwrap();
-    let after = location::CheckoutLocation { root: second.clone() };
+    let after = location::CheckoutLocation {
+        root: second.clone(),
+    };
     assert!(matches!(
         StateRoot::checkout_observe(&observe(), &after),
         Observed::Verified(_, _)

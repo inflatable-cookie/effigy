@@ -1028,13 +1028,20 @@ fn a_pinned_source_that_needs_a_prompt_fails_without_one() {
     let tools = fixture.owner.path().join("tools");
     fs::create_dir(&tools).unwrap();
     let ssh = tools.join("ssh");
-    fs::write(&ssh, "#!/bin/sh\nprintf '%s ' \"$@\" > \"$HOME/ssh-called\"\nexit 255\n")
-        .unwrap();
+    fs::write(
+        &ssh,
+        "#!/bin/sh\nprintf '%s ' \"$@\" > \"$HOME/ssh-called\"\nexit 255\n",
+    )
+    .unwrap();
     fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")])
-        .unwrap();
+    let path =
+        std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
 
-    let (ok, output) = fixture.run(&["hello"], &[("PATH", Path::new(&path))], Duration::from_secs(60));
+    let (ok, output) = fixture.run(
+        &["hello"],
+        &[("PATH", Path::new(&path))],
+        Duration::from_secs(60),
+    );
     assert!(!ok, "an unreachable pinned source fails the task: {output}");
     assert!(output.contains("book"), "{output}");
     let called = fs::read_to_string(fixture.home.join("ssh-called")).unwrap_or_default();

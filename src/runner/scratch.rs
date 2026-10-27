@@ -1287,7 +1287,10 @@ mod tests {
         // Either the removal won, or the tree stays marked and a later sweep
         // retires it: neither leaks an unmarked directory (F1).
         if outcome.is_err() {
-            assert!(read_marker(&dir).is_some(), "a tree left behind stays marked");
+            assert!(
+                read_marker(&dir).is_some(),
+                "a tree left behind stays marked"
+            );
             assert_eq!(sweep_at(root.path(), now_ms(), SWEEP_BUDGET).removed, 1);
         }
         assert!(!dir.exists(), "the tree is gone, not leaked unmarked");
@@ -1307,7 +1310,12 @@ mod tests {
         assert_eq!(process_gone(&live), Some(false));
         // A live pid whose recorded identity names another process generation
         // is a recycled number, not the run that wrote the marker.
-        let style = live.pid_start.split(':').next().unwrap_or_default().to_owned();
+        let style = live
+            .pid_start
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_owned();
         let recycled = Marker {
             pid_start: format!("{style}:1"),
             ..live

@@ -779,10 +779,7 @@ mod tests {
             },
             Case {
                 name: "a declared base",
-                routes: &[
-                    ("s3.acme.test", Some("web")),
-                    ("acme.test", Some("site")),
-                ],
+                routes: &[("s3.acme.test", Some("web")), ("acme.test", Some("site"))],
                 aliases: false,
                 listeners: &[],
                 declared: Some("declared.test"),
@@ -813,10 +810,7 @@ mod tests {
             },
             Case {
                 name: "a wildcard beside a bare route",
-                routes: &[
-                    ("*.acme.test", None),
-                    ("admin.acme.test", Some("web")),
-                ],
+                routes: &[("*.acme.test", None), ("admin.acme.test", Some("web"))],
                 aliases: false,
                 listeners: &[],
                 declared: None,
@@ -904,11 +898,7 @@ mod tests {
                         assert!(warning.contains(token), "{}: {warning}", case.name);
                     }
                 }
-                None => assert!(
-                    case.warning.is_empty(),
-                    "{}: expected a warning",
-                    case.name
-                ),
+                None => assert!(case.warning.is_empty(), "{}: expected a warning", case.name),
             }
         }
     }

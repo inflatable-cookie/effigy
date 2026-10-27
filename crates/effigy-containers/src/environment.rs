@@ -64,9 +64,7 @@ pub fn observe_root(
 /// to a nested catalog's directory (contract 052 §7.1). A nested catalog
 /// directory with no Git metadata of its own therefore shares the enclosing
 /// checkout's journal with the task runs that fence it.
-pub(crate) fn location(
-    repo_root: &std::path::Path,
-) -> effigy_kernel::location::CheckoutLocation {
+pub(crate) fn location(repo_root: &std::path::Path) -> effigy_kernel::location::CheckoutLocation {
     effigy_kernel::location::CheckoutLocation {
         root: effigy_core::worktree_scope::checkout_root(repo_root),
     }

@@ -129,12 +129,7 @@ fn old_route_rows_decode_with_the_pinned_shape() {
             Some("127.0.0.1:8080"),
             Some(Ipv4Addr::new(127, 1, 0, 7)),
         ),
-        (
-            without_dns_ip,
-            "test.test",
-            Some("127.0.0.1:8080"),
-            None,
-        ),
+        (without_dns_ip, "test.test", Some("127.0.0.1:8080"), None),
         (
             without_target,
             "db.test",

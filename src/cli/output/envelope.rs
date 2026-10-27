@@ -35,8 +35,7 @@ pub fn emit_json_envelope_error(
     message: &str,
     details: Option<serde_json::Value>,
 ) -> ! {
-    let payload =
-        build_json_envelope_error(kind, name, error_type, category, message, details);
+    let payload = build_json_envelope_error(kind, name, error_type, category, message, details);
     print_json_payload(&payload);
     std::process::exit(exit_code);
 }

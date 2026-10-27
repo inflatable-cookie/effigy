@@ -275,7 +275,11 @@ mod tests {
     /// is refused with the `external = true` remedy.
     #[test]
     fn legacy_form_cases() {
-        type Row = (&'static str, &'static str, Result<(&'static str, &'static str), &'static str>);
+        type Row = (
+            &'static str,
+            &'static str,
+            Result<(&'static str, &'static str), &'static str>,
+        );
         let cases: [Row; 3] = [
             (
                 "a repo-relative source resolves",
@@ -298,12 +302,10 @@ mod tests {
             std::fs::create_dir_all(repo.path().join("assets")).unwrap();
             match expected {
                 Ok((source_tail, target)) => {
-                    let resolved =
-                        resolve_legacy_spec(repo.path(), "web", spec).expect(name);
+                    let resolved = resolve_legacy_spec(repo.path(), "web", spec).expect(name);
                     let expected_root = repo.path().canonicalize().unwrap();
                     assert!(
-                        resolved
-                            .starts_with(&format!("{}/{source_tail}", expected_root.display())),
+                        resolved.starts_with(&format!("{}/{source_tail}", expected_root.display())),
                         "{name}: got `{resolved}`"
                     );
                     assert!(resolved.ends_with(target), "{name}: got `{resolved}`");
@@ -357,11 +359,7 @@ mod tests {
     /// and an unexpanded or absent source is refused by name.
     #[test]
     fn structured_form_cases() {
-        type Row = (
-            &'static str,
-            fn(&Path) -> PathBuf,
-            fn(&Path, &Path) -> Case,
-        );
+        type Row = (&'static str, fn(&Path) -> PathBuf, fn(&Path, &Path) -> Case);
         let cases: [Row; 6] = [
             (
                 "an absolute source without external",
@@ -385,10 +383,7 @@ mod tests {
                         host: "${EFFIGY_TEST_MOUNT_EXT}",
                         external: true,
                         options: vec!["ro"],
-                        env: Some((
-                            "EFFIGY_TEST_MOUNT_EXT",
-                            file.path().display().to_string(),
-                        )),
+                        env: Some(("EFFIGY_TEST_MOUNT_EXT", file.path().display().to_string())),
                         expect: Expect::Resolved {
                             source: source.display().to_string(),
                             tail: ":/etc/x:ro",
@@ -407,10 +402,7 @@ mod tests {
                         host: "${EFFIGY_TEST_MOUNT_OPTS}",
                         external: true,
                         options: vec!["ro", "z"],
-                        env: Some((
-                            "EFFIGY_TEST_MOUNT_OPTS",
-                            file.path().display().to_string(),
-                        )),
+                        env: Some(("EFFIGY_TEST_MOUNT_OPTS", file.path().display().to_string())),
                         expect: Expect::Resolved {
                             source: source.display().to_string(),
                             tail: ":/etc/x:ro,z",
@@ -476,7 +468,10 @@ mod tests {
                 case.host,
                 "/etc/x",
                 case.external,
-                case.options.iter().map(|option| (*option).to_owned()).collect(),
+                case.options
+                    .iter()
+                    .map(|option| (*option).to_owned())
+                    .collect(),
             );
             let resolved = resolve_structured(&repo, "web", &table);
             for (variable, _) in case.env.iter() {
@@ -519,10 +514,7 @@ mod tests {
             assert_eq!(expand_host_path("~").unwrap(), *home);
         }
         // A bare `$` needs its braces to be a variable.
-        assert_eq!(
-            expand_host_path("/home/$USER/x").unwrap(),
-            "/home/$USER/x"
-        );
+        assert_eq!(expand_host_path("/home/$USER/x").unwrap(), "/home/$USER/x");
         for (raw, empty) in [("${UNCLOSED", false), ("${}", true)] {
             let error = expand_host_path(raw).expect_err(raw);
             if empty {
