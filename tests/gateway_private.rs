@@ -1890,6 +1890,11 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (private_gateway, https_address) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let gateway_pid: u32 = fs::read_to_string(private_gateway.join("gateway.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     let ca_path = private_gateway.join("ca/rootCA.pem");
     let routes_path = private_gateway.join("routes.json");
 
@@ -1970,7 +1975,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         }
     }
 
-    let container_cleanup = ManagedContainerCleanup {
+    let mut container_cleanup = ManagedContainerCleanup {
         checkouts: checkouts
             .iter()
             .map(|(checkout, ..)| checkout.clone())
@@ -2009,6 +2014,10 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
                 "{args:?}: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
+        }
+        if args.contains(&"hosts") || args.contains(&"scope") {
+            let report = parse_json_success(output);
+            assert!(report["scope"]["token"].is_null(), "{args:?}: {report}");
         }
         assert!(
             effigy_core::worktree_scope::load_scoped(&checkouts[1].0)
@@ -2233,6 +2242,9 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     ));
     assert_eq!(restart_hosts["scope"]["kind"], "worktree");
     assert_ne!(restart_hosts["routes"][0]["effective"], DECLARED_HOST);
+    let restart_pid = read_json_file(&state_path(restart, "restart"))["child_pid"]
+        .as_u64()
+        .unwrap() as u32;
     assert_success(run_container_cli(
         restart,
         &container_cleanup,
@@ -2252,6 +2264,11 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     assert!(effigy_core::worktree_scope::load_scoped(stack)
         .unwrap()
         .is_some());
+    let stack_pid =
+        read_json_file(&stack.join(".effigy/runtime/host-processes/stack/stack/app.listener.json"))
+            ["child_pid"]
+            .as_u64()
+            .unwrap() as u32;
     assert_success(
         container_command_for_env(stack, &container_cleanup, "stack")
             .args(["down", "--json"])
@@ -2276,6 +2293,9 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             .1,
         failed_token
     );
+    let retry_pid = read_json_file(&state_path(shared_checkout, "scoped-shared"))["child_pid"]
+        .as_u64()
+        .unwrap() as u32;
     assert_success(run_container_cli(
         shared_checkout,
         &container_cleanup,
@@ -2370,9 +2390,187 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         !effects.log.exists() || fs::read(&effects.log).unwrap_or_default().is_empty(),
         "scoped listener proof invoked a host-global effect"
     );
-    println!(
-        "scoped listener proof: declared={DECLARED_HOST}, effective={effective:?}, shared_refused=true, private_host_effects=none"
+    for index in [0, 2] {
+        assert_success(run_container_cli(
+            &checkouts[index].0,
+            &container_cleanup,
+            &["down", "--json"],
+        ));
+        assert!(RouteTable::load(&routes_path)
+            .unwrap()
+            .lookup(&effective[index])
+            .is_none());
+    }
+    let mut pids = child_pids
+        .iter()
+        .map(|pid| pid.as_u64().unwrap() as u32)
+        .collect::<Vec<_>>();
+    pids.extend([
+        new_child_pid.as_u64().unwrap() as u32,
+        restart_pid,
+        stack_pid,
+        retry_pid,
+    ]);
+    for pid in &pids {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(*pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !effigy_process::process_is_running(*pid),
+            "fixture listener {pid} survived down"
+        );
+    }
+    container_cleanup.checkouts.clear();
+    assert_success(run_gateway(
+        &private_gateway,
+        "down",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    ));
+    gateway_cleanup.untrack(&private_gateway);
+    assert!(!private_gateway.join("gateway.pid").exists());
+    println!("scoped listener proof: declared={DECLARED_HOST}, effective={effective:?}, shared_refused=true, private_host_effects=none; listener pids={pids:?} stopped, gateway pid={gateway_pid} down, routes removed");
+}
+
+#[test]
+fn fresh_linked_hybrid_dev_prepares_scope_before_policy() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path).next().unwrap();
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+    let home = fixture.path().join("home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&foreign_ca).unwrap();
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let gateway_pid: u32 = fs::read_to_string(private_gateway.join("gateway.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let (primary, worktrees) = create_listener_worktree_fixture(fixture.path(), &["dev-linked"]);
+    let linked = &worktrees[0];
+    let binary = std::env::current_exe().unwrap();
+    for (checkout, profile) in [(&primary, "primary"), (linked, "dev-linked")] {
+        let control = fixture.path().join(format!("control-{profile}"));
+        fs::create_dir(&control).unwrap();
+        write_listener_fixture_manifest(ListenerFixtureManifest {
+            checkout,
+            profile,
+            domain: "dev.acme.test",
+            body: profile,
+            child_binary: &binary,
+            control_dir: &control,
+            bind: "127.0.0.1:0",
+            readiness_timeout_secs: 20,
+            never_ready: false,
+        });
+    }
+    let manifest = linked.join("effigy.toml");
+    let mut source = fs::read_to_string(&manifest).unwrap();
+    source.push_str("\n[tasks.dev]\nmode = \"tui\"\nworkspace = \"app\"\nrun = \"sleep 60\"\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n");
+    fs::write(&manifest, source).unwrap();
+    let mut cleanup = ManagedContainerCleanup {
+        checkouts: vec![primary.clone(), linked.clone()],
+        home,
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log,
+    };
+    let plan = fixture_environment_command(linked, &cleanup)
+        .args(["--plan", "dev"])
+        .output_owned()
+        .unwrap();
+    assert_success(plan);
+    assert!(effigy_core::worktree_scope::load_scoped(linked)
+        .unwrap()
+        .is_none());
+    assert_success(run_container_cli(
+        &primary,
+        &cleanup,
+        &["up", "--detach", "--json"],
+    ));
+    let output_path = fixture.path().join("dev.log");
+    let mut dev = fresh_container_command(linked, &cleanup)
+        .args(["dev", "--headless"])
+        .stdout(Stdio::from(fs::File::create(&output_path).unwrap()))
+        .stderr(Stdio::from(
+            fs::File::create(fixture.path().join("dev.err")).unwrap(),
+        ))
+        .spawn_owned()
+        .unwrap();
+    let dev_pid = dev.id();
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let output = fs::read_to_string(&output_path).unwrap_or_default();
+        if output.contains("[managed] started `dev`") {
+            break;
+        }
+        assert!(
+            dev.try_wait().unwrap().is_none(),
+            "dev exited: {output}; stderr={}",
+            fs::read_to_string(fixture.path().join("dev.err")).unwrap_or_default()
+        );
+        assert!(Instant::now() < deadline, "dev did not start: {output}");
+        thread::sleep(Duration::from_millis(50));
+    }
+    let token = effigy_core::worktree_scope::load_scoped(linked)
+        .unwrap()
+        .unwrap()
+        .1;
+    let hosts = parse_json_success(run_container_cli(linked, &cleanup, &["hosts", "--json"]));
+    assert_eq!(hosts["scope"]["token"], token);
+    let effective = hosts["routes"][0]["effective"].as_str().unwrap();
+    assert_ne!(effective, "dev.acme.test");
+    let state = read_json_file(
+        &linked.join(".effigy/runtime/host-processes/web/dev-linked/app.listener.json"),
     );
+    let listener_pid = state["child_pid"].as_u64().unwrap() as u32;
+    assert!(RouteTable::load(&private_gateway.join("routes.json"))
+        .unwrap()
+        .lookup(effective)
+        .is_some());
+    assert_success(
+        fixture_environment_command(linked, &cleanup)
+            .args(["dev", "stop"])
+            .output_owned()
+            .unwrap(),
+    );
+    assert!(dev.wait().unwrap().success());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while effigy_process::process_is_running(listener_pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(!effigy_process::process_is_running(listener_pid));
+    assert!(RouteTable::load(&private_gateway.join("routes.json"))
+        .unwrap()
+        .lookup(effective)
+        .is_none());
+    assert!(RouteTable::load(&private_gateway.join("routes.json"))
+        .unwrap()
+        .lookup("dev.acme.test")
+        .is_some());
+    assert_success(run_container_cli(&primary, &cleanup, &["down", "--json"]));
+    cleanup.checkouts.clear();
+    assert_success(run_gateway(
+        &private_gateway,
+        "down",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    ));
+    gateway_cleanup.untrack(&private_gateway);
+    assert!(!private_gateway.join("gateway.pid").exists());
+    println!("hybrid fixture cleanup: dev pid={dev_pid}, listener pid={listener_pid}, gateway pid={gateway_pid}; session and listener stopped, gateway down, primary and linked routes removed");
 }
 
 #[test]

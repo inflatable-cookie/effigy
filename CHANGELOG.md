@@ -6,8 +6,6 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-- Prepare a fresh linked worktree’s runtime scope before resolving container startup policy, so its first `up` uses its own hosts and identity.
-
 ### Breaking
 - **Upgrading from v0.14.1 recreates a local catalog service once, on the same
   named volume** (Q-012 §3, effigy#373). Nothing is imported from an earlier
@@ -2113,6 +2111,7 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- Prepare a fresh linked worktree’s runtime scope before resolving container startup policy, so its first `up` uses its own hosts and identity.
 - Release settlement receives a fresh 60-second budget after stages; `release settle <run>` recovers an interrupted invocation without advancing stages.
 - A run step opens the bundle source the checkout lock selects when it runs.
   A step is itself a Prepare path (`bundle sync`, `container up`), so it could

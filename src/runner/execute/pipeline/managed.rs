@@ -314,6 +314,13 @@ fn start_managed_run(
     let terminal = (front == Front::Tui)
         .then(crossterm::terminal::size)
         .and_then(Result::ok);
+    // The mutating session resolves its environment for the front end before
+    // its supervisor starts. Plans and controls never enter this path.
+    if plan.owns_environment && !context.container_handoff {
+        effigy_core::worktree_scope::prepare_checkout_token(context.repo()).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot record the checkout identity: {error}"))
+        })?;
+    }
     // What each front end shows is resolved before the run starts, so a
     // front-end resolution failure never leaves a supervisor running.
     let tui = match front {

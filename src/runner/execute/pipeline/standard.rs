@@ -317,6 +317,14 @@ fn run_standard_task_inner(
         return Ok(output);
     }
 
+    if matches!(
+        container_binding,
+        ContainerExecutionBinding::Container { .. }
+    ) {
+        effigy_core::worktree_scope::prepare_checkout_token(scope_root).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot record the checkout identity: {error}"))
+        })?;
+    }
     let routed = route_with_running_check(
         scope_root,
         preflight,
