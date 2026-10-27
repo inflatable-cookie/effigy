@@ -149,6 +149,9 @@ pub(in crate::runner) fn activate_routed_container_runtime(
     repo_root: &Path,
     container_name: &str,
 ) -> Result<ContainerTaskActivation, RunnerError> {
+    effigy_core::worktree_scope::prepare_checkout_token(repo_root).map_err(|error| {
+        RunnerError::task_invocation(format!("cannot record the checkout identity: {error}"))
+    })?;
     activate_routed_container_runtime_with(
         repo_root,
         container_name,

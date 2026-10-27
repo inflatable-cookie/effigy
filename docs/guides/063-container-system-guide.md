@@ -802,6 +802,8 @@ gate per shared Compose project serialises checkouts whose `up`s overlap.
 
 Treat the object directory as runtime output, not repo-owned source.
 
+A fresh linked worktree needs no preparatory command before its first container start.
+
 Runtime-scoped checkouts — linked Git worktrees and full clones whose local
 Git config sets `effigy.runtimeScope = ephemeral` — get a stable generation
 suffix on generated Compose project names (`-wt-` for a worktree, `-ec-` for

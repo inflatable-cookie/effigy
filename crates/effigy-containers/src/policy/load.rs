@@ -114,12 +114,16 @@ pub fn load_container_policy_with_workspace(
 }
 
 /// Resolve a fresh policy and optional extra-mount decisions for container up.
-/// Call after runtime and shared-service preparation, immediately before
-/// dispatching the primary Compose up command.
+/// Prepare the checkout identity before resolving any scope-dependent policy.
 pub fn load_container_policy_for_creation(
     repo_root: &Path,
     requested_name: Option<&str>,
 ) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+    effigy_core::worktree_scope::prepare_checkout_token(repo_root).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "cannot record the checkout identity: {error}"
+        ))
+    })?;
     super::render::prepare_inputs(&load_container_policy(repo_root, requested_name)?)?;
     let resolved =
         load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)?;

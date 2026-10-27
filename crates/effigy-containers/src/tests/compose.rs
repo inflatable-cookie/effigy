@@ -2381,3 +2381,60 @@ catalog = "node"
         assert_eq!(again.declared_ports, prepared.declared_ports);
     });
 }
+
+#[test]
+fn fresh_worktree_creation_scopes_local_resources_but_keeps_shared_service() {
+    let fixture = tempfile::tempdir().unwrap();
+    fs::create_dir(fixture.path().join("home")).unwrap();
+    crate::with_test_effigy_home(&fixture.path().join("home"), || {
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "fixture-dev"
+primary_service = "app"
+[containers.web.dns]
+base_domain = "acme.test"
+routes = [{ domain = "app.acme.test", service = "app", tls = false }]
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+[containers.web.services.postgres]
+catalog = "postgres"
+[containers.web.services.shared_db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+"#;
+        let (primary, worktrees) =
+            create_linked_worktree_fixture(fixture.path(), manifest, &["linked"]);
+        let linked = &worktrees[0];
+        let token_dir = effigy_core::worktree_scope::resolve(linked)
+            .unwrap()
+            .unwrap()
+            .token_dir;
+        fs::remove_file(token_dir.join(effigy_core::worktree_scope::SCOPE_FILE)).unwrap();
+        let primary_policy = load_prepared_policy(&primary, None).unwrap();
+        assert!(effigy_core::worktree_scope::load_scoped(linked)
+            .unwrap()
+            .is_none());
+        let linked_policy = load_prepared_policy(linked, None).unwrap();
+        assert_ne!(primary_policy.project_name, linked_policy.project_name);
+        assert!(linked_policy.project_name.starts_with("fixture-dev-wt-"));
+        assert_ne!(
+            primary_policy.dns_routes[0].domain,
+            linked_policy.dns_routes[0].domain
+        );
+        assert!(primary_policy.managed_volumes.iter().all(|v| linked_policy
+            .managed_volumes
+            .iter()
+            .all(|other| v.name != other.name)));
+        assert_eq!(
+            primary_policy.shared_services[0].project_name,
+            linked_policy.shared_services[0].project_name
+        );
+        let aliases = service_aliases(&parsed_compose(&linked_policy, 1), "postgres");
+        assert!(aliases
+            .iter()
+            .any(|alias| alias.starts_with("postgres.acme-w")));
+    });
+}
