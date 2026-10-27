@@ -608,6 +608,9 @@ def fixture_names(identity):
     return {
         "local_containers": sorted(local),
         "projects": sorted({identity["primary_project"], identity["linked_project"], identity["shared"]["project"]}),
+        # A linked worktree's project is `<worktree dir>-<scope>`, so the
+        # directory names are the stems that survive the scope rename.
+        "stems": sorted({PRIMARY_DIR, WORKTREE_DIR, identity["shared"]["project"]}),
         "shared": shared,
         "containers": sorted(local | set(shared["containers"])),
         "volumes": sorted(set(shared["volumes"]) | set(local_volumes)),
