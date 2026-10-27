@@ -6,9 +6,7 @@ use route_table_fixture::RouteTableFixture;
 use std::net::{TcpListener, UdpSocket};
 use std::time::{Duration, Instant};
 
-/// A private operator HOME with an active setup receipt and a route table, so
-/// a start has everything it needs except the daemon itself. The control
-/// socket needs a short external pathname.
+/// A short private operator HOME with setup receipt and route table.
 fn operator_fixture(
     prefix: &str,
 ) -> (
@@ -53,8 +51,19 @@ fn operator_fixture(
     (home, config, environment)
 }
 
-/// The fallback selector refuses before starting any operator fixture while
-/// the machine gateway is running. Direct test invocations use the same guard.
+#[test]
+fn operator_fixture_private_root_is_valid() {
+    use std::os::unix::fs::PermissionsExt;
+    let (home, _config, _private) = operator_fixture("g382-");
+    let root = home.path().join(".effigy/gateway");
+    for path in [&root, &root.join("certs")] {
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+    effigy_gateway::private_state::validate_root(&root).expect("valid operator fixture root");
+}
+
+/// Both selector and direct lifecycle tests refuse while the machine gateway runs.
 fn require_machine_gateway_free() {
     assert!(
         std::process::Command::new("/bin/sh")
@@ -69,8 +78,7 @@ fn require_machine_gateway_free() {
     );
 }
 
-/// Poll the private status until the run settles. A refusal must stop what it
-/// admitted rather than leave a live daemon behind.
+/// A refused start must settle its admitted run without leaving a daemon.
 fn settled_status(config: &GatewayConfig) -> operator::Status {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -162,13 +170,8 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     assert!(!ready.control_socket.unwrap().exists());
     assert!(!evidence.exists());
     assert!(!config.pid_file_path.exists());
-    // A bind collision produces a closed failed run and no advertised identity.
-    //
-    // The diagnosis is the daemon's own words for the collision, never the
-    // Rust variant that carries them: the operator prints `Display` of the
-    // `ProxyBindError` cause, and its account names the endpoint that could
-    // not be taken. Asserting the variant name would only restate an internal
-    // identifier that no operator ever sees.
+    // A bind collision closes the run without advertising identity and reports
+    // the daemon's Display diagnosis, including the endpoint that could not bind.
     let occupied = TcpListener::bind(config.proxy.bind_addr).unwrap();
     let bind_cause = format!("HTTP proxy failed to bind on {}", config.proxy.bind_addr);
     let failure = operator::up_with_executable(&config, executable)
@@ -213,10 +216,8 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     drop(occupied);
 }
 
-/// Supervisor admission and daemon readiness are separate bounded phases
-/// (papercut a9b40685). An exhausted admission budget refuses as admission
-/// without waiting out a readiness deadline, and an exhausted readiness budget
-/// is reported after a real admission, which it then stops.
+/// Admission and readiness have separate budgets (papercut a9b40685).
+/// Exhausting either reports its own phase and settles any admitted run.
 #[test]
 fn operator_startup_bounds_admission_and_readiness_separately() {
     let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
