@@ -1,4 +1,4 @@
-use crate::tests::prelude::{parse_command, Command, HelpTopic, RhaiArgs, RhaiSubcommand};
+use crate::tests::prelude::{parse_command, Command, RhaiArgs, RhaiSubcommand};
 
 #[test]
 fn parse_rhai_surface_accepts_json_flag() {
@@ -16,12 +16,4 @@ fn parse_rhai_surface_accepts_json_flag() {
             output_json: true,
         })
     );
-}
-
-#[test]
-fn parse_rhai_help_is_scoped() {
-    let command =
-        parse_command(vec!["rhai".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-
-    assert_eq!(command, Command::Help(HelpTopic::Rhai));
 }

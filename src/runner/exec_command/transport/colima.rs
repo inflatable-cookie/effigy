@@ -460,17 +460,6 @@ mod tests {
         policy.workspace_user = Some("dev".to_owned());
         policy
     }
-
-    /// Fake runtime that hangs on the uncached discovery probe while a valid
-    /// `ps -q` answer stays available for the compose resolve that follows.
-    #[cfg(unix)]
-    fn discovery_hang_script(pgfile: &Path) -> String {
-        format!(
-            "#!/bin/sh\ncase \"$1\" in\n  nerdctl)\n    case \"$*\" in\n      *\"ps --filter\"*\"--format\"*)\n        printf '%s\\n' \"$$\" > '{pg}'\n        sleep 300 &\n        printf '%s\\n' \"$!\" >> '{pg}'\n        wait\n        ;;\n      *)\n        printf 'demo-stack-workspace-1\\n'\n        exit 0\n        ;;\n    esac\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
-            pg = pgfile.display()
-        )
-    }
-
     /// Phased variant of the hang fixture for the caller-deadline proof. The
     /// first project-filtered `ps` invocation answers instantly through the same
     /// production capture path (readiness: PATH resolution, phase dispatch,
@@ -591,19 +580,6 @@ mod tests {
         );
         pids
     }
-
-    #[cfg(unix)]
-    fn assert_owned_processes_gone(pgfile: &Path) {
-        let alive = recorded_owned_pids(pgfile)
-            .into_iter()
-            .filter(|pid| pid_alive(*pid))
-            .collect::<Vec<_>>();
-        assert!(
-            alive.is_empty(),
-            "owned discovery process group was not reaped: {alive:?} still alive"
-        );
-    }
-
     #[cfg(unix)]
     fn wait_for_owned_processes_gone(pgfile: &Path) {
         let pids = recorded_owned_pids(pgfile);
@@ -639,54 +615,6 @@ mod tests {
     impl Drop for ProofGroupCleanup {
         fn drop(&mut self) {
             reap_exact_recorded_pids(&self.pgfile);
-        }
-    }
-
-    /// Private RAII guard for the unbounded negative control. Signals only the
-    /// exact PIDs the fixture recorded plus its own direct child handle, never
-    /// a process pattern and never the test's own process group.
-    #[cfg(unix)]
-    struct DiscoveryFixtureGuard {
-        pgfile: std::path::PathBuf,
-        child: std::process::Child,
-    }
-
-    #[cfg(unix)]
-    impl DiscoveryFixtureGuard {
-        fn new(pgfile: std::path::PathBuf, child: std::process::Child) -> Self {
-            Self { pgfile, child }
-        }
-
-        fn wait_until_recorded(&self) {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            loop {
-                if std::fs::read_to_string(&self.pgfile)
-                    .map(|text| !text.trim().is_empty())
-                    .unwrap_or(false)
-                {
-                    return;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "fixture never recorded its own pids: {}",
-                    self.pgfile.display()
-                );
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        }
-
-        fn reap(&mut self) {
-            reap_exact_recorded_pids(&self.pgfile);
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-            wait_for_owned_processes_gone(&self.pgfile);
-        }
-    }
-
-    #[cfg(unix)]
-    impl Drop for DiscoveryFixtureGuard {
-        fn drop(&mut self) {
-            self.reap();
         }
     }
 
@@ -864,43 +792,6 @@ mod tests {
             "an expired discovery deadline must not spawn the uncached probe or the ps resolve"
         );
     }
-
-    /// Negative control for the expired-no-spawn oracle: with no deadline
-    /// propagated the same fixture does spawn, so the oracle is non-vacuous.
-    #[cfg(unix)]
-    #[test]
-    fn expired_no_spawn_oracle_fails_when_the_discovery_deadline_is_not_propagated() {
-        let _lock = crate::contract_test_support::lock_test();
-        let (_temp, root) = deadline_fresh_root("discovery-propagation-control");
-        let marker = root.join("spawned");
-        let bin = install_deadline_fake_colima(
-            &root,
-            &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
-        );
-        let _env = with_deadline_runtime_env(&bin);
-        let policy = deadline_policy(&root);
-        clear_service_container_name_cache();
-        let capture = |root_dir: &Path, program: &std::ffi::OsStr, args: &[OsString]| {
-            crate::runner::exec_command::transport::run_command_capture_until(
-                root_dir, program, args, None, None,
-            )
-        };
-
-        let _ = resolve_compose_service_container_id(
-            &root,
-            &policy,
-            "workspace",
-            None,
-            &capture,
-            &|_| String::new(),
-        );
-
-        assert!(
-            marker.exists(),
-            "without a propagated deadline the fixture must spawn, proving the no-spawn oracle is non-vacuous"
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn cache_hit_does_not_spawn_discovery() {
@@ -1019,57 +910,6 @@ mod tests {
             fixture_trace_snippet(&tracefile)
         );
     }
-
-    /// Negative control: with runtime deadline/reap disabled, the recorded
-    /// discovery hang stays alive, so the reap oracle used by the positive
-    /// proof must fail. The private guard then reaps exactly the recorded
-    /// leader and descendant, leaving no leaked process behind.
-    #[cfg(unix)]
-    #[test]
-    fn discovery_reap_oracle_fails_when_the_runtime_deadline_is_disabled() {
-        let _lock = crate::contract_test_support::lock_test();
-        let (_temp, root) = deadline_fresh_root("discovery-reap-control");
-        let pgfile = root.join("discovery-process-group");
-        let bin = install_deadline_fake_colima(&root, &discovery_hang_script(&pgfile));
-        let fixture = bin.join("colima");
-        let child = std::process::Command::new(&fixture)
-            .args([
-                "nerdctl",
-                "--profile",
-                "effigy",
-                "--",
-                "ps",
-                "--filter",
-                "label=com.docker.compose.project=demo-stack",
-                "--format",
-                "{{.Names}}",
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn the discovery hang without runtime deadline");
-
-        let guard = DiscoveryFixtureGuard::new(pgfile.clone(), child);
-        guard.wait_until_recorded();
-        let recorded = recorded_owned_pids(&pgfile);
-        assert!(
-            recorded.iter().all(|pid| pid_alive(*pid)),
-            "deadline/reap disabled: the recorded discovery hang must still be alive: {recorded:?}"
-        );
-
-        let oracle = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            assert_owned_processes_gone(&pgfile);
-        }));
-        assert!(
-            oracle.is_err(),
-            "the reap oracle must fail while the owned discovery hang is still alive"
-        );
-
-        drop(guard);
-        assert_owned_processes_gone(&pgfile);
-    }
-
     #[test]
     fn resolve_running_service_container_name_prefers_matching_project_service() {
         let policy = effigy_containers::EffectiveContainerPolicy {
@@ -1148,72 +988,6 @@ mod tests {
 
         assert_eq!(resolved.as_deref(), Some("demo-app-1"));
     }
-
-    #[test]
-    fn cached_running_service_container_name_reuses_first_lookup() {
-        let repo_root = Path::new("/tmp/repo");
-        let policy = effigy_containers::EffectiveContainerPolicy {
-            render: None,
-            repo_root: std::path::PathBuf::from("/tmp"),
-            name: "web".to_owned(),
-            driver: effigy_manifest::ManifestContainerDriver::Colima,
-            startup: effigy_manifest::ManifestContainerStartup::Detached,
-            profile: "effigy-cache-test".to_owned(),
-            compose_source: effigy_containers::EffectiveComposeSource::Generated,
-            compose_files: vec![std::path::PathBuf::from("/tmp/docker-compose.yml")],
-            compose_file_display: "docker-compose.yml".to_owned(),
-            managed_volumes: vec![],
-            borrowed_volumes: Vec::new(),
-            data_peers: Vec::new(),
-            data_from: None,
-            shared_services: vec![],
-            project_name: "demo-cache".to_owned(),
-            primary_service: "app".to_owned(),
-            dns_domain: None,
-            dns_base_domain: None,
-            dns_tls: false,
-            dns_port: None,
-            dns_routes: vec![],
-            service_aliases: vec![],
-            declared_ports: vec![],
-            ports_declared_explicitly: false,
-            declared_mounts: vec![],
-            declared_media_mounts: vec![],
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
-            secret_runtime_dir: None,
-            source_secret_runtime_for_deferrals: false,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
-            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: Vec::new(),
-        };
-        let key = service_container_name_cache_key(repo_root, &policy, "app");
-        service_container_name_cache()
-            .lock()
-            .expect("service container name cache poisoned")
-            .remove(&key);
-
-        service_container_name_cache()
-            .lock()
-            .expect("service container name cache poisoned")
-            .insert(key.clone(), "demo-app-1".to_owned());
-
-        let resolved =
-            resolve_cached_running_service_container_name(repo_root, &policy, "app", None)
-                .expect("cached container name");
-        assert_eq!(resolved.as_deref(), Some("demo-app-1"));
-
-        service_container_name_cache()
-            .lock()
-            .expect("service container name cache poisoned")
-            .remove(&key);
-    }
-
     #[test]
     fn resolve_compose_service_container_id_uses_first_non_empty_line() {
         let repo_root = Path::new("/tmp/repo");

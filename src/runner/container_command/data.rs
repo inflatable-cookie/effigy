@@ -781,13 +781,7 @@ mod tests {
         run_container_data_dump_with_hooks,
     };
     use effigy_cli::ContainerDbDumpInput;
-    use effigy_containers::{
-        EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
-    };
-    use effigy_manifest::{
-        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-        ManifestContainerStartup, TaskManifest,
-    };
+    use effigy_manifest::TaskManifest;
     use std::fs;
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
@@ -838,50 +832,6 @@ mod tests {
             }
         }
     }
-
-    fn test_policy() -> EffectiveContainerPolicy {
-        EffectiveContainerPolicy {
-            render: None,
-            repo_root: std::path::PathBuf::from("/tmp"),
-            name: "web".to_owned(),
-            driver: ManifestContainerDriver::Colima,
-            startup: ManifestContainerStartup::Detached,
-            profile: "effigy".to_owned(),
-            compose_source: EffectiveComposeSource::Direct,
-            compose_files: vec![PathBuf::from("docker-compose.yml")],
-            compose_file_display: "docker-compose.yml".to_owned(),
-            managed_volumes: vec![],
-            borrowed_volumes: Vec::new(),
-            data_peers: Vec::new(),
-            data_from: None,
-            shared_services: Vec::<SharedServiceBinding>::new(),
-            project_name: "demo-web-dev".to_owned(),
-            primary_service: "app".to_owned(),
-            dns_domain: None,
-            dns_base_domain: None,
-            dns_tls: false,
-            dns_port: None,
-            dns_routes: vec![],
-            service_aliases: vec![],
-            declared_ports: vec!["8080:80".to_owned()],
-            ports_declared_explicitly: true,
-            declared_mounts: vec![],
-            declared_media_mounts: vec![],
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
-            secret_runtime_dir: None,
-            source_secret_runtime_for_deferrals: false,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: ManifestContainerOnTaskExit::Stop,
-            shutdown: ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: Vec::new(),
-        }
-    }
-
     #[test]
     fn run_container_data_dump_rejects_push_without_oci_destination() {
         let root = temp_repo("data-dump-push-local");
@@ -1290,13 +1240,6 @@ database = "acowtancy"
             .expect_err("json should fail");
         assert!(json.to_string().contains("--yes"));
     }
-
-    #[test]
-    fn test_policy_stays_constructible_for_data_tests() {
-        let policy = test_policy();
-        assert_eq!(policy.name, "web");
-    }
-
     #[test]
     fn resolve_db_dump_output_paths_expands_tilde() {
         let Ok(home) = std::env::var("HOME") else {

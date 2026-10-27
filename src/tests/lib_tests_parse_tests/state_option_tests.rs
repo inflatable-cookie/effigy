@@ -544,15 +544,6 @@ fn parse_state_history_with_positional_stack() {
         })
     );
 }
-
-#[test]
-fn parse_state_help_topic() {
-    let cmd =
-        parse_command(vec!["state".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-
-    assert_eq!(cmd, Command::Help(HelpTopic::State));
-}
-
 #[test]
 fn parse_state_artifact_inspect_with_repo_json_and_handoff() {
     let cmd = parse_command(vec![

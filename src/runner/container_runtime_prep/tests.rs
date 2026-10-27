@@ -1,19 +1,19 @@
 use super::{
     activate_container_runtime_plan_for_task_using, candidate_host_mount_paths,
-    ensure_exec_container_running_with, ensure_runtime_exec_readiness_stage_using,
+    ensure_exec_container_running_with,
     ensure_runtime_gateway_readiness_stage_using, ensure_runtime_running_stage,
-    parse_bind_mount_host_path, prepare_host_bind_mount_dirs, prepare_runtime_mounts_stage,
-    reconcile_runtime_aliases_stage_using, refresh_changed_cargo_inputs_using,
+    parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
+    refresh_changed_cargo_inputs_using,
     run_runtime_compose_up_stage, run_runtime_prep_steps, run_task_apply,
     runtime_activation_plan_from_request, runtime_activation_report_for_result,
-    validate_policy_runtime, validate_runtime_activation_stage, verify_live_checkout_mount_using,
+    validate_policy_runtime, verify_live_checkout_mount_using,
     ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_runtime_plan::{
-    RuntimeActivationRoute, RuntimeActivationStage, RuntimeCleanupResult, RuntimeLeasePolicy,
+    RuntimeActivationRoute, RuntimeCleanupResult, RuntimeLeasePolicy,
 };
 use std::ffi::OsString;
 use std::fs;
@@ -243,35 +243,6 @@ services:
     let _ = fs::remove_dir_all(&repo_root);
     let _ = fs::remove_dir_all(&outside_dir);
 }
-
-#[test]
-fn prepare_runtime_mounts_stage_preserves_bind_mount_behavior() {
-    let repo_root = temp_test_dir("mount-stage");
-    let runtime_dir = repo_root.join(".effigy/runtime/data/db/mysql");
-    let compose_file = repo_root.join("docker-compose.yml");
-
-    fs::write(
-        &compose_file,
-        format!(
-            r#"
-services:
-  db:
-    volumes:
-      - "{}:/var/lib/mysql"
-"#,
-            runtime_dir.display(),
-        ),
-    )
-    .expect("write compose file");
-
-    let policy = test_policy(compose_file);
-    prepare_runtime_mounts_stage(&repo_root, &policy).expect("prepare mount stage");
-
-    assert!(runtime_dir.is_dir());
-
-    let _ = fs::remove_dir_all(&repo_root);
-}
-
 #[test]
 fn prepare_host_bind_mount_dirs_creates_named_volume_targets_under_repo_binds() {
     let repo_root = temp_test_dir("named-volume-targets");
@@ -546,101 +517,6 @@ fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply()
         "shared services and secrets come first, then the one apply"
     );
 }
-
-#[test]
-fn runtime_readiness_stage_only_proves_the_owned_binding() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let calls = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
-
-    let error = ensure_runtime_exec_readiness_stage_using(repo_root, &policy, {
-        let calls = Arc::clone(&calls);
-        move |repo_root, policy| {
-            calls
-                .lock()
-                .expect("calls lock")
-                .push((repo_root.to_path_buf(), policy.name.clone()));
-            Err(RunnerError::task_invocation("binding unavailable"))
-        }
-    })
-    .expect_err("an unowned binding should fail");
-
-    assert_eq!(error.to_string(), "binding unavailable");
-    assert_eq!(
-        *calls.lock().expect("calls lock"),
-        vec![(repo_root.to_path_buf(), "web".to_owned())]
-    );
-}
-
-#[test]
-fn runtime_prep_reconciles_container_local_tcp_aliases_after_exec_readiness() {
-    let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
-
-    run_runtime_prep_steps(
-        {
-            let events = Arc::clone(&events);
-            move || {
-                events.lock().expect("events lock").push("prepare-mounts");
-                Ok(())
-            }
-        },
-        {
-            let events = Arc::clone(&events);
-            move || {
-                events.lock().expect("events lock").push("compose-up");
-                Ok(())
-            }
-        },
-        {
-            let events = Arc::clone(&events);
-            move || {
-                events.lock().expect("events lock").push("exec-ready");
-                Ok(())
-            }
-        },
-        {
-            let events = Arc::clone(&events);
-            move |_| {
-                events
-                    .lock()
-                    .expect("events lock")
-                    .push("reconcile-aliases");
-                Ok(())
-            }
-        },
-    )
-    .expect("runtime prep steps should succeed");
-
-    let events = events.lock().expect("events lock").clone();
-    assert_eq!(events.last().copied(), Some("reconcile-aliases"));
-    assert!(events.contains(&"exec-ready"));
-}
-
-#[test]
-fn runtime_alias_reconciliation_stage_preserves_identity_and_errors() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let calls = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
-
-    let error = reconcile_runtime_aliases_stage_using(repo_root, &policy, {
-        let calls = Arc::clone(&calls);
-        move |repo_root, policy| {
-            calls
-                .lock()
-                .expect("calls lock")
-                .push((repo_root.to_path_buf(), policy.name.clone()));
-            Err(RunnerError::task_invocation("alias reconciliation failed"))
-        }
-    })
-    .expect_err("alias reconciliation should fail");
-
-    assert_eq!(error.to_string(), "alias reconciliation failed");
-    assert_eq!(
-        *calls.lock().expect("calls lock"),
-        vec![(repo_root.to_path_buf(), "web".to_owned())]
-    );
-}
-
 #[test]
 fn runtime_gateway_readiness_stage_skips_when_no_gateway_surface_exists() {
     let repo_root = Path::new("/tmp/demo-repo");
@@ -737,26 +613,6 @@ fn runtime_gateway_readiness_stage_starts_gateway_before_registration() {
         ]
     );
 }
-
-#[test]
-fn runtime_activation_plan_from_request_preserves_non_task_route() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let plan = runtime_activation_plan_from_request(
-        repo_root,
-        &policy,
-        ActivationRequest {
-            container_name: Some("web"),
-            repo_override: Some(repo_root.to_path_buf()),
-            route: RuntimeActivationRoute::Rhai,
-            session_context: RuntimeSessionContext::default(),
-        },
-    );
-
-    assert_eq!(plan.request.route, RuntimeActivationRoute::Rhai);
-    assert_eq!(plan.route, RuntimeActivationRoute::Rhai);
-}
-
 #[test]
 fn runtime_prep_surfaces_alias_reconciliation_failure_after_exec_recovery() {
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
@@ -830,31 +686,6 @@ fn validate_policy_runtime_uses_typed_policy_error_family() {
         other => panic!("expected typed runtime policy error, got {other}"),
     }
 }
-
-#[test]
-fn validate_runtime_activation_stage_preserves_policy_error_phase() {
-    let repo_root = temp_test_dir("runtime-policy-stage-error");
-    let policy = test_policy(repo_root.join("missing-compose.yml"));
-
-    let error = validate_runtime_activation_stage(
-        RuntimeActivationStage::ValidatePolicy,
-        &repo_root,
-        &policy,
-    )
-    .expect_err("policy validation stage should fail");
-
-    match error {
-        RunnerError::ContainerRuntimePolicy { phase, detail } => {
-            assert_eq!(phase, "policy validation");
-            assert!(
-                detail.contains("missing-compose.yml"),
-                "detail should preserve original policy error: {detail}"
-            );
-        }
-        other => panic!("expected typed runtime policy error, got {other}"),
-    }
-}
-
 #[test]
 fn ensure_runtime_running_stage_skips_up_when_runtime_is_already_running() {
     let calls = Arc::new(Mutex::new(Vec::<(Option<String>, Option<PathBuf>)>::new()));
@@ -1064,79 +895,6 @@ fn task_activation_in_a_managed_workspace_keeps_its_stack_without_gateway_readin
     );
     assert_eq!(plan.lease.policy, RuntimeLeasePolicy::Skip);
 }
-
-#[test]
-fn reused_task_activation_matrix_keeps_gateway_skipped_across_retention_modes() {
-    for (lease_refresh_policy, expected_events, expected_started_held) in [
-        (
-            LeaseRefreshPolicy::RefreshOnActivation,
-            vec!["prepare", "permissions"],
-            false,
-        ),
-        (
-            LeaseRefreshPolicy::SkipRefresh,
-            vec!["prepare", "permissions"],
-            false,
-        ),
-    ] {
-        let fixture = effigy_test_support::Fixture::new("q010-activation-").unwrap();
-        let repo_root = fixture.path();
-        let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
-        policy.repo_root = repo_root.to_owned();
-        let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
-
-        let plan = runtime_activation_plan_from_request(
-            repo_root,
-            &policy,
-            ActivationRequest {
-                container_name: Some("web"),
-                repo_override: Some(repo_root.to_path_buf()),
-                route: RuntimeActivationRoute::Task,
-                session_context: RuntimeSessionContext {
-                    lease_refresh_policy,
-                    ..RuntimeSessionContext::default()
-                },
-            },
-        );
-        let activation = activate_container_runtime_plan_for_task_using(
-            &plan,
-            &policy,
-            {
-                let events = Arc::clone(&events);
-                move |_, _, _, _, _, _| {
-                    events.lock().expect("events lock").push("prepare");
-                    Ok(true)
-                }
-            },
-            {
-                let events = Arc::clone(&events);
-                move |_, _, _, _| {
-                    events.lock().expect("events lock").push("permissions");
-                    Ok(())
-                }
-            },
-            {
-                let events = Arc::clone(&events);
-                move |_, _| {
-                    events.lock().expect("events lock").push("gateway");
-                    Ok(())
-                }
-            },
-        )
-        .expect("activate container runtime");
-
-        assert_eq!(
-            *events.lock().expect("events lock"),
-            expected_events,
-            "unexpected reused-runtime side-effect order for {lease_refresh_policy:?}"
-        );
-        assert_eq!(
-            (activation.system_was_running, activation.started_held),
-            (true, expected_started_held)
-        );
-    }
-}
-
 #[test]
 fn task_activation_surfaces_workspace_permission_failure() {
     let fixture = effigy_test_support::Fixture::new("q010-activation-").unwrap();

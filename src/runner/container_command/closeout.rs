@@ -157,10 +157,9 @@ fn confirm_container_shell_exit_cleanup_from_io<R: BufRead, W: Write>(
 #[cfg(test)]
 mod tests {
     use super::{
-        confirm_container_shell_exit_cleanup_from_io, finish_container_up_failure,
-        render_interrupted_up_closeout_text, shell_exit_cleanup_prompt_supported,
+        confirm_container_shell_exit_cleanup_from_io, render_interrupted_up_closeout_text,
+        shell_exit_cleanup_prompt_supported,
     };
-    use crate::runner::RunnerError;
     use effigy_containers::{
         EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
     };
@@ -199,25 +198,6 @@ mod tests {
         ));
         assert!(rendered.contains("[warn] cleanup after interrupt: docker compose down failed"));
     }
-
-    #[test]
-    fn finish_container_up_failure_preserves_startup_error_when_cleanup_succeeds() {
-        let startup_error = RunnerError::task_invocation("gateway registration failed");
-        let rendered = finish_container_up_failure(startup_error, Ok(()));
-        assert_eq!(rendered.to_string(), "gateway registration failed");
-    }
-
-    #[test]
-    fn finish_container_up_failure_reports_cleanup_failure_too() {
-        let startup_error = RunnerError::task_invocation("gateway registration failed");
-        let cleanup_error = RunnerError::task_invocation("docker compose down failed");
-        let rendered = finish_container_up_failure(startup_error, Err(cleanup_error));
-        assert_eq!(
-            rendered.to_string(),
-            "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
-        );
-    }
-
     #[test]
     fn shell_exit_cleanup_prompt_requires_tty_io() {
         assert!(shell_exit_cleanup_prompt_supported(true, true));

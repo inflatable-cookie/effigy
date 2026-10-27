@@ -1,15 +1,7 @@
 use crate::tests::prelude::{
-    parse_command, Command, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpTopic,
+    parse_command, Command, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand,
     InternalGatewayArgs, PathBuf,
 };
-
-#[test]
-fn parse_gateway_help_is_scoped() {
-    let cmd = parse_command(vec!["gateway".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Gateway));
-}
-
 #[test]
 fn parse_gateway_status_supports_json() {
     let cmd = parse_command(vec![

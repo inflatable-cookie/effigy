@@ -71,33 +71,15 @@ fn a_held_environment_names_each_holder_and_how_to_end_it() {
         "{text}"
     );
 }
-
-#[test]
-fn a_busy_environment_is_one_sentence_naming_pid_and_task() {
-    let text = EnvError::Busy(
-        "environment `stack` is busy: run abc (pid 99290, task `dev`) is transitioning it. Nothing was changed and no backend was contacted; inspect it with `effigy container stack status`, then retry"
-            .to_owned(),
-    )
-    .to_string();
-    assert!(text.contains("pid 99290"), "{text}");
-    assert!(text.contains("task `dev`"), "{text}");
-    assert!(text.contains("`effigy container stack status`"), "{text}");
-}
-
 #[test]
 fn every_command_a_refusal_suggests_parses() {
     let held = run_id(1_760_000_000_000, 7);
     let background = run_id(1_760_000_100_000, 9);
-    let mut texts = vec![
-        held_environment_refusal(vec![&held, &background]),
-        EnvError::Busy(
-            "environment `stack` is busy: run abc (pid 99290, task `dev`) is transitioning it. Nothing was changed and no backend was contacted; inspect it with `effigy container stack status`, then retry"
-                .to_owned(),
-        )
-        .to_string(),
-    ];
+    // The engine's own busy sentence is covered by
+    // `effigy-containers` (`the_busy_refusal_text_names_the_holder_the_gate_recorded`);
+    // here every suggestion comes from a refusal this CLI actually renders.
     let mut commands = Vec::new();
-    for text in texts.drain(..) {
+    for text in [held_environment_refusal(vec![&held, &background])] {
         commands.extend(suggested_commands(&text));
     }
     assert!(

@@ -186,11 +186,6 @@ impl ScriptedGuard {
         self.runtime.base + budget
     }
 
-    /// Run `body` while `phase` is answered by the real fake backend instead of
-    /// the scripted one. Used only by the bounded real crosscheck.
-    pub(in crate::runner) fn passthrough(&self, phases: impl IntoIterator<Item = ScriptedPhase>) {
-        self.runtime.passthrough.borrow_mut().extend(phases);
-    }
 }
 
 impl Drop for ScriptedGuard {
@@ -227,12 +222,6 @@ impl ScriptedDoctor {
             passthrough: RefCell::new(Vec::new()),
             recorded_user_override: RefCell::new(None),
         }
-    }
-
-    /// Negative-control fixture switch. Used only by the bounded reliability
-    /// controls to prove an oracle rejects a wrong recorded backend user.
-    pub(in crate::runner) fn override_recorded_user(&self, phase: ScriptedPhase, user: &str) {
-        *self.recorded_user_override.borrow_mut() = Some((phase, user.to_owned()));
     }
 
     /// Model time consumed by every executed script operation so far.

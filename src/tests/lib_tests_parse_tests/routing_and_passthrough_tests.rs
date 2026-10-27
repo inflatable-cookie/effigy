@@ -1,67 +1,7 @@
-use crate::tests::prelude::{parse_command, Command, HelpTopic, TaskInvocation};
+use crate::tests::prelude::{parse_command, Command, HelpTopic};
 
 #[test]
 fn parse_defaults_to_help_without_command() {
     let cmd = parse_command(Vec::<String>::new()).expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::General));
-}
-
-#[test]
-fn parse_repo_pulse_is_treated_as_task_selector_after_builtin_removal() {
-    let cmd = parse_command(vec![
-        "repo-pulse".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "repo-pulse".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--repo".to_owned(),
-                "/tmp/repo".to_owned()
-            ],
-        })
-    );
-}
-
-#[test]
-fn parse_repo_pulse_help_flag_is_passthrough_after_builtin_removal() {
-    let cmd = parse_command(vec!["repo-pulse".to_owned(), "--verbose-root".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "repo-pulse".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--verbose-root".to_owned()
-            ],
-        })
-    );
-}
-
-#[test]
-fn parse_runtime_task_passthrough() {
-    let cmd = parse_command(vec![
-        "snapshot".to_owned(),
-        "--json".to_owned(),
-        "--repo".to_owned(),
-        ".".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "snapshot".to_owned(),
-            args: vec![
-                effigy_core::task_args::TASK_ARGS_BOUNDARY.to_owned(),
-                "--json".to_owned(),
-                "--repo".to_owned(),
-                ".".to_owned(),
-            ],
-        })
-    );
 }

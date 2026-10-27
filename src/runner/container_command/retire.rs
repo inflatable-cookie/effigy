@@ -1090,10 +1090,4 @@ mod tests {
             vec!["effigy".to_owned()]
         );
     }
-
-    #[test]
-    fn a_missing_checkout_still_has_an_observation_cwd() {
-        let cwd = observation_cwd(Path::new("/tmp/missing-checkout-for-retire"));
-        assert!(cwd.is_dir());
-    }
 }

@@ -32,9 +32,6 @@ use crate::runner::task_engine::EnvOverride;
 
 mod colima;
 
-#[cfg(test)]
-pub(in crate::runner) use self::colima::clear_service_container_name_cache;
-
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const CONTAINER_COLOR_ENV: [(&str, &str); 3] = [
     ("EFFIGY_COLOR", "always"),

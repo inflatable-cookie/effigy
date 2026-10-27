@@ -27,12 +27,8 @@ use prep::{
     ensure_runtime_exec_readiness_stage, prepare_runtime_mounts_stage,
     reconcile_runtime_aliases_stage, run_runtime_compose_up_stage,
 };
-#[cfg(test)]
-use prep::{ensure_runtime_exec_readiness_stage_using, reconcile_runtime_aliases_stage_using};
 use running::{check_runtime_running_state_stage, ensure_runtime_running_stage};
 use validation::validate_policy_runtime;
-#[cfg(test)]
-use validation::validate_runtime_activation_stage;
 
 use crate::runner::environment::Held;
 use crate::runner::error::RunnerError;
