@@ -279,7 +279,9 @@ fn operator_startup_bounds_admission_and_readiness_separately() {
 #[test]
 fn operator_cli_reads_the_home_gateway_root_and_never_drives_it_as_a_fixture() {
     use std::os::unix::fs::PermissionsExt;
-    let home = effigy_test_support::Fixture::short_home("g394-").expect("private operator home");
+    // No daemon and no control socket here, so the fixture needs no short
+    // path: an ordinary fixture HOME under the run's temp root is enough.
+    let home = effigy_test_support::Fixture::new("g394-").expect("private operator home");
     let root = home.path().join(".effigy/gateway");
     std::fs::create_dir_all(&root).expect("gateway root");
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
