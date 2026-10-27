@@ -259,8 +259,10 @@ managed run command are pointed at the object the lock selects at the moment
 they start, not at the generation the manifest load or plan resolved. In a
 managed run the process commands are rendered only after its setup steps and
 its environment `up` have run — both Prepare paths — so a container `up` that
-publishes a generation is never rendered around — and they are resolved again
-as each process starts, including on a restart. A container-routed process
+publishes a generation is never rendered around. A container route's per-process
+setup is its own exec, run by the supervisor before that process's command is
+resolved, and each command is resolved again as the process starts, including on
+a restart. A container-routed process
 command has been rewritten to the checkout's mount by then, so the same source
 resolves under that spelling too. The run continues on the newly selected
 bytes, exactly as it does after its own Prepare, and nothing records an
