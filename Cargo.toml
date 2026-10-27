@@ -56,6 +56,11 @@ opt-level = 3
 [profile.test.package."sha2:0.11.0"]
 opt-level = 3
 
+# Every secrets test runs at least one argon2id KDF (19 MiB, t=2). Optimising
+# the KDF keeps the suite honest without spending seconds per test.
+[profile.test.package."argon2:0.6.0"]
+opt-level = 3
+
 # Read-boundary proofs exercise the shipping CLI configuration without symbols,
 # keeping macOS pre-main loading inside the unchanged fixture deadlines.
 [profile.discovery-proof]
