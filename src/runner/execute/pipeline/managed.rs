@@ -698,6 +698,11 @@ fn own_managed_run(
             token: token.clone(),
             task: preflight.selector.task_name.clone(),
             profile: plan.profile.clone(),
+            // The catalog whose pins this run's commands resolve against. The
+            // supervisor re-resolves it when it starts each process, after the
+            // Prepare paths a setup step and the environment `up` run.
+            source_manifest: selection.catalog.manifest_path.clone(),
+            container_repo_root: container_repo_root.clone(),
             environment,
             fail_on_non_zero: plan.fail_on_non_zero,
             scratch: managed_task_scratch(selection.task),
@@ -726,7 +731,7 @@ fn own_managed_run(
             return Err(error);
         }
     };
-    let prepare = |run: &mut TaskRun| -> Result<Vec<WorkloadSpec>, RunnerError> {
+    let prepare = |run: &mut TaskRun| -> Result<effigy_managed::ManagedTaskPlan, RunnerError> {
         {
             let _parent = run.enter();
             run_managed_setup_steps(
@@ -752,6 +757,11 @@ fn own_managed_run(
                 true,
             )?;
         }
+        Ok(plan)
+    };
+    // Rendered after the environment's own Prepare published its generation,
+    // so a container-routed command never names the one it removed.
+    let workloads = |_: &mut TaskRun, plan: effigy_managed::ManagedTaskPlan| {
         managed_workloads(
             context,
             &plan,
@@ -760,7 +770,7 @@ fn own_managed_run(
             container_repo_root.as_deref(),
         )
     };
-    managed_run::own(owner, owned, prepare)
+    managed_run::own(owner, owned, prepare, workloads)
 }
 
 /// A managed session's host processes use the configured scratch directory
@@ -1144,7 +1154,7 @@ fn managed_workloads(
         let mut plain =
             BTreeMap::from([(effigy_managed::RUN_TOKEN_ENV.to_owned(), token.to_owned())]);
         let mut secret = BTreeMap::new();
-        let (command, exec_group) = if runs_on_host {
+        let (command, setup, exec_group) = if runs_on_host {
             secret.extend(
                 secrets
                     .iter()
@@ -1159,7 +1169,7 @@ fn managed_workloads(
                     None => run,
                 }
             };
-            (command, None)
+            (command, None, None)
         } else {
             plain.clear();
             let wrapped = |command: String| {
@@ -1182,43 +1192,48 @@ fn managed_workloads(
                 .unwrap_or(repo)
                 .join(&relative)
                 .join(&file);
-            let (command, binding) = match &inline {
-                Some(policy) => (
-                    render_inline_managed_exec_command(InlineManagedExecRequest {
-                        repo_root: repo,
-                        policy,
-                        process_cwd: &process.cwd,
-                        container_repo_root,
-                        setup_command: setup.as_deref(),
-                        command: &run,
-                        exec_group: Some((&container_marker, managed_run::EXEC_NONCE)),
-                    }),
-                    Binding::Inline {
-                        task: context.preflight.invocation.name.clone(),
-                    },
-                ),
-                None => {
-                    let executable =
-                        resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
-                    (
-                        managed_exec_command(ManagedExecRequest {
-                            repo_root: repo,
-                            container_name: selector.as_deref(),
-                            process_cwd: &process.cwd,
-                            container_repo_root,
-                            setup_command: setup.as_deref(),
-                            executable: &executable,
-                            command: &run,
-                            exec_group: Some((&container_marker, managed_run::EXEC_NONCE)),
-                        }),
-                        Binding::Named {
-                            selector: selector.clone(),
-                        },
-                    )
-                }
+            // The setup is the route's own exec, run by the supervisor before
+            // the process command is resolved: a setup that publishes a source
+            // generation must not leave the process naming the one it removed.
+            let executable = match &inline {
+                Some(_) => None,
+                None => Some(resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?),
+            };
+            let render = |command: &str, exec_group: Option<(&std::path::Path, &str)>| match &inline
+            {
+                Some(policy) => render_inline_managed_exec_command(InlineManagedExecRequest {
+                    repo_root: repo,
+                    policy,
+                    process_cwd: &process.cwd,
+                    container_repo_root,
+                    setup_command: None,
+                    command,
+                    exec_group,
+                }),
+                None => managed_exec_command(ManagedExecRequest {
+                    repo_root: repo,
+                    container_name: selector.as_deref(),
+                    process_cwd: &process.cwd,
+                    container_repo_root,
+                    setup_command: None,
+                    executable: executable.as_deref().unwrap_or_default(),
+                    command,
+                    exec_group,
+                }),
+            };
+            let command = render(&run, Some((&container_marker, managed_run::EXEC_NONCE)));
+            let setup = setup.map(|setup| render(&setup, None));
+            let binding = match &inline {
+                Some(_) => Binding::Inline {
+                    task: context.preflight.invocation.name.clone(),
+                },
+                None => Binding::Named {
+                    selector: selector.clone(),
+                },
             };
             (
                 command,
+                setup,
                 Some(ExecGroupSpec {
                     repo: repo.to_path_buf(),
                     binding,
@@ -1229,6 +1244,7 @@ fn managed_workloads(
         workloads.push(WorkloadSpec {
             name: process.name.clone(),
             command,
+            setup,
             cwd: process.cwd.clone(),
             env: managed_run::workload_env(&plain, &secret),
             pty: true,

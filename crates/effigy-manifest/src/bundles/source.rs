@@ -434,6 +434,100 @@ pub fn catalog_source_roots(manifest: &Path) -> Result<CatalogSourceRoots, Manif
         .collect::<Result<_, _>>()?;
     Ok(CatalogSourceRoots { bundle, declared })
 }
+/// A path a run step names under this checkout's source cache.
+const SOURCE_CACHE: &str = ".effigy/cache/sources/";
+
+/// An imported v0.14.1 object sits beside the acquired object of the same
+/// source, so both spellings name the one source.
+const IMPORTED_OBJECT_PREFIX: &str = "import-";
+
+/// Point a run step at the source the checkout lock selects now.
+///
+/// A path under `.effigy/cache/sources/<generation>/` names a source, not the
+/// generation that happened to hold it. A run resolved a bundle path before
+/// its own Prepare refreshed that source; the refresh publishes a new
+/// generation and removes the old one (contract 020), so the path a later step
+/// still holds names bytes nothing selects. Relocating it to the object the
+/// lock selects keeps the run on one rule: it opens the source the lock
+/// publishes, at the moment it runs.
+///
+/// Text that names no cached source path, or a source this checkout no longer
+/// pins, is returned unchanged. Reading the lock is local and bounded.
+pub fn relocate_source_paths(manifest: &Path, text: &str) -> String {
+    relocate_source_paths_through(manifest, &[], text)
+}
+
+/// The same rule for text written against another name for this checkout.
+///
+/// `roots` are checkout roots this checkout's source cache is reachable
+/// through — a managed container route rewrites the host checkout root to its
+/// mount before a process starts, so the generation its command names must be
+/// resolved in that namespace too.
+pub fn relocate_source_paths_through(manifest: &Path, roots: &[&Path], text: &str) -> String {
+    if !text.contains(SOURCE_CACHE) {
+        return text.to_owned();
+    }
+    let Some(live) = live_source_objects(manifest) else {
+        return text.to_owned();
+    };
+    let mut relocated = text.to_owned();
+    for root in std::iter::once(parent(manifest)).chain(roots.iter().copied()) {
+        relocated = relocate_below(&relocated, root, &live);
+    }
+    relocated
+}
+
+/// Rewrite every `<root>/.effigy/cache/sources/<generation>/<source>` spelling
+/// in `text` to the generation the lock selects for that source.
+fn relocate_below(text: &str, root: &Path, live: &BTreeMap<String, String>) -> String {
+    let cache = format!("{}/{SOURCE_CACHE}", root.display());
+    let mut relocated = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(&cache) {
+        relocated.push_str(&rest[..at + cache.len()]);
+        rest = &rest[at + cache.len()..];
+        // The generation component is the part a refresh replaces.
+        let Some((generation, named)) = rest.split_once('/') else {
+            break;
+        };
+        let object_len = named
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+            .count();
+        let object = &named[..object_len];
+        let imported = object
+            .strip_prefix(IMPORTED_OBJECT_PREFIX)
+            .unwrap_or(object);
+        match live.get(object).or_else(|| live.get(imported)) {
+            Some(selected) => relocated.push_str(selected),
+            None => {
+                relocated.push_str(generation);
+                relocated.push('/');
+                relocated.push_str(object);
+            }
+        }
+        rest = &named[object_len..];
+    }
+    relocated.push_str(rest);
+    relocated
+}
+
+/// The object each source name the lock selects resolves to now, as the part
+/// of its path below `cache/sources/`.
+fn live_source_objects(manifest: &Path) -> Option<BTreeMap<String, String>> {
+    let lock = read_lock(manifest).ok().flatten()?;
+    let objects = lock
+        .sources
+        .values()
+        .filter_map(|pin| {
+            let name = pin.object.file_name()?.to_str()?.to_owned();
+            let selected = pin.object.strip_prefix("cache/sources").ok()?;
+            Some((name, selected.display().to_string()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    (!objects.is_empty()).then_some(objects)
+}
+
 fn notice(message: &str) {
     // A single bounded diagnostic per process; nested manifest discovery can
     // resolve the same checkout repeatedly (completion in particular).
@@ -778,5 +872,108 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
             changed,
             "bundle behind: locked digest 9b1f7a4c, declaration changed; the next `effigy dev` or `effigy container up` will update"
         );
+    }
+
+    /// A checkout whose lock selects `bundle` from `object`.
+    fn pinned_checkout(object: &str) -> (tempfile::TempDir, PathBuf) {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = home.path().join("effigy.toml");
+        std::fs::write(
+            &manifest,
+            "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n",
+        )
+        .unwrap();
+        std::fs::create_dir(home.path().join(".effigy")).unwrap();
+        std::fs::write(
+            home.path().join(".effigy").join(LOCK_FILE),
+            serde_json::to_vec(&SourceLock {
+                version: 1,
+                sources: BTreeMap::from([(
+                    "bundle".to_owned(),
+                    SourcePin {
+                        declaration: ManifestBundleBase::Path {
+                            dir: "bundle".into(),
+                        },
+                        object: object.into(),
+                        version: "sha256:selected".into(),
+                        revision: None,
+                    },
+                )]),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        (home, manifest)
+    }
+
+    #[test]
+    fn a_step_path_follows_the_generation_the_lock_selects() {
+        let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
+        let root = home
+            .path()
+            .join(".effigy/cache/sources/generation-b/bundle-object");
+        let stale = home
+            .path()
+            .join(".effigy/cache/sources/generation-a/bundle-object/scripts/dev/profile_env.py");
+        let selected = root.join("scripts/dev/profile_env.py");
+        assert_eq!(
+            relocate_source_paths(&manifest, &format!("sh {}", stale.display())),
+            format!("sh {}", selected.display())
+        );
+        // An imported v0.14.1 object names the same source as the acquired one.
+        let imported = home.path().join(
+            ".effigy/cache/sources/generation-0/import-bundle-object/scripts/dev/profile_env.py",
+        );
+        assert_eq!(
+            relocate_source_paths(&manifest, &format!("sh {}", imported.display())),
+            format!("sh {}", selected.display())
+        );
+    }
+
+    #[test]
+    fn a_container_route_resolves_the_generation_under_its_own_mount() {
+        let (_home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
+        let mount = Path::new("/workspace");
+        let command = "cd /workspace && sh /workspace/.effigy/cache/sources/generation-a/bundle-object/scripts/dev/profile_env.py";
+        let selected = "cd /workspace && sh /workspace/.effigy/cache/sources/generation-b/bundle-object/scripts/dev/profile_env.py";
+        assert_eq!(
+            relocate_source_paths_through(&manifest, &[mount], command),
+            selected
+        );
+        // Only the roots the caller names are recognised: the host spelling of
+        // the same command is not a mount path, and neither is another mount.
+        assert_eq!(relocate_source_paths(&manifest, command), command);
+        assert_eq!(
+            relocate_source_paths_through(&manifest, &[Path::new("/elsewhere")], command),
+            command
+        );
+    }
+
+    #[test]
+    fn an_unchanged_selection_leaves_a_step_path_alone() {
+        let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
+        let current = home
+            .path()
+            .join(".effigy/cache/sources/generation-b/bundle-object/scripts/helper.sh");
+        let command = format!("sh {} --flag", current.display());
+        assert_eq!(relocate_source_paths(&manifest, &command), command);
+    }
+
+    #[test]
+    fn text_outside_the_selected_sources_keeps_its_paths() {
+        let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
+        let other_checkout = home.path().join("neighbour");
+        let neighbour = other_checkout
+            .join(".effigy/cache/sources/generation-a/bundle-object/scripts/helper.sh");
+        let retired = home
+            .path()
+            .join(".effigy/cache/sources/generation-a/retired-object/scripts/helper.sh");
+        let command = format!(
+            "sh {} && sh {} && sh {}",
+            neighbour.display(),
+            retired.display(),
+            home.path().join("scripts/dev/plain.sh").display()
+        );
+        assert_eq!(relocate_source_paths(&manifest, &command), command);
     }
 }

@@ -251,6 +251,25 @@ under `.effigy/cache/sources/` that the lock does not reference and reports
 `pruned N source generations nothing pins` once. Every generation the lock
 selects is kept, so repeated syncs no longer accumulate copies of each source.
 
+A run step is a Prepare path too, so a later step must never open a path that
+Prepare has already removed. A path under
+`.effigy/cache/sources/<generation>/<source>/` names the source, not the
+generation that happened to hold it: a step command, a Rhai step path and a
+managed run command are pointed at the object the lock selects at the moment
+they start, not at the generation the manifest load or plan resolved. In a
+managed run the process commands are rendered only after its setup steps and
+its environment `up` have run — both Prepare paths — so a container `up` that
+publishes a generation is never rendered around. A container route's per-process
+setup is its own exec, resolved from the same lock and run by the supervisor
+before that process's command is resolved, and each command is resolved again as
+the process starts, including on a restart. The supervisor observes a stop, a
+stop request or the owning client's death while that setup runs, as it does
+during the run's own setup steps. A container-routed process
+command has been rewritten to the checkout's mount by then, so the same source
+resolves under that spelling too. The run continues on the newly selected
+bytes, exactly as it does after its own Prepare, and nothing records an
+in-flight reference or delays the prune.
+
 A bounded host-side `~/.effigy/cache/sources-known.json` hint records the source bytes each
 checkout selected, written by any Prepare. A short shared cache gate serializes publishers;
 this derived hint is outside both runtime databases and contains no run index. A read may emit one
@@ -296,4 +315,6 @@ Update this contract when any of these change:
   floating-source window, the 5-second remote-check bound, the
   `sources.update.json` record, the `update = "auto" | "manual"` policy and the
   `bundle updated …` wording
+- source generation layout under `.effigy/cache/sources/`, when a run step
+  resolves its source path, and which generations a Prepare prunes
 - `bundle inspect` or `bundle sync` minimum source metadata

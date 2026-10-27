@@ -410,6 +410,16 @@ fn repeated_syncs_prune_every_generation_the_lock_does_not_pin() {
     let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
     assert!(ok, "{output}");
 
+    selected_source_object(&fixture);
+
+    let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
+    assert!(ok, "{output}");
+    assert!(output.contains("changed"), "{output}");
+}
+
+/// One live generation under `.effigy/cache/sources`, and the object the lock
+/// selects in it.
+fn selected_source_object(fixture: &Fixture) -> PathBuf {
     let lock: serde_json::Value =
         serde_json::from_slice(&fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap())
             .unwrap();
@@ -427,10 +437,157 @@ fn repeated_syncs_prune_every_generation_the_lock_does_not_pin() {
         .map(|entry| entry.unwrap().file_name())
         .collect::<Vec<_>>();
     assert_eq!(generations, vec![generation], "{generations:?}");
+    fixture.repo.join(".effigy").join(object)
+}
 
-    let (ok, output) = fixture.run(&["dev", "--plan"], &[], Duration::from_secs(8));
+/// A run's later step opens the bundle helper the lock selects now: a step's
+/// own Prepare can publish a new generation and remove the one every step of
+/// the run was rendered against. `sequence_in_bundle` writes the run into the
+/// bundle's own defaults, so its helper path is rendered when the manifest
+/// loads; otherwise the consumer manifest names it with `{{ bundle.root }}`.
+/// `bundle_content_changed` decides whether the refresh selects new bytes or
+/// only a new generation.
+fn run_bundle_helper_after_a_step_refresh(
+    fixture: &Fixture,
+    sequence_in_bundle: bool,
+    bundle_content_changed: bool,
+) -> (bool, String) {
+    fs::create_dir(fixture.repo.join("bundle/scripts")).unwrap();
+    fs::write(
+        fixture.repo.join("bundle/scripts/profile_env.sh"),
+        "#!/bin/sh\necho profile-env-helper\n",
+    )
+    .unwrap();
+    let mut steps = vec![
+        "task:bundle sync".to_owned(),
+        "sh {{ bundle.root }}/scripts/profile_env.sh".to_owned(),
+    ];
+    if bundle_content_changed {
+        // A path source is re-snapshotted when its content digest differs.
+        steps.insert(0, "sh -c 'date > bundle/touched'".to_owned());
+    }
+    let steps = steps
+        .iter()
+        .map(|step| format!("{step:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sequence = format!("[tasks.refresh]\nrun = [{steps}]\n");
+    fs::write(
+        fixture.repo.join("bundle/effigy.toml"),
+        if sequence_in_bundle {
+            sequence.clone()
+        } else {
+            "[tasks.dev]\nrun = \"echo original\"\n".to_owned()
+        },
+    )
+    .unwrap();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!(
+            "[bundle]\nbase = {{ type = \"path\", dir = \"bundle\" }}\n{}\n",
+            if sequence_in_bundle {
+                ""
+            } else {
+                sequence.as_str()
+            }
+        ),
+    )
+    .unwrap();
+    let (ok, output) = fixture.run(&["refresh"], &[], Duration::from_secs(60));
+    (ok, output)
+}
+
+#[test]
+fn a_later_step_runs_the_bundle_helper_its_own_refresh_replaced() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = run_bundle_helper_after_a_step_refresh(&fixture, true, true);
     assert!(ok, "{output}");
-    assert!(output.contains("changed"), "{output}");
+    assert!(output.contains("profile-env-helper"), "{output}");
+    // The refresh published one generation and removed the predecessor the
+    // run had rendered its helper path against.
+    let selected = selected_source_object(&fixture);
+    assert!(
+        selected.join("scripts/profile_env.sh").is_file(),
+        "the selected source carries the helper: {}",
+        selected.display()
+    );
+}
+
+#[test]
+fn an_unchanged_step_refresh_keeps_the_bundle_helper_reachable() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = run_bundle_helper_after_a_step_refresh(&fixture, false, false);
+    assert!(ok, "{output}");
+    assert!(output.contains("profile-env-helper"), "{output}");
+    selected_source_object(&fixture);
+}
+
+/// A managed run renders its process commands into a plan, then runs its
+/// setup steps and brings its environment up — both Prepare paths — before it
+/// starts a process. A refresh in between publishes a new source generation
+/// and removes the one the plan named, so the process must open the source the
+/// lock selects at start. `bundle_content_changed` decides whether the setup
+/// refresh selects new bytes or only a new generation.
+fn run_managed_bundle_helper_after_a_setup_refresh(
+    fixture: &Fixture,
+    bundle_content_changed: bool,
+) -> (bool, String) {
+    fs::create_dir(fixture.repo.join("bundle/scripts")).unwrap();
+    fs::write(
+        fixture.repo.join("bundle/scripts/profile_env.sh"),
+        "#!/bin/sh\necho profile-env-helper\n",
+    )
+    .unwrap();
+    let mut setup = vec![r#"{ task = "bundle sync" }"#.to_owned()];
+    if bundle_content_changed {
+        // A path source is re-snapshotted when its content digest differs.
+        setup.insert(0, r#"{ run = "sh -c 'date > bundle/touched'" }"#.to_owned());
+    }
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!(
+            "[bundle]\nbase = {{ type = \"path\", dir = \"bundle\" }}\n\
+             [tasks.refresh]\nmode = \"tui\"\n\
+             concurrent = [\n  {{ name = \"api\", task = \"serve\", setup = [{}] }},\n]\n\
+             [tasks.serve]\nrun = \"sh {{{{ bundle.root }}}}/scripts/profile_env.sh\"\n",
+            setup.join(", ")
+        ),
+    )
+    .unwrap();
+    fixture.run(
+        &["refresh"],
+        // The text front: no terminal, and `--headless` would be passed
+        // through to the setup step's `bundle sync` as a task argument.
+        &[("EFFIGY_MANAGED_HEADLESS", Path::new("1"))],
+        Duration::from_secs(60),
+    )
+}
+
+#[test]
+fn a_managed_process_opens_the_source_its_setup_refresh_selected() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = run_managed_bundle_helper_after_a_setup_refresh(&fixture, true);
+    assert!(ok, "{output}");
+    assert!(output.contains("profile-env-helper"), "{output}");
+    let selected = selected_source_object(&fixture);
+    assert!(
+        selected.join("scripts/profile_env.sh").is_file(),
+        "the selected source carries the helper: {}",
+        selected.display()
+    );
+}
+
+#[test]
+fn a_managed_process_opens_the_source_an_unchanged_setup_refresh_published() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = run_managed_bundle_helper_after_a_setup_refresh(&fixture, false);
+    assert!(ok, "{output}");
+    assert!(output.contains("profile-env-helper"), "{output}");
+    selected_source_object(&fixture);
 }
 
 #[test]

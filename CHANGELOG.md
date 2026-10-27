@@ -2098,10 +2098,23 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A run step opens the bundle source the checkout lock selects when it runs.
+  A step is itself a Prepare path (`bundle sync`, `container up`), so it could
+  publish a new source generation and remove the generation every later step
+  of the same run was rendered against: the step then failed with `No such
+  file or directory` on a bundle-shipped helper such as
+  `.effigy/cache/sources/<generation>/<source>/scripts/…` (Acowtancy, effigy#385).
+  A step command, its Rhai path and a managed process command now name the
+  object the lock publishes at the moment they start. A managed run renders its
+  process commands only after its setup steps and its environment `up` have
+  run, a container route's per-process setup runs as its own step — resolved
+  from the same lock, with a stop or the owning client's loss observed while it
+  runs — before that process's command is resolved, and a container-routed
+  command resolves in the mount it was translated to; only generations nothing
+  pins are removed (contract 020).
 - **A leaked test helper fails its selector.** Test fixtures and loops sleep
   between checks and have deadlines, so no fixture spins a core; a helper that
   outlives its test is named and killed by the suite sweep.
-
 - `container up` no longer fails with nerdctl's `cannot start a container that
   has stopped`. The rendered Compose file names no `restart:` policy, so the
   runtime's restart manager has nothing to settle on a container Compose has

@@ -33,6 +33,9 @@ use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, Tas
 
 /// TERM to KILL for a workload's group.
 const GRACE: Duration = Duration::from_secs(3);
+/// One workload setup's own bound: a container route runs it before the
+/// process starts, so a hung setup is a start failure rather than a run.
+const SETUP_BUDGET: Duration = Duration::from_secs(1800);
 /// Owner loop interval.
 const TURN: Duration = Duration::from_millis(20);
 /// Settle budget: workload groups, remote groups and the environment down.
@@ -100,6 +103,9 @@ pub(in crate::runner) fn take_owner() -> Option<OwnerSession> {
 pub(in crate::runner) struct WorkloadSpec {
     pub(in crate::runner) name: String,
     pub(in crate::runner) command: String,
+    /// A container route's setup as its own exec, run before `command` is
+    /// resolved: it is the Prepare that may publish a new source generation.
+    pub(in crate::runner) setup: Option<String>,
     pub(in crate::runner) cwd: PathBuf,
     pub(in crate::runner) env: Vec<(String, EnvOverride)>,
     pub(in crate::runner) pty: bool,
@@ -116,6 +122,55 @@ pub(in crate::runner) struct ExecGroupSpec {
     pub(in crate::runner) marker: PathBuf,
 }
 
+/// The command a workload starts with: the source the lock selects now.
+///
+/// A setup step and the environment `up` are Prepare paths and can publish a
+/// new source generation, removing the one the plan's command names. A
+/// container-routed command was already translated to the checkout's mount, so
+/// that spelling of the same source resolves as well.
+fn live_workload_command(
+    source_manifest: &std::path::Path,
+    container_repo_root: Option<&std::path::Path>,
+    command: &str,
+) -> String {
+    let roots = container_repo_root.into_iter().collect::<Vec<_>>();
+    effigy_manifest::relocate_source_paths_through(source_manifest, &roots, command)
+}
+
+/// The command a workload starts with.
+///
+/// Its setup runs first — a container route's setup is its own exec — and both
+/// the setup and the process command are resolved from the lock as the process
+/// starts: the setup opens the same sources, and it is the Prepare that may
+/// publish a generation, so the command is resolved only after it returns.
+fn workload_start_command<E>(
+    source_manifest: &std::path::Path,
+    container_repo_root: Option<&std::path::Path>,
+    setup: Option<&str>,
+    command: &str,
+    run_setup: impl FnOnce(&str) -> Result<(), E>,
+) -> Result<String, E> {
+    if let Some(setup) = setup {
+        let resolved = live_workload_command(source_manifest, container_repo_root, setup);
+        run_setup(&resolved)?;
+    }
+    Ok(live_workload_command(
+        source_manifest,
+        container_repo_root,
+        command,
+    ))
+}
+
+/// The end a failed workload start produces: a stop stays a stop, and a stop
+/// that filed an owner loss reports the loss.
+fn start_failure_end(error: SpawnError, lost_while_blocked: bool) -> End {
+    match error {
+        SpawnError::Stopped(_) if lost_while_blocked => End::Stopped(StopCause::OwnerLost),
+        SpawnError::Stopped(cause) => End::Stopped(cause),
+        SpawnError::Failed(reason) => End::StartFailed(reason, None),
+    }
+}
+
 /// Everything a supervisor needs to own one managed run.
 pub(in crate::runner) struct OwnedRun {
     pub(in crate::runner) target: TaskTarget,
@@ -126,6 +181,12 @@ pub(in crate::runner) struct OwnedRun {
     pub(in crate::runner) token: String,
     pub(in crate::runner) task: String,
     pub(in crate::runner) profile: String,
+    /// The catalog manifest whose pins this run's process commands resolve
+    /// against, read again as each process starts.
+    pub(in crate::runner) source_manifest: PathBuf,
+    /// Where that checkout's root appears inside a container route's command:
+    /// the translation a container-routed process command went through.
+    pub(in crate::runner) container_repo_root: Option<PathBuf>,
     pub(in crate::runner) environment: Option<EnvironmentPlan>,
     pub(in crate::runner) fail_on_non_zero: bool,
     /// Whether the session's host processes may use the configured per-run
@@ -144,6 +205,26 @@ struct Workload {
     tail: String,
 }
 
+/// Why a workload did not start.
+///
+/// A stop observed while a start was blocked (`pending_stop`) is not a failed
+/// start: it keeps its cause so the run reports the stop the client asked for,
+/// or the owner loss that filed one, as a cancelled outcome.
+#[derive(Debug)]
+enum SpawnError {
+    Stopped(StopCause),
+    Failed(String),
+}
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stopped(cause) => write!(formatter, "stopped: {}", describe(cause)),
+            Self::Failed(reason) => write!(formatter, "{reason}"),
+        }
+    }
+}
+
 /// How the owner loop ended.
 enum End {
     Stopped(StopCause),
@@ -155,10 +236,16 @@ enum End {
 }
 
 /// Owns the run from admission to settle. Returns what the client reports.
-pub(in crate::runner) fn own(
+///
+/// `prepare` runs the run's setup steps and gateway and hands its result to
+/// `workloads`, which renders the commands only once the environment is up, so
+/// a container `up` that publishes a source generation is never rendered
+/// around.
+pub(in crate::runner) fn own<T>(
     owner: OwnerSession,
     plan: OwnedRun,
-    prepare: impl FnOnce(&mut TaskRun) -> Result<Vec<WorkloadSpec>, RunnerError>,
+    prepare: impl FnOnce(&mut TaskRun) -> Result<T, RunnerError>,
+    workloads: impl FnOnce(&mut TaskRun, T) -> Result<Vec<WorkloadSpec>, RunnerError>,
 ) -> Result<Option<String>, RunnerError> {
     let OwnerSession {
         mut session,
@@ -211,11 +298,14 @@ pub(in crate::runner) fn own(
         session,
         workloads: Vec::new(),
         holds_environment: plan.environment.is_some(),
+        source_manifest: plan.source_manifest.clone(),
+        container_repo_root: plan.container_repo_root.clone(),
+        watch: None,
         terminal: payload.terminal,
         lost_while_blocked: false,
         health: None,
     };
-    let end = owner.start(&mut run, &plan, prepare);
+    let end = owner.start(&mut run, &plan, prepare, workloads);
     let end = match end {
         Ok(()) => owner.supervise(&mut run),
         Err(end) => end,
@@ -227,6 +317,16 @@ struct Owner {
     session: EngineSession,
     workloads: Vec<Workload>,
     holds_environment: bool,
+    /// Resolved for a process command as it starts, never when the plan was
+    /// rendered: a setup step and the environment `up` are Prepare paths
+    /// (contract 020) and can replace the source generation a command names.
+    source_manifest: PathBuf,
+    /// The container mount `source_manifest`'s checkout root is rewritten to
+    /// for a container-routed command, so its source path resolves too.
+    container_repo_root: Option<PathBuf>,
+    /// The owning client's death, observed during the blocking phases this
+    /// owner runs itself (a setup step, a process setup).
+    watch: Option<OwnerWatch>,
     terminal: Option<(u16, u16)>,
     /// The owning client went away inside a blocking phase.
     lost_while_blocked: bool,
@@ -235,23 +335,27 @@ struct Owner {
 }
 
 impl Owner {
-    /// Setup, gateway and environment, each after `Admitted` (K3). A stop
-    /// is observed at every wait boundary these phases offer.
-    fn start(
+    /// Setup, gateway, environment and the process commands, each after
+    /// `Admitted` (K3). A stop is observed at every wait boundary these phases
+    /// offer.
+    fn start<T>(
         &mut self,
         run: &mut TaskRun,
         plan: &OwnedRun,
-        prepare: impl FnOnce(&mut TaskRun) -> Result<Vec<WorkloadSpec>, RunnerError>,
+        prepare: impl FnOnce(&mut TaskRun) -> Result<T, RunnerError>,
+        workloads: impl FnOnce(&mut TaskRun, T) -> Result<Vec<WorkloadSpec>, RunnerError>,
     ) -> Result<(), End> {
-        let watch = self.session.owner_watch().ok();
+        self.watch = self.session.owner_watch().ok();
         let id = run.id();
         // A blocking setup step reads stop requests on its parent run; the
         // owning client's death becomes such a request.
         let filed = std::sync::atomic::AtomicBool::new(false);
         let result = std::thread::scope(|scope| {
-            let stop_filer = scope.spawn(|| {
-                while !filed.load(std::sync::atomic::Ordering::Acquire) {
-                    if watch.as_ref().is_some_and(OwnerWatch::lost) {
+            let watch = self.watch.as_ref();
+            let filed_ref = &filed;
+            let stop_filer = scope.spawn(move || {
+                while !filed_ref.load(std::sync::atomic::Ordering::Acquire) {
+                    if watch.is_some_and(OwnerWatch::lost) {
                         let _ = task_engine::request_run_stop(id);
                         return true;
                     }
@@ -266,16 +370,40 @@ impl Owner {
         });
         let (prepared, lost) = result;
         self.lost_while_blocked |= lost;
-        let workloads = match prepared {
-            Ok(workloads) => workloads,
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
             Err(error) => {
-                return Err(match pending_stop(run, watch.as_ref()) {
+                return Err(match pending_stop(run, self.watch.as_ref()) {
                     Some(cause) => End::Stopped(self.cause(cause)),
                     None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
                 })
             }
         };
-        self.workloads = workloads
+        if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
+            return Err(End::Stopped(self.cause(cause)));
+        }
+        if let Some(environment) = &plan.environment {
+            let mut stop = |run: &mut TaskRun| pending_stop(run, self.watch.as_ref());
+            match environment::bring_up(run, environment, &plan.token, &mut stop) {
+                Ok(()) => self.health = Some(RouteHealth::new(environment)),
+                Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
+                Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason, None)),
+            }
+        }
+        self.lost_while_blocked |= self.watch.as_ref().is_some_and(OwnerWatch::lost);
+        // The environment's `up` is itself a Prepare path (contract 020): it
+        // can publish a source generation and remove the one an earlier render
+        // named. The commands are therefore rendered here, after it.
+        let specs = match workloads(run, prepared) {
+            Ok(specs) => specs,
+            Err(error) => {
+                return Err(match pending_stop(run, self.watch.as_ref()) {
+                    Some(cause) => End::Stopped(self.cause(cause)),
+                    None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
+                })
+            }
+        };
+        self.workloads = specs
             .into_iter()
             .map(|spec| Workload {
                 spec,
@@ -285,18 +413,6 @@ impl Owner {
                 tail: String::new(),
             })
             .collect();
-        if let Some(cause) = pending_stop(run, watch.as_ref()) {
-            return Err(End::Stopped(self.cause(cause)));
-        }
-        if let Some(environment) = &plan.environment {
-            let mut stop = |run: &mut TaskRun| pending_stop(run, watch.as_ref());
-            match environment::bring_up(run, environment, &plan.token, &mut stop) {
-                Ok(()) => self.health = Some(RouteHealth::new(environment)),
-                Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
-                Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason, None)),
-            }
-        }
-        self.lost_while_blocked |= watch.as_ref().is_some_and(OwnerWatch::lost);
         Ok(())
     }
 
@@ -324,8 +440,10 @@ impl Owner {
                 return End::StartFailed(error.to_string(), None);
             }
             while next < self.workloads.len() && Instant::now() >= next_at {
-                if let Err(reason) = self.spawn(run, next) {
-                    return End::StartFailed(reason, None);
+                if let Err(error) = self.spawn(run, next) {
+                    // A setup is a blocking phase too: a stop during it is a
+                    // stop, not a failed start.
+                    return start_failure_end(error, self.lost_while_blocked);
                 }
                 next += 1;
                 next_at = Instant::now()
@@ -410,11 +528,25 @@ impl Owner {
         }
     }
 
-    fn spawn(&mut self, run: &mut TaskRun, index: usize) -> Result<(), String> {
+    fn spawn(&mut self, run: &mut TaskRun, index: usize) -> Result<(), SpawnError> {
         let terminal = self.terminal;
+        // The source generation a command was rendered against can be gone: a
+        // setup step (`bundle sync`) or the environment's own `up` publishes a
+        // new one and removes it. The setup runs first, then the process opens
+        // the generation the lock selects — including on a restart.
+        let source_manifest = self.source_manifest.clone();
+        let container_repo_root = self.container_repo_root.clone();
+        let command = self.workloads[index].spec.command.clone();
+        let setup = self.workloads[index].spec.setup.clone();
+        let mut command = workload_start_command(
+            &source_manifest,
+            container_repo_root.as_deref(),
+            setup.as_deref(),
+            &command,
+            |setup| self.run_setup(run, index, setup),
+        )?;
         let workload = &mut self.workloads[index];
         workload.starts += 1;
-        let mut command = workload.spec.command.clone();
         if let Some(group) = &workload.spec.exec_group {
             // K3: the remote group's intent precedes the exec client.
             let nonce = format!("{}:{}:{}", run.id(), workload.spec.name, workload.starts);
@@ -425,39 +557,30 @@ impl Owner {
                 marker: group.marker.clone(),
                 nonce: nonce.clone(),
             };
-            let mut kernel = run.run_mut().map_err(|error| error.to_string())?;
+            let mut kernel = run
+                .run_mut()
+                .map_err(|error| SpawnError::Failed(error.to_string()))?;
             let target = kernel.fence().clone();
             let ticket = kernel
                 .intend(EffectSpec {
                     target,
                     kind: settlement::EXEC_GROUP.to_owned(),
-                    payload: serde_json::to_value(&effect).map_err(|error| error.to_string())?,
+                    payload: serde_json::to_value(&effect)
+                        .map_err(|error| SpawnError::Failed(error.to_string()))?,
                     settlement: Settlement::Release(serde_json::Value::Null),
                     required: false,
                 })
-                .map_err(|error| format!("exec group intent: {error}"))?;
+                .map_err(|error| SpawnError::Failed(format!("exec group intent: {error}")))?;
             kernel
                 .applied(&ticket, serde_json::json!({ "marker": group.marker }))
-                .map_err(|error| format!("exec group receipt: {error}"))?;
+                .map_err(|error| SpawnError::Failed(format!("exec group receipt: {error}")))?;
             command = command.replace(EXEC_NONCE, &nonce);
         }
         if workload.spec.pty {
             let (cols, rows) = terminal.unwrap_or((120, 40));
             command = format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {command}");
         }
-        let mut env = task_engine::spawn_environment(&workload.spec.cwd)
-            .map_err(|error| error.to_string())?;
-        for (key, value) in &workload.spec.env {
-            let value = match value {
-                EnvOverride::Plain(value) => EnvValue::Plain(OsString::from(value)),
-                EnvOverride::Secret(value) if value.is_empty() => EnvValue::Plain(OsString::new()),
-                EnvOverride::Secret(value) => EnvValue::Secret(
-                    SecretValue::new(value.clone().into_bytes())
-                        .map_err(|error| format!("secret `{key}`: {error}"))?,
-                ),
-            };
-            env.insert(OsString::from(key), value);
-        }
+        let env = workload_environment(&workload.spec).map_err(SpawnError::Failed)?;
         let spec = ProcessSpec {
             argv: vec!["/bin/sh".into(), "-c".into(), command.into()],
             cwd: workload.spec.cwd.clone(),
@@ -471,9 +594,9 @@ impl Owner {
             },
             label: workload.spec.name.clone(),
         };
-        let process = run
-            .spawn(spec, false)
-            .map_err(|error| format!("`{}` did not start: {error:?}", workload.spec.name))?;
+        let process = run.spawn(spec, false).map_err(|error| {
+            SpawnError::Failed(format!("`{}` did not start: {error}", workload.spec.name))
+        })?;
         let sequence = sequence_of(&process);
         println!(
             "[managed] started `{}` (pid {})",
@@ -488,6 +611,55 @@ impl Owner {
         };
         self.event(&event);
         Ok(())
+    }
+
+    /// A container route's setup as its own custody child. Its output is the
+    /// run's output, and the run's settle stops it if the supervisor dies
+    /// inside it.
+    fn run_setup(
+        &mut self,
+        run: &mut TaskRun,
+        index: usize,
+        setup: &str,
+    ) -> Result<(), SpawnError> {
+        let name = self.workloads[index].spec.name.clone();
+        let env = workload_environment(&self.workloads[index].spec).map_err(SpawnError::Failed)?;
+        let spec = ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), setup.into()],
+            cwd: self.workloads[index].spec.cwd.clone(),
+            env,
+            grace: GRACE,
+            lifetime: Lifetime::Finite(SETUP_BUDGET),
+            terminal: Terminal::Inherit { capture: false },
+            label: format!("{name} setup"),
+        };
+        let mut process = run.spawn(spec, false).map_err(|error| {
+            SpawnError::Failed(format!("`{name}` setup did not start: {error}"))
+        })?;
+        loop {
+            run.verify_admission()
+                .map_err(|error| SpawnError::Failed(error.to_string()))?;
+            if let Observed::Verified(exit, _) = process.poll() {
+                let _ = run.complete(&process, exit);
+                if exit.code != 0 {
+                    return Err(SpawnError::Failed(format!(
+                        "`{name}` setup exited {}",
+                        exit.code
+                    )));
+                }
+                return Ok(());
+            }
+            // A filed stop, a signal or the owning client's death ends the
+            // setup as that stop: the run reports a cancelled outcome, not a
+            // failed start.
+            if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
+                if matches!(cause, StopCause::OwnerLost) {
+                    self.lost_while_blocked = true;
+                }
+                return Err(SpawnError::Stopped(cause));
+            }
+            std::thread::sleep(TURN);
+        }
     }
 
     fn poll(&mut self, run: &mut TaskRun, index: usize) -> Option<End> {
@@ -535,8 +707,8 @@ impl Owner {
                     .position(|workload| workload.spec.name == process)
                 {
                     println!("[managed] restarting `{process}`");
-                    if let Err(reason) = self.spawn(run, index) {
-                        println!("[managed] restart of `{process}` failed: {reason}");
+                    if let Err(error) = self.spawn(run, index) {
+                        println!("[managed] restart of `{process}` failed: {error}");
                     }
                 }
             }
@@ -793,6 +965,24 @@ pub(in crate::runner) fn record_gateway(run: &mut TaskRun) -> Result<(), RunnerE
         .map_err(|error| RunnerError::task_invocation(format!("gateway receipt: {error}")))
 }
 
+/// The environment a workload and its setup share: the spawn environment of
+/// its cwd plus the overrides the plan rendered.
+fn workload_environment(spec: &WorkloadSpec) -> Result<BTreeMap<OsString, EnvValue>, String> {
+    let mut env = task_engine::spawn_environment(&spec.cwd).map_err(|error| error.to_string())?;
+    for (key, value) in &spec.env {
+        let value = match value {
+            EnvOverride::Plain(value) => EnvValue::Plain(OsString::from(value)),
+            EnvOverride::Secret(value) if value.is_empty() => EnvValue::Plain(OsString::new()),
+            EnvOverride::Secret(value) => EnvValue::Secret(
+                SecretValue::new(value.clone().into_bytes())
+                    .map_err(|error| format!("secret `{key}`: {error}"))?,
+            ),
+        };
+        env.insert(OsString::from(key), value);
+    }
+    Ok(env)
+}
+
 /// Environment entries for a workload's spawn spec, as the task engine
 /// builds them for its own processes.
 pub(in crate::runner) fn workload_env(
@@ -808,4 +998,231 @@ pub(in crate::runner) fn workload_env(
                 .map(|(key, value)| (key.clone(), EnvOverride::Secret(value.clone()))),
         )
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        live_workload_command, start_failure_end, workload_start_command, End, SpawnError,
+    };
+    use effigy_kernel::ctx::StopCause;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    /// A checkout whose lock selects `bundle` from `object`.
+    fn pinned_checkout(object: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let home = tempfile::tempdir().expect("fixture directory");
+        let repo = home.path().join("repo");
+        fs::create_dir_all(&repo).expect("mkdir repo");
+        let manifest = repo.join("effigy.toml");
+        fs::write(
+            &manifest,
+            "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n",
+        )
+        .expect("write manifest");
+        write_lock(&manifest, object);
+        (home, repo, manifest)
+    }
+
+    fn write_lock(manifest: &Path, object: &str) {
+        let lock = manifest
+            .parent()
+            .expect("manifest parent")
+            .join(".effigy/sources.lock.json");
+        fs::create_dir_all(lock.parent().expect("lock parent")).expect("mkdir .effigy");
+        fs::write(
+            &lock,
+            serde_json::json!({
+                "version": 1,
+                "sources": {"bundle": {
+                    "declaration": {"type": "path", "dir": "bundle"},
+                    "object": object,
+                    "version": "sha256:selected",
+                }},
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+    }
+
+    /// A container-routed process command was translated to the checkout's
+    /// mount before the supervisor starts it, and the generation a Prepare
+    /// pruned still has to resolve. `container_exec_command` is that
+    /// translation, so this drives the production pair in the order a managed
+    /// run uses them.
+    #[test]
+    fn a_container_routed_command_resolves_the_generation_the_lock_selects() {
+        let (_home, repo, manifest) = pinned_checkout("cache/sources/generation-b/1e6ed65d");
+        let host_command = format!(
+            "sh {}/.effigy/cache/sources/generation-a/1e6ed65d/scripts/profile_env.sh",
+            repo.display()
+        );
+        let translated = effigy_containers::session::container_exec_command(
+            &host_command,
+            &repo,
+            &repo,
+            Some(Path::new("/workspace")),
+        );
+        assert!(
+            translated.contains("/workspace/.effigy/cache/sources/generation-a"),
+            "{translated}"
+        );
+        let started = live_workload_command(&manifest, Some(Path::new("/workspace")), &translated);
+        assert!(
+            started.contains(
+                "/workspace/.effigy/cache/sources/generation-b/1e6ed65d/scripts/profile_env.sh"
+            ),
+            "{started}"
+        );
+        assert!(!started.contains("generation-a"), "{started}");
+        // A host-routed command keeps its own namespace.
+        let host_started = live_workload_command(&manifest, None, &host_command);
+        assert!(
+            host_started
+                .contains("/.effigy/cache/sources/generation-b/1e6ed65d/scripts/profile_env.sh"),
+            "{host_started}"
+        );
+    }
+
+    /// A container route's setup is its own exec, run by the supervisor before
+    /// the process command is resolved. The setup opens the same sources, so it
+    /// is resolved too: the generation an earlier Prepare pruned is never
+    /// opened by the setup, and a setup that publishes generation `c` — as
+    /// `bundle sync` does — leaves the helper on `c`.
+    #[test]
+    fn a_setup_that_publishes_a_generation_keeps_setup_and_command_on_live_sources() {
+        // The lock selects `b`; both the setup and the command still name `a`,
+        // which an earlier Prepare pruned.
+        let (_home, repo, manifest) = pinned_checkout("cache/sources/generation-b/1e6ed65d");
+        fs::create_dir_all(repo.join(".effigy/cache/sources/generation-b/1e6ed65d"))
+            .expect("mkdir generation b");
+        let host_setup = format!(
+            "sh {}/.effigy/cache/sources/generation-a/1e6ed65d/scripts/setup.sh && effigy bundle sync",
+            repo.display()
+        );
+        let stale_setup = effigy_containers::session::container_exec_command(
+            &host_setup,
+            &repo,
+            &repo,
+            Some(Path::new("/workspace")),
+        );
+        let translated = effigy_containers::session::container_exec_command(
+            &format!(
+                "sh {}/.effigy/cache/sources/generation-a/1e6ed65d/scripts/profile_env.sh",
+                repo.display()
+            ),
+            &repo,
+            &repo,
+            Some(Path::new("/workspace")),
+        );
+        let mut setup_ran = false;
+        let started = workload_start_command(
+            &manifest,
+            Some(Path::new("/workspace")),
+            Some(&stale_setup),
+            &translated,
+            |setup| {
+                assert!(
+                    setup.contains("effigy bundle sync"),
+                    "the route's setup exec reaches the supervisor: {setup}"
+                );
+                assert!(
+                    setup.contains(
+                        "/workspace/.effigy/cache/sources/generation-b/1e6ed65d/scripts/setup.sh"
+                    ),
+                    "the setup opens the generation the lock selects: {setup}"
+                );
+                assert!(!setup.contains("generation-a"), "{setup}");
+                // The setup publishes generation `c` and prunes `b`, exactly
+                // as `bundle sync` does.
+                fs::remove_dir_all(repo.join(".effigy/cache/sources/generation-b"))
+                    .expect("prune generation b");
+                write_lock(&manifest, "cache/sources/generation-c/1e6ed65d");
+                setup_ran = true;
+                Ok::<(), SpawnError>(())
+            },
+        )
+        .expect("the setup runs before the command is resolved");
+        assert!(setup_ran, "the setup ran");
+        assert!(
+            started.contains(
+                "/workspace/.effigy/cache/sources/generation-c/1e6ed65d/scripts/profile_env.sh"
+            ),
+            "{started}"
+        );
+        assert!(!started.contains("generation-a"), "{started}");
+        assert!(!started.contains("generation-b"), "{started}");
+        assert!(
+            !repo.join(".effigy/cache/sources/generation-b").exists(),
+            "the generation the setup's Prepare pruned is gone"
+        );
+    }
+
+    /// A model of the supervisor's setup step: the seam runs the setup and
+    /// keeps the failure it returned, structured.
+    fn setup_that_fails(failure: SpawnError) -> Result<String, SpawnError> {
+        let (_home, repo, manifest) = pinned_checkout("cache/sources/generation-b/1e6ed65d");
+        let command = format!(
+            "sh {}/.effigy/cache/sources/generation-b/1e6ed65d/scripts/profile_env.sh",
+            repo.display()
+        );
+        workload_start_command(
+            &manifest,
+            None,
+            Some("effigy bundle sync"),
+            &command,
+            move |_| Err(failure),
+        )
+    }
+
+    /// A stop filed while a container route's setup runs is a stop: the run
+    /// reports a cancelled outcome, not a failed start.
+    #[test]
+    fn a_filed_stop_during_a_container_route_setup_is_not_a_failed_start() {
+        let error = setup_that_fails(SpawnError::Stopped(StopCause::Requested))
+            .expect_err("the setup stopped");
+        assert!(
+            matches!(error, SpawnError::Stopped(StopCause::Requested)),
+            "the stop keeps its cause: {error}"
+        );
+        assert!(
+            matches!(
+                start_failure_end(error, false),
+                End::Stopped(StopCause::Requested)
+            ),
+            "a filed stop ends the run as a stop"
+        );
+    }
+
+    /// The owning client's death while that setup runs reports the owner loss
+    /// the stop was filed for, once the run observed it.
+    #[test]
+    fn an_owner_loss_during_a_container_route_setup_reports_the_loss() {
+        let error = setup_that_fails(SpawnError::Stopped(StopCause::OwnerLost))
+            .expect_err("the setup stopped");
+        assert!(
+            matches!(error, SpawnError::Stopped(StopCause::OwnerLost)),
+            "the owner loss keeps its cause: {error}"
+        );
+        assert!(
+            matches!(
+                start_failure_end(error, true),
+                End::Stopped(StopCause::OwnerLost)
+            ),
+            "an owner loss ends the run as a stop, not a failed start"
+        );
+    }
+
+    /// A setup's own failure is a failed start, and a stop the owner reported
+    /// later still supersedes it.
+    #[test]
+    fn a_failed_setup_stays_a_failed_start() {
+        let error = setup_that_fails(SpawnError::Failed("setup exited 7".to_owned()))
+            .expect_err("the setup failed");
+        match start_failure_end(error, true) {
+            End::StartFailed(reason, _) => assert_eq!(reason, "setup exited 7"),
+            End::Stopped(cause) => panic!("a failed setup is not a stop: {cause:?}"),
+            _ => panic!("a failed setup is a failed start"),
+        }
+    }
 }
