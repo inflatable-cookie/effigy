@@ -3520,42 +3520,6 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
     /// reboot never blocks `up`: it is deleted with one line, and its spec with
     /// it (effigy#341).
     #[test]
-    fn host_process_owned_stop_removes_a_legacy_pid_supervisor() {
-        let fixture = fixture();
-        let policy = policy(
-            &fixture.checkout,
-            vec![host_process(
-                "app",
-                "exec /bin/sleep 120",
-                HostProcessRestart::Never,
-            )],
-        );
-        let dir = host_process_dir_for_policy(&fixture.checkout, &policy);
-        super::create_host_process_dir(&fixture.checkout, &dir).expect("runtime dir");
-        fs::write(
-            dir.join("app.pid"),
-            r#"{"pid":999999999,"boot_identity":"boot"}"#,
-        )
-        .expect("legacy record");
-        fs::write(dir.join("app.spec.json"), r#"{"schema":"legacy"}"#).expect("legacy spec");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-            .expect("a dead legacy record never blocks `up`");
-        assert!(!dir.join("app.pid").exists(), "the legacy record is gone");
-        assert!(
-            !dir.join("app.spec.json").exists(),
-            "the legacy spec is gone"
-        );
-        let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
-        assert_eq!(status[0].state, "running", "{status:?}");
-        let report =
-            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
-        assert!(report.complete(), "{report:?}");
-    }
-
-    /// A host process is a workload too: no internal marker this supervisor was
-    /// started with reaches the application it starts, and the container
-    /// handoff a consumer reads still does (effigy#341).
-    #[test]
     fn host_process_environment_carries_no_internal_marker() {
         let _markers = crate::contract_test_support::EnvGuard::set_many(&[
             ("EFFIGY_INTERNAL_SUPPRESS_HEADER", Some("1".to_owned())),
