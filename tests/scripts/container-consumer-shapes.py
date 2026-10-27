@@ -1081,6 +1081,23 @@ def discover_owned(repo, worktree, shared_project, predicted_projects=(), checko
             for key in ("com.docker.compose.project", "com.effigy.project"):
                 if labels.get(key):
                     projects.add(labels[key])
+    # A volume or network reached through a stem still carries the exact
+    # Compose project in its own label. Promote that id into the tracked set, so
+    # deletion is authorised by the label itself rather than by the stem: a
+    # linked `up` that created only state before failing leaves exactly this
+    # shape, and refusing it would strand the orphan.
+    def labelled_projects_of(resource):
+        ids = set()
+        for name in runtime_named(resource):
+            labels = labels_of(resource, name)
+            if labels_own(labels, name, projects, checkouts, stems):
+                for key in ("com.docker.compose.project", "com.effigy.project"):
+                    if labels.get(key):
+                        ids.add(labels[key])
+        return ids
+
+    for resource in ("volume", "network"):
+        projects.update(labelled_projects_of(resource))
     volumes = sorted(
         name for name in runtime_named("volume")
         if labels_own(labels_of("volume", name), name, projects, checkouts, stems)
