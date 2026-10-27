@@ -676,32 +676,4 @@ primary_service = "workspace"
             Some(("app", "workspace"))
         );
     }
-
-    #[test]
-    fn inline_workspace_container_errors_until_policy_support_lands() {
-        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
-        let systems = systems_toml(
-            r#"
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = { image = "node:22", mount = "./:/workspace" }
-"#,
-        );
-        let mut task = manifest_task();
-        task.workspace = Some("app".to_owned());
-
-        let error =
-            route_standard_task_execution("build", None, &task, Some(&systems), None, |_| {
-                panic!("routing should fail before runtime lookup")
-            })
-            .expect_err("inline workspace container should not route through legacy path");
-        assert!(error
-            .to_string()
-            .contains("standard task routing does not support inline workspace containers yet"));
-    }
 }

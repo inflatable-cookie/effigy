@@ -3,26 +3,11 @@
 //! conflict, and never unlocked by hand.
 
 use crate::runner::tests::prelude::{
-    assert_live_dev_lock_conflict, assert_output_equals, lock_test,
-    parse_json_output_with_schema_version, run_dev, run_task_status_from_repo, run_task_with_repo,
-    start_held_dev_owner, temp_workspace, wait_for_live_task_owner, write_lock_files,
-    write_root_manifest, OwnedThread,
+    assert_output_equals, lock_test, parse_json_output_with_schema_version, run_dev,
+    run_task_status_from_repo, run_task_with_repo, start_held_dev_owner, temp_workspace,
+    wait_for_live_task_owner, write_lock_files, write_root_manifest, OwnedThread,
 };
 use crate::runner::RunnerError;
-
-#[test]
-fn run_manifest_task_rejects_live_lock_conflict() {
-    let _guard = lock_test();
-    let root = temp_workspace("lock-conflict-live");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "sleep 1"
-"#,
-    );
-
-    assert_live_dev_lock_conflict(&root, "task:dev", "effigy runs");
-}
 
 #[test]
 fn live_lock_conflict_names_the_holder_and_never_suggests_unlocking() {

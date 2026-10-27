@@ -5,12 +5,15 @@
 use super::*;
 use effigy_kernel::ctx::{CancelToken, EffectClass, Placement};
 use effigy_kernel::gate::Wait;
+use effigy_kernel::gate::{ForegroundDiag, HolderDiag};
+use effigy_kernel::id::ResourceId;
 use effigy_kernel::id::{
     CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId,
     Surface, TaskId,
 };
+use effigy_kernel::ident::ProcessState;
 use effigy_kernel::objects::Closure;
-use effigy_kernel::observe::Observed;
+use effigy_kernel::observe::{AbsenceProof, Evidence, Observed};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation, WorkloadOutcome};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{AttachMode, BeginOpts, Liveness, Run};
@@ -19,6 +22,55 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+
+/// The busy sentence is written from the gate's own holder diagnostics
+/// (effigy#313), never from a caller-supplied string, and it suggests one
+/// command the CLI accepts.
+#[test]
+fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
+    let checkout = checkout();
+    let evidence = || Evidence::new("gate body probe".to_owned(), None).expect("evidence");
+    let holder = HolderDiag {
+        foreground: Some(ForegroundDiag {
+            root: false,
+            owner: ResourceId::environment(checkout, PROJECT).expect("owner"),
+            task: TaskId::new(checkout, "api", Surface::Published, "dev", None).expect("task"),
+            gate: ResourceId::environment(checkout, PROJECT).expect("gate"),
+        }),
+        run: Some("agqw465xzsu66h77ejdxon3hde".to_owned()),
+        pid: 99290,
+        start: None,
+        boot: None,
+        argv0: None,
+        state: Observed::Verified(ProcessState::Active, evidence()),
+    };
+    let text = reconcile::busy_text(
+        PROJECT,
+        &Observed::Verified(holder, evidence()),
+        Some(std::time::Duration::from_millis(1500)),
+    );
+    for needle in [
+        "environment `acme-stack` is busy",
+        "run agqw465xzsu66h77ejdxon3hde",
+        "pid 99290",
+        "task `api/dev`",
+        "and the wait ended after 1.5s",
+        "`effigy container acme-stack status`",
+    ] {
+        assert!(text.contains(needle), "{needle}: {text}");
+    }
+
+    // An unreadable gate body is named by category only, never by detail.
+    let unknown = reconcile::busy_text(PROJECT, &Observed::Absent(AbsenceProof::NoGateInode), None);
+    assert!(
+        unknown.contains("a run whose gate body is absent is transitioning it"),
+        "{unknown}"
+    );
+    assert!(
+        unknown.contains("`effigy container acme-stack status`"),
+        "{unknown}"
+    );
+}
 
 mod adapters;
 mod faults;
@@ -517,8 +569,7 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                 // holder releases, without a further declaration change.
                 task.take();
                 assert_eq!(
-                    bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[])
-                        .unwrap(),
+                    bring_up(&ctx, &stack, &fake, &closure("two"), Retention::Held, &[]).unwrap(),
                     Applied::Reconciled
                 );
                 assert_eq!(fake.calls().len(), before + 1, "{transition}");

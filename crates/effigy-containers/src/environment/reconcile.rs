@@ -181,7 +181,11 @@ pub(crate) fn operation(
 /// reported: its pid and task when the gate recorded them (effigy#313), and
 /// what the caller can do about it. Nothing here decides anything, and an
 /// unreadable diagnostic is simply not named.
-fn busy_text(env: &str, holder: &Observed<HolderDiag>, waited: Option<Duration>) -> String {
+pub(super) fn busy_text(
+    env: &str,
+    holder: &Observed<HolderDiag>,
+    waited: Option<Duration>,
+) -> String {
     let owner = match holder {
         Observed::Verified(diag, _) => {
             let mut facts = vec![format!("pid {}", diag.pid)];

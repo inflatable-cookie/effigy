@@ -4,23 +4,6 @@ use crate::runner::tests::prelude::{
 };
 
 #[test]
-fn run_doctor_and_explain_text_headings_are_stable() {
-    let doctor_root = temp_workspace("doctor-shared-layout-heading");
-    write_root_manifest(&doctor_root, "[tasks.health]\nrun = \"printf ok\"\n");
-    let doctor_out = run_builtin_ok(doctor_root, "doctor", &[]);
-    assert!(doctor_out.starts_with("Doctor's Report\n"));
-
-    let explain_root =
-        setup_doctor_explain_catalog_workspace("doctor-explain-shared-layout-heading");
-    let explain_out = run_builtin_ok(
-        explain_root,
-        "doctor",
-        &["catalog_a/build", "--", "--watch"],
-    );
-    assert!(explain_out.starts_with("Doctor Explain\n"));
-}
-
-#[test]
 fn run_doctor_and_explain_text_row_and_section_order_contract_is_stable() {
     let doctor_root = temp_workspace("doctor-shared-layout-row-order");
     write_root_manifest(

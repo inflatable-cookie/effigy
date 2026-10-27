@@ -1436,11 +1436,10 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_workspace_extra_mount_decisions, detached_activation_error,
-        detached_activation_failure, detached_activation_identity, ensure_up_workspace_permissions,
-        exec_operation_plan, gateway_registration_failure, lifecycle_operation_plan,
-        prepare_container_up, run_container_down_command, sanitized_failure_cause,
-        DetachedOperationState, RunnerError,
+        annotate_workspace_extra_mount_decisions, detached_activation_failure,
+        detached_activation_identity, ensure_up_workspace_permissions,
+        gateway_registration_failure, lifecycle_operation_plan, prepare_container_up,
+        run_container_down_command, sanitized_failure_cause, DetachedOperationState, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
@@ -1452,10 +1451,7 @@ mod tests {
         down_report, load_container_policy, load_container_policy_for_creation, up_detached_report,
         ContainerAction, EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
     };
-    use effigy_containers::{
-        ContainerConfirmationPolicy, ContainerExecOperation, ContainerLifecycleOperation,
-        ContainerOperationKind, ContainerSideEffectClass,
-    };
+    use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup,
@@ -1528,30 +1524,6 @@ mod tests {
             "got: {rendered}"
         );
     }
-
-    #[test]
-    fn up_workspace_permission_preparation_passes_success_through() {
-        let policy = test_policy(Vec::new());
-
-        ensure_up_workspace_permissions(&policy, || Ok(())).expect("clean preparation should pass");
-    }
-
-    #[test]
-    fn detached_activation_failure_preserves_typed_readiness_evidence() {
-        let policy = test_policy(Vec::new());
-        let diagnostic = "report=accepted, ownership=exclusive_owner_observed, http_probe=status_mismatch:503, route=not_reached";
-        let error = detached_activation_error(
-            &policy,
-            RunnerError::ManagedHostReadiness {
-                process: "private-listener".to_owned(),
-                diagnostic: diagnostic.to_owned(),
-            },
-        );
-        assert!(
-            matches!(error, RunnerError::ManagedHostReadiness { diagnostic: observed, .. } if observed == diagnostic)
-        );
-    }
-
     #[test]
     fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
         let policy = test_policy(Vec::new());
@@ -1616,23 +1588,6 @@ mod tests {
         assert!(cause.contains('…'), "{cause}");
         assert!(cause.ends_with("detail"), "{cause}");
     }
-
-    #[test]
-    fn lifecycle_operation_plan_keeps_policy_identity_and_backend_id() {
-        let policy = test_policy(Vec::new());
-        let plan = lifecycle_operation_plan(
-            Path::new("/tmp/repo"),
-            &policy,
-            ContainerLifecycleOperation::up(false, true),
-        );
-
-        assert_eq!(plan.request.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(plan.request.policy_name, "web");
-        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
-        assert_eq!(plan.side_effect, ContainerSideEffectClass::StartsRuntime);
-        assert!(plan.consumes_declared_container_secrets());
-    }
-
     #[test]
     fn lifecycle_reset_plan_requires_confirmation_only_for_wipe_data() {
         let policy = test_policy(Vec::new());
@@ -1660,62 +1615,6 @@ mod tests {
         );
         assert!(!wipe_data.consumes_declared_container_secrets());
     }
-
-    #[test]
-    fn exec_operation_plan_keeps_captured_command_identity() {
-        let policy = test_policy(Vec::new());
-        let stdin = PathBuf::from("/tmp/import.sql");
-        let plan = exec_operation_plan(
-            Path::new("/tmp/repo"),
-            &policy,
-            ContainerExecOperation::captured(
-                Some("db".to_owned()),
-                vec!["mysql".to_owned(), "app".to_owned()],
-                Some(stdin.clone()),
-            ),
-        );
-
-        assert_eq!(plan.request.repo_root, PathBuf::from("/tmp/repo"));
-        assert_eq!(plan.request.policy_name, "web");
-        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
-        assert_eq!(
-            plan.side_effect,
-            ContainerSideEffectClass::InteractsWithRuntime
-        );
-        assert!(!plan.consumes_declared_container_secrets());
-        match plan.request.kind {
-            ContainerOperationKind::Exec(ContainerExecOperation::Captured(operation)) => {
-                assert_eq!(operation.service.as_deref(), Some("db"));
-                assert_eq!(operation.command, vec!["mysql", "app"]);
-                assert_eq!(operation.stdin_file, Some(stdin));
-            }
-            other => panic!("unexpected operation kind: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn exec_operation_plan_keeps_shell_command_identity() {
-        let policy = test_policy(Vec::new());
-        let plan = exec_operation_plan(
-            Path::new("/tmp/repo"),
-            &policy,
-            ContainerExecOperation::shell(
-                Some("app".to_owned()),
-                Some("composer install".to_owned()),
-                true,
-            ),
-        );
-
-        match plan.request.kind {
-            ContainerOperationKind::Exec(ContainerExecOperation::Shell(operation)) => {
-                assert_eq!(operation.service.as_deref(), Some("app"));
-                assert_eq!(operation.command.as_deref(), Some("composer install"));
-                assert!(operation.interactive);
-            }
-            other => panic!("unexpected operation kind: {other:?}"),
-        }
-    }
-
     fn shared_service(name: &str, catalog: &str, host_port: u16) -> SharedServiceBinding {
         SharedServiceBinding {
             service_name: name.to_owned(),

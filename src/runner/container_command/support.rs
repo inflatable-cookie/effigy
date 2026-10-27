@@ -1024,12 +1024,10 @@ fn format_args(args: &[OsString]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        exec_error_means_runtime_not_running, render_tcp_alias_hosts_script,
-        running_container_runtime_mismatch, tcp_alias_host_pairs,
+        render_tcp_alias_hosts_script, running_container_runtime_mismatch, tcp_alias_host_pairs,
     };
     use effigy_containers::{
-        exec::{ContainerExecError, RunningComposeContainer},
-        EffectiveComposeSource, EffectiveContainerPolicy,
+        exec::RunningComposeContainer, EffectiveComposeSource, EffectiveContainerPolicy,
     };
     use std::path::{Path, PathBuf};
 
@@ -1246,37 +1244,6 @@ mod tests {
 
         assert!(mismatch.is_none());
     }
-
-    #[test]
-    fn runtime_not_running_errors_degrade_to_no_mismatch_probe() {
-        let colima_stopped = ContainerExecError::Failure {
-            command: "colima nerdctl ps".to_owned(),
-            code: Some(1),
-            stdout: String::new(),
-            stderr: "time=\"2026-04-21T07:59:20+01:00\" level=fatal msg=\"colima is not running\""
-                .to_owned(),
-        };
-        let profiled_colima_stopped = ContainerExecError::Failure {
-            command: "colima nerdctl ps".to_owned(),
-            code: Some(1),
-            stdout: String::new(),
-            stderr: "time=\"2026-05-13T11:09:48+01:00\" level=fatal msg=\"colima [profile=effigy] is not running\""
-                .to_owned(),
-        };
-        let docker_stopped = ContainerExecError::Failure {
-            command: "docker ps".to_owned(),
-            code: Some(1),
-            stdout: String::new(),
-            stderr: "Cannot connect to the Docker daemon".to_owned(),
-        };
-
-        assert!(exec_error_means_runtime_not_running(&colima_stopped));
-        assert!(exec_error_means_runtime_not_running(
-            &profiled_colima_stopped
-        ));
-        assert!(exec_error_means_runtime_not_running(&docker_stopped));
-    }
-
     #[test]
     fn tcp_alias_host_pairs_use_gateway_tcp_routes_only() {
         let policy = test_policy();

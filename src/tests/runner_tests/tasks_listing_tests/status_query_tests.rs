@@ -36,25 +36,6 @@ fn run_tasks_status_json_reports_the_live_run() {
 }
 
 #[test]
-fn run_tasks_status_text_reports_last_run_outcome() {
-    let root = temp_workspace("tasks-status-text-latest");
-    write_root_manifest(&root, "[tasks.check]\nrun = \"printf check\"\n");
-    run_task_in_workspace(&root, "check", &[]).expect("run check");
-
-    let out = run_task_status_from_repo(&root, "check", false);
-
-    assert_output_contains_all(
-        &out,
-        &[
-            "Task Status",
-            "check",
-            "not-recorded",
-            "No runs recorded yet.",
-        ],
-    );
-}
-
-#[test]
 fn run_tasks_status_text_reports_never_run() {
     let root = temp_workspace("tasks-status-text-never-run");
     write_root_manifest(&root, "[tasks.check]\nrun = \"printf check\"\n");

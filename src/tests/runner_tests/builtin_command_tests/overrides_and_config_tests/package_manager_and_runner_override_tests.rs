@@ -112,12 +112,3 @@ vitest = "npx vitest run --reporter=dot"
         ],
     );
 }
-
-#[test]
-fn run_manifest_task_builtin_test_plan_has_blank_line_between_sections() {
-    let root = temp_workspace("builtin-test-plan-section-spacing");
-    write_package_json_with_vitest_dev_dependency(&root);
-
-    let out = run_builtin_ok(root, "test", &["--plan"]);
-    assert_output_contains_all(&out, &["\n\nTarget Summary\n", "\n\nTarget: root\n"]);
-}

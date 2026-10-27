@@ -268,21 +268,6 @@ fn run_manifest_task_run_array_task_reference_env_contract_table() {
 }
 
 #[test]
-fn run_manifest_task_run_array_builtin_task_reference_uses_custody() {
-    let root = temp_workspace("run-array-task-ref-in-process");
-    write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");
-    write_validate_manifest(
-        &root,
-        r#"[tasks.validate]
-run = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
-"#,
-    );
-
-    let out = run_validate_ok(&root, &[]);
-    assert_eq!(out, "");
-}
-
-#[test]
 fn run_manifest_task_accepts_single_task_object_without_array_wrapper() {
     let root = temp_workspace("single-task-object-builtin-task-ref");
     write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");

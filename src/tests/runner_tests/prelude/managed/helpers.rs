@@ -7,7 +7,7 @@ use super::super::output::{
 use super::super::runtime::{
     fs, thread, Duration, Instant, Path, PathBuf, RunnerError, TaskInvocation,
 };
-use super::assertions::{assert_lock_conflict, assert_managed_profile_not_found};
+use super::assertions::assert_managed_profile_not_found;
 use super::cases::{
     ManagedInvocation, ManagedOutputCase, ManagedOutputDerivedCase, ManagedProfileNotFoundCase,
 };
@@ -188,21 +188,6 @@ run = "sh hold-owner.sh .effigy-test-hold-ready .effigy-test-hold-release"
     wait_for_live_task_owner(root, "dev");
     wait_for_path_exists(&ready_path, Duration::from_secs(5), HOLD_READY_NAME);
     held
-}
-
-pub(in crate::runner::tests) fn assert_live_dev_lock_conflict(
-    root: &Path,
-    expected_scope: &str,
-    expected_remediation: &str,
-) {
-    let root_for_thread = root.to_path_buf();
-    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(root, "dev");
-
-    let err = run_dev(root, &[]).expect_err("second run should conflict on lock");
-    assert_lock_conflict(err, expected_scope, expected_remediation);
-
-    owner.join().expect("first run should complete");
 }
 
 fn workspace_root(workspace: &str) -> PathBuf {

@@ -192,32 +192,36 @@ mod tests {
 
     #[test]
     fn runtime_not_running_errors_degrade_to_false() {
-        let colima_stopped = ContainerExecError::Failure {
-            command: "colima nerdctl ps".to_owned(),
-            code: Some(1),
-            stdout: String::new(),
-            stderr: "time=\"2026-04-20T08:31:53+01:00\" level=fatal msg=\"colima is not running\""
-                .to_owned(),
-        };
-        let profiled_colima_stopped = ContainerExecError::Failure {
-            command: "colima nerdctl ps".to_owned(),
-            code: Some(1),
-            stdout: String::new(),
-            stderr: "time=\"2026-05-13T11:09:48+01:00\" level=fatal msg=\"colima [profile=effigy] is not running\""
-                .to_owned(),
-        };
-        let docker_stopped = ContainerExecError::Failure {
+        let failure = |stderr: &str| ContainerExecError::Failure {
             command: "docker ps".to_owned(),
             code: Some(1),
             stdout: String::new(),
-            stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
-                .to_owned(),
+            stderr: stderr.to_owned(),
         };
-
-        assert!(exec_error_means_runtime_not_running(&colima_stopped));
-        assert!(exec_error_means_runtime_not_running(
-            &profiled_colima_stopped
+        // Only a runtime that is provably not running degrades; any other
+        // failure stays a failure, so a real break is never hidden.
+        for stderr in [
+            "time=\"2026-04-20T08:31:53+01:00\" level=fatal msg=\"colima is not running\"",
+            "time=\"2026-05-13T11:09:48+01:00\" level=fatal msg=\"colima [profile=effigy] is not running\"",
+            "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+            "the daemon is not running",
+        ] {
+            assert!(exec_error_means_runtime_not_running(&failure(stderr)), "{stderr}");
+        }
+        for stderr in [
+            "level=fatal msg=\"permission denied while trying to connect to the docker API\"",
+            "no such container: demo-workspace-1",
+        ] {
+            assert!(
+                !exec_error_means_runtime_not_running(&failure(stderr)),
+                "{stderr}"
+            );
+        }
+        assert!(!exec_error_means_runtime_not_running(
+            &ContainerExecError::Launch {
+                command: "colima nerdctl ps".to_owned(),
+                error: std::io::Error::other("spawn failed"),
+            }
         ));
-        assert!(exec_error_means_runtime_not_running(&docker_stopped));
     }
 }

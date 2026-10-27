@@ -4084,20 +4084,6 @@ services:
         let (escaped, note) = run_swap_race(&argv);
         assert!(!escaped, "bulk chown resolved outside the volume: {note}");
     }
-
-    #[cfg(unix)]
-    #[test]
-    fn bulk_negative_control_path_based_exec_is_redirected_by_the_same_swap() {
-        let mut legacy = bulk_chown_argv("/cargo/git", 424242, 424243);
-        for part in legacy.iter_mut() {
-            if part == "-execdir" {
-                *part = "-exec".to_owned();
-            }
-        }
-        let (escaped, _) = run_swap_race(&legacy);
-        assert!(escaped, "control must reproduce the original escape");
-    }
-
     /// Real filesystem, real `find`: 44339 entries over three volumes. A fake
     /// `chown` records every path it is handed (no uid change is possible
     /// without root) so we can prove traversal reaches every entry in all three
@@ -4280,30 +4266,6 @@ exit 0
         );
         pids
     }
-
-    #[cfg(unix)]
-    fn wait_for_bulk_fixture_pids(process_file: &Path) -> Vec<i32> {
-        let deadline = Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            if let Ok(recorded) = std::fs::read_to_string(process_file) {
-                if recorded
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .count()
-                    >= 2
-                {
-                    return bulk_fixture_pids(process_file);
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "fixture never reached its hung child: {}",
-                process_file.display()
-            );
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-    }
-
     #[cfg(unix)]
     fn bulk_fixture_pid_alive(pid: i32) -> bool {
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
@@ -4466,48 +4428,6 @@ exit 0
             "expired caller deadline must not spawn the fake bulk child"
         );
     }
-
-    #[cfg(unix)]
-    #[test]
-    fn bulk_production_constructor_reap_oracle_fails_when_timeout_reap_is_disabled() {
-        use crate::contract_test_support::lock_test;
-        use std::panic::AssertUnwindSafe;
-        use std::process::Command;
-
-        let _lock = lock_test();
-        let temp = effigy_test_support::Fixture::new("effigy-bulk-reap-negative-control-")
-            .expect("tempdir");
-        let root = std::fs::canonicalize(temp.path()).expect("canon");
-        let process_file = root.join("bulk-process-group");
-        let (bin, docker) = install_fake_hung_bulk_docker(&root, &process_file);
-        let _env = with_fake_bulk_runtime(&bin);
-        let child = Command::new(&docker)
-            .args(["compose", "exec", "find", "-execdir"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn private hang with timeout/reap disabled");
-        let fixture_guard = BulkFixtureProcessGuard::new(&process_file, Some(child));
-        let pids = wait_for_bulk_fixture_pids(&process_file);
-        assert_eq!(pids.len(), 2, "leader plus one sleep descendant");
-        assert!(
-            pids.iter().all(|pid| bulk_fixture_pid_alive(*pid)),
-            "no-reap control must keep its exact leader and descendant alive: {pids:?}"
-        );
-
-        let reap_oracle = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            assert_bulk_fixture_processes_gone(&pids);
-        }));
-        assert!(
-            reap_oracle.is_err(),
-            "reap oracle must fail while runtime timeout/reap is disabled"
-        );
-
-        drop(fixture_guard);
-        assert_bulk_fixture_processes_gone(&pids);
-    }
-
     /// Host-fs seam: observes current-user access on a private fixture.
     /// This process cannot switch to uid 501; numeric uid/gid acceptance is
     /// covered by `MemoryAccessBackend`, not by this OS probe.

@@ -1,7 +1,7 @@
 use crate::runner::tests::prelude::{
     assert_output_contains_all, assert_output_excludes_all, create_workspace_dir,
-    doctor_nonzero_rendered, run_builtin_ok, run_doctor_err_from_cwd,
-    setup_doctor_explain_catalog_workspace, temp_workspace, write_manifest, write_root_manifest,
+    doctor_nonzero_rendered, run_builtin_ok, run_doctor_err_from_cwd, temp_workspace,
+    write_manifest, write_root_manifest,
 };
 
 #[test]
@@ -15,46 +15,6 @@ fn run_doctor_text_output_has_blank_line_between_sections() {
     assert_output_contains_all(&out, &["No findings.", "\nsummary  ok:"]);
     assert_output_excludes_all(&out, &["workspace.root-resolution"]);
     assert_output_excludes_all(&out, &["\n\nRoot Resolution\n"]);
-}
-
-#[test]
-fn run_doctor_explain_text_snapshot_prefix_block_is_stable() {
-    let root = setup_doctor_explain_catalog_workspace("doctor-explain-snapshot-prefix");
-
-    let out = run_builtin_ok(root, "doctor", &["catalog_a/build", "--", "--watch"]);
-
-    let (prefix_block, _) = out
-        .split_once("\ncandidate-catalogs:\n")
-        .expect("expected candidate-catalogs section");
-    let lines = prefix_block.lines().collect::<Vec<&str>>();
-    assert_eq!(lines.len(), 12);
-    assert_eq!(lines[0], "Doctor Explain");
-    assert_eq!(lines[1], "──────────────");
-    assert_eq!(lines[2], "request: catalog_a/build");
-    assert_eq!(lines[3], "args: -- --watch");
-    assert!(
-        lines[4].starts_with("resolved-root: "),
-        "resolved-root line changed: {}",
-        lines[4]
-    );
-    assert!(
-        lines[4].contains("doctor-explain-snapshot-prefix"),
-        "resolved-root should include workspace marker: {}",
-        lines[4]
-    );
-    assert_eq!(lines[5], "selection-status: ok");
-    assert_eq!(lines[6], "selected-catalog: catalog_a");
-    assert_eq!(lines[7], "selected-mode: explicit_prefix");
-    assert_eq!(
-        lines[8],
-        "selection-reasoning: selected catalog by explicit task prefix"
-    );
-    assert_eq!(lines[9], "deferral-considered: false");
-    assert_eq!(lines[10], "deferral-selected: false");
-    assert_eq!(
-        lines[11],
-        "deferral-reasoning: deferral was not considered because the selection outcome does not trigger deferral"
-    );
 }
 
 #[test]

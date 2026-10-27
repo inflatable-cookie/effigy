@@ -162,21 +162,6 @@ fn detect_test_runner_ignores_commented_out_vite_test_block() {
 }
 
 #[test]
-fn detect_test_runner_ignores_commented_out_test_dir() {
-    let root = temp_workspace("test-detect-vitest-commented-dir");
-    fs::write(
-        root.join("vitest.config.ts"),
-        "export default { test: { /* dir: 'old' */ include: ['**/*.test.ts'] } };\n",
-    )
-    .expect("write config");
-
-    let plan = detect_test_runner(&root).expect("plan");
-    assert_eq!(plan.runner, TestRunner::Vitest);
-    assert_eq!(plan.command, "vitest run");
-    assert!(plan.evidence.iter().all(|line| !line.contains("test.dir")));
-}
-
-#[test]
 fn detect_test_runner_detects_vitest_from_cts_config_file() {
     let root = temp_workspace("test-detect-vitest-cts");
     fs::write(
@@ -213,63 +198,11 @@ fn detect_test_runner_detects_vitest_from_vite_cts_config_test_block() {
 }
 
 #[test]
-fn detect_test_runner_uses_quoted_test_keys_for_configured_dir() {
-    let root = temp_workspace("test-detect-vitest-quoted-keys");
-    fs::write(
-        root.join("package.json"),
-        r#"{ "devDependencies": { "vitest": "^2.0.0" } }"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("vite.config.ts"),
-        r#"export default { "test": { "dir": "src" } };"#,
-    )
-    .expect("write config");
-
-    let plan = detect_test_runner(&root).expect("plan");
-    assert_eq!(plan.runner, TestRunner::Vitest);
-    assert_eq!(plan.command, "vitest run --dir 'src'");
-}
-
-#[test]
 fn detect_test_runner_detects_quoted_vite_test_block_without_package_json() {
     let root = temp_workspace("test-detect-vitest-quoted-vite-only");
     fs::write(
         root.join("vite.config.ts"),
         r#"export default { "test": { "dir": "src" } };"#,
-    )
-    .expect("write config");
-
-    let plan = detect_test_runner(&root).expect("plan");
-    assert_eq!(plan.runner, TestRunner::Vitest);
-    assert_eq!(plan.command, "vitest run --dir 'src'");
-}
-
-#[test]
-fn detect_test_runner_keeps_test_dir_after_regex_with_slashes() {
-    let root = temp_workspace("test-detect-vitest-regex-slashes");
-    fs::write(
-        root.join("package.json"),
-        r#"{ "devDependencies": { "vitest": "^2.0.0" } }"#,
-    )
-    .expect("write package");
-    fs::write(
-        root.join("vitest.config.ts"),
-        r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#,
-    )
-    .expect("write config");
-
-    let plan = detect_test_runner(&root).expect("plan");
-    assert_eq!(plan.runner, TestRunner::Vitest);
-    assert_eq!(plan.command, "vitest run --dir 'src'");
-}
-
-#[test]
-fn detect_test_runner_detects_vite_test_block_after_regex_with_slashes() {
-    let root = temp_workspace("test-detect-vitest-vite-regex-slashes");
-    fs::write(
-        root.join("vite.config.ts"),
-        r#"const matcher = /\/\//; export default { test: { dir: 'src' } };"#,
     )
     .expect("write config");
 

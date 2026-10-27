@@ -60,15 +60,6 @@ pub(super) fn ensure_runtime_exec_readiness_stage(
     ensure_primary_service_binding(repo_root, policy)
 }
 
-#[cfg(test)]
-pub(super) fn ensure_runtime_exec_readiness_stage_using(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    ensure_exec_ready: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
-) -> Result<(), RunnerError> {
-    ensure_exec_ready(repo_root, policy)
-}
-
 pub(super) fn reconcile_runtime_aliases_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

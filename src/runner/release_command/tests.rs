@@ -1,28 +1,10 @@
-#[path = "../../../crates/effigy-release/src/test_support.rs"]
-mod release_test_support;
 use effigy_release::{
-    build_diff_preview, detect_cargo_version_path, detect_pyproject_version_path,
-    detect_version_file_kind, json_value_at_path, plan_release_pipeline,
+    build_diff_preview, detect_pyproject_version_path, json_value_at_path, plan_release_pipeline,
     render_changelog_preview_line as changelog_preview_line, render_prepared_changelog_contents,
-    render_updated_version_contents, replace_json_string_at_path_preserving_layout,
-    resolve_version_field_path, suggested_bump, toml_value_at_path, BumpKind, GateStage,
-    IdentityKind, ResolvedVersionSource, TargetKind, VersionFileKind,
+    render_updated_version_contents, replace_json_string_at_path_preserving_layout, suggested_bump,
+    toml_value_at_path, BumpKind, GateStage, IdentityKind, ResolvedVersionSource, TargetKind,
+    VersionFileKind,
 };
-
-#[test]
-fn version_file_kind_detection_matches_supported_names() {
-    release_test_support::assert_supported_version_file_kinds();
-}
-
-#[test]
-fn version_field_path_defaults_follow_known_formats() {
-    release_test_support::assert_default_version_field_paths();
-}
-
-#[test]
-fn detect_cargo_version_path_supports_workspace_inherited_versions() {
-    release_test_support::assert_workspace_inherited_cargo_version_path();
-}
 
 #[test]
 fn toml_and_json_path_helpers_follow_dot_segments() {

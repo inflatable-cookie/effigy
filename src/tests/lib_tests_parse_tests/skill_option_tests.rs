@@ -1,6 +1,5 @@
 use crate::tests::prelude::{
-    parse_command, Command, HelpTopic, PathBuf, SkillArgs, SkillStdioMode, SkillSubcommand,
-    TaskInvocation,
+    parse_command, Command, PathBuf, SkillArgs, SkillStdioMode, SkillSubcommand, TaskInvocation,
 };
 
 #[test]
@@ -164,15 +163,6 @@ fn parse_skill_run_rejects_json_with_stdio_passthrough_in_both_flag_positions() 
     .expect_err("global --json conflicts with passthrough");
     assert!(global.to_string().contains("incompatible"), "{global}");
 }
-
-#[test]
-fn parse_skill_help_is_scoped() {
-    assert_eq!(
-        parse_command(vec!["skill".to_owned(), "--help".to_owned()]).expect("skill help"),
-        Command::Help(HelpTopic::Skill)
-    );
-}
-
 #[test]
 fn parse_skill_rejects_missing_path_and_selector() {
     let missing_path =

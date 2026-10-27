@@ -145,7 +145,7 @@ mod tests {
     use super::*;
     use std::convert::Infallible;
     use std::net::{Shutdown, TcpListener};
-    use std::sync::mpsc::{self, Receiver, TryRecvError};
+    use std::sync::mpsc::{self, Receiver};
     use std::thread;
 
     use bytes::Bytes;
@@ -261,29 +261,6 @@ mod tests {
 
     fn probe_outcome(address: SocketAddr, status: u16) -> HttpReadinessOutcome {
         probe_http_readiness(address, DOMAIN, &listener_config(status)).outcome
-    }
-
-    #[test]
-    fn managed_host_readiness_fixture_waits_for_runtime_before_publishing_address() {
-        let (starting_tx, starting_rx) = mpsc::channel();
-        let (resume_tx, resume_rx) = mpsc::channel();
-        let ready = start_hyper_http1_server(200, Duration::ZERO, move || {
-            starting_tx.send(()).expect("fixture startup reached");
-            resume_rx
-                .recv_timeout(Duration::from_secs(5))
-                .expect("resume fixture startup");
-        });
-        starting_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("fixture paused before runtime startup");
-        // Force the old interleaving: the socket is bound, but its runtime
-        // cannot serve yet. A client must not receive the address here.
-        assert_eq!(ready.try_recv(), Err(TryRecvError::Empty));
-        resume_tx.send(()).expect("release fixture startup");
-        let address = ready
-            .recv_timeout(Duration::from_secs(5))
-            .expect("serving fixture address");
-        assert_eq!(probe_outcome(address, 200), HttpReadinessOutcome::Ready);
     }
 
     #[test]

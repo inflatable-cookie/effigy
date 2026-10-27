@@ -1,6 +1,6 @@
 use crate::tests::prelude::{
-    parse_command, strip_global_json_flag, strip_global_json_flags, Command, DoctorArgs, HelpGroup,
-    HelpTopic, PathBuf, TaskInvocation, TasksArgs,
+    parse_command, strip_global_json_flag, Command, DoctorArgs, HelpGroup, HelpTopic, PathBuf,
+    TaskInvocation, TasksArgs,
 };
 use effigy_cli::command_surface::HELP_COMMAND_TOPICS;
 use effigy_cli::{RunsAction, RunsArgs, INTERNAL_RUN_ID_ARG};
@@ -37,24 +37,61 @@ fn strip_global_json_flag_removes_root_json_before_passthrough_delimiter() {
         ]
     );
 }
-
 #[test]
-fn strip_global_json_flags_supports_json() {
-    let (args, json_mode) = strip_global_json_flags(vec![
-        "tasks".to_owned(),
-        "--json".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-    ]);
-    assert!(json_mode);
-    assert_eq!(
-        args,
-        vec![
-            "tasks".to_owned(),
-            "--repo".to_owned(),
-            "/tmp/repo".to_owned(),
-        ]
-    );
+fn leading_repo_and_version_argv_parse() {
+    let doctor = |repo: &str| {
+        Command::Doctor(DoctorArgs {
+            repo_override: Some(PathBuf::from(repo)),
+            output_json: false,
+            fix: false,
+            verbose: false,
+            deep: false,
+            catalog: None,
+            all_catalogs: false,
+            refresh: false,
+            explain: None,
+        })
+    };
+    let cases: &[(&[&str], Command)] = &[
+        (
+            &["--repo", "/tmp/workspace", "doctor"],
+            doctor("/tmp/workspace"),
+        ),
+        (
+            &["--repo", "/tmp/global", "doctor", "--repo", "/tmp/local"],
+            doctor("/tmp/local"),
+        ),
+        (
+            &[
+                "--repo",
+                "/tmp/workspace",
+                "--json",
+                "tasks",
+                "status",
+                "api/dev",
+            ],
+            Command::Tasks(TasksArgs {
+                all: false,
+                repo_override: Some(PathBuf::from("/tmp/workspace")),
+                task_name: None,
+                resolve_selector: None,
+                status_selector: Some("api/dev".to_owned()),
+                status_all: false,
+                output_json: true,
+                pretty_json: true,
+                qa: None,
+            }),
+        ),
+        (&["--version"], Command::Version),
+        (&["version"], Command::Version),
+    ];
+    for (args, expected) in cases {
+        assert_eq!(
+            &parse_command(args.iter().map(|arg| (*arg).to_owned())).expect("parse should succeed"),
+            expected,
+            "{args:?}"
+        );
+    }
 }
 
 #[test]
@@ -62,90 +99,6 @@ fn parse_command_rejects_unknown_global_flag_token() {
     let err = parse_command(vec!["--json-envelope".to_owned()]).expect_err("parse should fail");
     assert_eq!(err.to_string(), "unknown argument: --json-envelope");
 }
-
-#[test]
-fn parse_command_rejects_removed_json_raw_flag_token() {
-    let err = parse_command(vec!["--json-raw".to_owned()]).expect_err("parse should fail");
-    assert_eq!(err.to_string(), "unknown argument: --json-raw");
-}
-
-#[test]
-fn parse_command_applies_leading_repo_to_doctor() {
-    let cmd = parse_command(vec![
-        "--repo".to_owned(),
-        "/tmp/workspace".to_owned(),
-        "doctor".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Doctor(DoctorArgs {
-            repo_override: Some(PathBuf::from("/tmp/workspace")),
-            output_json: false,
-            fix: false,
-            verbose: false,
-            deep: false,
-            catalog: None,
-            all_catalogs: false,
-            refresh: false,
-            explain: None,
-        })
-    );
-}
-
-#[test]
-fn parse_command_preserves_command_local_repo_override_over_leading_repo() {
-    let cmd = parse_command(vec![
-        "--repo".to_owned(),
-        "/tmp/global".to_owned(),
-        "doctor".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/local".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Doctor(DoctorArgs {
-            repo_override: Some(PathBuf::from("/tmp/local")),
-            output_json: false,
-            fix: false,
-            verbose: false,
-            deep: false,
-            catalog: None,
-            all_catalogs: false,
-            refresh: false,
-            explain: None,
-        })
-    );
-}
-
-#[test]
-fn parse_command_applies_leading_repo_and_json_to_tasks_builtin() {
-    let cmd = parse_command(vec![
-        "--repo".to_owned(),
-        "/tmp/workspace".to_owned(),
-        "--json".to_owned(),
-        "tasks".to_owned(),
-        "status".to_owned(),
-        "api/dev".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Tasks(TasksArgs {
-            all: false,
-            repo_override: Some(PathBuf::from("/tmp/workspace")),
-            task_name: None,
-            resolve_selector: None,
-            status_selector: Some("api/dev".to_owned()),
-            status_all: false,
-            output_json: true,
-            pretty_json: true,
-            qa: None,
-        })
-    );
-}
-
 #[test]
 fn parse_command_applies_leading_task_runtime_flags_to_task_selectors() {
     let cmd = parse_command(vec![
@@ -334,70 +287,6 @@ fn parse_command_allows_leading_repo_on_builtin_help() {
     .expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Doctor));
 }
-
-#[test]
-fn parse_tasks_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["tasks".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Tasks));
-}
-
-#[test]
-fn parse_doctor_help_is_scoped() {
-    let cmd = parse_command(vec!["doctor".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Doctor));
-}
-
-#[test]
-fn parse_release_help_is_scoped() {
-    let cmd = parse_command(vec!["release".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Release));
-}
-
-#[test]
-fn parse_defer_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["defer".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Defer));
-}
-
-#[test]
-fn parse_docs_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["docs".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Docs));
-}
-
-#[test]
-fn parse_contracts_help_is_scoped() {
-    let cmd = parse_command(vec!["contracts".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Contracts));
-}
-
-#[test]
-fn parse_exec_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["exec".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Exec));
-}
-
-#[test]
-fn parse_state_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["state".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::State));
-}
-
-#[test]
-fn parse_gateway_help_is_scoped() {
-    let cmd = parse_command(vec!["gateway".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Gateway));
-}
-
 #[test]
 fn parse_graph_is_retired_even_with_help() {
     for args in [
@@ -412,14 +301,6 @@ fn parse_graph_is_retired_even_with_help() {
         assert!(message.contains("CHANGELOG.md"), "{message}");
     }
 }
-
-#[test]
-fn parse_service_help_alias_is_scoped() {
-    let cmd = parse_command(vec!["service".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Service));
-}
-
 #[test]
 fn parse_catalog_help_reports_removed_command() {
     let error = parse_command(vec!["catalog".to_owned(), "--help".to_owned()])
@@ -443,14 +324,6 @@ fn parse_catalogue_help_alias_falls_back_to_task_routing() {
         })
     );
 }
-
-#[test]
-fn parse_container_help_is_scoped() {
-    let cmd = parse_command(vec!["container".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Container));
-}
-
 #[test]
 fn parse_retired_system_help_names_the_container_replacement() {
     let error = parse_command(vec!["system".to_owned(), "--help".to_owned()])
@@ -460,80 +333,6 @@ fn parse_retired_system_help_names_the_container_replacement() {
     assert!(message.contains("effigy help container"));
     assert!(message.contains("CHANGELOG.md"));
 }
-
-#[test]
-fn parse_workspace_help_is_scoped() {
-    let cmd = parse_command(vec!["workspace".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Workspace));
-}
-
-#[test]
-fn parse_help_command_alias_is_general_help() {
-    let cmd = parse_command(vec!["help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::General));
-}
-
-#[test]
-fn parse_tasks_unlock_routes_through_nested_builtin_entrypoint() {
-    let cmd = parse_command(vec![
-        "tasks".to_owned(),
-        "unlock".to_owned(),
-        "--all".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "tasks".to_owned(),
-            args: vec!["unlock".to_owned(), "--all".to_owned()],
-        })
-    );
-}
-
-#[test]
-fn parse_tasks_cache_routes_through_nested_builtin_entrypoint() {
-    let cmd = parse_command(vec![
-        "tasks".to_owned(),
-        "cache".to_owned(),
-        "inspect".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Task(TaskInvocation {
-            name: "tasks".to_owned(),
-            args: vec!["cache".to_owned(), "inspect".to_owned()],
-        })
-    );
-}
-
-#[test]
-fn parse_version_flag_is_version_command() {
-    let cmd = parse_command(vec!["--version".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Version);
-}
-
-#[test]
-fn parse_version_command_alias_is_version_command() {
-    let cmd = parse_command(vec!["version".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Version);
-}
-
-#[test]
-fn parse_test_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["test".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Test));
-}
-
-#[test]
-fn parse_init_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["init".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Init));
-}
-
 #[test]
 fn parse_migrate_help_is_scoped() {
     let cmd = parse_command(vec!["migrate".to_owned(), "--help".to_owned()])

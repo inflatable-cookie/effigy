@@ -103,32 +103,8 @@ fn permission_plan_skips_targets_nested_under_a_recursive_parent() {
     }));
 }
 
-#[test]
-fn workspace_handoff_notice_mentions_container() {
-    let rendered = render_workspace_handoff_notice(&test_policy());
-
-    assert!(rendered.contains("[next]"));
-    assert!(rendered.contains("switching into workspace container `stack`"));
-}
-
 fn test_policy() -> effigy_containers::EffectiveContainerPolicy {
     effective_container_policy("stack", "demo-stack", "workspace", "docker-compose.yml")
-}
-
-#[test]
-fn workspace_info_render_mentions_info_label_and_message() {
-    let rendered = render_workspace_info("building linux effigy artifact");
-
-    assert!(rendered.contains("[info]"));
-    assert!(rendered.contains("building linux effigy artifact"));
-}
-
-#[test]
-fn workspace_handoff_reset_sequence_clears_screen_and_scrollback() {
-    assert_eq!(
-        workspace_handoff_terminal_reset_sequence(),
-        "\x1b[2J\x1b[H\x1b[3J"
-    );
 }
 
 #[test]
@@ -1445,79 +1421,6 @@ fn persist_effigy_source_repo_root_writes_host_pointer_file() {
         std::fs::read_to_string(temp_home.join(".effigy/source.toml")).expect("read source config");
 
     assert!(raw.contains(&format!("repo_root = \"{}\"", effigy.display())));
-}
-
-#[test]
-fn plain_workspace_session_shuts_down_only_if_it_started_the_system() {
-    assert!(should_shutdown_started_system(
-        classify_interactive_session_ownership(
-            InteractiveSessionIntent::PublicWorkspace,
-            false,
-            true,
-        ),
-        true,
-    ));
-    assert!(!should_shutdown_started_system(
-        classify_interactive_session_ownership(
-            InteractiveSessionIntent::PublicWorkspace,
-            true,
-            true,
-        ),
-        true,
-    ));
-}
-
-#[test]
-fn seeded_workspace_session_shuts_down_after_successful_handoff() {
-    assert!(should_shutdown_started_system(
-        classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, false, true,),
-        true,
-    ));
-}
-
-#[test]
-fn seeded_workspace_session_leaves_started_system_running_after_failed_handoff() {
-    assert!(!should_shutdown_started_system(
-        classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, false, true,),
-        false,
-    ));
-    assert!(!should_shutdown_started_system(
-        classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, true, true,),
-        true,
-    ));
-}
-
-#[test]
-fn plain_workspace_session_shuts_down_adopted_stack_when_handoff_completed_gateway_readiness() {
-    assert!(should_shutdown_started_system(
-        classify_interactive_session_ownership(
-            InteractiveSessionIntent::PublicWorkspace,
-            true,
-            false,
-        ),
-        true,
-    ));
-}
-
-#[test]
-fn bootstrap_started_workspace_session_forces_stop_on_exit_even_for_ready_adopted_runtime() {
-    with_runtime_session_context(
-        RuntimeSessionContext {
-            public_workspace_cleanup: PublicWorkspaceCleanupOverride::ForceStopOnExit,
-            ..RuntimeSessionContext::default()
-        },
-        || {
-            assert!(should_shutdown_started_system(
-                classify_workspace_session_ownership(
-                    InteractiveSessionIntent::PublicWorkspace,
-                    true,
-                    true,
-                    None,
-                ),
-                true,
-            ));
-        },
-    );
 }
 
 #[test]

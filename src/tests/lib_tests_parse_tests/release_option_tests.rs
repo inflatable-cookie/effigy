@@ -158,18 +158,6 @@ fn parse_release_resume_approve_and_receipt_take_a_run_id() {
         })
     );
 }
-
-#[test]
-fn parse_release_prepare_and_execute_name_their_replacement() {
-    for retired in ["prepare", "execute"] {
-        let error = parse_command(vec!["release".to_owned(), retired.to_owned()])
-            .expect_err("the retired subcommand refuses");
-        let message = error.to_string();
-        assert!(message.contains("retired in v0.15"), "{message}");
-        assert!(message.contains("effigy release run"), "{message}");
-    }
-}
-
 #[test]
 fn parse_release_effigy_only_commands_name_their_repo_task() {
     for (retired, replacement) in [

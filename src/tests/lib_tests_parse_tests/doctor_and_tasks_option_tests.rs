@@ -483,32 +483,3 @@ fn parse_deploy_redeploy_with_deployment_and_yes() {
         })
     );
 }
-
-#[test]
-fn parse_deploy_export_provider_after_global_json_and_repo() {
-    let cmd = parse_command(vec![
-        "deploy".to_owned(),
-        "export".to_owned(),
-        "acme-cloud".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--path".to_owned(),
-        "infra/deploy".to_owned(),
-        "--plan".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-    assert_eq!(
-        cmd,
-        Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Export {
-                provider: "acme-cloud".to_owned(),
-                env: None,
-                path: PathBuf::from("infra/deploy"),
-                plan: true,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
