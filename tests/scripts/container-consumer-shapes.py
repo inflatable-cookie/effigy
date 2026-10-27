@@ -1076,66 +1076,60 @@ def labels_prove_deletion(labels, projects, checkouts):
 
 
 def discover_owned(repo, worktree, shared_project, predicted_projects=(), checkouts=(), stems=()):
-    """Everything this fixture actually owns, found by the runtime's labels.
+    """Everything this fixture owns, in one cached pass.
 
-    The linked worktree's Compose project is derived at `up` from the scope the
-    run prepares, so the render-time name is not the name its containers carry
-    afterwards. Predicted names are seeded so a failure that left only a volume
-    or a network (no container) is still discovered, and the label pass extends
-    the set from whatever the runtime reports."""
+    The profile carries hundreds of volumes and networks, and each `nerdctl
+    inspect` over the VM socket costs about a quarter second, so candidates are
+    filtered by name first, every candidate is labelled at most once per call,
+    and the result is built in a single pass. Discovery never needs a second
+    read: an id is only ever promoted when it is provably the fixture's own."""
     checkouts = {str(p) for p in checkouts} or {str(repo), str(worktree)}
     exact = {p for p in predicted_projects if p}
     projects = {shared_project} | exact
+    prefixes = tuple({*projects, *stems})
+    cache = {}
+
+    def labelled(kind, name):
+        key = (kind, name)
+        if key not in cache:
+            cache[key] = labels_of(kind, name)
+        return cache[key]
+
+    def candidate(name):
+        # Name prefilter only: it decides what to inspect, never ownership.
+        return any(name.startswith(f"{prefix}-") or name.startswith(f"{prefix}_") for prefix in prefixes)
+
     containers = []
     for container_id, name in runtime_containers(include_stopped=True):
-        labels = labels_of("containers", container_id)
+        if not candidate(name):
+            continue
+        labels = labelled("containers", container_id)
         if labels_own(labels, name, projects, checkouts, stems):
             containers.append((container_id, name))
             for key in ("com.docker.compose.project", "com.effigy.project"):
                 if fixture_project_id(labels.get(key), shared_project, exact):
                     projects.add(labels[key])
-    # A volume or network reached through a stem still carries the exact
-    # Compose project in its own label. Promote that id into the tracked set, so
-    # deletion is authorised by the label itself rather than by the stem: a
-    # linked `up` that created only state before failing leaves exactly this
-    # shape, and refusing it would strand the orphan.
-    def labelled_projects_of(resource):
-        ids = set()
+    volumes, networks = [], []
+    for kind, resource, collected in (
+        ("volumes", "volume", volumes),
+        ("networks", "network", networks),
+    ):
         for name in runtime_named(resource):
-            labels = labels_of(resource, name)
+            if not candidate(name):
+                continue
+            labels = labelled(resource, name)
             if labels_own(labels, name, projects, checkouts, stems):
+                collected.append(name)
                 for key in ("com.docker.compose.project", "com.effigy.project"):
                     if fixture_project_id(labels.get(key), shared_project, exact):
-                        ids.add(labels[key])
-        return ids
-
-    for resource in ("volume", "network"):
-        projects.update(labelled_projects_of(resource))
-    volumes = sorted(
-        name for name in runtime_named("volume")
-        if labels_own(labels_of("volume", name), name, projects, checkouts, stems)
-    )
-    networks = sorted(
-        name for name in runtime_named("network")
-        if labels_own(labels_of("network", name), name, projects, checkouts, stems)
-    )
+                        projects.add(labels[key])
     return {
         "containers": sorted(containers),
         "projects": sorted(projects),
         "checkouts": sorted(checkouts),
         "stems": sorted(set(stems)),
-        "volumes": volumes,
-        "networks": networks,
-    }
-
-
-def residue_names(discovered):
-    """Names only, for residue comparisons: discovery keeps container IDs for
-    identity checks, but a name is what a residue assertion compares."""
-    return {
-        "containers": sorted(name for _, name in discovered["containers"]),
-        "volumes": list(discovered["volumes"]),
-        "networks": list(discovered["networks"]),
+        "volumes": sorted(volumes),
+        "networks": sorted(networks),
     }
 
 
