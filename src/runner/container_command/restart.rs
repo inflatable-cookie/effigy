@@ -30,6 +30,9 @@ pub(super) fn run_container_restart(
 ) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(repo_override)?;
     let repo_root = context.resolved.resolved_root;
+    effigy_core::worktree_scope::prepare_checkout_token(&repo_root).map_err(|error| {
+        RunnerError::task_invocation(format!("cannot record the checkout identity: {error}"))
+    })?;
     let policy = load_container_policy(&repo_root, name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     validate_container_policy(&repo_root, &policy)

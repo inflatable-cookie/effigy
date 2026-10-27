@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+- Prepare a fresh linked worktree’s runtime scope before resolving container startup policy, so its first `up` uses its own hosts and identity.
+
 ### Breaking
 - **Upgrading from v0.14.1 recreates a local catalog service once, on the same
   named volume** (Q-012 §3, effigy#373). Nothing is imported from an earlier
