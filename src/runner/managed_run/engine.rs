@@ -143,13 +143,13 @@ fn live_workload_command(
 /// the setup and the process command are resolved from the lock as the process
 /// starts: the setup opens the same sources, and it is the Prepare that may
 /// publish a generation, so the command is resolved only after it returns.
-fn workload_start_command(
+fn workload_start_command<E>(
     source_manifest: &std::path::Path,
     container_repo_root: Option<&std::path::Path>,
     setup: Option<&str>,
     command: &str,
-    run_setup: impl FnOnce(&str) -> Result<(), String>,
-) -> Result<String, String> {
+    run_setup: impl FnOnce(&str) -> Result<(), E>,
+) -> Result<String, E> {
     if let Some(setup) = setup {
         let resolved = live_workload_command(source_manifest, container_repo_root, setup);
         run_setup(&resolved)?;
@@ -159,6 +159,16 @@ fn workload_start_command(
         container_repo_root,
         command,
     ))
+}
+
+/// The end a failed workload start produces: a stop stays a stop, and a stop
+/// that filed an owner loss reports the loss.
+fn start_failure_end(error: SpawnError, lost_while_blocked: bool) -> End {
+    match error {
+        SpawnError::Stopped(_) if lost_while_blocked => End::Stopped(StopCause::OwnerLost),
+        SpawnError::Stopped(cause) => End::Stopped(cause),
+        SpawnError::Failed(reason) => End::StartFailed(reason, None),
+    }
 }
 
 /// Everything a supervisor needs to own one managed run.
@@ -193,6 +203,26 @@ struct Workload {
     starts: u32,
     /// The redacted output tail of its last exit, for the failure report.
     tail: String,
+}
+
+/// Why a workload did not start.
+///
+/// A stop observed while a start was blocked (`pending_stop`) is not a failed
+/// start: it keeps its cause so the run reports the stop the client asked for,
+/// or the owner loss that filed one, as a cancelled outcome.
+#[derive(Debug)]
+enum SpawnError {
+    Stopped(StopCause),
+    Failed(String),
+}
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stopped(cause) => write!(formatter, "stopped: {}", describe(cause)),
+            Self::Failed(reason) => write!(formatter, "{reason}"),
+        }
+    }
 }
 
 /// How the owner loop ended.
@@ -410,13 +440,10 @@ impl Owner {
                 return End::StartFailed(error.to_string(), None);
             }
             while next < self.workloads.len() && Instant::now() >= next_at {
-                if let Err(reason) = self.spawn(run, next) {
+                if let Err(error) = self.spawn(run, next) {
                     // A setup is a blocking phase too: a stop during it is a
                     // stop, not a failed start.
-                    if let Some(cause) = task_engine::root_cancel_cause() {
-                        return End::Stopped(self.cause(cause));
-                    }
-                    return End::StartFailed(reason, None);
+                    return start_failure_end(error, self.lost_while_blocked);
                 }
                 next += 1;
                 next_at = Instant::now()
@@ -501,7 +528,7 @@ impl Owner {
         }
     }
 
-    fn spawn(&mut self, run: &mut TaskRun, index: usize) -> Result<(), String> {
+    fn spawn(&mut self, run: &mut TaskRun, index: usize) -> Result<(), SpawnError> {
         let terminal = self.terminal;
         // The source generation a command was rendered against can be gone: a
         // setup step (`bundle sync`) or the environment's own `up` publishes a
@@ -530,27 +557,30 @@ impl Owner {
                 marker: group.marker.clone(),
                 nonce: nonce.clone(),
             };
-            let mut kernel = run.run_mut().map_err(|error| error.to_string())?;
+            let mut kernel = run
+                .run_mut()
+                .map_err(|error| SpawnError::Failed(error.to_string()))?;
             let target = kernel.fence().clone();
             let ticket = kernel
                 .intend(EffectSpec {
                     target,
                     kind: settlement::EXEC_GROUP.to_owned(),
-                    payload: serde_json::to_value(&effect).map_err(|error| error.to_string())?,
+                    payload: serde_json::to_value(&effect)
+                        .map_err(|error| SpawnError::Failed(error.to_string()))?,
                     settlement: Settlement::Release(serde_json::Value::Null),
                     required: false,
                 })
-                .map_err(|error| format!("exec group intent: {error}"))?;
+                .map_err(|error| SpawnError::Failed(format!("exec group intent: {error}")))?;
             kernel
                 .applied(&ticket, serde_json::json!({ "marker": group.marker }))
-                .map_err(|error| format!("exec group receipt: {error}"))?;
+                .map_err(|error| SpawnError::Failed(format!("exec group receipt: {error}")))?;
             command = command.replace(EXEC_NONCE, &nonce);
         }
         if workload.spec.pty {
             let (cols, rows) = terminal.unwrap_or((120, 40));
             command = format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {command}");
         }
-        let env = workload_environment(&workload.spec)?;
+        let env = workload_environment(&workload.spec).map_err(SpawnError::Failed)?;
         let spec = ProcessSpec {
             argv: vec!["/bin/sh".into(), "-c".into(), command.into()],
             cwd: workload.spec.cwd.clone(),
@@ -564,9 +594,9 @@ impl Owner {
             },
             label: workload.spec.name.clone(),
         };
-        let process = run
-            .spawn(spec, false)
-            .map_err(|error| format!("`{}` did not start: {error:?}", workload.spec.name))?;
+        let process = run.spawn(spec, false).map_err(|error| {
+            SpawnError::Failed(format!("`{}` did not start: {error}", workload.spec.name))
+        })?;
         let sequence = sequence_of(&process);
         println!(
             "[managed] started `{}` (pid {})",
@@ -586,9 +616,14 @@ impl Owner {
     /// A container route's setup as its own custody child. Its output is the
     /// run's output, and the run's settle stops it if the supervisor dies
     /// inside it.
-    fn run_setup(&mut self, run: &mut TaskRun, index: usize, setup: &str) -> Result<(), String> {
+    fn run_setup(
+        &mut self,
+        run: &mut TaskRun,
+        index: usize,
+        setup: &str,
+    ) -> Result<(), SpawnError> {
         let name = self.workloads[index].spec.name.clone();
-        let env = workload_environment(&self.workloads[index].spec)?;
+        let env = workload_environment(&self.workloads[index].spec).map_err(SpawnError::Failed)?;
         let spec = ProcessSpec {
             argv: vec!["/bin/sh".into(), "-c".into(), setup.into()],
             cwd: self.workloads[index].spec.cwd.clone(),
@@ -598,23 +633,30 @@ impl Owner {
             terminal: Terminal::Inherit { capture: false },
             label: format!("{name} setup"),
         };
-        let mut process = run
-            .spawn(spec, false)
-            .map_err(|error| format!("`{name}` setup did not start: {error}"))?;
+        let mut process = run.spawn(spec, false).map_err(|error| {
+            SpawnError::Failed(format!("`{name}` setup did not start: {error}"))
+        })?;
         loop {
-            run.verify_admission().map_err(|error| error.to_string())?;
+            run.verify_admission()
+                .map_err(|error| SpawnError::Failed(error.to_string()))?;
             if let Observed::Verified(exit, _) = process.poll() {
                 let _ = run.complete(&process, exit);
                 if exit.code != 0 {
-                    return Err(format!("`{name}` setup exited {}", exit.code));
+                    return Err(SpawnError::Failed(format!(
+                        "`{name}` setup exited {}",
+                        exit.code
+                    )));
                 }
                 return Ok(());
             }
+            // A filed stop, a signal or the owning client's death ends the
+            // setup as that stop: the run reports a cancelled outcome, not a
+            // failed start.
             if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
                 if matches!(cause, StopCause::OwnerLost) {
                     self.lost_while_blocked = true;
                 }
-                return Err(format!("`{name}` setup stopped: {}", describe(&cause)));
+                return Err(SpawnError::Stopped(cause));
             }
             std::thread::sleep(TURN);
         }
@@ -665,8 +707,8 @@ impl Owner {
                     .position(|workload| workload.spec.name == process)
                 {
                     println!("[managed] restarting `{process}`");
-                    if let Err(reason) = self.spawn(run, index) {
-                        println!("[managed] restart of `{process}` failed: {reason}");
+                    if let Err(error) = self.spawn(run, index) {
+                        println!("[managed] restart of `{process}` failed: {error}");
                     }
                 }
             }
@@ -960,7 +1002,10 @@ pub(in crate::runner) fn workload_env(
 
 #[cfg(test)]
 mod tests {
-    use super::{live_workload_command, workload_start_command};
+    use super::{
+        live_workload_command, start_failure_end, workload_start_command, End, SpawnError,
+    };
+    use effigy_kernel::ctx::StopCause;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1094,7 +1139,7 @@ mod tests {
                     .expect("prune generation b");
                 write_lock(&manifest, "cache/sources/generation-c/1e6ed65d");
                 setup_ran = true;
-                Ok(())
+                Ok::<(), SpawnError>(())
             },
         )
         .expect("the setup runs before the command is resolved");
@@ -1111,5 +1156,73 @@ mod tests {
             !repo.join(".effigy/cache/sources/generation-b").exists(),
             "the generation the setup's Prepare pruned is gone"
         );
+    }
+
+    /// A model of the supervisor's setup step: the seam runs the setup and
+    /// keeps the failure it returned, structured.
+    fn setup_that_fails(failure: SpawnError) -> Result<String, SpawnError> {
+        let (_home, repo, manifest) = pinned_checkout("cache/sources/generation-b/1e6ed65d");
+        let command = format!(
+            "sh {}/.effigy/cache/sources/generation-b/1e6ed65d/scripts/profile_env.sh",
+            repo.display()
+        );
+        workload_start_command(
+            &manifest,
+            None,
+            Some("effigy bundle sync"),
+            &command,
+            move |_| Err(failure),
+        )
+    }
+
+    /// A stop filed while a container route's setup runs is a stop: the run
+    /// reports a cancelled outcome, not a failed start.
+    #[test]
+    fn a_filed_stop_during_a_container_route_setup_is_not_a_failed_start() {
+        let error = setup_that_fails(SpawnError::Stopped(StopCause::Requested))
+            .expect_err("the setup stopped");
+        assert!(
+            matches!(error, SpawnError::Stopped(StopCause::Requested)),
+            "the stop keeps its cause: {error}"
+        );
+        assert!(
+            matches!(
+                start_failure_end(error, false),
+                End::Stopped(StopCause::Requested)
+            ),
+            "a filed stop ends the run as a stop"
+        );
+    }
+
+    /// The owning client's death while that setup runs reports the owner loss
+    /// the stop was filed for, once the run observed it.
+    #[test]
+    fn an_owner_loss_during_a_container_route_setup_reports_the_loss() {
+        let error = setup_that_fails(SpawnError::Stopped(StopCause::OwnerLost))
+            .expect_err("the setup stopped");
+        assert!(
+            matches!(error, SpawnError::Stopped(StopCause::OwnerLost)),
+            "the owner loss keeps its cause: {error}"
+        );
+        assert!(
+            matches!(
+                start_failure_end(error, true),
+                End::Stopped(StopCause::OwnerLost)
+            ),
+            "an owner loss ends the run as a stop, not a failed start"
+        );
+    }
+
+    /// A setup's own failure is a failed start, and a stop the owner reported
+    /// later still supersedes it.
+    #[test]
+    fn a_failed_setup_stays_a_failed_start() {
+        let error = setup_that_fails(SpawnError::Failed("setup exited 7".to_owned()))
+            .expect_err("the setup failed");
+        match start_failure_end(error, true) {
+            End::StartFailed(reason, _) => assert_eq!(reason, "setup exited 7"),
+            End::Stopped(cause) => panic!("a failed setup is not a stop: {cause:?}"),
+            _ => panic!("a failed setup is a failed start"),
+        }
     }
 }
