@@ -3,10 +3,19 @@
   "generated_by": "manual",
   "payload_schemas": {
     "effigy.command.v1": "payload-schemas/effigy.command.v1.json",
+    "effigy.container.hosts.v1": "payload-schemas/effigy.container.hosts.v1.json",
     "effigy.container.migrate.v1": "payload-schemas/effigy.container.migrate.v1.json",
     "effigy.container.render.v1": "payload-schemas/effigy.container.render.v1.json",
+    "effigy.container.status.v1": "payload-schemas/effigy.container.status.v1.json",
+    "effigy.deps.status.v1": "payload-schemas/effigy.deps.status.v1.json",
+    "effigy.help.v1": "payload-schemas/effigy.help.v1.json",
     "effigy.release.input.v1": "payload-schemas/effigy.release.input.v1.json",
-    "effigy.release.output.v1": "payload-schemas/effigy.release.output.v1.json"
+    "effigy.release.output.v1": "payload-schemas/effigy.release.output.v1.json",
+    "effigy.state-stack.apply.v1": "payload-schemas/effigy.state-stack.apply.v1.json",
+    "effigy.state-stack.capture.v1": "payload-schemas/effigy.state-stack.capture.v1.json",
+    "effigy.state-stack.history.v1": "payload-schemas/effigy.state-stack.history.v1.json",
+    "effigy.state-stack.lineage.v1": "payload-schemas/effigy.state-stack.lineage.v1.json",
+    "effigy.task.plan.v1": "payload-schemas/effigy.task.plan.v1.json"
   },
   "schemas": [
     {
@@ -227,6 +236,22 @@
       "command": "effigy container render web --json --repo <fixture_container_render>",
       "surface": "immutable container render",
       "status": "active"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json container web hosts --repo docs/knowledge/contracts/fixtures/container-runtime",
+      "surface": "container host map (guide 085)",
+      "status": "active",
+      "payload_schema": "effigy.container.hosts.v1"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
+      "command": "effigy --json container web status --repo docs/knowledge/contracts/fixtures/container-runtime",
+      "surface": "container status and backend choice (guide 085)",
+      "status": "active",
+      "payload_schema": "effigy.container.status.v1"
     },
     {
       "schema": "effigy.container.migrate.v1",

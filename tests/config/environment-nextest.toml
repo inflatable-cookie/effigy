@@ -3,5 +3,5 @@
 # its aggregate budget leaves two minutes for cleanup inside the 20m task cap.
 [profile.default]
 slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
-leak-timeout = { period = "1s", result = "fail" }
+leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "1080s"

@@ -2,7 +2,7 @@ pub(super) use crate::render_cli_header;
 pub(super) use effigy_cli::help::ui::{render_help, render_help_group_with_deferred_builtins};
 pub(super) use effigy_cli::{
     apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flag,
-    BootstrapArgs, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
+    BootstrapArgs, Command, ContainerArgs, ContainerSubcommand, ContractsArgs,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DeployArgs, DeploySubcommand,
     DepsArgs, DepsManager, DepsSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand,
     DoctorArgs, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpGroup, HelpTopic,

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.state-stack.history.v1 payload",
+  "description": "Payload of `effigy state history --json`: the lineage reports recorded for one stack.",
+  "type": "object",
+  "required": ["schema", "schema_version", "stack_name", "reports", "warnings"],
+  "properties": {
+    "schema": {"const": "effigy.state-stack.history.v1"},
+    "schema_version": {"const": 1},
+    "stack_name": {"type": "string"},
+    "reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "path", "schema", "created_at", "executed", "ok", "summary"]
+      }
+    },
+    "warnings": {"type": "array"}
+  }
+}

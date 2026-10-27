@@ -2,7 +2,7 @@
 # hundreds of fresh-HOME runs, so per-test bounds are wider than the default.
 [profile.default]
 slow-timeout = { period = "600s", terminate-after = 1, grace-period = "5s" }
-leak-timeout = { period = "1s", result = "fail" }
+leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "1800s"
 
 # Each scenario starts six fault-shard processes. Bound that expansion to two

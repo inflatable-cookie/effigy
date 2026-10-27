@@ -388,8 +388,10 @@ fn command_failure_renders_the_three_human_facts() {
         human.evidence_lines(),
         [
             "exit code 2",
-            "stderr: error TS2304: Cannot find name 'widget'."
-        ]
+            "stderr: error TS2304: Cannot find name 'widget'.",
+            "stdout: compiled 12 modules",
+        ],
+        "both streams are shown, so the cause cannot hide in the unread one"
     );
     assert!(human
         .next_action_text()
@@ -398,7 +400,8 @@ fn command_failure_renders_the_three_human_facts() {
         human.render_text(),
         "[error] command `npm run build` failed\n  \
          cause: exit code 2\n         \
-         stderr: error TS2304: Cannot find name 'widget'.\n  \
+         stderr: error TS2304: Cannot find name 'widget'.\n         \
+         stdout: compiled 12 modules\n  \
          next: read the output above, fix the cause, then run the command again"
     );
     let json = human.to_json();
@@ -516,7 +519,11 @@ fn task_run_details_name_the_task_and_the_failing_output() {
     assert_eq!(human.what_failed(), "task `fail` failed");
     assert_eq!(
         human.evidence_lines(),
-        ["exit_code: 3", "stderr: error: widget is undefined"]
+        [
+            "exit_code: 3",
+            "stderr: error: widget is undefined",
+            "stdout: building widget"
+        ]
     );
     let rendered = human.render_text();
     assert!(

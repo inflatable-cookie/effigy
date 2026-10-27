@@ -1374,9 +1374,10 @@ pub fn inspect_containers_for_policy(
     )
 }
 
-/// The last line a container logged, read on demand for one failure
-/// diagnostic. Only exited or unhealthy services are read this way, so a
-/// healthy stack pays nothing.
+/// The one line that says why a container stopped: the last line it logged
+/// that names a cause, else the last line it logged. Read on demand for one
+/// failure diagnostic; only exited or unhealthy services are read this way, so
+/// a healthy stack pays nothing.
 pub fn container_last_log_line_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -1399,12 +1400,7 @@ pub fn container_last_log_line_for_policy(
     let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
     combined.push('\n');
     combined.push_str(&String::from_utf8_lossy(&output.stderr));
-    Ok(combined
-        .lines()
-        .map(str::trim)
-        .rfind(|line| !line.is_empty())
-        .unwrap_or_default()
-        .to_owned())
+    Ok(effigy_ui::human::last_output_line(&combined).unwrap_or_default())
 }
 
 /// One runtime capture. A failure is reported as it stands: Effigy never

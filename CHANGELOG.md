@@ -375,6 +375,12 @@ During v0.x, MINOR bumps may include breaking changes.
   treated as a run.
 
 ### Removed
+- **`effigy contracts check-json --fast` is gone.** It skipped only
+  `effigy.test.results.v1`, which the schema index never carried, so it always
+  ran the same rows as `--full`; the mode, its skip branch and the report's
+  `mode`/`skipped` fields are deleted with it (effigy#374). `--full` is gone for
+  the same reason — the check has one behaviour. `qa:json` validates every
+  active row, its envelope and its payload schema.
 - **The retired release prepare/execute machinery is gone.** `ReleasePreparePlan`,
   `ReleaseExecutePlan`, `ReleasePreparedState` and their renderers, review menus
   and prepared-state helpers are deleted with the tests that kept them alive;
@@ -843,6 +849,35 @@ During v0.x, MINOR bumps may include breaking changes.
   files are now ignored and left alone like any other legacy file.
 
 ### Added
+- **`qa:json` reads `payload_schema`, and two documented container surfaces have
+  rows.** Eleven index rows named a payload schema nothing compiled or
+  validated; those ids now resolve against the index map and validate the
+  command's result payload, with nine payload schemas for `deps`, task plans,
+  help, the state-stack reports and `container <name> hosts|status --json`,
+  which [guide 085](docs/guides/085-v0.15.0-consumer-migration.md) tells
+  consumers to parse (effigy#374).
+- **`qa:live:consumer-shapes` is a milestone proof that Compose checks
+  Effigy's render.** It hands the rendered output to the real `compose config`
+  and asserts that a `build` names its Dockerfile content beside its context, no
+  `aliases: null` survives, a shared service carries no checkout path, a
+  client reaches a shared MariaDB through `host.docker.internal` while a local
+  one stays local, and a primary checkout and its linked worktree — one
+  environment, one backing service — keep distinct scoped project identities and
+  effective hosts. It never runs in per-task validation. See
+  [guide 013](docs/guides/013-testing-orchestration.md#live-consumer-shapes).
+  The same selector step then brings that fixture up on the Colima profile,
+  checks the build arguments, the shared-service client, an idempotent re-up,
+  the host-process restart and the linked worktree's fresh first `up` (which
+  takes its own scope while the primary keeps its own), tears it down by the
+  exact ids and names it owns and fails if anything it owns survives. The
+  listener publishes into
+  the fixture's own private gateway root, so the proof never uses the machine
+  gateway and re-verifies that gateway's listeners, PIDs and executables. It stages under
+  `/Volumes/Builds/scratch/effigy/` and fails at its own preflight, naming the
+  mount ask, until the approved Colima scratch mount makes that path visible to
+  the VM; it never falls back to a `/Users` staging root for ordinary QA. A
+  one-off run uses `execute <staging root> <plan sha256>`, where the hash is the
+  one `plan` printed for that exact root.
 - **`effigy container <NAME> restart <process>...` replaces only the named host
   processes** (effigy#367, Acow #756). Each named process's current generation
   is settled, a new one starts with the same declared listener address, its
@@ -1552,6 +1587,23 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- **A command failure shows both streams, and truncation keeps the cause.**
+  A failed command's evidence now includes stdout as well as stderr, and one
+  head-plus-tail bound in `effigy_ui::human` keeps the first lines, the last
+  lines and any line that names a cause (`error`, `fatal`, `panic`) for the
+  command fold, the health-check line, the exited-service log line and the
+  supervisor's refusal relay (effigy#374). Two redactors became one.
+- **Selectors prove something.** Every test-running task in `config/tasks.toml`
+  runs nextest with `--no-tests fail`; the 147 selectors that still used
+  `cargo test <substring>` (green after selecting nothing) and the filter terms
+  that named pruned tests are converted, repaired or deleted. `builder_recovery`
+  runs in exactly one selector, and `test:containers:render` covers the render
+  tests (effigy#374).
+- **One timeout budget per selector.** The per-test nextest overrides are gone:
+  an ordinary selector inherits `tests/config/gateway-nextest.toml`, a
+  journal-heavy one names `tests/config/journal-heavy-nextest.toml`, and
+  `leak-timeout` waits 30 s instead of failing healthy runs on slow reaping
+  (effigy#374).
 - **A test suite owns one kill sweep instead of a process ledger.** Every
   Rust test selector now runs under `tests/scripts/suite_guard.py`, which
   exports one `EFFIGY_TEST_SUITE` value and holds a marker descriptor that

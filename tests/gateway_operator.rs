@@ -266,3 +266,140 @@ fn operator_startup_bounds_admission_and_readiness_separately() {
     assert!(!settled.ready);
     assert!(!unready.pid_file_path.exists());
 }
+
+/// The operator path consumers use: no `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`, so
+/// the CLI resolves the gateway root from HOME (`~/.effigy/gateway`). The
+/// private-root tests always redirect that root, so this is the only test that
+/// exercises the consumer's own root and its non-mutating refusals.
+///
+/// It deliberately never starts a daemon: the operator daemon binds the
+/// machine's 127.0.0.1:80/:443/:15353, which needs the elevation broker, so a
+/// test process must refuse before binding. The daemon lifecycle itself is
+/// covered by the private-root operator tests above.
+#[test]
+fn operator_cli_reads_the_home_gateway_root_and_never_drives_it_as_a_fixture() {
+    use std::os::unix::fs::PermissionsExt;
+    // No daemon and no control socket here, so the fixture needs no short
+    // path: an ordinary fixture HOME under the run's temp root is enough.
+    let home = effigy_test_support::Fixture::new("g394-").expect("private operator home");
+    let root = home.path().join(".effigy/gateway");
+    std::fs::create_dir_all(&root).expect("gateway root");
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+        .expect("gateway root mode");
+    // A legacy record at the HOME root: `gateway status` can only report it if
+    // it resolved that root. This process owns the pid, so nothing else is
+    // stopped through it.
+    let owner = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("sleep 120")
+        .spawn()
+        .expect("owning process");
+    let pid = format!("{}", owner.id());
+    std::fs::write(root.join("gateway.pid"), &pid).expect("pid record");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _owned = Kill(owner);
+
+    // Any accidental elevation writes evidence and fails; the fixture writes
+    // only under this HOME.
+    let bin = home.path().join("bin");
+    std::fs::create_dir(&bin).expect("fixture bin");
+    let evidence = home.path().join("unexpected-elevation");
+    for tool in ["sudo", "osascript", "security", "ifconfig", "resolvectl"] {
+        let file = bin.join(tool);
+        std::fs::write(
+            &file,
+            format!(
+                "#!/bin/sh\nprintf called >> '{}'\nexit 91\n",
+                evidence.display()
+            ),
+        )
+        .expect("elevation sentinel");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o700))
+            .expect("sentinel mode");
+    }
+
+    let run = |args: &[&str], private_root: Option<&std::path::Path>| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_effigy"));
+        command
+            .args(args)
+            .env("HOME", home.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            // The consumer path is exactly the one with no private root.
+            .env_remove("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT")
+            .env_remove("EFFIGY_GATEWAY_DNS_ADDR")
+            .env_remove("EFFIGY_GATEWAY_PROXY_ADDR")
+            .env_remove("EFFIGY_GATEWAY_HTTPS_ADDR");
+        if let Some(private) = private_root {
+            command.env("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT", private);
+        }
+        let output = command.output().expect("run effigy gateway");
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // The HOME-level record is what the operator path reads.
+    let (ok, stdout, stderr) = run(&["gateway", "status", "--json"], None);
+    assert!(ok, "{stdout}{stderr}");
+    let status: serde_json::Value = serde_json::from_str(&stdout).expect("status json");
+    assert_eq!(status["result"]["status"], "setup_required", "{status}");
+    assert!(
+        status["result"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("gateway setup"),
+        "{status}"
+    );
+
+    // A private root redirects the same command away from that record, which is
+    // what proves the status above came from HOME.
+    let private = home.path().join("other-private");
+    std::fs::create_dir(&private).expect("private root");
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700))
+        .expect("private mode");
+    let (ok, stdout, stderr) = run(&["gateway", "status", "--json"], Some(&private));
+    assert!(ok, "{stdout}{stderr}");
+    let redirected: serde_json::Value = serde_json::from_str(&stdout).expect("status json");
+    assert_eq!(redirected["result"]["private"], true, "{redirected}");
+    assert_eq!(
+        redirected["result"]["pid"],
+        serde_json::Value::Null,
+        "{redirected}"
+    );
+    assert_eq!(
+        redirected["result"]["gateway_dir"],
+        private
+            .canonicalize()
+            .expect("canonical private root")
+            .display()
+            .to_string(),
+        "{redirected}"
+    );
+
+    // A fixture process refuses to drive the operator gateway instead of
+    // binding the machine's ports or migrating the legacy record.
+    let (ok, stdout, stderr) = run(&["gateway", "up", "--json"], None);
+    assert!(
+        !ok,
+        "a fixture process must not start the operator gateway: {stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("refusing to start, stop or replace the machine gateway")
+            || stdout.contains("gateway setup"),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("gateway.pid")).expect("pid record"),
+        pid,
+        "the operator gateway record must not be rewritten"
+    );
+    assert!(!evidence.exists(), "the operator path must not elevate");
+}

@@ -4,7 +4,7 @@ use std::time::Duration;
 use super::{
     bounded_last_output, parse_inspect_health, readiness_diagnostic, repeated_failure_diagnostic,
     shared_failure, unready, HealthState, ServiceHealth, SharedFailureTracker,
-    LAST_OUTPUT_MAX_CHARS, SHARED_FAILURE_MIN_ELAPSED, SHARED_FAILURE_OBSERVATIONS,
+    SHARED_FAILURE_MIN_ELAPSED, SHARED_FAILURE_OBSERVATIONS,
 };
 
 /// A `docker inspect` record shaped like the one from the inventors report:
@@ -275,15 +275,15 @@ fn a_different_failure_resets_the_repetition() {
 #[test]
 fn a_check_output_is_one_bounded_line() {
     let output = format!(
-        "GET / 404\nsecond line that is not the first\n{}",
+        "warning: using a password on the command line\nERROR 2003: cannot connect\n{}",
         "x".repeat(400)
     );
-    let bounded = bounded_last_output(&output).expect("first line");
-    assert_eq!(bounded, "GET / 404");
-    let long = "y".repeat(LAST_OUTPUT_MAX_CHARS + 20);
+    let bounded = bounded_last_output(&output).expect("one line");
+    assert_eq!(bounded, "ERROR 2003: cannot connect");
+    let long = "y".repeat(effigy_ui::human::MAX_EVIDENCE_BYTES + 20);
     let bounded = bounded_last_output(&long).expect("bounded line");
-    assert_eq!(bounded.chars().count(), LAST_OUTPUT_MAX_CHARS + 1);
-    assert!(bounded.ends_with('…'));
+    assert!(bounded.ends_with("… (truncated)"), "{bounded}");
+    assert!(bounded.len() <= effigy_ui::human::MAX_EVIDENCE_BYTES + "… (truncated)".len());
     assert_eq!(bounded_last_output("\n  \n"), None);
 }
 

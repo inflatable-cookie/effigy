@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.state-stack.capture.v1 payload",
+  "description": "Payload of `effigy state capture --json`: the captured lineage, its produced layers and the report paths written.",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "stack_name",
+    "source_environment",
+    "capture_role",
+    "capture_mode",
+    "parent_lineage_id",
+    "created_at",
+    "executed",
+    "ok",
+    "capture_artifacts",
+    "produced_layers",
+    "tasks",
+    "warnings"
+  ],
+  "properties": {
+    "schema": {"const": "effigy.state-stack.capture.v1"},
+    "schema_version": {"const": 1},
+    "stack_name": {"type": "string"},
+    "source_environment": {"type": "string"},
+    "capture_role": {"type": "string"},
+    "capture_mode": {"type": "string"},
+    "parent_lineage_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "executed": {"type": "boolean"},
+    "ok": {"type": "boolean"},
+    "capture_artifacts": {"type": "array", "items": {"type": "object", "required": ["layer_key", "operation", "ref"]}},
+    "produced_layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "role",
+          "apply_mode",
+          "artifact_kind",
+          "environment_policy",
+          "source_ref",
+          "snapshot_identity",
+          "depends_on"
+        ]
+      }
+    },
+    "tasks": {"type": "array"},
+    "warnings": {"type": "array"},
+    "written_report_path": {"type": "string"},
+    "written_history_path": {"type": "string"}
+  }
+}

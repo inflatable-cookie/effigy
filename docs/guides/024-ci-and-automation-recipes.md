@@ -114,13 +114,13 @@ Install pinning and team migration policy:
 PR-style changed-only simulation:
 
 ```sh
-effigy contracts check-json --fast --changed-only origin/main --print-selected=json
+effigy contracts check-json --changed-only origin/main --print-selected=json
 ```
 
 Validate the selection payload shape (implicit in `--print-selected=json`):
 
 ```sh
-effigy contracts check-json --fast --changed-only origin/main --print-selected=json --validate-selection
+effigy contracts check-json --changed-only origin/main --print-selected=json --validate-selection
 cargo test --test cli_output_tests cli_contracts_ -- --nocapture
 ```
 
@@ -148,7 +148,7 @@ jobs:
       - name: Validate JSON contracts
         run: |
           set -o pipefail
-          cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts.log
+          cargo run --bin effigy -- contracts check-json --print-selected=json | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
       - name: Validator smoke check
@@ -175,7 +175,7 @@ When you want explicit nightly full coverage:
 
 ```yaml
 - name: Nightly full JSON contract sweep
-  run: cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts-nightly.log
+  run: cargo run --bin effigy -- contracts check-json --print-selected=json | tee json-contracts-nightly.log
 ```
 
 Optional artifact upload:
@@ -228,14 +228,14 @@ the gate is the same command:
 
 ```yaml
 - name: Validate JSON contracts and the selection payload
-  run: cargo run --bin effigy -- contracts check-json --full --print-selected=json
+  run: cargo run --bin effigy -- contracts check-json --print-selected=json
 ```
 
 To gate a payload another job stored, validate the artifact:
 
 ```yaml
 - name: Validate a stored selection artifact
-  run: cargo run --bin effigy -- contracts check-json --full --validate-selection --artifact ./json-contracts-selected.json
+  run: cargo run --bin effigy -- contracts check-json --validate-selection --artifact ./json-contracts-selected.json
 ```
 
 This checks the payload against the project's `[contracts].selection_contract`
@@ -249,7 +249,7 @@ JSON Schema: required keys, string-only `selected`, the `mode` enum, and
 Run locally:
 
 ```sh
-cargo run --bin effigy -- contracts check-json --full --print-selected=json
+cargo run --bin effigy -- contracts check-json --print-selected=json
 ```
 
 Then inspect selection payload in log:
@@ -263,7 +263,7 @@ grep -m1 '^{"selected":' json-contracts.log | jq .
 Validate the stored artifact directly:
 
 ```sh
-cargo run --bin effigy -- contracts check-json --full --validate-selection --artifact ./json-contracts-selected.json
+cargo run --bin effigy -- contracts check-json --validate-selection --artifact ./json-contracts-selected.json
 ```
 
 The failure names the JSON pointer and the keyword message, for example
@@ -275,17 +275,14 @@ cargo test --test cli_output_tests cli_contracts_ -- --nocapture
 
 ### Case: command payload schema mismatch
 
-Run fast checker with selected output:
+Run the checker with the selected rows printed:
 
 ```sh
-effigy contracts check-json --fast --print-selected
+effigy contracts check-json --print-selected
 ```
 
-Then run full mode to catch heavy-schema paths:
-
-```sh
-effigy contracts check-json --full --print-selected
-```
+Every active row is validated, including a row's named payload schema, so a
+mismatch names the row and the failing property.
 
 ## 8) Artifact Conventions
 

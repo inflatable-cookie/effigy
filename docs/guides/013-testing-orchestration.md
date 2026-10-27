@@ -254,6 +254,82 @@ passes `--locked`:
 effigy test:focused -p effigy-deps --lib -E 'test(cargo_unlink::tests::)'
 ```
 
+## Selector truth
+
+A selector that runs a test runner must fail when it runs nothing. Every
+test-running task in `config/tasks.toml` therefore calls nextest with
+`--no-tests fail`, and a filter term names a test that exists: `cargo test
+<substring>`, which exits green after selecting nothing, is not used for a
+selector anymore. When a test is renamed or pruned, fix its selector in the same
+change — the selector is the only thing that notices a renamed test.
+
+Each selector names one budget. Ordinary selectors inherit
+`tests/config/gateway-nextest.toml`; a selector whose every case owns a durable
+journal on the drive-backed scratch root names
+`tests/config/journal-heavy-nextest.toml` instead of adding another per-test
+override. A case that hangs still dies; a case that is merely slow on a loaded
+host does not fail a proof.
+
+## Live consumer shapes
+
+`qa:live:consumer-shapes` is an internal milestone proof, never part of a
+per-task validation. It proves the shapes a consumer's checkout generates where
+the other fixtures cannot:
+
+- the rendered Compose is handed to the real `compose config`, so every
+  `build` names Dockerfile content beside its context, no `aliases: null`
+  survives, a shared service carries no checkout path, and a Dockerfile's own
+  `$` survives Compose interpolation;
+- a client of a shared MariaDB resolves `host.docker.internal` while a local
+  MariaDB of the same engine stays local;
+- a primary checkout and a linked worktree of the same fixture, in one
+  environment and sharing one backing service, keep distinct scoped project
+  identities and distinct effective hosts: the linked checkout's first `up`
+  takes its own scope, and both checkouts stay up at the same time.
+
+It runs under `/Volumes/Builds/scratch/effigy/` with private scratch checkouts
+and removes what it created. It never starts, stops or reconfigures a runtime,
+and it does not touch another checkout's shared services: the fixture's shared
+service owns its own project name.
+
+The selector runs both halves in one step. The live half brings the same
+fixture up on the Colima profile: a build service whose Dockerfile uses
+`ARG`/`${VAR}`/`$var`, a shared MariaDB beside a local one of the same engine
+with a client resolving `host.docker.internal`, a primary and a linked worktree
+in one environment and on one backing service, with distinct scoped project
+names and effective hosts, a second `up` that keeps every container ID, no
+`EFFIGY_` value in any container, `container <env> restart <process>` on a
+host-process listener, and a `down` that leaves no container, listener or route.
+The linked checkout is never prepared before its first `up`: the proof records
+its unprepared host map (no scope token, declared hosts) first, so that `up`
+exercises the fresh-checkout path.
+The listener publishes its route into the fixture's own private gateway root
+(`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`, loopback DNS/HTTP/HTTPS with its own CA),
+so this proof never uses the machine gateway that the operator-path test owns;
+it re-verifies the machine gateway's listeners, PIDs and executables afterwards.
+It deletes the fixture's own shared-service container, volume and network: it
+asks the runtime for that project's containers by label, removes each by exact
+id, and touches a volume or network only once the label query reports no
+container left. It never touches the protected shared MariaDBs, and fails
+(keeping the staging root) if any owned name survives.
+
+Three modes exist for the operator: no mode runs both halves (what the selector
+does), `compose` runs only the Compose-checked render proof, and `plan` prints
+the frozen plan — fixture paths, project and container names, port policy, the
+binary's identity, the protected container baseline and the cleanup, with a
+sha256 for each candidate staging root — while performing no container action.
+A one-off run outside the selector uses
+`execute <staging root> <plan sha256>`; the hash must match that exact root, so
+a stale GO cannot authorise a changed plan. There is no environment marker.
+
+Staging is the environment's decision, not the proof's: the fixture stages
+under `/Volumes/Builds/scratch/effigy/` and the preflight refuses when the
+profile's VM cannot see that path, naming the mount ask. Until the approved
+Colima scratch mount lands, `qa:live:consumer-shapes` fails at that preflight —
+deliberately, because a silent `/Users` staging root would put proof checkouts
+in the operator's home for ordinary QA. Schedule the mount before milestone QA
+on this change.
+
 ## Related Guides
 
 - [`077-local-dependency-linking.md`](077-local-dependency-linking.md)

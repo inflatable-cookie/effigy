@@ -346,21 +346,20 @@ selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
 is refused with "no JSON schema index configured" rather than being checked
 against Effigy's own documentation tree.
 
-### Fast vs full checks
+### The check
 
 ```bash
-# Quick check: validates only schemas that have fast validators
-effigy contracts check-json --fast
-
-# Complete check: validates every declared schema
-effigy contracts check-json --full
+# Validate every declared schema, its envelope and its payload schema
+effigy contracts check-json
 
 # Check only schemas touched since a git ref (great for PRs)
-effigy contracts check-json --fast --changed-only origin/main
+effigy contracts check-json --changed-only origin/main
 ```
 
-Use `--fast` for daily local checks. Use `--full` before releases or when you
-suspect a broad schema change. Use `--changed-only` in CI to keep PR checks fast.
+There is one behaviour, not a fast and a full one. A row that names a
+`payload_schema` is validated against that schema, and an id the index's
+`payload_schemas` map does not carry fails the check instead of being skipped.
+Use `--changed-only` in CI to keep PR checks short.
 
 ### Validate the selection payload
 
@@ -370,9 +369,9 @@ selection contract with the same JSON Schema engine it uses for payloads:
 
 ```bash
 # Validate this run's selection payload as part of the check
-effigy contracts check-json --full --print-selected=json
+effigy contracts check-json --print-selected=json
 # equivalent, without printing it
-effigy contracts check-json --full --validate-selection
+effigy contracts check-json --validate-selection
 
 # Validate a selection payload another job stored
 effigy contracts check-json --validate-selection --artifact ./contracts-selected.json
@@ -385,17 +384,17 @@ envelope, so the command still fails with an actionable, structured report.
 
 JSON Schema cannot compare a property with an array length, so `count` is a
 producer guarantee: it is derived from `selected.length`. Everything else —
-required keys, string-only `selected`, the `mode` enum, `changed_only_base`
+required keys, string-only `selected` and `changed_only_base`
 nullability — is schema-checked.
 
 ### Print selected schemas
 
 ```bash
 # Human-readable list
-effigy contracts check-json --fast --print-selected
+effigy contracts check-json --print-selected
 
 # Machine-readable JSON
-effigy contracts check-json --fast --print-selected=json
+effigy contracts check-json --print-selected=json
 ```
 
 Use `--print-selected` when you need to know exactly which schemas were validated
@@ -468,7 +467,7 @@ After this guide, you should be able to:
 
 ## Next Step
 
-After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](026-json-payload-examples.md) and run `effigy contracts check-json --fast`.
+After updating any envelope or payload shape, add or refresh examples in [`026-json-payload-examples.md`](026-json-payload-examples.md) and run `effigy contracts check-json`.
 
 
 ## Sequence results

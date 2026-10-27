@@ -547,11 +547,12 @@ pub(in crate::runner) fn task_command_failure_human(
         None => "a signal stopped it before it reported an exit code".to_owned(),
     });
     // The failing output is the evidence: its first lines name the failure and
-    // its last lines say how it ended. Evidence is bounded and redacted.
-    if stderr.trim().is_empty() {
+    // its last lines say how it ended. Both streams are shown when both said
+    // something, because a runner that prints progress to stderr and failures
+    // to stdout would otherwise hide its own cause (effigy#364).
+    error = error.evidence_output("stderr", stderr);
+    if !stdout.trim().is_empty() {
         error = error.evidence_output("stdout", stdout);
-    } else {
-        error = error.evidence_output("stderr", stderr);
     }
     error.next_action("read the output above, fix the cause, then run the command again")
 }
@@ -624,13 +625,11 @@ fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effi
             error = error.evidence(format!("{key}: {value}"));
         }
     }
-    // The failing output is the evidence; stdout only when stderr is silent.
-    match text("stderr") {
-        Some(stderr) => error = error.evidence_output("stderr", &stderr),
-        None => {
-            if let Some(stdout) = text("stdout") {
-                error = error.evidence_output("stdout", &stdout);
-            }
+    // The failing output is the evidence: both streams when both said
+    // something, so the cause cannot hide in the stream that was not read.
+    for (label, key) in [("stderr", "stderr"), ("stdout", "stdout")] {
+        if let Some(output) = text(key) {
+            error = error.evidence_output(label, &output);
         }
     }
     if let Some(action) = ["next_action", "next", "stop", "recovery"]

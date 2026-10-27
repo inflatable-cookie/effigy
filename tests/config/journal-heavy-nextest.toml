@@ -1,0 +1,10 @@
+# The one budget for selectors whose every case owns a durable journal on the
+# drive-backed scratch root: a journal commit costs about 26 ms there against
+# 0.16 ms on the internal disk, and one supervisor matrix owns 288 journals
+# (2026-10-25: 207 s quiet, about 550 s under competing load). The point is that
+# a hung case still dies; it does not need a per-test number, so a selector
+# picks this whole file instead of adding another override.
+[profile.default]
+slow-timeout = { period = "600s", terminate-after = 1, grace-period = "5s" }
+leak-timeout = { period = "30s", result = "fail" }
+global-timeout = "1800s"

@@ -114,56 +114,22 @@ fn detached_activation_identity(policy: &EffectiveContainerPolicy) -> String {
 /// The underlying refusal, bounded and safe for machine output.
 ///
 /// The detached JSON envelope used to replace the real cause with generic
-/// advice, which hid which admission or claim refused. This keeps the cause,
-/// drops values assigned to secret-shaped keys, and bounds the result.
+/// advice, which hid which admission or claim refused. This keeps the cause
+/// through the one redactor and the one head-plus-tail bound in
+/// `effigy_ui::human`, so a backend's last line survives (effigy#364).
 fn sanitized_failure_cause(error: &RunnerError) -> String {
-    const MAX_CHARS: usize = 1200;
-    let mut cause = error
+    let cause = error
         .to_string()
         .lines()
-        .map(|line| redact_secret_assignments(line.trim()))
+        .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("; ");
-    if cause.chars().count() > MAX_CHARS {
-        // A backend's last line says why it stopped, so the bound keeps both
-        // ends instead of only the opening failure (effigy#364).
-        let length = cause.chars().count();
-        let keep = MAX_CHARS / 2 - 1;
-        let head = cause.chars().take(keep).collect::<String>();
-        let tail = cause.chars().skip(length - keep).collect::<String>();
-        cause = format!("{head}…{tail}");
-    }
-    cause
+    effigy_ui::human::bound_text(&cause, MAX_CAUSE_BYTES)
 }
 
-/// Replace the value of any `key=value` token whose key names a secret. The key
-/// stays, so the refusal still says which input was involved.
-fn redact_secret_assignments(text: &str) -> String {
-    const MARKERS: [&str; 7] = [
-        "password",
-        "passphrase",
-        "secret",
-        "token",
-        "api_key",
-        "apikey",
-        "authorization",
-    ];
-    text.split_whitespace()
-        .map(|token| {
-            let Some((key, _)) = token.split_once('=') else {
-                return token.to_owned();
-            };
-            let lowered = key.to_ascii_lowercase();
-            if MARKERS.iter().any(|marker| lowered.contains(marker)) {
-                format!("{key}=[redacted]")
-            } else {
-                token.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+/// Bytes of a refusal detail the detached JSON envelope keeps.
+const MAX_CAUSE_BYTES: usize = 1200;
 
 /// `retention` is persistent for an explicit `container up` and held for a
 /// task's ensure; `holders` are runs the activation attaches (§5.9).

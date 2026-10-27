@@ -1,0 +1,12 @@
+# A container the JSON contract rows can observe without a runtime action.
+# It lives inside this checkout because `container status` reads the repo's
+# declared mounts, and the Colima VM only shares checkouts under a mounted
+# root. The rows only read; nothing here is started.
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "redis"

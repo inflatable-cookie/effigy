@@ -40,7 +40,10 @@ const PROBE_BUDGET: Duration = Duration::from_secs(15);
 /// after 0s" read that never happened.
 const PROBE_BUDGET_MINIMUM: Duration = Duration::from_secs(5);
 /// How many trailing log lines one exited service is read for.
-const EXITED_LOG_TAIL: u32 = 5;
+// Enough lines that a service's own cause line is still in the tail when its
+// last lines are shutdown notes (MariaDB writes `[ERROR]` before "shutdown
+// complete").
+const EXITED_LOG_TAIL: u32 = 20;
 
 /// How the wait ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,11 +208,8 @@ fn exited_logs(
         ) else {
             continue;
         };
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(bounded) = effigy_containers::health::readiness::bounded_last_output(&line) {
-            logs.insert(service.service.clone(), bounded);
+        if !line.is_empty() {
+            logs.insert(service.service.clone(), line);
         }
     }
     logs

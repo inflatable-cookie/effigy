@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand,
     ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerDbDumpInput,
-    ContainerSubcommand, ContainerVolumeSubcommand, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DeployArgs, DeploySubcommand, DocsArgs,
-    DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ServiceArgs,
-    ServiceSubcommand, StateArgs, StateSubcommand, TaskInvocation, TasksArgs,
+    ContainerSubcommand, ContainerVolumeSubcommand, ContractsArgs, ContractsSelectionPrintMode,
+    ContractsSubcommand, DeployArgs, DeploySubcommand, DocsArgs, DocsBlockRequirement,
+    DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ServiceArgs, ServiceSubcommand,
+    StateArgs, StateSubcommand, TaskInvocation, TasksArgs,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::surface::*;
@@ -562,10 +562,6 @@ pub(super) fn run_rhai_feature(
                     index_path: path_option(&options, "index")?,
                     contract_path: path_option(&options, "contract")?,
                     artifact_path: path_option(&options, "artifact")?,
-                    mode: match string_option(&options, "mode")?.as_deref() {
-                        Some("full") => ContractsCheckMode::Full,
-                        _ => ContractsCheckMode::Fast,
-                    },
                     changed_only_base: string_option(&options, "changed_only")?,
                     print_selected: match string_option(&options, "print_selected")?.as_deref() {
                         Some("json") => ContractsSelectionPrintMode::Json,

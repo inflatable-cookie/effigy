@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.deps.status.v1 payload",
+  "description": "Payload of `effigy deps --json`: dependency manager state for this checkout.",
+  "type": "object",
+  "required": ["schema", "schema_version", "manager", "detected_managers", "summary", "links", "repo_root"],
+  "properties": {
+    "schema": {"const": "effigy.deps.status.v1"},
+    "schema_version": {"const": 1},
+    "manager": {"type": ["string", "null"]},
+    "detected_managers": {"type": "array", "items": {"type": "string"}},
+    "links": {"type": "array"},
+    "repo_root": {"type": "string"},
+    "summary": {
+      "type": "object",
+      "required": ["total", "healthy", "drifted", "missing", "conflict", "errors", "warnings"],
+      "properties": {
+        "total": {"type": "integer"},
+        "healthy": {"type": "integer"},
+        "drifted": {"type": "integer"},
+        "missing": {"type": "integer"},
+        "conflict": {"type": "integer"},
+        "errors": {"type": "integer"},
+        "warnings": {"type": "integer"}
+      }
+    }
+  }
+}
