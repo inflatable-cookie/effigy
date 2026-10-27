@@ -808,8 +808,9 @@ def print_frozen_plan():
     print("  hard deny: no container, volume or network name containing "
           + " or ".join(PROTECTED) + " is ever stopped or deleted")
     print(f"discovery stems:   {', '.join(names['stems'])}  (fixture-unique; a linked project is")
-    print("                   <worktree stem>-<scope>, so the stem survives the rename and no")
-    print("                   broader project matching is used)")
+    print("                   <worktree stem>-<scope>, so the stem survives the rename; discovery")
+    print("                   and reporting use stems, deletion needs an exact tracked project or")
+    print("                   the fixture's own checkout/repo-root label)")
     print("linked worktree:   its Compose project is derived at `up` from the scope that")
     print("                   run prepares, so cleanup discovers its containers, volume and")
     print("                   network by com.effigy.checkout and com.docker.compose.project")
@@ -1047,6 +1048,21 @@ def labels_own(labels, name, projects, checkouts, stems=()):
     )
 
 
+def labels_prove_deletion(labels, projects, checkouts):
+    """Removal evidence: an exact, tracked Compose project, or the fixture's own
+    checkout/repo-root path. A stem or a name prefix discovers and reports, but
+    never authorises a deletion."""
+    for key in ("com.docker.compose.project", "com.effigy.project"):
+        value = labels.get(key)
+        if value and value in projects:
+            return True
+    for key in ("com.effigy.checkout", "com.effigy.repo-root"):
+        value = labels.get(key)
+        if value and value in checkouts:
+            return True
+    return False
+
+
 def discover_owned(repo, worktree, shared_project, predicted_projects=(), checkouts=(), stems=()):
     """Everything this fixture actually owns, found by the runtime's labels.
 
@@ -1108,11 +1124,13 @@ def remove_owned(discovered, shared_project):
         name for container_id, name in discovered["containers"]
         if labels_of("containers", container_id).get("com.docker.compose.project") == shared_project
     ]
-    for name in shared_containers:
+    for container_id, name in discovered["containers"]:
+        if name not in set(shared_containers):
+            continue
         for marker in PROTECTED:
             assert marker not in name, "refusing to delete protected %s" % name
-        assert owned_by(name, "containers", shared_project), (
-            "refusing to delete %s: its labels do not prove it belongs to %s" % (name, shared_project)
+        assert labels_prove_deletion(labels_of("containers", container_id), projects, checkouts), (
+            "refusing to delete %s: no exact label proves it belongs to this fixture" % name
         )
     if shared_containers:
         run(
@@ -1132,7 +1150,7 @@ def remove_owned(discovered, shared_project):
         for name in present:
             for marker in PROTECTED:
                 assert marker not in name, "refusing to delete protected %s" % name
-            assert labels_own(labels_of(resource, name), name, projects, checkouts, stems), (
+            assert labels_prove_deletion(labels_of(resource, name), projects, checkouts), (
                 "refusing to delete %s: its labels do not prove it belongs to this fixture" % name
             )
         if not present:
