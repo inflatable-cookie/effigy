@@ -1084,17 +1084,23 @@ Before acknowledging the barrier, the blocked child forks an anchor inside
 its already-created process group (and its session for a PTY). A transient
 intermediate child reparents the anchor and is reaped before workload exec,
 so the workload never inherits a hidden child to wait for. The anchor
-re-execs the run's binary as `__kernel-anchor`, ignores HUP, INT and TERM,
-then acknowledges its pid. Its environment contains only the custody nonce. The parent records the full `{pid, start, boot}` identity
-in the optional `anchor` field alongside the existing receipt. Old receipts
+re-execs the run's binary as `__kernel-anchor`, then acknowledges its pid. Its
+environment contains only the custody nonce. The parent records the full
+`{pid, start, boot}` identity in the optional `anchor` field alongside the existing receipt. Old receipts
 omit that field and deserialize unchanged; imports infer no anchor.
 
 The anchor reads a separate go channel until launch. Barrier EOF closes that
 channel when the blocked child exits, so an unrecorded anchor cannot persist.
 After the durable receipt and owner go byte, the child releases the anchor
 before execing the workload. The anchor closes its last descriptors and
-waits in `pause`; owner or leader death cannot retire it. It inherits no
-workload streams, gate descriptors or sentinel writer, and its output and
+waits for custody settlement; owner or leader death alone cannot retire it.
+Tom's 2026-10-27 ruling permits it to exit on SIGTERM or once its run settles.
+Settlement stops the workload and verifies group closure before retiring the
+anchor. If SIGTERM removes the anchor while workload members remain, its
+positive group-identity evidence is gone and the existing `Unknown` rule below
+applies; no numeric group signal or new settlement state is inferred. The
+current binary still ignores TERM until the anchor-lifecycle change lands. It
+inherits no workload streams, gate descriptors or sentinel writer, and its output and
 exit never become workload output or status. This costs one persistent
 process and a transient reparenting fork per custody group. A protected OS
 shell is unsuitable on macOS because its environment may be unavailable to
