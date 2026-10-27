@@ -229,21 +229,8 @@ def assert_worktrees_keep_their_own_projects(repo):
     assert primary["digest"] != worktree["digest"], (
         "a linked worktree rendered the primary checkout's generation"
     )
-    def project_name(result):
-        compose = next(
-            rendered["content"]
-            for rendered in result["files"]
-            if rendered["path"].endswith(".generated.compose.yml")
-        )
-        document = resolved(compose)
-        for owner in list(document["services"].values()) + list((document.get("volumes") or {}).values()):
-            labels = owner.get("labels") or {}
-            if isinstance(labels, dict) and labels.get("com.effigy.project"):
-                return labels["com.effigy.project"]
-        raise AssertionError(("the render names no project identity", [r["path"] for r in result["files"]]))
-
-    primary_project = project_name(primary)
-    worktree_project = project_name(worktree)
+    primary_project = project_name_of(primary)
+    worktree_project = project_name_of(worktree)
     assert primary_project != worktree_project, (primary_project, worktree_project)
     return primary_project, worktree_project
 
@@ -423,7 +410,7 @@ def project_name_of(result):
         labels = owner.get("labels") or {}
         if isinstance(labels, dict) and labels.get("com.effigy.project"):
             return labels["com.effigy.project"]
-    raise AssertionError("the render names no project identity")
+    raise AssertionError(("the render names no project identity", [r["path"] for r in result["files"]]))
 
 
 def print_frozen_plan():
