@@ -1048,6 +1048,18 @@ def labels_own(labels, name, projects, checkouts, stems=()):
     )
 
 
+LINKED_PROJECT = re.compile(rf"^{re.escape(WORKTREE_DIR)}-dev-wt-[0-9a-f]{{12}}$")
+
+
+def fixture_project_id(value, shared_project, exact_projects):
+    """Whether a project id is provably this fixture's own: the shared project,
+    a project the render already predicted, or the linked scoped pattern. A
+    stem-matched name never makes an unrelated project id the fixture's."""
+    if not value:
+        return False
+    return value == shared_project or value in exact_projects or bool(LINKED_PROJECT.match(value))
+
+
 def labels_prove_deletion(labels, projects, checkouts):
     """Removal evidence: an exact, tracked Compose project, or the fixture's own
     checkout/repo-root path. A stem or a name prefix discovers and reports, but
@@ -1072,14 +1084,15 @@ def discover_owned(repo, worktree, shared_project, predicted_projects=(), checko
     or a network (no container) is still discovered, and the label pass extends
     the set from whatever the runtime reports."""
     checkouts = {str(p) for p in checkouts} or {str(repo), str(worktree)}
-    projects = {shared_project} | {p for p in predicted_projects if p}
+    exact = {p for p in predicted_projects if p}
+    projects = {shared_project} | exact
     containers = []
     for container_id, name in runtime_containers(include_stopped=True):
         labels = labels_of("containers", container_id)
         if labels_own(labels, name, projects, checkouts, stems):
             containers.append((container_id, name))
             for key in ("com.docker.compose.project", "com.effigy.project"):
-                if labels.get(key):
+                if fixture_project_id(labels.get(key), shared_project, exact):
                     projects.add(labels[key])
     # A volume or network reached through a stem still carries the exact
     # Compose project in its own label. Promote that id into the tracked set, so
@@ -1092,7 +1105,7 @@ def discover_owned(repo, worktree, shared_project, predicted_projects=(), checko
             labels = labels_of(resource, name)
             if labels_own(labels, name, projects, checkouts, stems):
                 for key in ("com.docker.compose.project", "com.effigy.project"):
-                    if labels.get(key):
+                    if fixture_project_id(labels.get(key), shared_project, exact):
                         ids.add(labels[key])
         return ids
 
