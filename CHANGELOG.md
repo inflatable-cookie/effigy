@@ -864,11 +864,15 @@ During v0.x, MINOR bumps may include breaking changes.
   one stays local, and a primary checkout and its linked worktree keep distinct
   project identities. It never runs in per-task validation. See
   [guide 013](docs/guides/013-testing-orchestration.md#live-consumer-shapes).
-  The live Colima half of that proof is written and its `plan` mode prints the
-  frozen plan (fixture paths, project and container names, port policy, binary
-  identity, the protected container baseline and the cleanup); `execute`
-  refuses until the owner approves a staging root, because the profile's VM
-  mounts only `/Users/tom` and `/Volumes/Builds/scratch` is not visible to it.
+  The same selector step then brings that fixture up on the Colima profile,
+  checks the build arguments, the shared-service client, an idempotent re-up,
+  the host-process restart and the linked worktree, tears it down by exact
+  owned name and fails if anything it owns survives. It stages under
+  `/Volumes/Builds/scratch/effigy/` and fails at its own preflight, naming the
+  mount ask, until the approved Colima scratch mount makes that path visible to
+  the VM; it never falls back to a `/Users` staging root for ordinary QA. A
+  one-off run uses `execute <staging root> <plan sha256>`, where the hash is the
+  one `plan` printed for that exact root.
 - **`effigy container <NAME> restart <process>...` replaces only the named host
   processes** (effigy#367, Acow #756). Each named process's current generation
   is settled, a new one starts with the same declared listener address, its

@@ -290,21 +290,34 @@ and removes what it created. It never starts, stops or reconfigures a runtime,
 and it does not touch another checkout's shared services: the fixture's shared
 service owns its own project name.
 
-The live half is a separate mode, `container-consumer-shapes.py <effigy> plan`
-and `... execute`. It brings the same fixture up on the Colima profile: a build
-service whose Dockerfile uses `ARG`/`${VAR}`/`$var`, a shared MariaDB beside a
-local one of the same engine with a client resolving `host.docker.internal`,
-a primary and a linked worktree with distinct project names, a second `up` that
-keeps every container ID, no `EFFIGY_` value in any container,
-`container <env> restart <process>` on a host-process listener, and a `down`
-that leaves no container, listener or route.
+The selector runs both halves in one step. The live half brings the same
+fixture up on the Colima profile: a build service whose Dockerfile uses
+`ARG`/`${VAR}`/`$var`, a shared MariaDB beside a local one of the same engine
+with a client resolving `host.docker.internal`, a primary and a linked worktree
+with distinct project names, a second `up` that keeps every container ID, no
+`EFFIGY_` value in any container, `container <env> restart <process>` on a
+host-process listener, and a `down` that leaves no container, listener or route.
+It deletes the fixture's own shared-service container, volume and network by
+exact name and only after their labels prove the project, never touches the
+protected shared MariaDBs, and fails (keeping the staging root) if any owned
+name survives.
 
-`plan` prints the frozen plan — exact fixture paths, project and container
-names, port policy, the binary's identity, the protected container baseline and
-the cleanup — and performs no container action. `execute` refuses unless
-`EFFIGY_CONSUMER_SHAPES_APPROVED` names the approved staging root, because the
-profile's VM mounts only `/Users/tom`, so the checkout has to be staged there
-and that staging decision belongs to the owner.
+Three modes exist for the operator: no mode runs both halves (what the selector
+does), `compose` runs only the Compose-checked render proof, and `plan` prints
+the frozen plan — fixture paths, project and container names, port policy, the
+binary's identity, the protected container baseline and the cleanup, with a
+sha256 for each candidate staging root — while performing no container action.
+A one-off run outside the selector uses
+`execute <staging root> <plan sha256>`; the hash must match that exact root, so
+a stale GO cannot authorise a changed plan. There is no environment marker.
+
+Staging is the environment's decision, not the proof's: the fixture stages
+under `/Volumes/Builds/scratch/effigy/` and the preflight refuses when the
+profile's VM cannot see that path, naming the mount ask. Until the approved
+Colima scratch mount lands, `qa:live:consumer-shapes` fails at that preflight —
+deliberately, because a silent `/Users` staging root would put proof checkouts
+in the operator's home for ordinary QA. Schedule the mount before milestone QA
+on this change.
 
 ## Related Guides
 

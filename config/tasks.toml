@@ -1860,13 +1860,16 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   { task = "qa:kernel-ratchet" },
 ] }
 
-# Milestone proof, never per-task validation: the Compose a consumer's checkout
-# generates is checked by the real Compose implementation, including the shared
-# backing service and the worktree project identity. Internal, heavy, and it
-# needs a Compose executable.
-"qa:live:consumer-shapes" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Check the rendered consumer Compose shapes with the real Compose implementation.", run = [
+# Milestone proof, never per-task validation. One step runs both halves: the
+# rendered Compose is checked by the real Compose implementation, then the same
+# fixture is brought up on the Colima profile (build service, shared plus local
+# MariaDB, primary and linked worktree, idempotent re-up, host-process restart,
+# down leaving nothing) and torn down by exact owned name. The live half fails
+# closed and names the mount ask until the approved Colima scratch mount lands;
+# it never falls back to a /Users staging root by itself.
+"qa:live:consumer-shapes" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Check the consumer Compose shapes with the real Compose implementation, then bring the same fixture up on Colima.", run = [
   { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 },
-  { run = "python3 tests/scripts/container-consumer-shapes.py ./target/debug/effigy", timeout_ms = 900000 },
+  { run = "python3 tests/scripts/container-consumer-shapes.py ./target/debug/effigy", timeout_ms = 1800000 },
 ] }
 "proof:runtime-retire-dead:cli" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Prove private backend retirement after linked checkout deletion alongside mixed runtime classes.", run = [{ run = "sh tests/scripts/runtime-retire-dead.sh", timeout_ms = 1200000 }] }
 
