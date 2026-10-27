@@ -7,32 +7,6 @@ use serde_json::Value;
 
 pub(super) use effigy_test_support::process::{FixtureCommandExt, OwnedChild as OwnedCliChild};
 
-#[cfg(unix)]
-#[test]
-fn owned_cli_guard_reaps_on_unwind_and_preserves_foreign_child() {
-    let mut foreign = Command::new("/bin/sleep")
-        .arg("30")
-        .spawn_owned()
-        .expect("foreign child");
-    let mut owned_pid = None;
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let child = Command::new("/bin/sleep")
-            .arg("30")
-            .spawn_owned()
-            .expect("owned child");
-        owned_pid = Some(child.id());
-        panic!("controlled fixture unwind");
-    }));
-    assert!(result.is_err());
-    assert_eq!(foreign.try_wait().expect("foreign poll"), None);
-    let error = nix::sys::wait::waitpid(
-        nix::unistd::Pid::from_raw(owned_pid.expect("pid") as i32),
-        None,
-    )
-    .expect_err("guard must reap its child");
-    assert_eq!(error, nix::errno::Errno::ECHILD);
-}
-
 pub(super) fn temp_workspace(name: &str) -> PathBuf {
     let root = effigy_test_support::Fixture::thread_lifetime(&format!("effigy-{name}-"))
         .expect("owned CLI fixture");

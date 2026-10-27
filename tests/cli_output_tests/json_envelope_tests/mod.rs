@@ -5,8 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use super::support::{
-    run_cli_command, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, temp_workspace,
+    run_cli_command, run_json_cli_command, run_json_task_success, temp_workspace,
 };
 use crate::deploy_fixture_support::{
     setup_workspace_app_path_bundle, write_test_deploy_export_provider,

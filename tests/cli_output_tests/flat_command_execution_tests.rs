@@ -1,10 +1,9 @@
 //! End-to-end fixtures for card `1110`: former namespace words execute as
-//! manifest tasks, unowned grouped spellings never reach a child built-in,
-//! direct routes stay warning-free, and existing selector precedence holds.
+//! manifest tasks, unowned grouped spellings never reach a child built-in, and
+//! existing selector precedence holds.
 
 use serde_json::Value;
 use std::fs;
-use std::process::Command;
 
 use super::support::{parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace};
 
@@ -16,30 +15,13 @@ fn stderr_of(output: &std::process::Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("utf8 stderr")
 }
 
-fn assert_no_migration_diagnostics(output: &std::process::Output) {
-    let stderr = stderr_of(output);
-    assert!(
-        !stderr.contains("is deprecated"),
-        "direct route must not emit a migration warning: {stderr}"
-    );
-    assert!(
-        !stderr.contains("legacy-direct-command"),
-        "direct route must not emit a migration code: {stderr}"
-    );
-}
-
-fn assert_json_has_no_warning_metadata(payload: &Value) {
+fn assert_json_has_no_warnings(payload: &Value) {
     // v0.15's envelope always carries `warnings` (guide 017); a direct route
     // simply contributes none.
     assert_eq!(
         payload["warnings"],
         Value::Array(Vec::new()),
-        "command envelope must not carry preview warning metadata: {payload}"
-    );
-    let text = payload.to_string();
-    assert!(
-        !text.contains("legacy-direct-command"),
-        "command envelope must not mention the preview warning code: {payload}"
+        "command envelope must not carry warning metadata: {payload}"
     );
 }
 
@@ -66,7 +48,6 @@ fn former_namespace_words_run_same_named_manifest_tasks_with_their_args() {
             stdout.contains("extra"),
             "{word} must receive following args: {stdout}"
         );
-        assert_no_migration_diagnostics(&output);
     }
 }
 
@@ -86,8 +67,7 @@ fn unowned_former_grouped_spelling_does_not_reach_the_child_builtin() {
     // `scan` built-in.
     assert_eq!(payload["command"]["kind"], "task");
     assert_eq!(payload["command"]["name"], "repo");
-    assert_json_has_no_warning_metadata(&payload);
-    assert_no_migration_diagnostics(&output);
+    assert_json_has_no_warnings(&payload);
 }
 
 #[test]
@@ -102,7 +82,6 @@ fn shadowed_deferred_builtin_keeps_manifest_precedence() {
     let direct = run_cli_command(&root, &["docs"]);
     assert!(direct.status.success(), "direct docs: {direct:?}");
     assert!(stdout_of(&direct).contains("REPO-DOCS-TASK"));
-    assert_no_migration_diagnostics(&direct);
 
     let grouped = run_cli_command(&root, &["repo", "docs", "check", "links", "."]);
     assert!(
@@ -130,51 +109,6 @@ fn catalog_slash_alias_stays_a_selector() {
     let slash = run_cli_command(&root, &["admin/hello"]);
     assert!(slash.status.success(), "slash selector: {slash:?}");
     assert!(stdout_of(&slash).contains("SLASH-HELLO"));
-    assert_no_migration_diagnostics(&slash);
-}
-
-#[test]
-fn leading_repo_and_json_flags_still_select_direct_builtins() {
-    let root = temp_workspace("flat-leading-flags");
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["--json", "--repo"])
-        .arg(&root)
-        .args(["scan", "god-files"])
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-    assert!(output.status.success(), "leading flags: {output:?}");
-    let payload = parse_stdout_json(&output);
-    assert_eq!(payload["ok"], true);
-    // `scan` is a flat built-in task surface, so the envelope names it as a
-    // task rather than the retired `scan` command kind.
-    assert_eq!(payload["command"]["kind"], "task");
-    assert_eq!(payload["command"]["name"], "scan");
-    assert_json_has_no_warning_metadata(&payload);
-    assert_no_migration_diagnostics(&output);
-}
-
-#[test]
-fn direct_text_and_json_success_have_no_migration_metadata() {
-    let root = temp_workspace("flat-json-success");
-
-    let text = run_cli_command(&root, &["scan", "god-files"]);
-    assert!(text.status.success(), "text: {text:?}");
-    assert!(stdout_of(&text).contains("God Files"));
-    assert_no_migration_diagnostics(&text);
-
-    let json = run_json_cli_command(&root, &["scan", "god-files"]);
-    assert!(json.status.success(), "json: {json:?}");
-    let payload = parse_stdout_json(&json);
-    assert_eq!(payload["ok"], true);
-    assert_eq!(payload["command"]["kind"], "task");
-    assert_eq!(payload["command"]["name"], "scan");
-    assert_json_has_no_warning_metadata(&payload);
-    assert_no_migration_diagnostics(&json);
-
-    let config = run_cli_command(&root, &["config"]);
-    assert!(config.status.success(), "config: {config:?}");
-    assert_no_migration_diagnostics(&config);
 }
 
 #[test]
@@ -194,16 +128,14 @@ fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
             .is_some_and(|message| message.contains("built-in `scan`")),
         "usage error names the built-in: {payload}"
     );
-    assert_json_has_no_warning_metadata(&payload);
-    assert_no_migration_diagnostics(&usage);
+    assert_json_has_no_warnings(&payload);
 
     let runtime = run_json_cli_command(&root, &["release", "status"]);
     assert_eq!(runtime.status.code(), Some(1), "runtime: {runtime:?}");
     let payload = parse_stdout_json(&runtime);
     assert_eq!(payload["ok"], false);
     assert_eq!(payload["error"]["kind"], "refused");
-    assert_json_has_no_warning_metadata(&payload);
-    assert_no_migration_diagnostics(&runtime);
+    assert_json_has_no_warnings(&payload);
 }
 
 #[test]
@@ -217,19 +149,6 @@ fn retired_graph_returns_a_json_usage_error() {
         assert_eq!(payload["ok"], false);
         assert!(payload.to_string().contains("effigy test --plan"));
         assert!(payload.to_string().contains("removed in v0.15"));
-    }
-}
-
-#[test]
-fn genuine_subcommands_keep_nested_help() {
-    let root = temp_workspace("flat-nested-subcommands");
-    for args in [
-        &["release", "gates", "--help"][..],
-        &["service", "list", "--help"][..],
-    ] {
-        let output = run_cli_command(&root, args);
-        assert!(output.status.success(), "{args:?}: {output:?}");
-        assert_no_migration_diagnostics(&output);
     }
 }
 

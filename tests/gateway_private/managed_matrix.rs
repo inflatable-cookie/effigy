@@ -1,10 +1,13 @@
 //! The run supervisor's strict-fake lifecycle matrix (contract 052 §12.3,
-//! effigy#235): front end (TUI, attached text, detached) × prior environment
-//! state (fresh, partial, stopped) × stop (request, interrupt, handover,
-//! client or owner SIGKILL) × failed children (none, some, all): 108 cells
-//! against the real binary and a fake Compose backend whose unmodelled calls
-//! fail. Every cell asserts exactly one environment down, no surviving owned
-//! process, a closed run with complete cleanup, and an immediate restart.
+//! effigy#235): front end (TUI, attached text, detached) × stop (request,
+//! interrupt, handover, client or owner SIGKILL) against the real binary and a
+//! fake Compose backend whose unmodelled calls fail. The full prior × children
+//! cross product stays in the kernel model test
+//! `run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent`;
+//! each cell here is the one end-to-end representative per front end and stop
+//! (Q-013 ruling 2), with a partial prior and one failed child. Every cell
+//! asserts exactly one environment down, no surviving owned process, a closed
+//! run with complete cleanup, and an immediate restart.
 use super::*;
 use std::os::unix::process::CommandExt;
 
@@ -28,12 +31,6 @@ enum Stop {
     /// supervisor of a detached run (its sentinel settles).
     Kill,
 }
-#[derive(Clone, Copy, Debug)]
-enum Prior {
-    Fresh,
-    Partial,
-    Stopped,
-}
 
 // This is the fake Docker backend's data-plane proxy. Bind port 0 in the
 // component that keeps the socket, and publish only after listen succeeds.
@@ -41,7 +38,8 @@ enum Prior {
 // validator; no listener inventory is stubbed or suppressed.
 struct MatrixProxy {
     address: SocketAddr,
-    owner: ManagedSupervisor,
+    /// Kept alive for the case's lifetime and reaped on drop.
+    _owner: ManagedSupervisor,
 }
 
 impl MatrixProxy {
@@ -70,7 +68,7 @@ impl MatrixProxy {
             if let Ok(address) = fs::read_to_string(&report) {
                 return Self {
                     address: address.parse().expect("bound proxy address"),
-                    owner,
+                    _owner: owner,
                 };
             }
             assert!(
@@ -80,30 +78,6 @@ impl MatrixProxy {
             thread::sleep(Duration::from_millis(10));
         }
     }
-}
-
-#[test]
-fn managed_matrix_proxy_keeps_its_published_port_during_a_concurrent_claim() {
-    let fixture =
-        effigy_test_support::Fixture::new("effigy-private-").expect("private proxy fixture");
-    let proxy = MatrixProxy::bind(fixture.path());
-    let address = proxy.address;
-    // Force the old gap: another listener tries to claim the published port
-    // before the case starts. The proxy must still own the bound socket.
-    let contender = thread::spawn(move || TcpListener::bind(address));
-    assert_eq!(
-        contender
-            .join()
-            .expect("concurrent claim")
-            .unwrap_err()
-            .kind(),
-        std::io::ErrorKind::AddrInUse
-    );
-    let response = private_gateway_http_response(address).expect("proxy response");
-    assert!(response.contains("matrix proxy"), "{response}");
-    let pid = proxy.owner.0.id();
-    drop(proxy);
-    assert!(!owned_process_is_live(pid), "proxy must be reaped on drop");
 }
 
 const PROXY: &str = r#"import pathlib,socket,sys
@@ -302,13 +276,10 @@ impl<'a> Case<'a> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    fn prepare(&self, prior: Prior) {
-        if matches!(prior, Prior::Fresh) {
-            return;
-        }
+    /// A recorded partial prior: the exact admitted inputs, with only the
+    /// completion mark removed. That is the state a restart meets most often.
+    fn prepare_partial(&self) {
         self.success(&["container", "stack", "up", "--detach"]);
-        // Keep the exact admitted inputs and remove only the completion mark:
-        // this is a recorded partial activation, not an unrecorded adoption.
         fn remove_complete(dir: &Path) {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
@@ -325,12 +296,8 @@ impl<'a> Case<'a> {
             }
         }
         remove_complete(&self.home);
-        let marker = match prior {
-            Prior::Partial => "missing-matrix-stack",
-            Prior::Stopped => "stopped-matrix-stack",
-            Prior::Fresh => unreachable!(),
-        };
-        fs::write(self.state.join(marker), "prior owned state").expect("prior state");
+        fs::write(self.state.join("missing-matrix-stack"), "prior owned state")
+            .expect("prior state");
     }
     fn spawn(&self, front: Front, name: &str) -> Owner {
         let output = self.root.join(format!("{name}.out"));
@@ -575,85 +542,6 @@ fn owned_process_is_live(pid: u32) -> bool {
         })
 }
 
-#[test]
-fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
-    assert!(
-        owned_process_is_live(std::process::id()),
-        "live owner must fail settle"
-    );
-    let mut child = Command::new("sh")
-        .args(["-c", "exit 0"])
-        .spawn_owned()
-        .expect("short child");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while owned_process_is_live(child.id()) && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    let exited = !owned_process_is_live(child.id());
-    // Reap only after observing it, so the control exercises an exited PID
-    // that the kernel still exposes rather than merely an absent process.
-    let status = child.wait().expect("reap control child");
-    assert!(status.success());
-    assert!(exited, "unreaped exited child must count as ended");
-}
-
-/// A recorded exec workload need not lead its group (notably with Linux
-/// shells/setsid). Fake down must model container death for that PID too.
-#[test]
-fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
-    let private =
-        effigy_test_support::Fixture::new("effigy-private-").expect("private fake-down fixture");
-    let root = private.path();
-    fs::create_dir(root.join("engine")).expect("engine");
-    fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("adapter");
-    let mut command = Command::new("sh");
-    command
-        .args([
-            "-c",
-            "sleep 3600 & printf '%s\\n' \"$!\" > work.pid.tmp && mv work.pid.tmp work.pid; wait",
-        ])
-        .current_dir(root)
-        .process_group(0);
-    let owner = ManagedSupervisor(command.spawn_owned().expect("private process group"));
-    let marker = root.join("work.pid");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !marker.exists() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    let pid = fs::read_to_string(marker)
-        .expect("recorded child")
-        .trim()
-        .parse::<u32>()
-        .expect("PID");
-    assert!(owned_process_is_live(pid));
-    assert_ne!(
-        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid as i32)))
-            .expect("group")
-            .as_raw(),
-        pid as i32
-    );
-    let down = Command::new("python3")
-        .arg(root.join("matrix-adapter.py"))
-        .args(["down", "matrix-stack"])
-        .env("MATRIX_ROOT", root)
-        .env("MATRIX_TEST_BINARY", std::env::current_exe().unwrap())
-        .output()
-        .expect("fake down");
-    assert!(down.status.success(), "{:?}", down);
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while owned_process_is_live(pid) && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    let ended = !owned_process_is_live(pid);
-    // End/reap our private group even when exercising the broken adapter, so
-    // a failing regression proof never leaves its deliberately detached work.
-    drop(owner);
-    assert!(
-        ended,
-        "fake down missed a live workload whose PID differs from its PGID"
-    );
-}
-
 struct Owner {
     front: Front,
     child: ManagedSupervisor,
@@ -776,102 +664,97 @@ fn matrix(front: Front, stop: Stop) {
     let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    for (prior_index, prior) in [Prior::Fresh, Prior::Partial, Prior::Stopped]
-        .into_iter()
-        .enumerate()
-    {
-        for children in 0..3 {
-            let case = Case::new(
-                &fixture
-                    .path()
-                    .join(format!("case-{prior_index}-{children}")),
-                &gateway,
-                &effects,
-                &foreign_ca,
-            );
-            case.prepare(prior);
-            for child in ["api", "jobs"].into_iter().take(children) {
-                fs::write(case.root.join(format!("fail-{child}")), "fail").expect("child failure");
-            }
-            eprintln!("matrix front={front:?} stop={stop:?} prior={prior:?} children={children}");
-            let mut owner = case.spawn(front, "owner");
-            let pids = case.ready(&mut owner, children);
-            let down_before = case.down_count();
-            let live = case.status();
-            let client_success = match stop {
-                Stop::Request => {
-                    case.success(&["serve", "stop"]);
-                    Some(true)
-                }
-                Stop::Interrupt => {
-                    if front == Front::Detached {
-                        nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(supervisor_pid(&live)),
-                            nix::sys::signal::Signal::SIGTERM,
-                        )
-                        .expect("TERM the detached supervisor");
-                    } else {
-                        owner.signal(nix::sys::signal::Signal::SIGINT);
-                    }
-                    Some(true)
-                }
-                Stop::Handover => {
-                    case.success(&["container", "other", "up", "--detach"]);
-                    Some(true)
-                }
-                Stop::Kill => {
-                    if front == Front::Detached {
-                        nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(supervisor_pid(&live)),
-                            nix::sys::signal::Signal::SIGKILL,
-                        )
-                        .expect("KILL the detached supervisor");
-                    } else {
-                        owner.signal(nix::sys::signal::Signal::SIGKILL);
-                    }
-                    None
-                }
-            };
-            // A detached client exited 0 once the run was active.
-            owner.finish(if front == Front::Detached {
-                Some(true)
-            } else {
-                client_success
-            });
-            let closed = case.closed();
-            assert_eq!(
-                closed["run"]["cleanup"],
-                "complete",
-                "settled truthfully: {closed} lifecycle={}",
-                case.lifecycle_log()
-            );
-            assert_eq!(
-                case.down_count(),
-                down_before + 1,
-                "exactly one down per stop cell: {}",
-                case.lifecycle_log()
-            );
-            case.assert_down(&pids);
-            if matches!(stop, Stop::Handover) {
-                case.success(&["container", "other", "down"]);
-            }
-            // The restart recovers immediately with the same declaration.
-            for child in ["api", "jobs"] {
-                let _ = fs::remove_file(case.root.join(format!("work-{child}.pid")));
-            }
-            let mut restarted = case.spawn(front, "restart");
-            let restarted_pids = case.ready(&mut restarted, children);
-            case.success(&["serve", "stop"]);
-            restarted.finish(Some(true));
-            case.closed();
-            assert_eq!(
-                case.down_count(),
-                down_before + 2,
-                "exactly one down for the restarted run"
-            );
-            case.assert_down(&restarted_pids);
-        }
+    // One representative cell per front end and stop (Q-013 ruling 2):
+    // partial prior, one failed child. The kernel model test carries the full
+    // prior × children cross product.
+    let case = Case::new(
+        &fixture.path().join("case-representative"),
+        &gateway,
+        &effects,
+        &foreign_ca,
+    );
+    case.prepare_partial();
+    let children = 1;
+    for child in ["api", "jobs"].into_iter().take(children) {
+        fs::write(case.root.join(format!("fail-{child}")), "fail").expect("child failure");
     }
+    eprintln!("matrix front={front:?} stop={stop:?} prior=partial children={children}");
+    let mut owner = case.spawn(front, "owner");
+    let pids = case.ready(&mut owner, children);
+    let down_before = case.down_count();
+    let live = case.status();
+    let client_success = match stop {
+        Stop::Request => {
+            case.success(&["serve", "stop"]);
+            Some(true)
+        }
+        Stop::Interrupt => {
+            if front == Front::Detached {
+                nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(supervisor_pid(&live)),
+                    nix::sys::signal::Signal::SIGTERM,
+                )
+                .expect("TERM the detached supervisor");
+            } else {
+                owner.signal(nix::sys::signal::Signal::SIGINT);
+            }
+            Some(true)
+        }
+        Stop::Handover => {
+            case.success(&["container", "other", "up", "--detach"]);
+            Some(true)
+        }
+        Stop::Kill => {
+            if front == Front::Detached {
+                nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(supervisor_pid(&live)),
+                    nix::sys::signal::Signal::SIGKILL,
+                )
+                .expect("KILL the detached supervisor");
+            } else {
+                owner.signal(nix::sys::signal::Signal::SIGKILL);
+            }
+            None
+        }
+    };
+    // A detached client exited 0 once the run was active.
+    owner.finish(if front == Front::Detached {
+        Some(true)
+    } else {
+        client_success
+    });
+    let closed = case.closed();
+    assert_eq!(
+        closed["run"]["cleanup"],
+        "complete",
+        "settled truthfully: {closed} lifecycle={}",
+        case.lifecycle_log()
+    );
+    assert_eq!(
+        case.down_count(),
+        down_before + 1,
+        "exactly one down per stop cell: {}",
+        case.lifecycle_log()
+    );
+    case.assert_down(&pids);
+    if matches!(stop, Stop::Handover) {
+        case.success(&["container", "other", "down"]);
+    }
+    // The restart recovers immediately with the same declaration.
+    for child in ["api", "jobs"] {
+        let _ = fs::remove_file(case.root.join(format!("work-{child}.pid")));
+    }
+    let mut restarted = case.spawn(front, "restart");
+    let restarted_pids = case.ready(&mut restarted, children);
+    case.success(&["serve", "stop"]);
+    restarted.finish(Some(true));
+    case.closed();
+    assert_eq!(
+        case.down_count(),
+        down_before + 2,
+        "exactly one down for the restarted run"
+    );
+    case.assert_down(&restarted_pids);
 }
 macro_rules! matrix_case {
     ($name:ident, $front:ident, $stop:ident) => {
@@ -1119,15 +1002,9 @@ fn managed_matrix_slow_down_is_awaited_by_the_stop() {
     case.assert_down(&pids);
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Authority {
-    ExplicitDown,
-    Reaper,
-}
-
-/// Holder protection (R4): neither an explicit `container down` nor the
-/// lease reaper brings an environment down under its live bound run.
-fn authority_matrix(authority: Authority) {
+/// Holder protection (R4): an explicit `container down` does not bring an
+/// environment down under its live bound run.
+fn authority_matrix() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let bin = std::env::split_paths(&effects.env_path)
@@ -1148,50 +1025,24 @@ fn authority_matrix(authority: Authority) {
     let mut owner = case.spawn(Front::Text, "live-owner");
     let pids = case.ready(&mut owner, 0);
     let down_before = case.down_count();
-    match authority {
-        Authority::ExplicitDown => {
-            let down = case.run(&["container", "stack", "down"]);
-            assert!(!down.status.success(), "down under a live holder");
-            // The refusal counts its holders (one live run here) and names the
-            // exact command that ends it, so the reader is never left to guess
-            // which command stops the run that blocked the transition.
-            let stderr = String::from_utf8_lossy(&down.stderr);
-            assert!(stderr.contains("while 1 run holds it"), "{stderr}");
-            assert!(stderr.contains("effigy run stop"), "{stderr}");
-        }
-        Authority::Reaper => {
-            let dir = case
-                .home
-                .join(".effigy/runtime/host-container-leases/matrix/matrix-stack");
-            fs::create_dir_all(&dir).expect("lease directory");
-            let _ = fs::remove_file(dir.join("stack.persistent"));
-            let lease = serde_json::json!({"schema":"effigy.host-container-lease.v1","schema_version":1,"token":"expired-prior","container_name":"stack","profile":"matrix","project_name":"matrix-stack","expires_at_epoch_ms":0});
-            fs::write(dir.join("stack.json"), lease.to_string()).expect("expired lease");
-            let reaper = case.run(&[
-                "__container-lease-reaper",
-                "--repo-root",
-                case.root.to_str().expect("root"),
-                "--container",
-                "stack",
-                "--token",
-                "expired-prior",
-            ]);
-            assert!(!reaper.status.success(), "the retired reaper entry refuses");
-            assert!(
-                String::from_utf8_lossy(&reaper.stderr).contains("is retired"),
-                "{}",
-                String::from_utf8_lossy(&reaper.stderr)
-            );
-            assert!(
-                dir.join("stack.json").exists(),
-                "a v0.14.1 lease file is never changed"
-            );
-        }
-    }
+    let down = case.run(&["container", "stack", "down"]);
+    assert!(!down.status.success(), "down under a live holder");
+    // The refusal names the holder it saw and says no down was issued, so the
+    // reader is never left to guess which run blocked the transition.
+    let stderr = String::from_utf8_lossy(&down.stderr);
+    assert!(stderr.contains("is busy"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("pid {}", owner.child.0.id())),
+        "the refusal names the live holder: {stderr}"
+    );
+    assert!(
+        stderr.contains("no backend was contacted"),
+        "the refusal says nothing was changed: {stderr}"
+    );
     assert_eq!(
         case.down_count(),
         down_before,
-        "{authority:?} must issue no down"
+        "the refusal must issue no down"
     );
     assert!(case.state.join("active-matrix-stack").exists());
     case.success(&["serve", "stop"]);
@@ -1207,11 +1058,7 @@ fn authority_matrix(authority: Authority) {
 
 #[test]
 fn managed_matrix_explicit_down_refuses_under_live_holder() {
-    authority_matrix(Authority::ExplicitDown);
-}
-#[test]
-fn managed_matrix_reaper_under_live_holder() {
-    authority_matrix(Authority::Reaper);
+    authority_matrix();
 }
 
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal,shlex

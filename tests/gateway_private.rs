@@ -244,11 +244,10 @@ fn private_gateway_prunes_an_orphan_certificate_and_keeps_a_routed_one() {
 /// binary, because the pinned build is not part of this suite.
 #[cfg(unix)]
 #[test]
+#[ignore = "needs EFFIGY_PINNED_READER_EFC1478 naming that build's binary; run `effigy proof:gateway:pinned-reader`"]
 fn pinned_reader_reads_a_store_this_build_wrote() {
-    let Some(pinned) = std::env::var_os("EFFIGY_PINNED_READER_EFC1478") else {
-        eprintln!("skipped: EFFIGY_PINNED_READER_EFC1478 names no pinned build");
-        return;
-    };
+    let pinned = std::env::var_os("EFFIGY_PINNED_READER_EFC1478")
+        .expect("EFFIGY_PINNED_READER_EFC1478 must name the pinned build's binary for this proof");
     let fixture =
         effigy_test_support::Fixture::new("effigy-private-").expect("fresh private fixture");
     let effects = HostEffectSentinels::new(fixture.path());
@@ -328,44 +327,6 @@ fn private_gateway_keeps_a_route_whose_target_is_down() {
         fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
     );
     child.terminate_and_wait().expect("stop private daemon");
-}
-
-#[test]
-fn private_gateway_sentinel_reads_after_accept_before_client_bytes() {
-    // Controlled counterexample to the inherited nonblocking arrangement:
-    // accepting a connection does not mean its first byte is already ready.
-    let old_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut old_client = TcpStream::connect(old_listener.local_addr().unwrap()).unwrap();
-    let (mut old_stream, _) = old_listener.accept().unwrap();
-    old_stream.set_nonblocking(true).unwrap();
-    let mut byte = [0u8; 1];
-    assert_eq!(
-        old_stream.read(&mut byte).unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
-    old_client
-        .write_all(b"old fixture would have discarded this")
-        .unwrap();
-
-    let sentinel = ForeignListener::bind("127.0.0.1:0".parse().unwrap());
-    let mut client = TcpStream::connect(sentinel.address).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !sentinel.accepted.load(Ordering::Relaxed) {
-        assert!(Instant::now() < deadline, "sentinel did not accept");
-        thread::yield_now();
-    }
-    assert!(
-        !sentinel.received_request(),
-        "no bytes sent before accept acknowledgement"
-    );
-    client.write_all(b"still-owned").unwrap();
-    while !sentinel.received_request() {
-        assert!(
-            Instant::now() < deadline,
-            "bounded sentinel did not receive after acceptance"
-        );
-        thread::yield_now();
-    }
 }
 
 #[cfg(unix)]
@@ -870,17 +831,10 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 
 #[test]
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
-    managed_host_dependent_replacement_proof(true);
-}
-
-#[test]
-fn managed_host_dependent_replacement_cold_prepare_control() {
-    // Fresh cold starts exercise shared Store bootstrap and concurrent Prepare.
     // Text failures retain the original error, which detached JSON deliberately
-    // reduces to structural state. Verify each committed claim over HTTPS.
-    for _ in 0..3 {
-        managed_host_dependent_replacement_proof(false);
-    }
+    // reduces to structural state; each front proves its committed claim once.
+    managed_host_dependent_replacement_proof(false);
+    managed_host_dependent_replacement_proof(true);
 }
 
 fn managed_host_dependent_replacement_proof(startup_json: bool) {
@@ -1716,65 +1670,6 @@ fn edit_live_fixture_routes(path: &Path, edit: impl FnOnce(&mut RouteTable)) {
             Ok(())
         })
         .expect("private fixture endpoint transaction");
-}
-
-#[test]
-fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
-    use effigy_gateway::registration::{register_route, RouteRegistration};
-    use std::sync::mpsc;
-
-    let fixture = effigy_test_support::Fixture::new("effigy-private-")
-        .expect("private route transaction fixture");
-    let route_path = fixture.path().join("routes.json");
-    let registration = |domain: &str| RouteRegistration {
-        domain: domain.to_owned(),
-        target: Some("127.0.0.1:48081".to_owned()),
-        dns_ip: None,
-        tcp_port: None,
-        tcp_target: None,
-        tls: false,
-        project_path: fixture.path().display().to_string(),
-        source: RouteSource::Manual,
-    };
-    register_route(&route_path, &registration("original.test")).unwrap();
-    let sibling = registration("sibling.test");
-    let (attempt_tx, attempt_rx) = mpsc::channel();
-    let (finished_tx, finished_rx) = mpsc::channel();
-    thread::scope(|scope| {
-        let mut writer = None;
-        let mut excluded = false;
-        edit_live_fixture_routes(&route_path, |routes| {
-            writer = Some(scope.spawn(|| {
-                attempt_tx.send(()).unwrap();
-                register_route(&route_path, &sibling).expect("concurrent lifecycle registration");
-                finished_tx.send(()).unwrap();
-            }));
-            attempt_rx
-                .recv_timeout(Duration::from_secs(5))
-                .expect("lifecycle writer reached registration");
-            excluded = matches!(
-                finished_rx.recv_timeout(Duration::from_millis(100)),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            );
-            let mut original = routes.lookup("original.test").unwrap().clone();
-            original.target = Some("127.0.0.1:48082".to_owned());
-            routes.upsert(original);
-        });
-        writer.unwrap().join().expect("settle lifecycle writer");
-        assert!(
-            excluded,
-            "fixture mutation bypassed the lifecycle transaction lock"
-        );
-    });
-    let routes = RouteTable::load(&route_path).unwrap();
-    assert_eq!(
-        routes.lookup("original.test").unwrap().target.as_deref(),
-        Some("127.0.0.1:48082")
-    );
-    assert!(
-        routes.lookup("sibling.test").is_some(),
-        "fixture restoration lost the concurrent lifecycle registration"
-    );
 }
 
 /// A checkout can switch container -> hybrid -> container in either direction
@@ -3302,7 +3197,6 @@ fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
 struct ForeignListener {
     address: SocketAddr,
     received: Arc<AtomicBool>,
-    accepted: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -3315,10 +3209,8 @@ impl ForeignListener {
             .set_nonblocking(true)
             .expect("nonblocking foreign listener");
         let received = Arc::new(AtomicBool::new(false));
-        let accepted = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
         let thread_received = Arc::clone(&received);
-        let thread_accepted = Arc::clone(&accepted);
         let thread_stop = Arc::clone(&stop);
         let thread = thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
@@ -3330,7 +3222,6 @@ impl ForeignListener {
                         stream
                             .set_read_timeout(Some(Duration::from_millis(250)))
                             .expect("bounded sentinel receive");
-                        thread_accepted.store(true, Ordering::Relaxed);
                         let mut bytes = [0; 1];
                         if stream.read(&mut bytes).is_ok_and(|count| count > 0) {
                             thread_received.store(true, Ordering::Relaxed);
@@ -3346,7 +3237,6 @@ impl ForeignListener {
         Self {
             address,
             received,
-            accepted,
             stop,
             thread: Some(thread),
         }

@@ -3,12 +3,6 @@ slow-timeout = { period = "45s", terminate-after = 1, grace-period = "2s" }
 leak-timeout = { period = "1s", result = "fail" }
 global-timeout = "600s"
 
-# The transition proof drives two listener restarts and a teardown through the
-# public CLI, so it needs more than the default slow period.
-[[profile.default.overrides]]
-filter = "test(managed_host_transitions_)"
-slow-timeout = { period = "120s", terminate-after = 1 }
-
 # The environment-owned supervisor proof starts an environment through a
 # task step, restarts one listener generation after that task's lease ends and
 # then settles the environment, so it needs more than the default slow period.
@@ -31,7 +25,7 @@ slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
 # The adapter-less proofs start plain servers, restart one on its reserved port
 # and settle the environment through the public CLI (effigy#334).
 [[profile.default.overrides]]
-filter = "test(managed_host_adapterless_) | test(managed_host_listener_outside_generation_)"
+filter = "test(managed_host_adapterless_)"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 
 # This clone/switch proof runs a listener up, a container handover and a switch
@@ -42,9 +36,9 @@ slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 filter = "test(container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over)"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 
-# The 108-cell managed matrix runs nine cases per test with an immediate
-# restart each; one takes about 300s on a quiet host. A sweep that selects
-# gateway_private under this profile must not terminate it at the 45s default.
+# Every managed-matrix cell runs a partial prior, one failed child and an
+# immediate restart through the public CLI, so it needs more than the 45s
+# default but far less than the retired nine-cell sweep (Q-013 ruling 2).
 [[profile.default.overrides]]
 filter = "test(managed_matrix_)"
-slow-timeout = { period = "600s", terminate-after = 1, grace-period = "2s" }
+slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }

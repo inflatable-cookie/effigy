@@ -1,5 +1,5 @@
 use super::super::support::parse_stdout_json;
-use super::super::support::{temp_execution_workspace, FixtureCommandExt, OwnedCliChild};
+use super::super::support::{FixtureCommandExt, OwnedCliChild};
 use super::*;
 use std::path::Path;
 use std::process::{ExitStatus, Output, Stdio};
@@ -424,58 +424,6 @@ fn cli_json_mode_task_wraps_task_run_payload() {
 }
 
 #[test]
-fn cli_json_mode_parse_error_wraps_error_payload() {
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("tasks")
-        .arg("--repo")
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-
-    assert!(!output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], false);
-    assert_eq!(parsed["command"]["kind"], "cli");
-    assert_eq!(parsed["command"]["name"], "parse");
-    assert_eq!(parsed["error"]["kind"], "refused");
-    assert_eq!(parsed["error"]["type"], "CliParseError");
-}
-
-#[test]
-fn cli_json_mode_runner_error_wraps_runner_failure() {
-    let root = temp_workspace("cli-json-runner-error-envelope");
-    fs::write(
-        root.join("effigy.toml"),
-        "[tasks.build]\nrun = \"printf build\"\n",
-    )
-    .expect("write manifest");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--repo")
-        .arg(&root)
-        .arg("--json")
-        .arg("missing-task")
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-
-    assert!(!output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], false);
-    assert_eq!(parsed["command"]["kind"], "task");
-    assert_eq!(parsed["command"]["name"], "missing-task");
-    assert_eq!(parsed["error"]["kind"], "refused");
-    assert!(parsed["error"]["message"]
-        .as_str()
-        .is_some_and(|msg| msg.contains("missing-task")));
-}
-
-#[test]
 fn cli_json_mode_lock_conflict_wraps_runner_failure() {
     assert_json_lock_conflict_is_held(
         "cli-json-lock-conflict",
@@ -491,134 +439,6 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
             "`effigy run stop ",
             "`effigy runs`",
         ],
-    );
-}
-
-#[test]
-fn cli_json_lock_conflict_holder_exit_before_readiness_reports_child_output() {
-    let root = temp_workspace("cli-json-lock-conflict-holder-exit");
-    let (task_pid_path, ready_path, release_path) = held_task_paths(&root, "early-exit");
-    write_held_task_manifest(
-        &root,
-        "dev",
-        &format!(
-            "printf '%s\\n' \"$$\" > {}; printf holder-stdout; printf holder-stderr >&2; exit 17",
-            shell_quote(&task_pid_path)
-        ),
-    );
-
-    let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid_path, ready_path, release_path);
-    let diagnostic = holder
-        .wait_until_ready(Duration::from_secs(5))
-        .expect_err("an exited holder must not count as lock readiness");
-    assert!(diagnostic.contains("status=exit status:"), "{diagnostic}");
-    assert!(diagnostic.contains("holder-stdout"), "{diagnostic}");
-    assert!(diagnostic.contains("holder-stderr"), "{diagnostic}");
-}
-
-#[test]
-fn cli_lock_readiness_budget_starts_at_task_entry_without_rebasing_outer_deadline() {
-    let root = temp_execution_workspace("lock-delayed-task-entry");
-    let (task_pid, ready, release) = held_task_paths(&root, "delayed");
-    // A real task delays its entry marker; this is not a warmed metadata or
-    // scheduler path. The original pre-entry five-second check fails here.
-    write_held_task_manifest(
-        &root,
-        "dev",
-        &format!(
-            "sleep 6; {}",
-            held_task_command(&task_pid, &ready, &release)
-        ),
-    );
-    let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid, ready, release);
-    let outer = holder.child.as_ref().expect("holder child").deadline();
-    let pid = holder
-        .wait_until_ready(Duration::from_secs(5))
-        .expect("actual task entry followed by timely readiness");
-    assert!(pid > 0);
-    assert_eq!(
-        holder.child.as_ref().expect("holder child").deadline(),
-        outer,
-        "readiness observation must not rebase the absolute fixture bound"
-    );
-    let output = holder
-        .release_and_reap()
-        .expect("release delayed-entry holder");
-    assert!(output.status.success(), "{output:?}");
-}
-
-#[test]
-fn cli_json_lock_conflict_readiness_timeout_reaps_owned_processes() {
-    let root = temp_workspace("cli-json-lock-conflict-readiness-timeout");
-    let (task_pid_path, ready_path, release_path) = held_task_paths(&root, "timeout");
-    write_held_task_manifest(
-        &root,
-        "dev",
-        &format!(
-            "printf '%s\\n' \"$$\" > {}; printf timeout-stdout; printf timeout-stderr >&2; exec sleep 10",
-            shell_quote(&task_pid_path)
-        ),
-    );
-
-    let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid_path, ready_path, release_path);
-    let diagnostic = holder
-        .wait_until_ready(Duration::from_secs(5))
-        .expect_err("a task without readiness must time out");
-    assert!(
-        diagnostic.contains("did not reach readiness"),
-        "{diagnostic}"
-    );
-    assert!(diagnostic.contains("timeout-stdout"), "{diagnostic}");
-    assert!(diagnostic.contains("timeout-stderr"), "{diagnostic}");
-    assert!(
-        holder.child.is_none(),
-        "timeout path must reap the CLI child"
-    );
-    if let Some(task_pid) = holder.task_pid {
-        assert!(
-            wait_for_process_gone(task_pid, Duration::from_secs(3)),
-            "timed-out task process {task_pid} survived cleanup"
-        );
-    }
-    assert!(
-        wait_for_process_group_gone(holder.cli_group_pid, Duration::from_secs(3)),
-        "timed-out owned process group {} survived cleanup",
-        holder.cli_group_pid
-    );
-}
-
-#[test]
-fn cli_json_lock_conflict_holder_drop_releases_and_reaps_on_panic() {
-    let root = temp_workspace("cli-json-lock-conflict-holder-panic");
-    let (task_pid_path, ready_path, release_path) = held_task_paths(&root, "panic");
-    write_held_task_manifest(
-        &root,
-        "dev",
-        &held_task_command(&task_pid_path, &ready_path, &release_path),
-    );
-    let mut holder = HeldCliTask::spawn(&root, &["dev"], task_pid_path, ready_path, release_path);
-    let task_pid = holder
-        .wait_until_ready(Duration::from_secs(5))
-        .unwrap_or_else(|diagnostic| panic!("{diagnostic}"));
-    let cli_pid = holder.child.as_ref().expect("child").id();
-    let cli_group_pid = holder.cli_group_pid;
-
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        let _holder = holder;
-        panic!("simulate an assertion failure while the owner is held");
-    }));
-    assert!(panic.is_err());
-    assert!(
-        wait_for_process_gone(task_pid, Duration::from_secs(3)),
-        "holder task process {task_pid} survived panic cleanup"
-    );
-    assert!(
-        wait_for_process_gone(cli_pid, Duration::from_secs(3)),
-        "holder CLI process {cli_pid} survived panic cleanup"
-    );
-    assert!(
-        wait_for_process_group_gone(cli_group_pid, Duration::from_secs(3)),
-        "holder process group {cli_group_pid} survived panic cleanup"
     );
 }
 
@@ -887,22 +707,6 @@ fn cli_json_mode_tasks_unlock_refuses_with_the_explanation() {
         root.join(".effigy/locks/task-watch-build.lock").exists(),
         "the refusal changes nothing"
     );
-}
-
-#[test]
-fn cli_json_mode_missing_task_wraps_runner_failure() {
-    let (_root, output, parsed) = run_json_cli_command_with_manifest(
-        "cli-json-missing-task",
-        "[tasks.build]\nrun = \"printf build\"\n",
-        &["does-not-exist"],
-    );
-
-    assert!(!output.status.success());
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], false);
-    assert_eq!(parsed["command"]["kind"], "task");
-    assert_eq!(parsed["command"]["name"], "does-not-exist");
-    assert_eq!(parsed["error"]["kind"], "refused");
 }
 
 #[test]

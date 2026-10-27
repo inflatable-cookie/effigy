@@ -271,7 +271,10 @@ esac
             before_up = sum("up" in json.loads(line) for line in (root / "commands.jsonl").read_text().splitlines())
             kept = subprocess.run([str(binary), "container", "up", "--detach", "--json"], cwd=checkout,
                                   env=env, capture_output=True, text=True, timeout=90)
-            assert "keeps its running generation" in kept.stderr, (kept.returncode, kept.stdout, kept.stderr)
+            # A live holder defers the apply and names itself: the refusal
+            # records the holder it saw, and no Compose `up` is issued.
+            assert kept.returncode != 0 and "is busy" in kept.stderr, (kept.returncode, kept.stdout, kept.stderr)
+            assert f"pid {holder.pid}" in kept.stderr, (kept.returncode, kept.stderr)
             assert sum("up" in json.loads(line) for line in (root / "commands.jsonl").read_text().splitlines()) == before_up
         finally:
             # The holder's workload ends on its own (`sleep 30`). Letting it
@@ -293,4 +296,4 @@ esac
         up_commands = [command for command in commands if "up" in command]
         assert sum("--force-recreate" in command for command in up_commands) == 4, up_commands
         assert all("chown" not in " ".join(command) for command in commands), commands
-        print(f"{scenario}: isolated_dirs: status and doctor detect drift; fresh/recorded up and routed preparation repair it; a live holder of the environment keeps its running generation; transient inspect preserves reuse without recreation; no host chown")
+        print(f"{scenario}: isolated_dirs: status and doctor detect drift; fresh/recorded up and routed preparation repair it; a live holder of the environment defers the apply and names itself; transient inspect preserves reuse without recreation; no host chown")

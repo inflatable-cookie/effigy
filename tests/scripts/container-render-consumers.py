@@ -73,7 +73,10 @@ def prove_consumers():
     owner = Path(private).resolve()
     baseline = owner / "baseline"
     baseline.mkdir(exist_ok=True)
-    base = run(["git", "merge-base", "HEAD", "origin/main"], source).strip()
+    # The reference renderer is the last *shipped* build, never this checkout:
+    # on main a merge-base baseline would be HEAD itself and prove nothing.
+    baseline_ref = os.environ.get("EFFIGY_RENDER_PROOF_BASELINE", "v0.14.1")
+    base = run(["git", "rev-parse", "--verify", f"{baseline_ref}^{{commit}}"], source).strip()
     archive = subprocess.run(["git", "archive", base], cwd=source, capture_output=True, check=True).stdout
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         # This archive is our committed base; skip links so the private build

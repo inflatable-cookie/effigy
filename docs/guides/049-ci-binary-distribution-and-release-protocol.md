@@ -242,13 +242,10 @@ Released-surface rule for deliberate `0.x` minor cuts:
 - keep the previous shipped tag as the compatibility floor until the next
   release ships
 - for the `v0.3.0` cut, `v0.2.13` was that floor
-- record any intentional break from the floor in
-  `tests/fixtures/released_surface/v0.3.0/transition.json`
-- every intentional break entry must carry a migration note instead of relying
-  on implied changelog context
+- every intentional break from the floor is recorded with a migration note in
+  the release's changelog section, not in a test fixture
 - the recorded intentional break for `v0.3.0` is retirement of the legacy
-  release wrapper scripts; keep that fixture aligned with the real migration
-  story when more deliberate breaks are approved
+  release wrapper scripts
 
 Supported-boundary rule for `v0.3` messaging:
 
