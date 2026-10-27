@@ -573,3 +573,25 @@ defined in the product guardrails. Existing feedback work (#312 and #315) is a
 starting point, not automatic qualification of every plane. The planner
 checks the exact candidate and briefs any observed gaps before release gates;
 the full spinner rollout is not deferred to a later version.
+
+## Q-018: Primary Linux proof environment for v0.15
+
+Status: answered
+Asked: 2026-10-27
+Answered: 2026-10-27 by Tom
+Owner: [v0.15 roadmap](v015-roadmap.md#sequence-and-gates)
+
+Use a fresh, snapshot-backed Parallels Ubuntu arm64 VM as the primary Linux
+Docker Engine and service-supervision proof environment. Bazzite over SSH is an
+optional second-distro check. A Docker container does not stand in for the
+primary reboot, privileged-port and service-lifecycle gate. Do not reuse the
+existing invalid Parallels VMs. This chooses the proof environment; it does not
+authorize creating or reconfiguring a VM during planning.
+
+Tom is creating `effigy-linux-proof` as Ubuntu 24.04 arm64 on his Vault drive,
+with its `clean-base` snapshot there. Confirm Vault is attached before every
+Linux proof window, check its throughput before timing-sensitive proof, and
+shut the VM down cleanly before removing the drive. Do not run Linux proofs
+unattended without confirming the drive is present. Rosetta may run an x86_64
+smoke test inside the arm64 guest, but that is not native x86_64 qualification;
+a separate x86_64 machine would be needed for that optional coverage.

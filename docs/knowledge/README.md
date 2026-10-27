@@ -18,3 +18,4 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Domain vocabulary | [Domain](domain/README.md) |
 | Retired concepts | [Retirements](retired.toml) |
 | Open questions | [Questions](questions.md) |
+| v0.15 completion gates and sequence | [v0.15 roadmap](v015-roadmap.md) |
