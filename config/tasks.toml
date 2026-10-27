@@ -172,10 +172,6 @@
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_container_data_seed_) | test(private_three_scopes_concurrent_resume_replacement_and_cli_refusals)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(container_scoped_clone_first_listener_up_) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
-"proof:containers:isolated-dirs" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
-  { run = "python3 tests/scripts/container-isolated-dirs.py ./target/debug/effigy", timeout_ms = 540000 },
-] }
 
 "proof:containers:isolated-mount-points" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
@@ -185,7 +181,6 @@
 "test:containers:isolated-dirs:observation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(exec::mounts::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(container_scoped_clone_first_listener_up_) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { task = "proof:containers:isolated-dirs" },
 ] }
 "lint:containers:isolated-dirs" = { visibility = "internal", group = "Maintenance", run = [
   { task = "lint:containers:render" },

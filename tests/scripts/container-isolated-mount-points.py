@@ -3,8 +3,8 @@
 
 Deleting an isolated volume's host mount-point directory under a live stack (a
 host `target` or `node_modules` cleanup) leaves the running container's nested
-mount without a directory. `up` must recreate that directory before reuse and
-reconcile the running generation instead of reusing it.
+mount without a directory. `up`, and a routed task's preparation, must recreate
+that directory before create or reuse.
 
 The real CLI, immutable renderer and backend adapter run in a private HOME with
 a fake runtime. No engine, Colima profile or consumer checkout is touched.
@@ -103,7 +103,6 @@ elif args[0] == "compose" and "up" in args:
             else:
                 name = document["volumes"][source]["name"]
                 mounts.append({"Type":"volume", "Name":name, "Destination":target, "RW":"ro" not in options})
-    assert "--force-recreate" in args, "a deleted isolated mount point must reconcile, not reuse"
     config["mounts"] = mounts
     (root / "engine.json").write_text(json.dumps(config))
 elif args[0] == "exec" or (args[0] == "compose" and "exec" in args):
@@ -182,36 +181,31 @@ esac
     for path in isolated:
         assert path.is_dir(), f"up must create the host mount point {path}"
     assert up_count() == 1
-    assert run("container", "status", "--json")["mount_drift"] == {"state": "clean", "details": []}
 
     # efe0db77: the host tooling deletes the isolated mount point under a live
-    # stack. Status observes it read-only as mount drift, then up recreates it
-    # and reconciles the running generation.
+    # stack. Reading status changes nothing; the next `up` recreates the host
+    # directory before it reuses or recreates the stack.
     shutil.rmtree(isolated[2])
-    status = run("container", "status", "--json")
-    assert status["mount_drift"]["state"] == "drift", status
-    assert any("is missing on the host" in detail for detail in status["mount_drift"]["details"]), status
+    run("container", "status", "--json")
     assert not isolated[2].exists(), "status must not create the host mount point"
     run("container", "up", "--detach", "--json")
     assert isolated[2].is_dir(), "up must recreate the deleted host mount point"
     assert up_count() == 2
-    assert run("container", "status", "--json")["mount_drift"] == {"state": "clean", "details": []}
 
-    # A present mount point reuses the generation: no backend call, so no
-    # extra compose up.
+    # A present mount point is left alone: the apply carries no recreation or
+    # teardown flag, so Compose's own idempotent apply keeps the running stack
+    # and its volumes.
     run("container", "up", "--detach", "--json")
-    assert up_count() == 2, "a present mount point grants no recreation"
 
-    # Routed-task preparation reads the same drift before it creates anything,
-    # then heals through the guarded bring-up instead of an idempotent
-    # `--no-recreate` apply.
+    # Routed-task preparation creates the same host directories before it
+    # launches its child.
     shutil.rmtree(isolated[2])
     run("--json", "mount_probe")
     assert isolated[2].is_dir(), "routed-task preparation must recreate the host mount point"
-    assert up_count() == 3, "routed-task preparation must reconcile the deleted mount point"
-    assert run("container", "status", "--json")["mount_drift"] == {"state": "clean", "details": []}
     commands = [json.loads(line) for line in (root / "commands.jsonl").read_text().splitlines()]
     up_commands = [command for command in commands if "up" in command]
-    assert sum("--force-recreate" in command for command in up_commands) == 3, up_commands
+    assert up_commands, commands
+    assert all("--force-recreate" not in command for command in up_commands), up_commands
+    assert not [command for command in commands if " down" in " ".join(command)], commands
     assert all("chown" not in " ".join(command) for command in commands), commands
-    print("isolated mount points: up creates them; status reports a deleted one as drift read-only; up and routed-task preparation recreate it and reconcile the running generation; a present point reuses it; no host chown")
+    print("isolated mount points: up creates them; a deleted one is recreated by the next up and by routed-task preparation; a present point keeps the running stack; no host chown")

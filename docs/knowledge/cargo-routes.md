@@ -103,8 +103,8 @@ With Oxide's permanent-drive placement (`target` is a link to the build
 volume), a multi-step Effigy task whose first step rebuilds `effigy` admits its
 next step from whatever binary the path names; a state root on another volume
 is irrelevant. This is host state, not routing. The routes that used to expose
-cross-volume pinning are `proof:containers:isolated-dirs`,
-`proof:containers:isolated-mount-points`, `test:containers:generations:cli`,
+cross-volume pinning are `proof:containers:isolated-mount-points`,
+`test:containers:generations:cli`,
 `test:containers:generations:consumers` and `test:doctor:git-timeout-proof`;
 they are the ones to re-check on a host that links `target` to another volume.
 

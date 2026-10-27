@@ -61,8 +61,8 @@ run = "touch inner.txt"
 [tasks.hold]
 admission = "heavy"
 run = "touch ready; sleep 300"
-[tasks.late]
-run = "\\\"$EFFIGY_TEST_BIN\\\" --run-id forbidden short1"
+[tasks.nested]
+run = "\\\"$EFFIGY_TEST_BIN\\\" short1"
 [tasks.test_ref]
 run = [{task = "test local"}]
 [tasks.outer_test]
@@ -179,7 +179,12 @@ exec sleep 300
     assert view["state"] == "not-recorded" and view["current"] is None, view
     result = run(project, "run", "status", run_id, "--json", success=False)
     assert "not-recorded" in result.stdout or "not recorded" in result.stderr, result
-    run(project, "late", success=False)
+    # Q-011: a nested invocation is ordinary, so a child run from a foreground
+    # task runs and the whole tree still records nothing for it. The retained
+    # variant (a `--run-id` child that journals in its own checkout) is
+    # `secrets_hook_admission_cli_tests::an_undeclared_late_durable_child_runs_and_journals`.
+    nested = run(project, "nested")
+    assert "short-1" in nested.stdout, nested.stdout
     assert_memory_only()
     # Stop a separate foreground owner through its fresh gate identity. No
     # stop request, result, checkout token or database is retained.
@@ -275,4 +280,4 @@ run = 'touch completed'
                       "database_files_created": 0, "retained_run_records": 0,
                       "sequence": "passed", "nested_hook_count": 1,
                       "builtin_suites": "passed", "suite_stop": "released", "suite_hook_count": 1,
-                      "hook_loss": "stopped", "checkout_replacement": "survived", "late_durable_effect": "refused", "declared_durable_descendant": "passed"}, sort_keys=True))
+                      "hook_loss": "stopped", "checkout_replacement": "survived", "nested_foreground_child": "ran", "declared_durable_descendant": "passed"}, sort_keys=True))
