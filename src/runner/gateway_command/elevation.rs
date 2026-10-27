@@ -23,17 +23,6 @@ pub(super) fn gateway_invocation_is_escalated() -> bool {
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
 }
 
-pub(super) fn gateway_identity_elevation_allowed() -> bool {
-    #[cfg(unix)]
-    {
-        !gateway_invocation_is_escalated() && !is_running_as_root()
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
-}
-
 pub(super) fn prepare_gateway_state_for_elevated_run(
     config: &GatewayConfig,
 ) -> Result<(), RunnerError> {
@@ -50,14 +39,6 @@ pub(super) fn prepare_gateway_state_for_elevated_run(
         std::fs::create_dir_all(&tls_config.certs_dir).map_err(RunnerError::Cwd)?;
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn is_running_as_root() -> bool {
-    // SAFETY: `geteuid` is always defined on Unix, takes no arguments, reads
-    // only this process's effective credentials, and has no memory-safety
-    // preconditions.
-    unsafe { nix::libc::geteuid() == 0 }
 }
 
 /// Ask the existing gateway administrator elevation path to inspect only the

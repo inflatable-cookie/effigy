@@ -335,17 +335,14 @@ every use; the shared gateway directory is the operator's own state and is not
 validated as a private root. Route claims, generation binding and owner-checked
 withdrawal are the same in both.
 
-Gateway lifecycle gating distinguishes reuse from authority. Route publication
-and withdrawal write the owner-checked route table directly and never gate on
-the daemon's identity, and a managed task start only reuses an already-running
-daemon or starts one. A gateway with an authenticated record, a confirmed
-running process, and an identity unreadable to this user (permission-denied) is
-therefore reusable on every publish/withdraw/reuse path, including a headless
-managed start, which prints one note that the identity could not be verified
-and reuses the daemon without replacement — the same way the workspace handoff
-path already reuses it. Operations that signal, stop, replace, recover, or
-start a second gateway still require a verified identity and keep their
-refusals; no new privilege, helper, or root-process read is added.
+Gateway route publication and withdrawal write the owner-checked route table
+without gating on daemon identity. Managed startup reuses a running daemon and
+warns when its build differs; only positive absence starts one. An unavailable
+observation warns and proceeds without starting a second daemon. Replacement
+belongs to explicit `gateway down` / `gateway up`. Fixture commands require a
+private root, including stops. Command stops and custody settlement log the
+caller's pid, argv, cwd and cause in `gateway.stderr.log`.
+
 
 Dependencies use `depends_on` and must name a declared managed listener. They
 start after that listener is ready. A dependent process receives

@@ -698,9 +698,11 @@ against a live root gateway:
   spawns the child with `Stdio::inherit()` on stdin and piped stdout/stderr,
   then drains both pipes with `wait_with_output`. Noninteractive and declined
   authentication still return Unknown, so the lifecycle refuses without a
-  signal, cleanup, or replacement. Startup text is state-keyed (`stopped`,
-  `replacing a different build`, or `unverified`); an unknown or mismatched
-  live daemon is never described as "down".
+  signal, cleanup, or replacement. Startup text is state-keyed (`stopped` or
+  `unverified`); an unknown or mismatched live daemon is never described as
+  "down". A managed start that finds any running gateway uses it instead of
+  starting another (see "Managed start never replaces a running gateway"
+  below).
 - The macOS boot identity was the raw `kern.boottime` timeval, whose
   microsecond field is not stable across reads. A sidecar written by the
   published v0.14.0 macOS build could therefore compare `Mismatch` against the
@@ -761,84 +763,19 @@ Residual: the last identity comparison and TERM/KILL syscall are separate
 operations. A process can exit and its PID can be reused in that interval; this
 bounded portable fix does not claim atomic process targeting or add pidfd.
 
-#### Follow-up correction in task 118
+#### Gateway reuse and fixture isolation
 
-The managed build-replacement report identified two source-level failure
-paths. The previous managed preflight, `gateway up` preflight, and signal-access
-selection could each launch the bounded elevated identity reader. In addition,
-the stop loop treated the first ambiguous process observation after TERM or
-KILL as terminal, even when a later probe could confirm the target absent.
-These paths explain repeated authentication and a refused stop as possible
-source outcomes. The reported host's exact `ps` output and the cause of its
-PID 11887 failure were not observed or reproduced; no live gateway check was
-performed.
-
-Managed and ordinary `gateway up` preflight now read identity locally without
-the elevated-reader fallback. A verified different build that needs privilege
-delegates once to the existing elevated `gateway up` command, which acquires
-the transition lock and performs fresh identity reads through stop polling and
-at both signal boundaries. The signal-zero check only selects that transport;
-it does not authorize TERM or KILL. If local identity access is denied,
-noninteractive input or an already-elevated invocation refuses without record
-cleanup or replacement launch. Standalone status and the separate `down`
-preflight retain their bounded read-only reader behavior. The remaining
-identity-check-to-signal interval is still a TOCTOU.
-
-After TERM/KILL, an Unknown process observation now consumes the existing
-bounded polling window. Only a later confirmed absence or readable different
-generation completes reconciliation; persistent process or identity
-uncertainty still refuses, so the unchanged records remain available for
-operator reconciliation. Immediately before each signal the exact generation
-is still checked again. Private controls cover exit before TERM, transient and
-persistent Unknown after TERM, a failed TERM dispatch followed by confirmed
-absence, repeated fresh identity reads through TERM/KILL polling, signal order,
-byte-preserving refusal, and locked compare-and-remove before the replacement
-start path. A recording handoff control proves one interactive lifecycle
-handoff and zero handoff or replacement launch with null stdin. The maintained
-selectors are `test:retirements`, `check:retirements`, `fmt:check`, and
-`qa:docs:gateway-identity` when docs change.
-
-#### Follow-up correction in task 154 (structural diagnosis only, no trust change)
-
-The privileged-gateway report (`dev --headless` and `gateway status` returning
-`ProcessStateUnknown` for a recorded root-owned gateway) was classified
-without live inspection: at both the reported source and current main,
-liveness uses `ps -p <pid> -o pid= -o stat=`, and the same `ProcessStateUnknown`
-also covers a denied or otherwise failed live-identity read. The historical raw
-capture was not observed and is not guessed at. No PID, sidecar, ownership,
-route, or traffic observation alone authenticates the daemon.
-
-What changed is diagnostics, not trust. `server::diagnose_gateway_status`
-re-probes read-only (record shape, `ps` outcome, local identity outcome) and
-`server::render_gateway_diagnosis` renders fixed labels only
-(`record=`, `process=`, `identity=`), with no raw probe bytes, paths,
-digests, arguments, environment, or credentials. Status, managed-start
-preflight classification, `up`, and `down` append this as a `current diagnosis`
-hint on an already-Unknown failure; the verified-status outcome still governs
-every decision, and Unknown is never reported running, never cleaned up, and
-never replaced. A positively verified matching live generation still reuses
-without a second daemon, record removal, or signal; mismatch, reused, foreign,
-legacy, malformed, symlink, and unknown identities keep their existing
-refusals, and read-only reuse never authorizes stop or replacement. The
-headless UI flag neither grants privilege nor changes the terminal
-requirement: the bounded read-only reader still needs a real terminal on
-stdin, and declined, timed-out, or noninteractive reads stay Unknown.
-Review revision: permission-denied `up`, `down`, and managed-start
-preflights now refuse noninteractive input with that same bounded diagnosis
-before launching any replacement or signal, so every Unknown refusal path
-carries the gate labels.
-
-Truly noninteractive cross-UID verification remains unavailable with approved
-interfaces: macOS `PROC_PIDTBSDINFO` applies `CHECK_SAME_USER` (cross-uid
-reads need `PRIV_GLOBAL_PROC_INFO`), and the Q-002 reader requires an
-interactive terminal. No new helper, privilege, socket trust, authentication
-waiver, timeout/ retry change, or unsafe/FFI repair is implemented here. The
-bounded design evidence for a prompt-free read-only attestation remains the
-separate [read-only daemon attestation proposal](034-gateway-legacy-upgrade-recovery.md#proposed-read-only-root-daemon-attestation),
-which needs its own operator ruling before any implementation. Private
-controls: `test:gateway:permission-reuse` (deterministic refusal plus genuine
-private owned-process reuse through the production callers, with structural
-diagnosis controls); no real cross-UID qualification is claimed.
+A managed start uses the running gateway, warns when its build differs, and
+starts one only after positive absence. Unavailable observations warn and
+proceed without starting a second daemon. Replacement belongs to explicit
+`gateway down` / `gateway up`. Debug fixture commands require a private root,
+including down and platform setup. Operator lifecycle tests refuse while the
+machine ports are occupied; a private HOME alone does not isolate the broker.
+Command stops and kernel custody settlement append the caller's pid, argv, cwd
+and cause to `gateway.stderr.log`. A custody stop can result from owner loss,
+a durable stop request, cancellation or interrupted-run recovery, even when no
+`gateway down` command ran. This identifies possible causes of the 2026-10-26
+clean exits, without attributing an unobserved incident to one of them.
 
 ### Gateway process identity ruling
 

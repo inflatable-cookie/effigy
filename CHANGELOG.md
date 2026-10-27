@@ -821,6 +821,8 @@ During v0.x, MINOR bumps may include breaking changes.
   which shows the whole pipeline instead of only the version, tag and gate
   preview; `release --plan --version <SEMVER>` covers the old
   `simulate --version`. The refusal names the replacement.
+- Managed gateway startup no longer replaces a different build or requests an
+  elevated identity read (effigy#382).
 
 ### Added
 - **`effigy container <NAME> restart <process>...` replaces only the named host
@@ -2135,6 +2137,10 @@ During v0.x, MINOR bumps may include breaking changes.
   and `up` reads that label from the runtime, so an unchanged shared service is
   never touched. Two checkouts' `up`s are serialised on one machine gate per
   shared Compose project (effigy#377).
+- Managed startup reuses a running gateway across binary versions and warns
+  with both versions. Fixture starts and stops require a private gateway root;
+  operator lifecycle tests refuse while machine ports are in use. Command stops
+  and custody settlement log pid, argv, cwd and cause (effigy#382).
 - `container retire` and `container retire --dead` remove every owned container
   every time. They deleted each container with a forced remove, which the
   runtime's restart manager treated as an exit and undid for the
