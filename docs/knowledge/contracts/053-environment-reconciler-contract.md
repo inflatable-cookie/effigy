@@ -8,9 +8,10 @@ its host authority channel are later work (§9).
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
 records, renders and holders use their checkout journal; shared endpoint and
-port facts use the machine store. §11.1's central-store importer is retired
-(effigy#307), so v0.15 ships only the §11 v0.14.1 family importers. The later
-workflows named in §9 remain separate from this relocation.
+port facts use the machine store. No legacy family is imported (Q-012 §3): the
+§11.1 central-store importer was retired in effigy#307 and the v0.14.1 marker
+importer in effigy#373. The later workflows named in §9 remain separate from
+this relocation.
 
 Owner: environment reconciler (Queue lane `v015-environment`)
 Kernel: [052](052-runtime-kernel-contract.md) §5.9, §10.3, §11
@@ -203,35 +204,25 @@ backend (D3-25). Volume and data actions resolve the endpoint per environment
 and refuse an unknown record. `effigy container status` and `effigy doctor`
 show each environment's backend, why it was chosen, and its record.
 
-## 7. Marker importer
+## 7. No legacy import
 
-The first Mutate of an environment imports its v0.14.1 markers from
-`~/.effigy/runtime/host-container-leases/<profile>/<project>/` (052 M6):
+v0.15 imports nothing from an earlier release (Q-012 §3, Tom 2026-10-26). The
+v0.14.1 marker importer, its resumable import record and the wait for an
+unexpired lease are gone with it.
 
-| Marker | Record |
-| --- | --- |
-| `<name>.persistent` | persistent |
-| `<name>.json` lease, no persistent marker | held |
-| neither | persistent (v0.14.1 never idle-stopped it) |
-| `<name>.partial.json` without `.complete` | imported as history only: the next apply reconciles the stack |
-| ownership labels or, for a pre-label stack of an unscoped checkout, a bind mount of the checkout on every workload, with the primary running | adopted `active`, no backend call (M7) |
-| anything less | not active: holds refuse and transitions need the reconciler's own ownership proof (M4) |
+An environment's record is written by its own transitions. A stack a v0.14.1
+release left running is reconciled by the first `up`: the ordinary apply runs
+`compose up -d --remove-orphans` from the current render, so Compose recreates
+each service whose configuration differs and keeps every named volume. Named
+volumes and Compose project names are unchanged between v0.14.1 and v0.15, so
+the data stays. Upgrading straight from v0.14.1 therefore costs one container
+recreate per stack, and no command.
 
-The import is idempotent and resumable after a crash. It never changes or
-removes a legacy file (M3) and records each marker's path and SHA-256. While
-an unexpired v0.14.1 lease remains (its reaper may still be sleeping), the
-first Mutate waits for it, up to 10 minutes, before adopting.
-
-### Central-store relocation (retired 2026-10-24)
-
-The 052 §11.1 importer for the current-main central store is retired
-(effigy#307). v0.15 ships only the v0.14.1 importers above, so an environment
-closure arrives through the family import on first use: the desired render,
-backend, retention, object refs and holders keep their identity, and containers
-are not recreated (M7). The old store, any cutover manifest and any old
-per-checkout import record are ignored: never read on a durable open, never
-changed, never deleted and never a refusal. PID-only evidence remains Unknown,
-and old input stays byte-identical (M1/M3/M4/M8).
+Everything a v0.14.1 release wrote stays on disk, unread and unchanged:
+lifecycle markers, leases and the persistent owner under
+`~/.effigy/runtime/host-container-leases/`, and the retired runtime files under
+`<checkout>/.effigy/runtime/`. Nothing refuses because of them, and nothing in
+v0.15 deletes them; `effigy doctor` lists what it finds.
 
 ## 8. Guest
 
@@ -259,7 +250,7 @@ order, stopped by `down`, `reset` and session settle with a
 | Proof | Selector |
 | --- | --- |
 | Record, stopped publication, apply-run attach, exempt permit | `test:kernel:environment` |
-| Strict-fake engine; transition matrix against live, interrupted and unknown holders; EPERM, ENOSPC and SIGKILL at every crossing of up, down, reset and import, with O2, O3, O5, O6, O7 oracles; process-level strict fakes for both adapters; importer against copies of real Underlay and DecodeLabs `nerdctl inspect` captures | `test:containers:environment` |
+| Strict-fake engine; transition matrix against live, interrupted and unknown holders; EPERM, ENOSPC and SIGKILL at every crossing of up, down and reset, with O2, O3, O5, O6, O7 oracles; process-level strict fakes for both adapters | `test:containers:environment` |
 | Runner cutover: lifecycle, task activation, managed runs, handover, deferral, builder recovery | `test:environment:runner` |
 | Busy refusal diagnostics: the live exact-gate holder, terminal and successor observations, unreadable identity, the original wait deadline, explicit unknown/absent record semantics, held-by and journal-contention controls, with no backend call | `test:environment:busy-diagnostics` (the one-sentence refusal in `runner::environment::tests` and the refusal-command test) |
 | One apply: `up -d --remove-orphans` from task preparation, and a compose failure reported as an error | `test:containers:mount-prepare`, `test:containers:generations:callers` |

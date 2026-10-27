@@ -8,8 +8,6 @@
 //! still reports the settled outcome from the journal; only an unobservable
 //! journal reads `unknown` (R3).
 
-mod migrate;
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -44,10 +42,6 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
     let json = args.output_json;
     let repo_override = args.repo_override.clone();
     match args.action {
-        RunsAction::Migrate { plan } => {
-            debug_assert!(plan, "`run migrate` parses only its read-only plan form");
-            migrate::run(json)
-        }
         RunsAction::List { limit, all } => list(repo_override, limit, all, json),
         // A run lookup reads the journal of the checkout this query belongs
         // to and nothing else, resolved once here (effigy#339, Q-011).

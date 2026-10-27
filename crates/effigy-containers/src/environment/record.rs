@@ -33,37 +33,6 @@ impl Retention {
     }
 }
 
-/// Provenance of an import from v0.14.1 marker files and labels.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LegacyImport {
-    /// Each marker file read, with its SHA-256 (M2).
-    pub markers: Vec<ImportedMarker>,
-    /// Whether running workloads' ownership labels were verified (M7).
-    pub labels: LabelEvidence,
-    /// Set until the import's adoption step committed; a killed import
-    /// resumes instead of being skipped.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pending: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImportedMarker {
-    pub path: String,
-    pub sha256: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", tag = "state", content = "detail")]
-pub enum LabelEvidence {
-    /// Every project workload carries this checkout's ownership labels.
-    Verified { workloads: usize },
-    /// No workload exists for the project.
-    Absent,
-    /// Labels could not be read or did not prove ownership: blocks
-    /// destructive action until an explicit, label-verified `down` (M4).
-    Unknown(String),
-}
-
 /// The environment engine's fields on its kernel resource row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngineRecord {
@@ -71,8 +40,6 @@ pub struct EngineRecord {
     pub retention: Retention,
     /// The Compose project the environment's workloads run under.
     pub project: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imported: Option<LegacyImport>,
 }
 
 impl EngineRecord {
@@ -81,7 +48,6 @@ impl EngineRecord {
             schema: RECORD_SCHEMA.to_owned(),
             retention,
             project: project.to_owned(),
-            imported: None,
         }
     }
 }

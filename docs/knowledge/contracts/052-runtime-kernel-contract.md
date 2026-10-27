@@ -23,12 +23,14 @@ imported key aliases stay local. Foreground runs create no token and consult no
 machine state. `runs --all` and doctor use bounded filesystem/Git and
 explicit-root discovery with visible omissions, without a central index.
 
-v0.15 ships exactly one migration path: the v0.14.1 importers in §11. The
-importer for the current-main central `~/.effigy/state/kernel.db` is retired
-(§11.1, effigy#307). `run migrate --plan` is a read-only report: a committed
-manifest is provenance, and a machine still holding the retired store without
-one is refused once with its exact upgrade path. The retired source is never
-imported, opened for writing or deleted.
+v0.15 imports nothing (§11). A v0.14.1 install upgrades with no manual step
+and no command: everything that release left on disk is ignored, never changed
+and never deleted, and a stack it left running is reconciled by the first `up`
+through the ordinary apply. Named volumes and Compose project names did not
+change, so the data stays and the upgrade costs one container recreate per
+stack. The importer for the unreleased-main central
+`~/.effigy/state/kernel.db` was retired in effigy#307; the v0.14.1 importer,
+the `run migrate` report and the PID-only v0.14 refusals in effigy#373.
 
 Runtime ownership is only the backend's own labels; there is no scope inventory
 to keep. After deletion, `container retire --dead` groups the labelled
@@ -2831,9 +2833,8 @@ names `after = ["environment"]` / `depends_on`
 | Failed-run recovery downs inside `up` | `src/runner/container_command/lifecycle.rs:766` | predecessor settle (K5); permit (R4) |
 
 Adopted by effigy#232 ([053](053-environment-reconciler-contract.md)): the
-admission record, the lifecycle markers and lease, the reaper, admission
-hashing (kept only for the importer's adoption check), recreation under a
-permit, the per-environment reset and failed-run recovery. The backend record is #230's
+admission record, the lifecycle markers and lease, the reaper, recreation
+under a permit, the per-environment reset and failed-run recovery. The backend record is #230's
 (below); the reconciler reads it and targets every transition at it. The
 allocator, runtime-scope and Colima-repair rows remain current behavior.
 
@@ -2870,21 +2871,19 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | `init` writes in place | `crates/effigy-builtin/src/init/agent.rs:814` | `atomic_replace` |
 | Boot and start identity helpers | `crates/effigy-process/src/identity.rs:13-65`, `:214-245` | absorbed; macOS start identity via `proc_pidinfo` |
 
-## 11. Migration
+## 11. Legacy state
 
-A v0.14.1 user updates and everything keeps working with no manual steps
-(vision). Importers accept v0.14.1 shapes.
+v0.15 has no importer for any legacy family (Q-012 §3, Tom 2026-10-26). A
+v0.14.1 user updates and everything keeps working with no manual step and no
+command: the runtime is the source of truth and one apply converges from it.
 
 | # | Principle |
 | --- | --- |
-| M1 | Never dual-write. Per scope: quiesce the old writer, import, cut over. Old and new code never write the same fact. |
-| M2 | One destination transaction per scope, under `Gate(Store migrate:<scope>)`, recording source paths/digests. No scope ever gains partial authority. |
-| M3 | Import never modifies or deletes legacy files, and the new binary never writes them. Removal comes after one minor, by explicit maintenance, once the scope's import is committed. |
-| M4 | Unknown grants nothing. Unparsable, PID-only or foreign legacy state imports as `Unknown` and blocks destructive action until an explicit, label-verified `down` or `retire`. |
+| M3 | Effigy never modifies or deletes a legacy file, and never writes one. Removal is explicit operator maintenance. |
+| M4 | Legacy state grants nothing. Unparsable, PID-only or foreign records are ignored, and none of them refuses, locks or adopts anything. |
 | M5 | A legacy version without an importer is ignored, never guessed at. Doctor lists it. |
-| M6 | Observe never imports. Until a scope is imported, status reads legacy files read-only for one minor. The first Mutate per scope imports. |
-| M7 | Running stacks survive. Containers keep running, labels prove ownership, nothing is recreated because of an import. |
-| M8 | Downgrade after a scope's cut-over is unsupported. The store records the writing build, and a binary that predates the schema refuses Mutate. |
+| M7 | Running stacks survive. Named volumes and Compose project names are unchanged, so the first `up` reconciles the running stack through the ordinary apply: Compose recreates what changed, once, and the data stays. |
+| M8 | Downgrade is unsupported. The store records the writing build, and a binary that predates the schema refuses Mutate. |
 
 The gateway's former export-on-remove exception to M3/M8 is retired with the
 v0.14.1 handback: the endpoint Store is the only source of routes and loopback
@@ -2894,13 +2893,13 @@ aliases, and no scope exports or re-imports them
 
 | Legacy family | Location | Import | Quiesce condition | `Unknown` handling |
 | --- | --- | --- | --- | --- |
-| Task lease locks | `<root>/.effigy/locks/` | not imported | a live legacy holder (same host, PID alive, Effigy command) refuses Mutate on that task with the next command | foreign hostname or unreadable record: refuse, never delete |
+| Task lease locks | `<root>/.effigy/locks/` | not read: run gates replace them, so nothing refuses, locks or waits on one | — | ignored, never deleted |
 | Task status v1 | `<root>/.effigy/runtime/tasks/`, `<root>/.effigy/reports/tasks/` | not imported and not read; the one-minor read-only view is retired in v0.15 (M6), so old status history is dropped. Status history is not state: nothing restarts or unlocks from it. | — | — |
 | Managed sessions, stop markers, exec group markers, lifecycle state | `<root>/.effigy/runtime/managed*/` | not imported and not read: no PID-only owner refuses, locks or adopts anything, so a rebooting host reuses a recorded PID without consequence | — | — |
-| Environment markers, lease, persistent owner, handover, admission | `~/.effigy/runtime/host-container-leases/`, `<root>/.effigy/runtime/` | `resources` row: desired from persistent or lease, applied from complete, failed-unknown from partial without complete | a live reaper sleeper is waited for or refused | containers adopted only by `Verified` labels |
+| Environment markers, lease, persistent owner, handover, admission | `~/.effigy/runtime/host-container-leases/`, `<root>/.effigy/runtime/` | not read: the record is written by the environment's own transitions, and the first `up` reconciles the running stack through the ordinary apply | — | ignored, never deleted; named volumes and project names are unchanged, so the data stays |
 | Generated renders | `<root>/.effigy/runtime/compose/` | not imported; re-rendered into objects on the next apply | — | — |
 | Backend override metadata | `crates/effigy-containers/src/lib.rs:219-235` | the environment's backend field | — | unparsable: `Unknown` backend; destructive actions refuse until the backend is named |
-| Host sidecars: PID, spec, listener records | `<root>/.effigy/runtime/host-processes/` | stopped through the legacy stop protocol after identity verification, then started as an environment-owned kernel run (effigy#320) | legacy supervisor alive and verified: stopped first | unverifiable identity: `Unknown`, residue |
+| Host sidecars: PID, spec, listener records | `<root>/.effigy/runtime/host-processes/` | not read and not deleted: a host process is an environment-owned kernel run (effigy#320) | — | ignored; a leftover record never blocks a start |
 | Runtime-scope records | `~/.effigy/runtime-scopes/` | retired: ownership is the backend's labels; a legacy directory is neither read nor written | — | — |
 | Gateway PID, identity, version; routes, loopback | `~/.effigy/gateway/` | no import: the endpoint Store is the only source | — | — |
 | Vault | `<checkout>/.effigy/secrets/local.vault` | not moved; the next write uses the pointer commit | — | unreadable vault: never overwritten |
@@ -2911,7 +2910,7 @@ aliases, and no scope exports or re-imports them
 The importer for the current-main central `~/.effigy/state/kernel.db` is
 retired (effigy#307, Tom 2026-10-24). That schema existed only on unreleased
 main between `8fc1b9663` (2026-10-18) and effigy#276, so no released version
-ever wrote it and v0.15 ships one migration path: the v0.14.1 importers above.
+ever wrote it, and v0.15 imports nothing (effigy#373).
 
 - The single machine that held the store migrated once with Effigy main
   `7b82d26`: 110,944 machine rows, one checkout destination and 50 history
@@ -2922,8 +2921,9 @@ ever wrote it and v0.15 ships one migration path: the v0.14.1 importers above.
   open, never changed, never deleted and never a refusal. Per M3 removal is
   explicit maintenance after one minor.
 - A checkout database opens as its checkout's journal in place.
-- `effigy run migrate --plan` only reports whether a cutover manifest exists.
-  The importer's busy-writer preflight, stop controls, prepared/staged
+- `effigy run migrate` and its `effigy.runtime-migration.v1` report are gone
+  (effigy#373); a cutover manifest is simply one more ignored file. The
+  importer's busy-writer preflight, stop controls, prepared/staged
   destinations, commit manifest publication, seal resumption, the actual-copy
   proof and the unreleased-main refusal are gone; `docs/knowledge/retired.toml`
   lists their terms and paths.
@@ -3036,7 +3036,7 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Task status read model | `tasks status <task>` and `tasks status --all`, text/JSON: first foreground run with no token/DB is live, not never-run; free/stale gates and foreground exit produce not-recorded; old durable success stays historical; held/unverifiable identity and discovered residue are unknown; interrupted durable runs keep recovery commands. No history row or token is created. Validate the v3 envelopes and durable-only latest/history per 018 |
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
 | Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
-| Retired central store | A machine home holding the retired `~/.effigy/state/kernel.db` opens normally: the file, any cutover manifest and any old per-checkout import record are ignored, never changed and never deleted; `run migrate --plan` never stages, stops, imports or deletes anything |
+| Retired central store | A machine home holding the retired `~/.effigy/state/kernel.db` opens normally: the file, any cutover manifest and any old per-checkout import record are ignored, never changed and never deleted |
 | Deleted-worktree retirement (Tom, 2026-10-22) | Disposable backend stacks from deleted linked/Queue worktrees, with their checkout journals removed and no central index: `effigy container retire --dead` groups the labelled resources by checkout path, retires the groups whose path is gone, and preserves live/unknown/foreign groups, persistent data and the unselected backend |
 | Gateway/environment regression | Private gateway and disposable engine fixtures: unchanged pins/routes after migration, proxy readiness, container reuse, R4 holder refusal, idle-stop and interrupted recovery; no calls to the unselected backend or operator's gateway |
 

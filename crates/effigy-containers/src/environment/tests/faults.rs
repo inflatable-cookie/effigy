@@ -22,18 +22,16 @@ enum Scenario {
     Up,
     Down,
     Reset,
-    Import,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 4] = [Self::Up, Self::Down, Self::Reset, Self::Import];
+    const ALL: [Scenario; 3] = [Self::Up, Self::Down, Self::Reset];
 
     fn name(self) -> &'static str {
         match self {
             Self::Up => "up",
             Self::Down => "down",
             Self::Reset => "reset",
-            Self::Import => "import",
         }
     }
 
@@ -77,24 +75,12 @@ impl Scenario {
                 "EngineRecordAfter",
                 "SettleCloseBefore",
             ],
-            Self::Import => &[
-                "GateAcquire",
-                "BeginAdmitted",
-                "EngineRecordBefore",
-                "EngineRecordAfter",
-                "AttachBefore",
-                "AttachAfter",
-            ],
         }
     }
 }
 
 fn log(home: &Path) -> PathBuf {
     home.join("backend-calls")
-}
-
-fn markers(home: &Path) -> PathBuf {
-    home.join("legacy-markers")
 }
 
 /// The state each scenario starts from, built without any hook.
@@ -115,31 +101,7 @@ fn prepare(scenario: Scenario, home: &Path) {
             )
             .unwrap();
         }
-        Scenario::Import => {
-            let dir = markers(home);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join("stack.persistent"), b"").unwrap();
-            std::fs::write(dir.join("stack.complete"), b"").unwrap();
-            std::fs::write(dir.join("stack.partial.json"), b"{\"schema\":\"legacy\"}").unwrap();
-        }
     }
-}
-
-fn workloads(home: &Path) -> Observed<Vec<Workload>> {
-    verified(vec![Workload {
-        id: "a".repeat(64),
-        name: "acme-stack-app-1".into(),
-        running: true,
-        labels: BTreeMap::from([
-            ("com.docker.compose.project".into(), PROJECT.into()),
-            ("com.docker.compose.service".into(), "app".into()),
-            (
-                crate::runtime::scope::CHECKOUT_LABEL.into(),
-                home.display().to_string(),
-            ),
-        ]),
-        binds: vec![],
-    }])
 }
 
 fn operate(scenario: Scenario, home: &Path) -> Result<(), EnvError> {
@@ -159,26 +121,6 @@ fn operate(scenario: Scenario, home: &Path) -> Result<(), EnvError> {
         .map(|_| ()),
         Scenario::Down => take_down(&ctx, &stack, Operation::Down, &fake, None),
         Scenario::Reset => reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()),
-        Scenario::Import => {
-            let legacy = LegacyMarkers::read(&markers(home), "stack");
-            let ownership = Ownership {
-                checkout: home.canonicalize().unwrap(),
-                scope: None,
-            };
-            import(
-                &ctx,
-                ImportRequest {
-                    env: &stack,
-                    project: PROJECT,
-                    markers: &legacy,
-                    workloads: workloads(home),
-                    ownership: &ownership,
-                    primary_service: "app",
-                    backend: &selection(),
-                },
-            )
-            .map(|_| ())
-        }
     }
 }
 
@@ -218,24 +160,6 @@ fn recover_and_check(scenario: Scenario, home: &Path, label: &str) {
                 assert_eq!(stack.desired, None, "{label}: reset kept its render");
             }
         }
-        Scenario::Import => {
-            let engine = stack.engine().expect("imported record");
-            assert_eq!(engine.retention, Retention::Persistent, "{label}");
-            assert!(engine.imported.is_some(), "{label}");
-            assert!(stack.active(), "{label}: adopted stack not active");
-            // M3, M7: no backend call and the legacy files are untouched.
-            assert_eq!(
-                applies(home) + stops(home),
-                0,
-                "{label}: import reached the backend"
-            );
-            assert!(markers(home).join("stack.persistent").is_file(), "{label}");
-            assert_eq!(
-                std::fs::read(markers(home).join("stack.partial.json")).unwrap(),
-                b"{\"schema\":\"legacy\"}",
-                "{label}"
-            );
-        }
     }
 }
 
@@ -250,10 +174,6 @@ fn faults_reconciler_boundaries_down() {
 #[test]
 fn faults_reconciler_boundaries_reset() {
     faults_reconciler_boundaries(Scenario::Reset);
-}
-#[test]
-fn faults_reconciler_boundaries_import() {
-    faults_reconciler_boundaries(Scenario::Import);
 }
 
 fn faults_reconciler_boundaries(scenario: Scenario) {

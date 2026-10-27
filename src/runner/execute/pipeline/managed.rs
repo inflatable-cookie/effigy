@@ -20,7 +20,7 @@ use crate::runner::managed_run::{
     ManagedTab, OwnedRun, TabSource, WorkloadSpec,
 };
 use crate::runner::task_engine::{
-    refuse_live_legacy_holder, resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest, TaskTarget,
+    resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
@@ -118,7 +118,6 @@ pub(in crate::runner) fn run_managed_task(
                 &preflight.selector.task_name,
                 selection,
             );
-            refuse_live_legacy_holder(&target)?;
             let run = TaskRun::begin(TaskRunRequest {
                 target: &target,
                 lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
@@ -307,7 +306,6 @@ fn start_managed_run(
     // this terminal; the supervisor receives it in its spawn environment.
     context.task_secrets()?;
     let target = context.target(&plan.profile);
-    refuse_live_legacy_holder(&target)?;
     let addressed = Addressed {
         target: &target,
         task: &context.preflight.selector.task_name,
@@ -688,7 +686,6 @@ fn own_managed_run(
         // displays.
         let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
         let target = context.target(&plan.profile);
-        refuse_live_legacy_holder(&target)?;
         let owned = OwnedRun {
             target,
             lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,

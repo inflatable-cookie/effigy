@@ -595,8 +595,8 @@ fn repo_payload_schema(schema_id: &str) -> effigy_json_schema::CompiledSchema {
 }
 
 #[test]
-fn runtime_migration_json_contract_home_isolation_is_explicit_and_typed() {
-    let mut row = json!({"schema":"effigy.runtime-migration.v1","schema_version":1,"command":"effigy run migrate --plan --json","status":"active"});
+fn json_contract_home_isolation_is_explicit_and_typed() {
+    let mut row = json!({"schema":"effigy.run.v1","schema_version":1,"command":"effigy run status <run> --json","status":"active"});
     assert!(
         !super::load_active_contract_rows(&json!({"schemas":[row.clone()]})).unwrap()[0]
             .isolated_home

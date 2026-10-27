@@ -82,9 +82,6 @@ impl EnvironmentView {
         }];
         if let Some(engine) = record.engine() {
             parts.push(engine.retention.label().to_owned());
-            if engine.imported.is_some() {
-                parts.push("imported from v0.14.1 markers".to_owned());
-            }
         }
         parts.push(match &record.holders {
             Observed::Verified(holders, _) if holders.is_empty() => "no holders".to_owned(),
@@ -118,7 +115,6 @@ impl EnvironmentView {
                 }),
                 "generation": record.generation.get(),
                 "desired": record.desired,
-                "imported": record.engine().is_some_and(|engine| engine.imported.is_some()),
                 "holders": match &record.holders {
                     Observed::Verified(holders, _) => json!(holders
                         .iter()

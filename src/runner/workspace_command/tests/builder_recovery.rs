@@ -622,9 +622,15 @@ fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
 }
 
 /// A v0.14.1 partial-activation receipt, exactly as that release left it.
-/// The builder never reads or rewrites it (contract 052 M3).
+/// Nothing reads or rewrites it (contract 052 M3).
 fn write_legacy_partial_marker(root: &Path, policy: &effigy_containers::EffectiveContainerPolicy) {
-    let dir = crate::runner::environment::legacy_marker_dir(root, policy);
+    let base = std::env::var_os("EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join(".effigy"));
+    let dir = base
+        .join("runtime/host-container-leases")
+        .join(&policy.profile)
+        .join(&policy.project_name);
     std::fs::create_dir_all(&dir).unwrap();
     let context = json!({"schema": "effigy.container-partial-activation.v2"});
     std::fs::write(

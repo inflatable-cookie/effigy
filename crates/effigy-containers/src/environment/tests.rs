@@ -1,7 +1,6 @@
 //! Engine proofs (contract 053 §8): strict-fake backends, the transition
-//! matrix against live, interrupted and unknown holders, fault injection at
-//! every acquisition and publication boundary, and the marker importer
-//! against copies of real stack metadata.
+//! matrix against live, interrupted and unknown holders, and fault injection
+//! at every acquisition and publication boundary.
 
 use super::*;
 use effigy_kernel::ctx::{CancelToken, EffectClass, Placement};
@@ -11,7 +10,7 @@ use effigy_kernel::id::{
     Surface, TaskId,
 };
 use effigy_kernel::objects::Closure;
-use effigy_kernel::observe::{Evidence, Observed};
+use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, Invocation, WorkloadOutcome};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{AttachMode, BeginOpts, Liveness, Run};
@@ -23,7 +22,6 @@ use std::rc::Rc;
 
 mod adapters;
 mod faults;
-mod importer;
 
 const PROJECT: &str = "acme-stack";
 
@@ -106,13 +104,6 @@ pub(super) fn policy(root: &Path) -> crate::EffectiveContainerPolicy {
         detach_timeout_secs: 10,
         host_processes: vec![],
     }
-}
-
-pub(super) fn verified<T>(value: T) -> Observed<T> {
-    Observed::Verified(
-        value,
-        Evidence::new("fixture".into(), None).expect("evidence"),
-    )
 }
 
 /// A holder: one task run of the same checkout, owned by its own gate.

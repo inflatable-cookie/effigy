@@ -180,20 +180,11 @@ Heavy selectors need no scheduler: with no hook set they run directly, on CI
 runners too.
 
 
-## Inspect runtime migration state
+## Runtime migration state
 
-The importer for the unreleased-main central `$HOME/.effigy/state/kernel.db` is
-retired (contract 052 §11.1). v0.15 imports v0.14.1 legacy files on first use,
-so upgrading from v0.14.1 needs no migration command. `run migrate` is now a
-read-only report and never stages, imports, stops or deletes anything:
-
-```sh
-effigy run migrate --plan --json
-```
-
-It reports one of two states through `effigy.runtime-migration.v1`:
-`no-legacy-state`, or `committed` (a cutover manifest exists). A retired store
-or old migration record is ignored, never changed and never deleted, and never
-refuses a run. Host-wide admission capacity is unaffected: migration state is
-not a machine-wide gate, and ordinary foreground work continues.
+v0.15 imports nothing (contract 052 §11), so there is no migration command to
+run and no state to report. A retired `$HOME/.effigy/state/kernel.db`, a
+cutover manifest and a v0.14.1 stack's lifecycle markers are all ignored: never
+read, never changed, never deleted, and never a refusal. Host-wide admission
+capacity is unaffected: legacy state is not a machine-wide gate.
 

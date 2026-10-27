@@ -274,6 +274,18 @@ version = "16"
     }
 }
 
+/// How many Compose `up` calls stack `i`'s backend has received.
+fn up_count(fixture: &Fixture, i: usize) -> usize {
+    fs::read_to_string(fixture.stacks[i].root.join("commands.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| {
+            serde_json::from_str::<Vec<String>>(line)
+                .is_ok_and(|argv| argv.iter().any(|arg| arg == "up"))
+        })
+        .count()
+}
+
 /// Stack `i`'s environment record, as `container status --json` reports it.
 fn environment_record(fixture: &Fixture, i: usize) -> Value {
     let status = fixture.run(i, &["container", "status", "--json"]);
@@ -429,6 +441,55 @@ fn private_completed_activation_applies_changed_inputs() {
         })
         .count();
     assert_eq!(ups, 2, "changed inputs run a fresh compose up");
+    for i in 1..3 {
+        fixture.probe(i);
+    }
+}
+
+/// Q-012 §3 (Tom 2026-10-26): a running stack a v0.14.1 release left behind is
+/// reconciled by the one `up` apply path, not adopted from that release's
+/// markers. The marker and lease files are never read and never changed, and a
+/// lease that has not expired no longer refuses or delays the bring-up.
+#[test]
+fn a_v0141_labelled_stack_is_reconciled_by_one_up() {
+    let mut fixture = Fixture::new();
+    let first = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(first.status.success(), "{first:?}");
+    assert!(fixture.state(0)["active"].as_bool().unwrap());
+    let before = up_count(&fixture, 0);
+
+    // Lose the environment record and leave the v0.14.1 lifecycle markers a
+    // previous release wrote for this stack, including an unexpired lease.
+    let store = fixture.stacks[0].root.join(".effigy/state/kernel.db");
+    fs::remove_file(&store).expect("remove the fixture's private store");
+    let project = fixture.state(0)["project"].as_str().unwrap().to_owned();
+    let markers = fixture
+        .root
+        .path()
+        .join("home/.effigy/runtime/host-container-leases/private-0")
+        .join(&project);
+    fs::create_dir_all(&markers).expect("v0.14.1 marker directory");
+    fs::write(markers.join("web.persistent"), b"").expect("persistent marker");
+    let lease = json!({"schema":"effigy.host-container-lease.v1","schema_version":1,"token":"private-0","container_name":"web","profile":"private-0","project_name":project,"expires_at_epoch_ms":9999999999999u64}).to_string();
+    fs::write(markers.join("web.json"), &lease).expect("unexpired lease");
+
+    let reconciled = fixture.run(0, &["container", "up", "--detach", "--json"]);
+    assert!(reconciled.status.success(), "{reconciled:?}");
+    assert_eq!(
+        up_count(&fixture, 0),
+        before + 1,
+        "one apply reconciles the stack; nothing was adopted"
+    );
+    assert!(
+        !environment_record(&fixture, 0).is_null(),
+        "the apply records its environment"
+    );
+    assert_eq!(
+        fs::read_to_string(markers.join("web.json")).unwrap(),
+        lease,
+        "a v0.14.1 lease is never changed"
+    );
+    assert!(markers.join("web.persistent").is_file());
     for i in 1..3 {
         fixture.probe(i);
     }

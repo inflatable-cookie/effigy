@@ -299,10 +299,6 @@ fn run_container_up_inner(
     }
     plan.handover_notes.extend(handed_over);
 
-    if plan.attach_mode == EffectiveAttachMode::Detached {
-        environment::import_legacy(repo_root, &plan.policy)?;
-    }
-
     // The reconcile run journals the one Compose apply under Gate(Env).
     operation.stage = Some("compose_activation");
     let attached_end = std::cell::RefCell::new(None);

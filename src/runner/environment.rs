@@ -3,16 +3,14 @@
 //! Every container lifecycle command reaches the engine here. Bring-up runs
 //! as a reconcile run and an activation run, every stop is one transition,
 //! and a command that uses an environment holds it through a session run
-//! (or, for a managed run, through its own task run). The first Mutate of an
-//! environment imports its v0.14.1 markers.
+//! (or, for a managed run, through its own task run).
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use effigy_containers::environment::{
     self as engine, Applied, BackendError, BackendSelection, EnvContext, EnvError, EnvRecord,
-    EnvRef, HoldError, Idle, ImportRequest, LegacyMarkers, Operation, Ownership, Retention,
-    Session, Up,
+    EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::CancelToken;
@@ -27,8 +25,6 @@ use crate::runner::error::RunnerError;
 pub(in crate::runner) const HOLDER_ENV: &str = "EFFIGY_INTERNAL_ENVIRONMENT_HOLDER";
 /// Opts task-started environments out of holder-based idle stop.
 const KEEP_RUNNING_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
-/// The longest a first Mutate waits for a v0.14.1 idle-stop lease to end.
-const LEGACY_LEASE_WAIT: Duration = Duration::from_secs(600);
 const INVENTORY_BUDGET: Duration = Duration::from_secs(15);
 
 pub(in crate::runner) fn context(repo_root: &Path) -> Result<EnvContext<'static>, RunnerError> {
@@ -132,81 +128,6 @@ pub(in crate::runner) fn backend(
     engine::effective_backend(repo_root, policy, recorded.as_ref())
 }
 
-/// Where v0.14.1 kept this environment's lifecycle markers.
-pub(in crate::runner) fn legacy_marker_dir(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> PathBuf {
-    let base = legacy_marker_home()
-        .unwrap_or_else(|| repo_root.join(".effigy/runtime/host-container-leases"));
-    base.join(engine::sanitize_marker_component(&policy.profile))
-        .join(engine::sanitize_marker_component(&policy.project_name))
-}
-
-fn legacy_marker_home() -> Option<PathBuf> {
-    #[cfg(test)]
-    if let Some(path) = std::env::var_os("EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME") {
-        return Some(PathBuf::from(path).join("runtime/host-container-leases"));
-    }
-    std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(".effigy/runtime/host-container-leases"))
-}
-
-/// Imports v0.14.1 markers and labels once, before the first transition.
-/// Running containers are adopted only on proven ownership, never restarted.
-pub(in crate::runner) fn import_legacy(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    if record(policy).is_some_and(|record| record.engine.is_some()) {
-        return Ok(());
-    }
-    let markers = LegacyMarkers::read(&legacy_marker_dir(repo_root, policy), &policy.name);
-    if markers.is_empty() {
-        return Ok(());
-    }
-    if let Some(remaining) = markers.lease_pending(now_ms()) {
-        if remaining > LEGACY_LEASE_WAIT {
-            return Err(RunnerError::task_invocation(format!(
-                "environment `{}` still has a v0.14.1 idle-stop lease for {}s; its reaper may stop the stack. Retry after it expires",
-                policy.name,
-                remaining.as_secs()
-            )));
-        }
-        eprintln!(
-            "[info] waiting {}s for the v0.14.1 idle-stop lease of `{}` to end before adopting it",
-            remaining.as_secs().max(1),
-            policy.name
-        );
-        std::thread::sleep(remaining + Duration::from_secs(1));
-    }
-    let env = env_ref(policy)?;
-    let ctx = context(&policy.repo_root)?;
-    let backend = backend(repo_root, policy);
-    let workloads = backend.adapter().inventory(repo_root, &policy.project_name);
-    let ownership = Ownership {
-        checkout: repo_root.canonicalize().map_err(|error| {
-            RunnerError::task_invocation(format!("cannot resolve the checkout: {error}"))
-        })?,
-        scope: effigy_core::worktree_scope::load(repo_root)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
-    };
-    engine::import(
-        &ctx,
-        ImportRequest {
-            env: &env,
-            project: &policy.project_name,
-            markers: &markers,
-            workloads,
-            ownership: &ownership,
-            primary_service: &policy.primary_service,
-            backend: &backend,
-        },
-    )
-    .map(|_| ())
-    .map_err(error)
-}
-
 /// Whether every declared service of the environment's project runs, from one
 /// labelled `ps`. A project this checkout does not own is another checkout's:
 /// its containers carry that checkout's labels, so its rows never answer for
@@ -290,7 +211,6 @@ pub(in crate::runner) fn reconcile(
     retention: Retention,
     apply: impl FnOnce() -> Result<(), BackendError>,
 ) -> Result<BringUp, RunnerError> {
-    import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
     let ctx = context(&policy.repo_root)?;
     // The exact-identity inventory still removes owned containers a profile
@@ -413,7 +333,6 @@ pub(in crate::runner) fn stop_exempting(
     exempt: Option<RunId>,
     effect: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
-    import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
     stop_env(
         &policy.repo_root,
@@ -479,7 +398,6 @@ pub(in crate::runner) fn reset(
     policy: &EffectiveContainerPolicy,
     effect: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
-    import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
     let ctx = context(&policy.repo_root)?;
     let backend = backend(repo_root, policy);
@@ -670,13 +588,6 @@ pub(in crate::runner) fn emit_held_notice(container_name: &str) {
     eprintln!(
         "[info] environment `{container_name}` was started for this run; it stops when the last run using it ends. Run `effigy container up --detach` to keep it running, or set {KEEP_RUNNING_ENV}=1"
     );
-}
-
-fn now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
 }
 
 #[cfg(test)]

@@ -934,9 +934,6 @@ pub enum RunsAction {
     },
     /// `effigy run stop <run> [--wait-ms N]`: the kernel stop path.
     Stop { run: String, wait_ms: Option<u64> },
-    /// Explicit legacy runtime cutover, or read-only inspection before it.
-    /// Read-only report on the retired central-store import.
-    Migrate { plan: bool },
 }
 
 /// Bounded QA-group surfaces under `effigy tasks` (contract 051).

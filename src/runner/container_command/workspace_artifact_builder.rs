@@ -82,10 +82,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     {
         return Err(RunnerError::task_invocation(message));
     }
-    // The first Mutate imports v0.14.1 markers into the record (M6). The
-    // import's inventory is not the build's: the build's inventory gets a
-    // fresh budget afterwards, as it does after a bring-up below.
-    environment::import_legacy(repo_root, &policy)?;
+    // The build's inventory gets a fresh budget after the mismatch check.
     deadline = Instant::now() + Duration::from_secs(15);
     let mut retained = builder_retained(&policy).then_some(());
     // A profile Effigy just created or restarted discards the container the
