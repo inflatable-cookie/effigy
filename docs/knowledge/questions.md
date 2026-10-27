@@ -588,9 +588,12 @@ primary reboot, privileged-port and service-lifecycle gate. Do not reuse the
 existing invalid Parallels VMs. This chooses the proof environment; it does not
 authorize creating or reconfiguring a VM during planning.
 
-Tom is creating `effigy-linux-proof` as Ubuntu 24.04 arm64 on his Vault drive,
-with its `clean-base` snapshot there. Confirm Vault is attached before every
-Linux proof window, check its throughput before timing-sensitive proof, and
+Tom's Parallels automated option installed Ubuntu 26.04 arm64 instead of the
+originally proposed 24.04. The VM is currently named `Ubuntu 26.04 ARM64` and
+stored at `/Volumes/Vault/Parallels/Ubuntu 26.04 ARM64.pvm`; it is still being
+set up. The intended `clean-base` snapshot also belongs on Vault. Confirm Vault
+is attached before every Linux proof window, check its throughput before
+timing-sensitive proof, and
 shut the VM down cleanly before removing the drive. Do not run Linux proofs
 unattended without confirming the drive is present. Rosetta may run an x86_64
 smoke test inside the arm64 guest, but that is not native x86_64 qualification;
