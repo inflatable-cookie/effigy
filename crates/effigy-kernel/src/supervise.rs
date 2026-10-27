@@ -1397,13 +1397,9 @@ impl EngineSession {
     pub fn refused_message(&self, category: Category, message: impl Into<String>) {
         let message = message.into();
         let _ = writeln!(io::stderr(), "{message}");
-        let mut end = message.len().min(3072);
-        while !message.is_char_boundary(end) {
-            end -= 1;
-        }
         self.emit(&Event::Refused {
             category,
-            detail: message[..end].into(),
+            detail: effigy_ui::human::bound_text(&message, effigy_ui::human::RELAY_MAX_BYTES),
         });
     }
     pub fn active(&self) {

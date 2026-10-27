@@ -144,16 +144,12 @@ impl ServiceHealth {
     }
 }
 
-/// Bound the health check output kept for a person: one line, trimmed.
-pub const LAST_OUTPUT_MAX_CHARS: usize = 200;
-
-/// One line of a check's own output, bounded and stripped of the control
-/// characters that make a rendered error unreadable.
+/// The one line of a check's own output the diagnostic keeps: the last line
+/// that names a cause, else the last line the check wrote, through the shared
+/// redactor and bound, and stripped of the control characters that make a
+/// rendered error unreadable.
 pub fn bounded_last_output(output: &str) -> Option<String> {
-    let line = output
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())?;
+    let line = effigy_ui::human::last_output_line(output)?;
     let cleaned = line
         .chars()
         .map(|character| {
@@ -164,15 +160,7 @@ pub fn bounded_last_output(output: &str) -> Option<String> {
             }
         })
         .collect::<String>();
-    let mut bounded = String::new();
-    let mut characters = cleaned.trim().chars();
-    for character in characters.by_ref().take(LAST_OUTPUT_MAX_CHARS) {
-        bounded.push(character);
-    }
-    if characters.next().is_some() {
-        bounded.push('…');
-    }
-    Some(bounded)
+    Some(cleaned.trim().to_owned())
 }
 
 fn normalize_signature(output: &str) -> String {

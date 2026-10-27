@@ -1080,6 +1080,7 @@ name = "effigy-kernel"
 version = "0.14.1"
 dependencies = [
  "effigy-test-support",
+ "effigy-ui",
  "libc",
  "proc-macro2",
  "rhai",

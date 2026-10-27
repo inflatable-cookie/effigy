@@ -23,10 +23,18 @@ pub const MAX_EVIDENCE_BYTES: usize = 512;
 pub const MAX_EVIDENCE_LINES: usize = 12;
 /// Lines always kept from the start of a folded evidence list: what failed.
 pub const EVIDENCE_HEAD_LINES: usize = 3;
-/// Lines kept from the start of a command's output: the first failure.
+/// Lines kept from the start of a command's output: what it was doing.
 pub const OUTPUT_HEAD_LINES: usize = 3;
+/// Cause lines rescued from the middle of a long output: why it stopped.
+pub const OUTPUT_CAUSE_LINES: usize = 2;
 /// Lines kept from its end: how it finished.
-pub const OUTPUT_TAIL_LINES: usize = 2;
+pub const OUTPUT_TAIL_LINES: usize =
+    MAX_EVIDENCE_LINES - OUTPUT_HEAD_LINES - OUTPUT_CAUSE_LINES - 1;
+/// Bytes a supervisor relay keeps of a refusal message: enough for the category
+/// sentence, the cause and the end of a backend's last line.
+pub const RELAY_MAX_BYTES: usize = 3072;
+/// What a line that names a cause contains, lowercased.
+const CAUSE_MARKERS: [&str; 3] = ["error", "fatal", "panic"];
 /// What replaces a redacted value.
 pub const REDACTED: &str = "<redacted>";
 
@@ -92,34 +100,11 @@ impl HumanError {
     /// much it left out, so the evidence stays readable without hiding the
     /// detail a person needs.
     pub fn evidence_output(mut self, label: &str, output: &str) -> Self {
-        let lines: Vec<&str> = output
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect();
-        if lines.is_empty() {
-            return self;
-        }
-        let kept = OUTPUT_HEAD_LINES + OUTPUT_TAIL_LINES;
-        let mut picked: Vec<String> = if lines.len() <= kept {
-            lines.iter().map(|line| (*line).to_owned()).collect()
-        } else {
-            let mut picked: Vec<String> = lines[..OUTPUT_HEAD_LINES]
-                .iter()
-                .map(|line| (*line).to_owned())
-                .collect();
-            picked.push(format!("({} lines omitted)", lines.len() - kept));
-            picked.extend(
-                lines[lines.len() - OUTPUT_TAIL_LINES..]
-                    .iter()
-                    .map(|line| (*line).to_owned()),
-            );
-            picked
-        };
-        if let Some(first) = picked.first_mut() {
+        let mut lines = bound_output(output);
+        if let Some(first) = lines.first_mut() {
             *first = format!("{label}: {first}");
         }
-        for line in picked {
+        for line in lines {
             self = self.evidence(line);
         }
         self
@@ -186,18 +171,102 @@ impl HumanError {
     }
 }
 
+/// Whether a line names a cause: the line a person needs from a log.
+fn names_a_cause(line: &str) -> bool {
+    let lowered = line.to_ascii_lowercase();
+    CAUSE_MARKERS.iter().any(|marker| lowered.contains(marker))
+}
+
+/// One block of a command's or service's output, ready to show: every line
+/// redacted and bounded, the first [`OUTPUT_HEAD_LINES`] and last
+/// [`OUTPUT_TAIL_LINES`] kept, the last [`OUTPUT_CAUSE_LINES`] lines in the
+/// middle that name a cause kept too, and one marker counting the rest. A
+/// runner that prints its failures to stdout and its progress to stderr keeps
+/// both ends, so the cause survives whichever stream carried it.
+pub fn bound_output(output: &str) -> Vec<String> {
+    let lines: Vec<String> = output
+        .lines()
+        .map(|line| bound(&redact(line)))
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.len() <= MAX_EVIDENCE_LINES {
+        return lines;
+    }
+    let tail_start = lines.len() - OUTPUT_TAIL_LINES;
+    let middle = &lines[OUTPUT_HEAD_LINES..tail_start];
+    let causes: Vec<String> = (0..middle.len())
+        .rev()
+        .filter(|index| names_a_cause(&middle[*index]))
+        .take(OUTPUT_CAUSE_LINES)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|index| middle[index].clone())
+        .collect();
+    let omitted = lines.len() - (OUTPUT_HEAD_LINES + causes.len() + OUTPUT_TAIL_LINES);
+    let mut bounded = lines[..OUTPUT_HEAD_LINES].to_vec();
+    bounded.push(format!("({omitted} lines omitted)"));
+    bounded.extend(causes);
+    bounded.extend_from_slice(&lines[tail_start..]);
+    bounded
+}
+
+/// The one line that says why a command or service stopped: the last line
+/// naming a cause, or else the last line it wrote. Bounded and redacted.
+pub fn last_output_line(output: &str) -> Option<String> {
+    let lines: Vec<String> = output
+        .lines()
+        .map(|line| bound(&redact(line)))
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines
+        .iter()
+        .rev()
+        .find(|line| names_a_cause(line))
+        .or_else(|| lines.last())
+        .cloned()
+}
+
+/// A whole message bounded to `max_bytes`: both ends survive, because the last
+/// line of a backend's output is the one that says why it stopped. The tail
+/// starts on a line boundary when one is near, so the last lines stay whole.
+pub fn bound_text(text: &str, max_bytes: usize) -> String {
+    let text = redact(text.trim());
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let tail_budget = max_bytes / 3;
+    let mut tail_start = floor_char_boundary(&text, text.len() - tail_budget);
+    if let Some(newline) = text[..tail_start].rfind('\n') {
+        if text.len() - (newline + 1) <= tail_budget * 2 {
+            tail_start = newline + 1;
+        }
+    }
+    let head_end = floor_char_boundary(&text, max_bytes.saturating_sub(text.len() - tail_start));
+    format!(
+        "{}…{}",
+        text[..head_end].trim_end(),
+        text[tail_start..].trim_start()
+    )
+}
+
+/// The last char boundary at or before `end`.
+fn floor_char_boundary(text: &str, end: usize) -> usize {
+    let mut end = end.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
 /// Keep a line to a terminal's width, and say that it was cut.
 fn bound(text: &str) -> String {
     let text = text.trim();
     if text.len() <= MAX_EVIDENCE_BYTES {
         return text.to_owned();
     }
-    let mut end = MAX_EVIDENCE_BYTES;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let kept = text.get(..end).unwrap_or_default();
-    format!("{}… (truncated)", kept.trim_end())
+    let end = floor_char_boundary(text, MAX_EVIDENCE_BYTES);
+    format!("{}… (truncated)", text[..end].trim_end())
 }
 
 const SECRET_MARKERS: [&str; 8] = [
@@ -404,19 +473,52 @@ mod tests {
 
     #[test]
     fn command_output_keeps_its_head_and_tail() {
-        let output = "first failure\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\nninth";
+        let output = "first failure\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\neighth\nninth\ntenth\neleventh\ntwelfth\nthirteenth";
         let error = HumanError::new("task `dev` failed").evidence_output("stderr", output);
+        let lines = error.evidence_lines();
+        assert_eq!(&lines[..3], ["stderr: first failure", "second", "third"]);
+        assert_eq!(lines[3], "(4 lines omitted)");
         assert_eq!(
-            error.evidence_lines(),
-            [
-                "stderr: first failure",
-                "second",
-                "third",
-                "(3 lines omitted)",
-                "seventh",
-                "ninth",
-            ]
+            &lines[4..],
+            ["eighth", "ninth", "tenth", "eleventh", "twelfth", "thirteenth"],
+            "the last lines say how it finished"
         );
+    }
+
+    #[test]
+    fn a_cause_in_the_middle_of_a_long_output_survives_the_fold() {
+        let mut lines: Vec<String> = (0..30).map(|step| format!("Compiling crate {step}")).collect();
+        lines.insert(15, "error[E0308]: mismatched types".to_owned());
+        let output = lines.join("\n");
+        let error = HumanError::new("task `build` failed").evidence_output("stdout", &output);
+        let rendered = error.render_text();
+        assert!(rendered.contains("error[E0308]: mismatched types"), "{rendered}");
+        assert!(rendered.contains("Compiling crate 29"), "{rendered}");
+        assert!(error.evidence_lines().len() <= MAX_EVIDENCE_LINES);
+    }
+
+    #[test]
+    fn the_last_line_that_names_a_cause_beats_a_quiet_final_line() {
+        let log = "mysqld is alive\n[ERROR] InnoDB: cannot allocate memory\nshutdown complete";
+        assert_eq!(
+            last_output_line(log).as_deref(),
+            Some("[ERROR] InnoDB: cannot allocate memory")
+        );
+        assert_eq!(
+            last_output_line("ready\nwaiting for connections").as_deref(),
+            Some("waiting for connections")
+        );
+        assert_eq!(last_output_line("\n  \n"), None);
+    }
+
+    #[test]
+    fn a_long_message_keeps_both_ends() {
+        let message = format!("refused: {}\nlevel=fatal msg=\"X\"", "x".repeat(4000));
+        let bounded = bound_text(&message, RELAY_MAX_BYTES);
+        assert!(bounded.starts_with("refused: xxx"), "{bounded}");
+        assert!(bounded.ends_with("level=fatal msg=\"X\""), "{bounded}");
+        assert!(bounded.len() < message.len());
+        assert_eq!(bound_text("short", RELAY_MAX_BYTES), "short");
     }
 
     #[test]
