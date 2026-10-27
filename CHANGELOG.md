@@ -867,7 +867,9 @@ During v0.x, MINOR bumps may include breaking changes.
   The same selector step then brings that fixture up on the Colima profile,
   checks the build arguments, the shared-service client, an idempotent re-up,
   the host-process restart and the linked worktree, tears it down by exact
-  owned name and fails if anything it owns survives. It stages under
+  owned name and fails if anything it owns survives. The listener publishes into
+  the fixture's own private gateway root, so the proof never uses the machine
+  gateway and re-verifies that gateway's listeners, PIDs and executables. It stages under
   `/Volumes/Builds/scratch/effigy/` and fails at its own preflight, naming the
   mount ask, until the approved Colima scratch mount makes that path visible to
   the VM; it never falls back to a `/Users` staging root for ordinary QA. A

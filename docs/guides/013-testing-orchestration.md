@@ -297,6 +297,10 @@ with a client resolving `host.docker.internal`, a primary and a linked worktree
 with distinct project names, a second `up` that keeps every container ID, no
 `EFFIGY_` value in any container, `container <env> restart <process>` on a
 host-process listener, and a `down` that leaves no container, listener or route.
+The listener publishes its route into the fixture's own private gateway root
+(`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`, loopback DNS/HTTP/HTTPS with its own CA),
+so this proof never uses the machine gateway that the operator-path test owns;
+it re-verifies the machine gateway's listeners, PIDs and executables afterwards.
 It deletes the fixture's own shared-service container, volume and network by
 exact name and only after their labels prove the project, never touches the
 protected shared MariaDBs, and fails (keeping the staging root) if any owned

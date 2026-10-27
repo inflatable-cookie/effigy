@@ -343,6 +343,48 @@ def live_paths(staging):
 REAL_COLIMA_HOME = Path(os.environ.get("COLIMA_HOME") or Path.home() / ".colima")
 
 
+def machine_gateway_baseline():
+    """Read-only: the machine gateway's listeners, PIDs and executables.
+
+    Item 5's fixture uses its own private gateway root, so this baseline proves
+    the machine gateway was not touched at all."""
+    import hashlib
+
+    baseline = {}
+    for proto, port in (("TCP", 80), ("TCP", 443), ("UDP", 15353)):
+        flag = "-sTCP:LISTEN" if proto == "TCP" else "-sUDP:LISTEN"
+        try:
+            listing = run(["lsof", "-nP", "-i%s:%d" % (proto, port), flag, "-t"], root, timeout=60).strip()
+        except Exception:
+            listing = ""
+        entries = []
+        for pid in [line.strip() for line in listing.splitlines() if line.strip()]:
+            try:
+                executable = run(["ps", "-o", "comm=", "-p", pid], root, timeout=60).strip()
+            except Exception:
+                executable = ""
+            digest = None
+            if executable and Path(executable).is_file():
+                try:
+                    digest = hashlib.sha256(Path(executable).read_bytes()).hexdigest()
+                except Exception:
+                    digest = "unreadable"
+            entries.append((pid, executable, digest))
+        baseline[f"{proto}:{port}"] = entries
+    return baseline
+
+
+def private_gateway(root_path, command, env, extra=()):
+    return effigy("gateway", *command, "--private-state-root", str(root_path), "--json", *extra, env=env)
+
+
+def private_routes(root_path, env):
+    status = json.loads(private_gateway(root_path, ["status"], env))
+    assert status.get("ok"), status.get("error")
+    payload = status.get("result") or {}
+    return [route.get("domain") for route in (payload.get("routes") or [])]
+
+
 def live_env(home):
     """Effigy's own state is private; the Colima profile is not.
 
@@ -350,7 +392,12 @@ def live_env(home):
     running. COLIMA_HOME keeps the proof on the profile the owner named while
     routes, the shared-service render and the fixture's state stay under the
     private HOME."""
-    env = dict(os.environ, HOME=str(home), COLIMA_HOME=str(REAL_COLIMA_HOME))
+    env = dict(
+        os.environ,
+        HOME=str(home),
+        COLIMA_HOME=str(REAL_COLIMA_HOME),
+        EFFIGY_GATEWAY_PRIVATE_STATE_ROOT=str(Path(home).parent / "gateway"),
+    )
     for key in ("EFFIGY_WORKSPACE_CONTAINER", "EFFIGY_CONTAINER_HANDOFF", "EFFIGY_EXECUTABLE"):
         env.pop(key, None)
     return env
@@ -661,8 +708,13 @@ def print_frozen_plan():
         print(f"  delete {kind:9} {', '.join(values)}  (labels proved first)")
     print(f"shared project:    {shared['project']}")
     print("host process:      listener, bind 127.0.0.1:0 (reserved at up), readiness GET / 200")
-    print(f"listener route:    {LISTENER_DOMAIN} (operator gateway, tls false)")
+    print(f"listener route:    {LISTENER_DOMAIN} on the fixture's own private gateway")
+    print(f"gateway root:      {home.parent / 'gateway'} (loopback DNS/HTTP/HTTPS, own CA, port 0)")
     print("ports:             OS/gateway assigned at up and recorded, never fixed")
+    machine = machine_gateway_baseline()
+    print("machine gateway baseline (never used by this proof, re-verified after):")
+    for endpoint, entries in machine.items():
+        print(f"  {endpoint:12} {'absent' if not entries else entries}")
     print(f"protected baseline ({len(baseline)}), never touched, re-verified by ID, start time and mounts:")
     for container_id, name, identity_text in baseline:
         started = identity_text.split("|")[1] if "|" in identity_text else "?"
@@ -685,10 +737,11 @@ def print_frozen_plan():
         "exec the client: /z374-build-proof reads back the ARG/${VAR}/$var values",
         "exec the client: MYSQL_HOST is host.docker.internal and resolves",
         "exec db: the local MariaDB did not take the shared host",
+        "start the fixture's own private gateway, then assert the listener route landed there",
         "container z374proof restart listener; assert its PID changed",
         "up the linked worktree; assert its containers differ from the primary's",
         "down both environments by checkout path",
-        "assert no primary or linked container remains, and no route remains",
+        "assert no primary or linked container remains, and the private route is gone",
         "delete the shared project's own container, volume and network, labels first",
         "assert none of the owned names remains, or fail and keep the staging root",
         "assert the baseline containers kept their ID, start time and mounts",
@@ -700,10 +753,12 @@ def print_frozen_plan():
     for kind, values in names["shared"].items():
         verb = {"containers": "nerdctl rm -f", "volumes": "nerdctl volume rm", "networks": "nerdctl network rm"}[kind]
         print(f"  - {verb} {' '.join(values)}")
+    print("  - effigy gateway down --private-state-root <fixture>/gateway")
     print("  - stop only PIDs this run recorded, after re-checking each PID's own command line")
     print(f"  - git -C {repo} worktree remove --force {worktree}")
     print(f"  - rm -rf {staging}  (only when no owned container, volume or network remains)")
     print("  - assert the baseline containers above are unchanged")
+    print("  - assert the machine gateway's listeners, PIDs and executables are unchanged")
     print("")
     print("HOW MILESTONE QA RUNS IT")
     print("  `qa:live:consumer-shapes` runs this script with no mode at milestone QA,")
@@ -726,9 +781,11 @@ def print_frozen_plan():
     print(f"      {Path(__file__).name} execute {ONE_OFF_STAGING} {one_off_hash}")
     print("      (that hash is for that exact root; any change to the fixture or the steps")
     print("      changes it, and `plan` prints the pair again)")
-    print("Live actions either way: container up twice, exec, restart, down, the fixture")
-    print(f"image build (FROM busybox:latest, already cached), publishing {LISTENER_DOMAIN},")
-    print("and deleting only the owned names listed above.")
+    print("Live actions either way: the fixture's own private gateway up/down, container up")
+    print(f"twice, exec, restart, down, the fixture image build (FROM busybox:latest, already")
+    print(f"cached), publishing {LISTENER_DOMAIN} into that private root only, and deleting")
+    print("only the owned names listed above. The machine gateway is never used: item 7 owns")
+    print("that path, and this proof re-verifies its listeners, PIDs and executables afterwards.")
 
 
 def owned_by(name, kind, project):
@@ -888,6 +945,7 @@ def live_run(staging, approval=None):
                 "directory it did not create)" % path
             )
     baseline = protected_baseline()
+    machine_baseline = machine_gateway_baseline()
     repo, worktree = live_fixture(staging)
     env = live_env(home)
     checks = []
@@ -897,6 +955,7 @@ def live_run(staging, approval=None):
     shared = identity["shared"]
     failure = None
     started = False
+    started_gateway = False
 
     def status(repo_root):
         return json.loads(
@@ -926,6 +985,12 @@ def live_run(staging, approval=None):
             "refusing to run: these owned names already exist, so they belong to another run",
             existing,
         )
+
+        gateway_root = home.parent / "gateway"
+        private_gateway(gateway_root, ["setup-tls"], env)
+        gateway_up = json.loads(private_gateway(gateway_root, ["up"], env))
+        assert gateway_up.get("ok"), gateway_up.get("error")
+        started_gateway = True
 
         effigy("container", ENVIRONMENT, "up", "--repo", repo, cwd=repo, env=env)
         started = True
@@ -990,8 +1055,15 @@ def live_run(staging, approval=None):
         )
         checks.append(("a primary and its linked worktree keep distinct containers", len(worktree_containers)))
 
+        routes = private_routes(gateway_root, env)
+        assert LISTENER_DOMAIN in routes, ("the listener route did not land in the private gateway", routes)
+        checks.append(("the listener published its route to the fixture's own gateway", LISTENER_DOMAIN))
+
         down(repo)
         down(worktree)
+        assert LISTENER_DOMAIN not in private_routes(gateway_root, env), (
+            "down left the listener route behind"
+        )
         left_local = owned_containers(names["local_containers"])
         assert left_local == [], ("down left a checkout's own container", left_local)
         hosts = json.loads(
@@ -1007,8 +1079,13 @@ def live_run(staging, approval=None):
     except BaseException as exc:  # re-raised after cleanup
         failure = exc
     finally:
-        if not started:
+        if not started and not started_gateway:
             print("[info] no runtime action was taken: the preflight refused before any up", flush=True)
+        if started_gateway:
+            try:
+                private_gateway(home.parent / "gateway", ["down"], env)
+            except Exception as failure_reason:
+                print(f"[warn] private gateway down failed: {failure_reason}", flush=True)
         for pid in recorded_pids:
             print(f"[info] listener pid {pid}: {stop_own_pid(pid, staging, env)}", flush=True)
         if started:
@@ -1045,6 +1122,10 @@ def live_run(staging, approval=None):
     baseline_kept = after == baseline
     if not baseline_kept:
         print("[fail] the protected baseline changed", flush=True)
+    machine_after = machine_gateway_baseline()
+    machine_kept = machine_after == machine_baseline
+    if not machine_kept:
+        print("[fail] the machine gateway changed", flush=True)
     try:
         left = residue(names)
     except Exception as failure_reason:
@@ -1055,7 +1136,10 @@ def live_run(staging, approval=None):
         raise failure
     assert not any(left.values()), ("owned residue remains", left)
     assert baseline_kept, "the protected baseline containers changed"
+    assert machine_kept, "the machine gateway's listeners or executables changed"
     print(f"[ok] the {len(baseline)} baseline containers kept their ID, start time and mounts", flush=True)
+    print("[ok] the machine gateway's listeners, PIDs and executables are unchanged "
+          f"({', '.join('%s=%d' % (k, len(v)) for k, v in machine_baseline.items())})", flush=True)
     print(f"[ok] no owned name remains ({len(names['local_containers'])} checkout containers, "
           f"{len(names['shared']['containers'])} shared containers, "
           f"{len(names['shared']['volumes'])} volumes, {len(names['shared']['networks'])} networks)",
