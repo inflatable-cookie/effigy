@@ -340,6 +340,24 @@ def live_paths(staging):
     return repo, worktree, home
 
 
+def private_gateway_root(staging):
+    """The fixture's own gateway root: present, canonical and owner-only, which
+    is exactly what the gateway's root validation requires."""
+    root_path = (Path(staging) / "gateway").resolve()
+    if not root_path.is_dir():
+        raise SystemExit(
+            "refusing to use %s as a private gateway root: it is not an existing directory"
+            % root_path
+        )
+    mode = root_path.stat().st_mode & 0o777
+    if mode & 0o077:
+        raise SystemExit(
+            "refusing to use %s as a private gateway root: mode %o is not owner-only"
+            % (root_path, mode)
+        )
+    return root_path
+
+
 REAL_COLIMA_HOME = Path(os.environ.get("COLIMA_HOME") or Path.home() / ".colima")
 
 
@@ -444,6 +462,9 @@ def live_fixture(staging):
         LIVE_MANIFEST % {"environment": ENVIRONMENT, "domain": LISTENER_DOMAIN}
     )
     home.mkdir()
+    gateway = staging / "gateway"
+    gateway.mkdir(mode=0o700)
+    os.chmod(gateway, 0o700)
     run(["git", "init", "-q"], repo)
     run(["git", "add", "."], repo)
     run(
@@ -709,7 +730,7 @@ def print_frozen_plan():
     print(f"shared project:    {shared['project']}")
     print("host process:      listener, bind 127.0.0.1:0 (reserved at up), readiness GET / 200")
     print(f"listener route:    {LISTENER_DOMAIN} on the fixture's own private gateway")
-    print(f"gateway root:      {home.parent / 'gateway'} (loopback DNS/HTTP/HTTPS, own CA, port 0)")
+    print(f"gateway root:      {staging / 'gateway'} (0700, canonical; loopback DNS/HTTP/HTTPS, own CA, port 0)")
     print("ports:             OS/gateway assigned at up and recorded, never fixed")
     machine = machine_gateway_baseline()
     print("machine gateway baseline (never used by this proof, re-verified after):")
@@ -986,7 +1007,7 @@ def live_run(staging, approval=None):
             existing,
         )
 
-        gateway_root = home.parent / "gateway"
+        gateway_root = private_gateway_root(staging)
         private_gateway(gateway_root, ["setup-tls"], env)
         gateway_up = json.loads(private_gateway(gateway_root, ["up"], env))
         assert gateway_up.get("ok"), gateway_up.get("error")
@@ -1083,7 +1104,7 @@ def live_run(staging, approval=None):
             print("[info] no runtime action was taken: the preflight refused before any up", flush=True)
         if started_gateway:
             try:
-                private_gateway(home.parent / "gateway", ["down"], env)
+                private_gateway(private_gateway_root(staging), ["down"], env)
             except Exception as failure_reason:
                 print(f"[warn] private gateway down failed: {failure_reason}", flush=True)
         for pid in recorded_pids:
