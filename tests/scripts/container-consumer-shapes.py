@@ -469,13 +469,20 @@ def private_routes(root_path, env):
     return [route.get("domain") for route in (payload.get("routes") or [])]
 
 
-def checkout_routes(repo_root, env):
-    """One checkout's own host map after `up`: every route's effective name,
-    which is what a consumer resolves. A linked checkout's names are scoped when
-    `up` prepares its scope, so the proof records what the product resolved
-    instead of assuming the declared name survived."""
+def environment_routes(repo_root, environment, env):
+    """One environment's own host map after `up`: every route's effective name,
+    which is what a consumer resolves.
+
+    The host map is keyed by the environment that is named on the command line,
+    not by the checkout: the bare form answers for the manifest's default
+    environment, so naming it is what keeps the two environments' routes apart.
+    A linked checkout's names are scoped when `up` prepares its scope, so this
+    records what the product resolved instead of assuming the declared name
+    survived."""
     payload = json.loads(
-        effigy("container", "hosts", "--json", "--repo", repo_root, cwd=repo_root, env=env)
+        effigy(
+            "container", environment, "hosts", "--json", "--repo", repo_root, cwd=repo_root, env=env
+        )
     )
     assert payload.get("ok"), payload.get("error")
     return sorted(
@@ -901,7 +908,9 @@ def print_frozen_plan():
         "exec the client: MYSQL_HOST is host.docker.internal, /etc/hosts carries it, and",
         "                 ping resolves it through libc (BusyBox nslookup bypasses /etc/hosts)",
         "exec db: the local MariaDB did not take the shared host",
-        "start the fixture's own private gateway, then assert both checkouts' routes landed there",
+        "start the fixture's own private gateway, then read each environment's own host map",
+        "                 (`container <env> hosts --json`; the bare form answers for the default) and",
+        "                 assert the two route sets are disjoint and both are registered there",
         "container z374proof restart listener; assert its PID changed",
         "up the linked worktree in its own environment; assert its containers differ from the primary's",
         "down both environments by their own checkout path",
@@ -1486,12 +1495,12 @@ def live_run(staging, approval=None):
         )
         checks.append(("a primary and its linked worktree keep distinct containers", len(worktree_containers)))
 
-        primary_routes = checkout_routes(repo, env)
-        linked_routes = checkout_routes(worktree, env)
-        assert primary_routes, "the primary checkout resolved no route"
-        assert linked_routes, "the linked checkout resolved no route"
+        primary_routes = environment_routes(repo, ENVIRONMENT, env)
+        linked_routes = environment_routes(worktree, LINKED_ENVIRONMENT, env)
+        assert primary_routes, "the primary environment resolved no route"
+        assert linked_routes, "the linked environment resolved no route"
         assert not set(primary_routes) & set(linked_routes), (
-            "both checkouts resolved the same host, so they would share one route",
+            "both environments resolved the same host, so they would share one route",
             primary_routes,
             linked_routes,
         )
