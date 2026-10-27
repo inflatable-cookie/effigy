@@ -2103,10 +2103,10 @@ During v0.x, MINOR bumps may include breaking changes.
   file or directory` on a bundle-shipped helper such as
   `.effigy/cache/sources/<generation>/<source>/scripts/…` (Acowtancy, effigy#385).
   A step command, its Rhai path and a managed process command now name the
-  object the lock publishes at the moment they start — for a managed run, after
-  its setup steps and its environment are up, and in the container mount a
-  container-routed command was translated to — and only generations nothing
-  pins are removed (contract 020).
+  object the lock publishes at the moment they start. A managed run renders its
+  process commands only after its setup steps and its environment `up` have
+  run, and a container-routed command resolves in the mount it was translated
+  to; only generations nothing pins are removed (contract 020).
 - **A leaked test helper fails its selector.** Test fixtures and loops sleep
   between checks and have deadlines, so no fixture spins a core; a helper that
   outlives its test is named and killed by the suite sweep.

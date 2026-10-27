@@ -731,7 +731,7 @@ fn own_managed_run(
             return Err(error);
         }
     };
-    let prepare = |run: &mut TaskRun| -> Result<Vec<WorkloadSpec>, RunnerError> {
+    let prepare = |run: &mut TaskRun| -> Result<effigy_managed::ManagedTaskPlan, RunnerError> {
         {
             let _parent = run.enter();
             run_managed_setup_steps(
@@ -757,6 +757,11 @@ fn own_managed_run(
                 true,
             )?;
         }
+        Ok(plan)
+    };
+    // Rendered after the environment's own Prepare published its generation,
+    // so a container-routed command never names the one it removed.
+    let workloads = |_: &mut TaskRun, plan: effigy_managed::ManagedTaskPlan| {
         managed_workloads(
             context,
             &plan,
@@ -765,7 +770,7 @@ fn own_managed_run(
             container_repo_root.as_deref(),
         )
     };
-    managed_run::own(owner, owned, prepare)
+    managed_run::own(owner, owned, prepare, workloads)
 }
 
 /// A managed session's host processes use the configured scratch directory

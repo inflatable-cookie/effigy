@@ -176,10 +176,16 @@ enum End {
 }
 
 /// Owns the run from admission to settle. Returns what the client reports.
-pub(in crate::runner) fn own(
+///
+/// `prepare` runs the run's setup steps and gateway and hands its result to
+/// `workloads`, which renders the commands only once the environment is up, so
+/// a container `up` that publishes a source generation is never rendered
+/// around.
+pub(in crate::runner) fn own<T>(
     owner: OwnerSession,
     plan: OwnedRun,
-    prepare: impl FnOnce(&mut TaskRun) -> Result<Vec<WorkloadSpec>, RunnerError>,
+    prepare: impl FnOnce(&mut TaskRun) -> Result<T, RunnerError>,
+    workloads: impl FnOnce(&mut TaskRun, T) -> Result<Vec<WorkloadSpec>, RunnerError>,
 ) -> Result<Option<String>, RunnerError> {
     let OwnerSession {
         mut session,
@@ -238,7 +244,7 @@ pub(in crate::runner) fn own(
         lost_while_blocked: false,
         health: None,
     };
-    let end = owner.start(&mut run, &plan, prepare);
+    let end = owner.start(&mut run, &plan, prepare, workloads);
     let end = match end {
         Ok(()) => owner.supervise(&mut run),
         Err(end) => end,
@@ -265,13 +271,15 @@ struct Owner {
 }
 
 impl Owner {
-    /// Setup, gateway and environment, each after `Admitted` (K3). A stop
-    /// is observed at every wait boundary these phases offer.
-    fn start(
+    /// Setup, gateway, environment and the process commands, each after
+    /// `Admitted` (K3). A stop is observed at every wait boundary these phases
+    /// offer.
+    fn start<T>(
         &mut self,
         run: &mut TaskRun,
         plan: &OwnedRun,
-        prepare: impl FnOnce(&mut TaskRun) -> Result<Vec<WorkloadSpec>, RunnerError>,
+        prepare: impl FnOnce(&mut TaskRun) -> Result<T, RunnerError>,
+        workloads: impl FnOnce(&mut TaskRun, T) -> Result<Vec<WorkloadSpec>, RunnerError>,
     ) -> Result<(), End> {
         let watch = self.session.owner_watch().ok();
         let id = run.id();
@@ -296,8 +304,8 @@ impl Owner {
         });
         let (prepared, lost) = result;
         self.lost_while_blocked |= lost;
-        let workloads = match prepared {
-            Ok(workloads) => workloads,
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
             Err(error) => {
                 return Err(match pending_stop(run, watch.as_ref()) {
                     Some(cause) => End::Stopped(self.cause(cause)),
@@ -305,16 +313,6 @@ impl Owner {
                 })
             }
         };
-        self.workloads = workloads
-            .into_iter()
-            .map(|spec| Workload {
-                spec,
-                process: None,
-                exit: None,
-                starts: 0,
-                tail: String::new(),
-            })
-            .collect();
         if let Some(cause) = pending_stop(run, watch.as_ref()) {
             return Err(End::Stopped(self.cause(cause)));
         }
@@ -327,6 +325,28 @@ impl Owner {
             }
         }
         self.lost_while_blocked |= watch.as_ref().is_some_and(OwnerWatch::lost);
+        // The environment's `up` is itself a Prepare path (contract 020): it
+        // can publish a source generation and remove the one an earlier render
+        // named. The commands are therefore rendered here, after it.
+        let specs = match workloads(run, prepared) {
+            Ok(specs) => specs,
+            Err(error) => {
+                return Err(match pending_stop(run, watch.as_ref()) {
+                    Some(cause) => End::Stopped(self.cause(cause)),
+                    None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
+                })
+            }
+        };
+        self.workloads = specs
+            .into_iter()
+            .map(|spec| Workload {
+                spec,
+                process: None,
+                exit: None,
+                starts: 0,
+                tail: String::new(),
+            })
+            .collect();
         Ok(())
     }
 

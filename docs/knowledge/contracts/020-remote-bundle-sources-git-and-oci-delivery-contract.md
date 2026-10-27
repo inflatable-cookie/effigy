@@ -257,12 +257,14 @@ Prepare has already removed. A path under
 generation that happened to hold it: a step command, a Rhai step path and a
 managed run command are pointed at the object the lock selects at the moment
 they start, not at the generation the manifest load or plan resolved. In a
-managed run that moment is after its setup steps and after its environment is
-up — both Prepare paths — and again before a process restarts. A
-container-routed process command has already been rewritten to the checkout's
-mount when it starts, so the same source resolves under that spelling too. The
-run continues on the newly selected bytes, exactly as it does after its own
-Prepare, and nothing records an in-flight reference or delays the prune.
+managed run the process commands are rendered only after its setup steps and
+its environment `up` have run — both Prepare paths — so a container `up` that
+publishes a generation is never rendered around — and they are resolved again
+as each process starts, including on a restart. A container-routed process
+command has been rewritten to the checkout's mount by then, so the same source
+resolves under that spelling too. The run continues on the newly selected
+bytes, exactly as it does after its own Prepare, and nothing records an
+in-flight reference or delays the prune.
 
 A bounded host-side `~/.effigy/cache/sources-known.json` hint records the source bytes each
 checkout selected, written by any Prepare. A short shared cache gate serializes publishers;
