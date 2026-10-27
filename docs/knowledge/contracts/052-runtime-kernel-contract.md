@@ -4,8 +4,7 @@ Q-010 storage model (Tom, 2026-10-22: "Approve"): foreground runs keep
 runtime state in memory; runs requiring retained state use their owning
 checkout journal; only gateway endpoints/routes, ports and admission facts use
 the machine store. §3.1, §7 and §11 govern classification, storage and migration.
-Engine adoption limits remain recorded per engine in that engine's own
-contract. §3.1, §7 and §11 govern classification, storage and migration.
+Engine adoption limits are recorded per engine in that engine's own contract.
 
 Local shell tasks, statically resolved local sequences and local test suites,
 including the interactive test TUI, use `ForegroundRun`. Ancestor gate custody,

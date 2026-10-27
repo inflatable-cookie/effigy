@@ -942,6 +942,7 @@ requirement. A missing container is already ended; a cleanup failure against a
 still-live exact container remains a failure. Whole-stack
 cleanup proves every project container's labels, including stopped services and
 orphans, before down and keeps every volume.
+
 A managed run's stop - `effigy <task> stop`, a SIGINT/SIGTERM settle,
 or a handover-driven stop - reports settled only after that same whole
 cascade finished and nothing the run owns is left. Task runs started by
