@@ -32,6 +32,10 @@ These guardrails define what must stay true while the product expands.
 
 ## Human-Facing Feedback
 
+Tom confirmed on 2026-10-27 (Q-017) that the full feedback behavior below is
+a v0.15 release gate across every command plane. Earlier foundation and
+command-plane batches do not waive exact-candidate coverage.
+
 Tom, 2026-10-24: "We need much better human facing feedback in all command
 planes in effigy - asynchronous spinners with a short label that says what is
 happening as it happens, and error messages that actually describe what is

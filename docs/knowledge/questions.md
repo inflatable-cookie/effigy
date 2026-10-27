@@ -552,3 +552,24 @@ mount evidence. Until then live Colima fixtures keep the bounded `~/.cache`
 staging exception. Once the mount works, move those fixtures to Builds scratch
 and close papercut `62e6b400-03df-411b-9368-846ccffbad4a`. Barge may later
 own this under Barge Q-009; that does not change the interim install gate.
+
+## Q-017: Workspace client and operator feedback at v0.15
+
+Status: answered
+Asked: 2026-10-27
+Answered: 2026-10-27 by Tom
+Owners: Queue lanes `v015-workspace-client` and `operator-feedback`; [product guardrails](architecture/product-guardrails.md#human-facing-feedback)
+
+Full container-mode workspace-client coverage remains a v0.15 release gate:
+Acowtancy and CBS must pass the lane's coverage matrix, and the authenticated
+host channel must be qualified on Colima, Docker Desktop and Linux Docker
+Engine. Hybrid mode must provision no guest Effigy. The plan's `later` horizon
+orders this work after Q-011 simplification; it does not waive the release
+criterion.
+
+The complete human-facing feedback ruling also blocks v0.15. Every command
+plane must show the live, subject-named terminal steps and actionable errors
+defined in the product guardrails. Existing feedback work (#312 and #315) is a
+starting point, not automatic qualification of every plane. The planner
+checks the exact candidate and briefs any observed gaps before release gates;
+the full spinner rollout is not deferred to a later version.
