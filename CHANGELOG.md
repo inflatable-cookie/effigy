@@ -7,13 +7,18 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
-- **Upgrading from v0.14.1 recreates each stack's containers once** (Q-012 §3,
-  effigy#373). Nothing is imported from an earlier release: the first `up`
-  reconciles a running v0.14.1 stack through the ordinary apply, so Compose
-  recreates each service whose render or labels changed. Named volumes and
-  Compose project names are unchanged between v0.14.1 and v0.15, so the data
-  stays; shared services are reused in place. Proven live with the released
-  v0.14.1 binary against a local plus shared `mariadb` stack. See
+- **Upgrading from v0.14.1 recreates a local catalog service once, on the same
+  named volume** (Q-012 §3, effigy#373). Nothing is imported from an earlier
+  release: the first `up` reconciles a running v0.14.1 stack through the
+  ordinary apply, so Compose recreates each service whose render or labels
+  changed. A 2026-10-27 live proof at head `16cee887`, with the released
+  v0.14.1 binary and this branch on a local catalog `mariadb` fixture, showed
+  the same `<project>-<service>-data` volume and the same rows after v0.14.1
+  `down` then this branch's `up`, after an `up` over the still-running v0.14.1
+  stack, and across a further idempotent `up`. Shared-service continuity is
+  unproven (a v0.14.1 shared MariaDB fails during initialisation on that shape)
+  and is tracked as separate Queue lead `44b83952`. Guidance only, conditional
+  on v0.15 qualification; not a release or install instruction. See
   [guide 085](docs/guides/085-v0.15.0-consumer-migration.md#upgrading-from-v0141).
 - **The runtime restarts a stopped service.** Effigy asks the runtime for
   `restart: unless-stopped` on every container `up` started whose stack declares
