@@ -78,10 +78,8 @@ fn every_command_a_refusal_suggests_parses() {
     // The engine's own busy sentence is covered by
     // `effigy-containers` (`the_busy_refusal_text_names_the_holder_the_gate_recorded`);
     // here every suggestion comes from a refusal this CLI actually renders.
-    let mut commands = Vec::new();
-    for text in [held_environment_refusal(vec![&held, &background])] {
-        commands.extend(suggested_commands(&text));
-    }
+    let text = held_environment_refusal(vec![&held, &background]);
+    let commands = suggested_commands(&text);
     assert!(
         commands
             .iter()

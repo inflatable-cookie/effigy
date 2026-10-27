@@ -83,8 +83,8 @@ pub(in crate::runner) fn should_cleanup_interactive_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_interactive_session_ownership, should_cleanup_interactive_session, CleanupPolicy,
-        InteractiveSessionIntent, RuntimeOwnership, SessionReadinessState,
+        classify_interactive_session_ownership, CleanupPolicy, InteractiveSessionIntent,
+        RuntimeOwnership, SessionReadinessState,
     };
 
     #[test]
