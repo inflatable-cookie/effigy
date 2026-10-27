@@ -2273,3 +2273,147 @@ fn an_ambiguous_hosted_answer_fails_the_gate_and_binds_nothing() {
     );
     assert!(remote_tags(&hosted).is_empty());
 }
+
+#[test]
+fn long_gate_gets_fresh_settlement_budget() {
+    use effigy_kernel::{
+        ctx::*,
+        observe::Observed,
+        root::StateRoot,
+        run::{self, EffectState, Phase},
+        store::Store,
+    };
+    let fixture = fixture("long-gate-budget");
+    single_identity_project(&fixture);
+    write(
+        &fixture.root,
+        "gates/pre.sh",
+        "#!/bin/sh\nsleep 1\necho pre\n",
+    );
+    commit_all(&fixture.root, "slow gate");
+    git(&fixture.root, &["push"]);
+    let mut effects = TestEffects::new(&fixture.root);
+    let outcome = run_release_with_budget(
+        &request(&fixture, ReleaseAction::Run, Some(ReleaseStage::PreGates)),
+        &mut effects,
+        &mut SilentGateObserver,
+        std::time::Duration::from_millis(500),
+    )
+    .expect("long gate settles");
+    assert!(outcome.succeeded());
+    let op = OperationContext::new(
+        Deadline::At(std::time::Instant::now() + std::time::Duration::from_secs(30)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 65536,
+            log_rotate: 8 << 20,
+            log_keep: 2,
+            line_max: 65536,
+            queue_bytes: 1 << 20,
+            probe_concurrency: 2,
+        },
+        EffectClass::Observe,
+        Placement::Host,
+    );
+    let observe = op.observe().unwrap();
+    let location = effigy_kernel::location::CheckoutLocation {
+        root: fixture.root.clone(),
+    };
+    let Observed::Verified(root, _) =
+        StateRoot::checkout_observe_in(&observe, &fixture.home, &location)
+    else {
+        panic!("state root")
+    };
+    let Observed::Verified(reader, _) = Store::read(&observe, &root) else {
+        panic!("store")
+    };
+    let id = outcome.record.run_id.parse().unwrap();
+    let Observed::Verified(summary, _) = run::summary(&reader, id) else {
+        panic!("summary")
+    };
+    assert_eq!(summary.phase, Phase::Closed);
+    assert_eq!(summary.cleanup_complete, Some(true));
+    let Observed::Verified(effects, _) = run::effects(&reader, id) else {
+        panic!("effects")
+    };
+    assert!(effects
+        .iter()
+        .all(|effect| effect.state != EffectState::Applied));
+}
+
+#[test]
+fn interrupted_release_settles_without_advancing_stages() {
+    let fixture = fixture("settle-only");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    let session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
+    let state = session.state().unwrap();
+    let id = new_run_id().unwrap();
+    let mut run = session.begin(id, &mut ReportsOnly).unwrap();
+    let mut record = paused.record.clone();
+    record.run_id = id.to_string();
+    state.write_record(&record, &mut run).unwrap();
+    run.set_engine_record(&serde_json::to_value(record.checkpoint(&state.record_path)).unwrap())
+        .unwrap();
+    assert_eq!(current_record(&fixture).status, record.status);
+    drop(run);
+    let before = current_record(&fixture);
+    assert_eq!(before.status, ReleaseRunStatus::Failed);
+    assert!(before
+        .errors
+        .iter()
+        .any(|e| e.contains("settlement pending")));
+    let settled = settle_release(&fixture.home, &fixture.root, &record.release_id).unwrap();
+    assert_eq!(settled.run_id, id.to_string());
+    assert_eq!(settled.stage, record.stage);
+    assert_eq!(settled.status, ReleaseRunStatus::Failed);
+    assert!(settled
+        .errors
+        .iter()
+        .any(|e| e.contains("stage outcome: interrupted")));
+    assert!(!settled
+        .errors
+        .iter()
+        .any(|e| e.contains("settlement pending")));
+    assert_eq!(
+        ReleaseReceipt::from_record(&settled),
+        ReleaseReceipt::from_record(&current_record(&fixture))
+    );
+    assert!(!ReleaseReceipt::from_record(&settled).published);
+    assert!(effects.pushes.is_empty());
+}
+
+#[test]
+fn process_cleanup_budget_starts_after_child_exit() {
+    let fixture = fixture("process-cleanup-budget");
+    single_identity_project(&fixture);
+    let session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
+    let mut run = session
+        .begin(new_run_id().unwrap(), &mut ReportsOnly)
+        .unwrap();
+    let effects = GitEffects::with_executable(&fixture.root, custody_fixture());
+    let output = effects
+        .execute_with_cleanup_budget(
+            &mut run,
+            vec!["/bin/sh".into(), "-c".into(), "sleep 1".into()],
+            &fixture.root,
+            &BTreeMap::new(),
+            "slow fixture child",
+            std::time::Duration::from_millis(500),
+        )
+        .unwrap();
+    assert!(output.status.success());
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        run.settle(&session.cleanup().unwrap(), &mut ReportsOnly)
+            .unwrap()
+            .cleanup(),
+        effigy_kernel::outcome::CleanupOutcome::Complete
+    );
+}

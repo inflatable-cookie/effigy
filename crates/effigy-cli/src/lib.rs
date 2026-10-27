@@ -848,6 +848,10 @@ pub enum ReleaseSubcommand {
     ResumeRun {
         run: String,
     },
+    /// Settle an interrupted invocation without advancing stages.
+    Settle {
+        run: String,
+    },
     /// `effigy release approve <run>`: pass an approval checkpoint.
     Approve {
         run: String,

@@ -290,6 +290,7 @@ impl effigy_kernel::record::Record for ReleaseRecord {
 /// Each settlement gets a fresh bounded cleanup context.
 pub struct ReleaseSession {
     cx: EffectContext,
+    cleanup_budget: Duration,
     root: StateRoot,
     checkout: CheckoutId,
     pub owner: ResourceId,
@@ -308,6 +309,14 @@ impl std::fmt::Debug for ReleaseSession {
 
 impl ReleaseSession {
     pub fn open(home: &Path, repo_root: &Path) -> Result<Self, ReleaseError> {
+        Self::open_with_budget(home, repo_root, CLEANUP_BUDGET)
+    }
+
+    pub(super) fn open_with_budget(
+        home: &Path,
+        repo_root: &Path,
+        cleanup_budget: Duration,
+    ) -> Result<Self, ReleaseError> {
         if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
             return Err(ReleaseError::TaskInvocation(
                 "release mutation requires host authority".into(),
@@ -337,6 +346,7 @@ impl ReleaseSession {
         };
         Ok(Self {
             cx,
+            cleanup_budget,
             root,
             checkout,
             owner,
@@ -407,7 +417,7 @@ impl ReleaseSession {
             .observe()
             .map_err(|_| storage_error("record observation context"))?;
         match Store::read(&observe, &self.root) {
-            Observed::Verified(reader, _) => project_cleanup(&reader, record),
+            Observed::Verified(reader, _) => project_cleanup(&observe, &self.root, &reader, record),
             Observed::Absent(_) => Ok(()),
             Observed::Unknown(reason) => {
                 Err(storage_error(format!("journal is unreadable: {reason:?}")))
@@ -435,9 +445,27 @@ impl ReleaseSession {
     }
 
     pub fn cleanup(&self) -> Result<CleanupContext, ReleaseError> {
-        operation().cleanup(CLEANUP_BUDGET).map_err(|_| {
-            ReleaseError::TaskInvocation("release cleanup budget is unusable".into())
-        })
+        operation()
+            .cleanup(self.cleanup_budget)
+            .map_err(|_| ReleaseError::TaskInvocation("release cleanup budget is unusable".into()))
+    }
+
+    /// Settle exactly the named journaled invocation, without starting a release stage.
+    pub fn settle_interrupted(&self, id: RunId) -> Result<(), ReleaseError> {
+        let outcome = effigy_kernel::run::settle_interrupted(
+            &self.cx,
+            &self.root,
+            &self.owner,
+            id,
+            next_invocation(),
+            &self.cleanup()?,
+            &mut ReportsOnly,
+        )
+        .map_err(|error| storage_error(format!("release settlement failed: {error}")))?;
+        if outcome.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
+            return Err(storage_error("release settlement left unresolved cleanup"));
+        }
+        Ok(())
     }
 
     /// The kernel run id of the last invocation, when the journal knows it.
@@ -565,7 +593,7 @@ pub fn read_release_record(
             }
             let mut record = state.read_record()?.ok_or_else(|| storage_error(format!(
                 "release {} has a checkpoint but its record is missing; preserving the journal for recovery", checkpoint.release_id)))?;
-            project_cleanup(&reader, &mut record)?;
+            project_cleanup(&observe, &root, &reader, &mut record)?;
             Ok(Some(record))
         }
         None => Ok(None),
@@ -574,20 +602,49 @@ pub fn read_release_record(
 
 /// Incomplete cleanup stays in the journal. Project it without a late file
 /// write after the owner's gate was released by settle.
-fn project_cleanup(reader: &StoreReader, record: &mut ReleaseRecord) -> Result<(), ReleaseError> {
+fn project_cleanup(
+    observe: &effigy_kernel::ctx::ObserveContext,
+    root: &StateRoot,
+    reader: &StoreReader,
+    record: &mut ReleaseRecord,
+) -> Result<(), ReleaseError> {
+    use effigy_kernel::run::RunStatus;
     let id = record.run_id.parse::<RunId>().map_err(storage_error)?;
-    match effigy_kernel::run::summary(reader, id) {
-        Observed::Verified(summary, _) if summary.cleanup_complete == Some(false) => {
+    match effigy_kernel::run::status(observe, root, reader, id, next_invocation()) {
+        Observed::Verified(RunStatus::Live(_), _) => {}
+        Observed::Verified(RunStatus::Interrupted { .. }, _) => {
             record.status = super::record::ReleaseRunStatus::Failed;
-            record.errors.push(format!(
-                "release Run {} left unresolved cleanup; `effigy release receipt {}` lists it",
-                record.run_id, record.release_id
-            ));
+            record.errors.push(format!("release Run {} is interrupted; settlement pending; `effigy release settle {}` settles it without advancing stages", record.run_id, record.release_id));
+        }
+        Observed::Verified(
+            RunStatus::Closed {
+                workload, complete, ..
+            },
+            _,
+        ) => {
+            if matches!(
+                workload,
+                effigy_kernel::outcome::WorkloadOutcome::Interrupted
+            ) {
+                record.status = super::record::ReleaseRunStatus::Failed;
+                record.errors.push(format!(
+                    "release stage outcome: interrupted (Run {})",
+                    record.run_id
+                ));
+            }
+            if !complete {
+                record.status = super::record::ReleaseRunStatus::Failed;
+                record.errors.push(format!("release stage outcome: {workload}; release settlement incomplete for Run {}; `effigy release settle {}` retries cleanup", record.run_id, record.release_id));
+            }
         }
         Observed::Unknown(reason) => {
-            return Err(storage_error(format!("cleanup is unknown: {reason:?}")))
+            return Err(storage_error(format!(
+                "release Run status is unknown: {reason:?}"
+            )))
         }
-        _ => {}
+        Observed::Absent(_) => {
+            return Err(storage_error("release Run is missing from the journal"))
+        }
     }
     Ok(())
 }

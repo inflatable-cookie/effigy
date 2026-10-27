@@ -179,6 +179,7 @@ GLIBC and Homebrew checks) become Effigy repo tasks, wired as gates or as
 | `effigy release --plan` | The whole pipeline with no mutation: versions, files, gates, artifacts, targets. Replaces `simulate`. |
 | `effigy release run [--to <stage>]` | Starts a Run, or continues the active one, up to `--to` (default `closeout`). Replaces `prepare` plus `execute`. |
 | `effigy release resume <run>` | Continues an interrupted Run from its last checkpoint. |
+| `effigy release settle <run>` | Settles the recorded invocation without advancing stages. |
 | `effigy release approve <run>` | Passes an approval checkpoint. |
 | `effigy release gates [--stage pre\|certify]` | Runs gates standalone, with no Run. |
 | `effigy release receipt <run> [--json]` | Prints a receipt. Replaces `evidence summary`. |
@@ -401,8 +402,7 @@ exclude file; tracked receipts remain an explicit `closeout` task. Status and
 receipt reads create nothing, and a missing checkpoint record is unknown.
 Candidate reset and checkpoint publication happen after admission under the
 release owner's gate. Record replacement writes and syncs a private temporary,
-renames it and syncs the directory through the kernel. Cleanup failures are
-projected from the retained journal without a late write after gate release.
+renames it and syncs the directory through the kernel. Cleanup gets a fresh 60-second budget when settlement begins. `release settle <run>` acquires the owner gate and settles the recorded invocation without planning or running stages. Interrupted workload and pending or incomplete settlement are projected separately from the journal into the receipt without a late write after gate release.
 
 Legacy relocation preserves the old release resource's canonical identity and
 run ids in the checkout journal, with a local import alias for subsequent

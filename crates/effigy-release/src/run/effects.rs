@@ -281,6 +281,18 @@ impl GitEffects {
         extra: &BTreeMap<String, String>,
         label: &str,
     ) -> Result<std::process::Output, ReleaseError> {
+        self.execute_with_cleanup_budget(run, argv, cwd, extra, label, Duration::from_secs(30))
+    }
+
+    pub(super) fn execute_with_cleanup_budget(
+        &self,
+        run: &mut Run<'_>,
+        argv: Vec<OsString>,
+        cwd: &Path,
+        extra: &BTreeMap<String, String>,
+        label: &str,
+        cleanup_budget: Duration,
+    ) -> Result<std::process::Output, ReleaseError> {
         use effigy_kernel::{
             ctx::*,
             custody::*,
@@ -374,7 +386,7 @@ impl GitEffects {
             })?;
             std::thread::sleep(Duration::from_millis(5));
         };
-        let cleanup = op.cleanup(Duration::from_secs(30)).map_err(|error| {
+        let cleanup = op.cleanup(cleanup_budget).map_err(|error| {
             ReleaseError::TaskInvocation(format!("release process cleanup context: {error:?}"))
         })?;
         let closed = process.stop(&cleanup);

@@ -2111,6 +2111,7 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- Release settlement receives a fresh 60-second budget after stages; `release settle <run>` recovers an interrupted invocation without advancing stages.
 - A run step opens the bundle source the checkout lock selects when it runs.
   A step is itself a Prepare path (`bundle sync`, `container up`), so it could
   publish a new source generation and remove the generation every later step

@@ -105,6 +105,16 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             args.output_json,
             release_run_action(&resolved, ReleaseAction::Resume { run }, None)?,
         ),
+        ReleaseSubcommand::Settle { run } => {
+            let home = effigy_release::release_home()?;
+            let record = effigy_release::settle_release(&home, &resolved.resolved_root, &run)?;
+            let receipt = effigy_release::ReleaseReceipt::from_record(&record);
+            if args.output_json {
+                Ok(render_release_receipt_json(&receipt))
+            } else {
+                Ok(render_release_receipt_text(&receipt))
+            }
+        }
         ReleaseSubcommand::Approve { run } => render_release_run(
             args.output_json,
             release_run_action(&resolved, ReleaseAction::Approve { run }, None)?,

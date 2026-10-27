@@ -27,6 +27,7 @@ If you only need the shortest operator path, use:
 - `run --to certify`
 - `run`
 - `resume <run>`
+- `settle <run>`
 - `approve <run>`
 - `decide <run> --published|--not-published`
 - `receipt <run>`
@@ -52,6 +53,7 @@ Use the commands by intent:
   verify and closeout, with a checkpoint after every stage
 - `resume <run>` to continue an interrupted Run from its last checkpoint,
   including a Run waiting on hosted evidence
+- `settle <run>` to settle an interrupted invocation without executing another stage; inspect its receipt before deciding whether to resume
 - `approve <run>` to pass an approval checkpoint
 - `decide <run> --published|--not-published` to record an unknown `task` target
   outcome that has no `check` task to reconcile it
