@@ -282,9 +282,10 @@ the other fixtures cannot:
   `$` survives Compose interpolation;
 - a client of a shared MariaDB resolves `host.docker.internal` while a local
   MariaDB of the same engine stays local;
-- a primary checkout and a linked worktree of the same fixture keep distinct
-  project identities: each declares its own environment, domain and listener, so
-  both stay up at the same time.
+- a primary checkout and a linked worktree of the same fixture, in one
+  environment and sharing one backing service, keep distinct scoped project
+  identities and distinct effective hosts: the linked checkout's first `up`
+  takes its own scope, and both checkouts stay up at the same time.
 
 It runs under `/Volumes/Builds/scratch/effigy/` with private scratch checkouts
 and removes what it created. It never starts, stops or reconfigures a runtime,
@@ -295,9 +296,13 @@ The selector runs both halves in one step. The live half brings the same
 fixture up on the Colima profile: a build service whose Dockerfile uses
 `ARG`/`${VAR}`/`$var`, a shared MariaDB beside a local one of the same engine
 with a client resolving `host.docker.internal`, a primary and a linked worktree
-with distinct project names, a second `up` that keeps every container ID, no
+in one environment and on one backing service, with distinct scoped project
+names and effective hosts, a second `up` that keeps every container ID, no
 `EFFIGY_` value in any container, `container <env> restart <process>` on a
 host-process listener, and a `down` that leaves no container, listener or route.
+The linked checkout is never prepared before its first `up`: the proof records
+its unprepared host map (no scope token, declared hosts) first, so that `up`
+exercises the fresh-checkout path.
 The listener publishes its route into the fixture's own private gateway root
 (`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`, loopback DNS/HTTP/HTTPS with its own CA),
 so this proof never uses the machine gateway that the operator-path test owns;

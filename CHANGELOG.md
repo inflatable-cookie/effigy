@@ -861,14 +861,16 @@ During v0.x, MINOR bumps may include breaking changes.
   and asserts that a `build` names its Dockerfile content beside its context, no
   `aliases: null` survives, a shared service carries no checkout path, a
   client reaches a shared MariaDB through `host.docker.internal` while a local
-  one stays local, and a primary checkout and its linked worktree keep distinct
-  project identities. It never runs in per-task validation. See
+  one stays local, and a primary checkout and its linked worktree — one
+  environment, one backing service — keep distinct scoped project identities and
+  effective hosts. It never runs in per-task validation. See
   [guide 013](docs/guides/013-testing-orchestration.md#live-consumer-shapes).
   The same selector step then brings that fixture up on the Colima profile,
   checks the build arguments, the shared-service client, an idempotent re-up,
-  the host-process restart and the linked worktree (in its own environment, so
-  both checkouts stay up together), tears it down by the exact ids and names it
-  owns and fails if anything it owns survives. The listener publishes into
+  the host-process restart and the linked worktree's fresh first `up` (which
+  takes its own scope while the primary keeps its own), tears it down by the
+  exact ids and names it owns and fails if anything it owns survives. The
+  listener publishes into
   the fixture's own private gateway root, so the proof never uses the machine
   gateway and re-verifies that gateway's listeners, PIDs and executables. It stages under
   `/Volumes/Builds/scratch/effigy/` and fails at its own preflight, naming the

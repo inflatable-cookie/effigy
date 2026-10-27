@@ -260,13 +260,6 @@ ONE_OFF_STAGING = Path("/Users/tom/.effigy-consumer-shapes-374")
 
 
 LISTENER_DOMAIN = "z374-consumer-shapes.test"
-# The linked checkout declares its own environment. Its render is not scoped
-# before `up` prepares that checkout's scope, so two checkouts cannot share one
-# declared domain: the second `up` would collide with the route the first still
-# serves. Each environment therefore names its own domain and listener, and
-# both stay up at the same time.
-LINKED_ENVIRONMENT = "z374proof-linked"
-LINKED_LISTENER_DOMAIN = "z374-consumer-shapes-wt.test"
 
 LIVE_MANIFEST = """[containers]
 default = "%(environment)s"
@@ -306,37 +299,6 @@ timeout_secs = 120
 
 [containers.%(environment)s.host_processes.listener.route]
 domain = "%(domain)s"
-tls = false
-
-[containers.%(linked_environment)s]
-primary_service = "client"
-working_dir = "/workspace"
-
-[containers.%(linked_environment)s.services.client]
-catalog = "z374-client"
-
-[containers.%(linked_environment)s.services.db]
-catalog = "mariadb"
-
-[containers.%(linked_environment)s.dns]
-base_domain = "%(linked_domain)s"
-
-[[containers.%(linked_environment)s.host_processes]]
-name = "listener"
-run = 'exec python3 -m http.server "$PORT" --bind "$HOST"'
-cwd = "."
-restart = "never"
-
-[containers.%(linked_environment)s.host_processes.listener]
-bind = "127.0.0.1:0"
-
-[containers.%(linked_environment)s.host_processes.listener.readiness]
-path = "/"
-status = 200
-timeout_secs = 120
-
-[containers.%(linked_environment)s.host_processes.listener.route]
-domain = "%(linked_domain)s"
 tls = false
 """
 
@@ -469,25 +431,31 @@ def private_routes(root_path, env):
     return [route.get("domain") for route in (payload.get("routes") or [])]
 
 
-def environment_routes(repo_root, environment, env):
-    """One environment's own host map after `up`: every route's effective name,
-    which is what a consumer resolves.
+def host_map(repo_root, environment, env):
+    """The `effigy.container.hosts.v1` payload for one environment and checkout.
 
-    The host map is keyed by the environment that is named on the command line,
-    not by the checkout: the bare form answers for the manifest's default
-    environment, so naming it is what keeps the two environments' routes apart.
-    A linked checkout's names are scoped when `up` prepares its scope, so this
-    records what the product resolved instead of assuming the declared name
-    survived."""
+    The environment is named on the command line, because the bare form answers
+    for the manifest's default environment. The payload carries the scope the
+    checkout has right now and every route's declared and effective host, which
+    is what a consumer resolves; a linked checkout's names change once `up`
+    prepares its scope, so the proof records what the product reported rather
+    than assuming either name."""
     payload = json.loads(
         effigy(
             "container", environment, "hosts", "--json", "--repo", repo_root, cwd=repo_root, env=env
         )
     )
     assert payload.get("ok"), payload.get("error")
-    return sorted(
-        {route["effective"] for route in (payload["result"].get("routes") or []) if route.get("effective")}
-    )
+    return payload["result"]
+
+
+def effective_hosts(report):
+    """The effective host of every route in a hosts payload."""
+    return {route["effective"] for route in (report.get("routes") or []) if route.get("effective")}
+
+
+def declared_hosts(report):
+    return {route["declared"] for route in (report.get("routes") or []) if route.get("declared")}
 
 
 def live_env(home):
@@ -546,13 +514,7 @@ def live_fixture(staging):
     (catalog / "compose.fragment.yml").write_text(CLIENT_FRAGMENT)
     (catalog / "Dockerfile").write_text(CLIENT_DOCKERFILE)
     (repo / "effigy.toml").write_text(
-        LIVE_MANIFEST
-        % {
-            "environment": ENVIRONMENT,
-            "domain": LISTENER_DOMAIN,
-            "linked_environment": LINKED_ENVIRONMENT,
-            "linked_domain": LINKED_LISTENER_DOMAIN,
-        }
+        LIVE_MANIFEST % {"environment": ENVIRONMENT, "domain": LISTENER_DOMAIN}
     )
     home.mkdir()
     gateway = staging / "gateway"
@@ -735,7 +697,7 @@ def live_identity(staging):
     repo, worktree, home = live_paths(staging)
     env = live_env(home)
     primary = render(repo, ENVIRONMENT, env=env)
-    linked = render(worktree, LINKED_ENVIRONMENT, env=env)
+    linked = render(worktree, ENVIRONMENT, env=env)
     published = sorted(
         {
             f"{name}:{port}"
@@ -800,9 +762,8 @@ def approval_core(staging):
         f"linked {worktree}",
         f"home {home}",
         f"environment {ENVIRONMENT}",
-        f"linked environment {LINKED_ENVIRONMENT}",
         f"projects {identity['primary_project']} {identity['linked_project']}",
-        f"declared listener routes {LISTENER_DOMAIN} {LINKED_LISTENER_DOMAIN}",
+        f"declared listener route {LISTENER_DOMAIN}",
         "containers " + " ".join(names["containers"]),
         "volumes " + " ".join(names["volumes"]),
         "networks " + " ".join(names["networks"]),
@@ -810,7 +771,8 @@ def approval_core(staging):
         "protected " + " ".join(PROTECTED),
         "machine-gateway 80 443 15353 unchanged by pid and executable sha256",
         "steps up up-again no-effigy-env build-args shared-client local-stays-local "
-        "restart-process linked-worktree down shared-delete baseline-check",
+        "restart-process linked-first-up scoped-hosts shared-identity down shared-delete "
+        "baseline-check",
     ]
     return "\n".join(lines)
 
@@ -852,8 +814,7 @@ def print_frozen_plan():
     print(f"primary checkout:  {repo}")
     print(f"linked worktree:   {worktree}")
     print(f"fixture HOME:      {home} (the shared render lives here, not in the real ~)")
-    print(f"environment:       {ENVIRONMENT}")
-    print(f"linked environment: {LINKED_ENVIRONMENT}")
+    print(f"environment:       {ENVIRONMENT} (one environment, used by both checkouts)")
     print(f"projects:          primary={identity['primary_project']} linked={identity['linked_project']}")
     print("services:          client (catalog z374-client, build: busybox:latest + ARG/${VAR}/$var),")
     print("                   db (local mariadb:10.11), backing (shared mariadb:10.11)")
@@ -864,8 +825,7 @@ def print_frozen_plan():
     print(f"  delete networks {', '.join(names['networks'])}  (labels proved first)")
     print(f"shared project:    {shared['project']}")
     print("host process:      listener, bind 127.0.0.1:0 (reserved at up), readiness GET / 200")
-    print(f"listener routes:   {LISTENER_DOMAIN} (primary), {LINKED_LISTENER_DOMAIN} (linked), each on")
-    print("                   the fixture's own private gateway")
+    print(f"listener route:    {LISTENER_DOMAIN} declared, scoped per checkout once `up` prepares it")
     print(f"gateway root:      {staging / 'gateway'} (0700, canonical; loopback DNS/HTTP/HTTPS, own CA, port 0)")
     print("ports:             OS/gateway assigned at up and recorded, never fixed")
     machine = machine_gateway_baseline()
@@ -888,9 +848,10 @@ def print_frozen_plan():
     print("                   labels instead of trusting the render-time name.")
     print("shared database:   the fixture's shared MariaDB declares database=z374proof, so its")
     print("                   project name is its own and cannot collide with a consumer's.")
-    print("linked domain:     the linked checkout declares its own environment, domain and")
-    print("                   listener, because its render is not scoped before `up` prepares its")
-    print("                   scope. Both checkouts therefore stay up at the same time.")
+    print("linked scope:      both checkouts use this one environment and its shared service.")
+    print("                   The linked worktree is never prepared before its own `up`; that first")
+    print("                   `up` prepares its scope, so its effective hosts and project differ from")
+    print("                   the primary's while both stay up at the same time.")
     print("preflight, before the first `up`, all fail-closed:")
     for step in [
         "the staging root, its checkouts and its HOME must not exist",
@@ -908,13 +869,20 @@ def print_frozen_plan():
         "exec the client: MYSQL_HOST is host.docker.internal, /etc/hosts carries it, and",
         "                 ping resolves it through libc (BusyBox nslookup bypasses /etc/hosts)",
         "exec db: the local MariaDB did not take the shared host",
-        "start the fixture's own private gateway, then read each environment's own host map",
-        "                 (`container <env> hosts --json`; the bare form answers for the default) and",
-        "                 assert the two route sets are disjoint and both are registered there",
+        "start the fixture's own private gateway",
         "container z374proof restart listener; assert its PID changed",
-        "up the linked worktree in its own environment; assert its containers differ from the primary's",
-        "down both environments by their own checkout path",
-        "assert down left no container the runtime attributes to either checkout, and neither route remains",
+        "record the linked checkout's host map before anything starts it: no scope token and the",
+        "                 declared hosts, which is what makes its next command a fresh first up",
+        "up the linked worktree in the SAME environment; assert its containers differ from the primary's",
+        "read both host maps (`container z374proof hosts --json` per checkout) and assert the linked",
+        "                 one took scope kind worktree with a token and host key, its effective hosts",
+        "                 are disjoint from the primary's declared ones, and every effective host of",
+        "                 both is registered on the fixture's own gateway",
+        "assert both checkouts use the one shared MariaDB: the same shared project and the same",
+        "                 shared container id as before the linked up",
+        "down both checkouts in the same environment",
+        "assert down left no container the runtime attributes to either checkout, and none of their",
+        "                 effective hosts routed",
         "delete the shared project's containers by the exact ids its label query returns, then its volumes and networks",
         "assert none of the owned names remains, or fail and keep the staging root",
         "assert the baseline containers kept their ID, start time and mounts",
@@ -922,7 +890,7 @@ def print_frozen_plan():
         print(f"  - {step}")
     print("cleanup (always, in this order, each name checked against the hard deny and its labels):")
     print(f"  - effigy container {ENVIRONMENT} down --repo {repo}")
-    print(f"  - effigy container {LINKED_ENVIRONMENT} down --repo {worktree}")
+    print(f"  - effigy container {ENVIRONMENT} down --repo {worktree}")
     print(f"  - nerdctl ps -a --filter label=com.docker.compose.project={shared['project']}  (log every id)")
     print("  - nerdctl stop <exact id> && nerdctl rm <exact id>, then re-query the label filter")
     print("    until it reports no container, before any volume is touched")
@@ -958,7 +926,7 @@ def print_frozen_plan():
     print("      changes it, and `plan` prints the pair again)")
     print("Live actions either way: the fixture's own private gateway up/down, container up")
     print(f"twice, exec, restart, down, the fixture image build (FROM busybox:latest, already")
-    print(f"cached), publishing {LISTENER_DOMAIN} and {LINKED_LISTENER_DOMAIN} into that private root")
+    print(f"cached), publishing the scoped form of {LISTENER_DOMAIN} into that private root")
     print("only, and deleting only the owned names listed above. The machine gateway is never used:")
     print("item 7 owns that path, and this proof re-verifies its listeners, PIDs and executables afterwards.")
 
@@ -1126,12 +1094,9 @@ def labels_own(labels, name, projects, checkouts, stems=()):
     )
 
 
-# The linked project after `up` has prepared its scope: the checkout name, the
-# linked environment's project component and the scope token. A manifest with
-# more than one environment names projects `<checkout>-<environment>-dev`.
-LINKED_PROJECT = re.compile(
-    rf"^{re.escape(WORKTREE_DIR)}-{re.escape(LINKED_ENVIRONMENT)}-dev-wt-[0-9a-f]{{12}}$"
-)
+# The linked project once `up` has prepared its scope: the checkout name and the
+# scope token.
+LINKED_PROJECT = re.compile(rf"^{re.escape(WORKTREE_DIR)}-dev-wt-[0-9a-f]{{12}}$")
 
 
 def fixture_project_id(value, shared_project, exact_projects):
@@ -1477,9 +1442,32 @@ def live_run(staging, approval=None):
         assert shared["containers"] and owned_by(shared["containers"][0], "containers", shared["project"]), (
             "the shared backing service is not running as its own project"
         )
+        primary_shared = shared_project_containers(shared["project"])
+        assert len(primary_shared) == 1, (
+            "the fixture's shared project should be exactly one container",
+            primary_shared,
+        )
         checks.append(("the shared MariaDB runs as its own project", shared["project"]))
 
-        effigy("container", LINKED_ENVIRONMENT, "up", "--detach", "--repo", worktree, cwd=worktree, env=env)
+        # Before the linked checkout's first `up`, its scope is unprepared: the
+        # host map still reports the primary's identity and the declared hosts.
+        # Recording that state is what makes the `up` below provably a fresh
+        # first one, which is the product path Effigy #394 fixed.
+        before_linked = host_map(worktree, ENVIRONMENT, env)
+        assert (before_linked.get("scope") or {}).get("token") is None, (
+            "the linked worktree was already scoped before its first up",
+            before_linked.get("scope"),
+        )
+        assert (before_linked.get("scope") or {}).get("kind") == "primary", (
+            "an unscoped checkout should report the primary identity",
+            before_linked.get("scope"),
+        )
+        assert effective_hosts(before_linked) == declared_hosts(before_linked), (
+            "an unscoped checkout should resolve its declared hosts unchanged",
+            before_linked.get("routes"),
+        )
+
+        effigy("container", ENVIRONMENT, "up", "--detach", "--repo", worktree, cwd=worktree, env=env)
         linked_owned = owned_snapshot()
         worktree_containers = [
             (container_id, name)
@@ -1493,34 +1481,76 @@ def live_run(staging, approval=None):
         assert not ({name for _, name in second} & {name for _, name in worktree_containers}), (
             "the worktree reused the primary's container names"
         )
-        checks.append(("a primary and its linked worktree keep distinct containers", len(worktree_containers)))
+        checks.append(
+            ("a fresh first up in a linked worktree keeps its own containers", len(worktree_containers))
+        )
 
-        primary_routes = environment_routes(repo, ENVIRONMENT, env)
-        linked_routes = environment_routes(worktree, LINKED_ENVIRONMENT, env)
-        assert primary_routes, "the primary environment resolved no route"
-        assert linked_routes, "the linked environment resolved no route"
-        assert not set(primary_routes) & set(linked_routes), (
-            "both environments resolved the same host, so they would share one route",
-            primary_routes,
-            linked_routes,
+        primary_map = host_map(repo, ENVIRONMENT, env)
+        linked_map = host_map(worktree, ENVIRONMENT, env)
+        primary_scope = primary_map.get("scope") or {}
+        linked_scope = linked_map.get("scope") or {}
+        assert primary_scope.get("kind") == "primary" and primary_scope.get("token") is None, (
+            "the primary checkout took a scope it should not have",
+            primary_scope,
+        )
+        assert linked_scope.get("kind") == "worktree", (
+            "the linked checkout did not take its own scope on its first up",
+            linked_scope,
+        )
+        assert linked_scope.get("token") and linked_scope.get("host_key"), (
+            "the linked checkout has no scope token or host key after up",
+            linked_scope,
+        )
+        primary_effective = effective_hosts(primary_map)
+        linked_effective = effective_hosts(linked_map)
+        assert primary_effective and linked_effective, (primary_map.get("routes"), linked_map.get("routes"))
+        assert not primary_effective & linked_effective, (
+            "both checkouts resolved the same host, so they would share one route",
+            sorted(primary_effective),
+            sorted(linked_effective),
+        )
+        assert not linked_effective & declared_hosts(primary_map), (
+            "the linked checkout kept the primary's declared hosts",
+            sorted(linked_effective),
         )
         registered = set(private_routes(gateway_root, env))
-        for domain in primary_routes + linked_routes:
+        for domain in primary_effective | linked_effective:
             assert domain in registered, (
-                "a checkout route did not land in the fixture's own gateway",
+                "a checkout's effective host did not land in the fixture's own gateway",
                 domain,
                 sorted(registered),
             )
         checks.append(
             (
-                "primary and linked checkouts published their own routes at the same time",
-                " ".join(primary_routes + linked_routes),
+                "both checkouts served their own scoped effective hosts at once",
+                " ".join(sorted(primary_effective | linked_effective)),
+            )
+        )
+
+        # One shared backing service, not one per checkout: its exact container
+        # is the same one, and the linked checkout's own render names the same
+        # shared project the primary does.
+        assert shared_project_containers(shared["project"]) == primary_shared, (
+            "the linked up added or replaced the shared service's container",
+            primary_shared,
+            shared_project_containers(shared["project"]),
+        )
+        linked_render = render(worktree, ENVIRONMENT, env=env)
+        assert shared_project_of(linked_render)["project"] == shared["project"], (
+            "the linked checkout does not use the primary's shared service",
+            shared_project_of(linked_render)["project"],
+            shared["project"],
+        )
+        checks.append(
+            (
+                "both checkouts use the one shared MariaDB",
+                "%s %s" % (shared["project"], primary_shared[0][0][:12]),
             )
         )
 
         down(repo, ENVIRONMENT)
-        down(worktree, LINKED_ENVIRONMENT)
-        left_routes = sorted(set(private_routes(gateway_root, env)) & set(primary_routes + linked_routes))
+        down(worktree, ENVIRONMENT)
+        left_routes = sorted(set(private_routes(gateway_root, env)) & (primary_effective | linked_effective))
         assert left_routes == [], ("down left a checkout route behind", left_routes)
         after_down = owned_snapshot()
         left_local = [
@@ -1564,9 +1594,9 @@ def live_run(staging, approval=None):
         for pid in recorded_pids:
             print(f"[info] listener pid {pid}: {stop_own_pid(pid, staging, env)}", flush=True)
         if mutating:
-            for repo_root, environment in ((repo, ENVIRONMENT), (worktree, LINKED_ENVIRONMENT)):
+            for repo_root in (repo, worktree):
                 try:
-                    down(repo_root, environment)
+                    down(repo_root, ENVIRONMENT)
                 except Exception as failure_reason:
                     print(f"[warn] down {repo_root} failed: {failure_reason}", flush=True)
             try:
