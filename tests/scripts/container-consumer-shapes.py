@@ -318,8 +318,8 @@ shell = "/bin/sh"
 CLIENT_FRAGMENT = """services:
   {{ service_name }}:
     build:
-      context: {{ catalog_path }}
-      dockerfile: Dockerfile
+      context: {{ repo_root }}
+      dockerfile: {{ catalog_path }}/Dockerfile
       args:
         MARKER: "z374-build"
         SUFFIX: "{{ project_name }}"
@@ -595,12 +595,20 @@ def fixture_names(identity):
         "volumes": identity["shared"]["volumes"],
         "networks": identity["shared"]["networks"],
     }
+    local_volumes, local_networks = [], []
+    for project, document in identity["local_documents"]:
+        local_networks.append(f"{project}_default")
+        local_volumes.extend(
+            (spec or {}).get("name") or f"{project}_{key}"
+            for key, spec in (document.get("volumes") or {}).items()
+        )
     return {
         "local_containers": sorted(local),
+        "projects": sorted({identity["primary_project"], identity["linked_project"], identity["shared"]["project"]}),
         "shared": shared,
         "containers": sorted(local | set(shared["containers"])),
-        "volumes": shared["volumes"],
-        "networks": shared["networks"],
+        "volumes": sorted(set(shared["volumes"]) | set(local_volumes)),
+        "networks": sorted(set(shared["networks"]) | set(local_networks)),
     }
 
 
@@ -663,13 +671,16 @@ def live_identity(staging):
             for port in service.get("ports") or []
         }
     )
-    def services(result):
+    def document(result):
         compose = next(
             rendered["content"]
             for rendered in result["files"]
             if rendered["path"].endswith(".generated.compose.yml")
         )
-        return sorted((resolved(compose).get("services") or {}).keys())
+        return resolved(compose)
+
+    def services(result):
+        return sorted((document(result).get("services") or {}).keys())
 
     return {
         "repo": repo,
@@ -680,6 +691,10 @@ def live_identity(staging):
         "linked_project": project_name_of(linked),
         "primary_files": services(primary),
         "linked_files": services(linked),
+        "local_documents": [
+            (project_name_of(primary), document(primary)),
+            (project_name_of(linked), document(linked)),
+        ],
         "shared": shared_project_of(primary),
         "published": published,
     }
@@ -768,8 +783,8 @@ def print_frozen_plan():
     print("                   db (local mariadb:10.11), backing (shared mariadb:10.11)")
     print("owned names:")
     print(f"  down removes  {', '.join(names['local_containers'])}")
-    for kind, values in names["shared"].items():
-        print(f"  delete {kind:9} {', '.join(values)}  (labels proved first)")
+    print(f"  delete volumes  {', '.join(names['volumes'])}  (labels proved first)")
+    print(f"  delete networks {', '.join(names['networks'])}  (labels proved first)")
     print(f"shared project:    {shared['project']}")
     print("host process:      listener, bind 127.0.0.1:0 (reserved at up), readiness GET / 200")
     print(f"listener route:    {LISTENER_DOMAIN} on the fixture's own private gateway")
@@ -814,9 +829,8 @@ def print_frozen_plan():
     print("cleanup (always, in this order, each name checked against the hard deny and its labels):")
     print(f"  - effigy container {ENVIRONMENT} down --repo {repo}")
     print(f"  - effigy container {ENVIRONMENT} down --repo {worktree}")
-    for kind, values in names["shared"].items():
-        verb = {"containers": "nerdctl rm -f", "volumes": "nerdctl volume rm", "networks": "nerdctl network rm"}[kind]
-        print(f"  - {verb} {' '.join(values)}")
+    print(f"  - nerdctl volume rm {' '.join(names['volumes'])}")
+    print(f"  - nerdctl network rm {' '.join(names['networks'])}")
     print("  - effigy gateway down --private-state-root <fixture>/gateway")
     print("  - stop only PIDs this run recorded, after re-checking each PID's own command line")
     print(f"  - git -C {repo} worktree remove --force {worktree}")
@@ -962,27 +976,26 @@ def residue(names):
     }
 
 
-def remove_owned(shared, project):
-    """Delete the fixture's own shared project, labels first. Local containers
-    are `down`'s to remove and are never deleted here."""
+def remove_owned(names):
+    """Delete the fixture's own volumes and networks, labels first. Local
+    containers are `down`'s to remove and are never deleted here."""
     deleted = []
-    for kind in ("containers", "volumes", "networks"):
-        wanted = set(shared[kind])
+    for kind, resource, verb in (
+        ("volumes", "volume", ["volume", "rm"]),
+        ("networks", "network", ["network", "rm"]),
+    ):
+        wanted = set(names[kind])
         if not wanted:
             continue
-        if kind == "containers":
-            present = [name for _, name in owned_containers(sorted(wanted), include_stopped=True)]
-        else:
-            present = [name for name in runtime_named(kind) if name in wanted]
+        present = [name for name in runtime_named(resource) if name in wanted]
         for name in present:
             for marker in PROTECTED:
                 assert marker not in name, "refusing to delete protected %s" % name
-            assert owned_by(name, kind, project), (
-                "refusing to delete %s: its labels do not prove it belongs to %s" % (name, project)
+            assert any(owned_by(name, resource, project) for project in names["projects"]), (
+                "refusing to delete %s: its labels do not prove it belongs to this fixture" % name
             )
         if not present:
             continue
-        verb = {"containers": ["rm", "-f"], "volumes": ["volume", "rm"], "networks": ["network", "rm"]}[kind]
         run(
             ["colima", "-p", PROFILE, "ssh", "--", "sudo", "-n", "nerdctl", *verb, *present],
             root,
@@ -1136,7 +1149,7 @@ def live_run(staging, approval=None):
         assert hosts.get("result", {}).get("routes") == [], hosts.get("result", {}).get("routes")
         checks.append(("down left no container and no route", 0))
 
-        remove_owned(names["shared"], shared["project"])
+        remove_owned(names)
         left = residue(names)
         assert not any(left.values()), ("the owned names were not all deleted", left)
         checks.append(("the fixture's own shared container, volume and network are deleted", shared["project"]))
@@ -1159,7 +1172,7 @@ def live_run(staging, approval=None):
                 except Exception as failure_reason:
                     print(f"[warn] down {repo_root} failed: {failure_reason}", flush=True)
             try:
-                remove_owned(names["shared"], shared["project"])
+                remove_owned(names)
             except Exception as failure_reason:
                 print(f"[warn] owned cleanup failed: {failure_reason}", flush=True)
         try:
