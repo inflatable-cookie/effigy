@@ -7,6 +7,28 @@ use crate::supervise::Placement;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+/// Log command and custody stops to the same existing gateway log. Logging is
+/// best effort so an unavailable log never prevents settlement.
+pub fn record_gateway_stop(directory: &std::path::Path, cause: &str) {
+    use std::io::Write;
+    let line = serde_json::json!({
+        "event": "gateway_stop", "pid": std::process::id(),
+        "argv": std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        "cwd": std::env::current_dir().ok(), "cause": cause,
+    });
+    if let Ok(mut log) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("gateway.stderr.log"))
+    {
+        if let Err(error) = writeln!(log, "{line}") {
+            eprintln!("[gateway] cannot log stop: {error}");
+        }
+    } else {
+        eprintln!("[gateway] stop log unavailable: {line}");
+    }
+}
+
 /// One shared owner's current, positively closed operation. This replaces
 /// completed machine run history; it retains one bounded diagnostic only.
 #[derive(Debug, Clone, Serialize, Deserialize)]

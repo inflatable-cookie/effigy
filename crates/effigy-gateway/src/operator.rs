@@ -133,6 +133,7 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         config.proxy.bind_addr = http;
         config.proxy.tls_bind_addr = Some(https);
     }
+    require_fixture_isolation(&config)?;
     crate::setup::read_receipt(&home)?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -143,6 +144,37 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         ))
         .map_err(error)
 }
+/// Library-driven operator fixtures must select their own state directory and
+/// unprivileged loopback ports. CLI fixtures use GatewayConfig::private instead.
+fn require_fixture_isolation(config: &GatewayConfig) -> io::Result<()> {
+    if !cfg!(debug_assertions)
+        || cfg!(test)
+        || !std::env::vars_os()
+            .any(|(key, _)| key.to_string_lossy().starts_with("EFFIGY_TEST_") || key == "NEXTEST")
+    {
+        return Ok(());
+    }
+    let selected =
+        std::env::var_os(crate::private_state::PRIVATE_STATE_ROOT_ENV).map(PathBuf::from);
+    if let Some(root) =
+        selected.filter(|root| Some(root.as_path()) == config.pid_file_path.parent())
+    {
+        let endpoints = [
+            Some(config.dns.bind_addr),
+            Some(config.proxy.bind_addr),
+            config.proxy.tls_bind_addr,
+        ];
+        if endpoints
+            .into_iter()
+            .flatten()
+            .all(|addr| addr.ip().is_loopback() && addr.port() >= 1024 && addr.port() != 15353)
+        {
+            return crate::private_state::validate_root(&root).map_err(error);
+        }
+    }
+    Err(error("fixture process requires a private gateway root and test-only ports; refusing operator gateway mutation"))
+}
+
 pub(crate) fn require_operator() -> io::Result<()> {
     if nix::unistd::Uid::effective().is_root() {
         return Err(error("the standard gateway runs as the operator; run `effigy gateway setup` from your user account"));
@@ -155,6 +187,8 @@ pub struct Status {
     pub ready: bool,
     pub run: Option<RunId>,
     pub control_socket: Option<PathBuf>,
+    /// Build identity of the running daemon, from its own version record.
+    pub binary_version: Option<String>,
     pub reason: Option<String>,
 }
 impl Status {
@@ -164,6 +198,7 @@ impl Status {
             ready: false,
             run: None,
             control_socket: None,
+            binary_version: None,
             reason,
         }
     }
@@ -251,6 +286,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
                 ready: false,
                 run: Some(completion.run),
                 control_socket: Some(run::control_socket_path(&root, &owner(), completion.run)),
+                binary_version: None,
                 reason: completion_reason(&completion.workload, &completion.stderr_tail),
             })),
             None => Ok(None),
@@ -264,6 +300,11 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
         ready: false,
         run: Some(id),
         control_socket: Some(run::control_socket_path(&root, &owner(), id)),
+        // The build identity is an observation for the reuse warning: an
+        // unreadable or absent version record never refuses status.
+        binary_version: crate::identity::read_gateway_version(&config.pid_file_path)
+            .ok()
+            .flatten(),
         reason: None,
     };
     match state {
@@ -486,8 +527,10 @@ pub fn up_with_executable_within(
     budget: StartupBudget,
 ) -> io::Result<Status> {
     require_operator()?;
+    require_fixture_isolation(config)?;
     let before = status(config)?;
     if before.ready {
+        note_reused_gateway_build(&before);
         return Ok(before);
     }
     if before.status == "setup_required" {
@@ -497,10 +540,12 @@ pub fn up_with_executable_within(
                 .unwrap_or_else(|| "run `effigy gateway setup`".into()),
         ));
     }
-    if before.status == "degraded" {
-        return Err(error(
-            "a gateway is already running but degraded; inspect `effigy gateway status`",
-        ));
+    // Start only when the previous run is over. A gateway that is starting,
+    // stopping or unobservable is in use: `up` uses it as it is, and only
+    // `effigy gateway down` followed by `effigy gateway up` replaces one.
+    if before.status != "stopped" {
+        note_reused_gateway_build(&before);
+        return Ok(before);
     }
     let home = home(config)?;
     crate::setup::read_receipt(home)?;
@@ -626,8 +671,23 @@ pub fn up_with_executable_within(
         std::thread::sleep(Duration::from_millis(25));
     }
 }
+/// One warning when the gateway `up` is using runs a different build. `up`
+/// never replaces a running gateway; the operator action that does is `down`
+/// followed by `up`.
+fn note_reused_gateway_build(status: &Status) {
+    let current = effigy_core::build_info::active_version();
+    if status.binary_version.as_deref() == Some(current.as_str()) {
+        return;
+    }
+    eprintln!(
+        "[gateway] the gateway is running build {}; using it instead of replacing it with build {current}; `effigy gateway down` then `effigy gateway up` replaces it",
+        status.binary_version.as_deref().unwrap_or("unknown"),
+    );
+}
+
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     require_operator()?;
+    require_fixture_isolation(config)?;
     let current = status(config)?;
     if current.status == "setup_required" {
         return Err(error(
@@ -636,6 +696,9 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     }
     if current.status == "stopped" {
         return Ok(current);
+    }
+    if let Some(directory) = config.pid_file_path.parent() {
+        run::record_gateway_stop(directory, "gateway down command");
     }
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
@@ -876,6 +939,40 @@ mod tests {
             "stopped"
         );
     }
+    /// A stop is never silent: the gateway's log names the pid, argv and cwd of
+    /// the process that asked for it (papercut 06d1cd9e).
+    #[test]
+    fn a_stop_request_is_recorded_in_the_gateway_log_with_its_caller() {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+        run::record_gateway_stop(
+            config.pid_file_path.parent().unwrap(),
+            "gateway down command",
+        );
+        let log = std::fs::read_to_string(
+            config
+                .pid_file_path
+                .parent()
+                .unwrap()
+                .join("gateway.stderr.log"),
+        )
+        .expect("the stop record is written beside the gateway records");
+        let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(record["pid"], std::process::id());
+        assert_eq!(record["cause"], "gateway down command");
+        assert!(
+            log.contains(&std::env::current_dir().unwrap().display().to_string()),
+            "{log}"
+        );
+        assert!(
+            record["argv"]
+                .as_array()
+                .is_some_and(|args| !args.is_empty()),
+            "{log}"
+        );
+    }
+
     #[test]
     fn failed_http_self_test_is_bounded() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

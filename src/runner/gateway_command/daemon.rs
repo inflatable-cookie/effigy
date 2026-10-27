@@ -104,18 +104,13 @@ fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
         use std::os::unix::fs::OpenOptionsExt;
         OpenOptions::new()
             .create(true)
-            .truncate(true)
-            .write(true)
+            .append(true)
             .mode(0o600)
             .open(path)
     }
     #[cfg(not(unix))]
     {
-        OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(path)
+        OpenOptions::new().create(true).append(true).open(path)
     }
 }
 
@@ -192,6 +187,9 @@ fn stop_gateway_process_with_probe(
             "gateway identity is missing; refusing to signal",
         ));
     };
+    if let Some(directory) = snapshot.pid_path().parent() {
+        effigy_kernel::run::record_gateway_stop(directory, "gateway command signal or replacement");
+    }
     let pid = snapshot.pid();
     #[cfg(unix)]
     {

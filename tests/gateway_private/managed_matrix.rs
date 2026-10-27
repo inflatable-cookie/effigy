@@ -277,10 +277,6 @@ impl<'a> Case<'a> {
             .env("FAKE_DOCKER_LOG", &self.log)
             .env("FAKE_OWNED_STATE", &self.state)
             .env(
-                "EFFIGY_TEST_FIXTURE_LEDGER",
-                process::ledger().expect("matrix process ledger"),
-            )
-            .env(
                 "MATRIX_TEST_BINARY",
                 std::env::current_exe().expect("matrix helper image"),
             )
@@ -636,16 +632,11 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
             .as_raw(),
         pid as i32
     );
-    owner
-        .0
-        .register_owner(&root.join("engine"))
-        .expect("fake workload group registration");
     let down = Command::new("python3")
         .arg(root.join("matrix-adapter.py"))
         .args(["down", "matrix-stack"])
         .env("MATRIX_ROOT", root)
         .env("MATRIX_TEST_BINARY", std::env::current_exe().unwrap())
-        .env("EFFIGY_TEST_FIXTURE_LEDGER", process::ledger().unwrap())
         .output()
         .expect("fake down");
     assert!(down.status.success(), "{:?}", down);
@@ -1225,32 +1216,28 @@ fn managed_matrix_reaper_under_live_holder() {
 
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal,shlex
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
-def fixture_process(action,pid=None,owner=None,nonce=None):
- helper=os.environ.get('EFFIGY_TEST_PROCESS_HELPER')
- owner=str(owner if owner is not None else root/'engine')
- if helper:
-  command=[helper,action]+([str(pid),owner] if action=='register' else [owner])
-  if nonce is not None: command.append(nonce)
-  subprocess.run(command,check=True,stdout=subprocess.DEVNULL)
- else:
-  env=dict(os.environ,EFFIGY_REGISTER_OWNER=owner,EFFIGY_REGISTER_ACTION=action)
-  if pid is not None: env['EFFIGY_REGISTER_PID']=str(pid)
-  if nonce is not None: env['EFFIGY_REGISTER_NONCE']=nonce
-  subprocess.run([env['MATRIX_TEST_BINARY'],'--ignored','--exact','register_fixture_process_child'],env=env,check=True,stdout=subprocess.DEVNULL)
+def record_pid(path,pid):
+ pending=path.with_suffix('.pid.tmp')
+ pending.write_text(str(pid))
+ os.replace(pending,path)
 if op=='prior-parent':
  nonce=os.urandom(16).hex()
  # Execute the rendered sh -lc command directly: dash otherwise keeps an
  # extra sh -c parent alive after the controller dies, unlike macOS sh.
  child=subprocess.Popen(shlex.split(args[0]),start_new_session=True,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
- try: fixture_process('register',child.pid,root,nonce)
+ try: record_pid(root/('work-'+str(child.pid)+'.pid'),child.pid)
  except BaseException:
   os.killpg(child.pid,signal.SIGKILL)
   child.wait()
   raise
  sys.exit(child.wait())
 def kill_recorded():
- fixture_process('stop-root')
- for p in root.glob('*.pid'): p.unlink(missing_ok=True)
+ # Container death ends every workload the fixture recorded, whether or not
+ # that PID leads its own group.
+ for p in root.glob('*.pid'):
+  try: os.kill(int(p.read_text().strip()),signal.SIGKILL)
+  except (OSError,ValueError): pass
+  p.unlink(missing_ok=True)
 if op=='down':
  with (state/'down-events').open('a') as events: events.write(args[0]+'\n')
  if (state/'deny-down').exists(): sys.exit(71)
@@ -1267,16 +1254,12 @@ if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
   nonce=os.urandom(16).hex()
   payload_env['EFFIGY_CUSTODY_NONCE']=nonce
   child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log,env=payload_env)
-  try: fixture_process('register',child.pid,nonce=nonce)
+  try: record_pid(root/('remote-'+str(os.getpid())+'.pid'),child.pid)
   except BaseException:
    # This exact unreaped child created the dedicated group; rollback before reaping.
    os.killpg(child.pid,signal.SIGKILL)
    child.wait()
    raise
-  pid_file=root/('remote-'+str(os.getpid())+'.pid')
-  pending=pid_file.with_suffix('.pid.tmp')
-  pending.write_text(str(child.pid))
-  os.replace(pending,pid_file)
   sys.exit(child.wait())
 if op=='exec':
  held=time.time()+60

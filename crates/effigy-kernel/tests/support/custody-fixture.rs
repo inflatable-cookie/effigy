@@ -261,7 +261,7 @@ fn main() {
         process_spec.grace = Duration::from_secs(2);
         let mut child = Custody::spawn(&mut run, process_spec, &cx).unwrap();
         run.advance(Phase::Active).unwrap();
-        std::fs::write(home.join("lease-ready.json"),serde_json::to_vec(&serde_json::json!({"identity":run.checkout_fence_identity(),"child":child.identity()})).unwrap()).unwrap();
+        std::fs::write(home.join("lease-ready.json"),serde_json::to_vec(&serde_json::json!({"identity":run.checkout_fence_identity(),"child":child.identity(),"anchor":child.anchor()})).unwrap()).unwrap();
         let _ = child.wait(&op);
         run.settle(&cleanup, &mut Strict).unwrap();
         return;
