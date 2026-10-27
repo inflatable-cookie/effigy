@@ -211,7 +211,7 @@
 "check:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy-kernel -p effigy-containers -p effigy-runtime -p effigy --all-targets --features effigy-kernel/fault-injection,effigy-containers/fault-injection", timeout_ms = 900000 }] }
 "lint:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel -p effigy-containers -p effigy-runtime -p effigy --all-targets --features effigy-kernel/fault-injection,effigy-containers/fault-injection -- -D warnings", timeout_ms = 900000 }] }
 "test:kernel:environment" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(run::tests::environment_) | test(run::tests::attachments_) | test(objects::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:containers:environment" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --features fault-injection --lib -E 'test(environment::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
+"test:containers:environment" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/journal-heavy-nextest.toml --user-config-file none -p effigy-containers --features fault-injection --lib -E 'test(environment::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:environment:runner" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-runtime --lib -E 'test(container_command::) | test(container_runtime_prep::) | test(runner::environment) | test(execute::pipeline::) | test(exec_command::) | test(deferral_tests::) | test(workspace_command) | test(task_engine::) | test(write::) | test(session::)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 1800000 }] }
 # Busy refusals (#302): the refusal names the observed holder and row, the
 # explicit unknown/absent cases are unchanged in effect, and held-by and
@@ -653,6 +653,7 @@
 # carries the SIGPIPE classification and its genuine-service-failure negative
 # control, plus the live-holder refusal that forbids recreating a service under
 # an active run. Native pipes and processes only; no shared stack or VM.
+"test:containers:render" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy-catalog --lib -E 'test(policy::render::) | test(generated_compose_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:containers:exit141" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(exit141_) | test(transitions_refuse_against_live_interrupted_and_unknown_holders)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "check:containers:exit141" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy-containers --all-targets", timeout_ms = 900000 }] }
 "lint:containers:exit141" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }] }
@@ -1655,7 +1656,7 @@
 "qa:ci:fast".description = "Run the workspace test suite, doc tests and JSON contracts."
 "qa:ci:fast".admission = "heavy"
 "qa:ci:fast".run = [
-  "bash -lc 'if sh scripts/oxide-selector.sh nextest --version >/dev/null 2>&1; then sh scripts/oxide-selector.sh nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to sh scripts/oxide-selector.sh test --workspace --no-fail-fast\" >&2; sh scripts/oxide-selector.sh test --workspace --no-fail-fast; fi'",
+  "sh scripts/oxide-selector.sh nextest run --workspace --no-fail-fast --no-tests fail",
   "sh scripts/oxide-selector.sh test --workspace --doc",
   { task = "qa:released-surface" },
   { task = "qa:ci:json" },
@@ -1665,7 +1666,7 @@
 "qa:ci:local".run = [
   { task = "fmt:check" },
   "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings",
-  "bash -lc 'if sh scripts/oxide-selector.sh nextest --version >/dev/null 2>&1; then sh scripts/oxide-selector.sh nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to sh scripts/oxide-selector.sh test --workspace --no-fail-fast\" >&2; sh scripts/oxide-selector.sh test --workspace --no-fail-fast; fi'",
+  "sh scripts/oxide-selector.sh nextest run --workspace --no-fail-fast --no-tests fail",
   "sh scripts/oxide-selector.sh test --workspace --doc",
   { task = "qa:released-surface" },
   "effigy docs check links",
@@ -1859,6 +1860,14 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   { task = "qa:kernel-ratchet" },
 ] }
 
+# Milestone proof, never per-task validation: the Compose a consumer's checkout
+# generates is checked by the real Compose implementation, including the shared
+# backing service and the worktree project identity. Internal, heavy, and it
+# needs a Compose executable.
+"qa:live:consumer-shapes" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Check the rendered consumer Compose shapes with the real Compose implementation.", run = [
+  { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 },
+  { run = "python3 tests/scripts/container-consumer-shapes.py ./target/debug/effigy", timeout_ms = 900000 },
+] }
 "proof:runtime-retire-dead:cli" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Prove private backend retirement after linked checkout deletion alongside mixed runtime classes.", run = [{ run = "sh tests/scripts/runtime-retire-dead.sh", timeout_ms = 1200000 }] }
 
 "test:containers:checkout-binding" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(compose_binding_label_tests::) | test(legacy_admission_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }

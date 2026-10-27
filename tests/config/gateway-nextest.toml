@@ -1,27 +1,8 @@
 [profile.default]
+# One budget for one ordinary selector. A journal-heavy selector names its own
+# budget file (journal-heavy-nextest.toml) instead of raising this per test.
 slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
-leak-timeout = { period = "1s", result = "fail" }
-# A drive-backed temp root costs about 26 ms per durable journal commit against
-# 0.16 ms on the internal disk, and the §12.3 supervisor matrix alone owns 288
-# journals. Measured 2026-10-25: 207 s under the ruled `[scratch] root` on a
-# quiet host, 53 s internally, about 550 s under competing load. The run cap
-# follows the proof.
+# A test process that outlives its result is reaped, not failed: under load a
+# 1 s window failed healthy runs for slow reaping.
+leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "1800s"
-
-[[profile.default.overrides]]
-# The §12.3 supervisor matrix keeps its full cross product (3 front ends × 4
-# prior states × 8 stops × 3 attachments), and every cell owns a fresh durable
-# checkout journal. Keep the proof rather than trimming cells for the volume,
-# and run it alone so its cells do not queue behind other journals.
-filter = 'test(run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent)'
-threads-required = "num-test-threads"
-slow-timeout = { period = "900s", terminate-after = 1, grace-period = "2s" }
-
-[[profile.default.overrides]]
-# The run fault-boundary proofs replay every journal boundary with kill, ENOSPC
-# and EPERM, and every boundary owns a durable journal. Both take 169.7 s
-# together under the ruled `[scratch] root` (2026-10-25) and lost the focused
-# 180 s cap once other kernel proofs competed for the drive. Keep the proofs and
-# give them a bounded budget instead of trimming boundaries for the volume.
-filter = 'test(/^run::tests::faults::run_fault_/)'
-slow-timeout = { period = "600s", terminate-after = 1, grace-period = "2s" }

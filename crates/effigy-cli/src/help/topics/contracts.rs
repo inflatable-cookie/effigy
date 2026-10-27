@@ -12,7 +12,7 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "The schema index and the selection contract come from `[contracts]` in effigy.toml; there is no built-in default path.",
     ],
     usage: &[
-        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--contract <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected[=text|json]] [--validate-selection] [--artifact <PATH>] [--json]",
+        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--contract <PATH>] [--changed-only <BASE>] [--print-selected[=text|json]] [--validate-selection] [--artifact <PATH>] [--json]",
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[
@@ -24,8 +24,6 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
             "--contract <PATH>",
             "Override `contracts.selection_contract` from effigy.toml",
         ),
-        ("--fast", "Run the lighter JSON contract subset"),
-        ("--full", "Run the full active JSON contract set"),
         (
             "--changed-only <BASE>",
             "Restrict active rows to entries changed relative to a git base ref",
@@ -52,8 +50,8 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy contracts check-json --fast --print-selected",
-        "effigy contracts check-json --fast --changed-only origin/main --print-selected=json",
+        "effigy contracts check-json --print-selected",
+        "effigy contracts check-json --changed-only origin/main --print-selected=json",
         "effigy contracts check-json --validate-selection",
         "effigy contracts check-json --validate-selection --artifact tmp/selected.json",
         "effigy --json contracts check-json --print-selected=json --validate-selection",

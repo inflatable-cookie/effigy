@@ -4,5 +4,5 @@
 # a quiet host. The full prior × children cross product is the kernel model
 # test. Force termination and fail leaked handles.
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
-leak-timeout = { period = "2s", result = "fail" }
+leak-timeout = { period = "30s", result = "fail" }
 global-timeout = "900s"

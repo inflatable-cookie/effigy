@@ -254,6 +254,42 @@ passes `--locked`:
 effigy test:focused -p effigy-deps --lib -E 'test(cargo_unlink::tests::)'
 ```
 
+## Selector truth
+
+A selector that runs a test runner must fail when it runs nothing. Every
+test-running task in `config/tasks.toml` therefore calls nextest with
+`--no-tests fail`, and a filter term names a test that exists: `cargo test
+<substring>`, which exits green after selecting nothing, is not used for a
+selector anymore. When a test is renamed or pruned, fix its selector in the same
+change — the selector is the only thing that notices a renamed test.
+
+Each selector names one budget. Ordinary selectors inherit
+`tests/config/gateway-nextest.toml`; a selector whose every case owns a durable
+journal on the drive-backed scratch root names
+`tests/config/journal-heavy-nextest.toml` instead of adding another per-test
+override. A case that hangs still dies; a case that is merely slow on a loaded
+host does not fail a proof.
+
+## Live consumer shapes
+
+`qa:live:consumer-shapes` is an internal milestone proof, never part of a
+per-task validation. It proves the shapes a consumer's checkout generates where
+the other fixtures cannot:
+
+- the rendered Compose is handed to the real `compose config`, so every
+  `build` names Dockerfile content beside its context, no `aliases: null`
+  survives, a shared service carries no checkout path, and a Dockerfile's own
+  `$` survives Compose interpolation;
+- a client of a shared MariaDB resolves `host.docker.internal` while a local
+  MariaDB of the same engine stays local;
+- a primary checkout and a linked worktree of the same fixture keep distinct
+  project identities.
+
+It runs under `/Volumes/Builds/scratch/effigy/` with private scratch checkouts
+and removes what it created. It never starts, stops or reconfigures a runtime,
+and it does not touch another checkout's shared services: the fixture's shared
+service owns its own project name.
+
 ## Related Guides
 
 - [`077-local-dependency-linking.md`](077-local-dependency-linking.md)

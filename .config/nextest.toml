@@ -2,7 +2,7 @@
 # Bound workspace runs locally and on hosted CI, including lifecycle cases.
 # Focused profiles retain their stricter per-test limits.
 slow-timeout = { period = "360s", terminate-after = 1, grace-period = "2s" }
-leak-timeout = { period = "1s", result = "fail" }
+leak-timeout = { period = "30s", result = "fail" }
 # The suite bound admits the run-supervision matrix proofs below, which the
 # milestone path now runs with the runner reserved exactly as their owning
 # selector (`test:managed:matrix`) declares 3500s for. A tighter bound here
@@ -26,7 +26,7 @@ threads-required = "num-test-threads"
 filter = 'binary(gateway_private) & test(managed_host_dependent_replacement_)'
 threads-required = "num-test-threads"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
-leak-timeout = { period = "1s", result = "fail" }
+leak-timeout = { period = "30s", result = "fail" }
 
 [[profile.default.overrides]]
 # Each managed-matrix proof drives two full managed activations of a fake

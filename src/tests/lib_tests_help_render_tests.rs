@@ -180,8 +180,8 @@ fn render_contracts_help_shows_validation_options() {
     assert!(!rendered.contains("effigy contracts validate-selection"));
     assert!(rendered.contains("--validate-selection"));
     assert!(rendered.contains("--index <PATH>"));
-    assert!(rendered.contains("--fast"));
-    assert!(rendered.contains("--full"));
+    assert!(!rendered.contains("--fast"), "there is one check, not a fast one");
+    assert!(!rendered.contains("--full"), "there is one check, not a fast and a full one");
     assert!(rendered.contains("--changed-only <BASE>"));
     assert!(rendered.contains("--print-selected=json"));
     assert!(rendered.contains("--contract <PATH>"));
