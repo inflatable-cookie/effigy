@@ -23,8 +23,11 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "fault-injection")]
 use std::process::{Command, Stdio};
 
+#[cfg(feature = "fault-injection")]
 const CHILD_HOME: &str = "EFFIGY_WORKSPACE_TEST_HOME";
+#[cfg(feature = "fault-injection")]
 const CHILD_STEP: &str = "EFFIGY_WORKSPACE_TEST_STEP";
+#[cfg(feature = "fault-injection")]
 const CHILD: &str = "run::workspace::tests::helper_workspace_child";
 
 fn observe() -> ObserveContext {
