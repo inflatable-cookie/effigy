@@ -330,11 +330,7 @@ fn run_container_up_inner(
     }
 
     operation.stage = Some("readiness");
-    let health = wait_for_container_ready(
-        &plan.policy,
-        Some(&plan.stop_flag),
-        observation.get(),
-    )?;
+    let health = wait_for_container_ready(&plan.policy, Some(&plan.stop_flag), observation.get())?;
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
     }
@@ -650,18 +646,21 @@ fn complete_container_up_runtime_integrations(
                 ));
             }
         };
-    let tcp_alias_host_notes =
-        match reconcile_primary_service_tcp_alias_hosts(repo_root, policy, &binding, Some(deadline))
-        {
-            Ok(notes) => notes,
-            Err(error) => {
-                if plan.attach_mode == EffectiveAttachMode::Detached {
-                    return Err(detached_activation_error(policy, error));
-                }
-                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-                return Err(finish_container_up_failure(error, cleanup_result));
+    let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(
+        repo_root,
+        policy,
+        &binding,
+        Some(deadline),
+    ) {
+        Ok(notes) => notes,
+        Err(error) => {
+            if plan.attach_mode == EffectiveAttachMode::Detached {
+                return Err(detached_activation_error(policy, error));
             }
-        };
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+            return Err(finish_container_up_failure(error, cleanup_result));
+        }
+    };
 
     let mut warnings = plan.warnings.clone();
     let managed_host_listeners = match start_host_processes_for_container(repo_root, policy) {

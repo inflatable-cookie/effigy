@@ -473,10 +473,9 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
     policy: &EffectiveContainerPolicy,
     deadline: Option<std::time::Instant>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows = list_running_compose_containers_for_policy_with_deadline(
-        repo_root, policy, deadline,
-    )
-    .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
+    let rows =
+        list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline)
+            .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(

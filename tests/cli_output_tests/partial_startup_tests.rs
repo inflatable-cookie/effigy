@@ -899,10 +899,12 @@ fn private_hung_runtime_inventory_is_one_bounded_refusal() {
     );
     assert!(!output.status.success(), "{output:?}");
     let failed: Value = serde_json::from_slice(&output.stdout).expect("one JSON failure envelope");
-    assert_eq!(failed["error"]["details"]["state"], "unavailable", "{failed}");
     assert_eq!(
-        failed["error"]["details"]["readiness"],
-        "unverified",
+        failed["error"]["details"]["state"], "unavailable",
+        "{failed}"
+    );
+    assert_eq!(
+        failed["error"]["details"]["readiness"], "unverified",
         "{failed}"
     );
     // The declared 4s budget bounds the activation, not one probe of it: the
@@ -917,7 +919,10 @@ fn private_hung_runtime_inventory_is_one_bounded_refusal() {
         "the hung probe repeated activation: {rendered}"
     );
     // The probes that hung stopped with the budget: no child outlived it.
-    assert!(!hung.is_empty(), "the fixture never hung an inventory probe");
+    assert!(
+        !hung.is_empty(),
+        "the fixture never hung an inventory probe"
+    );
     for pid in hung {
         let alive = Command::new("kill")
             .args(["-0", &pid.to_string()])
