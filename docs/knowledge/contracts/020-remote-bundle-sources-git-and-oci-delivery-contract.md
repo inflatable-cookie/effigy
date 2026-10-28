@@ -133,7 +133,10 @@ that only `effigy bundle sync` moved selected bytes.
   existing usable pin never moves there - no changed declaration, path
   re-snapshot or floating Git check - and no update record is written. A
   failed acquisition fails the task with the acquisition error and the
-  `effigy bundle sync` hint.
+  `effigy bundle sync` hint. Managed (`mode = "tui"`) task-local `status`,
+  `logs` and `stop` do not apply rule 1: they inspect or stop the existing
+  session and never clone. A task whose first argument happens to be those
+  words still acquires.
 
 Every acquisition is bounded to 120 seconds and non-interactive
 (`GIT_TERMINAL_PROMPT=0`, and an SSH command with `BatchMode=yes` when the
@@ -179,7 +182,9 @@ checkout lock still selects every source.
 bundle inspection and Observe graph paths never refresh a pin, run a remote
 check, or register Git excludes. `--plan`, `--help` and `effigy tasks` still
 apply rule 1: a pin this checkout does not hold yet is acquired, so the first
-command an agent runs in a fresh worktree works. When a source is behind, the read
+command an agent runs in a fresh worktree works. Managed (`mode = "tui"`)
+task-local `status`, `logs` and `stop` never apply rule 1. A task whose first
+argument happens to be those words still acquires. When a source is behind, the read
 notice names the locked and the available revision and says that the next
 `effigy dev` or `effigy container up` will update it. Static help and version
 remain available while source preparation is unavailable.

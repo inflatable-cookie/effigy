@@ -5,7 +5,7 @@ use effigy_manifest::{
 };
 use effigy_ui::steps::Step;
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
@@ -22,13 +22,172 @@ pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
         effigy_cli::Command::Task(task) => {
             task.name.rsplit('/').next() == Some("dev")
                 && !is_read_only_task_invocation(task)
-                && !task
-                    .args
-                    .first()
-                    .is_some_and(|arg| matches!(arg.as_str(), "status" | "logs" | "stop"))
+                && !is_task_local_session_invocation(task)
         }
         _ => false,
     }
+}
+
+/// First-argument `status`, `logs` or `stop` on a task. On a managed TUI
+/// task this inspects or stops the session; on any other task those words
+/// are ordinary arguments and the run still acquires a missing pin. A CLI
+/// invocation joins Effigy flags with
+/// [`effigy_core::task_args::TASK_ARGS_BOUNDARY`] before the task's
+/// arguments; the verb is the first task-side argument after that split.
+pub(crate) fn is_task_local_session_invocation(task: &effigy_cli::TaskInvocation) -> bool {
+    first_task_arg(&task.args).is_some_and(|arg| matches!(arg, "status" | "logs" | "stop"))
+}
+
+/// Managed TUI companions (`mode = "tui"`) with first-argument status, logs
+/// or stop. They skip missing-pin acquisition. The selected task's own
+/// overlay, included fragments, and catalog file are read as TOML so a
+/// missing bundle pin is not cloned just to classify it; a prefixed catalog
+/// name uses that catalog's graph, not the root leaf of the same name.
+pub(crate) fn is_managed_tui_session_invocation(
+    task: &effigy_cli::TaskInvocation,
+    manifest_path: &Path,
+) -> bool {
+    is_task_local_session_invocation(task)
+        && declared_task_mode(manifest_path, &task.name).as_deref() == Some("tui")
+}
+
+fn declared_task_mode(manifest_path: &Path, task_name: &str) -> Option<String> {
+    let parent = manifest_path.parent()?;
+    let (catalog_root, leaf) = match task_name.split_once('/') {
+        Some((alias, leaf)) => (catalog_member_dir(parent, manifest_path, alias)?, leaf),
+        None => (parent.to_path_buf(), task_name),
+    };
+    let overlay = catalog_root.join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE);
+    task_mode_from_toml_file(&overlay, leaf)
+        .or_else(|| task_mode_from_include_graph(&catalog_root.join(TASK_MANIFEST_FILE), leaf))
+}
+
+/// Membership is the committed root `[catalog.members]` table, not an overlay.
+/// A handle that is missing or whose directory is not here fails closed.
+fn catalog_member_dir(root: &Path, manifest_path: &Path, alias: &str) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(manifest_path).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    let relative = value.get("catalog")?.get("members")?.get(alias)?.as_str()?;
+    if relative.trim().is_empty() {
+        return None;
+    }
+    Some(root.join(relative))
+}
+
+/// Parent file first, then each `[manifest].include` in order, matching
+/// composition: a later fragment overwrites a declared mode. A cycle or a
+/// missing required include fails closed.
+fn task_mode_from_include_graph(path: &Path, name: &str) -> Option<String> {
+    fn walk(path: &Path, name: &str, visiting: &mut BTreeSet<PathBuf>) -> Option<Option<String>> {
+        let identity = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if !visiting.insert(identity.clone()) {
+            return None;
+        }
+        let value = read_toml_value(path)?;
+        let mut mode = task_mode_from_value(&value, name);
+        for include in include_entries(&value) {
+            if include.path.trim().is_empty() {
+                visiting.remove(&identity);
+                return None;
+            }
+            let Some(parent) = path.parent() else {
+                visiting.remove(&identity);
+                return None;
+            };
+            let resolved = if Path::new(&include.path).is_absolute() {
+                PathBuf::from(&include.path)
+            } else {
+                parent.join(&include.path)
+            };
+            if !resolved.is_file() {
+                if include.optional {
+                    continue;
+                }
+                visiting.remove(&identity);
+                return None;
+            }
+            match walk(&resolved, name, visiting) {
+                None => {
+                    visiting.remove(&identity);
+                    return None;
+                }
+                Some(Some(child)) => mode = Some(child),
+                Some(None) => {}
+            }
+        }
+        visiting.remove(&identity);
+        Some(mode)
+    }
+    walk(path, name, &mut BTreeSet::new()).flatten()
+}
+
+struct IncludePeek {
+    path: String,
+    optional: bool,
+}
+
+fn include_entries(value: &toml::Value) -> Vec<IncludePeek> {
+    let Some(entries) = value
+        .get("manifest")
+        .and_then(|manifest| manifest.get("include"))
+        .and_then(toml::Value::as_array)
+    else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            if let Some(path) = entry.as_str() {
+                return Some(IncludePeek {
+                    path: path.to_owned(),
+                    optional: false,
+                });
+            }
+            let table = entry.as_table()?;
+            Some(IncludePeek {
+                path: table.get("path")?.as_str()?.to_owned(),
+                optional: table
+                    .get("optional")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+fn read_toml_value(path: &Path) -> Option<toml::Value> {
+    let text = std::fs::read_to_string(path).ok()?;
+    toml::from_str(&text).ok()
+}
+
+fn task_mode_from_toml_file(path: &Path, name: &str) -> Option<String> {
+    task_mode_from_value(&read_toml_value(path)?, name)
+}
+
+fn task_mode_from_value(value: &toml::Value, name: &str) -> Option<String> {
+    value
+        .get("tasks")?
+        .get(name)?
+        .get("mode")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn first_task_arg(args: &[String]) -> Option<&str> {
+    let mut rest = match args
+        .iter()
+        .position(|arg| arg == effigy_core::task_args::TASK_ARGS_BOUNDARY)
+    {
+        Some(index) => &args[index + 1..],
+        None => args,
+    };
+    while rest
+        .first()
+        .is_some_and(|arg| effigy_core::task_args::COMPAT_TRAILING_FLAGS.contains(&arg.as_str()))
+    {
+        rest = &rest[1..];
+    }
+    rest.first().map(String::as_str)
 }
 
 /// A task invocation that only reads: `--plan`, `--help` or `-h` before any
@@ -380,6 +539,191 @@ fn source_type_label(source_type: BundleSourceType) -> &'static str {
 mod tests {
     use super::*;
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
+
+    #[test]
+    fn task_local_status_logs_and_stop_are_not_prepare_or_pin_paths() {
+        use effigy_cli::{Command, TaskInvocation};
+
+        fn task(name: &str, args: &[&str]) -> TaskInvocation {
+            TaskInvocation {
+                name: name.to_owned(),
+                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+            }
+        }
+
+        for verb in ["status", "logs", "stop"] {
+            for name in ["dev", "api/dev", "serve"] {
+                let invocation = task(name, &[verb]);
+                assert!(
+                    is_task_local_session_invocation(&invocation),
+                    "{name} {verb} is a session companion"
+                );
+                assert!(
+                    !is_source_prepare_command(&Command::Task(invocation)),
+                    "{name} {verb} is not a Prepare path"
+                );
+
+                let joined = TaskInvocation {
+                    name: name.to_owned(),
+                    args: effigy_core::task_args::join_task_args(Vec::new(), vec![verb.to_owned()]),
+                };
+                assert!(
+                    is_task_local_session_invocation(&joined),
+                    "{name} {verb} after the CLI boundary is a session companion"
+                );
+                assert!(
+                    !is_source_prepare_command(&Command::Task(joined)),
+                    "{name} {verb} after the CLI boundary is not a Prepare path"
+                );
+            }
+        }
+
+        let trailing_json = TaskInvocation {
+            name: "dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(
+                Vec::new(),
+                vec!["--json".to_owned(), "status".to_owned()],
+            ),
+        };
+        assert!(is_task_local_session_invocation(&trailing_json));
+        assert!(!is_source_prepare_command(&Command::Task(trailing_json)));
+
+        let hello = task("hello", &[]);
+        assert!(!is_task_local_session_invocation(&hello));
+        assert!(!is_source_prepare_command(&Command::Task(hello)));
+
+        let dev = task("dev", &[]);
+        assert!(!is_task_local_session_invocation(&dev));
+        assert!(is_source_prepare_command(&Command::Task(dev)));
+
+        let joined_dev = TaskInvocation {
+            name: "dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(Vec::new(), Vec::new()),
+        };
+        assert!(!is_task_local_session_invocation(&joined_dev));
+        assert!(is_source_prepare_command(&Command::Task(joined_dev)));
+    }
+
+    #[test]
+    fn only_a_tui_task_skips_missing_pin_acquisition_for_session_verbs() {
+        use effigy_cli::TaskInvocation;
+
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let manifest = directory.path().join("effigy.toml");
+        std::fs::write(
+            &manifest,
+            "[catalog.members]\napi = \"api\"\n\n[tasks.dev]\nmode = \"tui\"\n\n[tasks.need]\nrun = \"sh -c 'cat book/README'\"\n\n[tasks.serve]\nrun = \"echo serve\"\n",
+        )
+        .expect("write overlay");
+        let api = directory.path().join("api");
+        std::fs::create_dir(&api).expect("api catalog");
+        std::fs::write(
+            api.join("effigy.toml"),
+            "[catalog]\nalias = \"api\"\n\n[tasks.dev]\nrun = \"echo api-dev-ran\"\n",
+        )
+        .expect("write member catalog");
+
+        let status = TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(
+            is_managed_tui_session_invocation(&status, &manifest),
+            "dev status on a tui overlay skips the missing pin"
+        );
+
+        let joined = TaskInvocation {
+            name: "dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+        };
+        assert!(is_managed_tui_session_invocation(&joined, &manifest));
+
+        let need_status = TaskInvocation {
+            name: "need".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(is_task_local_session_invocation(&need_status));
+        assert!(!is_managed_tui_session_invocation(&need_status, &manifest));
+
+        let serve_status = TaskInvocation {
+            name: "serve".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(is_task_local_session_invocation(&serve_status));
+        assert!(!is_managed_tui_session_invocation(&serve_status, &manifest));
+
+        let overlay = directory
+            .path()
+            .join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE);
+        std::fs::write(&overlay, "[tasks.serve]\nmode = \"tui\"\n").expect("write local overlay");
+        assert!(is_managed_tui_session_invocation(&serve_status, &manifest));
+
+        let api_status = TaskInvocation {
+            name: "api/dev".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(is_task_local_session_invocation(&api_status));
+        assert!(
+            !is_managed_tui_session_invocation(&api_status, &manifest),
+            "a prefixed non-tui catalog task does not inherit the root leaf's tui mode"
+        );
+        let joined_api = TaskInvocation {
+            name: "api/dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+        };
+        assert!(!is_managed_tui_session_invocation(&joined_api, &manifest));
+
+        std::fs::write(
+            api.join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE),
+            "[tasks.dev]\nmode = \"tui\"\n",
+        )
+        .expect("write member overlay");
+        assert!(
+            is_managed_tui_session_invocation(&api_status, &manifest),
+            "the selected catalog's own tui overlay skips the missing pin"
+        );
+    }
+
+    #[test]
+    fn an_included_fragment_tui_task_skips_missing_pin_acquisition_for_session_verbs() {
+        use effigy_cli::TaskInvocation;
+
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let infra = directory.path().join("infra");
+        std::fs::create_dir(&infra).expect("infra");
+        std::fs::write(
+            infra.join("tasks.toml"),
+            "[tasks.dev]\nmode = \"tui\"\nconcurrent = [{ name = \"api\", run = \"true\", start = 1 }]\n",
+        )
+        .expect("write fragment");
+        let manifest = directory.path().join("effigy.toml");
+        std::fs::write(
+            &manifest,
+            "[manifest]\ninclude = [\"infra/tasks.toml\"]\n\n[tasks.need]\nrun = \"echo need\"\n",
+        )
+        .expect("write root");
+
+        let status = TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(
+            is_managed_tui_session_invocation(&status, &manifest),
+            "dev status on an included tui fragment skips the missing pin"
+        );
+        let joined = TaskInvocation {
+            name: "dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+        };
+        assert!(is_managed_tui_session_invocation(&joined, &manifest));
+
+        let need_status = TaskInvocation {
+            name: "need".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(is_task_local_session_invocation(&need_status));
+        assert!(!is_managed_tui_session_invocation(&need_status, &manifest));
+    }
 
     #[test]
     fn source_steps_name_the_bundle_its_revision_and_the_outcome() {

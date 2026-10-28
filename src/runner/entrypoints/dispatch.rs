@@ -64,16 +64,29 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     // Both a task run and the task listing read the checkout's sources. Neither
     // refuses over a pin this checkout does not hold yet: a missing one is
     // acquired (rule 1 only), and only a Prepare path refreshes what is behind.
-    let reads_sources = matches!(cmd, Command::Task(_) | Command::Tasks(_));
-    if reads_sources {
-        let root = crate::runner::command_context::active_runtime_context()
-            .map(|context| context.command_root().to_path_buf())
-            .unwrap_or_else(|| cwd.into());
-        if let Some(manifest) = root
-            .ancestors()
-            .map(|root| root.join("effigy.toml"))
-            .find(|manifest| manifest.is_file())
-        {
+    // Managed TUI status/logs/stop inspect or stop an existing session and
+    // never acquire. Any other task, including one whose first argument is
+    // those words, still acquires.
+    let root = crate::runner::command_context::active_runtime_context()
+        .map(|context| context.command_root().to_path_buf())
+        .unwrap_or_else(|| cwd.into());
+    if let Some(manifest) = root
+        .ancestors()
+        .map(|root| root.join("effigy.toml"))
+        .find(|manifest| manifest.is_file())
+    {
+        let reads_sources = match &cmd {
+            Command::Task(task)
+                if crate::runner::bundle_command::is_managed_tui_session_invocation(
+                    task, &manifest,
+                ) =>
+            {
+                false
+            }
+            Command::Task(_) | Command::Tasks(_) => true,
+            _ => false,
+        };
+        if reads_sources {
             if crate::runner::bundle_command::is_source_prepare_command(&cmd) {
                 crate::runner::bundle_command::prepare_sources_for_manifest(&manifest)?;
             } else {
