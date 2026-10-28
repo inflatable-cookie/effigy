@@ -36,6 +36,9 @@ fn install_previous_binary_preservation_stages_owner_only_copy() {
         &callbacks(),
     )
     .expect("preserve production staging");
+    // The sixth argument is the selected signing identity. This test proves the
+    // staging and rollback shape, so it activates without one; the fixture suite
+    // (`test:install:local`) proves identity selection and signing.
     call_rhai_function(
         &context,
         PRODUCTION_STAGING,
@@ -46,6 +49,7 @@ fn install_previous_binary_preservation_stages_owner_only_copy() {
             target.display().to_string(),
             active_version.display().to_string(),
             "v0.14.0+local.test".to_owned(),
+            String::new(),
         ),
         &callbacks(),
     )

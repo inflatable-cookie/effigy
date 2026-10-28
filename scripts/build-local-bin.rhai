@@ -8,16 +8,24 @@
 // profile or to plain Cargo. `EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`
 // is the documented plain-Cargo escape and produces the same path.
 //
+// On macOS the staged copy is then signed with Effigy's one stable local
+// code-signing identity, so successive rebuilds keep the same designated
+// requirement instead of looking like a new program to Gatekeeper. The identity
+// policy lives in `scripts/local-codesign.sh`; the selection runs before the
+// build so an identity problem fails in seconds, and a signing failure fails
+// the install before the staged binary replaces the active one.
+//
 // Activation is staged and ordered so a failure cannot destroy the active
 // binary or its version receipt:
 //
-//   1. clear the stale release artifact and build the release binary;
-//   2. refuse to proceed if the active path is not a regular file;
-//   3. copy the active binary/stamp into the owner-only rollback channel;
-//   4. copy the release binary to `effigy.new`, verify the bytes and mark it
-//      executable;
-//   5. rename the staged binary over the active path;
-//   6. publish the new version receipt by rename, never by truncating it.
+//   1. select or provision the local signing identity (a no-op off macOS);
+//   2. clear the stale release artifact and build the release binary;
+//   3. refuse to proceed if the active path is not a regular file;
+//   4. copy the active binary/stamp into the owner-only rollback channel;
+//   5. copy the release binary to `effigy.new`, verify the bytes, sign it with
+//      that identity and mark it executable;
+//   6. rename the staged binary over the active path;
+//   7. publish the new version receipt by rename, never by truncating it.
 let source = path::join(repo_root, "target/release/effigy");
 let install_dir = path::join(repo_root, ".local-install/bin");
 let target = path::join(install_dir, "effigy");
@@ -199,10 +207,61 @@ fn preserve_previous_local_install(target, previous_target, active_version_file,
     }
 }
 
-fn activate_local_install(source, staged_target, target, active_version_file, version) {
+// Sign the staged copy with the selected local identity. The helper is the
+// whole policy (selection, provisioning, `EFFIGY_LOCAL_CODESIGN=off`, the
+// non-macOS no-op), and an empty identity means this activation was asked to
+// install without one. A refused signature removes the staged copy, as a
+// refused staged copy does, and never leaves it to be activated later.
+fn sign_staged_local_binary(staged_target, codesign_identity) {
+    if codesign_identity == "" {
+        return;
+    }
+
+    let result = process::run(
+        "sh",
+        ["scripts/local-codesign.sh", "sign", codesign_identity, staged_target],
+    );
+    if result["success"] {
+        return;
+    }
+
+    try {
+        fs::remove(staged_target);
+    } catch (error) {
+        log_warn("[warn] could not remove the refused staged copy: " + staged_target);
+    }
+    throw "[error] sign staged local effigy binary failed with status "
+        + result["status"].to_string()
+        + "\n[error] set EFFIGY_LOCAL_CODESIGN=off to skip local signing; guide 010 covers the identity"
+        + "\nstdout:\n" + result["stdout"].to_string()
+        + "\nstderr:\n" + result["stderr"].to_string();
+}
+
+// Resolve the identity before the build: selecting, provisioning or refusing it
+// is cheap, and a release build is not. The helper prints the identity it
+// selected, nothing when signing is skipped, and one explanatory line on stderr.
+fn local_codesign_identity() {
+    let result = process::run("sh", ["scripts/local-codesign.sh", "select"]);
+    let note = str::trim(result["stderr"].to_string());
+    if !result["success"] {
+        throw "[error] local effigy signing identity selection failed with status "
+            + result["status"].to_string()
+            + "\n[error] set EFFIGY_LOCAL_CODESIGN=off to skip local signing; guide 010 covers the identity"
+            + "\nstdout:\n" + result["stdout"].to_string()
+            + "\nstderr:\n" + result["stderr"].to_string();
+    }
+    if note != "" {
+        log("[note] " + note);
+    }
+
+    str::trim(result["stdout"].to_string())
+}
+
+fn activate_local_install(source, staged_target, target, active_version_file, version, codesign_identity) {
     require_regular_file(source, "built effigy release binary");
     run_check("stage local effigy binary", "cp", [source, staged_target]);
     verify_staged_copy(source, staged_target, "staged local effigy binary");
+    sign_staged_local_binary(staged_target, codesign_identity);
     run_check(
         "mark staged local effigy binary executable",
         "chmod",
@@ -217,6 +276,8 @@ fn activate_local_install(source, staged_target, target, active_version_file, ve
         [staged_version_file, active_version_file],
     );
 }
+
+let codesign_identity = local_codesign_identity();
 
 clear_stale_release_artifact(source);
 
@@ -237,7 +298,14 @@ if !fs::exists(source) || !fs::is_file(source) {
 fs::create_dir(install_dir);
 require_replaceable_active_binary(target);
 preserve_previous_local_install(target, previous_target, active_version_file, previous_version_file);
-activate_local_install(source, staged_target, target, active_version_file, local_active_version());
+activate_local_install(
+    source,
+    staged_target,
+    target,
+    active_version_file,
+    local_active_version(),
+    codesign_identity,
+);
 
 log("[ok] built local effigy release binary");
 log("[ok] installed " + target);

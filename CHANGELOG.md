@@ -184,6 +184,15 @@ During v0.x, MINOR bumps may include breaking changes.
   index and selection contract, an index may carry `payload_schemas`, and
   `effigy contracts check-json --validate-selection` replaces
   `contracts validate-selection`.
+- **`install:local` signs what it installs on macOS.** The binary it activates
+  carries one stable local code-signing identity, `Effigy Local Signing`, so
+  successive rebuilds keep the same designated requirement instead of looking
+  like a new program to Gatekeeper. The identity is reused if the keychain
+  already offers it and provisioned once in the user's own keychain otherwise,
+  with no `sudo` and no trust change. `EFFIGY_LOCAL_CODESIGN_IDENTITY` pins a
+  different identity, `EFFIGY_LOCAL_CODESIGN=off` skips signing, a refused
+  signature fails the install before activation, and non-macOS hosts are
+  unchanged.
 
 ### Changed
 

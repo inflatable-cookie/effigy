@@ -1013,15 +1013,18 @@
 # and one native loopback-lowport bind proof. Synthetic fixtures and owned
 # children only; no live gateway state, sudo, or cross-UID proof is claimed.
 "test:install:previous-binary-preservation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "install-previous-binary-preservation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib -E 'test(previous_binary_preservation)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 120000 },
+  { id = "install-previous-binary-preservation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-rhai --lib -E 'test(previous_binary_preservation)' --no-fail-fast --retries 0 --no-tests fail --no-capture", timeout_ms = 900000 },
 ] }
 # Local installer contract (task 303): the optimized release artifact is built
 # through Oxide and its exact uplifted output is activated; customized launchers
 # and custom symlinks are preserved byte-for-byte; activated paths are staged
 # and renamed so a failed build, copy or rename cannot truncate the active
-# binary or its receipt. Each fixture is a private mktemp HOME and checkout with
-# stub oxide/cargo/cp/mv/chmod programs; no host install, no ~/.local/bin write
-# and no real release build.
+# binary or its receipt. Each fixture is a private mktemp HOME, checkout and
+# keychain file with stub oxide/cargo/uname/security/codesign/cp/mv/chmod
+# programs; no host install, no ~/.local/bin write, no real release build and no
+# keychain identity (#389: two builds must select one signing identity, a refused
+# signature must leave the active install intact, and a non-macOS host must stay
+# unchanged).
 "test:install:local" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "install-local-fixture", run = "sh tests/scripts/install-local-bin.sh", timeout_ms = 900000 },
 ] }

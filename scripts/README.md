@@ -42,6 +42,8 @@ pool instead of `target/`, so the bulk of the writes stay off the internal SSD
 
 - `*.rhai` — task-backed automation (release, distribution, graph benchmark,
   container profiling, JSON contract artifacts, local bin bootstrap)
+- `local-codesign.sh` — selects or provisions the one stable macOS code-signing
+  identity that `install:local` signs each activated binary with (guide 010)
 - `oxide-selector.sh` — Cargo-to-Oxide routing for Effigy selectors
 - `check-release-ci.sh` — hosted CI status helper for release proof lanes
 

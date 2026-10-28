@@ -31,8 +31,10 @@ effigy install:local
 `install:local` builds the **release** profile once through Oxide
 (`oxide build --release --bin effigy`) and activates the exact release binary
 Oxide uplifts to `target/release/effigy`. It never falls back to another profile
-or to plain Cargo: a missing release output fails and names the escape. Without
-Oxide on `PATH`, run the one escape, which produces the same path:
+or to plain Cargo: a missing release output fails and names the escape. On macOS
+the activated copy is also signed with Effigy's one stable local identity (see
+[Signing on macOS](#signing-on-macos)). Without Oxide on `PATH`, run the one
+escape, which produces the same path:
 
 ```bash
 EFFIGY_OXIDE_ESCAPE=cargo effigy install:local
@@ -62,11 +64,56 @@ In the checkout:
   owner-only rollback channel, refreshed on each activation
 
 The active path is staged (`effigy.new`), byte-compared with the release
-artifact, marked executable, and only then renamed over the active binary. The
-version receipt is published by rename too, so a failed build, copy or rename
-leaves the previously active binary and receipt intact instead of truncating
-them. A non-regular active path (for example a symlink) is refused before
-anything is copied.
+artifact, signed with the local identity on macOS, marked executable, and only
+then renamed over the active binary. The version receipt is published by rename
+too, so a failed build, copy, signature or rename leaves the previously active
+binary and receipt intact instead of truncating them. A non-regular active path
+(for example a symlink) is refused before anything is copied.
+
+### Signing on macOS
+
+`install:local` signs the binary it activates with one local code-signing
+identity, `Effigy Local Signing`, so consecutive rebuilds keep the same code
+identity. Without it macOS treats each rebuild as a new program, and a
+Gatekeeper verification panel comes back with every build.
+
+The identity is Effigy's own, kept in your default (login) keychain and shared
+by every checkout on the machine:
+
+- an identity named `Effigy Local Signing` that the keychain already offers for
+  code signing is reused;
+- otherwise the first `install:local` on the machine provisions it once: a
+  self-signed code-signing certificate and its private key made with
+  `/usr/bin/openssl`, imported with
+  `security import -T /usr/bin/codesign` so codesign reads the key without a
+  keychain prompt. The certificate and key are generated in an owner-only
+  temporary directory that is removed straight after the import; only the two
+  keychain items stay, and the certificate is valid for ten years.
+
+No step uses `sudo`, changes system trust settings or asks Apple for anything.
+This identity makes a local build recognisable as the same local build; it is
+not a distribution identity, it is not notarized, and release artifacts are
+signed by the release pipeline instead.
+
+Two variables override the policy:
+
+| Variable | Effect |
+|---|---|
+| `EFFIGY_LOCAL_CODESIGN_IDENTITY` | Sign with this identity (common name or SHA-1 fingerprint); nothing is discovered or provisioned. |
+| `EFFIGY_LOCAL_CODESIGN=off` | Skip signing for this build. |
+
+A refused signature fails `install:local` before activation: the active binary,
+its version receipt, the previous-binary rollback copy and your launcher stay
+exactly as they were, and the staged copy is removed.
+
+If the automatic provisioning cannot run on your machine, create the identity by
+hand once: Keychain Access → Certificate Assistant → Create a Certificate, name
+`Effigy Local Signing`, Identity Type `Self Signed Root`, Certificate Type
+`Code Signing`. The next `install:local` reuses it. Trusting that certificate
+(Keychain Access → the certificate → Trust → Always Trust) changes how macOS
+verifies a signature, not which identity signs it.
+
+A non-macOS host is unchanged: nothing is selected, provisioned or signed.
 
 ### What happens to your launcher
 
@@ -104,7 +151,7 @@ Effigy itself.
 | Mode | Command | Expected |
 |---|---|---|
 | Source run | `cargo run --manifest-path ../effigy/Cargo.toml --bin effigy -- doctor` | Doctor report rendered, exit 0 |
-| Local install | `effigy install:local` | Optimized release binary activated, version receipt written |
+| Local install | `effigy install:local` | Optimized release binary activated, version receipt written, local code signature applied on macOS |
 | PATH binary | `effigy --help` | Usage shown, exit 0 |
 | PATH binary | `effigy doctor --repo <workspace>` | Doctor report rendered, exit 0 |
 
