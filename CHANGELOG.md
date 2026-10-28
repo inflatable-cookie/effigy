@@ -290,6 +290,13 @@ During v0.x, MINOR bumps may include breaking changes.
   table, `[catalog.graph]` and `[shell]` are ignored the same way.
   `[secrets.vault].identity`, `.unlock` and `.external` are errors that name the
   file and line.
+- **The vendored Underlay bundle uses Silo.** `external/bundles/underlay`
+  now points at `61dc5aa8405698ea757f0ff5c481cb6d7cb92314` (from
+  `4d4eb230979ce30ecb051388d1510ca471e781ad`): `services.silo`,
+  `catalog = "silo"`, `silo:reconcile` / `bootstrap-silo.rhai`, and
+  `silo.<host>`. `minimum_effigy_version` moves from `0.10.0` to `0.15.0`.
+  Default object-store credentials stay `minioadmin`. Effigy's catalog still
+  ships `minio`; that retirement is separate.
 
 ### Removed
 
