@@ -116,6 +116,17 @@ pub fn retire_owned_bun_registrations(
     let library_path = library_path.as_ref();
     let mut retirement = BunRegistrationRetirement::default();
     let index_store = BunRegistrationIndexStore::for_home(home);
+    // Only the owner that holds the index lock for its own apply may retire.
+    // Every other link waits on that lock, and a link waiting on it planned
+    // before this owner created anything: its registrations are not in the
+    // index yet, so this owner cannot tell whether a registration belongs to
+    // it or to the link that is still running.
+    if !crate::state::state_lock_held_by_this_process(index_store.lock_path()) {
+        retirement
+            .retained
+            .extend(registrations.iter().map(|(name, _)| name.clone()));
+        return retirement;
+    }
     let index = match index_store.read() {
         Ok(index) => index,
         Err(error) => {

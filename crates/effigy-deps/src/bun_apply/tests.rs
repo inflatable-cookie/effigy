@@ -839,6 +839,13 @@ fn retirement_of_one_bun_root_keeps_a_sibling_roots_claim() {
     ));
 }
 
+/// The index lock an owner holds for its whole apply. The interrupt path may
+/// only retire registrations while this process holds it.
+fn hold_index_lock(fixture: &Fixture) -> crate::state::StateLock {
+    crate::state::StateLock::acquire(BunRegistrationIndexStore::for_home(&fixture.home).lock_path())
+        .expect("hold the Bun registration index lock")
+}
+
 #[test]
 fn an_interrupted_owner_keeps_a_registration_another_consumer_claims() {
     let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
@@ -856,6 +863,7 @@ fn an_interrupted_owner_keeps_a_registration_another_consumer_claims() {
             )
         })
         .unwrap();
+    let _lock = hold_index_lock(&fixture);
 
     let retirement = retire_owned_bun_registrations(
         &fixture.home,
@@ -894,6 +902,7 @@ fn an_interrupted_owner_retires_an_unclaimed_registration() {
     let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
     let process = FixtureProcess::new(&fixture.home);
     link(&fixture, &process);
+    let _lock = hold_index_lock(&fixture);
 
     let retirement = retire_owned_bun_registrations(
         &fixture.home,
@@ -925,6 +934,7 @@ fn an_interrupted_owner_keeps_an_unverified_registration_when_the_index_cannot_b
         &BunRegistrationIndexStore::for_home(&fixture.home).path(),
         "{\"schema\":\"effigy.deps.bun-registrations.v1\",\"truncated\":",
     );
+    let _lock = hold_index_lock(&fixture);
 
     let retirement = retire_owned_bun_registrations(
         &fixture.home,
@@ -942,6 +952,37 @@ fn an_interrupted_owner_keeps_an_unverified_registration_when_the_index_cannot_b
     assert_eq!(retirement.retained, ["underlay"]);
     assert!(retirement.unregistered.is_empty());
     assert_eq!(retirement.failures.len(), 1, "{retirement:?}");
+    assert!(matches!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Symlink { .. }
+    ));
+}
+
+#[test]
+fn an_interrupted_owner_off_the_index_lock_retires_nothing() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &process);
+
+    // A link waiting for the index lock holds nothing: the link that owns the
+    // lock planned its own registrations, and they are not in the index yet.
+    let retirement = retire_owned_bun_registrations(
+        &fixture.home,
+        &fixture.repo,
+        &fixture.library,
+        &[(
+            "underlay".to_owned(),
+            fixture.packages[0].package_path.clone(),
+        )],
+        &process,
+        &FsBunPlanObserver,
+    );
+
+    assert_eq!(retirement.retained, ["underlay"]);
+    assert!(retirement.unregistered.is_empty());
+    assert!(retirement.failures.is_empty(), "{:?}", retirement.failures);
     assert!(matches!(
         FsBunPlanObserver
             .observe_path(&bun_registration_path(&fixture.home, "underlay"))

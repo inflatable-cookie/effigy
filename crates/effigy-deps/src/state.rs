@@ -3,6 +3,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
@@ -565,12 +566,35 @@ struct LockRecord {
     created_unix_ms: u64,
 }
 
-struct StateLock {
+/// The state locks this process currently holds.
+///
+/// A lock file cannot tell "held by this process" from "held by another one",
+/// and the distinction matters: an interrupted Bun link owner may only retire a
+/// registration while it holds the index lock for its own apply. Another link
+/// waiting on that lock planned before this owner created anything, so its
+/// registrations are not in the index yet and this owner cannot see them.
+static HELD_STATE_LOCKS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+
+fn held_state_locks() -> &'static Mutex<Vec<PathBuf>> {
+    HELD_STATE_LOCKS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Whether this process currently holds the state lock at `path`.
+pub fn state_lock_held_by_this_process(path: &Path) -> bool {
+    held_state_locks()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .iter()
+        .any(|held| held == path)
+}
+
+pub(crate) struct StateLock {
+    path: PathBuf,
     file: File,
 }
 
 impl StateLock {
-    fn acquire(path: &Path) -> Result<Self, DepsError> {
+    pub(crate) fn acquire(path: &Path) -> Result<Self, DepsError> {
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)
             .map_err(|error| DepsError::io("create lock directory", parent, error))?;
@@ -602,13 +626,24 @@ impl StateLock {
             .map_err(|error| DepsError::io("write lock", path, error))?;
         file.sync_all()
             .map_err(|error| DepsError::io("sync lock", path, error))?;
-        Ok(Self { file })
+        held_state_locks()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(path.to_path_buf());
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+        })
     }
 }
 
 impl Drop for StateLock {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
+        held_state_locks()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .retain(|held| held != &self.path);
     }
 }
 

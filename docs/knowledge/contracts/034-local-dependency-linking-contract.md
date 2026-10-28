@@ -118,13 +118,16 @@ Unix.
   takes its default course. Ownership is the recorded `(consumer root, library)`
   pair: a checkout can hold several Bun package roots (`studio/`, `harness/`),
   each a consumer with its own claim, so retiral never widens to a root that
-  merely shares a checkout. An interrupted owner holds the index lock for its
-  whole apply, so it reads the index instead of waiting for it and retains any
-  registration another consumer claims; when the index cannot be read it retires
-  nothing, because it cannot prove a registration is its own. It also stops the
-  `bun link` processes it is waiting on before it retires anything: a
-  registration process still running would recreate the registration after its
-  owner died. A leftover claim means an owner died between writing the claim and
+  merely shares a checkout. An interrupted owner may retire only while it holds
+  the index lock for its own apply. A link that only wants that lock planned
+  before this owner created anything, so its registrations are not in the index
+  yet and this owner cannot see them; an interrupted owner that does not hold
+  the lock retires nothing. While it does hold it, it reads the index instead of
+  waiting for the lock it already has, and retains any registration another
+  consumer claims; when the index cannot be read it retires nothing either,
+  because it cannot prove a registration is its own. It also stops the `bun
+  link` processes it is waiting on before it retires anything: a registration
+  process still running would recreate the registration after its owner died. A leftover claim means an owner died between writing the claim and
   retiring it; status reports `bun-registration-without-ledger` and
   `deps unlink bun` or the next link retires it.
 - Validate other repo references before removal. Retain and report stale or

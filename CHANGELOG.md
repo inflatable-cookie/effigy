@@ -409,8 +409,11 @@ During v0.x, MINOR bumps may include breaking changes.
   sibling Bun root in the same checkout keeps its own claim. An interrupted
   owner stops the `bun link` it is waiting on before retiring anything, since a
   registration process still running would recreate the registration after its
-  owner died, and it reads the index instead of waiting for the lock it already
-  holds, retaining any registration another consumer still claims or any
+  owner died. It also retires nothing unless it holds the Bun index lock for its
+  own apply: a link that only wants that lock planned its registrations before
+  this owner created anything, so they are not in the index yet and this owner
+  cannot see them. While it holds the lock it reads the index instead of waiting
+  for it, retaining any registration another consumer still claims or any
   registration it cannot verify because the index is unreadable. A shared or
   foreign registration is never removed. This is what stopped registrations
   pointing at deleted worktrees accumulating.
