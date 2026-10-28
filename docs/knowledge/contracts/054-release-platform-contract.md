@@ -394,7 +394,7 @@ The Run stops at the first unapproved one with status `awaiting-approval` and
 
 **Checkout state layout** (Q-010; §10 ruling 2):
 `<checkout>/.effigy/state/release/<owner>/record.json` is the durable record,
-`receipt.json` the receipt, `candidate/<artifact>/` the certified artifact
+`receipt.json` the receipt, rendered from the record and replaced through the same atomic route with every record write, so it is current at each checkpoint and equals `release receipt --json`; `candidate/<artifact>/` the certified artifact
 copies that publish re-hashes. The checkout journal holds the checkpoint
 pointer. The release owner uses that checkout's retained identity, and a linked
 worktree owns its own journal and candidate. State is registered in Git's local

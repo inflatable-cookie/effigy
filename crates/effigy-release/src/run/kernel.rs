@@ -28,7 +28,9 @@ use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{BeginOpts, Fence, Reconciled, Run, SettlementAdapter};
 use effigy_kernel::store::{Store, StoreReader};
 
+use super::receipt::ReleaseReceipt;
 use super::record::{ReleaseCheckpoint, ReleaseRecord, RELEASE_CHECKPOINT_SCHEMA};
+use super::RELEASE_RECEIPT_FILE;
 use crate::ReleaseError;
 
 /// The state-root directory a release's record and candidate live in.
@@ -231,19 +233,42 @@ impl ReleaseState {
         if bytes.len() as u64 > <ReleaseRecord as effigy_kernel::record::Record>::MAX_BYTES {
             return Err(storage_error("release record exceeds 4 MiB"));
         }
+        self.replace_file(run, "record.json", "release:checkpoint-file", &bytes)
+    }
+
+    /// Write the receipt rendered from `record`, through the same atomic route
+    /// as the record, so `receipt.json` and `release receipt --json` agree at
+    /// every checkpoint (054 §5).
+    pub fn write_receipt(
+        &self,
+        record: &ReleaseRecord,
+        run: &mut Run<'_>,
+    ) -> Result<(), ReleaseError> {
+        let receipt = ReleaseReceipt::from_record(record);
+        let bytes = serde_json::to_vec_pretty(&receipt).map_err(storage_error)?;
+        self.replace_file(run, RELEASE_RECEIPT_FILE, "release:receipt-file", &bytes)
+    }
+
+    fn replace_file(
+        &self,
+        run: &mut Run<'_>,
+        name: &str,
+        kind: &str,
+        bytes: &[u8],
+    ) -> Result<(), ReleaseError> {
+        let path = self.record_path.with_file_name(name);
         let ticket = run.intend(effigy_kernel::run::EffectSpec {
-            target: run.fence().clone(), kind: "release:checkpoint-file".into(),
-            payload: serde_json::json!({"record":self.record_path,"sha256":super::artifacts::sha256_bytes(&bytes)}),
+            target: run.fence().clone(), kind: kind.into(),
+            payload: serde_json::json!({"file":path,"sha256":super::artifacts::sha256_bytes(bytes)}),
             settlement: effigy_kernel::run::Settlement::Retain, required: false,
         }).map_err(storage_error)?;
         let directory = effigy_kernel::fs::DirFd::open(
-            self.record_path
-                .parent()
-                .ok_or_else(|| storage_error("record parent missing"))?,
+            path.parent()
+                .ok_or_else(|| storage_error("release state parent missing"))?,
         )
         .map_err(storage_error)?;
-        let name = effigy_kernel::fs::FileName::new("record.json").map_err(storage_error)?;
-        run.replace_record(&directory, &name, &bytes, Default::default())
+        let file = effigy_kernel::fs::FileName::new(name).map_err(storage_error)?;
+        run.replace_record(&directory, &file, bytes, Default::default())
             .map_err(storage_error)?;
         run.applied(&ticket, serde_json::Value::Null)
             .map_err(storage_error)

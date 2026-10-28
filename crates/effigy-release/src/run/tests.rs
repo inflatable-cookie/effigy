@@ -250,6 +250,8 @@ struct TestEffects {
     fail_task_start: Option<String>,
     /// Fail the prepare commit, so the rollback runs.
     fail_commit: bool,
+    /// Fail the closeout commit push before it reaches the remote.
+    fail_commit_push: bool,
     /// Print this on stdout for a `task` identity.
     task_stdout: String,
     tasks: Vec<String>,
@@ -280,6 +282,7 @@ impl TestEffects {
             fail_task: None,
             fail_task_start: None,
             fail_commit: false,
+            fail_commit_push: false,
             task_stdout: "identity-from-task\n".to_owned(),
             tasks: Vec::new(),
             task_outputs: BTreeMap::new(),
@@ -355,6 +358,11 @@ impl ReleaseEffects for TestEffects {
         commit: &str,
         branch: &str,
     ) -> Result<(), ReleaseError> {
+        if self.fail_commit_push {
+            return Err(ReleaseError::TaskInvocation(
+                "simulated closeout push failure".to_owned(),
+            ));
+        }
         self.inner.push_commit(run, commit, branch)?;
         self.commit_pushes.push(commit.to_owned());
         Ok(())
@@ -626,6 +634,111 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
         receipt["candidate"]["artifacts"][0]["files"][0]["sha256"],
         sha256_bytes(b"certified artifact").as_str()
     );
+}
+
+/// Asserts the on-disk receipt equals what `release receipt --json` prints for
+/// the same record, and returns it parsed.
+fn assert_receipt_file_matches_command(
+    receipt_path: &Path,
+    record: &ReleaseRecord,
+) -> serde_json::Value {
+    let file = std::fs::read_to_string(receipt_path).expect("receipt file");
+    let file: serde_json::Value = serde_json::from_str(&file).expect("receipt json");
+    let command = render_release_receipt_json(&ReleaseReceipt::from_record(record));
+    let command: serde_json::Value = serde_json::from_str(&command).expect("command json");
+    assert_eq!(
+        file, command,
+        "receipt.json must match `release receipt --json`"
+    );
+    file
+}
+
+#[test]
+fn the_receipt_file_matches_the_receipt_command_after_closeout() {
+    let fixture = fixture("receipt-complete");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+
+    let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        outcome.succeeded(),
+        "run failed: {:?}",
+        outcome.record.errors
+    );
+
+    let file =
+        assert_receipt_file_matches_command(&outcome.receipt_path, &current_record(&fixture));
+    assert_eq!(
+        file["release"]["status"],
+        ReleaseRunStatus::Complete.label()
+    );
+    assert_eq!(file["checkpoints"].as_array().map(Vec::len), Some(7));
+    assert_eq!(file["checkpoints"][6]["stage"], "closeout");
+}
+
+#[test]
+fn a_paused_run_keeps_a_non_complete_receipt_until_it_completes() {
+    let fixture = fixture("receipt-paused");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    assert!(paused.succeeded(), "run failed: {:?}", paused.record.errors);
+    let file = assert_receipt_file_matches_command(&paused.receipt_path, &current_record(&fixture));
+    assert_eq!(file["release"]["status"], ReleaseRunStatus::Paused.label());
+    assert_eq!(file["checkpoints"].as_array().map(Vec::len), Some(2));
+
+    let completed = resume(&fixture, &mut effects);
+    assert!(
+        completed.succeeded(),
+        "resume failed: {:?}",
+        completed.record.errors
+    );
+    let file =
+        assert_receipt_file_matches_command(&completed.receipt_path, &current_record(&fixture));
+    assert_eq!(
+        file["release"]["status"],
+        ReleaseRunStatus::Complete.label()
+    );
+
+    // A completed Run's re-read is idempotent: nothing rewrites the receipt.
+    let before = std::fs::read(&completed.receipt_path).expect("receipt");
+    let again = resume(&fixture, &mut effects);
+    assert!(
+        again.succeeded(),
+        "re-read failed: {:?}",
+        again.record.errors
+    );
+    assert_eq!(std::fs::read(&again.receipt_path).expect("receipt"), before);
+}
+
+#[test]
+fn a_failed_closeout_never_writes_a_complete_receipt() {
+    let fixture = fixture("receipt-failed-closeout");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects.fail_commit_push = true;
+
+    let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(!outcome.succeeded());
+    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
+
+    let file =
+        assert_receipt_file_matches_command(&outcome.receipt_path, &current_record(&fixture));
+    assert_eq!(file["release"]["status"], ReleaseRunStatus::Failed.label());
+    assert!(file["checkpoints"]
+        .as_array()
+        .expect("checkpoints")
+        .iter()
+        .all(|checkpoint| checkpoint["stage"] != "closeout"));
 }
 
 #[test]

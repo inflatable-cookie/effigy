@@ -757,10 +757,13 @@ impl<'a, 's> Runner<'a, 's> {
         });
     }
 
-    /// Write the record and its kernel checkpoint pointer.
+    /// Write the record, its receipt rendering and the kernel checkpoint
+    /// pointer. The receipt goes with every record write, so the file on disk
+    /// is never behind the record that `release receipt` reads.
     fn persist(&mut self) -> Result<(), ReleaseError> {
         self.record.updated_at = now();
         self.state.write_record(self.record, self.run)?;
+        self.state.write_receipt(self.record, self.run)?;
         let checkpoint = self.record.checkpoint(&self.state.record_path);
         let value = serde_json::to_value(&checkpoint).map_err(|error| {
             ReleaseError::TaskInvocation(format!(
@@ -1705,22 +1708,9 @@ impl<'a, 's> Runner<'a, 's> {
                 }
             }
         }
-        self.persist()?;
-        self.write_receipt()
-    }
-
-    fn write_receipt(&mut self) -> Result<(), ReleaseError> {
-        let receipt = ReleaseReceipt::from_record(self.record);
-        let bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| {
-            ReleaseError::TaskInvocation(format!("failed to encode the release receipt: {error}"))
-        })?;
-        let path = self.state.record_path.with_file_name(RELEASE_RECEIPT_FILE);
-        std::fs::write(&path, bytes).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to write the release receipt {}: {error}",
-                path.display()
-            ))
-        })
+        // The runner persists the closeout checkpoint and the Complete status
+        // after this returns, and that write carries the final receipt.
+        self.persist()
     }
 
     fn intend_irreversible(
