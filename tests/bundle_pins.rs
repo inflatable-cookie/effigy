@@ -1075,6 +1075,113 @@ fn task_local_status_logs_and_stop_do_not_acquire_a_missing_pin() {
     assert!(output.contains("hello local"), "{output}");
 }
 
+/// A `mode = "tui"` task declared in `[manifest].include` still skips
+/// missing-pin acquisition on status/logs/stop (Acowtancy `dev:container`).
+#[test]
+fn included_tui_status_logs_and_stop_do_not_acquire_a_missing_pin() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("book-src");
+    fs::create_dir(&source).unwrap();
+    git_in(
+        &source,
+        &fixture.home,
+        &["init", "--initial-branch=main", "--quiet"],
+    );
+    git_in(
+        &source,
+        &fixture.home,
+        &["config", "uploadpack.allowReachableSHA1InWant", "true"],
+    );
+    fs::write(source.join("README"), "book\n").unwrap();
+    git_in(&source, &fixture.home, &["add", "."]);
+    git_in(
+        &source,
+        &fixture.home,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "book",
+            "--quiet",
+        ],
+    );
+    let rev = git_in(&source, &fixture.home, &["rev-parse", "HEAD"]);
+    fs::create_dir(fixture.repo.join("infra")).unwrap();
+    fs::write(
+        fixture.repo.join("infra/tasks.toml"),
+        "[tasks.dev]\nmode = \"tui\"\nconcurrent = [\n  { name = \"api\", run = \"true\", start = 1 }\n]\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.repo.join("effigy.toml"),
+        format!(
+            "[manifest]\ninclude = [\"infra/tasks.toml\"]\n\n[sources.book]\ngit = \"file://{git}\"\nrev = \"{rev}\"\npath = \"book\"\n\n[tasks.hello]\nrun = \"echo hello local\"\n",
+            git = source.display(),
+        ),
+    )
+    .unwrap();
+
+    let tools = fixture.owner.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    for name in ["git", "oras"] {
+        let executable = tools.join(name);
+        fs::write(
+            &executable,
+            "#!/bin/sh\ncase \" $* \" in *clone*|*fetch*|*ls-remote*|*pull*) printf called > \"$HOME/remote-called\"; exit 1;; esac\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path =
+        std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+    let path = Path::new(&path);
+
+    for args in [
+        &["dev", "status"][..],
+        &["dev", "status", "--json"][..],
+        &["dev", "logs"][..],
+        &["dev", "stop"][..],
+    ] {
+        let (ok, output) = fixture.run(args, &[("PATH", path)], Duration::from_secs(20));
+        assert!(
+            !fixture.home.join("remote-called").exists(),
+            "{args:?} acquired a source: {output}"
+        );
+        assert!(
+            !fixture.repo.join("book").exists(),
+            "{args:?} cloned the missing pin: {output}"
+        );
+        if args.get(1) == Some(&"logs") {
+            assert!(!ok, "{args:?} should report the session: {output}");
+            assert!(
+                output.contains("has no run"),
+                "{args:?} session result: {output}"
+            );
+        } else {
+            assert!(ok, "{args:?}: {output}");
+            if args.contains(&"--json") {
+                assert!(
+                    output.contains("effigy.managed.status.v1"),
+                    "{args:?} json envelope: {output}"
+                );
+            }
+        }
+    }
+
+    let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
+    assert!(ok, "a real task run still acquires: {output}");
+    assert!(output.contains("hello local"), "{output}");
+    assert!(
+        fixture.repo.join("book").is_dir(),
+        "the missing pin is acquired for a real run: {output}"
+    );
+}
+
 /// A fresh checkout runs an ordinary task: the missing bundle and catalog pins
 /// are acquired before the strict parse (contract 020 §Behaviour rule 1).
 #[test]

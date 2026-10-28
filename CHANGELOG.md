@@ -318,9 +318,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Managed-task `status`, `logs` and `stop` (`mode = "tui"`) inspect or stop an
   existing session without acquiring a missing pinned source. The skip follows
-  the selected task's own `mode`, including a prefixed catalog name. A real
-  task run, including one whose first argument is those words, still acquires
-  the pin.
+  the selected task's own `mode`, including a prefixed catalog name and a task
+  declared in an included manifest fragment. A real task run, including one
+  whose first argument is those words, still acquires the pin.
 - Mapping-form `build.additional_contexts` (`src: ../frontend`) now resolve
   against the Compose file that names them, the same as sequence-form
   `src=../frontend`. After render the path stays checkout-rooted instead of
