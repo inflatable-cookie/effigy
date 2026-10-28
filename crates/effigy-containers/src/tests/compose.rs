@@ -1691,6 +1691,10 @@ variant = "default"
         assert!(compose.contains("DB_HOST: host.docker.internal"));
         assert!(compose.contains(&format!("DB_PORT: '{}'", shared.host_port)));
 
+        // A shared render is published by its ensure, not by `prepare`.
+        for render in &policy.render.as_ref().expect("rendered").shared {
+            crate::policy::render::publish_shared_render(render).expect("publish shared");
+        }
         assert!(shared.compose_file.exists());
         let shared_compose = policy
             .read_compose(&shared.compose_file)

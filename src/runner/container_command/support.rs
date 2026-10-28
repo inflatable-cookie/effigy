@@ -377,6 +377,20 @@ pub(super) fn ensure_pinned_host_ports_available(
 pub(in crate::runner) fn ensure_shared_services_running(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
+    let renders = policy
+        .render
+        .as_ref()
+        .map_or(&[][..], |render| render.shared.as_slice());
+    ensure_shared_services_with_renders(policy, renders)
+}
+
+/// The ensure with the shared renders it may publish. They are the ones the
+/// policy's one render produced; publication happens after the vanished-render
+/// refusal so a missing directory is never silently restored (ef5780da).
+fn ensure_shared_services_with_renders(
+    policy: &EffectiveContainerPolicy,
+    renders: &[effigy_containers::SharedRender],
+) -> Result<Vec<String>, RunnerError> {
     let mut notes = Vec::new();
     for service in &policy.shared_services {
         // Held until this service's ensure is complete; a gate that cannot be
@@ -392,7 +406,21 @@ pub(in crate::runner) fn ensure_shared_services_running(
                 None
             }
         };
-        let replaced = replace_stale_shared_render(policy, service)?;
+        // One inventory read serves the refusal and the replacement below.
+        let containers = read_shared_containers(policy, service);
+        refuse_vanished_shared_render(policy, service, containers.as_deref())?;
+        if let Some(render) = renders
+            .iter()
+            .find(|render| Some(render.directory.as_path()) == service.compose_file.parent())
+        {
+            effigy_containers::policy::render::publish_shared_render(render).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot publish shared {} render: {error}",
+                    service.service_name
+                ))
+            })?;
+        }
+        let replaced = replace_stale_shared_render(policy, service, containers.as_deref())?;
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
@@ -422,27 +450,108 @@ pub(in crate::runner) fn ensure_shared_services_running(
     Ok(notes)
 }
 
-/// Stop and remove every container of a shared project the runtime says came
-/// from a different render, so Compose creates the new one against a free
-/// port. An unreadable runtime is named and left to Compose rather than
-/// stopping a service this run cannot see.
-fn replace_stale_shared_render(
+/// The shared project's containers as the runtime reports them. A failed read is
+/// named and yields `None`.
+fn read_shared_containers(
     policy: &EffectiveContainerPolicy,
     service: &effigy_containers::SharedServiceBinding,
-) -> Result<bool, RunnerError> {
-    let containers = match effigy_containers::exec::shared_project_containers(
+) -> Option<Vec<effigy_containers::exec::SharedProjectContainer>> {
+    match effigy_containers::exec::shared_project_containers(
         &policy.repo_root,
         policy,
         &service.project_name,
     ) {
-        Ok(containers) => containers,
+        Ok(containers) => Some(containers),
         Err(error) => {
             eprintln!(
                 "[warn] cannot read the runtime's shared {} containers: {error}",
                 service.service_name
             );
-            return Ok(false);
+            None
         }
+    }
+}
+
+/// Refuse a shared service that would start against a missing render (ef5780da).
+///
+/// A container whose own render directory is gone has bind sources that no
+/// longer exist, so starting or replacing it fails after a stop or remove. That
+/// is refused before any publish, stop, remove or Compose call, whichever render
+/// the container was created from. A missing render with no container is the
+/// normal creation path. A missing render with an unreadable inventory is
+/// refused, because no container can be ruled out. A present render keeps the
+/// previous behaviour when the inventory is unreadable.
+fn refuse_vanished_shared_render(
+    policy: &EffectiveContainerPolicy,
+    service: &effigy_containers::SharedServiceBinding,
+    containers: Option<&[effigy_containers::exec::SharedProjectContainer]>,
+) -> Result<(), RunnerError> {
+    let current_present = service.compose_file.is_file();
+    let Some(containers) = containers else {
+        if current_present {
+            return Ok(());
+        }
+        let render = service
+            .compose_file
+            .parent()
+            .unwrap_or(&service.compose_file)
+            .display();
+        return Err(RunnerError::task_invocation(format!(
+            "shared {service} (project `{project}`) has no render at `{render}`, and the runtime's containers cannot be read, so no container can be ruled out. Nothing was stopped, removed, published or started. Make the runtime readable, then re-run `effigy container up {env}`.",
+            service = service.service_name,
+            project = service.project_name,
+            env = policy.name,
+        )));
+    };
+    // `<project>/<digest>/<file>`: the project directory names every render.
+    let project_dir = service.compose_file.ancestors().nth(2);
+    let vanished = containers
+        .iter()
+        .filter_map(|container| {
+            let label = container.render.as_deref()?;
+            if label == service.render_digest {
+                let directory = service.compose_file.parent()?;
+                return (!current_present)
+                    .then(|| (container.container_name.as_str(), directory.to_path_buf()));
+            }
+            let directory = project_dir?.join(label);
+            (!directory.is_dir()).then(|| (container.container_name.as_str(), directory))
+        })
+        .collect::<Vec<_>>();
+    if vanished.is_empty() {
+        return Ok(());
+    }
+    let names = vanished
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let renders = vanished
+        .iter()
+        .map(|(_, directory)| directory.display().to_string())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(RunnerError::task_invocation(format!(
+        "shared {service} (project `{project}`) has container {names} created from render `{renders}`, which is missing, so Compose cannot start it. Nothing was stopped, removed or re-rendered: the container and its named data volume are unchanged. Recover by removing exactly the container named here with the runtime's `rm -f` (its named volume stays), then re-run `effigy container up {env}`, which renders the shared service and creates it on the preserved volume.",
+        service = service.service_name,
+        project = service.project_name,
+        env = policy.name,
+    )))
+}
+
+/// Stop and remove every container of a shared project the runtime says came
+/// from a different render, so Compose creates the new one against a free
+/// port. An unreadable runtime (`None`) is left to Compose rather than stopping
+/// a service this run cannot see.
+fn replace_stale_shared_render(
+    policy: &EffectiveContainerPolicy,
+    service: &effigy_containers::SharedServiceBinding,
+    containers: Option<&[effigy_containers::exec::SharedProjectContainer]>,
+) -> Result<bool, RunnerError> {
+    let Some(containers) = containers else {
+        return Ok(false);
     };
     let stale = containers
         .iter()
@@ -1332,26 +1441,50 @@ mod tests {
         assert!(script.contains("printf '%s %s\\n' \"$ip\" \"$alias\" >> /etc/hosts"));
     }
 
+    /// A private checkout whose runtime is a script recording every call. The
+    /// store holds the renders `<project>/<digest>` the bindings point at, and a
+    /// named data volume that the fake `volume rm` deletes.
     struct SharedFixture {
         _fixture: effigy_test_support::Fixture,
         root: PathBuf,
+        volume: PathBuf,
     }
 
     impl SharedFixture {
-        /// A private checkout whose runtime is a script recording every call,
-        /// listing one container of `project` rendered from `container_render`.
+        /// The runtime lists one container of `project` rendered from
+        /// `container_render`.
         fn new(name: &str, project: &str, container: &str, container_render: &str) -> Self {
+            let listing = format!(
+                "printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' '{container_render}' '{project}'"
+            );
+            Self::build(name, project, &listing)
+        }
+
+        /// The same runtime with no container of `project` on it.
+        fn unlisted(name: &str, project: &str) -> Self {
+            Self::build(name, project, "exit 0")
+        }
+
+        /// A runtime whose inventory read fails.
+        fn unreadable(name: &str, project: &str) -> Self {
+            Self::build(name, project, "echo 'daemon is down' >&2; exit 1")
+        }
+
+        fn build(name: &str, project: &str, listing: &str) -> Self {
             let fixture = effigy_test_support::Fixture::workspace(name).unwrap();
             let root = fixture.path().canonicalize().unwrap();
             let bin = root.join("bin");
             std::fs::create_dir(&bin).unwrap();
             let log = root.join("calls");
+            let volumes = root.join("volumes");
+            let volume = volumes.join(format!("{project}-data"));
+            std::fs::create_dir_all(&volume).unwrap();
+            std::fs::write(volume.join("rows"), "kept\n").unwrap();
             let script = format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'--format'*)\n    printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' '{container_render}' '{project}'\n    ;;\nesac\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'volume rm'*)\n    rm -rf {volumes}\n    ;;\n  *'--format'*)\n    {listing}\n    ;;\nesac\n",
                 log = log.display(),
-                container = container,
-                container_render = container_render,
-                project = project,
+                volumes = volumes.display(),
+                listing = listing,
             );
             for name in ["docker", "colima"] {
                 let executable = bin.join(name);
@@ -1363,12 +1496,15 @@ mod tests {
                 .unwrap();
             }
             std::fs::write(root.join("effigy.toml"), "[tasks]\nbuild = \"true\"\n").unwrap();
-            let shared = root.join("shared");
-            std::fs::create_dir_all(&shared).unwrap();
-            std::fs::write(shared.join("compose.yml"), "services: {}\n").unwrap();
+            for digest in ["this-render", "previous-render"] {
+                let directory = root.join("store").join(digest);
+                std::fs::create_dir_all(&directory).unwrap();
+                std::fs::write(directory.join("compose.yml"), "services: {}\n").unwrap();
+            }
             Self {
                 _fixture: fixture,
                 root,
+                volume,
             }
         }
 
@@ -1388,7 +1524,7 @@ mod tests {
                 catalog: "mariadb".to_owned(),
                 domain_label: "mysql".to_owned(),
                 project_name: project.to_owned(),
-                compose_file: self.root.join("shared/compose.yml"),
+                compose_file: self.render_dir(render_digest).join("compose.yml"),
                 host: "host.docker.internal".to_owned(),
                 host_port: 23306,
                 container_port: 3306,
@@ -1398,76 +1534,60 @@ mod tests {
             }];
             policy
         }
+
+        fn render_dir(&self, digest: &str) -> PathBuf {
+            self.root.join("store").join(digest)
+        }
+
+        /// The render `up` hands the ensure: the directory and its compose file,
+        /// as `publish_shared_render` would write them.
+        fn render(&self, digest: &str) -> effigy_containers::SharedRender {
+            effigy_containers::SharedRender {
+                directory: self.render_dir(digest),
+                files: std::collections::BTreeMap::from([(
+                    PathBuf::from("compose.yml"),
+                    b"services: {}\n".to_vec(),
+                )]),
+            }
+        }
+
+        /// Removes a rendered directory, as an operator's cleanup would.
+        fn vanish_render(&self, digest: &str) {
+            std::fs::remove_dir_all(self.render_dir(digest)).unwrap();
+        }
+
+        /// Whether the named data volume still holds its rows.
+        fn volume_kept(&self) -> bool {
+            self.volume.join("rows").is_file()
+        }
     }
 
-    /// A changed shared render is replaced in the one order that frees its
-    /// published host port before the new container is created (effigy#377).
-    #[test]
-    fn a_changed_shared_render_stops_then_removes_before_it_starts_the_new_one() {
+    /// The fake runtime's environment for one test, pointed at its checkout.
+    fn runtime_env(fixture: &SharedFixture) -> crate::contract_test_support::EnvGuard {
+        runtime_env_for(&fixture.root)
+    }
+
+    fn runtime_env_for(root: &Path) -> crate::contract_test_support::EnvGuard {
         use crate::contract_test_support::EnvGuard;
-        let project = "effigy-shared-mariadb-probe";
-        let container = format!("{project}-legacy_mysql-1");
-        let fixture = SharedFixture::new(
-            "effigy-shared-replace-",
-            project,
-            &container,
-            "previous-render",
-        );
-        let _env = EnvGuard::set_many(&[
+        EnvGuard::set_many(&[
             (
                 "PATH",
                 Some(format!(
                     "{}:{}",
-                    fixture.root.join("bin").display(),
+                    root.join("bin").display(),
                     std::env::var("PATH").unwrap()
                 )),
             ),
-            ("HOME", Some(fixture.root.display().to_string())),
+            ("HOME", Some(root.display().to_string())),
             ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
-        ]);
-        let policy = fixture.policy(project, "this-render");
-
-        let notes = super::ensure_shared_services_running(&policy).expect("ensure succeeds");
-
-        assert_eq!(
-            notes,
-            vec!["replaced shared legacy_mysql (render changed)".to_owned()]
-        );
-        let calls = fixture.calls();
-        let position = |needle: &str| {
-            calls
-                .iter()
-                .position(|call| call.split(' ').any(|arg| arg == needle))
-                .unwrap_or_else(|| panic!("`{needle}` was never run: {}", calls.join("; ")))
-        };
-        let listed = calls
-            .iter()
-            .position(|call| call.starts_with("ps "))
-            .expect("the runtime is asked which render is running");
-        assert!(calls[listed].contains("--all"), "{}", calls[listed]);
-        assert!(
-            position("stop") < position("rm") && position("rm") < position("up"),
-            "stop, remove, then up: {calls:?}"
-        );
-        assert!(
-            calls[position("stop")].ends_with(&container),
-            "the stale container is stopped by name: {calls:?}"
-        );
-        assert!(
-            calls[position("rm")].contains(&format!("rm -f {container}")),
-            "the stale container is removed by name: {calls:?}"
-        );
-        assert!(
-            !calls.iter().any(|call| call.contains("volume rm")),
-            "the shared data volume is kept: {calls:?}"
-        );
+        ])
     }
 
-    /// An unchanged shared render is never touched, so a second `up` leaves a
-    /// healthy shared data service and its connections alone (effigy#377).
+    /// A shared service whose render is unchanged is never touched, so a second
+    /// `up` leaves a healthy shared data service and its connections alone
+    /// (effigy#377).
     #[test]
     fn an_unchanged_shared_render_is_left_alone() {
-        use crate::contract_test_support::EnvGuard;
         let project = "effigy-shared-mariadb-probe";
         let container = format!("{project}-legacy_mysql-1");
         let fixture = SharedFixture::new(
@@ -1476,18 +1596,7 @@ mod tests {
             &container,
             "this-render",
         );
-        let _env = EnvGuard::set_many(&[
-            (
-                "PATH",
-                Some(format!(
-                    "{}:{}",
-                    fixture.root.join("bin").display(),
-                    std::env::var("PATH").unwrap()
-                )),
-            ),
-            ("HOME", Some(fixture.root.display().to_string())),
-            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
-        ]);
+        let _env = runtime_env(&fixture);
         let policy = fixture.policy(project, "this-render");
 
         let notes = super::ensure_shared_services_running(&policy).expect("ensure succeeds");
@@ -1506,6 +1615,509 @@ mod tests {
         assert!(
             calls.iter().any(|call| call.contains(" up ")),
             "the unchanged service still gets its one apply: {calls:?}"
+        );
+    }
+
+    /// A changed shared render is replaced in the one order that frees its
+    /// published host port before the new container is created (effigy#377).
+    #[test]
+    fn a_changed_shared_render_stops_then_removes_before_it_starts_the_new_one() {
+        let project = "effigy-shared-mariadb-probe";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-replace-",
+            project,
+            &container,
+            "previous-render",
+        );
+        let _env = runtime_env(&fixture);
+        let policy = fixture.policy(project, "this-render");
+
+        let notes = super::ensure_shared_services_running(&policy).expect("ensure succeeds");
+
+        assert_eq!(
+            notes,
+            vec!["replaced shared legacy_mysql (render changed)".to_owned()]
+        );
+        let calls = fixture.calls();
+        let position = |needle: &str| {
+            calls
+                .iter()
+                .position(|call| call.split(' ').any(|arg| arg == needle))
+                .unwrap_or_else(|| panic!("`{needle}` was never run: {}", calls.join("; ")))
+        };
+        assert!(
+            position("stop") < position("rm") && position("rm") < position("up"),
+            "stop, remove, then up: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call.contains("volume rm")),
+            "the shared data volume is kept: {calls:?}"
+        );
+        assert!(fixture.volume_kept());
+    }
+
+    /// A container created from the current render, whose render directory has
+    /// vanished, is refused before anything is published, stopped, removed or
+    /// started. Its identity and named volume are unchanged (ef5780da).
+    #[test]
+    fn a_container_from_a_vanished_render_is_refused_before_anything_changes() {
+        let project = "effigy-shared-mariadb-probe";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-vanished-",
+            project,
+            &container,
+            "this-render",
+        );
+        let _env = runtime_env(&fixture);
+        fixture.vanish_render("this-render");
+        let policy = fixture.policy(project, "this-render");
+
+        let error =
+            super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
+                .expect_err("a vanished render with its container is refused");
+
+        let message = error.to_string();
+        assert!(message.contains("legacy_mysql"), "{message}");
+        assert!(message.contains(project), "{message}");
+        assert!(message.contains("is missing"), "{message}");
+        assert!(message.contains(&container), "{message}");
+        assert!(message.contains("rm -f"), "{message}");
+        assert!(message.contains("effigy container up"), "{message}");
+        assert!(
+            !fixture.render_dir("this-render").exists(),
+            "the vanished render is not silently restored"
+        );
+        let calls = fixture.calls();
+        assert!(
+            calls.iter().all(|call| call.starts_with("ps ")),
+            "only the runtime listing ran: {calls:?}"
+        );
+        assert!(fixture.volume_kept(), "the named volume is preserved");
+    }
+
+    /// A container from an older render whose own render directory has vanished
+    /// is refused even when the current render is present: starting or replacing
+    /// it would stop a container whose bind sources are gone (ef5780da).
+    #[test]
+    fn a_container_from_a_vanished_older_render_is_refused() {
+        let project = "effigy-shared-mariadb-probe";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-older-",
+            project,
+            &container,
+            "previous-render",
+        );
+        let _env = runtime_env(&fixture);
+        fixture.vanish_render("previous-render");
+        let policy = fixture.policy(project, "this-render");
+
+        let error = super::ensure_shared_services_running(&policy)
+            .expect_err("an older vanished render with its container is refused");
+
+        let message = error.to_string();
+        assert!(message.contains("is missing"), "{message}");
+        assert!(message.contains(&container), "{message}");
+        assert!(message.contains("rm -f"), "{message}");
+        assert!(
+            !fixture.render_dir("previous-render").exists(),
+            "the older render is not silently restored"
+        );
+        let calls = fixture.calls();
+        assert!(
+            calls.iter().all(|call| call.starts_with("ps ")),
+            "nothing is stopped, removed or started: {calls:?}"
+        );
+        assert!(fixture.volume_kept(), "the named volume is preserved");
+    }
+
+    /// A stale container whose render is present is replaced after the current
+    /// render is published, with the named volume kept (effigy#377).
+    #[test]
+    fn a_container_from_another_render_is_replaced_after_its_render_is_published() {
+        let project = "effigy-shared-mariadb-probe";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-replaced-",
+            project,
+            &container,
+            "previous-render",
+        );
+        let _env = runtime_env(&fixture);
+        fixture.vanish_render("this-render");
+        let policy = fixture.policy(project, "this-render");
+
+        let notes =
+            super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
+                .expect("a changed render replaces its container");
+
+        assert_eq!(
+            notes,
+            vec!["replaced shared legacy_mysql (render changed)".to_owned()]
+        );
+        assert!(fixture
+            .render_dir("this-render")
+            .join("compose.yml")
+            .is_file());
+        let calls = fixture.calls();
+        let position = |needle: &str| {
+            calls
+                .iter()
+                .position(|call| call.split(' ').any(|arg| arg == needle))
+                .unwrap_or_else(|| panic!("`{needle}` was never run: {}", calls.join("; ")))
+        };
+        assert!(
+            position("stop") < position("rm") && position("rm") < position("up"),
+            "stop, remove, then up: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call.contains("volume rm")),
+            "the shared data volume is kept: {calls:?}"
+        );
+        assert!(fixture.volume_kept());
+    }
+
+    /// A vanished render with an unreadable inventory is refused: no container
+    /// can be ruled out, so nothing is published or started.
+    #[test]
+    fn a_vanished_render_with_an_unreadable_inventory_is_refused() {
+        let project = "effigy-shared-mariadb-probe";
+        let fixture = SharedFixture::unreadable("effigy-shared-unreadable-", project);
+        let _env = runtime_env(&fixture);
+        fixture.vanish_render("this-render");
+        let policy = fixture.policy(project, "this-render");
+
+        let error =
+            super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
+                .expect_err("an unreadable inventory is refused");
+
+        assert!(error.to_string().contains("cannot be read"), "{error}");
+        let calls = fixture.calls();
+        assert!(
+            calls.iter().all(|call| call.starts_with("ps ")),
+            "nothing is published, stopped or started: {calls:?}"
+        );
+        assert!(!fixture.render_dir("this-render").exists());
+    }
+
+    /// A present render with an unreadable inventory keeps the previous
+    /// behaviour: it is named and the service still starts.
+    #[test]
+    fn a_healthy_render_with_an_unreadable_inventory_still_starts() {
+        let project = "effigy-shared-mariadb-probe";
+        let fixture = SharedFixture::unreadable("effigy-shared-healthy-", project);
+        let _env = runtime_env(&fixture);
+        let policy = fixture.policy(project, "this-render");
+
+        let notes = super::ensure_shared_services_running(&policy)
+            .expect("a present render starts without the inventory");
+
+        assert_eq!(
+            notes,
+            vec!["legacy_mysql [mariadb] -> host.docker.internal:23306".to_owned()]
+        );
+        assert!(fixture.calls().iter().any(|call| call.contains(" up ")));
+    }
+
+    /// First creation: no shared container and no render yet. The ensure
+    /// publishes the render, then Compose creates the service (effigy#377).
+    #[test]
+    fn a_first_creation_publishes_its_render_then_starts_the_service() {
+        let project = "effigy-shared-mariadb-probe";
+        let fixture = SharedFixture::unlisted("effigy-shared-fresh-", project);
+        let _env = runtime_env(&fixture);
+        fixture.vanish_render("this-render");
+        let policy = fixture.policy(project, "this-render");
+
+        let notes =
+            super::ensure_shared_services_with_renders(&policy, &[fixture.render("this-render")])
+                .expect("first creation succeeds");
+
+        assert_eq!(
+            notes,
+            vec!["legacy_mysql [mariadb] -> host.docker.internal:23306".to_owned()]
+        );
+        assert!(fixture
+            .render_dir("this-render")
+            .join("compose.yml")
+            .is_file());
+        let calls = fixture.calls();
+        assert!(
+            calls.iter().any(|call| call.contains(" up ")),
+            "the service is created: {calls:?}"
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("stop ") || call.starts_with("rm ")),
+            "nothing existing is stopped or removed: {calls:?}"
+        );
+        assert!(fixture.volume_kept());
+    }
+
+    /// A checkout whose manifest declares a shared mariadb service and whose
+    /// runtime is a script. Unlike [`SharedFixture`], the policy, the render
+    /// digest and the publication are the product's own: `up`'s preparation
+    /// (`load_container_policy_for_creation`) and its shared-service ensure run
+    /// here, so a proof cannot pass on a hand-built binding.
+    struct UpFixture {
+        _fixture: effigy_test_support::Fixture,
+        root: PathBuf,
+        home: PathBuf,
+        listing: PathBuf,
+        volume: PathBuf,
+    }
+
+    impl UpFixture {
+        fn new(name: &str) -> Self {
+            let fixture = effigy_test_support::Fixture::workspace(name).unwrap();
+            let root = fixture.path().canonicalize().unwrap();
+            let bin = root.join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            let log = root.join("calls");
+            let volumes = root.join("volumes");
+            let volume = volumes.join("effigy-shared-mariadb-data");
+            std::fs::create_dir_all(&volume).unwrap();
+            std::fs::write(volume.join("rows"), "kept\n").unwrap();
+            // The runtime's shared-project inventory: rows the test writes.
+            let listing = root.join("listing");
+            std::fs::write(&listing, "").unwrap();
+            let script = format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'volume rm'*)\n    rm -rf {volumes}\n    ;;\n  *'--format'*)\n    if [ -s {listing} ]; then cat {listing}; fi\n    ;;\nesac\n",
+                log = log.display(),
+                volumes = volumes.display(),
+                listing = listing.display(),
+            );
+            for name in ["docker", "colima"] {
+                let executable = bin.join(name);
+                std::fs::write(&executable, &script).unwrap();
+                std::fs::set_permissions(
+                    executable,
+                    std::os::unix::fs::PermissionsExt::from_mode(0o700),
+                )
+                .unwrap();
+            }
+            std::fs::write(
+                root.join("effigy.toml"),
+                r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+            )
+            .unwrap();
+            let home = root.join("effigy-home");
+            std::fs::create_dir(&home).unwrap();
+            Self {
+                _fixture: fixture,
+                root,
+                home,
+                listing,
+                volume,
+            }
+        }
+
+        /// `up`'s preparation: resolve the creation policy from this checkout's
+        /// manifest, render it and prepare its mounts. The shared render is
+        /// rendered here and published by the ensure, never by this stage.
+        fn prepare(&self) -> EffectiveContainerPolicy {
+            effigy_containers::with_test_effigy_home(&self.home, || {
+                effigy_containers::load_container_policy_for_creation(&self.root, None)
+                    .expect("creation policy")
+                    .0
+            })
+        }
+
+        /// `up`'s shared-service stage, on the policy its preparation produced.
+        fn ensure(
+            &self,
+            policy: &EffectiveContainerPolicy,
+        ) -> Result<Vec<String>, super::RunnerError> {
+            effigy_containers::with_test_effigy_home(&self.home, || {
+                super::ensure_shared_services_running(policy)
+            })
+        }
+
+        /// The one shared binding the manifest declares.
+        fn only_shared<'a>(
+            &self,
+            policy: &'a EffectiveContainerPolicy,
+        ) -> &'a effigy_containers::SharedServiceBinding {
+            assert_eq!(policy.shared_services.len(), 1, "one shared service");
+            &policy.shared_services[0]
+        }
+
+        fn container_name(&self, service: &effigy_containers::SharedServiceBinding) -> String {
+            format!("{}-{}-1", service.project_name, service.service_name)
+        }
+
+        /// The runtime reports one container of the shared project, created
+        /// from `render`'s digest.
+        fn list_container(&self, container: &str, render: &str, project: &str) {
+            std::fs::write(
+                &self.listing,
+                format!("{container}\tUp 2 minutes\t{render}\t{project}\n"),
+            )
+            .unwrap();
+        }
+
+        fn calls(&self) -> Vec<String> {
+            std::fs::read_to_string(self.root.join("calls"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        /// Whether the runtime's named data volume still holds its rows.
+        fn volume_kept(&self) -> bool {
+            self.volume.join("rows").is_file()
+        }
+    }
+
+    /// The papercut's refusal, proved through `up`'s own preparation and
+    /// publication path. Preparation renders the shared service without
+    /// publishing it, the ensure publishes it and Compose creates it, a healthy
+    /// existing service is left alone, and a render directory an operator
+    /// deleted is neither restored by preparation nor started: the runtime's
+    /// container is refused before Compose runs, with its identity and named
+    /// data volume unchanged (ef5780da).
+    #[test]
+    fn up_refuses_a_vanished_shared_render_instead_of_republishing_it() {
+        let fixture = UpFixture::new("effigy-shared-up-");
+        let _env = runtime_env_for(&fixture.root);
+
+        // First creation: the manifest resolves one shared service whose render
+        // exists only once the ensure publishes it.
+        let first = fixture.prepare();
+        assert_eq!(
+            first
+                .render
+                .as_ref()
+                .expect("the creation policy renders")
+                .shared
+                .len(),
+            1,
+            "the policy's one render carries the shared service"
+        );
+        let shared = fixture.only_shared(&first);
+        let render_dir = shared
+            .compose_file
+            .parent()
+            .expect("shared render directory")
+            .to_path_buf();
+        assert_eq!(shared.service_name, "db");
+        assert!(
+            !render_dir.exists(),
+            "preparation renders the shared service without publishing it: {}",
+            render_dir.display()
+        );
+        fixture.ensure(&first).expect("first creation succeeds");
+        assert!(
+            shared.compose_file.is_file(),
+            "the ensure publishes the shared render: {}",
+            shared.compose_file.display()
+        );
+        let created = fixture.calls();
+        assert!(
+            created.iter().any(|call| {
+                call.contains("compose")
+                    && call.contains(&shared.compose_file.display().to_string())
+                    && call.contains("up -d")
+            }),
+            "Compose starts the render the ensure published: {created:?}"
+        );
+
+        // A healthy existing shared service: the runtime holds the container
+        // this render created, so the next `up` leaves it and its data alone.
+        let container = fixture.container_name(shared);
+        fixture.list_container(&container, &shared.render_digest, &shared.project_name);
+        let healthy = fixture.prepare();
+        let healthy_shared = fixture.only_shared(&healthy);
+        assert_eq!(
+            healthy_shared.compose_file, shared.compose_file,
+            "one machine-wide render path for the shared project"
+        );
+        let notes = fixture
+            .ensure(&healthy)
+            .expect("a healthy shared service starts");
+        assert_eq!(
+            notes,
+            vec![format!(
+                "db [mariadb] -> {}:{}",
+                healthy_shared.host, healthy_shared.host_port
+            )]
+        );
+        let calls = fixture.calls();
+        assert!(
+            !calls.iter().any(|call| call.starts_with("stop ")
+                || call.starts_with("rm ")
+                || call.contains("volume rm")),
+            "the healthy container and its volume are untouched: {calls:?}"
+        );
+
+        // The operator deletes the rendered project directory; the runtime still
+        // holds the container that render created.
+        std::fs::remove_dir_all(&render_dir).expect("delete the rendered project");
+        let stale = fixture.prepare();
+        let stale_shared = fixture.only_shared(&stale);
+        assert_eq!(
+            stale_shared.compose_file, shared.compose_file,
+            "the same render is due again"
+        );
+        assert!(
+            !render_dir.exists(),
+            "preparation never republishes a vanished shared render: {}",
+            render_dir.display()
+        );
+
+        let before_refusal = fixture.calls().len();
+        let error = fixture
+            .ensure(&stale)
+            .expect_err("a vanished shared render with its container is refused");
+        let message = error.to_string();
+        for expected in [
+            "db",
+            stale_shared.project_name.as_str(),
+            container.as_str(),
+            render_dir.display().to_string().as_str(),
+            "is missing",
+            "named data volume",
+            "rm -f",
+            "effigy container up web",
+        ] {
+            assert!(message.contains(expected), "{expected}: {message}");
+        }
+        assert!(
+            !render_dir.exists(),
+            "the refusal does not re-render the shared service: {}",
+            render_dir.display()
+        );
+        let refusal_calls = &fixture.calls()[before_refusal..];
+        assert!(
+            refusal_calls.iter().all(|call| call.starts_with("ps ")),
+            "one inventory read, then no Compose start, stop or remove: {refusal_calls:?}"
+        );
+        assert!(
+            fixture.volume_kept(),
+            "the shared service's named data volume is preserved"
         );
     }
 }

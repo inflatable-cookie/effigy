@@ -346,6 +346,14 @@ During v0.x, MINOR bumps may include breaking changes.
   journal, a journal that has gone missing while release state remains, or an
   unreadable record now blocks `release status` instead of reporting no Run.
 - Bundle step overrides replace the execution kind, including retired `draft` defaults, while retaining other step metadata.
+- A shared service whose render directory is gone is refused before anything
+  changes. When a container whose own render is gone still exists, whichever
+  render it was created from, `container up` names it and the recovery (remove
+  that exact container with `rm -f`, then `effigy container up <NAME>`), and
+  does not restore the render or stop, remove or start anything. Its named data
+  volume is kept. A container whose render is present and differs is replaced
+  as before, and a missing render with no container takes the normal creation
+  path.
 - A container runtime that stops answering an inventory read can no longer
   hold one `container up` open for minutes. Every runtime read Effigy makes is
   bounded, and a bring-up's read after Compose returns and its readiness wait

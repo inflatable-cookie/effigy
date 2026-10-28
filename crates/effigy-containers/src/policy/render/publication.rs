@@ -87,12 +87,6 @@ pub fn prepare(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyE
             None => Ok(()),
         }
     })?;
-    // A shared service belongs to no checkout, so its render is published
-    // outside this generation, at one machine-wide content-addressed directory
-    // every checkout that shares it computes (effigy#377).
-    for shared in &render.shared {
-        publish_shared_render(shared)?;
-    }
     Ok(())
 }
 
@@ -100,7 +94,11 @@ pub fn prepare(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyE
 /// content-addressed, so an identical file already there is left alone and a
 /// concurrent writer of the same bytes writes the same bytes (through a
 /// temporary file in the same directory, renamed into place).
-fn publish_shared_render(shared: &crate::SharedRender) -> Result<(), ContainerPolicyError> {
+///
+/// A shared render is published by its ensure, not by `prepare`: the ensure
+/// refuses a vanished render first, so publishing here would silently restore
+/// it (ef5780da).
+pub fn publish_shared_render(shared: &crate::SharedRender) -> Result<(), ContainerPolicyError> {
     for (relative, bytes) in &shared.files {
         let path = shared.directory.join(relative);
         if std::fs::read(&path).is_ok_and(|existing| existing == *bytes) {
