@@ -98,7 +98,7 @@ asset reasons, generated-in-source categories, or marker/suppression hits.
 ## Incremental cache
 
 Disposable workspace-owned cache state lives under
-`.effigy/doctor/cache/v1/<encoded-scope>/`. Entries contain per-file reusable
+`.effigy/doctor/cache/v2/<encoded-scope>/`. Entries contain per-file reusable
 facts, not rendered doctor output. Facts may include line/code counts,
 generated classification, and normalized duplicate fingerprints.
 

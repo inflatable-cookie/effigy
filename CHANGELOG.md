@@ -200,6 +200,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
+  scopes after changed publications. Legacy v1 cache is left for manual cleanup.
+
 - **A pinned `[sources.<name>]` checkout is published in one step.** A missing
   checkout is cloned into a hidden staging directory beside its declared path and
   moved into place with one rename, so a path that exists is complete. Two fresh

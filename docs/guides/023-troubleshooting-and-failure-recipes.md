@@ -670,6 +670,20 @@ Fix:
 
 ## 9) Doctor Deep Health Preconditions
 
+### Deep-doctor cache space
+
+Deep doctor stores disposable scan observations in `.effigy/doctor/cache/v2/`.
+After a changed publication it targets 128 MiB and 32 owned generations, keeping
+locked and current generations. It warns when an oversized result cannot be
+cached or when unknown, unreadable, mismatched or locked entries prevent cleanup.
+A warm identical scan makes no cache writes. Older v1 cache entries are left
+untouched; if no deep doctor is running, you may remove the checkout's
+`.effigy/doctor/cache/v1/` directory once after inspecting its contents.
+
+This cache is separate from `.effigy/cache/sources/`, which holds pinned source
+generations governed by [the bundle source contract](../knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md).
+Do not clear source generations as part of doctor cache cleanup.
+
 ### Symptom: `doctor --deep` reports `health.task.bootstrap` and skips health
 
 Diagnosis:

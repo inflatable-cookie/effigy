@@ -177,7 +177,7 @@ agent-skill trees, supports `--json` for CI integration, and can be configured
 in `effigy.toml` with thresholds, include/exclude globs, and automatic
 deep-doctor inclusion. Without explicit thresholds `god-files` uses
 per-language size defaults, so a real repository yields a short review list.
-TODO/FIXME searches are not a scan: use `rg -n 'TODO|FIXME' <path>`. Deep doctor shares one catalog-scoped inventory and an exact disposable cache under `.effigy/doctor/cache/v1/`; use `--refresh` to bypass cache reads. Findings write to `.effigy/reports/doctor/` as markdown for review.
+TODO/FIXME searches are not a scan: use `rg -n 'TODO|FIXME' <path>`. Deep doctor shares one catalog-scoped inventory and an exact disposable cache under `.effigy/doctor/cache/v2/`; use `--refresh` to bypass cache reads. Findings write to `.effigy/reports/doctor/` as markdown for review.
 
 For scripts and agents, `effigy --json <command>` emits stable envelopes (see
 `docs/guides/017-json-output-contracts.md`). Manifest tasks also accept a
