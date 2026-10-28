@@ -1525,6 +1525,61 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    /// Characterize the actual host and guest argv at the named managed exec
+    /// boundary with a private fake runtime. This records the current leak;
+    /// the fix must invert these assertions and retain the environment proof.
+    #[test]
+    fn managed_exec_secret_argv_exposure_characterization() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        use effigy_containers::session::{managed_exec_command, ManagedExecRequest};
+        use effigy_env::secret::SecretString;
+
+        let fixture = effigy_test_support::Fixture::workspace("managed-secret-argv-")
+            .expect("private fixture");
+        let root = fixture.path().canonicalize().expect("fixture root");
+        let runtime = root.join("runtime");
+        fs::write(
+            &runtime,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > host-argv\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --command ]; then shift; printf '%s\\n' \"$1\" > guest-argv; exec /bin/sh -c \"$1\"; fi\n  shift\ndone\nexit 1\n",
+        )
+        .expect("fake runtime");
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("runtime mode");
+        let secret = "managed-argv-characterization-secret";
+        let command = super::wrap_with_managed_secret_env(
+            "printf '%s' \"$DATABASE_URL\" > received".to_owned(),
+            &[(
+                "DATABASE_URL".to_owned(),
+                SecretString::new(secret.to_owned()),
+            )],
+            &root,
+        );
+        let rendered = managed_exec_command(ManagedExecRequest {
+            repo_root: &root,
+            container_name: None,
+            process_cwd: &root,
+            container_repo_root: None,
+            setup_command: None,
+            executable: &effigy_core::shell::shell_quote(&runtime.display().to_string()),
+            command: &command,
+            exec_group: None,
+        });
+        let output = Command::new("/bin/sh")
+            .args(["-c", &rendered])
+            .current_dir(&root)
+            .output()
+            .expect("spawn fake runtime");
+        assert!(output.status.success());
+        assert!(fs::read_to_string(root.join("host-argv"))
+            .unwrap()
+            .contains(secret));
+        assert!(fs::read_to_string(root.join("guest-argv"))
+            .unwrap()
+            .contains(secret));
+        assert_eq!(fs::read_to_string(root.join("received")).unwrap(), secret);
+    }
+
     #[test]
     fn a_managed_task_honours_its_scratch_opt_out() {
         let uses: effigy_manifest::ManifestTask =
