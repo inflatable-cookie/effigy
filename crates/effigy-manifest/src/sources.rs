@@ -316,10 +316,16 @@ fn clone_at_pin(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestE
         Ok(()) => Ok(cloned_report(spec)),
         Err(error) => {
             let _ = std::fs::remove_dir_all(&staging);
-            if !spec.path.exists() {
-                return Err(ManifestError::Read {
+            if !spec.path.join(".git").exists() {
+                // Nothing checkout-shaped appeared: the path holds something else
+                // and only the rename's own error describes it.
+                return Err(ManifestError::Compose {
                     path: spec.path.clone(),
-                    error,
+                    detail: format!(
+                        "pinned source `{}` could not be published at {}: {error}; the entry already there was left untouched",
+                        spec.name,
+                        spec.path.display()
+                    ),
                 });
             }
             adopt_published(spec)
@@ -354,7 +360,7 @@ fn adopt_published(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, Manife
     Err(ManifestError::Compose {
         path: spec.path.clone(),
         detail: format!(
-            "pinned source `{}` at {} was published by a concurrent run that does not match its pin {}: {}",
+            "pinned source `{}` at {} already holds a checkout this run did not publish, and it does not match the pin {}: {} (nothing was reset, fetched or cleaned; another run sharing this declared path may hold a different pin)",
             spec.name,
             spec.path.display(),
             spec.revision,
@@ -836,6 +842,35 @@ path = "book"
         );
     }
 
+    /// A destination that holds something other than a checkout is never
+    /// replaced or removed: this run's clone is reported and the entry stays.
+    #[test]
+    fn a_destination_holding_something_else_is_reported_and_left_alone() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let remote = dir.path().join("book-src");
+        let revision = init_source_remote(&remote, "pinned\n");
+        let spec = worktree_spec(dir.path(), "wt-a", &remote, &revision, "../book");
+        std::fs::create_dir(&spec.path).expect("mkdir destination");
+        std::fs::write(spec.path.join("keep.txt"), "not a checkout\n").expect("write entry");
+
+        let error = clone_at_pin(&spec).expect_err("something else holds the path");
+        let message = error.to_string();
+        assert!(message.contains("could not be published"), "{message}");
+        assert_eq!(
+            std::fs::read_to_string(spec.path.join("keep.txt")).expect("the entry is kept"),
+            "not a checkout\n"
+        );
+        assert!(
+            !spec.path.join(".git").exists(),
+            "nothing was cloned into the occupied path"
+        );
+        assert!(
+            staging_entries(dir.path()).is_empty(),
+            "a refused publication leaves no staging directory: {:?}",
+            staging_entries(dir.path())
+        );
+    }
+
     /// A run in a second worktree never continues on a destination another run
     /// published at a different revision: the mismatch is reported and the
     /// checkout is left exactly as it was.
@@ -852,8 +887,9 @@ path = "book"
         clone_at_pin(&older_spec).expect("the older pin publishes the destination");
         let error = clone_at_pin(&newer_spec).expect_err("a different revision is never adopted");
         let message = error.to_string();
-        assert!(message.contains("concurrent run"), "{message}");
+        assert!(message.contains("did not publish"), "{message}");
         assert!(message.contains(&newer), "{message}");
+        assert!(message.contains("nothing was reset"), "{message}");
 
         let head = git(Some(&newer_spec.path), &["rev-parse", "HEAD"]).expect("read head");
         assert_eq!(head, older, "the published checkout is left untouched");
