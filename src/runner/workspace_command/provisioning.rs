@@ -15,13 +15,14 @@ use crate::runner::exec_command::{
 };
 use crate::runner::workspace_client::context::{
     binary_dir, binary_path, context_dir, context_path, read_published_context,
-    read_published_generation, render_digest, sha256, ContextReadError, GuestBinaryIdentity,
-    GuestReader, GuestWorkspace, WorkspaceActivationIdentity, WorkspaceBackendDescriptor,
-    WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext, WorkspaceContextInput,
+    read_published_generation, render_digest, sha256, snapshot_dir, snapshot_path,
+    ContextReadError, GuestBinaryIdentity, GuestReader, GuestWorkspace,
+    WorkspaceActivationIdentity, WorkspaceBackendDescriptor, WorkspaceChannelLocator,
+    WorkspaceContainerIdentity, WorkspaceContext, WorkspaceContextInput,
     WorkspaceEnrolmentCredential, WorkspaceEnvironmentIdentity, WorkspaceHostIdentity,
     WorkspacePathMap, WorkspacePinnedSource, WorkspaceRoute, BINARY_CURRENT_PATH, BINARY_ROOT,
-    CHANNEL_PROTOCOL_VERSION, CONTEXT_CURRENT_PATH, ENROL_CREDENTIAL_PATH, ENROL_ROOT,
-    HOST_REPREPARE_COMMAND,
+    CHANNEL_PROTOCOL_VERSION, COMPOSED_MANIFEST_KIND, CONTEXT_CURRENT_PATH, ENROL_CREDENTIAL_PATH,
+    ENROL_ROOT, HOST_REPREPARE_COMMAND,
 };
 
 #[cfg(test)]
@@ -44,8 +45,10 @@ const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie
 pub(super) const EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV: &str =
     "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE";
 static WORKSPACE_EFFIGY_STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
 const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(300);
+#[cfg(test)]
 const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 
@@ -55,6 +58,11 @@ pub(super) enum LinuxWorkspaceTarget {
     Aarch64Gnu,
 }
 
+/// Where a Prepare may find the produced guest artifact (§8.9).
+///
+/// No variant builds one: `Local` consumes this checkout's produced artifact or
+/// refuses, `Download` takes the release artifact, and `Auto` prefers the local
+/// one and falls back to a current release download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LinuxWorkspaceArtifactSource {
     Auto,
@@ -306,6 +314,15 @@ pub(in crate::runner) struct WorkspacePrepareFacts<'a> {
     /// The environment engine's activation generation (§8.2). The activation
     /// path resolves it; a publisher never invents one.
     pub(in crate::runner) environment: WorkspaceEnvironmentIdentity,
+    /// The install identity of the produced artifact this Prepare consumed. It
+    /// is the producer's own identity, never minted by the consumer.
+    pub(in crate::runner) artifact_install_identity: Option<String>,
+}
+
+/// The live facts an entry check compares the published context to.
+pub(in crate::runner) struct LiveWorkspaceEntry {
+    /// The environment record's activation generation, read after activation.
+    pub(in crate::runner) environment: WorkspaceEnvironmentIdentity,
 }
 
 /// Publish the version-locked guest executable and immutable context for one
@@ -332,7 +349,7 @@ pub(in crate::runner) fn prepare_workspace_guest(
         environment: facts.environment,
         container: facts.container,
     };
-    let sources = workspace_source_pins(facts.repo_root, facts.policy, &paths)?;
+    let closure = workspace_source_closure(facts.repo_root, &paths)?;
     let mut context = WorkspaceContext::new(WorkspaceContextInput {
         generation: 1,
         host: WorkspaceHostIdentity {
@@ -344,17 +361,21 @@ pub(in crate::runner) fn prepare_workspace_guest(
         session_run_id: facts.session_run_id,
         paths: paths.clone(),
         backend: facts.backend,
-        sources,
+        sources: closure.pins,
         routes: workspace_routes(facts.policy),
         channel: facts.channel,
     });
-    let context_generation = publish_context_generation(guest, &mut context)?;
+    // The executable and the rendered snapshots are published before the
+    // context that names them, so an entry never resolves a generation whose
+    // executable or snapshot is still missing.
     install_pinned_guest_binary(
         guest,
         artifact,
         &binary,
-        &expected_workspace_effigy_install_identity(facts.repo_root)?,
+        facts.artifact_install_identity.as_deref(),
     )?;
+    publish_source_snapshots(guest, &closure.snapshots)?;
+    let context_generation = publish_context_generation(guest, &mut context)?;
     if let Some(enrolment) = facts.enrolment.as_ref() {
         publish_enrolment_credential(guest, &workspace.user, enrolment)?;
     }
@@ -393,19 +414,33 @@ pub(super) fn publish_workspace_guest(
         ))
     })?;
     // The container fence is the backend's full id, verified on the host before
-    // anything is published; the guest compares its own view to it.
+    // anything is published; the guest compares its own view to it. The probe
+    // and the binding are taken through different paths, so they are checked
+    // against each other before either becomes a fence: a published id that the
+    // running guest does not name would never match again.
     let binding = crate::runner::container_runtime_prep::verify_service_binding(
         repo_root,
         policy,
         policy.primary_service.as_str(),
         None,
     )?;
-    let container = WorkspaceContainerIdentity {
+    let bound = WorkspaceContainerIdentity {
         container_id: binding.id().to_owned(),
-        vm_boot_id: observed.vm_boot_id,
-        platform: observed.platform,
+        vm_boot_id: observed.vm_boot_id.clone(),
+        platform: observed.platform.clone(),
     };
-    let artifact = ensure_linux_workspace_effigy_artifact(repo_root, target)?;
+    if !bound.container_matches(&observed) {
+        return Err(RunnerError::task_invocation(format!(
+            "workspace container `{}` reports id `{}`, but the backend binding inspected `{}`; \
+             the probe and the binding do not name the same instance, so nothing is published. \
+             Run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+            policy.name,
+            observed.container_id,
+            binding.id()
+        )));
+    }
+    let (artifact, artifact_install_identity) =
+        produced_linux_workspace_effigy_artifact(repo_root, target)?;
     prepare_workspace_guest(
         &mut guest,
         &artifact,
@@ -430,8 +465,11 @@ pub(super) fn publish_workspace_guest(
                 runtime: None,
                 vm_type: None,
             },
-            container,
+            container: bound,
+            // Read after activation: the generation the environment engine just
+            // promoted is the one this context is bound to.
             environment: environment_generation(policy)?,
+            artifact_install_identity,
         },
     )
 }
@@ -447,12 +485,14 @@ pub(super) fn ensure_workspace_provisioning_ready(
     ensure_workspace_permissions_ready(workspace_repo_root, policy, container_name, repo_override)
 }
 
-/// Entry path: verify the pinned guest executable the published context names.
+/// Entry path: verify the pinned guest executable and the live identity the
+/// published context is bound to.
 ///
 /// This is not a Prepare. It never downloads, builds or reinstalls the guest
 /// (§8.9); a workspace without a prepared context, or with one that pins
-/// another version or a missing executable, refuses and names the host
-/// re-prepare command.
+/// another version, container, VM boot or environment generation, refuses and
+/// names the host re-prepare command. A hybrid environment (no declared
+/// operator workspace) has no guest and provisions none.
 pub(super) fn ensure_workspace_effigy_available_for_policy(
     workspace_repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -461,8 +501,17 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
         return Ok(());
     }
+    // The mode boundary is the declared workspace, the same one Prepare uses: a
+    // catalog service's default workspace user does not make this container
+    // mode, so it does not require a guest either (§8.1).
+    if operator_workspace_for_policy(workspace_repo_root, policy)?.is_none() {
+        return Ok(());
+    }
+    let live = LiveWorkspaceEntry {
+        environment: environment_generation(policy)?,
+    };
     let mut guest = ComposeWorkspaceGuest::unbounded(workspace_repo_root, policy);
-    verify_pinned_guest_binary(&mut guest)
+    verify_pinned_guest_binary(&mut guest, &live)
 }
 
 pub(super) fn ensure_workspace_effigy_available_for_policy_bounded(
@@ -471,36 +520,48 @@ pub(super) fn ensure_workspace_effigy_available_for_policy_bounded(
     target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
-    let verified = {
-        let mut guest =
-            ComposeWorkspaceGuest::bounded(workspace_repo_root, policy, target_id, budget);
-        verify_pinned_guest_binary(&mut guest)
-    };
-    verified.map_err(|error| {
-        // A bounded capture failure (deadline, stream limit) already carries
-        // its own phase detail; only a verification refusal is restated here.
-        if error.json_error_details().is_some() {
-            return error;
+    // Hybrid environments are not container-mode workspaces and have no guest
+    // to verify; the bounded path keeps the same declared-workspace boundary.
+    if operator_workspace_for_policy(workspace_repo_root, policy)?.is_some() {
+        let live = LiveWorkspaceEntry {
+            environment: environment_generation(policy)?,
+        };
+        let verified = {
+            let mut guest =
+                ComposeWorkspaceGuest::bounded(workspace_repo_root, policy, target_id, budget);
+            verify_pinned_guest_binary(&mut guest, &live)
+        };
+        if let Err(error) = verified {
+            // A bounded capture failure (deadline, stream limit) already carries
+            // its own phase detail; only a verification refusal is restated here.
+            if error.json_error_details().is_some() {
+                return Err(error);
+            }
+            // Bounded failures carry only static text, so the refusal names the
+            // phase and the host re-prepare rather than a version, a digest or a
+            // path from the container.
+            return Err(bounded_phase_error(
+                policy,
+                policy.primary_service.as_str(),
+                budget,
+                BoundedCommandPhase::WorkspacePreparation,
+                "workspace_preparation_failed",
+                "bounded container command could not verify the prepared workspace guest; run \
+                 `effigy container up` on the host to re-prepare the workspace",
+                None,
+            ));
         }
-        // Bounded failures carry only static text, so the refusal names the
-        // phase and the host re-prepare rather than a version, a digest or a
-        // path from the container.
-        bounded_phase_error(
-            policy,
-            policy.primary_service.as_str(),
-            budget,
-            BoundedCommandPhase::WorkspacePreparation,
-            "workspace_preparation_failed",
-            "bounded container command could not verify the prepared workspace guest; run \
-             `effigy container up` on the host to re-prepare the workspace",
-            None,
-        )
-    })
+    }
+    Ok(())
 }
 
-/// Check the published context against the host's own version and the guest's
-/// installed executable. Pure reads: no write, no build, no download.
-pub(super) fn verify_pinned_guest_binary(guest: &mut dyn GuestReader) -> Result<(), RunnerError> {
+/// Check the published context against the host's own version, the guest's
+/// installed executable, and the live container, VM boot and environment
+/// generation it was prepared for. Pure reads: no write, no build, no download.
+pub(super) fn verify_pinned_guest_binary(
+    guest: &mut dyn GuestWorkspace,
+    live: &LiveWorkspaceEntry,
+) -> Result<(), RunnerError> {
     let published = read_published_context(guest)
         .map_err(context_read_error)?
         .ok_or_else(|| {
@@ -518,6 +579,13 @@ pub(super) fn verify_pinned_guest_binary(guest: &mut dyn GuestReader) -> Result<
             published.generation, context.binary.version, context.host.version, host_version
         )));
     }
+    if context.binary.protocol != CHANNEL_PROTOCOL_VERSION {
+        return Err(RunnerError::task_invocation(format!(
+            "workspace context generation {} pins channel protocol {} but this client speaks {}; \
+             run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+            published.generation, context.binary.protocol, CHANNEL_PROTOCOL_VERSION
+        )));
+    }
     let digest = context.binary.digest.clone();
     let pinned = guest
         .read_file(BINARY_CURRENT_PATH)
@@ -530,6 +598,42 @@ pub(super) fn verify_pinned_guest_binary(guest: &mut dyn GuestReader) -> Result<
             pinned.as_deref().unwrap_or("nothing"),
             published.generation,
             digest
+        )));
+    }
+    // The identity fence: the container the guest can observe about itself, the
+    // VM boot it belongs to and the image platform. A replaced container, a
+    // reboot that retained the filesystem, or another image refuses here before
+    // any effect.
+    let observed = guest.probe_container_identity()?;
+    let prepared_for = &context.activation.container;
+    if !prepared_for.container_matches(&observed) || !prepared_for.boot_matches(&observed) {
+        return Err(RunnerError::task_invocation(format!(
+            "workspace context generation {} was prepared for container `{}` on VM boot `{}` \
+             ({}), but this is container `{}` on VM boot `{}` ({}); run \
+             `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+            published.generation,
+            prepared_for.container_id,
+            prepared_for.vm_boot_id,
+            prepared_for.platform,
+            observed.container_id,
+            observed.vm_boot_id,
+            observed.platform,
+        )));
+    }
+    // The environment fence is the environment record's activation generation,
+    // read after activation: a re-activation with unchanged files still moves it.
+    if context.activation.environment.generation != live.environment.generation
+        || context.activation.environment.resource_id != live.environment.resource_id
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "workspace context generation {} was prepared for environment `{}` generation `{}`, \
+             but `{}` is now at generation `{}`; run `{HOST_REPREPARE_COMMAND}` on the host to \
+             re-prepare the workspace",
+            published.generation,
+            context.activation.environment.resource_id,
+            context.activation.environment.generation,
+            live.environment.resource_id,
+            live.environment.generation,
         )));
     }
     let executable = binary_path(&digest);
@@ -610,7 +714,7 @@ fn install_pinned_guest_binary(
     guest: &mut dyn GuestWorkspace,
     artifact: &Path,
     binary: &GuestBinaryIdentity,
-    install_identity: &Option<String>,
+    install_identity: Option<&str>,
 ) -> Result<(), RunnerError> {
     let executable = binary_path(&binary.digest);
     let installed = guest.file_sha256(&executable)?;
@@ -644,7 +748,7 @@ fn install_pinned_guest_binary(
         CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH,
         &binary.version,
     )?;
-    if let Some(install_identity) = install_identity.as_deref() {
+    if let Some(install_identity) = install_identity {
         guest.replace_pointer(
             CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH,
             install_identity,
@@ -876,43 +980,227 @@ pub(super) fn environment_generation(
 
 /// The pinned inputs a container-mode guest reads locally (§8.2).
 ///
-/// Each pin is a checkout-relative file the guest can read through its mount,
-/// with the digest the host computed for it. `manifest` is the task snapshot
-/// Static reads parse; `source-lock` carries the pinned bundle and catalog
-/// identities; `snapshot` is the rendered Compose the environment applies.
-fn workspace_source_pins(
+/// `pins` is the closure the context carries: the root manifest, the source
+/// lock, every bundle and catalog source the host composed from, each
+/// composition fragment, and the rendered composed manifest. `snapshots` is
+/// the rendered document published into the guest store, so a bundle- or
+/// catalog-provided task is readable without the guest reading a cache the
+/// host did not approve.
+pub(super) struct WorkspaceSourceClosure {
+    pub(super) pins: Vec<WorkspacePinnedSource>,
+    pub(super) snapshots: Vec<(String, Vec<u8>)>,
+}
+
+fn workspace_source_closure(
     repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
     paths: &WorkspacePathMap,
-) -> Result<Vec<WorkspacePinnedSource>, RunnerError> {
+) -> Result<WorkspaceSourceClosure, RunnerError> {
     let host_checkout = repo_root
         .canonicalize()
         .unwrap_or_else(|_| repo_root.to_path_buf());
-    let mut candidates = vec![
+    let manifest_path = host_checkout.join(TASK_MANIFEST_FILE);
+    let mut pins = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+
+    // Checkout-visible inputs the local task read verifies before parsing.
+    for (kind, relative) in [
         ("manifest", TASK_MANIFEST_FILE.to_owned()),
         ("source-lock", ".effigy/sources.lock.json".to_owned()),
-    ];
-    if let Some(render) = policy.render.as_ref() {
-        if let Ok(relative) = render.path.strip_prefix(&host_checkout) {
-            candidates.push(("snapshot", relative.display().to_string()));
-        }
-    }
-    let mut pins = Vec::new();
-    for (kind, relative) in candidates {
+    ] {
         let path = host_checkout.join(&relative);
-        let Some(digest) = linux_workspace_artifact_digest(&path, || true)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-        else {
+        let Some(bytes) = read_optional_bytes(&path)? else {
             continue;
+        };
+        seen.insert(relative.clone());
+        pins.push(WorkspacePinnedSource {
+            kind: kind.to_owned(),
+            name: relative.clone(),
+            digest: crate::runner::workspace_client::context::sha256_text(&bytes),
+            snapshot: Some(guest_checkout_path(paths, &relative)),
+        });
+    }
+
+    // The composed manifest is the complete task closure: every `[tasks]`
+    // entry the bundle, the catalogs and the checkout's own fragments
+    // contribute. It is published immutably, so reading it never refreshes a
+    // source or writes host state.
+    let composed = crate::runner::manifest::load_task_manifest_with_inspection(&manifest_path)?;
+    let composed_bytes = composed.effective_manifest.clone().into_bytes();
+    let composed_digest = crate::runner::workspace_client::context::sha256_text(&composed_bytes);
+    let composed_snapshot = snapshot_path(&composed_digest);
+    pins.push(WorkspacePinnedSource {
+        kind: COMPOSED_MANIFEST_KIND.to_owned(),
+        name: TASK_MANIFEST_FILE.to_owned(),
+        digest: composed_digest.clone(),
+        snapshot: Some(composed_snapshot.clone()),
+    });
+
+    // Every file the composition read, so each pin names the bytes its source
+    // contributed and the guest path those bytes are readable at.
+    let canonical = |path: PathBuf| path.canonicalize().unwrap_or(path);
+    let catalog_roots = effigy_manifest::catalog_source_roots(&manifest_path)
+        .map(|roots| {
+            let mut declared = roots
+                .declared
+                .into_iter()
+                .map(|(_, path)| canonical(path))
+                .collect::<Vec<_>>();
+            if let Some(bundle) = roots.bundle {
+                declared.push(canonical(bundle));
+            }
+            declared
+        })
+        .unwrap_or_default();
+    let bundle_root = composed
+        .bundle_root
+        .as_ref()
+        .map(|root| canonical(root.clone()));
+    for fragment in &composed.evaluation_order {
+        let canonical = fragment
+            .canonicalize()
+            .unwrap_or_else(|_| fragment.to_path_buf());
+        let Ok(relative) = canonical.strip_prefix(&host_checkout) else {
+            continue;
+        };
+        let relative = relative.display().to_string();
+        if !seen.insert(relative.clone()) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&canonical) else {
+            continue;
+        };
+        let kind = if bundle_root
+            .as_ref()
+            .is_some_and(|root| canonical.starts_with(root))
+        {
+            "bundle"
+        } else if catalog_roots.iter().any(|root| canonical.starts_with(root)) {
+            "catalog"
+        } else {
+            "manifest"
         };
         pins.push(WorkspacePinnedSource {
             kind: kind.to_owned(),
             name: relative.clone(),
-            digest: render_digest(digest),
+            digest: crate::runner::workspace_client::context::sha256_text(&bytes),
             snapshot: Some(guest_checkout_path(paths, &relative)),
         });
     }
-    Ok(pins)
+
+    // The pinned bundle and catalog identities. Their rendered result is the
+    // composed snapshot, which each pin names.
+    if let Some(root) = bundle_root.as_ref() {
+        if let Some(pin) = source_directory_pin("bundle", root, &host_checkout, &composed_snapshot)
+        {
+            pins.push(pin);
+        }
+    }
+    for root in &catalog_roots {
+        if let Some(pin) = source_directory_pin("catalog", root, &host_checkout, &composed_snapshot)
+        {
+            pins.push(pin);
+        }
+    }
+
+    Ok(WorkspaceSourceClosure {
+        pins,
+        snapshots: vec![(composed_digest, composed_bytes)],
+    })
+}
+
+/// One pinned bundle or catalog source: the digest of its manifest fragments and
+/// the rendered snapshot they produced.
+fn source_directory_pin(
+    kind: &str,
+    root: &Path,
+    host_checkout: &Path,
+    rendered_snapshot: &str,
+) -> Option<WorkspacePinnedSource> {
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if !canonical.is_dir() {
+        return None;
+    }
+    let name = canonical
+        .strip_prefix(host_checkout)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| canonical.display().to_string());
+    Some(WorkspacePinnedSource {
+        kind: kind.to_owned(),
+        name,
+        digest: manifest_fragment_digest(&canonical)?,
+        snapshot: Some(rendered_snapshot.to_owned()),
+    })
+}
+
+/// A deterministic digest over one source directory's manifest fragments: its
+/// `*.toml` files, sorted by relative path, each contributing its path, length
+/// and bytes.
+pub(super) fn manifest_fragment_digest(root: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut fragments = Vec::new();
+    collect_toml_files(root, root, &mut fragments)?;
+    fragments.sort();
+    let mut digest = Sha256::new();
+    for relative in fragments {
+        let path = root.join(&relative);
+        let bytes = std::fs::read(&path).ok()?;
+        digest.update(relative.display().to_string().as_bytes());
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(&bytes);
+    }
+    let bytes: [u8; 32] = digest.finalize().into();
+    Some(crate::runner::workspace_client::context::render_digest(
+        bytes,
+    ))
+}
+
+fn collect_toml_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Option<()> {
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        let file_type = entry.file_type().ok()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_toml_files(root, &path, out)?;
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("toml") {
+            out.push(path.strip_prefix(root).ok()?.to_path_buf());
+        }
+    }
+    Some(())
+}
+
+fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, RunnerError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(RunnerError::task_invocation(format!(
+            "cannot read workspace input `{}`: {error}",
+            path.display()
+        ))),
+    }
+}
+
+/// Publish the rendered source snapshots the pins name, before the context that
+/// names them: one immutable directory per rendered digest.
+fn publish_source_snapshots(
+    guest: &mut dyn GuestWorkspace,
+    snapshots: &[(String, Vec<u8>)],
+) -> Result<(), RunnerError> {
+    for (digest, bytes) in snapshots {
+        let directory = snapshot_dir(digest);
+        let path = snapshot_path(digest);
+        guest.ensure_dir(&directory, 0o755)?;
+        if guest
+            .file_sha256(&path)?
+            .is_none_or(|hex| !digest_matches(digest, &hex))
+        {
+            guest.write_file(&path, bytes, 0o444)?;
+        }
+        guest.ensure_dir(&directory, 0o555)?;
+    }
+    Ok(())
 }
 
 /// The guest path a checkout-relative file is readable at.
@@ -1209,9 +1497,9 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
 
     fn write_file(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError> {
         let staging = render_workspace_effigy_staging_path();
-        let host_path = stage_host_bytes(bytes)?;
-        let staged = self.stage(&host_path, &staging);
-        let _ = std::fs::remove_file(&host_path);
+        let host_file = stage_host_bytes(bytes)?;
+        let staged = self.stage(host_file.path(), &staging);
+        drop(host_file);
         staged?;
         let script = format!(
             "install -m {mode:04o} {staging} {path} && rm -f {staging}",
@@ -1262,9 +1550,15 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
     }
 
     fn probe_container_identity(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError> {
+        // The guest reports what it can read: the cgroup path (which carries the
+        // full id under Docker on cgroup v1 and containerd/systemd on cgroup v2),
+        // its VM boot, its hostname (the 12-hex short id) and its platform. The
+        // host parses the id, so the extraction is a tested pure function rather
+        // than shell quoting in a container.
         let output = self.run_script(
-            "printf 'boot=%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\"; \
-             printf 'hostname=%s\\n' \"$(hostname)\"; \
+            "printf 'cgroup=%s\\n' \"$(cat /proc/self/cgroup 2>/dev/null | tr '\\n' ' ')\"\n\
+             printf 'boot=%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\"\n\
+             printf 'hostname=%s\\n' \"$(hostname)\"\n\
              printf 'platform=%s\\n' \"$(uname -m)\"",
             false,
         )?;
@@ -1299,10 +1593,23 @@ impl ComposeWorkspaceGuest<'_> {
     }
 }
 
+/// The full container id a guest's cgroup path names, when one is present.
+///
+/// Docker on cgroup v1 writes `/docker/<64 hex id>`, containerd and systemd on
+/// cgroup v2 write `.../<64 hex id>.scope` or `.../docker-<64 hex id>.scope`.
+/// The backend's configured hostname is not identity: it can repeat across
+/// replacements, so it is only a fallback when no path carries an id.
+pub(super) fn cgroup_container_id(raw: &str) -> Option<String> {
+    raw.split(|character: char| !character.is_ascii_hexdigit())
+        .filter(|token| token.len() == 64)
+        .map(|token| token.to_ascii_lowercase())
+        .next()
+}
+
 /// Parse the guest's identity probe: the VM boot, the image platform and the
 /// container id it can prove for itself.
 ///
-/// `container=` comes from the cgroup path when the backend exposes the full id
+/// The id comes from the cgroup path when the backend exposes the full id
 /// there, and falls back to `hostname=` (the 12-hex short id). The host records
 /// the full id it verified, and the fence accepts a short id as its prefix.
 pub(super) fn parse_container_identity(
@@ -1316,7 +1623,9 @@ pub(super) fn parse_container_identity(
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     };
-    let container_id = field("container").or_else(|| field("hostname"));
+    let container_id = field("container")
+        .or_else(|| field("cgroup").and_then(|raw| cgroup_container_id(&raw)))
+        .or_else(|| field("hostname"));
     let vm_boot_id = field("boot");
     let platform = field("platform");
     match (container_id, vm_boot_id, platform) {
@@ -1332,21 +1641,178 @@ pub(super) fn parse_container_identity(
 }
 
 /// Stage bytes for a host → container copy. The file is private to this
-/// Prepare run and removed as soon as the copy finishes.
-fn stage_host_bytes(bytes: &[u8]) -> Result<PathBuf, RunnerError> {
-    let path = std::env::temp_dir().join(format!(
-        "effigy-workspace-context-{}-{}",
-        std::process::id(),
-        WORKSPACE_EFFIGY_STAGING_COUNTER.fetch_add(1, Ordering::Relaxed),
+/// Prepare run, created exclusively with owner-only permissions in a directory
+/// only this run owns, and removed when the guard drops — on every outcome,
+/// including an error.
+pub(super) fn stage_host_bytes(bytes: &[u8]) -> Result<StagedHostFile, RunnerError> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let directory = std::env::temp_dir().join(format!(
+        "effigy-workspace-stage-{pid}",
+        pid = std::process::id()
     ));
-    std::fs::write(&path, bytes).map_err(|error| {
+    match std::fs::create_dir(&directory) {
+        Ok(()) => {
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).map_err(
+                |error| {
+                    RunnerError::task_invocation(format!(
+                        "cannot make workspace staging directory `{}` private: {error}",
+                        directory.display()
+                    ))
+                },
+            )?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = std::fs::symlink_metadata(&directory).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot inspect workspace staging directory `{}`: {error}",
+                    directory.display()
+                ))
+            })?;
+            if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+                return Err(RunnerError::task_invocation(format!(
+                    "workspace staging directory `{}` is not a private directory this run owns",
+                    directory.display()
+                )));
+            }
+        }
+        Err(error) => {
+            return Err(RunnerError::task_invocation(format!(
+                "cannot create workspace staging directory `{}`: {error}",
+                directory.display()
+            )))
+        }
+    }
+    let path = directory.join(format!(
+        "stage-{counter}",
+        counter = WORKSPACE_EFFIGY_STAGING_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    // `create_new` refuses a pre-existing path, so a planted symlink can never
+    // receive the bytes; 0600 is the only mode the file ever has.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot stage workspace bytes at `{}`: {error}",
+                path.display()
+            ))
+        })?;
+    file.write_all(bytes).map_err(|error| {
         RunnerError::task_invocation(format!(
-            "cannot stage workspace context bytes at `{}`: {error}",
+            "cannot write staged workspace bytes at `{}`: {error}",
             path.display()
         ))
     })?;
-    Ok(path)
+    drop(file);
+    Ok(StagedHostFile {
+        path,
+        directory: directory.clone(),
+        remove_directory: true,
+    })
 }
+
+/// A host staging file that removes itself and its run-owned directory.
+pub(super) struct StagedHostFile {
+    path: PathBuf,
+    directory: PathBuf,
+    remove_directory: bool,
+}
+
+impl StagedHostFile {
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for StagedHostFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        if self.remove_directory {
+            let _ = std::fs::remove_dir(&self.directory);
+        }
+    }
+}
+/// Consume the version-locked guest artifact this host may hand to a workspace
+/// (§8.2, §8.9).
+///
+/// Prepare never builds a guest artifact from an Effigy checkout at consumer
+/// runtime: it consumes bytes a release download or an explicit `effigy
+/// workspace:linux:artifact` already produced, or refuses naming that command.
+/// The bytes are authenticated against the producer receipt before publication.
+pub(super) fn produced_linux_workspace_effigy_artifact(
+    repo_root: &Path,
+    target: LinuxWorkspaceTarget,
+) -> Result<(PathBuf, Option<String>), RunnerError> {
+    let source = configured_linux_workspace_artifact_source()?;
+    let release_identity = workspace_effigy_release_install_identity();
+    let rebuild = format!(
+        "`EFFIGY_LINUX_RELEASE_TRIPLE={triple} effigy workspace:linux:artifact` on the host, or \
+         set `{env}=download` to download the published release artifact",
+        triple = target.release_triple(),
+        env = EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    );
+    if source != LinuxWorkspaceArtifactSource::Download {
+        if let Some(effigy_repo_root) = resolve_local_effigy_repo_root(repo_root)? {
+            let artifact = effigy_repo_root.join(target.artifact_relative_path());
+            if produced_linux_workspace_artifact_is_current(&artifact, target) {
+                let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
+                let anchor = resolve_local_workspace_effigy_freshness_anchor(
+                    &host_binary,
+                    &effigy_repo_root,
+                );
+                return Ok((
+                    artifact,
+                    Some(workspace_effigy_local_install_identity(&anchor)?),
+                ));
+            }
+            // `local` means this checkout's artifact or nothing: a stale one is
+            // never silently replaced by a download.
+            if source == LinuxWorkspaceArtifactSource::Local {
+                return Err(RunnerError::task_invocation(format!(
+                    "no produced linux workspace artifact for `{}` is current at `{}` (a stale \
+                     artifact is not consumed); run {rebuild}",
+                    target.release_triple(),
+                    artifact.display(),
+                )));
+            }
+        }
+    }
+    // A release download is the other produced artifact: the cache is reused
+    // only when its identity sidecar names this release, and fresh bytes must
+    // match the checksum the release publishes beside them.
+    let cache = linux_workspace_effigy_cache_path(target)?;
+    if source == LinuxWorkspaceArtifactSource::Download
+        || linux_workspace_release_cache_is_current(&cache, &release_identity)
+    {
+        let artifact = ensure_downloaded_linux_workspace_effigy_artifact(target)?;
+        return Ok((artifact, Some(release_identity)));
+    }
+    Err(RunnerError::task_invocation(format!(
+        "no produced linux workspace artifact for `{}` is available on this host (no local Effigy \
+         artifact and no current release download at `{}`); run {rebuild}",
+        target.release_triple(),
+        cache.display(),
+    )))
+}
+
+/// Whether a local artifact is already produced for this exact host version and
+/// target. The bytes are authenticated by [`verify_guest_artifact`].
+pub(super) fn produced_linux_workspace_artifact_is_current(
+    artifact_path: &Path,
+    target: LinuxWorkspaceTarget,
+) -> bool {
+    artifact_path.is_file()
+        && read_trimmed_identity_file(&workspace_effigy_active_version_file(artifact_path))
+            .as_deref()
+            == Some(effigy_core::build_info::active_version().as_str())
+        && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
+}
+
+#[cfg(test)]
 pub(super) fn ensure_linux_workspace_effigy_artifact(
     workspace_repo_root: &Path,
     target: LinuxWorkspaceTarget,
@@ -1532,6 +1998,7 @@ pub(super) fn configured_effigy_repo_root() -> Option<PathBuf> {
     looks_like_effigy_repo_root(&repo_root).then_some(repo_root)
 }
 
+#[cfg(test)]
 pub(super) fn persist_effigy_source_repo_root(repo_root: &Path) -> Result<(), RunnerError> {
     let path = effigy_source_config_path()?;
     let parent = path.parent().ok_or_else(|| {
@@ -1586,6 +2053,7 @@ pub(super) fn looks_like_effigy_repo_root(path: &Path) -> bool {
         && path.join("config/containers.toml").is_file()
 }
 
+#[cfg(test)]
 pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     host_binary: &Path,
     effigy_repo_root: &Path,
@@ -1679,6 +2147,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
 /// Bind the active-version and install-identity sidecars to a verified artifact.
 /// Callers must have proven the artifact current, or that a supported build or
 /// download just produced it; the sidecars are never written for stale bytes.
+#[cfg(test)]
 fn bind_verified_linux_workspace_effigy_artifact(
     artifact_path: &Path,
     install_identity: &str,
@@ -1694,6 +2163,7 @@ fn bind_verified_linux_workspace_effigy_artifact(
 /// A prepared artifact is current only when its bytes are bound to the expected
 /// host identity by the identity sidecar and its rehearsal receipt names the
 /// target. Timestamps and the presence of the file alone do not qualify.
+#[cfg(test)]
 pub(super) fn linux_workspace_effigy_artifact_is_current(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
@@ -1779,6 +2249,7 @@ fn linux_workspace_artifact_digest_bounded(
 
 /// A successful build only counts when it rewrote the artifact and its receipt
 /// for this target. An exit status alone can leave older output in place.
+#[cfg(test)]
 pub(super) fn linux_workspace_artifact_produced_since(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
@@ -1803,6 +2274,7 @@ pub(super) fn read_trimmed_identity_file(path: &Path) -> Option<String> {
 
 /// Name what is stale and the supported rebuild. Reports host and artifact
 /// versions and identities, with `unknown` where a sidecar is absent.
+#[cfg(test)]
 pub(super) fn describe_linux_workspace_artifact_refusal(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
@@ -1830,6 +2302,7 @@ pub(super) fn describe_linux_workspace_artifact_refusal(
     )
 }
 
+#[cfg(test)]
 pub(super) fn linux_workspace_artifact_offline_hint(
     error: RunnerError,
     refusal: &str,
@@ -1839,12 +2312,14 @@ pub(super) fn linux_workspace_artifact_offline_hint(
     ))
 }
 
+#[cfg(test)]
 pub(super) fn linux_workspace_artifact_lock_path(effigy_repo_root: &Path) -> PathBuf {
     effigy_repo_root
         .join(".effigy/locks")
         .join("task-workspace-linux-artifact.lock")
 }
 
+#[cfg(test)]
 pub(super) fn wait_for_in_progress_linux_workspace_artifact_build(
     effigy_repo_root: &Path,
     expected_identity: &str,
@@ -2058,27 +2533,6 @@ fn ensure_workspace_effigy_install_identity_file(
     })
 }
 
-pub(super) fn expected_workspace_effigy_install_identity(
-    workspace_repo_root: &Path,
-) -> Result<Option<String>, RunnerError> {
-    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    match configured_linux_workspace_artifact_source()? {
-        LinuxWorkspaceArtifactSource::Download => {
-            return Ok(Some(workspace_effigy_release_install_identity()));
-        }
-        LinuxWorkspaceArtifactSource::Local | LinuxWorkspaceArtifactSource::Auto => {}
-    }
-    let Some(effigy_repo_root) = resolve_local_effigy_repo_root(workspace_repo_root)? else {
-        return Ok(Some(workspace_effigy_release_install_identity()));
-    };
-    persist_effigy_source_repo_root(&effigy_repo_root)?;
-    let freshness_anchor =
-        resolve_local_workspace_effigy_freshness_anchor(&host_binary, &effigy_repo_root);
-    Ok(Some(workspace_effigy_local_install_identity(
-        &freshness_anchor,
-    )?))
-}
-
 pub(super) fn workspace_effigy_release_install_identity() -> String {
     format!("release:v{}", effigy_core::build_info::active_version())
 }
@@ -2266,6 +2720,7 @@ pub(super) fn linux_workspace_effigy_rehearsal_receipt_matches_target(
         .any(|line| line.trim() == format!("release_triple={}", target.release_triple()))
 }
 
+#[cfg(test)]
 pub(super) fn run_linux_workspace_effigy_artifact_build(
     host_binary: &Path,
     effigy_repo_root: &Path,

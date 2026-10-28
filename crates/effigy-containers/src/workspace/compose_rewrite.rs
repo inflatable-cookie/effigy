@@ -5,7 +5,7 @@ use crate::ContainerPolicyError;
 
 use super::{
     build_workspace_runtime_environment, build_workspace_runtime_mounts,
-    enforce_guest_volume_isolation, is_guest_mask_target, RenderedWorkspaceMount,
+    enforce_effective_guest_volume_isolation, is_guest_mask_target, RenderedWorkspaceMount,
     WorkspaceComposeRewrite, WorkspaceExtraMountDecision,
 };
 
@@ -56,6 +56,13 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         record_optional_extra_mount_decisions,
     )?;
     inject_workspace_named_volumes(&mut parsed, &injected_mounts);
+    // Read the document's bind-backed named volumes before the services are
+    // borrowed mutably: a named volume's `driver_opts.device` is a host path
+    // the service entries only name.
+    let document_volumes = parsed
+        .get("volumes")
+        .cloned()
+        .unwrap_or(serde_yaml::Value::Null);
     let injected_env = build_workspace_runtime_environment(repo_root, config, primary_service)?;
     {
         let services = parsed
@@ -84,6 +91,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
             workspace_root,
             working_dir,
             &injected_mounts,
+            &document_volumes,
         )?;
         if !injected_env.is_empty() {
             inject_workspace_service_environment(service, &injected_env);
@@ -103,6 +111,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
     Ok((rewrite_path, extra_mount_decisions))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_workspace_service_volumes(
     service: &mut serde_yaml::Mapping,
     container_name: &str,
@@ -111,6 +120,7 @@ fn rewrite_workspace_service_volumes(
     workspace_root: &Path,
     working_dir: &Path,
     injected_mounts: &[RenderedWorkspaceMount],
+    document_volumes: &serde_yaml::Value,
 ) -> Result<(), ContainerPolicyError> {
     let key = serde_yaml::Value::String("volumes".to_owned());
     let volumes = match service.get_mut(&key) {
@@ -149,27 +159,30 @@ fn rewrite_workspace_service_volumes(
         .collect::<Vec<_>>();
 
     for entry in volumes.iter() {
-        let Some(raw) = entry.as_str() else {
-            rewritten.push(entry.clone());
-            continue;
+        // Both forms are read: a long-form mapping names its target in a
+        // field, so a target-only check on strings would miss it.
+        let Some(target) = compose_mount_target(entry) else {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` Compose mount `{}` names no guest target; \
+                 an effective mount set the host cannot read is refused",
+                describe_compose_entry(entry),
+            )));
         };
-        let Some((source, target, _options)) = parse_mount_parts(raw) else {
-            rewritten.push(entry.clone());
-            continue;
-        };
-        if injected_targets.contains(target) {
+        if injected_targets.contains(target.as_str()) {
             continue;
         }
-        if target == workspace_root_rendered {
-            if let Some(canonical_source) = resolve_bind_mount_source(compose_dir, source) {
-                if canonical_repo_root.starts_with(&canonical_source) {
-                    continue;
-                }
-            }
-        }
-        if target == working_dir_rendered {
-            if let Some(canonical_source) = resolve_bind_mount_source(compose_dir, source) {
-                if canonical_source == canonical_repo_root {
+        if target == workspace_root_rendered || target == working_dir_rendered {
+            let source = compose_mount_source(entry);
+            if let Some(canonical_source) = source
+                .as_deref()
+                .and_then(|source| resolve_bind_mount_source(compose_dir, source))
+            {
+                let owner = if target == workspace_root_rendered {
+                    canonical_repo_root.starts_with(&canonical_source)
+                } else {
+                    canonical_source == canonical_repo_root
+                };
+                if owner {
                     continue;
                 }
             }
@@ -183,16 +196,79 @@ fn rewrite_workspace_service_volumes(
             .map(|mount| serde_yaml::Value::String(mount.rendered.clone())),
     );
     // Validate the complete effective list, including entries this rewrite
-    // retained, before it is published.
-    enforce_guest_volume_isolation(
+    // retained and the host paths their sources resolve to, before it is
+    // published.
+    enforce_effective_guest_volume_isolation(
         container_name,
         &canonical_repo_root,
         working_dir,
         compose_dir,
+        Some(document_volumes),
         &rewritten,
     )?;
     *volumes = rewritten;
     Ok(())
+}
+
+/// A Compose `volumes` entry as a human-readable label, without its Debug form.
+fn describe_compose_entry(entry: &serde_yaml::Value) -> String {
+    if let Some(raw) = entry.as_str() {
+        return raw.to_owned();
+    }
+    let field = |name: &str| {
+        entry
+            .as_mapping()
+            .and_then(|mapping| mapping.get(serde_yaml::Value::String(name.to_owned())))
+            .and_then(serde_yaml::Value::as_str)
+    };
+    match (field("type"), field("source"), field("target")) {
+        (kind, source, target) => format!(
+            "type={kind} source={source} target={target}",
+            kind = kind.unwrap_or("volume"),
+            source = source.unwrap_or("none"),
+            target = target.unwrap_or("none"),
+        ),
+    }
+}
+
+/// The guest target one Compose `volumes` entry names, in either form.
+fn compose_mount_target(entry: &serde_yaml::Value) -> Option<String> {
+    if let Some(raw) = entry.as_str() {
+        let mut parts = raw.splitn(3, ':');
+        let first = parts.next()?.trim();
+        // A single component is an anonymous-volume target.
+        let target = match parts.next() {
+            Some(target) if !target.trim().is_empty() => target.trim(),
+            Some(_) => return None,
+            None => first,
+        };
+        return (!target.is_empty()).then(|| target.to_owned());
+    }
+    entry
+        .as_mapping()?
+        .get(serde_yaml::Value::String("target".to_owned()))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::trim)
+        .filter(|target| !target.is_empty())
+        .map(str::to_owned)
+}
+
+/// The source one Compose `volumes` entry names, in either form.
+fn compose_mount_source(entry: &serde_yaml::Value) -> Option<String> {
+    if let Some(raw) = entry.as_str() {
+        let mut parts = raw.splitn(3, ':');
+        let source = parts.next()?.trim();
+        // A single component is an anonymous-volume target, not a source.
+        parts.next()?;
+        return (!source.is_empty()).then(|| source.to_owned());
+    }
+    entry
+        .as_mapping()?
+        .get(serde_yaml::Value::String("source".to_owned()))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+        .map(str::to_owned)
 }
 
 #[cfg_attr(test, allow(dead_code))]

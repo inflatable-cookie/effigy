@@ -12,18 +12,19 @@ use effigy_test_support::Fixture;
 
 use crate::contract_test_support::EnvGuard;
 use crate::runner::workspace_client::context::{
-    binary_path, context_path, read_published_context, sha256_text, CheckoutReader,
-    ContextRefusalCode, GuestLocalReads, GuestReader, LocalRead, LocalReadError, LocalReadOutcome,
-    WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext,
+    binary_path, context_path, read_published_context, sha256_text, snapshot_path, CheckoutReader,
+    ContextRefusalCode, GuestLocalReads, GuestReader, GuestWorkspace, LocalRead, LocalReadError,
+    LocalReadOutcome, WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext,
     WorkspaceEnrolmentCredential, WorkspaceEnvironmentIdentity, BINARY_CURRENT_PATH,
-    CHANNEL_PROTOCOL_VERSION, CONTEXT_CURRENT_PATH, ENROL_CREDENTIAL_PATH, ENROL_ROOT,
-    HOST_REPREPARE_COMMAND,
+    CHANNEL_PROTOCOL_VERSION, COMPOSED_MANIFEST_KIND, CONTEXT_CURRENT_PATH, ENROL_CREDENTIAL_PATH,
+    ENROL_ROOT, HOST_REPREPARE_COMMAND,
 };
 use crate::runner::workspace_client::guest_fake::{hex_sha256, DiskGuest, FakeGuest};
 use crate::runner::workspace_command::provisioning::{
-    environment_generation, operator_workspace_for_policy, parse_container_identity,
-    prepare_workspace_guest, verify_pinned_guest_binary, workspace_effigy_active_version_file,
-    OperatorWorkspace, PreparedWorkspaceGuest, WorkspacePrepareFacts,
+    cgroup_container_id, environment_generation, manifest_fragment_digest,
+    operator_workspace_for_policy, parse_container_identity, prepare_workspace_guest,
+    stage_host_bytes, verify_pinned_guest_binary, workspace_effigy_active_version_file,
+    LiveWorkspaceEntry, OperatorWorkspace, PreparedWorkspaceGuest, WorkspacePrepareFacts,
     EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, WORKSPACE_ARTIFACT_RECEIPT_FILE,
 };
 
@@ -149,6 +150,7 @@ fn prepare(
             },
             container,
             environment: local_identity(),
+            artifact_install_identity: None,
         },
     )
     .expect("prepare")
@@ -176,6 +178,7 @@ fn prepare_refusal(repo: &Path, guest: &mut FakeGuest, artifact: &Path) -> Strin
             },
             container: container_identity(),
             environment: local_identity(),
+            artifact_install_identity: None,
         },
     )
     .err()
@@ -195,6 +198,13 @@ fn published(repo: &Path, guest: &mut FakeGuest) -> PreparedWorkspaceGuest {
         container_identity(),
     )
     .expect("container mode prepares a guest")
+}
+
+/// The live facts the entry check compares a context to.
+fn entry() -> LiveWorkspaceEntry {
+    LiveWorkspaceEntry {
+        environment: local_identity(),
+    }
 }
 
 fn live(generation: u64) -> crate::runner::workspace_client::context::LiveGuestRun {
@@ -217,6 +227,71 @@ fn live(generation: u64) -> crate::runner::workspace_client::context::LiveGuestR
 struct CountingGuest<'a> {
     inner: &'a mut DiskGuest,
     bytes: u64,
+}
+
+impl GuestWorkspace for CountingGuest<'_> {
+    fn ensure_dir(
+        &mut self,
+        path: &str,
+        mode: u32,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.inner.ensure_dir(path, mode)
+    }
+
+    fn write_file(
+        &mut self,
+        path: &str,
+        bytes: &[u8],
+        mode: u32,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.inner.write_file(path, bytes, mode)
+    }
+
+    fn set_owner(
+        &mut self,
+        path: &str,
+        owner: &str,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.inner.set_owner(path, owner)
+    }
+
+    fn stage_host_file(
+        &mut self,
+        host_path: &Path,
+        guest_path: &str,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.inner.stage_host_file(host_path, guest_path)
+    }
+
+    fn install_executable(
+        &mut self,
+        staging: &str,
+        path: &str,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.inner.install_executable(staging, path)
+    }
+
+    fn replace_pointer(
+        &mut self,
+        path: &str,
+        target: &str,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.inner.replace_pointer(path, target)
+    }
+
+    fn replace_link(
+        &mut self,
+        path: &str,
+        target: &str,
+    ) -> Result<(), crate::runner::error::RunnerError> {
+        self.inner.replace_link(path, target)
+    }
+
+    fn probe_container_identity(
+        &mut self,
+    ) -> Result<WorkspaceContainerIdentity, crate::runner::error::RunnerError> {
+        self.inner.probe_container_identity()
+    }
 }
 
 impl crate::runner::workspace_client::context::GuestReader for CountingGuest<'_> {
@@ -400,7 +475,11 @@ fn a_changed_fact_publishes_a_new_generation_without_editing_the_old_one() {
     .expect("first prepare");
     let first_generation = guest.text(&context_path(1)).expect("first document");
 
-    std::fs::write(repo.join("effigy.toml"), "[tasks]\ndev = {}\n").expect("manifest change");
+    std::fs::write(
+        repo.join("effigy.toml"),
+        "[tasks]\ndev = { run = \"true\" }\n",
+    )
+    .expect("manifest change");
     let second = prepare(
         &repo,
         &mut guest,
@@ -656,7 +735,7 @@ fn wrong_installed_bytes_are_refused_at_entry() {
     let executable = binary_path(&prepared.binary.digest);
     guest.put_file(&executable, "tampered bytes", 0o555);
 
-    let error = verify_pinned_guest_binary(&mut guest)
+    let error = verify_pinned_guest_binary(&mut guest, &entry())
         .expect_err("tampered bytes")
         .to_string();
 
@@ -668,7 +747,7 @@ fn wrong_installed_bytes_are_refused_at_entry() {
 fn an_unprepared_workspace_refusal_names_the_host_reprepare() {
     let mut guest = guest();
 
-    let error = verify_pinned_guest_binary(&mut guest)
+    let error = verify_pinned_guest_binary(&mut guest, &entry())
         .expect_err("unprepared refuses")
         .to_string();
 
@@ -687,7 +766,7 @@ fn a_prepared_workspace_verifies() {
 
     let prepared = published(&repo, &mut guest);
 
-    verify_pinned_guest_binary(&mut guest).expect("prepared verifies");
+    verify_pinned_guest_binary(&mut guest, &entry()).expect("prepared verifies");
     assert_eq!(prepared.context_generation, 1);
 }
 
@@ -739,7 +818,7 @@ fn a_missing_pinned_executable_refuses_and_names_the_reprepare() {
         }
     }
 
-    let error = verify_pinned_guest_binary(&mut replacement)
+    let error = verify_pinned_guest_binary(&mut replacement, &entry())
         .expect_err("missing executable")
         .to_string();
 
@@ -1127,6 +1206,37 @@ fn a_declared_workspace_is_the_container_mode_boundary() {
     assert_eq!(workspace.guest_checkout, "/workspace");
 }
 
+#[test]
+fn hybrid_entry_needs_no_prepared_guest_and_no_activation() {
+    let repo = fixture("hybrid-entry");
+    hybrid_manifest(&repo);
+    // A catalog service's default identity resolves a user, but no operator
+    // workspace is declared: the entry path must not require a guest, a
+    // published context or an environment record.
+    let policy = web_policy(&repo, "node", "/home/node");
+
+    crate::runner::workspace_command::ensure_workspace_effigy_available_for_policy(
+        &repo, &policy, None,
+    )
+    .expect("hybrid entry has nothing to verify");
+}
+
+#[test]
+fn container_mode_entry_refuses_without_an_activation_before_touching_the_guest() {
+    let repo = fixture("entry-no-activation");
+    container_mode_manifest(&repo);
+    let policy = web_policy(&repo, "dev", "/home/dev");
+
+    let error = crate::runner::workspace_command::ensure_workspace_effigy_available_for_policy(
+        &repo, &policy, None,
+    )
+    .expect_err("a workspace with no activated environment has no fence")
+    .to_string();
+
+    assert!(error.contains("no activation record"), "{error}");
+    assert!(error.contains(HOST_REPREPARE_COMMAND));
+}
+
 // ------------------------------------------------- identity probe parsing
 
 #[test]
@@ -1207,7 +1317,7 @@ fn a_multi_megabyte_executable_is_authenticated_without_reading_its_bytes() {
         inner: &mut guest,
         bytes: 0,
     };
-    verify_pinned_guest_binary(&mut counting).expect("the large guest authenticates");
+    verify_pinned_guest_binary(&mut counting, &entry()).expect("the large guest authenticates");
     assert!(
         counting.bytes < 2048,
         "an ordinary bounded command pays for the context and one digest line, not the \
@@ -1405,7 +1515,233 @@ fn prepare_disk(
             },
             container: container_identity(),
             environment: local_identity(),
+            artifact_install_identity: None,
         },
     )
     .expect("prepare")
+}
+
+// --------------------------------------------------------- entry fences
+
+#[test]
+fn entry_refuses_a_replaced_container_a_new_vm_boot_and_a_new_activation() {
+    let repo = fixture("entry-fences");
+    let _env = EnvGuard::set_many(&[(
+        EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+        Some("download".to_owned()),
+    )]);
+    let mut guest = guest();
+    published(&repo, &mut guest);
+    // A prepared workspace on the identity it was prepared for passes.
+    verify_pinned_guest_binary(&mut guest, &entry()).expect("same instance verifies");
+
+    // A replacement container: the hostname could be configured identically,
+    // so only the id differs.
+    let mut replaced = guest
+        .clone()
+        .with_container(observed_identity(&"a".repeat(64)));
+    let error = verify_pinned_guest_binary(&mut replaced, &entry())
+        .expect_err("a replaced container refuses at entry")
+        .to_string();
+    assert!(error.contains("prepared for container"), "{error}");
+    assert!(error.contains(HOST_REPREPARE_COMMAND));
+
+    // Another VM boot that retained the container filesystem.
+    let mut booted_elsewhere = observed_identity(HOST_CONTAINER_ID);
+    booted_elsewhere.vm_boot_id = "boot-after-reboot".to_owned();
+    let mut rebooted = guest.clone().with_container(booted_elsewhere);
+    let error = verify_pinned_guest_binary(&mut rebooted, &entry())
+        .expect_err("a new VM boot refuses at entry")
+        .to_string();
+    assert!(error.contains("VM boot"), "{error}");
+    assert!(error.contains(HOST_REPREPARE_COMMAND));
+
+    // A re-activation with unchanged files still advances the environment
+    // generation, so the published context no longer matches.
+    let reactivated = LiveWorkspaceEntry {
+        environment: WorkspaceEnvironmentIdentity {
+            resource_id: "env:dev".to_owned(),
+            generation: "8".to_owned(),
+        },
+    };
+    let error = verify_pinned_guest_binary(&mut guest, &reactivated)
+        .expect_err("a re-activated environment refuses at entry")
+        .to_string();
+    assert!(error.contains("generation `7`"), "{error}");
+    assert!(error.contains(HOST_REPREPARE_COMMAND));
+}
+
+#[test]
+fn an_identity_probe_carries_the_full_id_a_cgroup_path_exposes() {
+    let short = &HOST_CONTAINER_ID[..12];
+    // Docker on cgroup v1.
+    let docker = format!(
+        "cgroup=12:devices:/docker/{full} 0::/docker/{full} \nboot=boot-a\nhostname={short}\n\
+         platform=x86_64\n",
+        full = HOST_CONTAINER_ID
+    );
+    let parsed = parse_container_identity(&docker).expect("docker identity");
+    assert_eq!(parsed.container_id, HOST_CONTAINER_ID);
+    assert!(container_identity().container_matches(&parsed));
+
+    // containerd/systemd on cgroup v2.
+    let systemd = format!(
+        "cgroup=0::/user.slice/user-1000.slice/session-1.scope/cri-containerd-{full}.scope \n\
+         boot=boot-a\nhostname={short}\nplatform=x86_64\n",
+        full = HOST_CONTAINER_ID
+    );
+    assert_eq!(
+        parse_container_identity(&systemd)
+            .expect("systemd identity")
+            .container_id,
+        HOST_CONTAINER_ID
+    );
+
+    // A guest that cannot read its cgroup falls back to its 12-hex hostname,
+    // which is still the published full id's prefix.
+    let hostname_only = format!("cgroup=0::/ \nboot=boot-a\nhostname={short}\nplatform=x86_64\n");
+    let parsed = parse_container_identity(&hostname_only).expect("hostname identity");
+    assert_eq!(parsed.container_id, short);
+    assert!(container_identity().container_matches(&parsed));
+
+    // A configured hostname is not a full id and never matches one.
+    assert_eq!(cgroup_container_id("/docker/app"), None);
+    let configured = format!("cgroup=0::/ \nboot=boot-a\nhostname=app\nplatform=x86_64\n");
+    let parsed = parse_container_identity(&configured).expect("configured hostname");
+    assert!(!container_identity().container_matches(&parsed));
+}
+
+// ------------------------------------------------------- pinned closure
+
+#[test]
+fn the_context_pins_the_composed_task_closure_and_its_sources() {
+    let repo = fixture("closure");
+    let _env = EnvGuard::set_many(&[(
+        EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+        Some("download".to_owned()),
+    )]);
+    std::fs::create_dir_all(repo.join("fragments")).expect("fragment directory");
+    std::fs::write(
+        repo.join("effigy.toml"),
+        "[manifest]\ninclude = [\"fragments/extra.toml\"]\n\n[tasks]\nroot = { run = \"true\" }\n",
+    )
+    .expect("manifest with an include");
+    std::fs::write(
+        repo.join("fragments/extra.toml"),
+        "[tasks]\nincluded = { run = \"true\" }\n",
+    )
+    .expect("included fragment");
+    std::fs::create_dir_all(repo.join(".effigy")).expect(".effigy directory");
+    std::fs::write(
+        repo.join(".effigy/sources.lock.json"),
+        "{\"version\":1,\"sources\":{}}",
+    )
+    .expect("source lock");
+    let mut guest = guest();
+    published(&repo, &mut guest);
+    let context = published_context(&mut guest);
+
+    let kinds = context
+        .sources
+        .iter()
+        .map(|pin| pin.kind.as_str())
+        .collect::<Vec<_>>();
+    assert!(kinds.contains(&"manifest"), "{kinds:?}");
+    assert!(kinds.contains(&"source-lock"), "{kinds:?}");
+    assert!(kinds.contains(&COMPOSED_MANIFEST_KIND), "{kinds:?}");
+    let included = context
+        .sources
+        .iter()
+        .find(|pin| pin.name == "fragments/extra.toml")
+        .expect("the included fragment is pinned");
+    assert_eq!(
+        included.snapshot.as_deref(),
+        Some("/workspace/fragments/extra.toml")
+    );
+
+    let composed = context
+        .sources
+        .iter()
+        .find(|pin| pin.kind == COMPOSED_MANIFEST_KIND)
+        .expect("composed manifest pin");
+    assert_eq!(
+        composed.snapshot.as_deref(),
+        Some(snapshot_path(&composed.digest).as_str())
+    );
+    let rendered = guest
+        .text(&snapshot_path(&composed.digest))
+        .expect("the rendered snapshot is guest-readable");
+    assert!(rendered.contains("included"), "{rendered}");
+    assert_eq!(sha256_text(rendered.as_bytes()), composed.digest);
+    assert_eq!(
+        guest.mode(&snapshot_path(&composed.digest)),
+        Some(0o444),
+        "a rendered snapshot is read-only"
+    );
+
+    // The task list comes from the pinned closure, so a bundle- or
+    // catalog-provided task is visible without refreshing a source.
+    let before = guest.tree_digest();
+    let mut checkout = FixtureCheckout::new(repo.clone());
+    let mut reads = GuestLocalReads {
+        context: &context,
+        guest: &mut guest,
+        checkout: &mut checkout,
+    };
+    assert_eq!(
+        reads
+            .read(&LocalRead::Tasks, context.generation)
+            .expect("tasks"),
+        LocalReadOutcome::Tasks(vec!["included".to_owned(), "root".to_owned()])
+    );
+    assert_eq!(before, guest.tree_digest(), "a local read writes nothing");
+}
+
+#[test]
+fn a_pinned_source_closure_names_its_fragment_identity() {
+    let root = Fixture::process_lifetime("effigy-workspace-fragment-identity-")
+        .expect("fixture directory");
+    std::fs::create_dir_all(root.join("manifest")).expect("fragment directory");
+    std::fs::write(root.join("bundle.toml"), "[bundle]\nname = \"x\"\n").expect("descriptor");
+    std::fs::write(root.join("manifest/tasks.toml"), "[tasks]\na = {}\n").expect("fragment");
+    let first = manifest_fragment_digest(&root).expect("digest");
+    assert!(first.starts_with("sha256:"));
+
+    std::fs::write(root.join("manifest/tasks.toml"), "[tasks]\nb = {}\n").expect("fragment");
+    let second = manifest_fragment_digest(&root).expect("digest");
+    assert_ne!(first, second, "fragment bytes are part of the identity");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// --------------------------------------------------- private host staging
+
+#[test]
+fn staged_host_bytes_are_private_exclusive_and_removed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let staged = stage_host_bytes(b"enrolment-secret").expect("stage");
+    let path = staged.path().to_path_buf();
+    let metadata = std::fs::metadata(&path).expect("staged file");
+    assert_eq!(
+        metadata.permissions().mode() & 0o777,
+        0o600,
+        "a staged file is owner-only from creation"
+    );
+    let directory = path.parent().expect("staging directory");
+    assert_eq!(
+        std::fs::metadata(directory)
+            .expect("staging directory")
+            .permissions()
+            .mode()
+            & 0o077,
+        0,
+        "the staging directory is private to this run"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("staged bytes"),
+        b"enrolment-secret"
+    );
+
+    drop(staged);
+    assert!(!path.exists(), "the guard removes the staged bytes");
 }

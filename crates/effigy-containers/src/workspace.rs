@@ -302,6 +302,246 @@ struct EffectiveMount {
     source: Option<PathBuf>,
 }
 
+/// The values Compose interpolates a service mount with, plus the host paths a
+/// bind-backed named volume names.
+///
+/// Compose expands `${NAME}` in a mount entry before it parses it and resolves
+/// a named volume's `driver_opts.device` at mount time. Both can turn an entry
+/// that looks harmless into a bind of a host state root, so the isolation check
+/// reads exactly those two inputs here.
+pub(crate) struct ComposeMountContext {
+    env: std::collections::BTreeMap<String, String>,
+    named_binds: std::collections::BTreeMap<String, NamedVolumeSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NamedVolumeSource {
+    Host(PathBuf),
+    /// A named volume whose driver the host cannot resolve to a host path. It
+    /// stays refused rather than assumed harmless.
+    Unprovable(String),
+}
+
+impl ComposeMountContext {
+    /// Read the interpolation inputs for one rendered Compose document: the
+    /// project `.env` beside the compose file, then the process environment
+    /// (Compose's own order), and the document's `volumes:` driver options.
+    pub(crate) fn read(compose_dir: &Path, document_volumes: Option<&serde_yaml::Value>) -> Self {
+        let mut env = read_compose_env_file(compose_dir);
+        for (name, value) in std::env::vars_os() {
+            if let (Some(name), Some(value)) = (name.to_str(), value.to_str()) {
+                env.insert(name.to_owned(), value.to_owned());
+            }
+        }
+        Self {
+            named_binds: read_named_volume_bind_sources(document_volumes, &env, compose_dir),
+            env,
+        }
+    }
+
+    fn expand(&self, value: &str) -> Result<String, String> {
+        expand_compose_interpolation(value, &self.env)
+    }
+}
+
+fn read_compose_env_file(compose_dir: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut env = std::collections::BTreeMap::new();
+    let Ok(raw) = std::fs::read_to_string(compose_dir.join(".env")) else {
+        return env;
+    };
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if !name.is_empty() {
+            env.insert(
+                name.to_owned(),
+                value.trim().trim_matches('"').trim_matches('\'').to_owned(),
+            );
+        }
+    }
+    env
+}
+
+/// Resolve Compose interpolation: `$NAME`, `${NAME}`, `${NAME:-default}`,
+/// `${NAME-default}`, `${NAME:?message}` and `${NAME:+alternate}`.
+///
+/// An unset name without a default, or a form this reader does not implement,
+/// is an error so the caller refuses an entry it cannot prove safe.
+fn expand_compose_interpolation(
+    value: &str,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    let mut expanded = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(dollar) = rest.find('$') {
+        expanded.push_str(&rest[..dollar]);
+        let after = &rest[dollar + 1..];
+        if let Some(stripped) = after.strip_prefix('$') {
+            expanded.push('$');
+            rest = stripped;
+            continue;
+        }
+        if let Some(inner) = after.strip_prefix('{') {
+            let Some(close) = inner.find('}') else {
+                return Err(format!("unterminated interpolation in `{value}`"));
+            };
+            expanded.push_str(&expand_compose_braced(&inner[..close], env, value)?);
+            rest = &inner[close + 1..];
+            continue;
+        }
+        let name_len = after
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+            .count();
+        if name_len == 0 {
+            expanded.push('$');
+            rest = after;
+            continue;
+        }
+        let name = &after[..name_len];
+        let resolved = env
+            .get(name)
+            .ok_or_else(|| format!("`${{{name}}}` is unset in `{value}`"))?;
+        expanded.push_str(resolved);
+        rest = &after[name_len..];
+    }
+    expanded.push_str(rest);
+    Ok(expanded)
+}
+
+fn expand_compose_braced(
+    inner: &str,
+    env: &std::collections::BTreeMap<String, String>,
+    value: &str,
+) -> Result<String, String> {
+    // Compose's forms, longest marker first so `:-` is not read as `-`.
+    for marker in [":-", ":?", ":+", "-", "?", "+"] {
+        let Some((name, argument)) = inner.split_once(marker) else {
+            continue;
+        };
+        let name = name.trim();
+        let set = env.get(name).filter(|value| !value.is_empty());
+        return match marker {
+            ":-" => Ok(set.cloned().unwrap_or_else(|| argument.to_owned())),
+            "-" => Ok(env
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| argument.to_owned())),
+            ":?" => set
+                .cloned()
+                .ok_or_else(|| format!("`{name}` is unset in `{value}`: {argument}")),
+            "?" => env
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("`{name}` is unset in `{value}`: {argument}")),
+            ":+" => Ok(if set.is_some() {
+                argument.to_owned()
+            } else {
+                String::new()
+            }),
+            _ => Ok(if env.contains_key(name) {
+                argument.to_owned()
+            } else {
+                String::new()
+            }),
+        };
+    }
+    let name = inner.trim();
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(format!(
+            "unsupported interpolation `${{{inner}}}` in `{value}`"
+        ));
+    }
+    env.get(name)
+        .cloned()
+        .ok_or_else(|| format!("`${{{name}}}` is unset in `{value}`"))
+}
+
+/// Split one Compose short-form mount into its source and target. A single
+/// component is an anonymous-volume target: Compose mounts an empty volume
+/// there, so it carries no host path.
+fn split_short_mount_source_and_target(raw: &str) -> Option<(&str, &str)> {
+    let mut parts = raw.splitn(3, ':');
+    let first = parts.next()?;
+    match parts.next() {
+        Some(target) if !target.trim().is_empty() => Some((first, target)),
+        Some(_) => None,
+        None => Some(("", first)),
+    }
+}
+
+/// The host paths a document's bind-backed named volumes name.
+fn read_named_volume_bind_sources(
+    document_volumes: Option<&serde_yaml::Value>,
+    env: &std::collections::BTreeMap<String, String>,
+    compose_dir: &Path,
+) -> std::collections::BTreeMap<String, NamedVolumeSource> {
+    let mut sources = std::collections::BTreeMap::new();
+    let Some(entries) = document_volumes.and_then(serde_yaml::Value::as_mapping) else {
+        return sources;
+    };
+    for (name, entry) in entries {
+        let Some(name) = name.as_str() else {
+            continue;
+        };
+        let Some(entry) = entry.as_mapping() else {
+            continue;
+        };
+        let field = |field: &str| {
+            entry
+                .get(serde_yaml::Value::String(field.to_owned()))
+                .and_then(serde_yaml::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        };
+        let driver = field("driver").unwrap_or("local");
+        let Some(driver_opts) = entry
+            .get(serde_yaml::Value::String("driver_opts".to_owned()))
+            .and_then(serde_yaml::Value::as_mapping)
+        else {
+            continue;
+        };
+        let option = |name: &str| {
+            driver_opts
+                .get(serde_yaml::Value::String(name.to_owned()))
+                .and_then(serde_yaml::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        };
+        let bind = option("o").is_some_and(|value| value.split(',').any(|part| part == "bind"))
+            || option("type") == Some("bind")
+            || option("type") == Some("none");
+        let Some(device) = option("device") else {
+            continue;
+        };
+        if !bind {
+            continue;
+        }
+        let resolved = match expand_compose_interpolation(device, env) {
+            Ok(device) if Path::new(&device).is_absolute() => {
+                NamedVolumeSource::Host(PathBuf::from(device))
+            }
+            Ok(device) if driver == "local" && device.starts_with('.') => {
+                NamedVolumeSource::Host(compose_dir.join(device))
+            }
+            Ok(_) => continue,
+            Err(reason) => NamedVolumeSource::Unprovable(reason),
+        };
+        sources.insert(name.to_owned(), resolved);
+    }
+    sources
+}
+
 /// Refuse a mount that would hand the guest a host state root, expose a
 /// protected checkout family outside the masked checkout mount, or shadow the
 /// guest's own store (§8.1, §8.2, §8.10 R1).
@@ -313,6 +553,7 @@ fn check_guest_mount(
     container_name: &str,
     protected: &[PathBuf],
     checkout_target: &str,
+    mask_targets: &[String],
     mount: &EffectiveMount,
 ) -> Result<(), ContainerPolicyError> {
     let target = Path::new(&mount.target);
@@ -322,6 +563,22 @@ fn check_guest_mount(
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` mount target `{target}` overlaps the guest's own \
              store; a host mount cannot provide or shadow `{GUEST_PRIVATE_ROOT}`",
+            target = mount.target,
+        )));
+    }
+    // The state masks own their guest paths. Only the mask itself (an empty
+    // named volume, no host path) may occupy one, so no bind and no retained
+    // Compose entry can mount a host path over a masked family.
+    if mount.source.is_some() && mask_targets.iter().any(|mask| mask == &mount.target) {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` mount `{source}` targets the masked checkout path \
+             `{target}`; the host state mask owns that path and only an empty read-only mask \
+             may occupy it",
+            source = mount
+                .source
+                .as_ref()
+                .map(|source| source.display().to_string())
+                .unwrap_or_default(),
             target = mount.target,
         )));
     }
@@ -366,10 +623,35 @@ fn check_guest_mounts(
 ) -> Result<(), ContainerPolicyError> {
     let protected = guest_protected_host_paths(canonical_repo_root);
     let checkout_target = working_dir.display().to_string();
+    let mask_targets = guest_mask_targets(working_dir);
+    let mut targets = std::collections::BTreeSet::new();
     for mount in mounts {
-        check_guest_mount(container_name, &protected, &checkout_target, &mount)?;
+        check_guest_mount(
+            container_name,
+            &protected,
+            &checkout_target,
+            &mask_targets,
+            &mount,
+        )?;
+        // Two entries for one guest path is ambiguous: which source wins is a
+        // backend detail, so an unprovable set is refused instead.
+        if !targets.insert(mount.target.clone()) {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` mounts two sources at guest path `{target}`; \
+                 the effective mount set must name each path once",
+                target = mount.target,
+            )));
+        }
     }
     Ok(())
+}
+
+/// The guest paths the host state masks own, in the checkout's terms.
+fn guest_mask_targets(working_dir: &Path) -> Vec<String> {
+    GUEST_MASKED_CHECKOUT_PATHS
+        .iter()
+        .map(|relative| working_dir.join(relative).display().to_string())
+        .collect()
 }
 
 /// Validate the mounts the workspace rewrite injects, before they are written.
@@ -393,33 +675,66 @@ fn enforce_guest_mount_isolation(
 /// Validate the complete effective service mount list, including entries the
 /// source Compose file already declared, in both the short `source:target`
 /// form and the long mapping form (§8.1, §8.2).
-pub(crate) fn enforce_guest_volume_isolation(
+/// Validate the complete effective service mount list against the resolved
+/// sources Compose will use: interpolation expanded, bind-backed named volumes
+/// resolved through the document's `volumes:` driver options, short and long
+/// forms alike (§8.1, §8.2).
+pub(crate) fn enforce_effective_guest_volume_isolation(
     container_name: &str,
     canonical_repo_root: &Path,
     working_dir: &Path,
     compose_dir: &Path,
+    document_volumes: Option<&serde_yaml::Value>,
     volumes: &[serde_yaml::Value],
 ) -> Result<(), ContainerPolicyError> {
-    check_guest_mounts(
-        container_name,
-        canonical_repo_root,
-        working_dir,
-        volumes
-            .iter()
-            .filter_map(|entry| effective_volume_mount(entry, compose_dir)),
-    )
+    let context = ComposeMountContext::read(compose_dir, document_volumes);
+    let mut mounts = Vec::with_capacity(volumes.len());
+    for entry in volumes {
+        mounts.push(effective_volume_mount(
+            container_name,
+            entry,
+            compose_dir,
+            &context,
+        )?);
+    }
+    check_guest_mounts(container_name, canonical_repo_root, working_dir, mounts)
 }
 
-/// Read one Compose `volumes` entry as an effective mount. Named volumes and
-/// tmpfs mounts carry no host path, so only their target is checked.
-fn effective_volume_mount(entry: &serde_yaml::Value, compose_dir: &Path) -> Option<EffectiveMount> {
+/// Read one Compose `volumes` entry as an effective mount, resolving the source
+/// Compose will actually use.
+///
+/// A named volume, a tmpfs and a docker-managed volume carry no host path. A
+/// bind-backed named volume does, through its `driver_opts`, so it is resolved
+/// here; an entry whose source cannot be resolved is refused rather than
+/// assumed harmless.
+fn effective_volume_mount(
+    container_name: &str,
+    entry: &serde_yaml::Value,
+    compose_dir: &Path,
+    context: &ComposeMountContext,
+) -> Result<EffectiveMount, ContainerPolicyError> {
+    let unprovable = |detail: String| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot prove the source of Compose mount `{detail}`; \
+             write an absolute host path or remove the interpolation"
+        ))
+    };
+    let named = |name: &str| match context.named_binds.get(name) {
+        Some(NamedVolumeSource::Host(path)) => Ok(Some(path.clone())),
+        Some(NamedVolumeSource::Unprovable(reason)) => {
+            Err(unprovable(format!("{name}` ({reason})")))
+        }
+        None => Ok(None),
+    };
     if let Some(raw) = entry.as_str() {
-        let mut parts = raw.splitn(3, ':');
-        let source = parts.next().unwrap_or_default().trim();
-        let target = parts
-            .next()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
+        // Compose interpolates the whole scalar before parsing it.
+        let expanded = context.expand(raw).map_err(unprovable)?;
+        let (source, target) = split_short_mount_source_and_target(&expanded)
+            .ok_or_else(|| unprovable(format!("`{raw}` names no target")))?;
+        let target = target.trim();
+        if !target.starts_with('/') {
+            return Err(unprovable(format!("`{raw}` names a relative target")));
+        }
         let source = source.trim();
         let host_source = if source.is_empty() {
             None
@@ -428,15 +743,16 @@ fn effective_volume_mount(entry: &serde_yaml::Value, compose_dir: &Path) -> Opti
         } else if source.starts_with('.') || source.contains('/') {
             Some(compose_dir.join(source))
         } else {
-            // A named volume, not a host path.
-            None
+            named(source)?
         };
-        return Some(EffectiveMount {
+        return Ok(EffectiveMount {
             target: target.to_owned(),
             source: host_source,
         });
     }
-    let mapping = entry.as_mapping()?;
+    let mapping = entry.as_mapping().ok_or_else(|| {
+        unprovable("a Compose mount that is neither a string nor a mapping".to_owned())
+    })?;
     let field = |name: &str| {
         mapping
             .get(serde_yaml::Value::String(name.to_owned()))
@@ -444,18 +760,40 @@ fn effective_volume_mount(entry: &serde_yaml::Value, compose_dir: &Path) -> Opti
             .map(str::trim)
             .filter(|value| !value.is_empty())
     };
-    let target = field("target")?;
-    let source = match (field("type"), field("source")) {
-        (Some("volume"), _) | (Some("tmpfs"), _) => None,
-        (_, Some(source)) if Path::new(source).is_absolute() => Some(PathBuf::from(source)),
-        (_, Some(source)) if source.starts_with('.') || source.contains('/') => {
-            Some(compose_dir.join(source))
+    let kind = field("type").unwrap_or("volume");
+    let described = format!(
+        "a long-form {kind} mount from `{}`",
+        field("source").unwrap_or("no source")
+    );
+    let target = field("target")
+        .ok_or_else(|| unprovable(described.clone()))?
+        .to_owned();
+    let target = context.expand(&target).map_err(unprovable)?;
+    let source = field("source");
+    let host_source = match kind {
+        "tmpfs" => None,
+        "volume" => match source {
+            Some(source) if Path::new(source).is_absolute() => Some(PathBuf::from(source)),
+            Some(source) if source.starts_with('.') || source.contains('/') => {
+                Some(compose_dir.join(source))
+            }
+            Some(source) => named(source)?,
+            None => None,
+        },
+        "bind" => {
+            let source = source.ok_or_else(|| unprovable(described.clone()))?;
+            let expanded = context.expand(source).map_err(unprovable)?;
+            Some(if Path::new(&expanded).is_absolute() {
+                PathBuf::from(expanded)
+            } else {
+                compose_dir.join(expanded)
+            })
         }
         _ => None,
     };
-    Some(EffectiveMount {
-        target: target.to_owned(),
-        source,
+    Ok(EffectiveMount {
+        target,
+        source: host_source,
     })
 }
 

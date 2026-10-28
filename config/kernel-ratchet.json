@@ -385,11 +385,10 @@
       "std::fs::File::create": 2
     },
     "src/runner/workspace_command/provisioning.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.status": 1,
+      "std.fs.OpenOptions.write": 2,
       "std::fs::remove_file": 1,
       "std::fs::rename": 1,
-      "std::fs::write": 6
+      "std::fs::write": 4
     }
   },
   "tests": {

@@ -16,19 +16,18 @@ use crate::runner::workspace_command::provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     describe_linux_workspace_artifact_refusal, discover_effigy_repo_root,
     ensure_linux_workspace_effigy_artifact, ensure_local_linux_workspace_effigy_artifact,
-    ensure_local_linux_workspace_effigy_artifact_bounded,
-    expected_workspace_effigy_install_identity, linux_workspace_artifact_lock_path,
+    ensure_local_linux_workspace_effigy_artifact_bounded, linux_workspace_artifact_lock_path,
     linux_workspace_artifact_offline_hint, linux_workspace_effigy_artifact_is_current,
     linux_workspace_effigy_cache_path, linux_workspace_effigy_release_url,
     linux_workspace_release_cache_is_current, plan_workspace_permission_prep,
-    read_trimmed_identity_file, read_trimmed_workspace_effigy_active_version,
-    render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
-    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
-    sibling_effigy_repo_root, wait_for_in_progress_linux_workspace_artifact_build,
-    workspace_effigy_active_version_file, workspace_effigy_install_identity_file,
-    workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
-    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, WorkspacePermissionMode,
-    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    produced_linux_workspace_artifact_is_current, read_trimmed_identity_file,
+    read_trimmed_workspace_effigy_active_version, render_workspace_effigy_staging_path,
+    resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
+    run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
+    wait_for_in_progress_linux_workspace_artifact_build, workspace_effigy_active_version_file,
+    workspace_effigy_install_identity_file, workspace_effigy_local_install_identity,
+    workspace_effigy_release_install_identity, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
+    WorkspacePermissionMode, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::workspace_command::session::classify_workspace_session_ownership;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1850,29 +1849,44 @@ fn workspace_effigy_local_install_identity_tracks_anchor_metadata() {
     assert_ne!(first, second);
 }
 
+/// Prepare consumes an already produced artifact: a same-version artifact with
+/// the producer receipt for this target is current, and another version's
+/// bytes are not (contract 052 §8.2, §8.9).
 #[test]
-fn expected_workspace_install_identity_uses_release_identity_in_download_mode() {
-    let temp_home = std::env::temp_dir().join(format!(
-        "effigy-workspace-expected-identity-home-{}",
+fn a_produced_local_artifact_is_current_only_for_this_host_version() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-workspace-produced-artifact-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos()
     ));
-    std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
-    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
-    let _env = EnvGuard::set_many(&[(
-        EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
-        Some("download".to_owned()),
-    )]);
+    std::fs::create_dir_all(&root).expect("mkdir artifact root");
+    let artifact = root.join("effigy-x86_64-unknown-linux-gnu");
+    std::fs::write(&artifact, "produced bytes").expect("write artifact");
+    std::fs::write(
+        workspace_effigy_active_version_file(&artifact),
+        format!("{}\n", effigy_core::build_info::active_version()),
+    )
+    .expect("write version");
+    std::fs::write(
+        root.join("rehearsal.txt"),
+        "release_triple=x86_64-unknown-linux-gnu\nsha256=00\n",
+    )
+    .expect("write receipt");
 
-    let workspace = temp_home.join("workspace");
-    std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+    assert!(produced_linux_workspace_artifact_is_current(
+        &artifact,
+        LinuxWorkspaceTarget::X86_64Gnu
+    ));
 
-    assert_eq!(
-        expected_workspace_effigy_install_identity(&workspace).expect("expected identity"),
-        Some(workspace_effigy_release_install_identity())
+    std::fs::write(workspace_effigy_active_version_file(&artifact), "9.9.9\n")
+        .expect("write stale version");
+    assert!(
+        !produced_linux_workspace_artifact_is_current(&artifact, LinuxWorkspaceTarget::X86_64Gnu),
+        "another version's bytes are not this host's artifact"
     );
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

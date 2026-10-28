@@ -2371,16 +2371,30 @@ workspace is admitted:
   whenever a fact it carries changes on the host, then switches `current`.
   It never edits a published generation. A guest invocation reads one
   generation for its whole run.
+- Sources closure: the pins name the root manifest, the source lock, every
+  bundle and catalog source the host composed from, each composition fragment,
+  and the rendered composed manifest. The rendered document is published once
+  at `/run/effigy/snapshots/<digest>/manifest.toml`, so a bundle- or
+  catalog-provided task is guest-readable without the guest reading a cache the
+  host did not approve. A bundle or catalog pin's snapshot is the rendered
+  result it contributed.
 - The environment fence is the environment record's activation generation,
   which the activation run advances; `container up`, a task's environment apply
   and the workspace handoff all publish through the same Prepare, so the
   recovery a refusal names prepares the workspace rather than repeating it.
+- Entry fences: before a command runs, the guest compares the context's full
+  container id (a 12-hex short id matches its full id as a prefix), VM boot id,
+  image platform and environment generation to the live values. A replaced
+  container, a reboot that retained the filesystem, or a re-activation with
+  unchanged files refuses and names the host re-prepare. The host checks that
+  the probe and the backend binding name the same instance before publishing.
 - Local reads: version, the pinned task list and the pinned source identities
-  come from the context and the mounted checkout alone. The manifest snapshot
-  is digest-checked against the context before it is parsed, so a checkout that
-  changed since Prepare refuses instead of reading bytes the host never
-  approved. A local reader holds no capability, so a Static or Observe read
-  cannot enrol, and an authority-bearing command refuses rather than enrol.
+  come from the context, the immutable rendered snapshot and the mounted
+  checkout alone. The pins whose snapshot is checkout-visible are
+  digest-checked before anything is parsed, so a checkout that changed since
+  Prepare refuses instead of reading bytes the host never approved. A local
+  reader holds no capability, so a Static or Observe read cannot enrol, and an
+  authority-bearing command refuses rather than enrol.
 - Staleness: the context is input, not liveness proof. Every request carries
   the context generation; the host refuses a stale one (K7) and the client
   rereads `current`. A missing context means the workspace is unprepared:
@@ -2395,6 +2409,14 @@ workspace is admitted:
   its previous generation, key wraps and unlock credentials (§7.3 families
   10–11) with an empty read-only overlay. Vault reads and writes are channel
   requests to the secrets engine.
+- Mount isolation validates the complete effective mount set the primary
+  service will have: injected and retained entries, short and long form, with
+  Compose interpolation expanded and a bind-backed named volume resolved
+  through its driver options. The masks are applied last and own their guest
+  paths. A host state root, an ancestor of one mounted anywhere but the masked
+  checkout mount, a second source for one guest path, an entry whose source
+  cannot be proven, and anything overlapping the guest's `/run/effigy` store
+  are refused by name.
 
 Ordinary source edits and task outputs in the mounted checkout are workspace
 files, not host records. The context's authoritative inputs are host
@@ -2613,11 +2635,15 @@ only, and host access needs a terminal opened through Effigy.
   entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
   store, so a running invocation keeps the bytes it resolved and only a new
   invocation sees a new generation.
-- Workspace Prepare acquires the artifact on the host, verifies its digest,
-  and installs it into a guest-private executable store, selected per
+- Workspace Prepare consumes the produced artifact on the host, verifies its
+  digest, and installs it into a guest-private executable store, selected per
   workspace generation by an atomic pointer. The architecture comes from the
   container image's platform, not the host's `uname`. An image whose libc
   has no matching artifact refuses Prepare.
+- No consumer-time build: Prepare consumes bytes a release download or an
+  explicit `effigy workspace:linux:artifact` already produced, and otherwise
+  refuses naming that command. It never discovers a checkout to build from and
+  never writes a host source pointer at consumer runtime.
 - No run-time build or download: task, exec and terminal entry never fetch
   or compile Effigy or look for a sibling checkout. A contributor's explicit
   Prepare may build the artifact and record the same digest receipt.

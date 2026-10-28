@@ -35,6 +35,9 @@ pub(crate) const CONTEXT_ROOT: &str = "/run/effigy/context";
 pub(crate) const CONTEXT_CURRENT_PATH: &str = "/run/effigy/context/current";
 /// Guest-private executable store, one immutable directory per artifact digest.
 pub(crate) const BINARY_ROOT: &str = "/run/effigy/bin";
+/// Guest-private snapshot store, one immutable directory per rendered source
+/// digest (§8.2 "the rendered bundle and catalog snapshot they name").
+pub(crate) const SNAPSHOT_ROOT: &str = "/run/effigy/snapshots";
 /// File naming the executable generation new guest invocations run.
 pub(crate) const BINARY_CURRENT_PATH: &str = "/run/effigy/bin/current";
 /// Guest-private storage for a client session capability (never the checkout).
@@ -65,6 +68,16 @@ pub(crate) fn binary_dir(digest: &str) -> String {
 /// The executable a pinned digest resolves to.
 pub(crate) fn binary_path(digest: &str) -> String {
     format!("{}/effigy", binary_dir(digest))
+}
+
+/// The immutable directory one rendered source snapshot is published in.
+pub(crate) fn snapshot_dir(digest: &str) -> String {
+    format!("{SNAPSHOT_ROOT}/{}", digest_dir_name(digest))
+}
+
+/// The guest-readable rendered manifest snapshot a context pin names.
+pub(crate) fn snapshot_path(digest: &str) -> String {
+    format!("{}/manifest.toml", snapshot_dir(digest))
 }
 
 /// A digest is `sha256:<hex>`; the store uses its hex part so the path is safe
@@ -201,9 +214,14 @@ pub(crate) struct WorkspaceBackendDescriptor {
     pub(crate) vm_type: Option<String>,
 }
 
+/// The `kind` a pin carrying the host's rendered composed manifest uses. That
+/// snapshot is what a pinned task read parses, so bundle- and catalog-provided
+/// tasks are visible without the guest reading a cache the host did not approve.
+pub(crate) const COMPOSED_MANIFEST_KIND: &str = "composed-manifest";
+
 /// One pinned source the context carries. `kind` is `bundle`, `catalog`,
-/// `manifest` or `snapshot`; `snapshot` names the rendered artifact the digest
-/// belongs to when the pin names one (§8.2).
+/// `manifest`, `source-lock` or `composed-manifest`; `snapshot` names the
+/// guest-readable bytes the digest belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkspacePinnedSource {
@@ -436,7 +454,9 @@ pub(crate) trait CheckoutReader {
 pub(crate) enum LocalRead {
     /// Version and the pinned identity this guest is running under.
     Version,
-    /// Task names from the digest-verified manifest snapshot the context pins.
+    /// Task names from the rendered composed manifest the context pins. The
+    /// pinned checkout inputs are digest-checked first, so a checkout that
+    /// changed since Prepare refuses instead of being read.
     Tasks,
     /// The pinned source identities the context carries.
     Sources,
@@ -558,36 +578,40 @@ impl GuestLocalReads<'_> {
         }
     }
 
-    /// Task names from the manifest snapshot the context pins, digest first: a
-    /// checkout whose manifest changed since Prepare refuses instead of reading
-    /// a snapshot the host never approved (§8.2).
+    /// Task names from the rendered composed manifest the context pins.
+    ///
+    /// The pins whose snapshot is checkout-visible are verified first: a
+    /// checkout that changed since Prepare refuses rather than being read
+    /// (§8.2 staleness). The task list itself comes from the immutable rendered
+    /// snapshot in the guest store, so a bundle- or catalog-provided task is
+    /// visible without refreshing a source or writing host state.
     fn read_pinned_tasks(&mut self) -> Result<LocalReadOutcome, LocalReadError> {
-        let Some(pin) = self
+        self.verify_checkout_pins()?;
+        let pin = self
             .context
             .sources
             .iter()
-            .find(|source| source.kind == "manifest")
-        else {
-            return Err(LocalReadError::Refused(ContextRefusal::unavailable(
-                "the workspace context pins no manifest snapshot; run \
-                 `effigy container up` on the host to re-prepare the workspace"
-                    .to_owned(),
-            )));
-        };
-        let Some(bytes) = self.checkout.read_checkout_file(&pin.name)? else {
-            return Err(LocalReadError::Refused(ContextRefusal::unavailable(
-                format!(
-                    "the pinned manifest `{}` is not in the mounted checkout",
-                    pin.name
-                ),
-            )));
-        };
+            .find(|source| source.kind == COMPOSED_MANIFEST_KIND)
+            .or_else(|| {
+                self.context
+                    .sources
+                    .iter()
+                    .find(|source| source.kind == "manifest")
+            })
+            .ok_or_else(|| {
+                LocalReadError::Refused(ContextRefusal::unavailable(
+                    "the workspace context pins no manifest snapshot; run \
+                     `effigy container up` on the host to re-prepare the workspace"
+                        .to_owned(),
+                ))
+            })?;
+        let bytes = self.read_pinned_bytes(pin)?;
         let digest = sha256_text(&bytes);
         if digest != pin.digest {
             return Err(LocalReadError::Refused(ContextRefusal::unavailable(
                 format!(
-                    "the mounted manifest `{}` is {digest} but the context pins {}; run \
-                 `effigy container up` on the host to re-prepare the workspace",
+                    "the pinned manifest snapshot `{}` is {digest} but the context pins {}; run \
+                     `effigy container up` on the host to re-prepare the workspace",
                     pin.name, pin.digest
                 ),
             )));
@@ -595,7 +619,7 @@ impl GuestLocalReads<'_> {
         let document: toml::Value =
             toml::from_str(&String::from_utf8_lossy(&bytes)).map_err(|error| {
                 LocalReadError::Guest(RunnerError::task_invocation(format!(
-                    "the pinned manifest `{}` is not readable: {error}",
+                    "the pinned manifest snapshot `{}` is not readable: {error}",
                     pin.name
                 )))
             })?;
@@ -607,6 +631,86 @@ impl GuestLocalReads<'_> {
         tasks.sort();
         Ok(LocalReadOutcome::Tasks(tasks))
     }
+
+    /// Verify every pin the guest can read through the mounted checkout.
+    ///
+    /// A pin whose bytes no longer match is a checkout that moved on since
+    /// Prepare; the read refuses instead of reading unapproved inputs.
+    fn verify_checkout_pins(&mut self) -> Result<(), LocalReadError> {
+        let checkout_root = self.context.paths.guest_checkout.trim_end_matches('/');
+        let pins = self
+            .context
+            .sources
+            .iter()
+            .filter_map(|pin| {
+                let relative = checkout_relative(pin.snapshot.as_deref()?, checkout_root)?;
+                Some((pin.name.clone(), relative.to_owned(), pin.digest.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (name, relative, expected) in pins {
+            let Some(bytes) = self.checkout.read_checkout_file(&relative)? else {
+                return Err(LocalReadError::Refused(ContextRefusal::unavailable(
+                    format!(
+                        "the pinned source `{name}` is not in the mounted checkout at \
+                         `{relative}`; run `effigy container up` on the host to re-prepare the \
+                         workspace"
+                    ),
+                )));
+            };
+            let digest = sha256_text(&bytes);
+            if digest != expected {
+                return Err(LocalReadError::Refused(ContextRefusal::unavailable(
+                    format!(
+                        "the mounted source `{name}` is {digest} but the context pins {expected}; \
+                         run `effigy container up` on the host to re-prepare the workspace"
+                    ),
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Read one pin's bytes: through the mounted checkout when the pin names a
+    /// checkout file, or from the immutable guest store when it names a
+    /// rendered snapshot.
+    fn read_pinned_bytes(
+        &mut self,
+        pin: &WorkspacePinnedSource,
+    ) -> Result<Vec<u8>, LocalReadError> {
+        let checkout_root = self.context.paths.guest_checkout.trim_end_matches('/');
+        let Some(snapshot) = pin.snapshot.as_deref() else {
+            return Err(LocalReadError::Refused(ContextRefusal::unavailable(
+                format!(
+                    "the pinned source `{}` names no guest-readable snapshot; run `effigy \
+                     container up` on the host to re-prepare the workspace",
+                    pin.name
+                ),
+            )));
+        };
+        let bytes = match checkout_relative(snapshot, checkout_root) {
+            Some(relative) => self.checkout.read_checkout_file(relative)?,
+            None => self.guest.read_file(snapshot)?,
+        };
+        bytes.ok_or_else(|| {
+            LocalReadError::Refused(ContextRefusal::unavailable(format!(
+                "the pinned snapshot `{snapshot}` for `{}` is missing; run `effigy container up` \
+                 on the host to re-prepare the workspace",
+                pin.name
+            )))
+        })
+    }
+}
+
+/// A pin snapshot's path relative to the guest checkout root, when it names a
+/// path inside the mounted checkout.
+fn checkout_relative<'a>(snapshot: &'a str, checkout_root: &str) -> Option<&'a str> {
+    if checkout_root.is_empty() || checkout_root == "/" {
+        return snapshot.strip_prefix('/').filter(|value| !value.is_empty());
+    }
+    snapshot
+        .strip_prefix(checkout_root)?
+        .strip_prefix('/')
+        .filter(|value| !value.is_empty())
 }
 
 /// The one digest function this module uses for pinned snapshots.
