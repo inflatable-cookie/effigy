@@ -200,6 +200,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **Manual `[manifest].include` `optional`/`override` and kebab-case aliases
+  still load through v0.15, with one deprecation notice.** `optional` is
+  replaced by omitting a missing include or auto-discovered
+  `effigy.local.toml`; `override` by auto-discovered `effigy.local.toml` or
+  `[manifest].extend`. Write `schema_index`, `selection_contract` and
+  `rev_file` instead of the kebab spellings at `[contracts]` and
+  `[sources.<name>]`. The forms are removed in v0.16. A task named
+  `schema-index` is not an alias. Contract 041's
+  `default-currentness` stays the kind spelling. Canonical snake_case and
+  path-only includes stay silent. `--json` carries the notice in
+  `warnings`, never stdout.
 - Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
   scopes after changed publications. Legacy v1 cache is left for manual cleanup.
 

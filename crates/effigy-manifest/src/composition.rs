@@ -92,6 +92,7 @@ struct CompositionSession {
     evaluation_order: Vec<PathBuf>,
     include_graph: Vec<ManifestCompositionEdge>,
     overridden_paths: Vec<ManifestCompositionOverride>,
+    legacy_compat: crate::retired_config::RetiredConfigDeclaration,
 }
 
 pub fn load_docs_policy_graph_config(
@@ -163,6 +164,12 @@ pub fn load_task_manifest_with_inspection(
             .retired_config
             .merge(bundle_defaults.retired_config.clone());
     }
+    session
+        .legacy_compat
+        .merge(crate::legacy_compat::scan(&composed.value));
+    manifest
+        .retired_config
+        .merge(std::mem::take(&mut session.legacy_compat));
     manifest.validate(manifest_path)?;
     crate::retired_notice::emit(manifest_path, &manifest.retired_config);
     let effective_manifest =
@@ -274,6 +281,9 @@ fn load_composed_value(
         path: manifest_path.to_path_buf(),
         error,
     })?;
+    session
+        .legacy_compat
+        .merge(crate::legacy_compat::scan(&raw));
     crate::config_sections::reject_retired_vault_keys(manifest_path, &source, &raw)?;
     let mut table = raw
         .as_table()
@@ -1279,6 +1289,13 @@ paths = ["a"]
             "include_graph: {:?}",
             loaded.include_graph
         );
+        let notice = loaded
+            .manifest
+            .retired_config
+            .notice(&loaded.manifest_path)
+            .expect("optional include still notices");
+        assert!(notice.contains("`optional`"), "{notice}");
+        assert!(notice.contains("removed in v0.16"), "{notice}");
     }
 
     #[test]
@@ -1331,6 +1348,12 @@ paths = ["b"]
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
         let domains = array_strings(&loaded.effective_value, "isolation.paths");
         assert_eq!(domains, vec!["a".to_owned(), "b".to_owned()]);
+        let notice = loaded
+            .manifest
+            .retired_config
+            .notice(&loaded.manifest_path)
+            .expect("present optional include still notices");
+        assert!(notice.contains("`optional`"), "{notice}");
     }
 
     /// Serialise tests that toggle process-global `EFFIGY_NO_LOCAL_OVERLAY`.
@@ -1429,6 +1452,14 @@ paths = ["b"]
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
         let domains = array_strings(&loaded.effective_value, "isolation.paths");
         assert_eq!(domains, vec!["b".to_owned()]);
+        assert!(
+            loaded
+                .manifest
+                .retired_config
+                .notice(&loaded.manifest_path)
+                .is_none(),
+            "auto-discovered local overlay is not a manual optional/override"
+        );
         // Auto-discovered include shows up in the include graph.
         assert_eq!(loaded.include_graph.len(), 1);
         assert_eq!(
@@ -1718,5 +1749,323 @@ minimum_effigy_version = "latest"
         )
         .expect_err("invalid active version should fail");
         assert!(err.contains("current Effigy version is invalid"), "{err}");
+    }
+
+    #[test]
+    fn include_override_still_replaces_and_notices_once() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml", override = ["isolation.paths"] },
+]
+
+[isolation]
+paths = ["root"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[isolation]
+paths = ["overlay"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            array_strings(&loaded.effective_value, "isolation.paths"),
+            ["overlay"]
+        );
+        let notice = loaded
+            .manifest
+            .retired_config
+            .notice(&loaded.manifest_path)
+            .expect("override include still notices");
+        assert!(notice.contains("`override`"), "{notice}");
+        assert!(notice.contains("removed in v0.16"), "{notice}");
+        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
+        assert_eq!(
+            loaded.manifest.retired_config.compat_statements().len(),
+            1,
+            "{notice}"
+        );
+    }
+
+    #[test]
+    fn representative_kebab_aliases_still_load_and_notice_once() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[contracts]
+schema-index = "index.json"
+selection-contract = "selection.json"
+
+[sources.book]
+git = "git@example.com:acme/book.git"
+rev-file = "book.rev"
+path = "book"
+
+[docs_policy.graph]
+roots = ["README.md"]
+
+[docs_policy.graph.kinds.guide]
+include = ["docs/*.md"]
+default-currentness = "current"
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let contracts = loaded.manifest.contracts.as_ref().expect("contracts");
+        assert_eq!(contracts.schema_index.as_deref(), Some("index.json"));
+        assert_eq!(
+            contracts.selection_contract.as_deref(),
+            Some("selection.json")
+        );
+        assert_eq!(
+            loaded
+                .manifest
+                .sources
+                .get("book")
+                .expect("book")
+                .rev_file
+                .as_deref(),
+            Some("book.rev")
+        );
+        assert_eq!(
+            loaded
+                .manifest
+                .docs_policy
+                .as_ref()
+                .expect("docs policy")
+                .graph
+                .as_ref()
+                .expect("graph")
+                .kinds
+                .get("guide")
+                .expect("guide")
+                .default_currentness,
+            crate::config_sections::ManifestDocsPolicyGraphCurrentnessClass::Current
+        );
+        let notice = loaded
+            .manifest
+            .retired_config
+            .notice(&loaded.manifest_path)
+            .expect("kebab aliases still notice");
+        assert!(notice.contains("`schema-index`"), "{notice}");
+        assert!(notice.contains("`selection-contract`"), "{notice}");
+        assert!(notice.contains("`rev-file`"), "{notice}");
+        assert!(!notice.contains("`default-currentness`"), "{notice}");
+        assert!(notice.contains("removed in v0.16"), "{notice}");
+        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
+        assert_eq!(
+            loaded.manifest.retired_config.compat_statements().len(),
+            3,
+            "{notice}"
+        );
+    }
+
+    #[test]
+    fn a_task_named_schema_index_does_not_notice() {
+        let tmp = tempdir().expect("tempdir");
+        let root = write_manifest(
+            tmp.path(),
+            "effigy.toml",
+            r#"
+[tasks.schema-index]
+run = "true"
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert!(loaded.manifest.tasks.contains_key("schema-index"));
+        assert!(
+            loaded
+                .manifest
+                .retired_config
+                .notice(&loaded.manifest_path)
+                .is_none(),
+            "task names are not alias positions: {:?}",
+            loaded.manifest.retired_config.compat_statements()
+        );
+    }
+
+    #[test]
+    fn docs_policy_kind_default_currentness_is_canonical_and_silent() {
+        let tmp = tempdir().expect("tempdir");
+        let root = write_manifest(
+            tmp.path(),
+            "effigy.toml",
+            r#"
+[docs_policy.graph]
+roots = ["README.md"]
+
+[docs_policy.graph.kinds.guide]
+include = ["docs/*.md"]
+default-currentness = "current"
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            loaded
+                .manifest
+                .docs_policy
+                .as_ref()
+                .expect("docs policy")
+                .graph
+                .as_ref()
+                .expect("graph")
+                .kinds
+                .get("guide")
+                .expect("guide")
+                .default_currentness,
+            crate::config_sections::ManifestDocsPolicyGraphCurrentnessClass::Current
+        );
+        assert!(
+            loaded
+                .manifest
+                .retired_config
+                .notice(&loaded.manifest_path)
+                .is_none(),
+            "contract 041 kebab spelling stays silent: {:?}",
+            loaded.manifest.retired_config.compat_statements()
+        );
+    }
+
+    #[test]
+    fn canonical_include_and_snake_case_keys_are_silent() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = ["overlay.toml"]
+
+[contracts]
+schema_index = "index.json"
+selection_contract = "selection.json"
+
+[sources.book]
+git = "git@example.com:acme/book.git"
+rev_file = "book.rev"
+path = "book"
+
+[docs_policy.graph]
+roots = ["README.md"]
+
+[docs_policy.graph.kinds.guide]
+include = ["docs/*.md"]
+default_currentness = "current"
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[isolation]
+paths = ["overlay"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            loaded
+                .manifest
+                .contracts
+                .as_ref()
+                .expect("contracts")
+                .schema_index
+                .as_deref(),
+            Some("index.json")
+        );
+        assert!(
+            loaded
+                .manifest
+                .retired_config
+                .notice(&loaded.manifest_path)
+                .is_none(),
+            "canonical forms stay silent: {:?}",
+            loaded.manifest.retired_config.compat_statements()
+        );
+    }
+
+    #[test]
+    fn a_combined_legacy_manifest_prints_one_notice() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml", optional = true, override = ["isolation.paths"] },
+]
+
+[contracts]
+schema-index = "index.json"
+
+[isolation]
+paths = ["root"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[isolation]
+paths = ["overlay"]
+
+[contracts]
+selection-contract = "selection.json"
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            array_strings(&loaded.effective_value, "isolation.paths"),
+            ["overlay"]
+        );
+        assert_eq!(
+            loaded
+                .manifest
+                .contracts
+                .as_ref()
+                .expect("contracts")
+                .schema_index
+                .as_deref(),
+            Some("index.json")
+        );
+        assert_eq!(
+            loaded
+                .manifest
+                .contracts
+                .as_ref()
+                .expect("contracts")
+                .selection_contract
+                .as_deref(),
+            Some("selection.json")
+        );
+        let notice = loaded
+            .manifest
+            .retired_config
+            .notice(&loaded.manifest_path)
+            .expect("combined legacy still notices");
+        assert!(notice.contains("`optional`"), "{notice}");
+        assert!(notice.contains("`override`"), "{notice}");
+        assert!(notice.contains("`schema-index`"), "{notice}");
+        assert!(notice.contains("`selection-contract`"), "{notice}");
+        assert!(notice.contains("removed in v0.16"), "{notice}");
+        assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
+        assert_eq!(
+            loaded.manifest.retired_config.compat_statements().len(),
+            4,
+            "{notice}"
+        );
     }
 }
