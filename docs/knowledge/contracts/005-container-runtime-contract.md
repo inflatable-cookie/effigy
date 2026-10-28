@@ -1999,8 +1999,9 @@ rewrite, used by the runner and by the managed session's run specs):
 - a sequence step's environment, including values chained from earlier steps
 - a managed session's process plan (`mode = "tui"`), its entry `env`, its
   sequence steps, its `setup` steps and the nested task references it renders
-- a configured test suite's own delivered environment, and the step
-  environment of that suite's `setup`/`teardown` commands
+- a configured test suite's own delivered environment, its rendered command,
+  and the step environment of that suite's `setup`/`teardown` commands, all
+  proved before any suite starts
 
 Each is delivered with this checkout's effective alias in place of the
 declared one. That env map is the one Effigy already owns: a consumer whose

@@ -14,7 +14,7 @@
 //! alias route is written to a private gateway route table, which is exactly
 //! the record `container up` leaves behind.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -107,7 +107,7 @@ fn effective_alias(checkout: &Path, label: &str) -> String {
 /// Publish one alias route for a scope, the record `container up` leaves
 /// behind once the backing service has a published host port.
 fn publish_alias_route(checkout: &Path, domain: &str, host_port: u16) {
-    publish_alias_route_with_endpoint(checkout, domain, 5432, host_port);
+    publish_alias_route_with_endpoint(checkout, domain, Ipv4Addr::LOCALHOST, 5432, host_port);
 }
 
 /// The route `container up` publishes: the checkout's loopback address, the
@@ -115,6 +115,7 @@ fn publish_alias_route(checkout: &Path, domain: &str, host_port: u16) {
 fn publish_alias_route_with_endpoint(
     checkout: &Path,
     domain: &str,
+    address: Ipv4Addr,
     container_port: u16,
     host_port: u16,
 ) {
@@ -124,7 +125,7 @@ fn publish_alias_route_with_endpoint(
             table.upsert(Route {
                 domain: domain.to_owned(),
                 target: None,
-                dns_ip: Some(Ipv4Addr::LOCALHOST),
+                dns_ip: Some(address),
                 tcp_port: Some(container_port),
                 tcp_target: Some(format!("127.0.0.1:{host_port}")),
                 source: RouteSource::Container,
@@ -158,18 +159,14 @@ fn fake_database(token: &'static str) -> FakeDatabase {
     FakeDatabase { port, token }
 }
 
-/// A loopback port nothing holds, for the alias listener the gateway binds.
-fn free_loopback_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("probe a free port");
-    let port = listener.local_addr().expect("probe address").port();
-    drop(listener);
-    port
+/// A private DNS resolver and TCP-alias gateway over this fixture's own
+/// routes: the same two hops a client takes, without touching the operator's
+/// gateway or machine-wide DNS.
+struct PrivateGateway {
+    shutdown: tokio::sync::watch::Sender<bool>,
 }
 
-/// Start the gateway's own TCP alias manager over the routes this fixture
-/// published, so a client reaching a scope's alias address really is forwarded
-/// to that scope's backing service.
-fn start_tcp_alias_manager() -> tokio::sync::watch::Sender<bool> {
+fn start_private_gateway(dns_port: u16) -> PrivateGateway {
     let table_path = gateway_dir().expect("gateway dir").join("routes.json");
     let table = EndpointStore::for_routes(&table_path)
         .snapshot()
@@ -177,47 +174,90 @@ fn start_tcp_alias_manager() -> tokio::sync::watch::Sender<bool> {
         .expect("read the published routes");
     let table = std::sync::Arc::new(std::sync::RwLock::new(table));
     let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+    let dns_shutdown = shutdown_rx.clone();
+    let alias_table = std::sync::Arc::clone(&table);
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("alias manager runtime");
-        let _ = runtime.block_on(effigy_gateway::tcp_alias::run_tcp_alias_manager(
-            table,
-            shutdown_rx,
-        ));
+            .expect("private gateway runtime");
+        runtime.block_on(async move {
+            let config = effigy_gateway::dns::DnsConfig {
+                bind_addr: (Ipv4Addr::LOCALHOST, dns_port).into(),
+                tld: "test".to_owned(),
+                resolve_to: Ipv4Addr::LOCALHOST,
+            };
+            let dns = tokio::spawn(effigy_gateway::dns::run_dns_server(
+                config,
+                table,
+                std::sync::Arc::new(effigy_gateway::stats::GatewayStats::new()),
+                std::sync::Arc::new(effigy_gateway::dns::DnsCache::new(Duration::from_millis(
+                    50,
+                ))),
+                dns_shutdown,
+            ));
+            let _ =
+                effigy_gateway::tcp_alias::run_tcp_alias_manager(alias_table, shutdown_rx).await;
+            dns.abort();
+        });
     });
-    shutdown
+    PrivateGateway { shutdown }
 }
 
-/// Ask the gateway what address a domain answers with, then dial the scope's
-/// declared container port there. This is the client's own two steps: it
-/// resolves the delivered host through the route record and connects to it.
-fn reach_database(domain: &str, container_port: u16) -> String {
-    let table_path = gateway_dir().expect("gateway dir").join("routes.json");
-    let table = EndpointStore::for_routes(&table_path)
-        .snapshot()
-        .and_then(|snapshot| snapshot.routes())
-        .expect("read the published routes");
-    let route = table
-        .lookup(domain)
-        .expect("the scope's published alias route");
-    let address = (route.dns_ip.expect("the alias address"), container_port);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if let Ok(mut stream) = TcpStream::connect(address) {
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .expect("read timeout");
-            let mut token = String::new();
-            let _ = stream.read_to_string(&mut token);
-            if !token.trim().is_empty() {
-                return token.trim().to_owned();
+impl PrivateGateway {
+    /// Wait until every scope address answers on the declared container port,
+    /// so a task's connect is the gateway's forwarding and not a race.
+    fn wait_until_ready(&self, addresses: &[Ipv4Addr]) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        for address in addresses {
+            loop {
+                if TcpStream::connect((*address, 5432)).is_ok() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "the TCP alias listener never bound {address}:5432"
+                );
+                std::thread::sleep(Duration::from_millis(20));
             }
         }
-        std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("the gateway never answered on {address:?}");
+}
+
+impl Drop for PrivateGateway {
+    fn drop(&mut self) {
+        let _ = self.shutdown.send(true);
+    }
+}
+
+/// A free alias address: the pool's own loopback range, probed on the declared
+/// container port so no live listener is asked to share it. The highest
+/// addresses are tried first, away from the pool's lowest-first allocation.
+fn free_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
+    let mut found = Vec::new();
+    for last in (1..=50).rev() {
+        let address = Ipv4Addr::new(127, 1, 0, last);
+        if TcpListener::bind((address, 5432)).is_ok() {
+            found.push(address);
+        }
+        if found.len() == count {
+            break;
+        }
+    }
+    assert_eq!(
+        found.len(),
+        count,
+        "three free loopback alias addresses on port 5432: found {found:?}"
+    );
+    found
+}
+
+/// A free UDP port for the private resolver.
+fn free_udp_port() -> u16 {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("probe a free UDP port");
+    let port = socket.local_addr().expect("probe address").port();
+    drop(socket);
+    port
 }
 
 fn database_url(checkout: &Path) -> String {
@@ -227,8 +267,15 @@ fn database_url(checkout: &Path) -> String {
         .to_owned()
 }
 
-/// A private gateway route table, so no test reads or writes the operator's.
-fn with_private_gateway<T>(name: &str, run: impl FnOnce() -> T) -> T {
+/// A private gateway route table and a short scratch root: a detached run's
+/// control socket is bounded, and a reviewer's plain selector run has no say
+/// over `TMPDIR`, so this suite pins a short one for its own fixtures.
+fn with_short_scratch<T>(name: &str, run: impl FnOnce() -> T) -> T {
+    let short = tempfile::Builder::new()
+        .prefix("ef431-")
+        .tempdir_in("/tmp")
+        .expect("short fixture root");
+    let _env = EnvGuard::set_many(&[("TMPDIR", Some(short.path().display().to_string()))]);
     let home = temp_workspace(&format!("gateway-home-{name}"));
     let guard = set_test_gateway_home(&home);
     let result = run();
@@ -238,7 +285,7 @@ fn with_private_gateway<T>(name: &str, run: impl FnOnce() -> T) -> T {
 
 #[test]
 fn each_scoped_host_task_reaches_only_its_own_declared_database_alias() {
-    with_private_gateway("scoped-host-alias", || {
+    with_short_scratch("scoped-host-alias", || {
         let primary = primary_checkout("scoped-host-alias");
         let one = linked_worktree(&primary, "worktree-one");
         let two = linked_worktree(&primary, "worktree-two");
@@ -292,69 +339,124 @@ fn each_scoped_host_task_reaches_only_its_own_declared_database_alias() {
 /// and no scope's task ever reaches its sibling's database. Two real TCP
 /// backing services and the gateway's own TCP alias manager do the forwarding;
 /// only DNS and the container runtime are fixtures.
+/// Write the task that connects: it resolves the host of the URL Effigy
+/// delivered through the private resolver, then connects to that host on the
+/// URL's own port and records what it reached.
+fn write_connect_manifest(checkout: &Path, dns_port: u16) {
+    let out = checkout.join("reached.txt");
+    let manifest = format!(
+        r#"{MANIFEST}
+[tasks.connect]
+run_in = "host"
+run = "sh -lc 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(printf %s $rest | cut -d: -f1); port=$(printf %s $rest | cut -d: -f2 | cut -d/ -f1); ip=$(dig +short +time=2 +tries=3 @127.0.0.1 -p $DNS_PORT $host | head -1); echo $host > $OUT; echo $port >> $OUT; echo $ip >> $OUT; if [ -z $ip ]; then exit 4; fi; exec 3<>/dev/tcp/$ip/$port || exit 5; head -c 128 <&3 >> $OUT'"
+env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app", DNS_PORT = "{dns_port}", OUT = "{}" }}
+"#,
+        out.display()
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a connecting task");
+}
+
+/// Read what a connecting task recorded: the host and port it used, the
+/// address it resolved, and the token its backing service answered with.
+fn reached(checkout: &Path) -> (String, String, String, String) {
+    let recorded = fs::read_to_string(checkout.join("reached.txt"))
+        .expect("the task recorded what it reached");
+    let fields = recorded.lines().collect::<Vec<_>>();
+    assert_eq!(fields.len(), 4, "host, port, address and token: {recorded}");
+    (
+        fields[0].to_owned(),
+        fields[1].to_owned(),
+        fields[2].to_owned(),
+        fields[3].trim().to_owned(),
+    )
+}
+
+/// Each scope's host task connects with the URL Effigy delivered it — the same
+/// host, and the declared port 5432 — and reaches only its own backing
+/// service. The primary checkout keeps the declared name; the two linked
+/// worktrees use their own effective aliases. The private resolver and the
+/// gateway's own TCP alias manager are the two hops a client takes; only the
+/// container runtime is a fixture.
 #[test]
-fn each_scoped_host_task_reaches_only_its_own_test_database() {
-    with_private_gateway("scoped-host-database-reach", || {
+fn each_scoped_host_task_connects_to_only_its_own_test_database() {
+    with_short_scratch("scoped-host-database-reach", || {
         let primary = primary_checkout("scoped-host-database-reach");
         let one = linked_worktree(&primary, "worktree-one");
         let two = linked_worktree(&primary, "worktree-two");
+        let primary_alias = "postgres.acme.test".to_owned();
         let one_alias = effective_alias(&one, "postgres");
         let two_alias = effective_alias(&two, "postgres");
-        assert_ne!(one_alias, two_alias);
+        assert_ne!(one_alias, two_alias, "each scope keeps its own apex");
 
-        let one_database = fake_database("database-one");
-        let two_database = fake_database("database-two");
-        let one_port = free_loopback_port();
-        let two_port = free_loopback_port();
-        assert_ne!(one_port, two_port);
-        publish_alias_route_with_endpoint(&one, &one_alias, one_port, one_database.port);
-        publish_alias_route_with_endpoint(&two, &two_alias, two_port, two_database.port);
-        let shutdown = start_tcp_alias_manager();
+        let addresses = free_alias_addresses(3);
+        let databases = [
+            fake_database("database-primary"),
+            fake_database("database-one"),
+            fake_database("database-two"),
+        ];
+        for (((checkout, alias), address), database) in [
+            (&primary, &primary_alias),
+            (&one, &one_alias),
+            (&two, &two_alias),
+        ]
+        .iter()
+        .zip(addresses.iter())
+        .zip(databases.iter())
+        {
+            publish_alias_route_with_endpoint(checkout, alias, *address, 5432, database.port);
+        }
+        let dns_port = free_udp_port();
+        let gateway = start_private_gateway(dns_port);
+        gateway.wait_until_ready(&addresses);
+        for checkout in [&primary, &one, &two] {
+            write_connect_manifest(checkout, dns_port);
+        }
 
-        run_task(&one, "check", &[]).expect("the first worktree's task runs");
-        run_task(&two, "check", &[]).expect("the second worktree's task runs");
-
-        for (name, checkout, alias, port, own, sibling) in [
+        for (name, checkout, alias, own, siblings) in [
             (
-                "one",
+                "the primary checkout",
+                &primary,
+                &primary_alias,
+                databases[0].token,
+                [databases[1].token, databases[2].token],
+            ),
+            (
+                "worktree one",
                 &one,
                 &one_alias,
-                one_port,
-                one_database.token,
-                two_database.token,
+                databases[1].token,
+                [databases[0].token, databases[2].token],
             ),
             (
-                "two",
+                "worktree two",
                 &two,
                 &two_alias,
-                two_port,
-                two_database.token,
-                one_database.token,
+                databases[2].token,
+                [databases[0].token, databases[1].token],
             ),
         ] {
-            let delivered = database_url(checkout);
-            let host = delivered
-                .rsplit('@')
-                .next()
-                .expect("a URL authority")
-                .split(':')
-                .next()
-                .expect("a host");
-            assert_eq!(host, alias, "worktree {name} received its own alias");
-            let reached = reach_database(host, port);
+            run_task(checkout, "connect", &[])
+                .unwrap_or_else(|error| panic!("{name}'s task runs: {error}"));
+            let (host, port, _address, token) = reached(checkout);
+            assert_eq!(host, *alias, "{name} connected with its own alias");
             assert_eq!(
-                reached, own,
-                "worktree {name} reached its own database, not its sibling's"
+                port, "5432",
+                "{name} connected on the port its delivered URL declared"
             );
-            assert_ne!(reached, sibling, "worktree {name} never reaches a sibling");
+            assert_eq!(
+                token, own,
+                "{name} reached its own backing service, not a sibling's"
+            );
+            for sibling in siblings {
+                assert_ne!(token, sibling, "{name} never reaches a sibling");
+            }
         }
-        let _ = shutdown.send(true);
     });
 }
 
 #[test]
 fn a_scoped_host_task_refuses_before_it_runs_without_a_published_backing_service() {
-    with_private_gateway("scoped-host-alias-absent", || {
+    with_short_scratch("scoped-host-alias-absent", || {
         let primary = primary_checkout("scoped-host-alias-absent");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -379,7 +481,7 @@ fn a_scoped_host_task_refuses_before_it_runs_without_a_published_backing_service
 
 #[test]
 fn a_scoped_host_task_refuses_an_alias_route_another_checkout_owns() {
-    with_private_gateway("scoped-host-alias-sibling", || {
+    with_short_scratch("scoped-host-alias-sibling", || {
         let primary = primary_checkout("scoped-host-alias-sibling");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -398,7 +500,7 @@ fn a_scoped_host_task_refuses_an_alias_route_another_checkout_owns() {
 
 #[test]
 fn a_scoped_host_task_refuses_an_alias_route_with_no_published_port() {
-    with_private_gateway("scoped-host-alias-unpublished", || {
+    with_short_scratch("scoped-host-alias-unpublished", || {
         let primary = primary_checkout("scoped-host-alias-unpublished");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -424,7 +526,7 @@ fn a_scoped_host_task_refuses_an_alias_route_with_no_published_port() {
 
 #[test]
 fn a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_precedence() {
-    with_private_gateway("scoped-host-alias-schema", || {
+    with_short_scratch("scoped-host-alias-schema", || {
         let primary = primary_checkout("scoped-host-alias-schema");
         let checkout = linked_worktree(&primary, "worktree-one");
         fs::write(
@@ -466,7 +568,7 @@ fn a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_prece
 
 #[test]
 fn a_sequence_step_environment_resolves_the_same_declared_alias() {
-    with_private_gateway("scoped-host-alias-sequence", || {
+    with_short_scratch("scoped-host-alias-sequence", || {
         let primary = primary_checkout("scoped-host-alias-sequence");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -486,7 +588,7 @@ fn a_sequence_step_environment_resolves_the_same_declared_alias() {
 /// effective alias.
 #[test]
 fn a_managed_session_resolves_the_scoped_database_alias() {
-    with_private_gateway("scoped-host-alias-managed", || {
+    with_short_scratch("scoped-host-alias-managed", || {
         let primary = primary_checkout("scoped-host-alias-managed");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -508,7 +610,7 @@ fn a_managed_session_resolves_the_scoped_database_alias() {
 /// no published backing service for the alias it would deliver.
 #[test]
 fn a_managed_session_refuses_without_a_published_backing_service() {
-    with_private_gateway("scoped-host-alias-managed-absent", || {
+    with_short_scratch("scoped-host-alias-managed-absent", || {
         let primary = primary_checkout("scoped-host-alias-managed-absent");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -547,6 +649,73 @@ fn write_managed_session_manifest(checkout: &Path) {
     fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a managed session");
 }
 
+/// A configured test suite is a host environment too: its own `env`, its
+/// rendered command and its `setup`/`teardown` steps receive this checkout's
+/// effective alias, and an unpublished one refuses before any suite starts.
+#[test]
+fn a_configured_test_suite_resolves_and_proves_its_scoped_alias() {
+    with_short_scratch("scoped-host-alias-suite", || {
+        let primary = primary_checkout("scoped-host-alias-suite");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let suite = checkout.join("suite-database-url.txt");
+        let setup = checkout.join("setup-database-url.txt");
+        let teardown = checkout.join("teardown-database-url.txt");
+        let manifest = format!(
+            r#"{MANIFEST}
+[test.suites.unit]
+run = "sh -lc 'printf %s $DATABASE_URL > {suite}'"
+env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }}
+setup = [
+  {{ id = "seed", run = "sh -lc 'printf %s $DATABASE_URL > {setup}'", env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }} }},
+]
+teardown = [
+  {{ id = "clear", run = "sh -lc 'printf %s $DATABASE_URL > {teardown}'", env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }} }},
+]
+"#,
+            suite = suite.display(),
+            setup = setup.display(),
+            teardown = teardown.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a test suite");
+
+        let error = run_task(&checkout, "test", &[]).expect_err("the suite must refuse");
+        assert_task_invocation_error_contains(
+            error,
+            &[
+                "test.suites.unit",
+                "postgres.acme.test",
+                &alias,
+                "effigy container up web",
+            ],
+        );
+        for path in [&suite, &setup, &teardown] {
+            assert!(
+                !path.exists(),
+                "the refused suite never ran {}",
+                path.display()
+            );
+        }
+
+        publish_alias_route(&checkout, &alias, 55432);
+        run_task(&checkout, "test", &[]).expect("the suite runs");
+        let expected = format!("postgres://app:secret@{alias}:5432/app");
+        for (name, path) in [
+            ("suite", &suite),
+            ("setup", &setup),
+            ("teardown", &teardown),
+        ] {
+            assert_eq!(
+                fs::read_to_string(path)
+                    .unwrap_or_else(|_| panic!("the {name} recorded the URL it received"))
+                    .trim(),
+                expected,
+                "the {name} environment received this checkout's own alias"
+            );
+        }
+    });
+}
+
 /// The command Effigy renders for one task, without dispatching anything.
 fn rendered_command(root: &Path, selector: &str) -> crate::runner::execute::TaskCommand {
     use crate::runner::execute::api::build_execution_preflight;
@@ -567,7 +736,7 @@ fn rendered_command(root: &Path, selector: &str) -> crate::runner::execute::Task
 
 #[test]
 fn a_container_task_keeps_the_canonical_alias_the_scope_network_answers() {
-    with_private_gateway("scoped-host-alias-container", || {
+    with_short_scratch("scoped-host-alias-container", || {
         let primary = primary_checkout("scoped-host-alias-container");
         let checkout = linked_worktree(&primary, "worktree-one");
         // A container-bound task needs a system and workspace binding; the

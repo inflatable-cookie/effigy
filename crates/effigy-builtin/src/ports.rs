@@ -102,30 +102,32 @@ pub trait HostSuiteCustody: Send {
 /// reach-back from the built-in layer into the rest of the runner goes
 /// through this trait.
 pub trait BuiltinRuntimePorts {
-    /// Resolve the declared backing-service aliases this suite's host
-    /// environment carries to the checkout's own effective aliases, refusing
-    /// when the checkout has no published backing service for one
-    /// (effigy#431, contract 005). Called before any suite starts. The default
-    /// implementation, and every container-routed suite, leaves the
-    /// environment as written: the container's own network answers both names.
-    fn resolve_host_suite_env(
-        &self,
-        root: &std::path::Path,
-        env: &mut std::collections::BTreeMap<String, String>,
-    ) -> Result<(), BuiltinError> {
-        let _ = (root, env);
-        Ok(())
-    }
-
-    /// The declared/effective backing-service aliases this checkout resolves in
-    /// a host environment, for renders that happen before the environment
-    /// exists (a suite's lifecycle step commands).
+    /// The declared/effective backing-service aliases this checkout's host
+    /// execution delivers (effigy#431, contract 005). A suite's environment,
+    /// its rendered command and its `setup`/`teardown` commands receive the
+    /// effective alias where they carry the declared one. Empty — the default,
+    /// and every container-routed suite — leaves them as written: the
+    /// container's own network answers both names.
     fn host_suite_env_aliases(
         &self,
         root: &std::path::Path,
     ) -> Result<Vec<crate::BuiltinHostAlias>, BuiltinError> {
         let _ = root;
         Ok(Vec::new())
+    }
+
+    /// Prove every delivered alias this suite would use before anything runs:
+    /// the alias's route must belong to this checkout and publish an upstream
+    /// port. `label` names the suite in the refusal. The default implementation
+    /// refuses nothing because it delivers no alias.
+    fn prove_host_suite_aliases(
+        &self,
+        root: &std::path::Path,
+        label: &str,
+        texts: &[&str],
+    ) -> Result<(), BuiltinError> {
+        let _ = (root, label, texts);
+        Ok(())
     }
 
     /// Whether the caller wants test-only child evidence for built-in suite

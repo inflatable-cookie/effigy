@@ -1517,8 +1517,9 @@ value source precedence is unchanged.
 
 That covers a task's own `env`, an env-schema or `.env` value, a declared
 secret, a sequence step's environment, a managed session's process plan
-(`mode = "tui"`), and a configured test suite's own environment with its
-`setup`/`teardown` step environments. Only an endpoint is rewritten - a value
+(`mode = "tui"`), and a configured test suite's own environment, command and
+`setup`/`teardown` step environments. Every alias a configured suite would use
+is proved before any suite starts. Only an endpoint is rewritten - a value
 that is exactly the host, a host in a URL authority, or a host carrying its
 own port - so text that merely names the alias (a search pattern, a JSON blob,
 a comma-separated list) keeps its bytes. Effigy rewrites the environment it

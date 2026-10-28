@@ -306,15 +306,19 @@ impl HostAliasResolver {
     }
 }
 
-/// Resolve a host suite's delivered environment for one checkout.
-pub(in crate::runner) fn resolve_host_env(
+/// Prove every alias one host render would deliver before it runs.
+pub(in crate::runner) fn prove_host_env_aliases(
     root: &Path,
-    env: &mut BTreeMap<String, String>,
+    label: &str,
+    texts: &[&str],
 ) -> Result<(), RunnerError> {
     let Some(mut resolver) = HostAliasResolver::for_checkout(root)? else {
         return Ok(());
     };
-    resolver.resolve_plain_env(env)
+    for text in texts {
+        resolver.require_published_in(label, text)?;
+    }
+    Ok(())
 }
 
 /// The declared/effective aliases one checkout's host environments resolve,

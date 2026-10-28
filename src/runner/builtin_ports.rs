@@ -140,20 +140,21 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
         self.suite_parent.is_some()
     }
 
-    fn resolve_host_suite_env(
-        &self,
-        root: &Path,
-        env: &mut std::collections::BTreeMap<String, String>,
-    ) -> Result<(), BuiltinError> {
-        crate::runner::execute::host_alias::resolve_host_env(root, env)
-            .map_err(|error| BuiltinError::task_invocation(error.to_string()))
-    }
-
     fn host_suite_env_aliases(
         &self,
         root: &Path,
     ) -> Result<Vec<effigy_builtin::BuiltinHostAlias>, BuiltinError> {
         crate::runner::execute::host_alias::host_env_aliases(root)
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))
+    }
+
+    fn prove_host_suite_aliases(
+        &self,
+        root: &Path,
+        label: &str,
+        texts: &[&str],
+    ) -> Result<(), BuiltinError> {
+        crate::runner::execute::host_alias::prove_host_env_aliases(root, label, texts)
             .map_err(|error| BuiltinError::task_invocation(error.to_string()))
     }
 
