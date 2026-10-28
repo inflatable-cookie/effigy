@@ -1584,9 +1584,48 @@ Linux setup installs a systemd dummy-link split-DNS unit with no default-route
 role. It applies only `CAP_NET_BIND_SERVICE` to the installed Effigy executable;
 it does not lower the host-wide unprivileged-port threshold. Replacing that
 binary removes its file capability, so run setup again after an executable
-upgrade. Foreign unit files and foreign executable capabilities are preserved
-with an error. This adapter requires systemd-resolved and the documented `ip`
-and `resolvectl` tools.
+upgrade; `effigy gateway status --json` reports `launcher.low_port` as `missing`
+until then. Foreign unit files and foreign executable capabilities are preserved
+with an error. This adapter requires systemd-resolved, the documented `ip` and
+`resolvectl` tools, and systemd's user manager for the login launch below.
+
+Linux setup also installs one launch-only systemd **user** unit,
+`~/.config/systemd/user/effigy-gateway.service`, and enables it for the login
+session. The unit runs `effigy gateway up` at login, `effigy gateway down` when
+it is stopped, and nothing else. The daemon's kernel Run stays the only lifecycle
+authority, so the unit declares no restart policy and never runs the daemon
+itself: `systemctl --user restart effigy-gateway.service` is an ordinary
+reconcile request (`down`, then `up`), and `systemctl --user stop` runs the same
+`gateway down` you would. `effigy gateway down` stops the gateway without
+touching the unit, so the next login starts it again; remove the unit with
+`effigy gateway setup --remove`.
+
+The administrator prompt is for the split-DNS unit and the file capability, once.
+Everything else, including the user unit, runs as your account. Immediately
+after applying the capability, setup re-execs the installed binary as you and
+binds the configured low ports; a refusal fails setup instead of leaving a
+gateway that cannot serve 80/443. A port already held by a running gateway counts
+as proven.
+
+A user manager starts the unit at login without further action. Starting it
+after boot with no logged-in user is your explicit opt-in and is never enabled
+by Effigy:
+
+```sh
+loginctl enable-linger "$USER"    # opt in: start at boot without a login
+loginctl disable-linger "$USER"   # undo
+```
+
+`effigy gateway status --json` reports the observed `launcher` object on Linux
+(`unit`, `enabled`, `linger`, `low_port`) and a `recovery` list of exact commands
+for anything that is not ready. Nothing there is inferred: an unobservable linger
+state is omitted, and a foreign unit or capability is reported as `foreign`
+rather than claimed.
+
+`effigy gateway setup --remove` stops the gateway, disables and removes the unit
+it owns, removes the split-DNS unit and the file capability, and preserves
+certificates, CA trust and interface addresses. A unit or capability Effigy did
+not write is preserved with an error naming it.
 
 The daemon uses a kernel Run and owned process custody. Its generation-fenced
 control socket lives under `~/.effigy/gateway/runtime/`. Status has a shared
@@ -1628,8 +1667,9 @@ checkout takes it at once. There is no quarantine and no withdrawn claim: the
 previous `effigy gateway repair` and its `--owner-checkout` filter are retired.
 
 Removal is an administrator action. It removes only verified setup-owned
-resolver entries, the bind broker and boot jobs. Leaf certificates, mkcert CA
-trust and existing interface aliases are preserved. A live alias may predate
+resolver entries, the bind broker, the boot jobs and the Linux login launch
+unit. Leaf certificates, mkcert CA trust and existing interface aliases are
+preserved. A live alias may predate
 setup, so owning the boot job does not authorize deleting that address. The
 v0.14.1 `gateway up` restores its normal resolver/alias behavior and starts the
 root gateway; use that binary's normal administrator prompt.

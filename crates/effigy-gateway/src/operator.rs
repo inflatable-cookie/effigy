@@ -190,6 +190,10 @@ pub struct Status {
     /// Build identity of the running daemon, from its own version record.
     pub binary_version: Option<String>,
     pub reason: Option<String>,
+    /// Linux launch route: the login unit and the low-port capability. Omitted
+    /// on a platform with its own adapter, and absent facts are never guessed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<crate::linux_operator::LaunchStatus>,
 }
 impl Status {
     fn simple(status: &'static str, reason: Option<String>) -> Self {
@@ -200,6 +204,7 @@ impl Status {
             control_socket: None,
             binary_version: None,
             reason,
+            launcher: None,
         }
     }
 }
@@ -248,6 +253,11 @@ fn legacy_status(config: &GatewayConfig) -> io::Result<Status> {
 }
 /// Pure, bounded observation: no repair, privilege request or exclusive gate.
 pub fn status(config: &GatewayConfig) -> io::Result<Status> {
+    let mut result = observed_status(config)?;
+    result.launcher = home(config).ok().and_then(crate::linux_operator::current);
+    Ok(result)
+}
+fn observed_status(config: &GatewayConfig) -> io::Result<Status> {
     let op = context(Duration::from_secs(3), EffectClass::Observe);
     loop {
         match status_once(config, &op) {
@@ -288,6 +298,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
                 control_socket: Some(run::control_socket_path(&root, &owner(), completion.run)),
                 binary_version: None,
                 reason: completion_reason(&completion.workload, &completion.stderr_tail),
+                launcher: None,
             })),
             None => Ok(None),
         };
@@ -306,6 +317,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
             .ok()
             .flatten(),
         reason: None,
+        launcher: None,
     };
     match state {
         RunStatus::Closed {
