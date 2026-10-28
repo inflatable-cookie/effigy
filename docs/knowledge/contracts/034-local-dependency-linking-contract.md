@@ -96,6 +96,8 @@ Unix.
 - Never replace a registration that points at another path.
 - Remove a registration only when Effigy created it, its observed target still
   matches, and no desired consumer reference remains.
+- Unlink of an absent checkout still releases that exact consumer's index
+  references. Shared, foreign, and unverifiable live-consumer claims stay.
 - Validate other repo references before removal. Retain and report stale or
   unverifiable references rather than risk breaking another consumer.
 - Status and doctor report index/registry disagreement as drift.

@@ -10,7 +10,8 @@ use tempfile::TempDir;
 use super::*;
 use crate::{
     apply_bun_link_plan, plan_bun_link, BunConsumerInventory, BunConsumerReference,
-    BunPackageInventory, DependencyDepth, ProcessOutput, RepoLinkStateStore,
+    BunPackageInventory, BunReferenceRelease, BunRegistrationIndexStore, DependencyDepth,
+    ProcessOutput, RepoLinkStateStore,
 };
 
 struct FixtureProcess {
@@ -451,6 +452,164 @@ fn unregister_failure_restores_registrations_and_consumer_links() {
         assert_eq!(
             fs::canonicalize(bun_registration_path(&fixture.home, &package.name)).unwrap(),
             package.package_path
+        );
+    }
+}
+
+#[test]
+fn unlink_of_a_deleted_consumer_retires_only_its_own_registration() {
+    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&first.home);
+    link(&first, &process);
+    let other_temp = TempDir::new().unwrap();
+    let other = fs::canonicalize(other_temp.path()).unwrap();
+    write(&other.join("package.json"), "{\"name\":\"other\"}\n");
+    replace_symlink(
+        &first.packages[0].package_path,
+        &other.join("node_modules").join("underlay"),
+    );
+    BunRegistrationIndexStore::for_home(&first.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                first.packages[0].package_path.clone(),
+                true,
+                BunConsumerReference {
+                    consumer_repo: other.clone(),
+                    library_path: first.library.clone(),
+                },
+            )
+        })
+        .unwrap();
+    let missing = first.repo.clone();
+    fs::remove_dir_all(&missing).unwrap();
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &missing,
+            &first.library,
+            &first.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &first.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunUnlinkOutcome::Unlinked);
+    assert!(report.applied_processes.is_empty());
+    assert!(matches!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&first.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Symlink { .. }
+    ));
+    let index = BunRegistrationIndexStore::for_home(&first.home)
+        .read()
+        .unwrap();
+    assert_eq!(index.registrations[0].consumers.len(), 1);
+    assert_eq!(index.registrations[0].consumers[0].consumer_repo, other);
+    assert_eq!(
+        fs::canonicalize(other.join("node_modules").join("underlay")).unwrap(),
+        first.packages[0].package_path
+    );
+}
+
+#[test]
+fn unlink_of_a_deleted_last_owned_consumer_unregisters() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &process);
+    let missing = fixture.repo.clone();
+    fs::remove_dir_all(&missing).unwrap();
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &missing,
+            &fixture.library,
+            &fixture.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunUnlinkOutcome::Unlinked);
+    assert_eq!(report.applied_processes.len(), 1);
+    assert!(BunRegistrationIndexStore::for_home(&fixture.home)
+        .read()
+        .unwrap()
+        .registrations
+        .is_empty());
+    assert_eq!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Missing
+    );
+}
+
+#[test]
+fn unlink_of_a_deleted_consumer_rolls_back_an_unregister_failure() {
+    let fixture = fixture(&[
+        ("@signal/core", DependencyDepth::Direct),
+        ("@signal/protocol", DependencyDepth::Transitive),
+    ]);
+    let link_process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &link_process);
+    let index_before = fs::read(BunRegistrationIndexStore::for_home(&fixture.home).path()).unwrap();
+    let missing = fixture.repo.clone();
+    fs::remove_dir_all(&missing).unwrap();
+    let process = FixtureProcess::fail_unregister_once(&fixture.home, "@signal/protocol");
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &missing,
+            &fixture.library,
+            &fixture.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunUnlinkOutcome::ApplyFailed);
+    assert!(report.rollback.attempted);
+    assert!(
+        report.rollback.failures.is_empty(),
+        "{:?}",
+        report.rollback.failures
+    );
+    assert_eq!(report.rollback.restored_registrations, ["@signal/core"]);
+    assert_eq!(
+        fs::read(BunRegistrationIndexStore::for_home(&fixture.home).path()).unwrap(),
+        index_before
+    );
+    for package in &fixture.packages {
+        assert_eq!(
+            fs::canonicalize(bun_registration_path(&fixture.home, &package.name)).unwrap(),
+            package.package_path
+        );
+        assert_eq!(
+            report
+                .plan
+                .packages
+                .iter()
+                .find(|planned| planned.name == package.name)
+                .unwrap()
+                .reference_release,
+            Some(BunReferenceRelease::RemoveOwned)
         );
     }
 }
