@@ -1,5 +1,5 @@
 #[path = "pipeline/command.rs"]
-mod command;
+pub(super) mod command;
 #[path = "pipeline/managed.rs"]
 pub(super) mod managed;
 #[path = "pipeline/standard.rs"]
@@ -178,5 +178,5 @@ fn plan_command_shape(
             .collect::<Vec<_>>()
             .join("; "));
     }
-    command::build_task_command(preflight, selection, &None)
+    command::build_task_command(preflight, selection, &None).map(|built| built.command)
 }

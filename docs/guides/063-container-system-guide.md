@@ -1506,6 +1506,23 @@ answer on their checkout's loopback alias address. That means host and
 container code can use the same stable names without hand-written
 `/etc/hosts` edits.
 
+A linked worktree or marked ephemeral clone answers those aliases on its own
+scoped apex (`postgres.acme-w<key>.test`). Its container targets resolve the
+declared name too, and a task Effigy runs on the host receives the scoped name
+where its configuration carries the declared one - in `[tasks.<name>].env`, an
+env-schema or `.env` value, a declared secret, or a sequence step's
+environment - so `php artisan test` or `cargo test` in a worktree reaches that
+worktree's database. The consumer's manifest keeps the declared name and its
+value source precedence is unchanged.
+
+Before such a run starts, Effigy proves the scope's backing service: its route
+must belong to this checkout and publish an upstream port. When it does not,
+the task refuses with the alias, the service and the command that starts the
+stack (`effigy container up <NAME>`), and nothing runs. The primary checkout
+keeps its declared name, and a container-bound task is not rewritten because
+its target's own network already answers both names. A managed TUI session
+(`mode = "tui"`) is not covered yet.
+
 By default, generated TCP aliases, the `container hosts` cookie apex and
 gateway service-alias registration all use the same apex.
 For a linked worktree, that effective apex includes its checkout host key even

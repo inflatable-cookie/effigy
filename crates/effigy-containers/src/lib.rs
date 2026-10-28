@@ -31,6 +31,7 @@ pub use ops::{
 pub use policy::data_from::{
     borrowed_volume_ensure_commands, plan_volume_data_handover, VolumeDataHandover,
 };
+pub use policy::host_alias::{DeclaredAlias, HostExecutionAliases};
 pub use policy::host_process_env::{
     validate_host_process_env, HostProcessEnvFacts, HostProcessUrls, ServiceEndpoint,
 };

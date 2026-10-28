@@ -10,6 +10,7 @@ use super::super::api::{
     ContainerExecutionBinding, ExecutionBindingResolution,
 };
 use super::super::context::ExecutionTaskContext;
+use super::super::host_alias::{secret_env_slice, HostAliasResolver};
 use super::super::planning::ExecutionPreflight;
 use super::super::routing::{
     route_standard_task_execution, routed_container_target, routed_not_running_container,
@@ -129,11 +130,8 @@ pub(in crate::runner) fn run_standard_task(
                 Some(&exec),
             )?
         };
-        let context = ExecutionTaskContext::new(
-            preflight,
-            selection,
-            command::build_task_command(preflight, selection, &env_schema_resolved)?,
-        );
+        let built = command::build_task_command(preflight, selection, &env_schema_resolved)?;
+        let context = ExecutionTaskContext::new(preflight, selection, built.command);
         run_standard_task_inner(
             preflight,
             selection,
@@ -141,6 +139,7 @@ pub(in crate::runner) fn run_standard_task(
             &context,
             &env_schema_resolved,
             Some(&task_secret_pairs),
+            built.host_aliases,
             &mut run,
             &mut workload,
         )
@@ -261,6 +260,7 @@ fn run_standard_task_inner(
     context: &ExecutionTaskContext<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
     resolved_task_secrets: Option<&[(String, SecretString)]>,
+    mut host_aliases: Option<HostAliasResolver>,
     run: &mut TaskRun,
     workload: &mut Option<WorkloadOutcome>,
 ) -> Result<String, RunnerError> {
@@ -416,6 +416,24 @@ fn run_standard_task_inner(
         }
         return finish_remote(preflight, context, secret_ref, exit, workload);
     }
+
+    // A host run in a runtime-scoped checkout resolves the canonical declared
+    // backing-service alias in the secret values it delivers too, and refuses
+    // before the child starts when this checkout has no published backing
+    // service for them (contract 005).
+    let resolved_secret_env = match (host_aliases.as_mut(), secret_ref) {
+        (Some(resolver), Some(pairs)) => Some(resolver.resolved_secret_env(pairs)?),
+        _ => None,
+    };
+    let resolved_secret_refs = resolved_secret_env
+        .as_deref()
+        .map(secret_env_slice)
+        .unwrap_or_default();
+    let secret_ref = if resolved_secret_env.is_some() {
+        Some(resolved_secret_refs.as_slice())
+    } else {
+        secret_ref
+    };
 
     process_run::run_task_process(
         preflight.output_json,
@@ -1137,11 +1155,8 @@ pub(in crate::runner) fn run_sequence_container_command(
         evidence: selection.evidence.clone(),
         surface: selection.surface,
     };
-    let context = ExecutionTaskContext::new(
-        preflight,
-        &selected,
-        command::build_task_command(preflight, &selected, &None)?,
-    );
+    let built = command::build_task_command(preflight, &selected, &None)?;
+    let context = ExecutionTaskContext::new(preflight, &selected, built.command);
     // The canonical selection plan is rebuilt without effects by the resolver.
     let invocation = effigy_cli::TaskInvocation {
         name: effigy_tasks::render_task_selector(&preflight.selector),
@@ -1155,7 +1170,15 @@ pub(in crate::runner) fn run_sequence_container_command(
         ));
     };
     run_standard_task_inner(
-        preflight, &selected, &plan, &context, &None, None, run, &mut None,
+        preflight,
+        &selected,
+        &plan,
+        &context,
+        &None,
+        None,
+        built.host_aliases,
+        run,
+        &mut None,
     )
 }
 

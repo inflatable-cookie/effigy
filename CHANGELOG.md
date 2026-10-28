@@ -483,6 +483,20 @@ During v0.x, MINOR bumps may include breaking changes.
   the child is alive the wait has no deadline and reports progress; once the
   port accepts a connection, `readiness.timeout_secs` bounds reaching the
   declared status. A restart binds the address its declaration names.
+- **A host run in a linked worktree reaches that worktree's database.** A
+  scoped checkout answers its backing services on its own apex, and a task
+  Effigy runs on the host receives the scoped alias where its configuration
+  carries the declared one - in `[tasks.<name>].env`, an env-schema or `.env`
+  value, a declared secret, or a sequence step's environment - so application
+  configuration keeps `postgres.<apex>` and the run still reaches this
+  checkout's own database. Value precedence is unchanged, only a whole hostname
+  is replaced, and a primary checkout keeps its declared name. Before the task
+  starts, Effigy proves the scope's route belongs to this checkout and
+  publishes an upstream port; otherwise the run refuses with the alias, the
+  service and `effigy container up <NAME>`, and the command never runs. A
+  container-bound task is untouched: its target's own network already answers
+  both names. A managed TUI session (`mode = "tui"`) is not covered yet. See
+  [contract 005](docs/knowledge/contracts/005-container-runtime-contract.md).
 - **Host processes get resolved facts instead of a wrapper script:**
   `${service.<name>.host}`, `${route.<domain>.public_url}`,
   `${host_process.<name>.internal_url}`, `${apex}`, `${domains}` and

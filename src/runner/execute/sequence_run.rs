@@ -1,4 +1,5 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
+use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
 use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
@@ -359,6 +360,24 @@ fn run_steps(
         selection.task.env_file.as_ref(),
         preflight.runtime_args_raw.env_schema_override.as_deref(),
     )?;
+    // A host sequence in a runtime-scoped checkout resolves the canonical
+    // declared backing-service alias in every environment it delivers,
+    // including the values a step inherits from the task and chains from its
+    // predecessors (contract 005).
+    let mut host_aliases = host_alias_resolver(preflight, selection)?;
+    let resolved_secrets = match (host_aliases.as_mut(), secrets) {
+        (Some(resolver), Some(pairs)) => Some(resolver.resolved_secret_env(pairs)?),
+        _ => None,
+    };
+    let resolved_secret_refs = resolved_secrets
+        .as_deref()
+        .map(secret_env_slice)
+        .unwrap_or_default();
+    let secrets = if resolved_secrets.is_some() {
+        Some(resolved_secret_refs.as_slice())
+    } else {
+        secrets
+    };
     let mut planned = Vec::with_capacity(steps.len());
     for (index, step) in steps.iter().enumerate() {
         env.apply_from_step(
@@ -377,6 +396,9 @@ fn run_steps(
             if let Some(source) = &preflight.task_source {
                 *value = value.replace("{skill}", &source.source_root.display().to_string());
             }
+        }
+        if let Some(resolver) = host_aliases.as_mut() {
+            resolver.resolve_plain_env(&mut step_env)?;
         }
         let (label, timeout) = match step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),
