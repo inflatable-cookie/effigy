@@ -330,8 +330,8 @@ pub(in crate::runner) fn start_host_processes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<ManagedHostListenerResult>, RunnerError> {
     let HostProcessStart { started, listeners } =
-        start_host_processes_inner(repo_root, policy, None)?;
-    detach_started(repo_root, policy, started)?;
+        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
+    detach_started(repo_root, policy, started, None)?;
     Ok(listeners)
 }
 
@@ -344,6 +344,11 @@ pub(in crate::runner) fn start_host_processes_for_container(
 /// containers and the other host processes - is never touched, so a process
 /// stopped with `effigy run stop <run>` is simply started again.
 ///
+/// The replace step (stop plus spawn) holds `Gate(Env)`, and the readiness
+/// wait runs after that gate is released: a restart that waits on a listener
+/// which never answers still yields to `down` instead of holding the
+/// environment for the whole gate budget (effigy#390).
+///
 /// An unknown name fails before any effect, naming the processes this
 /// environment declares.
 pub(in crate::runner) fn restart_host_processes_for_container(
@@ -353,9 +358,13 @@ pub(in crate::runner) fn restart_host_processes_for_container(
 ) -> Result<HostProcessRestartReport, RunnerError> {
     let selection = restart_selection(policy, requested)?;
     let selected = selection.ordered.iter().cloned().collect::<BTreeSet<_>>();
-    let HostProcessStart { started, listeners } =
-        start_host_processes_inner(repo_root, policy, Some(&selected))?;
-    let runs = detach_started(repo_root, policy, started)?
+    let HostProcessStart { started, listeners } = start_host_processes_inner(
+        repo_root,
+        policy,
+        Some(&selected),
+        ReplaceGate::HeldForReplace,
+    )?;
+    let runs = detach_started(repo_root, policy, started, Some(&selected))?
         .into_iter()
         .collect::<BTreeMap<_, _>>();
     let mut listeners = listeners
@@ -379,12 +388,12 @@ pub(in crate::runner) fn restart_host_processes_for_container(
 
 /// What a restart replaces: the named processes and every process whose
 /// `depends_on` reaches one of them, in dependency order.
-struct RestartSelection {
-    ordered: Vec<String>,
-    dependent: BTreeSet<String>,
+pub(super) struct RestartSelection {
+    pub(super) ordered: Vec<String>,
+    pub(super) dependent: BTreeSet<String>,
 }
 
-fn restart_selection(
+pub(super) fn restart_selection(
     policy: &EffectiveContainerPolicy,
     requested: &[String],
 ) -> Result<RestartSelection, RunnerError> {
@@ -452,6 +461,7 @@ fn detach_started(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     started: Vec<(String, effigy_kernel::supervise::SupervisorClient)>,
+    selection: Option<&BTreeSet<String>>,
 ) -> Result<Vec<(String, RunId)>, RunnerError> {
     let cx = effects()?;
     let mut detached = Vec::with_capacity(started.len());
@@ -459,7 +469,7 @@ fn detach_started(
         let run = client.run;
         if let Err(error) = client.detach(&cx, run) {
             if !run_is_closed(repo_root, run) {
-                let report = stop_host_processes_for_container(repo_root, policy);
+                let report = rollback_after_detach_failure(repo_root, policy, selection);
                 return Err(RunnerError::task_invocation(format!(
                     "host process `{name}` could not detach after readiness: {error}{}",
                     if report.complete() {
@@ -478,6 +488,19 @@ fn detach_started(
     Ok(detached)
 }
 
+/// The rollback after a detach that failed while its run was still live.
+///
+/// A restart settles exactly the processes it replaced; every other host
+/// process of the environment keeps its run and its route. `up` names no
+/// selection, so its rollback still settles the whole environment.
+pub(super) fn rollback_after_detach_failure(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    selection: Option<&BTreeSet<String>>,
+) -> HostProcessStopReport {
+    stop_host_processes(repo_root, policy, selection)
+}
+
 /// Starts every supervisor and keeps its owning client, without detaching.
 /// Dropping the clients is exactly the client death the kernel treats as an
 /// owner-loss stop; tests use it to prove custody settles both children.
@@ -486,7 +509,8 @@ pub(super) fn start_host_processes_owning(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
-    let HostProcessStart { started, .. } = start_host_processes_inner(repo_root, policy, None)?;
+    let HostProcessStart { started, .. } =
+        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
     Ok(started)
 }
 
@@ -497,10 +521,23 @@ struct HostProcessStart {
     listeners: Vec<ManagedHostListenerResult>,
 }
 
+/// Whether the replace step (stop plus spawn) holds `Gate(Env)`.
+///
+/// `up` starts host processes after its reconcile run has finished, so it
+/// holds no gate here. A restart's replace step does, and releases it before
+/// the readiness wait, so a listener that never answers still yields to `down`
+/// instead of holding the environment for the whole gate budget (effigy#390).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplaceGate {
+    Unheld,
+    HeldForReplace,
+}
+
 fn start_host_processes_inner(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     selection: Option<&BTreeSet<String>>,
+    gate: ReplaceGate,
 ) -> Result<HostProcessStart, RunnerError> {
     if policy.host_processes.is_empty() {
         return Ok(HostProcessStart {
@@ -551,9 +588,6 @@ fn start_host_processes_inner(
                 continue;
             }
             let resource = host_process_resource(policy, &hp.name)?;
-            // A previous generation of this exact process (from an earlier
-            // `up`) is settled before this bring-up replaces it.
-            stop_resource_run(repo_root, policy, &resource, &hp.name, "replace")?;
             let env = resolved_host_process_environment(hp, &facts)?;
             let listener = resolved_host_process_listener(hp, &listener_binds);
             let mut dependencies = Vec::new();
@@ -621,24 +655,44 @@ fn start_host_processes_inner(
                 crate::runner::secret_session::workload_ambient_environment()
                     .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
                     .collect();
-            let client = effigy_kernel::supervise::start_engine_at(
-                &cx,
-                state_root,
-                effigy_kernel::supervise::EngineLaunch {
-                    payload,
-                    cwd: spec.cwd.clone(),
-                    env: environment,
-                    handoff: None,
-                },
-                &executable,
-                effigy_kernel::supervise::ClientMode::Owning,
-            )
-            .map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "host process `{}` did not start its kernel run: {error}",
-                    hp.name
-                ))
-            })?;
+            // The replace step: settle the previous generation of this exact
+            // process (from an earlier `up`) and start its successor. A
+            // restart holds `Gate(Env)` for these two effects only, so a
+            // concurrent `down` is never blocked by the readiness wait below.
+            let launch_cwd = spec.cwd.clone();
+            let process_name = hp.name.clone();
+            let cx = &cx;
+            let executable = &executable;
+            let replace =
+                move || -> Result<effigy_kernel::supervise::SupervisorClient, RunnerError> {
+                    stop_resource_run(repo_root, policy, &resource, &process_name, "replace")?;
+                    effigy_kernel::supervise::start_engine_at(
+                        cx,
+                        state_root,
+                        effigy_kernel::supervise::EngineLaunch {
+                            payload,
+                            cwd: launch_cwd,
+                            env: environment,
+                            handoff: None,
+                        },
+                        executable,
+                        effigy_kernel::supervise::ClientMode::Owning,
+                    )
+                    .map_err(|error| {
+                        RunnerError::task_invocation(format!(
+                            "host process `{}` did not start its kernel run: {error}",
+                            process_name
+                        ))
+                    })
+                };
+            let client = match gate {
+                ReplaceGate::Unheld => replace()?,
+                ReplaceGate::HeldForReplace => super::super::environment::holding_environment(
+                    policy,
+                    effigy_containers::environment::Operation::Up,
+                    replace,
+                )?,
+            };
             started.push((hp.name.clone(), client));
             if let Some(listener) = &hp.listener {
                 let owner = managed_host_process_owner(&project_path, policy, hp)?;
@@ -681,7 +735,14 @@ fn start_host_processes_inner(
         // owner-loss stop; settle explicitly so the refusal is complete before
         // it returns. Only the processes this start replaced are settled: a
         // restart leaves every other host process and its route running.
+        let replaced_nothing = started.is_empty();
         drop(started);
+        if gate == ReplaceGate::HeldForReplace && replaced_nothing {
+            // A restart that could not take its gate, or whose first replace
+            // failed before a successor started, settles no other process:
+            // whatever else runs today is left alone.
+            return Err(error);
+        }
         let report = stop_host_processes(repo_root, policy, selection);
         let residue = report.lines();
         if report.complete() {

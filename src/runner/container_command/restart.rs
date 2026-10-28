@@ -40,14 +40,13 @@ pub(super) fn run_container_restart(
     if let Some(warning) = environment_up_notice(&repo_root, &policy) {
         eprintln!("{warning}");
     }
-    // The replace step takes `Gate(Env)` like `up`, so `down` and a concurrent
-    // bring-up cannot interleave with a restart that is starting a generation
-    // (effigy#367, effigy#370).
-    let report = environment::holding_environment(
-        &policy,
-        effigy_containers::environment::Operation::Up,
-        || restart_host_processes_for_container(&repo_root, &policy, processes),
-    )?;
+    // The replace step (stop plus spawn) takes `Gate(Env)` like `up`, so `down`
+    // and a concurrent bring-up cannot interleave with a restart that is
+    // starting a generation (effigy#367, effigy#370). The readiness wait runs
+    // after the gate is released, so a listener that never answers still
+    // yields to `down` instead of holding the environment for the whole gate
+    // budget (effigy#390).
+    let report = restart_host_processes_for_container(&repo_root, &policy, processes)?;
     Ok(restart_report(&repo_root, &report, output_json))
 }
 

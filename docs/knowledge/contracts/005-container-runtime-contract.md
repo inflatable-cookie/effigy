@@ -608,11 +608,15 @@ other route.
 A published listener stays published while the supervisor's run is alive and
 the listener port answers. The supervisor connects to that port every five
 seconds; three consecutive misses withdraw the route and record `unavailable`,
-and the next answer republishes it and records `ready` again. A probe miss never
-kills or restarts the child, and never replaces a dependent: the child's own
-exit drives restarts, and a dependent is replaced only when its dependency's
-supervisor generation changes. A restart, a watch-mode respawn that replaces the
-process serving the port, a double fork and a long compile are all ordinary.
+and the next answer republishes it and records `ready` again. A republication
+that fails while the port keeps answering is retried on the next probe, so a
+brief gateway-store failure never leaves a healthy child unreachable: the
+generation stays `unavailable` with no route until a retry succeeds. A probe
+miss never kills or restarts the child, and never replaces a dependent: the
+child's own exit drives restarts, and a dependent is replaced only when its
+dependency's supervisor generation changes. A restart, a watch-mode respawn
+that replaces the process serving the port, a double fork and a long compile
+are all ordinary.
 
 Readiness is one bounded HTTP/1.1 `GET` on the listener's loopback socket. Effigy
 reads the first status line and accepts only the configured status. The line

@@ -149,6 +149,33 @@ impl AdapterlessSetup {
     }
 }
 
+/// The fixture directory goes away when this struct's `fixture` field drops,
+/// which is after this `Drop`. Stopping the daemon while its private root still
+/// exists is what keeps a suite sweep from finding an orphaned gateway; the
+/// caller's `GatewayCleanup` covers the panic path and stops the same daemon.
+impl Drop for AdapterlessSetup {
+    fn drop(&mut self) {
+        let status = Command::new(EFFIGY)
+            .args([
+                "gateway",
+                "down",
+                "--private-state-root",
+                self.private_gateway
+                    .to_str()
+                    .expect("UTF-8 private gateway root"),
+                "--json",
+            ])
+            .env("HOME", &self.private_gateway)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if let Err(error) = status {
+            eprintln!("adapterless fixture could not stop its private gateway: {error}");
+        }
+    }
+}
+
 /// A plain server (`python3 -m http.server "$PORT" --bind "$HOST"`) needs no
 /// adapter: Effigy verifies its reserved address against the child generation,
 /// publishes the route, keeps the reserved port across a restart and settles on
@@ -792,7 +819,144 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
     assert_success(down);
 }
 
-/// A shipped listener adapter needs the two variables it has always read: the
+/// A republication that fails while the port keeps answering is retried by the
+/// next liveness probe: the child is healthy, so the route has to come back
+/// without another outage. A private root this supervisor refuses is a brief
+/// store failure; restoring it is the only thing that changes, and the same
+/// generation republishes on the next probe.
+#[cfg(unix)]
+#[test]
+fn managed_host_listener_retries_a_failed_republication_while_the_port_answers() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let setup = AdapterlessSetup::start(fixture, &effects, &foreign_ca, &mut gateway_cleanup);
+    let profile = "adapterless-republish-failure";
+    let domain = "adapterless-republish-failure.host.test";
+    let manifest = format!(
+        "[[containers.web.host_processes]]\nname = {}\nrun = 'exec python3 server.py'\nrestart = \"always\"\nrestart_delay_ms = 100\n\n{}",
+        toml_quote(LISTENER_NAME),
+        listener_declaration(domain, "127.0.0.1:0", 30)
+    );
+    let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
+    fs::write(
+        checkout.join("server.py"),
+        format!(
+            "{}\nimport threading, time\nstate = {{\"server\": http.server.HTTPServer((host, int(port)), Handler)}}\ndef serve():\n    state[\"server\"].serve_forever()\ndef outage():\n    time.sleep(3)\n    server = state[\"server\"]\n    server.shutdown()\n    server.server_close()\n    time.sleep(40)\n    state[\"server\"] = http.server.HTTPServer((host, int(port)), Handler)\n    threading.Thread(target=serve, daemon=True).start()\nthreading.Thread(target=outage, daemon=True).start()\nserve()\nwhile True:\n    time.sleep(1)\n",
+            plain_server("republished after a store failure")
+        ),
+    )
+    .expect("fixture server script");
+    let cleanup = setup.cleanup(&effects, &checkout, profile);
+    let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
+    let log_path = listener_log_path(&checkout, profile, LISTENER_NAME);
+    let routes_path = setup.private_gateway.join("routes.json");
+
+    parse_json_success(run_container_cli(
+        &checkout,
+        &cleanup,
+        &["up", "--detach", "--json"],
+    ));
+    let state = read_json_file(&state_path);
+    assert_eq!(state["status"], "ready", "{state}");
+    let generation = state["generation"].clone();
+    let child_pid = state["child_pid"].clone();
+    let address = state["address"]
+        .as_str()
+        .expect("published address")
+        .to_owned();
+
+    // The port goes silent long enough for three consecutive probe misses to
+    // withdraw the route, while the root still validates.
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let published = RouteTable::load(&routes_path)
+            .expect("published routes")
+            .lookup(domain)
+            .is_some();
+        if !published {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "three consecutive probe misses never withdrew the route: state={:?}",
+            read_json_file(&state_path)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    // A private root this user still owns but no longer keeps at mode 0700 is
+    // the brief store failure: the answer's publication cannot validate it.
+    let original = fs::metadata(&setup.private_gateway)
+        .expect("the private root's metadata")
+        .permissions();
+    fs::set_permissions(&setup.private_gateway, fs::Permissions::from_mode(0o755))
+        .expect("widen the private root for the failed publication");
+
+    // The port answers again and the publication fails once.
+    wait_for_file_contains(
+        &log_path,
+        "but its route could not be republished",
+        Duration::from_secs(120),
+    );
+    let failed = read_json_file(&state_path);
+    assert_eq!(failed["status"], "unavailable", "{failed}");
+    assert!(failed["route_owner"].is_null(), "{failed}");
+    assert!(
+        RouteTable::load(&routes_path)
+            .expect("published routes")
+            .lookup(domain)
+            .is_none(),
+        "a failed republication leaves the route withdrawn"
+    );
+
+    // Restoring the root is the only change: the still-answering port is the
+    // retry, so the same generation republishes with no further outage.
+    fs::set_permissions(&setup.private_gateway, original).expect("restore the private root");
+    wait_for_file_contains(&log_path, "route republished", Duration::from_secs(60));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let republished = RouteTable::load(&routes_path)
+            .expect("published routes")
+            .lookup(domain)
+            .cloned();
+        if republished
+            .as_ref()
+            .is_some_and(|route| route.target.as_deref() == Some(address.as_str()))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "an answering listener never retried its failed publication: state={:?}",
+            read_json_file(&state_path)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    let republished = read_json_file(&state_path);
+    assert_eq!(republished["status"], "ready", "{republished}");
+    assert_eq!(republished["generation"], generation, "{republished}");
+    assert_eq!(republished["child_pid"], child_pid, "{republished}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+        if body.contains("republished after a store failure") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the retried route never reached the listener: {body}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    assert_success(down);
+}
 /// report path and this generation's token (effigy#349). A fixture that, like
 /// the Underlay bundle's adapters, refuses to start without them binds
 /// `$HOST:$PORT`, writes the report file, reaches ready and publishes its

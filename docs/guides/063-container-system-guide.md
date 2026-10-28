@@ -572,8 +572,10 @@ one is never touched. An unknown process name fails before anything changes. An
 environment that is not up is named in one warning and the named processes start
 anyway: an environment that declares only host processes has no containers to
 prove. A restarted listener keeps the address it published, so a
-dependent's `internal_url` keeps working, and the restart holds the environment
-the way `up` does, so a `down` or a bring-up never interleaves with it.
+dependent's `internal_url` keeps working. A restart holds the environment's gate
+for its replace step - the stop plus the spawn - and releases it before the
+readiness wait, so a `down` from another shell still stops a listener that never
+answers instead of waiting out the restart's gate budget.
 
 ```
 [host process] farmyard-jobs restarted (run 7k2…, listener 127.0.0.1:41873, route https://jobs.example.test)
