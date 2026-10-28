@@ -316,6 +316,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Mapping-form `build.additional_contexts` (`src: ../frontend`) now resolve
+  against the Compose file that names them, the same as sequence-form
+  `src=../frontend`. After render the path stays checkout-rooted instead of
+  being read against the generation directory. Remote and already-absolute
+  values are unchanged.
 - A container readiness refusal and a Colima profile refusal name the failed
   service or profile, the cause they observed and one `next:` command. A
   bring-up that never becomes ready ends its diagnostic with a single `next:`

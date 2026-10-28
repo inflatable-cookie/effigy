@@ -536,6 +536,87 @@ configs:
     });
 }
 
+/// Mapping-form `additional_contexts: { src: ../frontend }` resolves against
+/// the declaring file, the same as sequence-form `src=../frontend`.
+#[test]
+fn mapping_and_sequence_additional_contexts_resolve_against_the_checkout() {
+    let (fixture, checkout, home) = fixture();
+    std::fs::create_dir_all(checkout.join("app")).unwrap();
+    std::fs::write(checkout.join("app/Dockerfile"), "FROM scratch\n").unwrap();
+    let frontend = checkout.join(".effigy/runtime/frontend");
+    std::fs::create_dir_all(&frontend).unwrap();
+    std::fs::write(
+        checkout.join("compose.yml"),
+        r#"services:
+  app:
+    build:
+      dockerfile: Dockerfile
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(checkout.join(".effigy/runtime/compose")).unwrap();
+    std::fs::write(
+        checkout.join(".effigy/runtime/compose/compose.override.yml"),
+        r#"services:
+  mapping:
+    build:
+      additional_contexts:
+        src: ../frontend
+        image: docker-image://example/base:latest
+        abs: /already/absolute
+  sequence:
+    build:
+      additional_contexts:
+        - src=../frontend
+        - image=docker-image://example/base:latest
+        - abs=/already/absolute
+"#,
+    )
+    .unwrap();
+    crate::with_test_effigy_home(&home, || {
+        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
+        let override_document: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[1]).unwrap()).unwrap();
+        let expected = frontend.canonicalize().unwrap();
+        let expected = expected.display().to_string();
+        assert!(
+            !expected.contains(".effigy/state"),
+            "the declaring checkout owns the path, not the generation: {expected}"
+        );
+        assert_eq!(
+            override_document["services"]["mapping"]["build"]["additional_contexts"]["src"],
+            serde_yaml::Value::String(expected.clone()),
+            "mapping-form additional_contexts resolve against the file that names them"
+        );
+        assert_eq!(
+            override_document["services"]["sequence"]["build"]["additional_contexts"][0],
+            serde_yaml::Value::String(format!("src={expected}")),
+            "sequence-form additional_contexts resolve against the file that names them"
+        );
+        assert_eq!(
+            override_document["services"]["mapping"]["build"]["additional_contexts"]["image"],
+            serde_yaml::Value::String("docker-image://example/base:latest".to_owned()),
+            "a remote mapping-form context stays as written"
+        );
+        assert_eq!(
+            override_document["services"]["sequence"]["build"]["additional_contexts"][1],
+            serde_yaml::Value::String("image=docker-image://example/base:latest".to_owned()),
+            "a remote sequence-form context stays as written"
+        );
+        assert_eq!(
+            override_document["services"]["mapping"]["build"]["additional_contexts"]["abs"],
+            serde_yaml::Value::String("/already/absolute".to_owned()),
+            "an already-absolute mapping-form context stays as written"
+        );
+        assert_eq!(
+            override_document["services"]["sequence"]["build"]["additional_contexts"][2],
+            serde_yaml::Value::String("abs=/already/absolute".to_owned()),
+            "an already-absolute sequence-form context stays as written"
+        );
+        let _ = fixture;
+    });
+}
+
 /// The `healthcheck.test` of each service in a rendered Compose document, as
 /// the words Compose sees.
 fn healthcheck_tests(document: &str) -> BTreeMap<String, Vec<String>> {

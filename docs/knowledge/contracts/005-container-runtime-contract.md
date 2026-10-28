@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-22
+Last Updated: 2026-10-28
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -418,8 +418,11 @@ same Compose arguments — so alternating the two paths recreates nothing.
 
 Prepare establishes owned mount directories before
 admission, so creating a cache cannot change canonical bind paths afterward.
-Relative user build contexts and Dockerfiles keep their
-Compose meaning. `compose.override.yml` inputs are copied into the closure. Existing mutable generated files are not imported
+Relative user build contexts, mapping- and sequence-form
+`build.additional_contexts`, and Dockerfiles keep their Compose meaning. A
+relative additional context is rewritten against the file that names it, so
+Compose does not resolve it against the generation. Remote and already-absolute
+values stay as written. `compose.override.yml` inputs are copied into the closure. Existing mutable generated files are not imported
 or rewritten; the next Prepare renders their replacement automatically.
 
 `effigy container render [<env>]` is read-only and prints every closure file,

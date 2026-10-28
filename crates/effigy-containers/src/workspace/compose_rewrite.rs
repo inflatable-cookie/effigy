@@ -524,20 +524,26 @@ fn normalize_service_build_paths(
                     serde_yaml::Value::String(render_compose_relative_path(".", compose_dir)),
                 );
             }
-            if let Some(serde_yaml::Value::Sequence(contexts)) =
-                mapping.get_mut(serde_yaml::Value::String("additional_contexts".to_owned()))
-            {
-                for context in contexts {
-                    normalize_additional_context(context, compose_dir);
+            match mapping.get_mut(serde_yaml::Value::String("additional_contexts".to_owned())) {
+                Some(serde_yaml::Value::Sequence(contexts)) => {
+                    for context in contexts {
+                        normalize_additional_context(context, compose_dir);
+                    }
                 }
+                Some(serde_yaml::Value::Mapping(contexts)) => {
+                    for context in contexts.values_mut() {
+                        normalize_mapping_additional_context(context, compose_dir);
+                    }
+                }
+                _ => {}
             }
         }
         _ => {}
     }
 }
 
-/// One `build.additional_contexts` entry: a `name=path` or `name: path`,
-/// or a mapping whose value names the path.
+/// One sequence-form `build.additional_contexts` entry: a `name=path` or
+/// `name: path`, or a mapping whose `value` names the path.
 fn normalize_additional_context(context: &mut serde_yaml::Value, compose_dir: &Path) {
     match context {
         serde_yaml::Value::String(raw) => {
@@ -558,6 +564,18 @@ fn normalize_additional_context(context: &mut serde_yaml::Value, compose_dir: &P
             }
         }
         _ => {}
+    }
+}
+
+/// Mapping-form `additional_contexts: { name: path }`: the value is the
+/// context itself, not a `name=path` string. Remote and already-absolute
+/// values stay as written, same as sequence form.
+fn normalize_mapping_additional_context(context: &mut serde_yaml::Value, compose_dir: &Path) {
+    let serde_yaml::Value::String(path) = context else {
+        return;
+    };
+    if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
+        *path = normalized;
     }
 }
 
