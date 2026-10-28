@@ -236,12 +236,17 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
             return view;
         }
     };
+    // Only the newest open row of a key can hold that key's gate now, so any
+    // older open row of the same key is an interrupted predecessor the next
+    // admission settles. An argument-scoped task (Q-015) has one key per
+    // argument set, so several of its rows — different keys — are live
+    // together, and each one is probed on its own gate.
+    let mut live_keys = std::collections::BTreeSet::new();
     for (index, summary) in runs.iter().enumerate() {
-        // Only the newest open run can hold the gate now; older open rows
-        // are interrupted runs the next admission settles. The gate a row
-        // holds is its own invocation's owner: an argument-scoped run
-        // (Q-015) is not gated by the task's plain owner.
-        let held = (index == 0).then(|| Gate::probe(&cx, &root, run_owner(summary, &owner)));
+        let row_owner = run_owner(summary, &owner);
+        let key_is_live =
+            summary.phase != Phase::Closed && live_keys.insert(row_owner.name().to_string());
+        let held = key_is_live.then(|| Gate::probe(&cx, &root, row_owner));
         let mut run = project(summary, held.as_ref());
         match project_children(&cx, &root, &reader, summary.id, 0) {
             Ok(steps) => run.steps = steps,

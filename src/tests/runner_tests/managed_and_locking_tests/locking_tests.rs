@@ -492,6 +492,23 @@ fn different_focused_filters_run_at_the_same_time() {
         "running",
         "two live filters are still one task's live runs"
     );
+    // Both rows are open and both hold their own gate, so both read as live:
+    // a held open run is `running`, never `interrupted` (contract 018).
+    let live = run_task_status_from_repo(&root, "test:focused", true);
+    let live = parse_json_output_with_schema_version(&live, "effigy.tasks-status.v3", 3);
+    let states = live["history"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| row["state"].as_str().unwrap_or_default().to_owned())
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        states,
+        vec!["running".to_owned(), "running".to_owned()],
+        "each live filter's row is still running: {live}"
+    );
 
     release(&root, "api");
     release(&root, "web");
