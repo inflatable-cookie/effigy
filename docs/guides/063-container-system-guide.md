@@ -1600,12 +1600,14 @@ reconcile request (`down`, then `up`), and `systemctl --user stop` runs the same
 touching the unit, so the next login starts it again; remove the unit with
 `effigy gateway setup --remove`.
 
-The administrator prompt is for the split-DNS unit and the file capability, once.
-Everything else, including the user unit, runs as your account. Immediately
-after applying the capability, setup re-execs the installed binary as you and
-binds the configured low ports; a refusal fails setup instead of leaving a
-gateway that cannot serve 80/443. A port already held by a running gateway counts
-as proven.
+Beyond trusting mkcert's local CA, the administrator prompt is for the split-DNS
+unit and the file capability. Everything else, including the user unit, runs as
+your account. Immediately after applying the capability, setup re-execs the
+installed binary as you, checks that the fresh exec carries
+`CAP_NET_BIND_SERVICE`, and binds the configured low ports; a refusal fails
+setup instead of leaving a gateway that cannot serve 80/443. A port a running
+gateway already holds is reported as held, and the capability itself is proven
+from the fresh exec's own effective set.
 
 A user manager starts the unit at login without further action. Starting it
 after boot with no logged-in user is your explicit opt-in and is never enabled

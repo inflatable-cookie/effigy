@@ -358,7 +358,6 @@ fn unenabled(paths: &LaunchPaths) -> LaunchInstall {
 
 /// Remove the launch unit exactly when Effigy owns it.
 pub fn remove(
-    run: &mut Run<'_>,
     cx: &EffectContext,
     paths: &LaunchPaths,
     operator_uid: u32,
@@ -1322,7 +1321,7 @@ mod tests {
             enable_link(&paths);
             let mut systemd = FakeSystemd::default();
             assert!(install(run, cx, &paths, uid, &binary, &mut systemd).is_err());
-            assert!(remove(run, cx, &paths, uid, &mut systemd).is_err());
+            assert!(remove(cx, &paths, uid, &mut systemd).is_err());
             assert!(systemd.calls.is_empty());
             assert_eq!(
                 std::fs::read(&paths.unit).unwrap(),
@@ -1421,7 +1420,7 @@ mod tests {
             let mut systemd = FakeSystemd::default();
             install(run, cx, &paths, uid, &binary, &mut systemd).unwrap();
             enable_link(&paths);
-            remove(run, cx, &paths, uid, &mut systemd).unwrap();
+            remove(cx, &paths, uid, &mut systemd).unwrap();
             assert_eq!(
                 systemd
                     .calls
@@ -1438,7 +1437,7 @@ mod tests {
             assert!(!paths.wants.exists());
             // Idempotent: a second teardown changes nothing.
             let calls = systemd.calls.len();
-            remove(run, cx, &paths, uid, &mut systemd).unwrap();
+            remove(cx, &paths, uid, &mut systemd).unwrap();
             assert_eq!(systemd.calls.len(), calls);
         });
     }
@@ -1454,7 +1453,7 @@ mod tests {
             install(run, cx, &paths, uid, &binary, &mut systemd).unwrap();
             enable_link(&paths);
             let mut refusing = FakeSystemd::failing("disable");
-            let error = remove(run, cx, &paths, uid, &mut refusing).unwrap_err();
+            let error = remove(cx, &paths, uid, &mut refusing).unwrap_err();
             assert!(error.to_string().contains("effigy gateway down"), "{error}");
             assert!(paths.unit.exists());
         });
@@ -1462,14 +1461,14 @@ mod tests {
 
     #[test]
     fn remove_cleans_a_dangling_activation_link_for_the_missing_unit() {
-        with_run(|run, cx| {
+        with_run(|_run, cx| {
             let home = tempfile::tempdir().unwrap();
             let paths = paths(home.path());
             let uid = nix::unistd::Uid::effective().as_raw();
             std::fs::create_dir_all(&paths.user_dir).unwrap();
             enable_link(&paths);
             let mut systemd = FakeSystemd::default();
-            remove(run, cx, &paths, uid, &mut systemd).unwrap();
+            remove(cx, &paths, uid, &mut systemd).unwrap();
             assert_eq!(
                 systemd.calls,
                 vec![vec!["disable".to_owned(), UNIT_NAME.to_owned()]]
@@ -1480,7 +1479,7 @@ mod tests {
 
     #[test]
     fn a_foreign_activation_link_is_never_followed_or_removed() {
-        with_run(|run, cx| {
+        with_run(|_run, cx| {
             let home = tempfile::tempdir().unwrap();
             let paths = paths(home.path());
             let uid = nix::unistd::Uid::effective().as_raw();
@@ -1492,7 +1491,7 @@ mod tests {
             std::os::unix::fs::symlink(&foreign, &paths.wants).unwrap();
             let mut systemd = FakeSystemd::default();
             // A foreign unit is preserved, and its link is not ours to touch.
-            assert!(remove(run, cx, &paths, uid, &mut systemd).is_err());
+            assert!(remove(cx, &paths, uid, &mut systemd).is_err());
             assert!(systemd.calls.is_empty());
             assert!(paths.wants.exists());
             assert_eq!(std::fs::read(&foreign).unwrap(), b"foreign unit");

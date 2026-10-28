@@ -1849,7 +1849,6 @@ fn run_gateway_setup(
                 #[cfg(target_os = "linux")]
                 setup_step("removing the systemd user launch unit", |_| {
                     effigy_gateway::linux_operator::remove(
-                        run,
                         cx,
                         &effigy_gateway::linux_operator::LaunchPaths::standard(&home),
                         operator_uid.as_raw(),
