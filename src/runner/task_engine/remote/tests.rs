@@ -221,6 +221,7 @@ fn begin(root: &Path, task: &str) -> TaskRun {
         surface: effigy_core::task_selection::TaskSurface::Published,
         profile: None,
         shared_lock: None,
+        argument_scope: None,
         label: task.to_owned(),
     };
     TaskRun::begin(TaskRunRequest {

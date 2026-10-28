@@ -1203,6 +1203,7 @@ mod tests {
             surface: effigy_core::task_selection::TaskSurface::Published,
             profile: None,
             shared_lock: None,
+            argument_scope: None,
         };
         let error = refusal(&target, "run-1", "deny", "busy".to_owned());
         let human = error.human_error();

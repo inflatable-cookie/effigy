@@ -41,6 +41,7 @@ fn target(root: &Path, task: &str) -> TaskTarget {
         surface: TaskSurface::Published,
         profile: None,
         shared_lock: None,
+        argument_scope: None,
         label: task.to_owned(),
     }
 }

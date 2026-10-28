@@ -34,7 +34,9 @@ pub(in crate::runner) use process::{
     run_effigy_child, run_plain, EnvOverride, PlainCommand, PlainExit, RunExec,
 };
 pub(in crate::runner) use remote::{remote_tty, run_remote, RemoteTask};
-pub(in crate::runner) use run::{resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest};
+pub(in crate::runner) use run::{
+    resolve_lock_wait_ms, resolve_lock_wait_ms_or, RunKey, TaskRun, TaskRunRequest,
+};
 pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,
 };
@@ -69,6 +71,7 @@ pub(in crate::runner) fn root_task_status_for_tests(
         surface: effigy_core::task_selection::TaskSurface::Published,
         profile: None,
         shared_lock: None,
+        argument_scope: None,
         label: task.to_owned(),
     };
     task_status(&target, HISTORY_LIMIT)

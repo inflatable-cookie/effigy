@@ -4,9 +4,10 @@
 //! interrupted run, and history never stands in for current state.
 
 use effigy_kernel::gate::{ForegroundHolder, Gate, GateState};
+use effigy_kernel::id::{CheckoutId, ResourceId, Scope};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::WorkloadOutcome;
-use effigy_kernel::run::{history, Phase, RunSummary};
+use effigy_kernel::run::{history, recent, Phase, RunSummary};
 use effigy_kernel::store::Store;
 use serde::Serialize;
 
@@ -225,7 +226,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
             return view;
         }
     };
-    let runs = match history(&reader, &owner, limit.max(1)) {
+    let runs = match task_runs(&reader, checkout, &owner, target, limit) {
         Observed::Verified(runs, _) => runs,
         Observed::Absent(_) => Vec::new(),
         Observed::Unknown(reason) => {
@@ -235,12 +236,18 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
             return view;
         }
     };
-    let gate = Gate::probe(&cx, &root, &owner);
+    // Only the newest open row of a key can hold that key's gate now, so any
+    // older open row of the same key is an interrupted predecessor the next
+    // admission settles. An argument-scoped task (Q-015) has one key per
+    // argument set, so several of its rows — different keys — are live
+    // together, and each one is probed on its own gate.
+    let mut live_keys = std::collections::BTreeSet::new();
     for (index, summary) in runs.iter().enumerate() {
-        // Only the newest open run can hold the gate now; older open rows
-        // are interrupted runs the next admission settles.
-        let held = if index == 0 { Some(&gate) } else { None };
-        let mut run = project(summary, held);
+        let row_owner = run_owner(summary, &owner);
+        let key_is_live =
+            summary.phase != Phase::Closed && live_keys.insert(row_owner.name().to_string());
+        let held = key_is_live.then(|| Gate::probe(&cx, &root, row_owner));
+        let mut run = project(summary, held.as_ref());
         match project_children(&cx, &root, &reader, summary.id, 0) {
             Ok(steps) => run.steps = steps,
             Err(reason) => {
@@ -251,7 +258,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         if index == 0 && summary.phase != Phase::Closed {
             view.state = run.state.clone();
             if run.state == "interrupted" {
-                view.next = Some(format!("effigy {}", target.label));
+                view.next = Some(rerun_command(target, summary));
             }
             view.current = Some(run.clone());
         }
@@ -261,7 +268,7 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         {
             view.state = "failed-cleanup".into();
             view.current = Some(run.clone());
-            view.next = Some(format!("effigy {}", target.label));
+            view.next = Some(rerun_command(target, summary));
         }
         if view.latest.is_none() && summary.phase == Phase::Closed {
             view.latest = Some(run.clone());
@@ -269,6 +276,78 @@ fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
         view.history.push(run);
     }
     view
+}
+
+/// A target's runs, newest first. One declared task normally has one owner
+/// key. A task that opts into an argument-scoped lock (Q-015) gives each of
+/// its runs the key of that run's own arguments, so its runs are found by
+/// the task coordinates every one of them still records.
+fn task_runs(
+    reader: &effigy_kernel::store::StoreReader,
+    checkout: CheckoutId,
+    owner: &ResourceId,
+    target: &TaskTarget,
+    limit: usize,
+) -> Observed<Vec<RunSummary>> {
+    let limit = limit.max(1);
+    if !target.is_argument_scoped() {
+        return history(reader, owner, limit);
+    }
+    // Retention keeps `HISTORY_LIMIT` runs per key, so a window wide enough
+    // for the shown limit still covers this task's rows beside its peers'.
+    let window = limit.saturating_mul(4).max(64);
+    match recent(reader, Some(Scope::Checkout(checkout)), window) {
+        Observed::Verified(runs, evidence) => Observed::Verified(
+            runs.into_iter()
+                .filter(|run| {
+                    run.invocation
+                        .as_ref()
+                        .is_some_and(|invocation| same_task(invocation.spec(), target))
+                })
+                .take(limit)
+                .collect(),
+            evidence,
+        ),
+        other => other,
+    }
+}
+
+fn same_task(spec: &effigy_kernel::id::InvocationSpec, target: &TaskTarget) -> bool {
+    spec.task.catalog() == target.catalog && spec.task.task() == target.task
+}
+
+/// The gate a recorded run holds. An imported row without an invocation
+/// falls back to the queried owner.
+fn run_owner<'a>(summary: &'a RunSummary, owner: &'a ResourceId) -> &'a ResourceId {
+    summary
+        .invocation
+        .as_ref()
+        .map_or(owner, |invocation| &invocation.spec().owner)
+}
+
+/// The command that settles this target's interrupted run. A run keyed by
+/// its own arguments is settled by the same invocation, never by the bare
+/// selector (Q-015).
+fn rerun_command(target: &TaskTarget, summary: &RunSummary) -> String {
+    let Some(spec) = summary
+        .invocation
+        .as_ref()
+        .map(|invocation| invocation.spec())
+    else {
+        return format!("effigy {}", target.label);
+    };
+    if !target.is_argument_scoped() || spec.argv.len() < 2 {
+        return format!("effigy {}", target.label);
+    }
+    let args = spec.argv[1..]
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<String>>();
+    format!(
+        "effigy {} {}",
+        target.label,
+        crate::runner::util::render_passthrough_args(&args)
+    )
 }
 
 /// One run's view from its row and, while it is open, its owner gate.

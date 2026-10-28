@@ -178,6 +178,8 @@ Definition:
 
 Common scopes:
 - `task:<selector>`: one per declared task; every spelling of the task shares it
+- `task:test:focused`: the one exception, keyed by the arguments its command
+  receives as well (see [ordered sequences and locks](020-dag-lock-policy-baseline.md#lock-scopes))
 - `shared:<name>` for explicit cross-task serialization (`lock = "<name>"`)
 
 Independent tasks never share a gate. Wait for a live run with

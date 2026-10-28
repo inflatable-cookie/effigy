@@ -32,7 +32,7 @@ use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
 use crate::runner::task_engine::{
-    resolve_lock_wait_ms, RunExec, RunKey, TaskRun, TaskRunRequest, TaskTarget,
+    resolve_lock_wait_ms_or, RunExec, RunKey, TaskRun, TaskRunRequest, TaskTarget,
 };
 use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_containers::{load_container_policy, ContainerAction, ContainerComposeInvocationPlan};
@@ -64,7 +64,8 @@ pub(in crate::runner) fn run_standard_task(
         &preflight.resolved.resolved_root,
         &preflight.selector.task_name,
         selection,
-    );
+    )
+    .with_arguments(&preflight.runtime_args_exec.passthrough);
     let inherited_managed_run = std::env::var(effigy_managed::RUN_TOKEN_ENV)
         .ok()
         .filter(|token| !token.is_empty());
@@ -93,7 +94,10 @@ pub(in crate::runner) fn run_standard_task(
     };
     let mut run = begin(TaskRunRequest {
         target: &target,
-        lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
+        lock_wait_ms: resolve_lock_wait_ms_or(
+            preflight.runtime_args_raw.lock_wait_ms,
+            target.default_lock_wait_ms(),
+        )?,
         // Host commands, env-schema commands and container workloads all
         // run under the run's custody; every route plans its sentinel.
         custody: true,

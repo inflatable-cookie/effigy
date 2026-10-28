@@ -1678,3 +1678,74 @@ done
         assert!(status["pid"].is_null(), "{label}");
     }
 }
+
+/// Q-015 through the real binary: `test:focused` keys its exclusion by the
+/// arguments its command receives. Two filters run together, and the
+/// identical invocation is the one that waits — or refuses when an explicit
+/// zero wait says not to.
+const ARGUMENT_SCOPED_MANIFEST: &str = r#"
+[tasks."test:focused"]
+durable = true
+run = 'printf "%s start\n" {args} >> runs.log; while [ ! -f release-{args} ]; do sleep 0.02; done; printf "%s end\n" {args} >> runs.log'
+"#;
+
+#[test]
+fn focused_test_filters_are_one_lock_per_normalized_invocation() {
+    let fixture = Fixture::new();
+    fs::write(fixture.repo.join("effigy.toml"), ARGUMENT_SCOPED_MANIFEST).expect("manifest");
+
+    let mut first = fixture
+        .effigy(&["test:focused", "--", "api"])
+        .spawn_owned()
+        .expect("first filter");
+    fixture.wait_for("the first filter to start", || {
+        fixture.read("runs.log").contains("api start")
+    });
+
+    let mut other = fixture
+        .effigy(&["test:focused", "--", "web"])
+        .spawn_owned()
+        .expect("second filter");
+    fixture.wait_for("the second filter to start", || {
+        fixture.read("runs.log").contains("web start")
+    });
+    assert!(
+        !fixture.read("runs.log").contains("api end"),
+        "different filters must overlap, not serialize: {}",
+        fixture.read("runs.log")
+    );
+
+    // The identical invocation is refused at once only because the explicit
+    // zero wait says so; without it the task's own ~120s default waits.
+    let duplicate = fixture
+        .effigy(&["--json", "--lock-wait-ms", "0", "test:focused", "--", "api"])
+        .output_owned()
+        .expect("duplicate invocation");
+    assert_eq!(duplicate.status.code(), Some(75), "{}", text(&duplicate));
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&duplicate.stdout).expect("json envelope");
+    assert_eq!(
+        envelope["error"]["details"]["schema"], "effigy.lock-wait.v2",
+        "{envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["details"]["scope"], "task:test:focused",
+        "{envelope}"
+    );
+
+    fs::write(fixture.repo.join("release-api"), b"release").expect("release the first filter");
+    fs::write(fixture.repo.join("release-web"), b"release").expect("release the second filter");
+    assert!(
+        wait_child(&mut first).success(),
+        "the first filter completes"
+    );
+    assert!(
+        wait_child(&mut other).success(),
+        "the second filter completes"
+    );
+    let runs = fixture.read("runs.log");
+    assert!(
+        runs.contains("api end") && runs.contains("web end"),
+        "{runs}"
+    );
+}
