@@ -1777,3 +1777,37 @@ fn nested_lockfile_change_allows_a_partial_workspace_record() {
         "{refused}"
     );
 }
+
+#[test]
+fn status_reports_pending_settlement_with_its_settle_action() {
+    let root = write_initial_release_repo("status-settlement", false);
+    let plan = plan_release_pipeline(&root).expect("release plan");
+    let mut status = collect_release_status(&plan, false, GateExecutionReport::empty());
+    status.run = crate::ReleaseRunSummary {
+        id: Some("run-7".into()),
+        stage: Some("publish".into()),
+        waiting_on: None,
+        status: Some("paused".into()),
+        settlement: Some("pending".into()),
+    };
+    let text = render_release_status_text(&status);
+    assert!(
+        text.contains(
+            "Settlement: pending; `effigy release settle run-7` settles it without advancing stages"
+        ),
+        "{text}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&render_release_status_json(&status)).expect("status json");
+    assert_eq!(json["run"]["active"], true);
+    assert_eq!(json["run"]["settlement"], "pending");
+
+    // Settled: the payload keeps its previous shape, and no run is active.
+    status.run.settlement = None;
+    status.run.status = Some("complete".into());
+    let json: serde_json::Value =
+        serde_json::from_str(&render_release_status_json(&status)).expect("status json");
+    assert_eq!(json["run"]["active"], false);
+    assert!(json["run"].get("settlement").is_none());
+    assert!(!render_release_status_text(&status).contains("Settlement:"));
+}

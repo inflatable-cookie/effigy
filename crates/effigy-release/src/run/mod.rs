@@ -153,7 +153,7 @@ pub use input::{
 pub use kernel::{
     new_run_id, release_home, release_owner, ReleaseSession, ReleaseState, ReportsOnly,
 };
-pub use kernel::{read_release_record, read_release_record_for_root};
+pub use kernel::{read_release_observation_for_root, read_release_record, ReleaseSettlement};
 pub use receipt::{
     render_release_receipt_json, render_release_receipt_text, render_release_run_json,
     ReleaseReceipt,
@@ -293,10 +293,7 @@ fn run_release_with_budget(
     let prepared = (|| {
         let plan = plan_release_pipeline(&request.repo_root)?;
         let checkpoint = session.read_checkpoint()?;
-        let mut existing = state.read_record()?;
-        if let Some(record) = &mut existing {
-            session.project_record(record)?;
-        }
+        let existing = state.read_record()?;
         let continuation = continue_record(
             request,
             existing,
@@ -385,8 +382,8 @@ fn run_release_with_budget(
         Ok(()) => WorkloadOutcome::Succeeded,
         Err(_) => WorkloadOutcome::Failed { code: 1 },
     };
-    let mut record = runner.record.clone();
-    let messages = runner.messages.clone();
+    let record = runner.record.clone();
+    let mut messages = runner.messages.clone();
     drop(runner);
 
     run.finish(workload).map_err(|error| {
@@ -402,12 +399,13 @@ fn run_release_with_budget(
             match &staged { Ok(()) => "succeeded".to_owned(), Err(stage_error) => format!("failed: {stage_error}") }, record.release_id
         ))
         })?;
+    // Settlement is not a stage outcome: the receipt keeps the recorded stage
+    // status, and `release status` reports the pending cleanup (contract 054 §12).
     if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
-        record.errors.push(format!(
-            "release stage outcome: {}; settlement incomplete for Run {}; `effigy release settle {}` retries cleanup",
-            match &staged { Ok(()) => "succeeded".to_owned(), Err(error) => format!("failed: {error}") }, record.run_id, record.release_id
+        messages.push(format!(
+            "release Run {} settlement is incomplete; `effigy release settle {}` retries cleanup",
+            record.run_id, record.release_id
         ));
-        record.status = ReleaseRunStatus::Failed;
     }
 
     Ok(ReleaseRunOutcome {

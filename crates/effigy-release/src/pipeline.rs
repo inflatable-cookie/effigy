@@ -168,6 +168,9 @@ pub struct ReleaseRunSummary {
     /// `paused`, `awaiting-approval`, `awaiting-hosted-evidence`,
     /// `awaiting-decision`, `failed` or `complete`.
     pub status: Option<String>,
+    /// `pending` when the invocation was interrupted, `incomplete` when it
+    /// closed without its cleanup settling. Absent once settled.
+    pub settlement: Option<String>,
 }
 
 impl ReleaseRunSummary {
@@ -175,9 +178,11 @@ impl ReleaseRunSummary {
         Self::default()
     }
 
-    /// Whether the Run is unfinished: a complete release has no active Run.
+    /// Whether the Run is unfinished: a complete release with pending
+    /// settlement still has an active Run to settle.
     pub fn is_active(&self) -> bool {
-        self.id.is_some() && self.status.as_deref() != Some("complete")
+        self.id.is_some()
+            && (self.status.as_deref() != Some("complete") || self.settlement.is_some())
     }
 }
 

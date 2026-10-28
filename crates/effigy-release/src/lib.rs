@@ -32,7 +32,7 @@ pub use prepare_helpers::{
     suggested_bump,
 };
 pub use run::{
-    new_run_id, parse_release_task_output, read_release_record, read_release_record_for_root,
+    new_run_id, parse_release_task_output, read_release_observation_for_root, read_release_record,
     read_release_task_output, release_home, release_input_value, release_owner,
     render_release_receipt_json, render_release_receipt_text, render_release_run_json, run_release,
     run_release_with_observer, settle_release, sha256_bytes, verify_artifact_digests, GitEffects,
@@ -1027,9 +1027,10 @@ pub fn collect_release_status(
 /// A release whose state root is absent, unreadable or belongs to another
 /// Effigy schema reports no Run rather than failing `release status`.
 fn release_run_summary(plan: &ReleasePipelinePlan) -> ReleaseRunSummary {
-    let Ok(Some(record)) = run::read_release_record_for_root(&plan.repo_root) else {
+    let Ok(Some(observation)) = run::read_release_observation_for_root(&plan.repo_root) else {
         return ReleaseRunSummary::none();
     };
+    let record = observation.record;
     ReleaseRunSummary {
         id: Some(record.release_id),
         stage: Some(if record.stage.is_empty() {
@@ -1039,6 +1040,11 @@ fn release_run_summary(plan: &ReleasePipelinePlan) -> ReleaseRunSummary {
         }),
         waiting_on: record.waiting_on,
         status: Some(record.status.label().to_owned()),
+        settlement: match observation.settlement {
+            run::ReleaseSettlement::Interrupted => Some("pending".to_owned()),
+            run::ReleaseSettlement::Incomplete => Some("incomplete".to_owned()),
+            run::ReleaseSettlement::Live | run::ReleaseSettlement::Settled => None,
+        },
     }
 }
 

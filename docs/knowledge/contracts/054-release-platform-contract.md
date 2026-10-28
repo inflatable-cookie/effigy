@@ -402,7 +402,7 @@ exclude file; tracked receipts remain an explicit `closeout` task. Status and
 receipt reads create nothing, and a missing checkpoint record is unknown.
 Candidate reset and checkpoint publication happen after admission under the
 release owner's gate. Record replacement writes and syncs a private temporary,
-renames it and syncs the directory through the kernel. Cleanup gets a fresh 60-second budget when settlement begins. `release settle <run>` acquires the owner gate and settles the recorded invocation without planning or running stages. Interrupted workload and pending or incomplete settlement are projected separately from the journal into the receipt without a late write after gate release.
+renames it and syncs the directory through the kernel. Cleanup gets a fresh 60-second budget when settlement begins. `release settle <run>` acquires the owner gate and settles the recorded invocation without planning or running stages. Settlement is not a stage outcome. `release receipt <run>` and `receipt.json` render the recorded stage outcome and never change on read; no write follows a settlement, and the journal is not projected into the record. `release status` observes pending or incomplete settlement from the journal and shows the bounded `release settle <run>` action. A completed release keeps its `complete` status while its cleanup is pending; a failed stage keeps `failed`. Missing or unreadable journal state is an error, never a guess (Tom ruling 2026-10-28, Queue decision b8317fec).
 
 Legacy relocation preserves the old release resource's canonical identity and
 run ids in the checkout journal, with a local import alias for subsequent

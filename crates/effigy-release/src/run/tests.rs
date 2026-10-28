@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::kernel::read_release_observation;
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -2473,34 +2474,90 @@ fn interrupted_release_settles_without_advancing_stages() {
     let mut record = paused.record.clone();
     record.run_id = id.to_string();
     state.write_record(&record, &mut run).unwrap();
+    state.write_receipt(&record, &mut run).unwrap();
     run.set_engine_record(&serde_json::to_value(record.checkpoint(&state.record_path)).unwrap())
         .unwrap();
-    assert_eq!(current_record(&fixture).status, record.status);
     drop(run);
-    let before = current_record(&fixture);
-    assert_eq!(before.status, ReleaseRunStatus::Failed);
-    assert!(before
+
+    // Pending settlement is a journal observation. The recorded stage outcome
+    // and both receipt surfaces stay as the Run recorded them.
+    let before = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(before.settlement, ReleaseSettlement::Interrupted);
+    assert_eq!(before.record.status, ReleaseRunStatus::Paused);
+    assert!(!before
+        .record
         .errors
         .iter()
-        .any(|e| e.contains("settlement pending")));
+        .any(|e| e.contains("settlement")));
+    assert_receipt_file_matches_command(&paused.receipt_path, &before.record);
+
     let settled = settle_release(&fixture.home, &fixture.root, &record.release_id).unwrap();
     assert_eq!(settled.run_id, id.to_string());
     assert_eq!(settled.stage, record.stage);
-    assert_eq!(settled.status, ReleaseRunStatus::Failed);
-    assert!(settled
-        .errors
-        .iter()
-        .any(|e| e.contains("stage outcome: interrupted")));
-    assert!(!settled
-        .errors
-        .iter()
-        .any(|e| e.contains("settlement pending")));
+    assert_eq!(settled.status, ReleaseRunStatus::Paused);
+    assert!(!settled.errors.iter().any(|e| e.contains("settlement")));
+    let after = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(after.settlement, ReleaseSettlement::Settled);
     assert_eq!(
         ReleaseReceipt::from_record(&settled),
-        ReleaseReceipt::from_record(&current_record(&fixture))
+        ReleaseReceipt::from_record(&after.record)
     );
+    assert_receipt_file_matches_command(&paused.receipt_path, &after.record);
     assert!(!ReleaseReceipt::from_record(&settled).published);
     assert!(effects.pushes.is_empty());
+}
+
+#[test]
+fn a_complete_run_with_pending_settlement_keeps_its_complete_receipt() {
+    let fixture = fixture("settle-after-closeout");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    let complete = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        complete.succeeded(),
+        "run failed: {:?}",
+        complete.record.errors
+    );
+    let pushes = effects.commit_pushes.clone();
+
+    // Interruption after the final durable checkpoint: the Run never settles.
+    let session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
+    let state = session.state().unwrap();
+    let id = new_run_id().unwrap();
+    let mut run = session.begin(id, &mut ReportsOnly).unwrap();
+    let mut record = complete.record.clone();
+    record.run_id = id.to_string();
+    state.write_record(&record, &mut run).unwrap();
+    state.write_receipt(&record, &mut run).unwrap();
+    run.set_engine_record(&serde_json::to_value(record.checkpoint(&state.record_path)).unwrap())
+        .unwrap();
+    drop(run);
+
+    let pending = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(pending.settlement, ReleaseSettlement::Interrupted);
+    assert_eq!(pending.record.status, ReleaseRunStatus::Complete);
+    let file = assert_receipt_file_matches_command(&complete.receipt_path, &pending.record);
+    assert_eq!(
+        file["release"]["status"],
+        ReleaseRunStatus::Complete.label()
+    );
+
+    // Settling adds no stage, publication or push.
+    let settled = settle_release(&fixture.home, &fixture.root, &record.release_id).unwrap();
+    assert_eq!(settled.status, ReleaseRunStatus::Complete);
+    let after = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(after.settlement, ReleaseSettlement::Settled);
+    assert_receipt_file_matches_command(&complete.receipt_path, &after.record);
+    assert_eq!(effects.commit_pushes, pushes);
 }
 
 #[test]

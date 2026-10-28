@@ -487,6 +487,8 @@ struct ReleaseRunPayload {
     stage: Option<String>,
     waiting_on: Option<String>,
     status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settlement: Option<String>,
 }
 
 impl ReleaseRunPayload {
@@ -497,6 +499,7 @@ impl ReleaseRunPayload {
             stage: None,
             waiting_on: None,
             status: None,
+            settlement: None,
         }
     }
 
@@ -507,6 +510,7 @@ impl ReleaseRunPayload {
             stage: run.stage.clone(),
             waiting_on: run.waiting_on.clone(),
             status: run.status.clone(),
+            settlement: run.settlement.clone(),
         }
     }
 }
