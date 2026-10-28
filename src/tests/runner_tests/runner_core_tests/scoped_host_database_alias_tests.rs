@@ -482,42 +482,17 @@ fn a_sequence_step_environment_resolves_the_same_declared_alias() {
 }
 
 /// A managed session (`mode = "tui"`) renders its own process plan, so it
-/// resolves the same declared alias: the session's workload receives this
-/// checkout's own effective alias, and a missing backing service refuses the
-/// session before its workload starts.
+/// resolves the same declared alias: its workload receives this checkout's own
+/// effective alias.
 #[test]
 fn a_managed_session_resolves_the_scoped_database_alias() {
     with_private_gateway("scoped-host-alias-managed", || {
         let primary = primary_checkout("scoped-host-alias-managed");
         let checkout = linked_worktree(&primary, "worktree-one");
-        let manifest = format!(
-            "{MANIFEST}\n\
-             [tasks.dev]\n\
-             mode = \"tui\"\n\
-             run_in = \"host\"\n\
-             run = \"sh -lc 'printf \\\"%s\\\\n\\\" \\\"$DATABASE_URL\\\" > \\\"$OUT\\\"'\"\n\
-             env = {{ DATABASE_URL = \"postgres://app:secret@postgres.acme.test:5432/app\", OUT = \"{{repo}}/session-database-url.txt\" }}\n"
-        );
-        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a managed task");
         let alias = effective_alias(&checkout, "postgres");
-
-        let error = run_task(&checkout, "dev", &["--headless"])
-            .expect_err("the session refuses before its workload starts");
-        assert_task_invocation_error_contains(
-            error,
-            &[
-                "DATABASE_URL",
-                "postgres.acme.test",
-                &alias,
-                "effigy container up web",
-            ],
-        );
-        assert!(
-            !checkout.join("session-database-url.txt").exists(),
-            "the refused session never ran its workload"
-        );
-
         publish_alias_route(&checkout, &alias, 55432);
+        write_managed_session_manifest(&checkout);
+
         run_task(&checkout, "dev", &["--headless"]).expect("the managed session runs");
         assert_eq!(
             fs::read_to_string(checkout.join("session-database-url.txt"))
@@ -527,6 +502,49 @@ fn a_managed_session_resolves_the_scoped_database_alias() {
             "the managed session's workload received this checkout's own alias"
         );
     });
+}
+
+/// The same session refuses before its workload starts when this checkout has
+/// no published backing service for the alias it would deliver.
+#[test]
+fn a_managed_session_refuses_without_a_published_backing_service() {
+    with_private_gateway("scoped-host-alias-managed-absent", || {
+        let primary = primary_checkout("scoped-host-alias-managed-absent");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        write_managed_session_manifest(&checkout);
+
+        let error = run_task(&checkout, "dev", &["--headless"])
+            .expect_err("the session refuses before its workload starts");
+        assert_task_invocation_error_contains(
+            error,
+            &["postgres.acme.test", &alias, "effigy container up web"],
+        );
+        assert!(
+            !checkout.join("session-database-url.txt").exists(),
+            "the refused session never ran its workload"
+        );
+    });
+}
+
+/// A managed session needs a `concurrent` entry; this one renders a host task
+/// through a task reference, which is the shape a real session uses for a host
+/// workload.
+fn write_managed_session_manifest(checkout: &Path) {
+    let manifest = format!(
+        "{MANIFEST}\n\
+         [tasks.record-db-url]\n\
+         run_in = \"host\"\n\
+         run = \"sh -lc 'printf \\\"%s\\\\n\\\" \\\"$DATABASE_URL\\\" > \\\"$OUT\\\"'\"\n\
+         env = {{ DATABASE_URL = \"postgres://app:secret@postgres.acme.test:5432/app\", OUT = \"{{repo}}/session-database-url.txt\" }}\n\
+         \n\
+         [tasks.dev]\n\
+         mode = \"tui\"\n\
+         concurrent = [\n\
+           {{ name = \"record\", task = \"record-db-url\", run_in = \"host\", start = 1 }},\n\
+         ]\n"
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a managed session");
 }
 
 /// The command Effigy renders for one task, without dispatching anything.

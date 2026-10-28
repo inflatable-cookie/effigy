@@ -168,6 +168,21 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
+    // A rendered session command that names this checkout's effective alias
+    // owes the same published-backing-service proof a plain host run owes, and
+    // a refusal here stops the session before its supervisor starts
+    // (effigy#431, contract 005). The client proves it; a supervisor continues
+    // the run its client already proved.
+    if owner.is_none() {
+        if let Some(resolver) = host_aliases.as_mut() {
+            for process in &plan.processes {
+                resolver.require_published_in(&preflight.selector.task_name, &process.run)?;
+                if let Some(setup) = process.setup.as_deref() {
+                    resolver.require_published_in(&preflight.selector.task_name, setup)?;
+                }
+            }
+        }
+    }
     let mut context = ManagedContext {
         preflight,
         selection,

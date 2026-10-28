@@ -198,6 +198,27 @@ impl HostAliasResolver {
         Ok(())
     }
 
+    /// Prove every alias a rendered session command names before the session
+    /// starts: a managed plan bakes its environment into the command string, so
+    /// the check reads the rendered text.
+    pub(in crate::runner) fn require_published_in(
+        &mut self,
+        task: &str,
+        text: &str,
+    ) -> Result<(), RunnerError> {
+        let used = self
+            .aliases
+            .aliases()
+            .iter()
+            .filter(|alias| text.contains(alias.host.effective.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        for alias in used {
+            self.require_published(task, &alias)?;
+        }
+        Ok(())
+    }
+
     /// Resolve one value, or `None` when it names no declared alias endpoint.
     /// The key only ever appears in refusal text; a value never does.
     fn resolve_value(&mut self, key: &str, value: &str) -> Result<Option<String>, RunnerError> {
