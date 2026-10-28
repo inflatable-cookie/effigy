@@ -647,7 +647,19 @@ pub fn read_release_observation(
     };
     let reader = match Store::read(&observe, &root) {
         Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Ok(None),
+        // The state root exists but its journal does not. A checkout that never
+        // ran a release left no release state either, so it has no Run; durable
+        // release state whose journal has gone missing is an error, never no
+        // Run (contract 054 §12).
+        Observed::Absent(_) => match remaining_release_state(root.path())? {
+            Some(directory) => {
+                return Err(storage_error(format!(
+                    "the release journal is missing while release state remains at {}; the journal is the only record of settled effects, so restore it or remove that release state before continuing",
+                    directory.display()
+                )))
+            }
+            None => return Ok(None),
+        },
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state store: {reason}"
@@ -673,6 +685,24 @@ pub fn read_release_observation(
         }
         None => Ok(None),
     }
+}
+
+/// Durable release state a missing journal would otherwise hide: any release
+/// record or receipt left under the state root's release directory.
+fn remaining_release_state(state_root: &Path) -> Result<Option<PathBuf>, ReleaseError> {
+    let directory = state_root.join(RELEASE_STATE_DIR);
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(storage_error(error)),
+    };
+    for entry in entries {
+        let path = entry.map_err(storage_error)?.path();
+        if path.join("record.json").is_file() || path.join(RELEASE_RECEIPT_FILE).is_file() {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 /// Observe the record's invocation in the journal. A missing or unreadable

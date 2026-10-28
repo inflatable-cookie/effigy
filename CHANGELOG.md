@@ -333,7 +333,8 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy release status` shows `Settlement: pending` or `incomplete` with the
   `effigy release settle <run>` action, and the JSON `run` object gains a
   `settlement` field only while settlement is pending. An unreadable release
-  journal or record now blocks `release status` instead of reporting no Run.
+  journal, a journal that has gone missing while release state remains, or an
+  unreadable record now blocks `release status` instead of reporting no Run.
 - A container runtime that stops answering an inventory read can no longer
   hold one `container up` open for minutes. Every runtime read Effigy makes is
   bounded, and a bring-up's read after Compose returns and its readiness wait

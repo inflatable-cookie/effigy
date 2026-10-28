@@ -2677,3 +2677,52 @@ fn an_unreadable_record_is_an_error_never_no_run() {
     assert!(read_release_observation(&fixture.home, &fixture.root).is_err());
     assert!(release_receipt_for_run(&fixture.home, &fixture.root, None).is_err());
 }
+
+#[test]
+fn a_missing_journal_beside_release_state_is_an_error_never_no_run() {
+    let fixture = fixture("missing-journal");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    assert!(paused.succeeded(), "run failed: {:?}", paused.record.errors);
+
+    // The checkout journal goes missing while the release record and receipt
+    // remain. The loss is reported, never read as no Run.
+    let state = fixture.root.join(".effigy/state");
+    for name in ["kernel.db", "kernel.db-wal", "kernel.db-shm"] {
+        let path = state.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path).expect("remove journal file");
+        }
+    }
+    assert!(paused.receipt_path.is_file());
+
+    let error = read_release_observation(&fixture.home, &fixture.root)
+        .expect_err("a lost journal beside release state is an error");
+    let message = error.to_string();
+    assert!(message.contains("journal is missing"), "{message}");
+    assert!(
+        message.contains("release state remains"),
+        "the error names the durable state it protects: {message}"
+    );
+    assert!(release_receipt_for_run(&fixture.home, &fixture.root, None).is_err());
+}
+
+#[test]
+fn a_checkout_with_no_release_state_still_has_no_run() {
+    let fixture = fixture("missing-journal-fresh");
+    single_identity_project(&fixture);
+    // A state root with neither a journal nor release state belongs to a
+    // checkout that never ran a release: no Run, not an error.
+    ReleaseSession::open(&fixture.home, &fixture.root).expect("state root");
+    assert!(fixture.root.join(".effigy/state").is_dir());
+    assert!(!fixture.root.join(".effigy/state/kernel.db").exists());
+    assert!(read_release_observation(&fixture.home, &fixture.root)
+        .expect("a fresh checkout reads as no Run")
+        .is_none());
+}

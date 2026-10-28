@@ -41,7 +41,7 @@ pub use run::{
     RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAction,
     ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome,
     ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState,
-    ReleaseTaskOutput, ReleaseTaskSubject, TargetDecision, TaskRequest, TaskResponse,
+    ReleaseTaskOutput, ReleaseTaskSubject, ReportsOnly, TargetDecision, TaskRequest, TaskResponse,
     RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
     RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
 };

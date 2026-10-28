@@ -145,6 +145,9 @@ Current built-in release commands:
     `effigy release settle <run>`. After a crash, `receipt.json` can lag the
     record until the next `release run`, `resume`, `approve` or `decide` reopens
     the Run; `release receipt` always reads the record
+  - a release whose journal or record cannot be read, including a journal that
+    has gone missing while its record remains, is reported with its error. It
+    never reads as "no release Run"
 
 Retired in v0.15 (contract 054 §5 and §4.4), each refusing with the
 replacement above:
