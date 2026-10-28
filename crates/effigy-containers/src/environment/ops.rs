@@ -6,7 +6,7 @@
 use effigy_kernel::gate::Wait;
 use effigy_kernel::id::RunId;
 use effigy_kernel::objects::{Closure, Objects};
-use effigy_kernel::observe::Observed;
+use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::run::AttachMode;
 use std::time::Instant;
 
@@ -35,6 +35,9 @@ pub enum Applied {
     /// requesting runs are attached to it, and the render is not applied. The
     /// holders name themselves so the caller can report the deferred edit.
     HeldByRuns(Vec<RunId>),
+    /// The holder list could not be read, so it is not treated as held (Q-011):
+    /// the backend converged anyway. The reason says what could not be read.
+    ReconciledUnreadableHolders(UnknownReason),
 }
 
 /// The apply run of a bring-up: publishes the desired render, records the
@@ -46,13 +49,25 @@ pub fn reconcile(
     request: Up<'_>,
     apply: impl FnOnce() -> Result<(), BackendError>,
 ) -> Result<Applied, EnvError> {
+    reconcile_observing(ctx, env, request, apply, |run| run.holders())
+}
+
+/// [`reconcile`] with the holder observation supplied. Production reads the
+/// record's holders; a proof passes an observer that reports the list unreadable.
+pub fn reconcile_observing(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    request: Up<'_>,
+    apply: impl FnOnce() -> Result<(), BackendError>,
+    observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
+) -> Result<Applied, EnvError> {
     let mut run = EnvRun::begin(
         ctx,
         env,
         Operation::Up,
         Wait::Until(Instant::now() + GATE_WAIT),
     )?;
-    let result = reconcile_in(&mut run, request, apply);
+    let result = reconcile_in(&mut run, request, apply, observe_holders);
     let ok = result.is_ok();
     run.finish(ok)?;
     result
@@ -62,6 +77,7 @@ fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,
     apply: impl FnOnce() -> Result<(), BackendError>,
+    observe_holders: impl FnOnce(&EnvRun<'_>) -> Observed<Vec<Holder>>,
 ) -> Result<Applied, EnvError> {
     if let Some(closure) = request.render {
         run.publish_desired(closure)?;
@@ -81,12 +97,20 @@ fn reconcile_in(
     record.retention = retention;
     record.project = request.project.to_owned();
     run.write_record(&record)?;
-    let holders = live_holders(run.holders());
+    let observed = observe_holders(run);
+    let unreadable = match &observed {
+        Observed::Unknown(reason) => Some(reason.clone()),
+        _ => None,
+    };
+    let holders = live_holders(observed);
     if !holders.is_empty() {
         return Ok(Applied::HeldByRuns(holders));
     }
     run.apply_with(request.backend, request.project, apply)?;
-    Ok(Applied::Reconciled)
+    Ok(match unreadable {
+        Some(reason) => Applied::ReconciledUnreadableHolders(reason),
+        None => Applied::Reconciled,
+    })
 }
 
 /// The activation run: publishes `active` and attaches requesting holders.
