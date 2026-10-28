@@ -1170,6 +1170,7 @@ fn cli_state_apply_yes_executes_task_layers_in_order() {
         String::from_utf8_lossy(&output.stderr)
     );
     let payload = parse_stdout_json(&output);
+    assert_json_output_has_no_progress_marks(&output);
     assert_eq!(payload["result"]["executed"], true);
     assert_eq!(payload["result"]["layers"][0]["status"], "executed");
     assert_eq!(payload["result"]["layers"][1]["status"], "executed");
@@ -1188,6 +1189,19 @@ fn cli_state_apply_yes_executes_task_layers_in_order() {
     assert!(root.join(metadata_path).exists(), "missing {metadata_path}");
     let order = fs::read_to_string(root.join("state-order.txt")).expect("read order");
     assert_eq!(order, "structure\nseed\n");
+}
+
+fn assert_json_output_has_no_progress_marks(output: &std::process::Output) {
+    for (name, bytes) in [
+        ("stdout", output.stdout.as_slice()),
+        ("stderr", output.stderr.as_slice()),
+    ] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains('✓') && !text.contains('✗') && !text.contains('\u{1b}'),
+            "{name} must stay free of progress marks: {text}"
+        );
+    }
 }
 
 fn assert_state_history_file_exists(history_dir: &std::path::Path, kind_fragment: &str) {

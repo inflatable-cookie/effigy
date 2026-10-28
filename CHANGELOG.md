@@ -136,6 +136,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- `effigy state apply` and `state capture` show a live step per executed
+  layer that names the layer and action (task, SQL import, artifact stage, or
+  hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
+  spinner timing still needs an exact-candidate proof.
 - Run control for every run: `effigy --run-id <key> <task>` names a run,
   `effigy runs` lists them, and `effigy run status|logs|stop <run>` inspects and
   stops one. A managed task's `--detach` returns once every workload has
