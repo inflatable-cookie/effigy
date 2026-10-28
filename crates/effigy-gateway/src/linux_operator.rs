@@ -452,7 +452,7 @@ fn create_user_unit_dir(paths: &LaunchPaths, operator_uid: u32) -> io::Result<()
 
 /// Create only the missing components of one path, each with mode 0755.
 fn create_missing_directories(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let mut missing = Vec::new();
     let mut current = Some(path);
     while let Some(candidate) = current {
