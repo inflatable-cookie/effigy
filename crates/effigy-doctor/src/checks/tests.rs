@@ -24,14 +24,14 @@ fn doctor_check_registry_order_is_stable() {
 fn doctor_check_registry_progress_labels_are_stable() {
     let labels = doctor_check_definitions()
         .iter()
-        .filter_map(|check| check.progress_label)
+        .filter_map(|check| check.progress_label.map(|label| label.active))
         .collect::<Vec<&str>>();
     assert_eq!(
         labels,
         vec![
-            "Doctor scan: god-files",
-            "Doctor scan: duplicate-blocks",
-            "Doctor task: health",
+            "scanning for god files",
+            "scanning for duplicate blocks",
+            "running health task",
         ]
     );
 }

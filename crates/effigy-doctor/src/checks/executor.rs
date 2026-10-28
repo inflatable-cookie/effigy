@@ -1,4 +1,4 @@
-use super::super::progress::DoctorProgressReporter;
+use super::super::progress::{DoctorProgressReporter, ScanOutcome};
 use super::definitions::{DoctorCheckContext, DoctorCheckDefinition};
 use crate::DoctorState;
 use std::time::Instant;
@@ -21,18 +21,25 @@ pub(super) fn run_registered_checks(
             return false;
         }
         let _check_name = check.name;
-        if let Some(progress) = progress.as_deref_mut() {
-            if let Some(label) = check.progress_label {
-                progress.start_scan(label);
-            }
+        if let (Some(progress), Some(label)) = (progress.as_deref_mut(), check.progress_label) {
+            progress.start_scan(label);
         }
+        let findings_before = state.findings.len();
         let started = Instant::now();
         (check.run)(context, state);
         let elapsed = started.elapsed();
-        if context
+        let stopped = context
             .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
+            .is_some_and(|deadline| Instant::now() >= deadline);
+        if let (Some(progress), Some(label)) = (progress.as_deref_mut(), check.progress_label) {
+            let outcome = if stopped {
+                ScanOutcome::Stopped("stopped at the time budget")
+            } else {
+                ScanOutcome::from_findings(&state.findings[findings_before..])
+            };
+            progress.finish_scan(label, &outcome);
+        }
+        if stopped {
             state.record_budget_exhausted(check.name, elapsed);
             for skipped in &checks[index + 1..] {
                 state.record_skipped_check(skipped.name);
