@@ -308,6 +308,75 @@ fn workspace_admission_a_reserved_request_never_names_a_run() {
 }
 
 #[test]
+fn workspace_admission_one_run_id_belongs_to_one_key() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    let first = admission_key(31);
+    // A different session *and* a different request: the strongest collision.
+    let second = AdmissionKey {
+        session: Session {
+            run: id(202),
+            generation: Generation::new(1),
+        },
+        request: RequestId::new([32; 16]),
+    };
+    let ticket = fresh(&cx, &root, first, id(1));
+    // Before the admission commits, and after it does, the run identity is
+    // this key's alone: the second key is refused by name and records nothing.
+    let collision =
+        |cx: &EffectContext, root: &StateRoot| match reserve(cx, root, second, digest(), id(1)) {
+            Err(RunError::Refused(rule)) => {
+                assert!(rule.contains("another workspace request"), "rule: {rule}")
+            }
+            other => panic!("a second key took the run identity: {other:?}"),
+        };
+    collision(&cx, &root);
+    assert_eq!(
+        scalar(&cx, &root, "SELECT count(*) FROM workspace_admissions"),
+        1
+    );
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &inv(owner()),
+        begin_opts(id(1)),
+        &cleanup(&cx),
+        &mut fake,
+        ticket,
+    )
+    .expect("admitted run");
+    collision(&cx, &root);
+    assert!(matches!(
+        lookup_now(&cx, &root, second),
+        Observed::Absent(_)
+    ));
+
+    // The run reports the session that admitted it, so no attachment can be
+    // attributed to the session that lost the collision.
+    let owner_attachment = resume_owner(&cx, &root, first.session, id(1)).expect("owner");
+    assert_eq!(owner_attachment.session(), first.session);
+    assert!(resume_owner(&cx, &root, second.session, id(1)).is_err());
+    assert!(attach_secondary(
+        &cx,
+        &root,
+        second.session,
+        id(1),
+        AttachmentId::new([7; 16])
+    )
+    .is_err());
+    assert_eq!(
+        scalar(&cx, &root, "SELECT count(*) FROM run_attachments"),
+        1
+    );
+    run.finish(WorkloadOutcome::Succeeded).expect("finish");
+    run.settle(&cleanup(&cx), &mut fake).expect("settle");
+    assert_eq!(runs(&cx, &root), 1);
+}
+
+#[test]
 fn workspace_admission_changed_digest_conflicts_and_never_readmits() {
     let fixture = home();
     let home = fixture.path();

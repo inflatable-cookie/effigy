@@ -2754,8 +2754,11 @@ integration and resolve the kernel interface before implementing a substitute.
 A session is its run and its generation, so two sessions at one generation stay
 distinct. `reserve` records `(session, request ID, canonical request digest)`
 with the one run it reserved, and `Run::begin_admitted` commits that binding, the
-run row and the owning client's attachment in one transaction; `lookup` answers
-a reconnect from the same records, `Unknown` included, and never admits again. A
+run row and the owning client's attachment in one transaction. One run identity
+belongs to exactly one key: a second key proposing the same run id is refused in
+that transaction and by a unique index, so a run is never attributed to another
+session's request. `lookup` answers a reconnect from the same records, `Unknown`
+included, and never admits again. A
 reservation whose admission cannot be established is `Unknown` and names no run:
 an id the client offered is not evidence that the request produced it. The run's
 close transaction records the keyed request's outcome and ends its client

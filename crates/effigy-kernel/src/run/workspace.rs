@@ -239,7 +239,8 @@ pub fn reserve(
 }
 
 /// The one insert-and-classify step. Callers hold the store's writer lock, so
-/// two concurrent identical requests cannot both see an empty key.
+/// two concurrent identical requests cannot both see an empty key, and a run
+/// identity can never be claimed by two keys.
 fn insert_reservation(
     conn: &Connection,
     now: i64,
@@ -247,6 +248,16 @@ fn insert_reservation(
     digest: &Digest,
     run: RunId,
 ) -> Result<Option<Recovered>, RunError> {
+    // One run identity belongs to exactly one keyed request. A second key
+    // proposing the same RunId is refused, never reserved: otherwise a later
+    // reader could attribute that run to whichever key it happened to find.
+    if let Some(holder) = admission_holder(conn, run)? {
+        if holder != key {
+            return Err(RunError::refused(
+                "this run id already belongs to another workspace request",
+            ));
+        }
+    }
     let inserted = conn.execute(
         "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at) \
          VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6) \
@@ -812,23 +823,39 @@ fn mutations_only(cx: &EffectContext, what: &str) -> Result<(), RunError> {
     Ok(())
 }
 
-fn admission_session(conn: &Connection, run: RunId) -> Result<Option<Session>, RunError> {
+/// The key that holds this run identity, if any. A run identity has at most
+/// one such row (the unique index and `insert_reservation` both hold that
+/// line), so this read can never answer with another session's key by accident.
+fn admission_holder(conn: &Connection, run: RunId) -> Result<Option<AdmissionKey>, RunError> {
     conn.query_row(
-        "SELECT session_id,session_generation FROM workspace_admissions \
-             WHERE run_id=?1 ORDER BY session_generation DESC",
+        "SELECT session_id,session_generation,request_id FROM workspace_admissions WHERE run_id=?1",
         [run.to_string()],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        },
     )
     .optional()?
-    .map(|(session, generation)| {
-        Ok::<_, RunError>(Session {
-            run: session
-                .parse()
-                .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
-            generation: Generation::new(generation as u64),
+    .map(|(session, generation, request)| {
+        Ok::<_, RunError>(AdmissionKey {
+            session: Session {
+                run: session
+                    .parse()
+                    .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
+                generation: Generation::new(generation as u64),
+            },
+            request: HexId::parse(&request)
+                .map_err(|_| RunError::broken("a stored request id is not readable"))?,
         })
     })
     .transpose()
+}
+
+fn admission_session(conn: &Connection, run: RunId) -> Result<Option<Session>, RunError> {
+    Ok(admission_holder(conn, run)?.map(|key| key.session))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

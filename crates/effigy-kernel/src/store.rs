@@ -1572,7 +1572,7 @@ CREATE INDEX IF NOT EXISTS foreground_terminals_closed
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (session_id, session_generation, request_id)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS workspace_admissions_run
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_admissions_run_identity
   ON workspace_admissions(run_id)",
     ),
     // A client's lifetime on a run, separate from environment resource holds
@@ -1598,7 +1598,7 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
 /// Indexes §7.4 retention needs, as additive schema-1 changes. Retention's
 /// candidates and deletes are index-driven, so a sweep costs the same on a
 /// small store and a hundred-thousand-run store.
-const ADDITIVE_INDEXES: [(&str, &str); 10] = [
+const ADDITIVE_INDEXES: [(&str, &str); 11] = [
     (
         "runs_settled",
         "CREATE INDEX IF NOT EXISTS runs_settled ON runs(created_at)",
@@ -1626,6 +1626,17 @@ const ADDITIVE_INDEXES: [(&str, &str); 10] = [
     (
         "attachments_run",
         "CREATE INDEX IF NOT EXISTS attachments_run ON attachments(run_id)",
+    ),
+    // 052 §8.11: one run identity belongs to at most one keyed request, so a
+    // run can never be attributed to another session's key. The admission
+    // transaction refuses a collision by name; this index holds the same line
+    // for any writer that reaches the table another way. The earlier draft
+    // carried a non-unique index under the old name.
+    (
+        "workspace_admissions_run_identity",
+        "DROP INDEX IF EXISTS workspace_admissions_run; \
+         CREATE UNIQUE INDEX IF NOT EXISTS workspace_admissions_run_identity \
+         ON workspace_admissions(run_id)",
     ),
     (
         "object_refs_resource",
@@ -1808,7 +1819,7 @@ CREATE INDEX claims_run ON claims(run_id);
 CREATE INDEX runs_parent ON runs(parent_run);
 CREATE INDEX requests_run ON requests(run_id);
 CREATE INDEX attachments_run ON attachments(run_id);
-CREATE INDEX workspace_admissions_run ON workspace_admissions(run_id);
+CREATE UNIQUE INDEX workspace_admissions_run_identity ON workspace_admissions(run_id);
 CREATE INDEX run_attachments_run ON run_attachments(run_id, state);
 CREATE INDEX object_refs_resource ON object_refs(resource);
 CREATE INDEX checkouts_live_seen ON checkouts(state, last_seen);

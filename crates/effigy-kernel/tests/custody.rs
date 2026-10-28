@@ -30,8 +30,11 @@ impl Drop for ChildGuard {
     }
 }
 fn home() -> tempfile::TempDir {
-    // Short: the run's control socket path is bounded (`sun_path`).
-    effigy_test_support::short_tempdir("kcustody-").unwrap()
+    // Three characters at most: the fixture path plus a run id and `.sock`
+    // must fit `sun_path`, and an Effigy run scratch root spends most of that
+    // budget before the fixture name. A longer prefix fails the harness with
+    // "cannot hold a ... fixture and its control socket".
+    effigy_test_support::short_tempdir("kc-").unwrap()
 }
 fn fixture() -> PathBuf {
     std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
