@@ -392,6 +392,7 @@ pub(in crate::runner) fn ensure_shared_services_running(
                 None
             }
         };
+        refuse_vanished_shared_render(policy, service)?;
         let replaced = replace_stale_shared_render(policy, service)?;
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
@@ -420,6 +421,49 @@ pub(in crate::runner) fn ensure_shared_services_running(
         });
     }
     Ok(notes)
+}
+
+/// Refuse a shared service whose render directory is gone while the runtime
+/// still holds one of its containers (ef5780da). Compose cannot read its file
+/// or resolve its bind sources, so the start would fail after a stop or remove.
+/// Nothing is stopped, removed or re-rendered here: the operator re-runs `up`,
+/// which publishes the render before this ensure. No container means the
+/// normal creation path runs unchanged.
+fn refuse_vanished_shared_render(
+    policy: &EffectiveContainerPolicy,
+    service: &effigy_containers::SharedServiceBinding,
+) -> Result<(), RunnerError> {
+    if service.compose_file.is_file() {
+        return Ok(());
+    }
+    let holds_container = match effigy_containers::exec::shared_project_containers(
+        &policy.repo_root,
+        policy,
+        &service.project_name,
+    ) {
+        Ok(containers) => !containers.is_empty(),
+        Err(error) => {
+            eprintln!(
+                "[warn] cannot read the runtime's shared {} containers: {error}",
+                service.service_name
+            );
+            false
+        }
+    };
+    if !holds_container {
+        return Ok(());
+    }
+    let render = service
+        .compose_file
+        .parent()
+        .unwrap_or(&service.compose_file)
+        .display();
+    Err(RunnerError::task_invocation(format!(
+        "shared {service_name} (project `{project}`) has a container, but its render at `{render}` is missing, so Compose cannot start it. Nothing was stopped, removed or re-rendered: the container and its named data volume are unchanged. Recover with `effigy container up {env}`, which re-renders the shared service before it applies.",
+        service_name = service.service_name,
+        project = service.project_name,
+        env = policy.name,
+    )))
 }
 
 /// Stop and remove every container of a shared project the runtime says came
@@ -1341,17 +1385,30 @@ mod tests {
         /// A private checkout whose runtime is a script recording every call,
         /// listing one container of `project` rendered from `container_render`.
         fn new(name: &str, project: &str, container: &str, container_render: &str) -> Self {
+            Self::build(name, project, Some((container, container_render)))
+        }
+
+        /// The same runtime with no container of `project` on it.
+        fn unlisted(name: &str, project: &str) -> Self {
+            Self::build(name, project, None)
+        }
+
+        fn build(name: &str, project: &str, listed: Option<(&str, &str)>) -> Self {
             let fixture = effigy_test_support::Fixture::workspace(name).unwrap();
             let root = fixture.path().canonicalize().unwrap();
             let bin = root.join("bin");
             std::fs::create_dir(&bin).unwrap();
             let log = root.join("calls");
+            let listing = match listed {
+                Some((container, container_render)) => format!(
+                    "printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' '{container_render}' '{project}'"
+                ),
+                None => ":".to_owned(),
+            };
             let script = format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'--format'*)\n    printf '%s\\t%s\\t%s\\t%s\\n' '{container}' 'Up 2 minutes' '{container_render}' '{project}'\n    ;;\nesac\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'--format'*)\n    {listing}\n    ;;\nesac\n",
                 log = log.display(),
-                container = container,
-                container_render = container_render,
-                project = project,
+                listing = listing,
             );
             for name in ["docker", "colima"] {
                 let executable = bin.join(name);
@@ -1506,6 +1563,82 @@ mod tests {
         assert!(
             calls.iter().any(|call| call.contains(" up ")),
             "the unchanged service still gets its one apply: {calls:?}"
+        );
+    }
+
+    /// A container whose render directory is gone is refused before any stop,
+    /// remove or Compose call, so its volume and identity stay as they are
+    /// (ef5780da).
+    #[test]
+    fn a_container_whose_render_vanished_is_refused_before_anything_changes() {
+        use crate::contract_test_support::EnvGuard;
+        let project = "effigy-shared-mariadb-probe";
+        let container = format!("{project}-legacy_mysql-1");
+        let fixture = SharedFixture::new(
+            "effigy-shared-vanished-",
+            project,
+            &container,
+            "previous-render",
+        );
+        let _env = EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    fixture.root.join("bin").display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("HOME", Some(fixture.root.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+        ]);
+        std::fs::remove_dir_all(fixture.root.join("shared")).unwrap();
+        let policy = fixture.policy(project, "this-render");
+
+        let error = super::ensure_shared_services_running(&policy)
+            .expect_err("a vanished render is refused");
+
+        let message = error.to_string();
+        assert!(message.contains("legacy_mysql"), "{message}");
+        assert!(message.contains(project), "{message}");
+        assert!(message.contains("is missing"), "{message}");
+        assert!(message.contains("effigy container up"), "{message}");
+        let calls = fixture.calls();
+        assert!(
+            calls.iter().all(|call| call.starts_with("ps ")),
+            "only the runtime listing ran: {calls:?}"
+        );
+    }
+
+    /// A missing render with no shared container of its project is not a
+    /// refusal: the service takes the normal creation path.
+    #[test]
+    fn a_missing_render_without_a_container_takes_the_normal_creation_path() {
+        use crate::contract_test_support::EnvGuard;
+        let project = "effigy-shared-mariadb-probe";
+        let fixture = SharedFixture::unlisted("effigy-shared-fresh-", project);
+        let _env = EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    fixture.root.join("bin").display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("HOME", Some(fixture.root.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+        ]);
+        let policy = fixture.policy(project, "this-render");
+
+        let result = super::ensure_shared_services_running(&policy);
+
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_none_or(|error| !error.to_string().contains("is missing")),
+            "no refusal without an existing container: {result:?}"
         );
     }
 }
