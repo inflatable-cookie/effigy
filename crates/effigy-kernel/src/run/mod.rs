@@ -393,8 +393,8 @@ impl<'a> Run<'a> {
 
     /// Admit a run bound to a keyed workspace request (§8.11). The reservation,
     /// the run row and the key's `admitted` state commit in one transaction, so
-    /// no reader ever sees a reservation for a run that was not admitted or a
-    /// run that no key names.
+    /// no reader ever sees an admitted binding without its run. A reservation
+    /// that never reaches this commit remains Unknown and names no run.
     #[allow(clippy::too_many_arguments)]
     pub fn begin_admitted(
         cx: &EffectContext,

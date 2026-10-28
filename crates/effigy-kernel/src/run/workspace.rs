@@ -398,8 +398,8 @@ pub(super) fn bind(txn: &mut Txn<'_>, ticket: &AdmissionTicket) -> Result<(), Ru
     Ok(())
 }
 
-/// A reserved run identity belongs to its key until that key admits it or the
-/// session generation ends. An ordinary run that offers the same id is refused
+/// A reserved run identity belongs to its key. An ordinary run that offers the
+/// same id is refused
 /// inside its admission transaction, so a reservation can never be swapped for
 /// another workload (§8.11).
 pub(super) fn refuse_unkeyed(txn: &Txn<'_>, run: RunId) -> Result<(), RunError> {
