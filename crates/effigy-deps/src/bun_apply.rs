@@ -73,6 +73,8 @@ fn execute_bun_link_inner(
     let owner = (owned && !dry_run).then(|| {
         crate::bun_owner::BunLinkOwner::arm(
             home.as_ref(),
+            &consumer_root,
+            &library_identity,
             crate::bun_owner::link_registrations(&plan),
         )
     });
@@ -92,22 +94,58 @@ fn execute_bun_link_inner(
     Ok(report)
 }
 
-/// Retire registrations this owner created, without reading the claim index.
+/// Retire registrations this owner created when it is interrupted.
 ///
 /// An owner interrupted mid-link still holds the machine index lock for its
-/// whole apply, so it cannot rewrite the index it is about to die under without
-/// deadlocking against its own blocked thread. It retires the registrations the
-/// plan recorded for it — the machine-wide residue — and leaves the claim for
-/// `deps status` to report and `deps unlink bun` or the next link to retire.
+/// whole apply, so it cannot wait for that lock: it would deadlock against its
+/// own blocked thread. It reads the index instead — a read is an atomic
+/// snapshot — so it still sees another consumer's claim. A registration another
+/// consumer claims is retained, never unregistered by an owner that is dying.
+/// The claim this owner recorded is left for `deps status` to report and
+/// `deps unlink bun` or the next link to retire.
 pub fn retire_owned_bun_registrations(
     home: impl AsRef<Path>,
+    consumer_repo: impl AsRef<Path>,
+    library_path: impl AsRef<Path>,
     registrations: &[(String, PathBuf)],
     process: &impl ReadOnlyProcess,
     observer: &impl BunPlanObserver,
 ) -> BunRegistrationRetirement {
     let home = home.as_ref();
+    let consumer_repo = consumer_repo.as_ref();
+    let library_path = library_path.as_ref();
     let mut retirement = BunRegistrationRetirement::default();
+    let index_store = BunRegistrationIndexStore::for_home(home);
+    let index = match index_store.read() {
+        Ok(index) => Some(index),
+        Err(error) => {
+            // Without the index no registration can be proved to be this
+            // owner's alone, and unregistering another consumer's would be
+            // worse than leaving residue the next link retires.
+            retirement.failures.push(error.to_string());
+            None
+        }
+    };
     for (name, package_path) in registrations {
+        if let Some(index) = &index {
+            let claimed_elsewhere = index
+                .registrations
+                .iter()
+                .find(|registration| {
+                    registration.package_name == *name
+                        && same_path(&registration.package_path, package_path)
+                })
+                .is_some_and(|registration| {
+                    registration
+                        .consumers
+                        .iter()
+                        .any(|consumer| !claim_owned_by(consumer, consumer_repo, library_path))
+                });
+            if claimed_elsewhere {
+                retirement.retained.push(name.clone());
+                continue;
+            }
+        }
         let owned = OwnedRegistration {
             name: name.clone(),
             package_path: package_path.clone(),
@@ -275,14 +313,19 @@ fn unregister_owned_registration(
     }
 }
 
+/// Whether a recorded claim is the one this owner's link wrote.
+///
+/// A checkout can hold several Bun package roots (`studio/`, `harness/`), and
+/// each is a separate consumer with its own claim. Retirement therefore matches
+/// the exact root and library this operation recorded; sharing a checkout is
+/// not evidence that a claim belongs to this operation.
 fn claim_owned_by(
     reference: &BunConsumerReference,
     consumer_repo: &Path,
     library_path: &Path,
 ) -> bool {
-    same_path(&reference.library_path, library_path)
-        && (same_path(&reference.consumer_repo, consumer_repo)
-            || crate::state::shares_checkout(&reference.consumer_repo, consumer_repo))
+    same_path(&reference.consumer_repo, consumer_repo)
+        && same_path(&reference.library_path, library_path)
 }
 
 pub fn apply_bun_link_plan(

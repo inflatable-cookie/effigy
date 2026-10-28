@@ -40,6 +40,8 @@ pub(crate) fn link_registrations(plan: &BunDependencyPlan) -> Vec<(String, PathB
 struct Owner {
     id: u64,
     home: PathBuf,
+    consumer_repo: PathBuf,
+    library_path: PathBuf,
     registrations: Vec<(String, PathBuf)>,
 }
 
@@ -54,7 +56,12 @@ pub(crate) struct BunLinkOwner {
 }
 
 impl BunLinkOwner {
-    pub(crate) fn arm(home: &Path, registrations: Vec<(String, PathBuf)>) -> Self {
+    pub(crate) fn arm(
+        home: &Path,
+        consumer_repo: &Path,
+        library_path: &Path,
+        registrations: Vec<(String, PathBuf)>,
+    ) -> Self {
         if registrations.is_empty() {
             return Self { id: 0 };
         }
@@ -69,6 +76,8 @@ impl BunLinkOwner {
             .push(Owner {
                 id,
                 home: home.to_path_buf(),
+                consumer_repo: consumer_repo.to_path_buf(),
+                library_path: library_path.to_path_buf(),
                 registrations,
             });
         Self { id }
@@ -113,6 +122,8 @@ fn watch_interrupts() {
                 for owner in owners {
                     let retirement = retire_owned_bun_registrations(
                         &owner.home,
+                        &owner.consumer_repo,
+                        &owner.library_path,
                         &owner.registrations,
                         &StdReadOnlyProcess,
                         &FsBunPlanObserver,

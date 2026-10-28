@@ -114,12 +114,16 @@ Unix.
   under it, and never scavenges an independently nested checkout or an unnamed
   dead path.
 - Exact-owned registrations are retired by the owner that created them when it
-  completes. The owner retires only the registrations the plan recorded for its
-  own consumer (an Effigy-created package registration), and an interrupt
-  retires the same registrations before the signal takes its default course. A
-  leftover claim means an owner died between writing the claim and retiring it;
-  status reports `bun-registration-without-ledger` and `deps unlink bun` or the
-  next link retires it.
+  completes, and an interrupt retires the same registrations before the signal
+  takes its default course. Ownership is the recorded `(consumer root, library)`
+  pair: a checkout can hold several Bun package roots (`studio/`, `harness/`),
+  each a consumer with its own claim, so retiral never widens to a root that
+  merely shares a checkout. An interrupted owner holds the index lock for its
+  whole apply, so it reads the index instead of waiting for it and retains any
+  registration another consumer claims; it never unregisters a registration it
+  cannot prove is its own. A leftover claim means an owner died between writing
+  the claim and retiring it; status reports `bun-registration-without-ledger`
+  and `deps unlink bun` or the next link retires it.
 - Validate other repo references before removal. Retain and report stale or
   unverifiable references rather than risk breaking another consumer.
 - Status and doctor verify the consumer's `node_modules` symlink, which is the

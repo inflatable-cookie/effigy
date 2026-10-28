@@ -797,3 +797,121 @@ fn a_failed_retirement_keeps_the_claim_for_unlink() {
     assert_eq!(retried.unregistered, ["underlay"]);
     assert!(registration_consumers(&fixture).is_empty());
 }
+
+#[test]
+fn retirement_of_one_bun_root_keeps_a_sibling_roots_claim() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    fs::create_dir_all(fixture.repo.join(".git")).unwrap();
+    let process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &process);
+    // A second Bun package root in the same checkout: its own consumer, its own
+    // claim, sharing one checkout with the root this link named.
+    let harness = fixture.repo.join("harness");
+    fs::create_dir_all(&harness).unwrap();
+    let harness = fs::canonicalize(&harness).unwrap();
+    BunRegistrationIndexStore::for_home(&fixture.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                fixture.packages[0].package_path.clone(),
+                true,
+                BunConsumerReference::claim(harness.clone(), fixture.library.clone()),
+            )
+        })
+        .unwrap();
+
+    let retirement = retire_bun_registration_claims(
+        &fixture.home,
+        &fixture.repo,
+        &fixture.library,
+        &process,
+        &FsBunPlanObserver,
+    );
+
+    assert_eq!(retirement.released_shared, ["underlay"]);
+    assert!(retirement.unregistered.is_empty());
+    assert_eq!(registration_consumers(&fixture), [harness]);
+    assert!(matches!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Symlink { .. }
+    ));
+}
+
+#[test]
+fn an_interrupted_owner_keeps_a_registration_another_consumer_claims() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &process);
+    let sibling = TempDir::new().unwrap();
+    let sibling_root = fs::canonicalize(sibling.path()).unwrap();
+    BunRegistrationIndexStore::for_home(&fixture.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                fixture.packages[0].package_path.clone(),
+                true,
+                BunConsumerReference::claim(sibling_root.clone(), fixture.library.clone()),
+            )
+        })
+        .unwrap();
+
+    let retirement = retire_owned_bun_registrations(
+        &fixture.home,
+        &fixture.repo,
+        &fixture.library,
+        &[(
+            "underlay".to_owned(),
+            fixture.packages[0].package_path.clone(),
+        )],
+        &process,
+        &FsBunPlanObserver,
+    );
+
+    // The dying owner holds the index lock, so it reads the index instead of
+    // waiting for it -- and still sees the other consumer.
+    assert_eq!(retirement.retained, ["underlay"]);
+    assert!(retirement.unregistered.is_empty());
+    assert!(retirement.failures.is_empty(), "{:?}", retirement.failures);
+    // The interrupted owner leaves its own claim behind (it cannot rewrite the
+    // index it dies under) and never touches the other consumer's.
+    let mut consumers = registration_consumers(&fixture);
+    consumers.sort();
+    let mut expected = vec![fixture.repo.clone(), sibling_root];
+    expected.sort();
+    assert_eq!(consumers, expected);
+    assert!(matches!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Symlink { .. }
+    ));
+}
+
+#[test]
+fn an_interrupted_owner_retires_an_unclaimed_registration() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &process);
+
+    let retirement = retire_owned_bun_registrations(
+        &fixture.home,
+        &fixture.repo,
+        &fixture.library,
+        &[(
+            "underlay".to_owned(),
+            fixture.packages[0].package_path.clone(),
+        )],
+        &process,
+        &FsBunPlanObserver,
+    );
+
+    assert_eq!(retirement.unregistered, ["underlay"]);
+    assert_eq!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Missing
+    );
+}
