@@ -1466,13 +1466,15 @@ impl EngineSession {
     /// EOF releases this attachment on the next control turn, even when its
     /// terminal process is killed. Only owner loss requests stop. The caller
     /// must retain the sole write end in that client, independently of data flow.
+    /// Registration borrows the handle, so a failed watch leaves it available
+    /// for explicit release or retry.
     pub fn watch_attachment(
         &mut self,
         run: &Run<'_>,
-        attachment: run::Attachment,
+        attachment: &run::Attachment,
         input: &std::fs::File,
     ) -> Result<(), RunError> {
-        if !run.workspace_attachment_attached(&attachment)? {
+        if !run.workspace_attachment_attached(attachment)? {
             return Err(RunError::refused("this attachment was released"));
         }
         if self.attachments.len() > run::SECONDARY_MAX
@@ -1486,7 +1488,7 @@ impl EngineSession {
             ));
         }
         self.attachments
-            .push((attachment, OwnerWatch::start(input)?));
+            .push((attachment.lifetime_handle(), OwnerWatch::start(input)?));
         Ok(())
     }
     /// Whether the owning client detached: its death no longer stops the run.

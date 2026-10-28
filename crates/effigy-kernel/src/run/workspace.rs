@@ -478,6 +478,18 @@ pub struct Attachment {
     released: bool,
 }
 impl Attachment {
+    /// Supervisor liveness needs only the identity, never a terminal's cursors.
+    pub(crate) fn lifetime_handle(&self) -> Self {
+        Self {
+            id: self.id,
+            run: self.run,
+            fence: self.fence.clone(),
+            session: self.session,
+            client: self.client,
+            cursors: BTreeMap::new(),
+            released: self.released,
+        }
+    }
     pub fn id(&self) -> AttachmentId {
         self.id
     }

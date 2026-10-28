@@ -633,7 +633,7 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
                 )?;
                 let socket = std::os::unix::net::UnixStream::connect(home.join("a.sock"))?;
                 let input = std::fs::File::from(std::os::fd::OwnedFd::from(socket));
-                session.watch_attachment(&run, attachment, &input)?;
+                session.watch_attachment(&run, &attachment, &input)?;
             }
             session.event(frame);
         }
