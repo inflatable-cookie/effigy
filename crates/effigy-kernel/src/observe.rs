@@ -91,6 +91,10 @@ pub enum UnknownReason {
     Busy {
         phase: String,
     },
+    /// A stop request — a signal or an operator's own stop — ended the work
+    /// before the observation could be taken. Nothing is wrong with the state:
+    /// the work was stopped on purpose. The detail names what was stopped.
+    Cancelled(String),
     PermissionDenied,
     ToolUnavailable(String),
     Unparsable(String),
@@ -113,6 +117,10 @@ impl std::fmt::Display for UnknownReason {
             Self::Busy { phase } => write!(
                 f,
                 "could not tell: the state was being written throughout {phase}; retry once nothing else is writing it"
+            ),
+            Self::Cancelled(detail) => write!(
+                f,
+                "could not tell: {detail}; nothing further was attempted"
             ),
             Self::PermissionDenied => f.write_str(
                 "could not tell: this user may not read the state; check the checkout's `.effigy/state` ownership and permissions",

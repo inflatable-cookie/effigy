@@ -1593,7 +1593,7 @@ while True:
             .path()
             .join(".effigy/runtime/logs/private-failure.compose.log");
         assert!(
-            message.contains("detached backend failed (code Some(7))"),
+            message.contains("detached backend failed (exit code 7)"),
             "{message}"
         );
         assert!(

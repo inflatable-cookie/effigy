@@ -91,11 +91,14 @@ pub(in crate::runner) fn release(effect: &Effect, cx: &CleanupContext) -> Observ
         ))),
     };
     if let Err(interrupt) = cx.operation().check("managed release") {
-        // The interrupt's own sentence is the cause: `Display` names the wait,
-        // how long it ran and the phase, so no `Debug` tree reaches a person.
+        // The interrupt's own sentence is the cause: `Display` names the wait
+        // and how long it ran, or the stop request that ended it. A stop is a
+        // stop, so it never reads as contradictory evidence (effigy#402).
         return Observed::Unknown(match interrupt {
             Interrupt::TimedOut { phase, .. } => UnknownReason::TimedOut { phase },
-            other => UnknownReason::Inconsistent(format!("the managed release was {other}")),
+            Interrupt::Cancelled { cause } => {
+                UnknownReason::Cancelled(format!("the managed release was cancelled by {cause}"))
+            }
         });
     }
     match result {
@@ -263,5 +266,73 @@ mod tests {
     fn managed_kinds_are_recognised() {
         assert!(owns(ENVIRONMENT) && owns(EXEC_GROUP) && owns(GATEWAY));
         assert!(!owns("kernel:process"));
+    }
+
+    /// A stop request during a managed release is a cancellation, not
+    /// "the evidence contradicts itself": the reader is told the release was
+    /// stopped on purpose (effigy#402, Q-017).
+    #[test]
+    fn a_stop_request_during_a_managed_release_reads_as_a_cancellation() {
+        use effigy_kernel::ctx::{
+            CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement, StopCause,
+        };
+        use effigy_kernel::id::{Generation, ResourceId, Scope};
+        use effigy_kernel::run::{EffectSpec, EffectState, Settlement as EffectSettlement};
+
+        let operation = OperationContext::new(
+            Deadline::At(std::time::Instant::now() + std::time::Duration::from_secs(30)),
+            CancelToken::default(),
+            Limits {
+                capture_tail: 1024,
+                log_rotate: 4096,
+                log_keep: 1,
+                line_max: 4096,
+                queue_bytes: 4096,
+                probe_concurrency: 1,
+            },
+            EffectClass::Mutate,
+            Placement::Host,
+        );
+        let cleanup = operation
+            .cleanup(std::time::Duration::from_secs(5))
+            .expect("cleanup context");
+        // A cleanup gets its own token; escalation is what cancels it.
+        cleanup
+            .operation()
+            .cancel_token()
+            .cancel(StopCause::Requested);
+        // An unknown kind touches nothing: the cancellation is what is proven.
+        let effect = Effect {
+            sequence: 1,
+            spec: EffectSpec {
+                target: Fence {
+                    resource: ResourceId::store(Scope::Machine, "managed release")
+                        .expect("valid owner"),
+                    generation: Generation::new(1),
+                },
+                kind: "managed:proof".to_owned(),
+                payload: serde_json::json!({}),
+                settlement: EffectSettlement::Retain,
+                required: true,
+            },
+            state: EffectState::Intended,
+            receipt: None,
+            reason: None,
+        };
+
+        let reason = match release(&effect, &cleanup) {
+            Observed::Unknown(reason) => reason,
+            Observed::Absent(_) => panic!("a cancelled release proves nothing about ownership"),
+            Observed::Verified((), _) => panic!("a cancelled release did not release the effect"),
+        };
+        let rendered = reason.to_string();
+        assert!(
+            rendered.contains("the managed release was cancelled by a stop request"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("contradicts itself"),
+            "a stop is not contradictory evidence: {rendered}"
+        );
     }
 }

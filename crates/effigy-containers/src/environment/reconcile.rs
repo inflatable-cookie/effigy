@@ -231,6 +231,7 @@ fn unknown_label(reason: &UnknownReason) -> &'static str {
     match reason {
         UnknownReason::TimedOut { .. } => "timed-out",
         UnknownReason::Busy { .. } => "busy",
+        UnknownReason::Cancelled(_) => "cancelled",
         UnknownReason::PermissionDenied => "permission-denied",
         UnknownReason::ToolUnavailable(_) => "tool-unavailable",
         UnknownReason::Unparsable(_) => "unparsable",

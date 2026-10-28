@@ -1727,7 +1727,11 @@ pub enum AbsenceProof {
 }
 
 pub enum UnknownReason {
-    TimedOut { phase: String }, Busy { phase: String }, PermissionDenied,
+    TimedOut { phase: String }, Busy { phase: String },
+    // A stop request ended the work before it could be observed: the detail
+    // names what was stopped, so it never reads as contradictory evidence.
+    Cancelled(String),
+    PermissionDenied,
     ToolUnavailable(String), Unparsable(String), Inconsistent(String),
     GuardUnavailable, Injected, Untrusted(String), HostAuthorityRequired,
     StoreUnreadable(String),
