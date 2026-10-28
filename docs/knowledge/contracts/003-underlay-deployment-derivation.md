@@ -213,7 +213,7 @@ The local bundle also registers:
 
 - `dbgate.<host>`
 - `mailpit.<host>`
-- `minio.<host>`
+- `silo.<host>`
 
 Those do not appear in the first production deployment model by default.
 
@@ -234,17 +234,17 @@ It does not derive by default:
 
 - `dbgate`
 - `mailpit`
-- `minio`
+- `silo`
 
 Reason:
 
 - `postgres` is a real application dependency
 - `dbgate` and `mailpit` are local-only helpers
-- `minio` is bundled locally for convenience, but the bundle alone does not
+- `silo` is bundled locally for convenience, but the bundle alone does not
   prove that production object storage is truly required
 
 A production storage service requires an explicit bundle declaration; local
-MinIO use is not such a declaration.
+Silo use is not such a declaration.
 
 ## Secret derivation
 

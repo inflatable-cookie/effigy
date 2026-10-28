@@ -288,6 +288,12 @@ During v0.x, MINOR bumps may include breaking changes.
   the retired spellings are read and translated, and one deprecation notice per
   manifest names them. A `[demos]` table, a removed scanner's `[scan.<name>]`
   table, `[catalog.graph]` and `[shell]` are ignored the same way.
+- **The vendored Underlay bundle uses Silo.** `external/bundles/underlay`
+  now points at `61dc5aa8405698ea757f0ff5c481cb6d7cb92314` (from
+  `4d4eb230979ce30ecb051388d1510ca471e781ad`): `services.silo`,
+  `catalog = "silo"`, `silo:reconcile` / `bootstrap-silo.rhai`, and
+  `silo.<host>`. Default object-store credentials stay `minioadmin`. Effigy's
+  catalog still ships `minio`; that retirement is separate.
   `[secrets.vault].identity`, `.unlock` and `.external` are errors that name the
   file and line.
 

@@ -35,7 +35,7 @@ roles in its `[deploy.model]` section:
 The static services use output directory `build` and request Svelte fallback
 detection. The API declares `/v1/health` and an optional `db:migrate` release
 task. The bundle declares managed Postgres and `DATABASE_URL` references for
-API and jobs. Local dbgate, mailpit, and MinIO services are excluded from the
+API and jobs. Local dbgate, mailpit, and Silo services are excluded from the
 production model. Domains use provider-managed TLS.
 
 ## Current Verification Limit
