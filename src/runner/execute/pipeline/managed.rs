@@ -1630,6 +1630,90 @@ mod tests {
         assert_eq!(fs::read_to_string(root.join("received")).unwrap(), secret);
     }
 
+    /// A local model of the interactive handoff; it does not prove managed
+    /// custody, crash cleanup or a Colima mount.
+    #[test]
+    fn managed_interactive_file_spike_preserves_input_and_unlinks_before_exec() {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::process::{Command, Stdio};
+
+        let fixture = effigy_test_support::Fixture::workspace("managed-secret-file-")
+            .expect("private fixture");
+        let root = fixture.path().canonicalize().expect("fixture root");
+        let directory = root.join("private");
+        fs::create_dir(&directory).expect("private directory");
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).expect("directory mode");
+        let env_file = directory.join("environment");
+        let secret = "file secret with 'quotes'\nand a newline";
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&env_file)
+            .expect("private env file");
+        write!(
+            file,
+            "DATABASE_URL={}\n",
+            effigy_core::shell::shell_quote(secret)
+        )
+        .expect("write env file");
+        drop(file);
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&env_file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let runtime = root.join("runtime");
+        fs::write(
+            &runtime,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > runtime-argv\n[ ! -e \"$SECRET_FILE\" ] || exit 2\n[ \"$1\" = -e ] && [ \"$2\" = DATABASE_URL ] || exit 3\nshift 2\nprintf '%s\\n' \"$@\" > guest-argv\nexec \"$@\"\n",
+        )
+        .expect("fake runtime");
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("runtime mode");
+        let path = effigy_core::shell::shell_quote(&env_file.display().to_string());
+        let command = format!(
+            ". {path} && rm -f {path} && export DATABASE_URL && exec {} -e DATABASE_URL /bin/sh -c {}",
+            effigy_core::shell::shell_quote(&runtime.display().to_string()),
+            effigy_core::shell::shell_quote("IFS= read -r input; printf '%s' \"$input\" > input; printf '%s' \"$DATABASE_URL\" > received"),
+        );
+        assert!(!command.contains(secret));
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", &command])
+            .env("SECRET_FILE", &env_file)
+            .current_dir(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn file bootstrap");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"terminal input\n")
+            .unwrap();
+        let output = child.wait_with_output().expect("bootstrap exit");
+        assert!(output.status.success());
+        assert!(!env_file.exists());
+        assert!(!fs::read_to_string(root.join("runtime-argv"))
+            .unwrap()
+            .contains(secret));
+        assert!(!fs::read_to_string(root.join("guest-argv"))
+            .unwrap()
+            .contains(secret));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(secret));
+        assert_eq!(fs::read_to_string(root.join("received")).unwrap(), secret);
+        assert_eq!(
+            fs::read_to_string(root.join("input")).unwrap(),
+            "terminal input"
+        );
+    }
+
     #[test]
     fn a_managed_task_honours_its_scratch_opt_out() {
         let uses: effigy_manifest::ManifestTask =
