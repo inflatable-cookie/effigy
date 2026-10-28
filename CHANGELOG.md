@@ -345,6 +345,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Builtin `effigy test` now routes a named-container suite's setup and teardown
+  with the suite command, so those hooks run inside the selected container.
+  Nested effigy re-entries still keep their own routing.
 - `effigy contracts check-json` reports a payload schema or selection contract
   that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
   `effigy.contracts.check-json.v1`, and stops before any indexed command.
