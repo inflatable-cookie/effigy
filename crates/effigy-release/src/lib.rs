@@ -34,15 +34,16 @@ pub use prepare_helpers::{
 pub use run::{
     new_run_id, parse_release_task_output, read_release_observation_for_root, read_release_record,
     read_release_task_output, release_home, release_input_value, release_owner,
-    render_release_receipt_json, render_release_receipt_text, render_release_run_json, run_release,
-    run_release_with_observer, settle_release, sha256_bytes, verify_artifact_digests, GitEffects,
-    HostedEvidence, RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint,
-    RecordDecision, RecordDestination, RecordGate, RecordIdentity, RecordTarget, RecordTargetState,
-    RecordVerification, ReleaseAction, ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt,
-    ReleaseRecord, ReleaseRunOutcome, ReleaseRunRequest, ReleaseRunStatus, ReleaseSession,
-    ReleaseStage, ReleaseState, ReleaseTaskOutput, ReleaseTaskSubject, TargetDecision, TaskRequest,
-    TaskResponse, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA,
-    RELEASE_RECORD_SCHEMA, RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
+    release_receipt_for_run, render_release_receipt_json, render_release_receipt_text,
+    render_release_run_json, run_release, run_release_with_observer, settle_release, sha256_bytes,
+    verify_artifact_digests, GitEffects, HostedEvidence, RecordApproval, RecordArtifact,
+    RecordArtifactFile, RecordCheckpoint, RecordDecision, RecordDestination, RecordGate,
+    RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAction,
+    ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome,
+    ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState,
+    ReleaseTaskOutput, ReleaseTaskSubject, TargetDecision, TaskRequest, TaskResponse,
+    RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
+    RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
 };
 
 pub use effigy_changelog::BumpKind;
@@ -988,6 +989,11 @@ pub fn collect_release_status(
     gate_report: GateExecutionReport,
 ) -> ReleaseStatus {
     let mut blockers = plan.blockers.clone();
+    let run = release_run_summary(plan);
+    // An unreadable Run is a blocker: status never reports it as no Run.
+    if let Some(error) = &run.error {
+        blockers.push(format!("release Run state is unreadable: {error}"));
+    }
     if check_gates {
         blockers.extend(gate_blockers(&gate_report.results));
     }
@@ -999,7 +1005,7 @@ pub fn collect_release_status(
     ReleaseStatus {
         repo_root: plan.repo_root.clone(),
         plan: plan.clone(),
-        run: release_run_summary(plan),
+        run,
         current_version: primary.and_then(|identity| identity.current_version.clone()),
         version_source: primary.and_then(|identity| identity.version_source.clone()),
         changelog_path: plan.changelog_path.clone(),
@@ -1024,14 +1030,22 @@ pub fn collect_release_status(
 
 /// The active or last release Run, read from Effigy-owned state (a pure read).
 ///
-/// A release whose state root is absent, unreadable or belongs to another
-/// Effigy schema reports no Run rather than failing `release status`.
+/// A release whose state root is absent reports no Run. A journal or record
+/// that cannot be read is an error that blocks `release status`, never no Run.
 fn release_run_summary(plan: &ReleasePipelinePlan) -> ReleaseRunSummary {
-    let Ok(Some(observation)) = run::read_release_observation_for_root(&plan.repo_root) else {
-        return ReleaseRunSummary::none();
+    let observation = match run::read_release_observation_for_root(&plan.repo_root) {
+        Ok(Some(observation)) => observation,
+        Ok(None) => return ReleaseRunSummary::none(),
+        Err(error) => {
+            return ReleaseRunSummary {
+                error: Some(error.to_string()),
+                ..ReleaseRunSummary::none()
+            }
+        }
     };
     let record = observation.record;
     ReleaseRunSummary {
+        error: None,
         id: Some(record.release_id),
         stage: Some(if record.stage.is_empty() {
             "validate".to_owned()

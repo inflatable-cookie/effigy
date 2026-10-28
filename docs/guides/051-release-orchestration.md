@@ -142,7 +142,9 @@ Current built-in release commands:
   - `receipt.json` in the state directory is the same receipt, kept current at
     each checkpoint. Check `effigy release status` for settlement: a
     `Settlement: pending` or `incomplete` line means run
-    `effigy release settle <run>`
+    `effigy release settle <run>`. After a crash, `receipt.json` can lag the
+    record until the next `release run`, `resume`, `approve` or `decide` reopens
+    the Run; `release receipt` always reads the record
 
 Retired in v0.15 (contract 054 §5 and §4.4), each refusing with the
 replacement above:

@@ -1789,6 +1789,7 @@ fn status_reports_pending_settlement_with_its_settle_action() {
         waiting_on: None,
         status: Some("paused".into()),
         settlement: Some("pending".into()),
+        error: None,
     };
     let text = render_release_status_text(&status);
     assert!(

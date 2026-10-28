@@ -238,7 +238,8 @@ impl ReleaseState {
 
     /// Write the receipt rendered from `record`, through the same atomic route
     /// as the record, so `receipt.json` and `release receipt --json` agree at
-    /// every checkpoint (054 §5).
+    /// every checkpoint (054 §5). Unchanged bytes write nothing, so a re-read or
+    /// resume that changes nothing adds no effect.
     pub fn write_receipt(
         &self,
         record: &ReleaseRecord,
@@ -246,6 +247,10 @@ impl ReleaseState {
     ) -> Result<(), ReleaseError> {
         let receipt = ReleaseReceipt::from_record(record);
         let bytes = serde_json::to_vec_pretty(&receipt).map_err(storage_error)?;
+        let path = self.record_path.with_file_name(RELEASE_RECEIPT_FILE);
+        if std::fs::read(&path).ok().as_deref() == Some(bytes.as_slice()) {
+            return Ok(());
+        }
         self.replace_file(run, RELEASE_RECEIPT_FILE, "release:receipt-file", &bytes)
     }
 

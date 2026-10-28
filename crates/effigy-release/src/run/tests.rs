@@ -637,16 +637,18 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
     );
 }
 
-/// Asserts the on-disk receipt equals what `release receipt --json` prints for
-/// the same record, and returns it parsed.
+/// Asserts the on-disk receipt equals what `release receipt --json` prints.
+/// The printed side goes through `release_receipt_for_run`, the function the
+/// CLI calls, and reads the record from disk. Returns the parsed file.
 fn assert_receipt_file_matches_command(
+    fixture: &Fixture,
     receipt_path: &Path,
-    record: &ReleaseRecord,
 ) -> serde_json::Value {
     let file = std::fs::read_to_string(receipt_path).expect("receipt file");
     let file: serde_json::Value = serde_json::from_str(&file).expect("receipt json");
-    let command = render_release_receipt_json(&ReleaseReceipt::from_record(record));
-    let command: serde_json::Value = serde_json::from_str(&command).expect("command json");
+    let receipt = release_receipt_for_run(&fixture.home, &fixture.root, None).expect("receipt");
+    let command: serde_json::Value =
+        serde_json::from_str(&render_release_receipt_json(&receipt)).expect("command json");
     assert_eq!(
         file, command,
         "receipt.json must match `release receipt --json`"
@@ -668,8 +670,7 @@ fn the_receipt_file_matches_the_receipt_command_after_closeout() {
         outcome.record.errors
     );
 
-    let file =
-        assert_receipt_file_matches_command(&outcome.receipt_path, &current_record(&fixture));
+    let file = assert_receipt_file_matches_command(&fixture, &outcome.receipt_path);
     assert_eq!(
         file["release"]["status"],
         ReleaseRunStatus::Complete.label()
@@ -692,7 +693,7 @@ fn a_paused_run_keeps_a_non_complete_receipt_until_it_completes() {
         Some(ReleaseStage::PreGates),
     );
     assert!(paused.succeeded(), "run failed: {:?}", paused.record.errors);
-    let file = assert_receipt_file_matches_command(&paused.receipt_path, &current_record(&fixture));
+    let file = assert_receipt_file_matches_command(&fixture, &paused.receipt_path);
     assert_eq!(file["release"]["status"], ReleaseRunStatus::Paused.label());
     assert_eq!(file["checkpoints"].as_array().map(Vec::len), Some(2));
 
@@ -702,8 +703,7 @@ fn a_paused_run_keeps_a_non_complete_receipt_until_it_completes() {
         "resume failed: {:?}",
         completed.record.errors
     );
-    let file =
-        assert_receipt_file_matches_command(&completed.receipt_path, &current_record(&fixture));
+    let file = assert_receipt_file_matches_command(&fixture, &completed.receipt_path);
     assert_eq!(
         file["release"]["status"],
         ReleaseRunStatus::Complete.label()
@@ -732,8 +732,7 @@ fn a_failed_closeout_never_writes_a_complete_receipt() {
     assert!(!outcome.succeeded());
     assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
 
-    let file =
-        assert_receipt_file_matches_command(&outcome.receipt_path, &current_record(&fixture));
+    let file = assert_receipt_file_matches_command(&fixture, &outcome.receipt_path);
     assert_eq!(file["release"]["status"], ReleaseRunStatus::Failed.label());
     assert!(file["checkpoints"]
         .as_array()
@@ -2491,7 +2490,7 @@ fn interrupted_release_settles_without_advancing_stages() {
         .errors
         .iter()
         .any(|e| e.contains("settlement")));
-    assert_receipt_file_matches_command(&paused.receipt_path, &before.record);
+    assert_receipt_file_matches_command(&fixture, &paused.receipt_path);
 
     let settled = settle_release(&fixture.home, &fixture.root, &record.release_id).unwrap();
     assert_eq!(settled.run_id, id.to_string());
@@ -2506,7 +2505,7 @@ fn interrupted_release_settles_without_advancing_stages() {
         ReleaseReceipt::from_record(&settled),
         ReleaseReceipt::from_record(&after.record)
     );
-    assert_receipt_file_matches_command(&paused.receipt_path, &after.record);
+    assert_receipt_file_matches_command(&fixture, &paused.receipt_path);
     assert!(!ReleaseReceipt::from_record(&settled).published);
     assert!(effects.pushes.is_empty());
 }
@@ -2543,7 +2542,7 @@ fn a_complete_run_with_pending_settlement_keeps_its_complete_receipt() {
         .expect("observation");
     assert_eq!(pending.settlement, ReleaseSettlement::Interrupted);
     assert_eq!(pending.record.status, ReleaseRunStatus::Complete);
-    let file = assert_receipt_file_matches_command(&complete.receipt_path, &pending.record);
+    let file = assert_receipt_file_matches_command(&fixture, &complete.receipt_path);
     assert_eq!(
         file["release"]["status"],
         ReleaseRunStatus::Complete.label()
@@ -2556,7 +2555,7 @@ fn a_complete_run_with_pending_settlement_keeps_its_complete_receipt() {
         .unwrap()
         .expect("observation");
     assert_eq!(after.settlement, ReleaseSettlement::Settled);
-    assert_receipt_file_matches_command(&complete.receipt_path, &after.record);
+    assert_receipt_file_matches_command(&fixture, &complete.receipt_path);
     assert_eq!(effects.commit_pushes, pushes);
 }
 
@@ -2616,4 +2615,65 @@ fn deciding_a_target_that_already_has_an_outcome_reads_it_in_words() {
             "a target state label reads as prose: {label}"
         );
     }
+}
+
+#[test]
+fn a_stale_receipt_file_is_rewritten_when_the_run_is_reopened() {
+    let fixture = fixture("receipt-repair");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    let complete = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        complete.succeeded(),
+        "run failed: {:?}",
+        complete.record.errors
+    );
+    assert_receipt_file_matches_command(&fixture, &complete.receipt_path);
+
+    // A crash between the record and receipt writes: the record moved on and
+    // the receipt did not.
+    let mut record = current_record(&fixture);
+    record
+        .errors
+        .push("written after the last receipt".to_owned());
+    std::fs::write(
+        complete.receipt_path.with_file_name("record.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    let stale = std::fs::read_to_string(&complete.receipt_path).unwrap();
+    assert!(!stale.contains("written after the last receipt"));
+
+    // Reopening the completed Run rewrites the file from the record, once.
+    let resumed = resume(&fixture, &mut effects);
+    assert!(
+        resumed.succeeded(),
+        "resume failed: {:?}",
+        resumed.record.errors
+    );
+    assert_receipt_file_matches_command(&fixture, &resumed.receipt_path);
+    let repaired = std::fs::read(&resumed.receipt_path).unwrap();
+    let again = resume(&fixture, &mut effects);
+    assert_eq!(std::fs::read(&again.receipt_path).unwrap(), repaired);
+}
+
+#[test]
+fn an_unreadable_record_is_an_error_never_no_run() {
+    let fixture = fixture("unreadable-record");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    std::fs::write(
+        paused.receipt_path.with_file_name("record.json"),
+        b"{not json",
+    )
+    .unwrap();
+    assert!(read_release_observation(&fixture.home, &fixture.root).is_err());
+    assert!(release_receipt_for_run(&fixture.home, &fixture.root, None).is_err());
 }

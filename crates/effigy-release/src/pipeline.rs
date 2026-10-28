@@ -171,6 +171,9 @@ pub struct ReleaseRunSummary {
     /// `pending` when the invocation was interrupted, `incomplete` when it
     /// closed without its cleanup settling. Absent once settled.
     pub settlement: Option<String>,
+    /// Why the Run could not be read. Set only when the journal or record is
+    /// unreadable; status reports it as a blocker.
+    pub error: Option<String>,
 }
 
 impl ReleaseRunSummary {

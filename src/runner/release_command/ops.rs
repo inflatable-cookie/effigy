@@ -4,11 +4,10 @@ use effigy_core::resolver::ResolvedTarget;
 use effigy_release::{
     collect_release_gate_run, collect_release_status as collect_release_status_via_release,
     gate_outcome_word, plan_release_pipeline as plan_release_pipeline_via_release,
-    read_release_record as read_release_record_via_release,
-    release_home as release_home_via_release, run_release_gates_with_observer,
-    run_release_with_observer, GateExecutionReport, GateObserver, GateResult, GitEffects,
-    ReleaseAction, ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome, ReleaseRunRequest,
-    ReleaseStage, ReleaseStatus, ResolvedGate,
+    release_home as release_home_via_release, release_receipt_for_run,
+    run_release_gates_with_observer, run_release_with_observer, GateExecutionReport, GateObserver,
+    GateResult, GitEffects, ReleaseAction, ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome,
+    ReleaseRunRequest, ReleaseStage, ReleaseStatus, ResolvedGate,
 };
 
 use effigy_ui::steps::Step;
@@ -245,29 +244,11 @@ pub(super) fn release_receipt(
     run: Option<&str>,
 ) -> Result<effigy_release::ReleaseReceipt, RunnerError> {
     let home = release_home_via_release()?;
-    let record =
-        read_release_record_via_release(&home, &resolved.resolved_root)?.ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "there is no release Run for {}; `effigy release run` starts one",
-                resolved.resolved_root.display()
-            ))
-        })?;
-    if let Some(run) = run {
-        let run = run.trim();
-        if run != record.release_id && run != record.run_id {
-            return Err(RunnerError::task_invocation(format!(
-                "`{run}` is not this checkout's release Run; the last release Run is {} (stage `{}`, status `{}`)",
-                record.release_id,
-                if record.stage.is_empty() {
-                    "validate"
-                } else {
-                    &record.stage
-                },
-                record.status.label()
-            )));
-        }
-    }
-    Ok(effigy_release::ReleaseReceipt::from_record(&record))
+    Ok(release_receipt_for_run(
+        &home,
+        &resolved.resolved_root,
+        run,
+    )?)
 }
 
 pub(super) fn run_standalone_release_gates(

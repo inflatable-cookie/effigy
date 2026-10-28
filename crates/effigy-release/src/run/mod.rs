@@ -154,6 +154,7 @@ pub use kernel::{
     new_run_id, release_home, release_owner, ReleaseSession, ReleaseState, ReportsOnly,
 };
 pub use kernel::{read_release_observation_for_root, read_release_record, ReleaseSettlement};
+
 pub use receipt::{
     render_release_receipt_json, render_release_receipt_text, render_release_run_json,
     ReleaseReceipt,
@@ -274,6 +275,38 @@ pub fn run_release_with_observer(
     )
 }
 
+/// The receipt `effigy release receipt [<run>]` prints: the last Run of this
+/// checkout, or the named one (contract 054 §5). The CLI and the receipt file
+/// proofs both render through this function.
+pub fn release_receipt_for_run(
+    home: &Path,
+    repo_root: &Path,
+    run: Option<&str>,
+) -> Result<ReleaseReceipt, ReleaseError> {
+    let record = read_release_record(home, repo_root)?.ok_or_else(|| {
+        ReleaseError::TaskInvocation(format!(
+            "there is no release Run for {}; `effigy release run` starts one",
+            repo_root.display()
+        ))
+    })?;
+    if let Some(run) = run {
+        let run = run.trim();
+        if run != record.release_id && run != record.run_id {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "`{run}` is not this checkout's release Run; the last release Run is {} (stage `{}`, status `{}`)",
+                record.release_id,
+                if record.stage.is_empty() {
+                    "validate"
+                } else {
+                    &record.stage
+                },
+                record.status.label()
+            )));
+        }
+    }
+    Ok(ReleaseReceipt::from_record(&record))
+}
+
 fn run_release_with_budget(
     request: &ReleaseRunRequest,
     effects: &mut dyn ReleaseEffects,
@@ -294,6 +327,12 @@ fn run_release_with_budget(
         let plan = plan_release_pipeline(&request.repo_root)?;
         let checkpoint = session.read_checkpoint()?;
         let existing = state.read_record()?;
+        // A crash between the record and receipt writes leaves receipt.json one
+        // checkpoint behind. Opening the Run rewrites it from the record, so the
+        // file catches up before any stage runs.
+        if let Some(record) = &existing {
+            state.write_receipt(record, &mut run)?;
+        }
         let continuation = continue_record(
             request,
             existing,
