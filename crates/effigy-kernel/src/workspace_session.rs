@@ -30,7 +30,7 @@ mod tests;
 pub use admissions::{
     Admission, AdmissionRecord, AdmissionRequest, AdmissionState, AdmissionTicket, Digest, Method,
     Refusal, RefusalCode, RequestId, ReserveDecision, SessionAdmissions, SessionKey, StoredOutcome,
-    DIGEST_BYTES, REQUEST_ID_BYTES,
+    REQUEST_ID_BYTES,
 };
 pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use grants::{
@@ -43,7 +43,7 @@ pub use streams::{
     StreamId, StreamKind, MAX_FRAME_BYTES, MAX_QUEUED_BYTES, MAX_UNACKNOWLEDGED_FRAMES,
 };
 
-use crate::ctx::{Capability, CleanupContext, EffectContext, ObserveContext};
+use crate::ctx::{CleanupContext, EffectContext, ObserveContext};
 use crate::gate::Wait;
 use crate::id::{Generation, ResolvedInvocation, ResourceId, RunId};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -52,7 +52,7 @@ use crate::run::{
     self, AttachMode, Attachments, BeginOpts, Fence, Phase, RequestAction, Run, RunError,
     SettlementAdapter,
 };
-use crate::store::{Store, StoreReader};
+use crate::store::StoreReader;
 use crate::supervise::Placement;
 use rusqlite::{params, OptionalExtension};
 
@@ -290,9 +290,6 @@ impl SessionHandle {
     pub fn identity(&self) -> &SessionRef {
         &self.session
     }
-    pub fn into_identity(self) -> SessionRef {
-        self.session
-    }
 
     /// Reserves a session request id before admission (§8.11). The reservation
     /// and the request digest commit together, so a concurrent or later retry
@@ -419,25 +416,4 @@ fn target_fence(reader: &StoreReader, target: RunId) -> Result<Fence, RunError> 
         resource: decode_owner(&canonical)?,
         generation: Generation::new(generation as u64),
     })
-}
-
-impl AdmissionRecord {
-    /// The session identity of the run this record admitted, when it names one.
-    pub fn session(&self, reader: &StoreReader) -> Observed<Option<SessionRef>> {
-        match self.admitted_run() {
-            Some(run) => SessionRef::of_run(reader, run),
-            None => Observed::Absent(AbsenceProof::NoRow {
-                table: "workspace_session_admissions".into(),
-            }),
-        }
-    }
-}
-
-/// Opens a write handle on the journal that holds the session. Reservation,
-/// terminal records and a down's own run all write through the store; readers
-/// use [`Store::read`].
-pub fn open_store(cx: &EffectContext, root: &StateRoot) -> Result<Store, RunError> {
-    cx.require(Capability::AdapterEffect)
-        .map_err(|_| RunError::refused("a session record needs Mutate"))?;
-    Ok(Store::open(cx, root)?)
 }

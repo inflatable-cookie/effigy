@@ -42,19 +42,6 @@ pub enum StreamKind {
     Gap,
 }
 impl StreamKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Event => "event",
-            Self::Stdout => "stdout",
-            Self::Stderr => "stderr",
-            Self::TerminalOutput => "terminal_output",
-            Self::TerminalInput => "terminal_input",
-            Self::Resize => "resize",
-            Self::Ack => "ack",
-            Self::End => "end",
-            Self::Gap => "gap",
-        }
-    }
     /// Data counts against the acknowledgement window. Control frames do not,
     /// so cancelling stays serviceable however full the window is.
     pub fn is_data(self) -> bool {
@@ -220,9 +207,6 @@ impl StreamBuffer {
     }
     pub fn unacknowledged(&self) -> usize {
         self.unacknowledged.len()
-    }
-    pub fn queued_bytes(&self) -> usize {
-        self.queued_bytes
     }
     pub fn input_frames(&self) -> u64 {
         self.input_frames
@@ -390,11 +374,6 @@ impl StreamBuffer {
     /// this takes no window and never waits for a reader.
     pub fn cancel(&mut self) {
         self.cancelled = true;
-        self.closed = true;
-    }
-
-    /// Marks the stream closed without an outcome.
-    pub fn close(&mut self) {
         self.closed = true;
     }
 }

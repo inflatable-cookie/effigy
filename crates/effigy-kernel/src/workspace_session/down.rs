@@ -20,14 +20,6 @@ pub enum DownHolder {
     /// first, so a down refuses it too.
     Interrupted(RunId),
 }
-impl DownHolder {
-    pub fn run(self) -> RunId {
-        match self {
-            Self::Live(run) | Self::Unknown(run) | Self::Interrupted(run) => run,
-        }
-    }
-}
-
 /// What a down may do now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DownStart {
@@ -47,9 +39,6 @@ pub struct DownChildren {
     children: Vec<RunId>,
 }
 impl DownChildren {
-    pub fn session(&self) -> RunId {
-        self.session
-    }
     pub fn children(&self) -> &[RunId] {
         &self.children
     }

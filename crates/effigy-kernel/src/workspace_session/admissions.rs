@@ -15,8 +15,9 @@
 //! a second run.
 
 use super::*;
+use crate::ctx::Capability;
 use crate::outcome::WorkloadOutcome;
-use crate::store::Txn;
+use crate::store::{Store, Txn};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -26,8 +27,6 @@ const TABLE: &str = "workspace_session_admissions";
 
 /// Bytes in a request id: 128 bits, as §8.11 requires.
 pub const REQUEST_ID_BYTES: usize = 16;
-/// Bytes in a canonical request digest.
-pub const DIGEST_BYTES: usize = 32;
 /// The longest recorded refusal or outcome label.
 const TEXT_MAX: usize = 4096;
 

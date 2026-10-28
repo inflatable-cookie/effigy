@@ -19,6 +19,7 @@
 
 use super::*;
 use crate::human::Category;
+use crate::store::Store;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -264,9 +265,6 @@ pub struct ClientGrant {
     operations: Vec<Method>,
 }
 impl ClientGrant {
-    pub fn binding(&self) -> &SessionBinding {
-        &self.binding
-    }
     pub fn allows(&self, method: Method) -> bool {
         self.operations.contains(&method)
     }
@@ -416,9 +414,6 @@ impl SessionAuthority {
         })
     }
 
-    pub fn binding(&self) -> &SessionBinding {
-        &self.binding
-    }
     pub fn session(&self) -> &SessionRef {
         &self.binding.session
     }
