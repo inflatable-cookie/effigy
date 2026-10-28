@@ -1760,8 +1760,9 @@ fn supervise_managed_host_listener(
             Some(true) => {
                 // The port answers again: republish the route this generation
                 // had withdrawn. A failed republication keeps the generation
-                // withdrawn and is retried on the next answer, so a gateway
-                // store that is briefly unavailable never costs the child.
+                // withdrawn and is retried while the port keeps answering, so
+                // a gateway store that is briefly unavailable never costs the
+                // child and never leaves it unreachable.
                 match publish_managed_listener_route(spec, listener, &owner) {
                     Ok(()) => {
                         state.route_owner = Some(owner.clone());
@@ -1775,6 +1776,9 @@ fn supervise_managed_host_listener(
                         );
                     }
                     Err(error) => {
+                        // The answer did not publish a route, so the next probe
+                        // of the still-answering port is the retry.
+                        liveness.publication_failed();
                         state.route_owner = None;
                         state.write("unavailable")?;
                         append_log_line(
@@ -1998,6 +2002,13 @@ impl ListenerLiveness {
             return Some(false);
         }
         None
+    }
+
+    /// The route is not published after all, whatever the last answer decided.
+    /// A port that is still answering is the next retry, so a failed
+    /// republication is never left withdrawn until the child next goes silent.
+    fn publication_failed(&mut self) {
+        self.published = false;
     }
 }
 
@@ -3395,6 +3406,49 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         drop(listener);
     }
 
+    /// A failed republication is not a published route: while the port keeps
+    /// answering the liveness probe retries the publication instead of waiting
+    /// for a silence that may never come.
+    #[test]
+    fn listener_liveness_retries_a_failed_publication_while_the_port_answers() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("fixture listener");
+        let address = listener.local_addr().expect("fixture address");
+        let mut liveness = ListenerLiveness::new(address);
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), None, "an answering port changes nothing");
+
+        // The supervisor's publication failed: the route is not published.
+        liveness.publication_failed();
+        liveness.next_probe = Instant::now();
+        assert_eq!(
+            liveness.poll(),
+            Some(true),
+            "the next answer retries a publication that failed"
+        );
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), None, "a published route is quiet");
+
+        // A second failure retries again, not once.
+        liveness.publication_failed();
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), Some(true));
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), None);
+
+        // A silent port is still withdrawn after three misses, and a failed
+        // publication on a withdrawn route asks for no republish.
+        drop(listener);
+        for miss in 1..LISTENER_PROBE_MISSES {
+            liveness.next_probe = Instant::now();
+            assert_eq!(liveness.poll(), None, "miss {miss} only counts");
+        }
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), Some(false));
+        liveness.publication_failed();
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), None, "a silent port is retried by nothing");
+    }
+
     /// A dependent is replaced only when its dependency's supervisor replaced
     /// its child generation; a probe miss on the dependency is not a change.
     #[test]
@@ -4031,6 +4085,70 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             (worker_run_after, worker_pid_after),
             (worker_run, worker_pid),
             "a process that does not depend on the restarted one is untouched"
+        );
+
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(report.complete(), "{report:?}");
+    }
+
+    /// A detach that fails while the restarted run is still live settles only
+    /// the process the restart selected. Every other host process of the
+    /// environment keeps its run, its leader and its route.
+    #[test]
+    fn detach_failure_rollback_stops_only_the_restarted_process() {
+        let fixture = fixture();
+        let domain = "detach-failure.host.test";
+        let bind = fixture_listener_bind("detach-failure|front");
+        let front = listener_host_process_running("front", domain, &bind, LISTENER_CHILD, 30);
+        let api = host_process("api", "exec /bin/sleep 120", HostProcessRestart::Never);
+        let (_guard, policy) =
+            restart_policy(&fixture.checkout, "detach-failure", vec![front, api]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("the listener and the worker start");
+        let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        let (front_run, front_pid) = running_process(&before, "front");
+        let route_before = published_owner(domain);
+
+        // The restart selected `api`; its detach failed while the run was
+        // live, so the rollback settles exactly that selection.
+        let selection = super::kernel_run::restart_selection(&policy, &["api".to_owned()])
+            .expect("the restart selects the named process")
+            .ordered
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            selection,
+            std::collections::BTreeSet::from(["api".to_owned()]),
+            "a restart of one process does not select the other"
+        );
+        let report = super::kernel_run::rollback_after_detach_failure(
+            &fixture.checkout,
+            &policy,
+            Some(&selection),
+        );
+        assert!(report.complete(), "{report:?}");
+        assert!(
+            report.processes.iter().any(|process| process.name == "api"),
+            "the selected process is settled: {report:?}"
+        );
+
+        let after = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        assert!(
+            !after
+                .iter()
+                .any(|row| row.name == "api" && row.state == "running"),
+            "the selected process is stopped: {after:?}"
+        );
+        assert_eq!(
+            running_process(&after, "front"),
+            (front_run, front_pid),
+            "a detach-failure rollback leaves an unrelated host process alone"
+        );
+        assert_eq!(
+            published_owner(domain).generation,
+            route_before.generation,
+            "an unrelated listener keeps its route"
         );
 
         let report =

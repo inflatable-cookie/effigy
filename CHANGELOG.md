@@ -298,6 +298,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A managed listener whose route republication failed retries while its port
+  keeps answering, instead of staying unreachable until the child next goes
+  silent. `container <env> restart` holds `Gate(Env)` for its stop and spawn
+  only, so a hung readiness wait still yields to `down`, and a failed detach
+  rollback settles only the restarted process, never an unrelated host
+  process. The private orphan-certificate proof now waits on the actual
+  `certs/` pair, and `test:gateway:endpoints` selects the fresh-store watcher
+  proof.
 - A custody anchor no longer ignores SIGTERM: an idle `__kernel-anchor` exits
   within a bounded grace when a harness stops the tree it started, and a run
   that completes still retires its anchor during settlement, so a settled run

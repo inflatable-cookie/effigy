@@ -400,7 +400,9 @@ fn private_gateway_prunes_an_orphan_certificate_and_keeps_a_routed_one() {
 
     let mut child = spawn_private_gateway_daemon(&root, false);
     let deadline = Instant::now() + Duration::from_secs(20);
-    while root.join("orphan.test.pem").exists() || root.join("orphan.test-key.pem").exists() {
+    // The daemon prunes the pair it did not route, and the pair is the two
+    // files under `certs/`, so the wait checks both of them there.
+    while certs.join("orphan.test.pem").exists() || certs.join("orphan.test-key.pem").exists() {
         if let Some(status) = child.try_wait().expect("check private daemon") {
             panic!(
                 "private daemon exited before pruning ({status}); log={}",
@@ -414,6 +416,10 @@ fn private_gateway_prunes_an_orphan_certificate_and_keeps_a_routed_one() {
         );
         thread::sleep(Duration::from_millis(20));
     }
+    assert!(
+        !certs.join("orphan.test.pem").exists() && !certs.join("orphan.test-key.pem").exists(),
+        "the orphaned pair is gone from certs/"
+    );
     assert!(
         certs.join("kept.test.pem").exists() && certs.join("kept.test-key.pem").exists(),
         "a routed domain keeps its cached certificate"
@@ -6891,70 +6897,16 @@ fn nested_effigy_host_process_stops_with_closure_verified() {
 fn hung_listener_does_not_block_down_from_another_shell() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
-    let docker_dir = std::env::split_paths(&effects.env_path)
-        .next()
-        .expect("sentinel PATH directory");
-    let docker_log = fixture.path().join("docker-fixture.log");
-    write_fake_docker(&docker_dir.join("docker"));
-
-    let home = fixture.path().join("home");
-    private_directory(&home);
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    let (private_gateway, _https_address) =
-        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
-
-    let checkout = fixture.path().join("checkout");
-    fs::create_dir(&checkout).expect("hung listener checkout");
-    fs::write(
-        checkout.join("compose.yml"),
-        "services:\n  app:\n    image: fixture\n",
-    )
-    .expect("write fixture compose file");
-    fs::write(
-        checkout.join("effigy.toml"),
-        "[containers]\ndefault = \"web\"\n",
-    )
-    .expect("seed manifest before git commit");
-    git(&checkout, &["init", "--initial-branch=main"]);
-    git(&checkout, &["config", "user.name", "Hung Listener Fixture"]);
-    git(
-        &checkout,
-        &["config", "user.email", "hung-listener@example.invalid"],
+    let (cleanup, checkout, state_path) = hung_listener_scaffold(
+        &fixture,
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+        &hung_listener_manifest("hung.host.test"),
     );
-    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
-    git(&checkout, &["commit", "-m", "fixture base"]);
-
-    let profile = "fixture";
-    let domain = "hung.host.test";
-    let hung_run = "exec python3 -c 'import time\ntime.sleep(120)'";
-    let listener = format!(
-        "[containers.web.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 60\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = false\n",
-        toml_quote(domain)
-    );
-    let manifest = format!(
-        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = {hung_run}\nrestart = \"never\"\n\n{listener}",
-        profile = toml_quote(profile),
-        hung_run = toml_quote(hung_run),
-    );
-    fs::write(checkout.join("effigy.toml"), manifest).expect("write the hung listener config");
-
-    let cleanup = ManagedContainerCleanup {
-        checkouts: vec![checkout.clone()],
-        home: home.clone(),
-        private_gateway: private_gateway.clone(),
-        foreign_ca: foreign_ca.clone(),
-        effects_path: effects.env_path.clone(),
-        mkcert: effects.private_mkcert.clone(),
-        effect_log: effects.log.clone(),
-        mkcert_calls: effects.mkcert_calls.clone(),
-        docker_log: docker_log.clone(),
-    };
-    let state_path = checkout
-        .join(".effigy/runtime/host-processes/web")
-        .join(profile)
-        .join("api.listener.json");
 
     let state_now = || {
         fs::read(&state_path)
@@ -7003,6 +6955,188 @@ fn hung_listener_does_not_block_down_from_another_shell() {
         !status.success(),
         "a bring-up stopped before readiness does not report success"
     );
+}
+
+/// A restart holds `Gate(Env)` for its replace step only, so its readiness wait
+/// is as preemptible as `up`'s: a restart of a listener that never opens its
+/// port still lets `down` from another shell settle the environment instead of
+/// waiting out the restart's gate budget.
+#[test]
+fn hung_restart_does_not_block_down_from_another_shell() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    private_directory(&foreign_ca);
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (cleanup, checkout, state_path) = hung_listener_scaffold(
+        &fixture,
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+        &hung_listener_base_manifest(),
+    );
+
+    // The environment comes up first, so the restart has a record to hold.
+    let up = run_container_cli(&checkout, &cleanup, &["up", "--detach"]);
+    assert!(
+        up.status.success(),
+        "`container web up --detach` failed: {}{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    // The same environment now declares a listener that never opens its port;
+    // `restart` replaces only that process.
+    fs::write(
+        checkout.join("effigy.toml"),
+        hung_listener_manifest("hung-restart.host.test"),
+    )
+    .expect("declare the hung listener before the restart");
+    let state_now = || {
+        fs::read(&state_path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+    };
+    let mut restart = spawn_container_cli(&checkout, &cleanup, &["restart", "api"]);
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while state_now().is_none_or(|state| state["status"] != "starting") {
+        assert!(
+            Instant::now() < deadline,
+            "the restarted listener never published its starting generation: {:?}",
+            state_now()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    // `down` from this shell must be taken while the restart waits, not held
+    // behind the restart's gate.
+    let started = Instant::now();
+    let mut down = spawn_container_cli(&checkout, &cleanup, &["down"]);
+    let status = loop {
+        if let Some(status) = down.try_wait().expect("poll the owned down") {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(60) {
+            let _ = down.kill();
+            panic!(
+                "`container web down` waited on the restart's gate instead of stopping it: {:?}",
+                started.elapsed()
+            );
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let mut down_text = String::new();
+    if let Some(mut stdout) = down.stdout.take() {
+        let _ = stdout.read_to_string(&mut down_text);
+    }
+    if let Some(mut stderr) = down.stderr.take() {
+        let _ = stderr.read_to_string(&mut down_text);
+    }
+    assert!(
+        status.success(),
+        "`container web down` failed against a hung restart: {down_text}"
+    );
+    assert!(
+        !down_text.contains("holds its gate") && !down_text.contains("busy"),
+        "the stop is taken, not refused as busy: {down_text}"
+    );
+    assert_eq!(
+        read_json_file(&state_path)["status"],
+        "stopped",
+        "the waiting restart settles its listener state"
+    );
+    // The restart saw the stop and returned instead of waiting for readiness.
+    let status = restart.wait().expect("the waiting restart returns");
+    assert!(
+        !status.success(),
+        "a restart stopped before readiness does not report success"
+    );
+}
+
+/// The environment part of a hung-listener fixture, with no host process yet.
+fn hung_listener_base_manifest() -> String {
+    let profile = "fixture";
+    format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n",
+        profile = toml_quote(profile),
+    )
+}
+
+/// One host process named `api` that is a listener and never opens its port.
+fn hung_listener_manifest(domain: &str) -> String {
+    let profile = "fixture";
+    let hung_run = "exec python3 -c 'import time\ntime.sleep(120)'";
+    let listener = format!(
+        "[containers.web.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 60\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = false\n",
+        toml_quote(domain)
+    );
+    format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"api\"\nrun = {hung_run}\nrestart = \"never\"\n\n{listener}",
+        profile = toml_quote(profile),
+        hung_run = toml_quote(hung_run),
+    )
+}
+
+/// The shared scaffold for the hung-listener proofs: the fake backend, a
+/// disposable private gateway and one git checkout whose manifest is
+/// `manifest`. Returns the owned cleanup, the checkout and `api`'s listener
+/// state file.
+fn hung_listener_scaffold(
+    fixture: &effigy_test_support::Fixture,
+    effects: &HostEffectSentinels,
+    foreign_ca: &Path,
+    gateway_cleanup: &mut GatewayCleanup<'_>,
+    manifest: &str,
+) -> (ManagedContainerCleanup, PathBuf, PathBuf) {
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    private_directory(&home);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), effects, foreign_ca, gateway_cleanup);
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("hung listener checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Hung Listener Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "hung-listener@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write the hung listener config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home,
+        private_gateway,
+        foreign_ca: foreign_ca.to_path_buf(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log,
+    };
+    let state_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join("fixture")
+        .join("api.listener.json");
+    (cleanup, checkout, state_path)
 }
 
 /// The headless managed supervisor stays alive while its session runs and its
