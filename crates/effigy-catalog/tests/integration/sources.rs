@@ -266,3 +266,46 @@ fn compiled_baseline_fragments_meet_their_own_requirements() {
             .unwrap_or_else(|error| panic!("{}: {error}", info.name));
     }
 }
+
+/// A retired catalog name is refused from every layer, not only the compiled
+/// baseline: a project, bundle or declared source that still carries `minio/`
+/// cannot reintroduce it, and `service list` never advertises it (effigy#424).
+#[test]
+fn a_source_local_retired_catalog_name_is_refused_not_resolved() {
+    let sources = Sources::new();
+    write_fragment(&sources.roots[0], "minio", "project-local retry", "");
+    write_fragment(&sources.roots[1], "minio", "bundle-local retry", "");
+    write_fragment(&sources.roots[2], "minio", "declared-local retry", "");
+    let resolver = sources.resolver();
+
+    for name in ["minio", "project/minio", "bundle/minio", "acme/minio"] {
+        let error = resolver.resolve(name).expect_err("minio is retired");
+        assert!(
+            matches!(error, CatalogError::RetiredCatalogService { .. }),
+            "{name} should refuse as retired, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains("catalog = \"silo\""),
+            "{name}: {error}"
+        );
+    }
+    assert!(
+        resolver.list().iter().all(|info| info.name != "minio"),
+        "a retired name must never be listed as resolvable: {:?}",
+        resolver
+            .list()
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    // A non-retired name from the same layers still resolves normally.
+    let silo = write_fragment(&sources.roots[0], "silo", "project-local silo", "");
+    let resolved = resolver.resolve("project/silo").unwrap();
+    assert_eq!(resolved.name, "silo");
+    assert_eq!(
+        resolved.source,
+        FragmentSource::Project(silo),
+        "only retired names are blocked; ordinary project fragments still win"
+    );
+}

@@ -129,9 +129,10 @@ or a declared source.
 The built-in `minio` service is retired in v0.15 (effigy#424): Effigy no longer
 ships or accepts it. A manifest that declares `catalog = "minio"` fails with a
 refusal that names `silo`; the old name is never silently remapped, and
-existing volumes and data are untouched. A project, bundle or declared source
-can still ship a fragment of its own under that name, but nothing resolves
-`minio` from the compiled baseline. Use `silo` for object storage.
+existing volumes and data are untouched. The refusal happens before any source
+is consulted, so a project, bundle or declared source cannot reintroduce the
+name either: rename such a fragment (and the service that uses it) to `silo` or
+another non-retired name. Use `silo` for object storage.
 
 ## Catalog Services
 

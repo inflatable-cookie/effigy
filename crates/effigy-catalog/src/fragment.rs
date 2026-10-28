@@ -223,22 +223,13 @@ impl CatalogResolver {
 
     /// Resolve a fragment by name, or by `source/service` from one source.
     ///
-    /// A name this release retired is refused with its replacement instead of
-    /// the plain not-found error, and is never remapped onto that replacement.
+    /// A name this release retired is refused before any source is read, so no
+    /// layer can reintroduce it and it is never remapped onto its replacement.
     pub fn resolve(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
-        match self.resolve_named(name) {
-            Err(CatalogError::FragmentNotFound { .. }) => Err(retired_catalog_service(
-                split_qualified(name).1,
-            )
-            .unwrap_or(CatalogError::FragmentNotFound {
-                name: name.to_owned(),
-            })),
-            resolved => resolved,
-        }
-    }
-
-    fn resolve_named(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
         let (qualifier, service) = split_qualified(name);
+        if let Some(error) = retired_catalog_service(service) {
+            return Err(error);
+        }
         if !is_fragment_segment(service) {
             return Err(CatalogError::FragmentNotFound {
                 name: name.to_owned(),
@@ -308,9 +299,16 @@ impl CatalogResolver {
     }
 
     /// List every resolvable fragment with the source that wins and the
-    /// lower sources it shadows.
+    /// lower sources it shadows. A retired name is never listed, because
+    /// [`Self::resolve`] refuses it from every source.
     pub fn list(&self) -> Vec<FragmentInfo> {
         fn record(seen: &mut HashMap<String, FragmentInfo>, name: &str, source: FragmentSource) {
+            if RETIRED_CATALOG_SERVICES
+                .iter()
+                .any(|(retired, _)| *retired == name)
+            {
+                return;
+            }
             match seen.get_mut(name) {
                 Some(info) => info.shadows.push(source),
                 None => {
@@ -677,8 +675,9 @@ pub fn service_name(catalog: &str) -> &str {
 /// replaces it and the migration a manifest describes.
 ///
 /// A manifest that still names one is refused with the replacement spelled
-/// out. Effigy never remaps a retired name onto its replacement, and leaving
-/// the name in place cannot resolve the removed baseline fragment (effigy#424).
+/// out, whatever the declaring source would provide: no project, bundle or
+/// declared source can reintroduce the name, and Effigy never remaps it onto
+/// its replacement (effigy#424).
 const RETIRED_CATALOG_SERVICES: &[(&str, &str)] = &[(
     "minio",
     "the built-in MinIO service is gone in v0.15. Declare `catalog = \"silo\"` instead: \
