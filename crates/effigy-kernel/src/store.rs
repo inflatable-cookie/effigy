@@ -421,6 +421,11 @@ impl Store {
         let patient = cx.patience(window);
         let started = Instant::now();
         let _gate = self.writer_gate(&patient, window)?;
+        // Configuration PRAGMAs can wait on another connection even when this
+        // process already holds the writer gate. Set their SQLite wait before
+        // the first statement, rather than inheriting SQLite's five seconds.
+        self.conn
+            .busy_timeout(window.saturating_sub(started.elapsed()))?;
         // Incremental auto-vacuum must be chosen while the store is empty, and
         // before write-ahead logging materialises its header. On an existing
         // store this is only pending until retention's one-time `VACUUM`.
