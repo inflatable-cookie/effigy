@@ -321,6 +321,15 @@ During v0.x, MINOR bumps may include breaking changes.
   the selected task's own `mode`, including a prefixed catalog name. A real
   task run, including one whose first argument is those words, still acquires
   the pin.
+- Mapping-form `build.additional_contexts` (`src: ../frontend`) now resolve
+  against the Compose file that names them, the same as sequence-form
+  `src=../frontend`. After render the path stays checkout-rooted instead of
+  being read against the generation directory. Remote, already-absolute, and
+  `service:<name>` named-context values are unchanged.
+- An unreadable run-holder list warns. `container up` still applies the edit,
+  since an unreadable list is not held, and prints a `[warn]` line on stderr
+  that the holders were not checked. A readable list keeps its held-environment
+  warning.
 - A container readiness refusal and a Colima profile refusal name the failed
   service or profile, the cause they observed and one `next:` command. A
   bring-up that never becomes ready ends its diagnostic with a single `next:`

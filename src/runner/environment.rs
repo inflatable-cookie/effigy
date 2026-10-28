@@ -237,8 +237,8 @@ pub(in crate::runner) fn reconcile(
         apply,
     )
     .map_err(error)?;
-    if let Applied::HeldByRuns(holders) = &applied {
-        eprintln!(
+    match &applied {
+        Applied::HeldByRuns(holders) => eprintln!(
             "[warn] environment `{}` is held by {}; the edit applies on the next up. The runs using it stay attached",
             policy.name,
             holders
@@ -246,7 +246,12 @@ pub(in crate::runner) fn reconcile(
                 .map(|run| format!("run {run}"))
                 .collect::<Vec<_>>()
                 .join(", ")
-        );
+        ),
+        Applied::ReconciledUnreadableHolders(reason) => eprintln!(
+            "[warn] environment `{}` holder list could not be read ({reason}); the edit was applied without checking for runs that hold it",
+            policy.name
+        ),
+        Applied::Reconciled => {}
     }
     Ok(BringUp {
         env,

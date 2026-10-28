@@ -85,16 +85,11 @@ where
         }
         Ok(())
     });
-    match (compose_steps.borrow().touched(), whole_stack) {
-        // The runtime printed nothing this parser recognises. The teardown's
-        // own result is the only evidence, so one step says what happened.
-        (0, Some(whole_stack)) => match &stopped {
-            Ok(()) => whole_stack.succeed("the runtime reported the stack stopped"),
-            Err(error) => whole_stack.fail(format!("the stack did not stop: {error}")),
-        },
-        // The per-service steps carry the story; the fallback had none.
-        (_, Some(whole_stack)) => whole_stack.finish_clear(),
-        (_, None) => {}
+    if let Some(whole_stack) = whole_stack {
+        finish_whole_stack(
+            &whole_stack,
+            whole_stack_ending(compose_steps.borrow().touched(), &stopped),
+        );
     }
 
     // A step the runtime never closed is closed from the post-teardown
@@ -352,4 +347,117 @@ where
     annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))
+}
+
+/// How the whole-stack step ends when the runtime's own step lines did not
+/// carry the teardown (effigy#313). Pure, so the choice is testable without a
+/// terminal or a runtime.
+#[derive(Debug, PartialEq, Eq)]
+enum WholeStackEnding {
+    Stopped,
+    Failed(String),
+    Cleared,
+}
+
+/// `touched` is how many subjects the runtime's recognised lines moved.
+fn whole_stack_ending(
+    touched: usize,
+    stopped: &Result<(), EffigyRuntimeError>,
+) -> WholeStackEnding {
+    match (touched, stopped) {
+        // The runtime printed nothing this parser recognises. The teardown's
+        // own result is the only evidence, so one step says what happened.
+        (0, Ok(())) => WholeStackEnding::Stopped,
+        (0, Err(error)) => WholeStackEnding::Failed(format!("the stack did not stop: {error}")),
+        // The per-service steps carry the story; the fallback had none.
+        _ => WholeStackEnding::Cleared,
+    }
+}
+
+fn finish_whole_stack(whole_stack: &effigy_containers::exec::TimedStep, ending: WholeStackEnding) {
+    match ending {
+        WholeStackEnding::Stopped => whole_stack.succeed("the runtime reported the stack stopped"),
+        WholeStackEnding::Failed(cause) => whole_stack.fail(cause),
+        WholeStackEnding::Cleared => whole_stack.finish_clear(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{finish_whole_stack, whole_stack_ending, WholeStackEnding};
+    use crate::EffigyRuntimeError;
+    use effigy_containers::exec::{phase, ComposeStepEvent, ComposeSteps};
+
+    #[test]
+    fn a_stop_the_runtime_never_narrated_ends_the_stack_step_with_a_check() {
+        let (_, lines) = effigy_ui::steps::capture_lines(|| {
+            let ending = whole_stack_ending(0, &Ok(()));
+            assert_eq!(ending, WholeStackEnding::Stopped);
+            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+        });
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("✓ the runtime reported the stack stopped"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_stop_the_runtime_never_narrated_ends_the_stack_step_with_a_cross_and_its_cause() {
+        let stopped = Err(EffigyRuntimeError::task_invocation(
+            "docker compose down exited 1",
+        ));
+        let (_, lines) = effigy_ui::steps::capture_lines(|| {
+            let ending = whole_stack_ending(0, &stopped);
+            assert_eq!(
+                ending,
+                WholeStackEnding::Failed(
+                    "the stack did not stop: docker compose down exited 1".to_owned()
+                )
+            );
+            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+        });
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("✗ the stack did not stop: docker compose down exited 1"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_recognised_service_move_clears_the_stack_step_and_inventory_ends_the_service_step() {
+        let (_, lines) = effigy_ui::steps::capture_lines(|| {
+            let mut steps = ComposeSteps::new("demo-web-dev");
+            steps.observe(&ComposeStepEvent::Stopping {
+                subject: "demo-web-dev-web-1".to_owned(),
+            });
+            steps.observe(&ComposeStepEvent::Removing {
+                subject: "demo-web-dev-web-1".to_owned(),
+            });
+            let ending = whole_stack_ending(steps.touched(), &Ok(()));
+            assert_eq!(ending, WholeStackEnding::Cleared);
+            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            steps.finish_unfinished_teardown(Some(&["demo-web-dev-web-1".to_owned()]));
+        });
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("✗ web is still present after the teardown"),
+            "{lines:?}"
+        );
+
+        let (_, lines) = effigy_ui::steps::capture_lines(|| {
+            let mut steps = ComposeSteps::new("demo-web-dev");
+            steps.observe(&ComposeStepEvent::Removing {
+                subject: "demo-web-dev-web-1".to_owned(),
+            });
+            let ending = whole_stack_ending(steps.touched(), &Ok(()));
+            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            steps.finish_unfinished_teardown(Some(&[]));
+        });
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("✓ stopped and removed web"),
+            "{lines:?}"
+        );
+    }
 }
