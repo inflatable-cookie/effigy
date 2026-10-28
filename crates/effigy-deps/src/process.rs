@@ -3,6 +3,7 @@ use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,63 @@ pub trait ReadOnlyProcess {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StdReadOnlyProcess;
+
+/// Child processes this process has spawned and not yet reaped.
+///
+/// A `bun link` still running when its owner is interrupted would recreate the
+/// registration the owner is retiring, leaving residue no owner holds. The Bun
+/// link owner therefore stops these children before it retires anything.
+static OWNED_CHILDREN: OnceLock<Mutex<Vec<u32>>> = OnceLock::new();
+
+fn owned_children() -> &'static Mutex<Vec<u32>> {
+    OWNED_CHILDREN.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+struct TrackedChild {
+    pid: u32,
+}
+
+impl TrackedChild {
+    fn new(pid: u32) -> Self {
+        owned_children()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(pid);
+        Self { pid }
+    }
+}
+
+impl Drop for TrackedChild {
+    fn drop(&mut self) {
+        owned_children()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .retain(|pid| *pid != self.pid);
+    }
+}
+
+/// Terminate every child process this process is still waiting on.
+///
+/// Only an owner that is dying calls this, immediately before it retires the
+/// registrations those children were creating.
+pub fn terminate_owned_children() {
+    let pids = owned_children()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .clone();
+    for pid in pids {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+            let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
+    }
+}
 
 /// A [`ReadOnlyProcess`] that shares the doctor's remaining monotonic deadline.
 ///
@@ -232,15 +290,30 @@ fn terminate_child_tree_forced(child: &mut std::process::Child) {
 
 impl ReadOnlyProcess for StdReadOnlyProcess {
     fn run(&self, request: &ProcessRequest) -> Result<ProcessOutput, DepsError> {
-        let output = Command::new(&request.program)
+        // `output()` gives no handle on the running child, and the Bun link
+        // owner has to be able to stop one before it retires a registration
+        // that child is still creating.
+        let child = Command::new(&request.program)
             .args(&request.args)
             .current_dir(&request.cwd)
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|source| DepsError::ProcessSpawn {
                 program: request.program.clone(),
                 cwd: request.cwd.clone(),
                 source,
             })?;
+        let tracked = TrackedChild::new(child.id());
+        let output = child
+            .wait_with_output()
+            .map_err(|source| DepsError::ProcessSpawn {
+                program: request.program.clone(),
+                cwd: request.cwd.clone(),
+                source,
+            })?;
+        drop(tracked);
         let result = ProcessOutput {
             status: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),

@@ -120,10 +120,13 @@ Unix.
   each a consumer with its own claim, so retiral never widens to a root that
   merely shares a checkout. An interrupted owner holds the index lock for its
   whole apply, so it reads the index instead of waiting for it and retains any
-  registration another consumer claims; it never unregisters a registration it
-  cannot prove is its own. A leftover claim means an owner died between writing
-  the claim and retiring it; status reports `bun-registration-without-ledger`
-  and `deps unlink bun` or the next link retires it.
+  registration another consumer claims; when the index cannot be read it retires
+  nothing, because it cannot prove a registration is its own. It also stops the
+  `bun link` processes it is waiting on before it retires anything: a
+  registration process still running would recreate the registration after its
+  owner died. A leftover claim means an owner died between writing the claim and
+  retiring it; status reports `bun-registration-without-ledger` and
+  `deps unlink bun` or the next link retires it.
 - Validate other repo references before removal. Retain and report stale or
   unverifiable references rather than risk breaking another consumer.
 - Status and doctor verify the consumer's `node_modules` symlink, which is the

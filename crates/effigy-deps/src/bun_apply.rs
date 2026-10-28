@@ -117,34 +117,35 @@ pub fn retire_owned_bun_registrations(
     let mut retirement = BunRegistrationRetirement::default();
     let index_store = BunRegistrationIndexStore::for_home(home);
     let index = match index_store.read() {
-        Ok(index) => Some(index),
+        Ok(index) => index,
         Err(error) => {
             // Without the index no registration can be proved to be this
-            // owner's alone, and unregistering another consumer's would be
-            // worse than leaving residue the next link retires.
+            // owner's alone: another consumer may hold it. Retire nothing and
+            // say why, so the next link or `deps unlink bun` decides.
             retirement.failures.push(error.to_string());
-            None
+            retirement
+                .retained
+                .extend(registrations.iter().map(|(name, _)| name.clone()));
+            return retirement;
         }
     };
     for (name, package_path) in registrations {
-        if let Some(index) = &index {
-            let claimed_elsewhere = index
-                .registrations
-                .iter()
-                .find(|registration| {
-                    registration.package_name == *name
-                        && same_path(&registration.package_path, package_path)
-                })
-                .is_some_and(|registration| {
-                    registration
-                        .consumers
-                        .iter()
-                        .any(|consumer| !claim_owned_by(consumer, consumer_repo, library_path))
-                });
-            if claimed_elsewhere {
-                retirement.retained.push(name.clone());
-                continue;
-            }
+        let claimed_elsewhere = index
+            .registrations
+            .iter()
+            .find(|registration| {
+                registration.package_name == *name
+                    && same_path(&registration.package_path, package_path)
+            })
+            .is_some_and(|registration| {
+                registration
+                    .consumers
+                    .iter()
+                    .any(|consumer| !claim_owned_by(consumer, consumer_repo, library_path))
+            });
+        if claimed_elsewhere {
+            retirement.retained.push(name.clone());
+            continue;
         }
         let owned = OwnedRegistration {
             name: name.clone(),

@@ -915,3 +915,37 @@ fn an_interrupted_owner_retires_an_unclaimed_registration() {
         BunPathObservation::Missing
     );
 }
+
+#[test]
+fn an_interrupted_owner_keeps_an_unverified_registration_when_the_index_cannot_be_read() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &process);
+    write(
+        &BunRegistrationIndexStore::for_home(&fixture.home).path(),
+        "{\"schema\":\"effigy.deps.bun-registrations.v1\",\"truncated\":",
+    );
+
+    let retirement = retire_owned_bun_registrations(
+        &fixture.home,
+        &fixture.repo,
+        &fixture.library,
+        &[(
+            "underlay".to_owned(),
+            fixture.packages[0].package_path.clone(),
+        )],
+        &process,
+        &FsBunPlanObserver,
+    );
+
+    // No index means no proof that another consumer does not claim it.
+    assert_eq!(retirement.retained, ["underlay"]);
+    assert!(retirement.unregistered.is_empty());
+    assert_eq!(retirement.failures.len(), 1, "{retirement:?}");
+    assert!(matches!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Symlink { .. }
+    ));
+}

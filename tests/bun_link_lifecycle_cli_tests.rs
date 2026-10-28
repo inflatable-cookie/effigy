@@ -227,6 +227,10 @@ case "$*" in
     ;;
   "link --no-save")
     package="$(package_name)"
+    if [ -f "$home/hold-register" ]; then
+      echo "$$" > "$home/register-child.pid"
+      sleep 2
+    fi
     mkdir -p "$(dirname "$registration_root/$package")"
     ln -sfn "$PWD" "$registration_root/$package"
     ;;
@@ -379,7 +383,7 @@ fn interrupt_retires_only_the_registration_the_owner_created() {
         wait_until(Duration::from_secs(60), || machine.marked("held-child.pid"));
         interrupt(&mut owner.child);
         let status = wait_for_exit(&mut owner.child);
-        stop_recorded_child(&machine);
+        stop_recorded_child(&machine, "held-child.pid");
         assert!(
             !status.success(),
             "interrupted owner must not report success: {status:?}"
@@ -412,12 +416,52 @@ fn interrupt_retires_only_the_registration_the_owner_created() {
         );
     } else {
         let status = wait_for_exit(&mut owner.child);
-        stop_recorded_child(&machine);
+        stop_recorded_child(&machine, "held-child.pid");
         panic!(
             "the fixture never reached the interrupt window: {status:?}; calls: {}",
             fs::read_to_string(machine.home.join("calls.log")).unwrap_or_default()
         );
     }
+}
+
+#[test]
+fn interrupt_stops_an_in_flight_registration_before_it_leaves_residue() {
+    let machine = Machine::new("effigy-bun-link-register-race-");
+    machine.mark("hold-register");
+    let args = machine.link_args();
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut owner = RunningOwner {
+        machine: &machine,
+        child: machine
+            .command(&args)
+            .spawn()
+            .expect("spawn the effigy CLI in the fixture"),
+    };
+    assert!(
+        wait_until(Duration::from_secs(60), || machine
+            .marked("register-child.pid")),
+        "the fixture never started registering; calls: {}",
+        fs::read_to_string(machine.home.join("calls.log")).unwrap_or_default()
+    );
+    interrupt(&mut owner.child);
+    let status = wait_for_exit(&mut owner.child);
+    // The fixture child is stopped by the proof's Drop guard, not here: this
+    // proof is that the owner's own cleanup stopped it.
+    assert!(
+        !status.success(),
+        "interrupted owner must not report success: {status:?}"
+    );
+    // The stopped `bun link` would otherwise create the registration a moment
+    // after its owner retired it.
+    std::thread::sleep(Duration::from_millis(2_500));
+    assert_eq!(
+        fs::symlink_metadata(machine.registration())
+            .map(|_| ())
+            .ok(),
+        None,
+        "an in-flight registration process recreated residue after its owner died"
+    );
+    assert!(machine.claim_consumers().is_empty());
 }
 
 #[test]
@@ -462,7 +506,9 @@ impl Drop for RunningOwner<'_> {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        stop_recorded_child(self.machine);
+        // Both recorded fixture children, so a panicking proof leaves none.
+        stop_recorded_child(self.machine, "held-child.pid");
+        stop_recorded_child(self.machine, "register-child.pid");
     }
 }
 
@@ -501,8 +547,8 @@ fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
 /// The blocked fake `bun` is this fixture's own process; stop it by the PID it
 /// recorded, never by pattern. The record is removed so a second stop cannot
 /// reach a recycled PID.
-fn stop_recorded_child(machine: &Machine) {
-    let record = machine.home.join("held-child.pid");
+fn stop_recorded_child(machine: &Machine, record: &str) {
+    let record = machine.home.join(record);
     let Ok(raw) = fs::read_to_string(&record) else {
         return;
     };

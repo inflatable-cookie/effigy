@@ -407,10 +407,13 @@ During v0.x, MINOR bumps may include breaking changes.
   exist, and an interrupt retires the same registrations before the signal
   stops the command. Retiral is the exact `(consumer root, library)` claim, so a
   sibling Bun root in the same checkout keeps its own claim. An interrupted
-  owner reads the index instead of waiting for the lock it already holds, and
-  retains any registration another consumer still claims. A shared or foreign
-  registration is never removed. This is what stopped registrations pointing at
-  deleted worktrees accumulating.
+  owner stops the `bun link` it is waiting on before retiring anything, since a
+  registration process still running would recreate the registration after its
+  owner died, and it reads the index instead of waiting for the lock it already
+  holds, retaining any registration another consumer still claims or any
+  registration it cannot verify because the index is unreadable. A shared or
+  foreign registration is never removed. This is what stopped registrations
+  pointing at deleted worktrees accumulating.
 - Bun `deps unlink` now retires only the named consumer's claims when that
   checkout is already gone, instead of no-op'ing and leaving the worktree claim
   behind. Each claim records the checkout that wrote it, so `--repo` recovers a

@@ -119,18 +119,27 @@ fn watch_interrupts() {
                             .clone()
                     })
                     .unwrap_or_default();
-                for owner in owners {
-                    let retirement = retire_owned_bun_registrations(
-                        &owner.home,
-                        &owner.consumer_repo,
-                        &owner.library_path,
-                        &owner.registrations,
-                        &StdReadOnlyProcess,
-                        &FsBunPlanObserver,
-                    );
-                    for failure in &retirement.failures {
-                        eprintln!("effigy: interrupted Bun link could not retire: {failure}");
+                let mut failures = Vec::new();
+                // Stop the `bun link` this owner is waiting on before retiring
+                // anything: left running, it would recreate the registration
+                // after the owner died. Then retire, and repeat once because
+                // the stopped child may have been mid-write when it died.
+                for _ in 0..2 {
+                    crate::process::terminate_owned_children();
+                    for owner in &owners {
+                        let retirement = retire_owned_bun_registrations(
+                            &owner.home,
+                            &owner.consumer_repo,
+                            &owner.library_path,
+                            &owner.registrations,
+                            &StdReadOnlyProcess,
+                            &FsBunPlanObserver,
+                        );
+                        failures.extend(retirement.failures);
                     }
+                }
+                for failure in &failures {
+                    eprintln!("effigy: interrupted Bun link could not retire: {failure}");
                 }
                 let _ = signal_hook::low_level::emulate_default_handler(signal);
                 return;
