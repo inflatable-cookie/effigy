@@ -1,4 +1,17 @@
 [[retired]]
+id = "manifest-legacy-include-and-kebab-aliases"
+retired = "2026-10-28; accepted through v0.15, removed in v0.16 (effigy#434)"
+replacement = "Manual `[manifest].include` `optional` and `override` still load through v0.15. Omit a missing include or use auto-discovered `effigy.local.toml` instead of `optional`. Use auto-discovered `effigy.local.toml` for machine-local replacement, or `[manifest].extend` for arrays, instead of `override`. Public kebab-case aliases at `[contracts].schema-index`, `[contracts].selection-contract` and `[sources.<name>].rev-file` still load as `schema_index`, `selection_contract` and `rev_file`. One notice per manifest names the replacement. The scan matches those positions only. Contract 041 `docs_policy.graph.kinds.<kind>.default-currentness` is the primary kebab spelling and is not in this window. Canonical snake_case and path-only includes stay silent. 2026-10-28 scan: `default-currentness` in Effigy's docs config and the Northstar starter (canonical); no active external consumer `effigy.toml` hit in projects/legacy. Broader serde alias inventory is in `crates/effigy-manifest/src/legacy_compat.rs`; user-global program preference aliases are out of scope."
+owner = "docs/knowledge/contracts/028-manifest-section-decomposition-contract.md"
+terms = [
+  "legacy include optional/override v0.16",
+  "kebab serde aliases v0.16",
+]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
 id = "colima-profile-pattern-kill"
 retired = "2026-10-28; profile repair process identity (effigy#422)"
 replacement = "Explicit repair uses the selected Lima pidfiles and checks host-agent arguments and process start identity before signalling; unprovable processes are refused."

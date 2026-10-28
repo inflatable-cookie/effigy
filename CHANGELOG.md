@@ -136,6 +136,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **Linux runs the operator gateway from a launch-only systemd user unit.**
+  `effigy gateway setup` installs and enables
+  `~/.config/systemd/user/effigy-gateway.service`, whose only actions are
+  `effigy gateway up` at login and `effigy gateway down` on stop; the daemon's
+  kernel Run stays the lifecycle authority, so the unit declares no restart
+  policy and `systemctl --user restart` is an ordinary reconcile request. A
+  login-less boot start is your explicit `loginctl enable-linger "$USER"`
+  opt-in (undo with `disable-linger`). After the administrator step, setup
+  re-execs the installed binary as you and binds the configured low ports to
+  prove the `CAP_NET_BIND_SERVICE` capability, refusing a changed, linked or
+  group/world-writable binary. `gateway status --json` reports the observed
+  `launcher` facts and recovery commands, and `gateway setup --remove` removes
+  only unit and capability records Effigy wrote.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
@@ -200,6 +213,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **Manual `[manifest].include` `optional`/`override` and kebab-case aliases
+  still load through v0.15, with one deprecation notice.** `optional` is
+  replaced by omitting a missing include or auto-discovered
+  `effigy.local.toml`; `override` by auto-discovered `effigy.local.toml` or
+  `[manifest].extend`. Write `schema_index`, `selection_contract` and
+  `rev_file` instead of the kebab spellings at `[contracts]` and
+  `[sources.<name>]`. The forms are removed in v0.16. A task named
+  `schema-index` is not an alias. Contract 041's
+  `default-currentness` stays the kind spelling. Canonical snake_case and
+  path-only includes stay silent. `--json` carries the notice in
+  `warnings`, never stdout.
 - Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
   scopes after changed publications. Legacy v1 cache is left for manual cleanup.
 
@@ -351,6 +375,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS`, `EFFIGY_INTERNAL_SECRET_GRANT` or
   `EFFIGY_TEST_SECRETS_PASSPHRASE` no longer reaches a container; the run's
   declared secrets and the user's own variables still do.
+- State stack `depends_on` now requires an earlier layer. A self-reference or a
+  later key fails closed instead of planning in declaration order that ignored
+  the edge.
+- Digest-pinned `oci://` refs bind to their `@sha256:` pin through userinfo, and
+  inspect/pull/stage refuse an observed digest that does not match.
 - Builtin `effigy test` now routes a named-container suite's setup and teardown
   with the suite command, so those hooks run inside the selected container.
   Nested effigy re-entries still keep their own routing.

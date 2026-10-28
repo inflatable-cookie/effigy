@@ -57,7 +57,7 @@ environment_policy = "non-production"
 | `source` | yes | repo path, task selector, or `oci://` artifact ref |
 | `apply_mode` | yes | `task`, `artifact`, `sql`, `manual`, or `checkpoint` |
 | `environment_policy` | yes | `all`, `dev-only`, `non-production`, `production`, or `capture-only` |
-| `depends_on` | no | keys that must complete before this layer |
+| `depends_on` | no | keys that must complete before this layer; each key must name an earlier layer (declaration order is apply order) |
 | `artifact_kind` | no | payload type: `sql-dump`, `migrated-base-snapshot`, `content-overlay`, `object-store` |
 | `hook` | no | app-owned task selector or inline task definition to run after the layer |
 

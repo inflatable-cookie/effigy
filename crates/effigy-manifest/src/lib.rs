@@ -13,6 +13,7 @@ pub mod config_sections;
 mod lifecycle_date;
 pub use lifecycle_date::ManifestLifecycleDate;
 pub mod execution_binding;
+mod legacy_compat;
 mod loaded_catalog;
 mod manifest_section;
 pub mod portfolio;
