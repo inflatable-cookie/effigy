@@ -386,7 +386,7 @@ pub enum Client {
     Secondary,
 }
 
-/// How a attachment ended. A detach is acknowledged before the client goes;
+/// How an attachment ended. A detach is acknowledged before the client goes;
 /// an EOF is the client going away without one (§8.11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
