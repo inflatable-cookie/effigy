@@ -622,6 +622,19 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
             child.forward(*signal);
         }
         for frame in control.frames {
+            if frame == b"watch-secondary" {
+                let key = session.admission().expect("workspace ticket").key();
+                let attachment = attach_secondary(
+                    &cx,
+                    &root,
+                    key.session,
+                    run.id(),
+                    AttachmentId::new([8; 16]),
+                )?;
+                let socket = std::os::unix::net::UnixStream::connect(home.join("a.sock"))?;
+                let input = std::fs::File::from(std::os::fd::OwnedFd::from(socket));
+                session.watch_attachment(&run, attachment, &input)?;
+            }
             session.event(frame);
         }
         if let Some(cause) = control.stop {

@@ -2756,8 +2756,13 @@ distinct. `reserve` records `(session, request ID, canonical request digest)`
 with the one run it reserved, and `Run::begin_admitted` commits that binding, the
 run row and the owning client's attachment in one transaction. One run identity
 belongs to exactly one key: a second key proposing the same run id is refused in
-that transaction and by a unique index, so a run is never attributed to another
-session's request. `lookup` answers a reconnect from the same records, `Unknown`
+that transaction and by a unique index, and an ordinary run may not take a
+reserved id, so a reservation is never swapped for another workload. A key with
+a record is classified before any proposed id is judged, so a same-key retry
+recovers its admission or reports its digest conflict whatever entropy it
+offers. Only the binding that actually admitted a run answers for attachment and
+records its outcome; a reservation that never committed keeps answering
+`Unknown`. `lookup` answers a reconnect from the same records, `Unknown`
 included, and never admits again. A
 reservation whose admission cannot be established is `Unknown` and names no run:
 an id the client offered is not evidence that the request produced it. The run's
@@ -2769,8 +2774,18 @@ dispatcher hands it to a detached engine supervisor through
 the ticket alone binds nothing. `attach_secondary` gives a second terminal its
 own attachment row, a bounded stream cursor that reports a rotation gap, and
 stop/escalate control bounded at four waiting requests, counted in the same
-transaction that records one; every read and control re-checks the attachment
-row, so a released attachment or a closed run stops both. `resume_owner` reopens
+transaction that records one; every read re-checks the attachment row, and a
+control re-checks it in the transaction that records the request, so a release
+cannot be overtaken and a released attachment or a closed run stops both. An
+owning client's EOF records its run's stop in the same commit as the release,
+while an acknowledged detach records none and leaves the run going, including
+when its original owning pipe closes. `EngineSession::watch_attachment` binds an
+attachment to a separate client liveness pipe; the supervisor's control turn
+releases a killed secondary's row without stopping the owner, and reclaims its
+slot. Watches are bounded to eight secondaries and one owner. Workspace controls
+respect the caller's remaining budget, capped at one second, including a busy
+store; a timeout records no control and the caller may retry. Output reads do
+not hold the writer or share the liveness pipe. `resume_owner` reopens
 the owning client's handle and no other. Both refuse a run this session did not
 admit and grant nothing: the dispatcher's grant check remains the authority.
 `test:kernel:workspace` owns these proofs.

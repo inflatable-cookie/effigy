@@ -323,7 +323,45 @@ fn workspace_admission_one_run_id_belongs_to_one_key() {
         },
         request: RequestId::new([32; 16]),
     };
-    let ticket = fresh(&cx, &root, first, id(1));
+    // A concurrent collision on distinct keys still grants only one ticket.
+    drop(Store::open(&cx, &root).unwrap());
+    let barrier = Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = [first, second]
+            .into_iter()
+            .map(|key| {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let cx = context();
+                    let root = StateRoot::effects(&cx, home).unwrap();
+                    barrier.wait();
+                    (key, reserve(&cx, &root, key, digest(), id(1)))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let mut winner = None;
+    let mut loser = None;
+    for (key, result) in results {
+        match result {
+            Ok(Reservation::Fresh(ticket)) => {
+                assert!(
+                    winner.replace((key, ticket)).is_none(),
+                    "two keys reserved the same run"
+                );
+            }
+            Err(RunError::Refused(rule)) if rule.contains("another workspace request") => {
+                loser = Some(key);
+            }
+            other => panic!("colliding admission {other:?}"),
+        }
+    }
+    let (first, ticket) = winner.expect("one reservation wins");
+    let second = loser.expect("the other reservation is refused");
     // Before the admission commits, and after it does, the run identity is
     // this key's alone: the second key is refused by name and records nothing.
     let collision =
@@ -374,6 +412,303 @@ fn workspace_admission_one_run_id_belongs_to_one_key() {
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
     run.settle(&cleanup(&cx), &mut fake).expect("settle");
     assert_eq!(runs(&cx, &root), 1);
+}
+
+#[test]
+fn workspace_admission_a_reserved_run_id_is_not_an_ordinary_run() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    let key = admission_key(41);
+    let mut ticket_holder = fresh(&cx, &root, key, id(1));
+
+    // The reserved identity is the key's: an ordinary run that offers it is
+    // refused inside its own admission transaction.
+    match Run::begin(
+        &cx,
+        &root,
+        &inv(owner()),
+        begin_opts(id(1)),
+        &cleanup(&cx),
+        &mut fake,
+    ) {
+        Err(RunError::Refused(rule)) => {
+            assert!(
+                rule.contains("reserved for a keyed workspace request"),
+                "{rule}"
+            )
+        }
+        other => panic!("an ordinary run took a reserved id: {other:?}"),
+    }
+    assert_eq!(runs(&cx, &root), 0);
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    // Nothing can attach to it, and the key still answers Unknown.
+    assert!(resume_owner(&cx, &root, session(), id(1)).is_err());
+    assert!(attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([8; 16])).is_err());
+    match lookup_now(&cx, &root, key) {
+        Observed::Verified(Recovered::Unknown { reason }, _) => {
+            assert_eq!(reason, UnknownAdmission::ReservedNotAdmitted)
+        }
+        other => panic!("reserved key {other:?}"),
+    }
+
+    // The key's own admission still works, and now the identity is admitted.
+    let run = Run::begin_admitted(
+        &cx,
+        &root,
+        &inv(owner()),
+        begin_opts(id(1)),
+        &cleanup(&cx),
+        &mut fake,
+        ticket_holder,
+    )
+    .expect("admitted run");
+    assert_eq!(run.fence().generation, Generation::new(1));
+    ticket_holder = fresh(&cx, &root, admission_key(42), id(2));
+    assert_eq!(ticket_holder.run(), id(2));
+}
+
+#[test]
+fn workspace_admission_close_never_claims_a_reserved_row() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    // An ordinary run whose id a stale reservation also names. The admission
+    // path now refuses that interleaving, so the row is written straight into
+    // the journal: this checks the close side of the same rule on a store that
+    // predates it.
+    let mut plain = Run::begin(
+        &cx,
+        &root,
+        &inv(foreign_owner()),
+        begin_opts(id(2)),
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .expect("plain run");
+    let key = admission_key(43);
+    {
+        let mut store =
+            Store::open(&cx.child(std::time::Duration::from_secs(30)), &root).expect("store");
+        store
+            .transaction(
+                &cx.child(std::time::Duration::from_secs(30)),
+                |txn| {
+                    txn.conn().execute(
+                        "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at) \
+                         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6)",
+                        rusqlite::params![
+                            session().run.to_string(),
+                            session().generation.get() as i64,
+                            key.request.to_string(),
+                            digest().0.as_slice(),
+                            id(2).to_string(),
+                            txn.now()
+                        ],
+                    )?;
+                    Ok::<_, RunError>(())
+                },
+            )
+            .expect("stale reservation");
+    }
+    assert_eq!(
+        admission_session(reader(&cx, &root).conn(), id(2)).unwrap(),
+        None
+    );
+    assert!(attach_secondary(&cx, &root, key.session, id(2), AttachmentId::new([9; 16])).is_err());
+    plain.finish(WorkloadOutcome::Succeeded).expect("finish");
+    plain.settle(&cleanup(&cx), &mut fake).expect("settle");
+    // The stale reservation names a closed run, but it never admitted one, so
+    // it keeps answering Unknown instead of claiming that workload's outcome.
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    match lookup_now(&cx, &root, key) {
+        Observed::Verified(Recovered::Unknown { reason }, _) => {
+            assert_eq!(reason, UnknownAdmission::ReservedNotAdmitted)
+        }
+        other => panic!("stale reservation {other:?}"),
+    }
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM workspace_admissions WHERE state='closed'"
+        ),
+        0
+    );
+}
+
+#[test]
+fn workspace_admission_retry_classifies_before_the_run_id_check() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    let key = admission_key(46);
+    let mut run = admitted(&cx, &root, key, id(1), &mut fake);
+    // Another key already holds a different run identity.
+    let other_key = admission_key(47);
+    let other_ticket = fresh(&cx, &root, other_key, id(2));
+    assert_eq!(other_ticket.run(), id(2));
+
+    // A retry of the recorded key recovers its admission even though the id it
+    // proposes now belongs to another key, and a changed digest still conflicts.
+    assert_eq!(
+        recorded(&cx, &root, key, id(2)),
+        Recovered::Admitted {
+            run: id(1),
+            fence: run.fence().clone()
+        }
+    );
+    match reserve(&cx, &root, key, other_digest(), id(2)).expect("reserve") {
+        Reservation::Recorded(Recovered::Conflict { recorded }) => {
+            assert_eq!(recorded, digest())
+        }
+        other => panic!("changed digest with a foreign id: {other:?}"),
+    }
+    run.finish(WorkloadOutcome::Succeeded).expect("finish");
+    run.settle(&cleanup(&cx), &mut fake).expect("settle");
+}
+
+#[test]
+fn workspace_attachment_release_fences_the_other_owner_handle() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    let key = admission_key(48);
+    let run = admitted(&cx, &root, key, id(1), &mut fake);
+    write_segment(&root, id(1), 1, Stream::Stdout, 0, b"kept");
+    // Two handles on the same owning row: releasing one must fence the other,
+    // which never saw that release in its own memory.
+    let mut first = resume_owner(&cx, &root, session(), id(1)).expect("first owner");
+    let mut second = resume_owner(&cx, &root, session(), id(1)).expect("second owner");
+    first
+        .release(&cx, &root, Release::Detach)
+        .expect("owner detach");
+    assert!(second
+        .control(&cx, &root, id(80), RequestAction::Stop)
+        .is_err());
+    assert!(second
+        .read(&observe(), &root, 1, Stream::Stdout, 4096)
+        .is_err());
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM requests WHERE state='pending'"
+        ),
+        0,
+        "a release must not be overtaken by a control"
+    );
+    assert_eq!(run.phase().expect("phase"), Phase::Admitted);
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn workspace_attachment_release_wins_while_control_is_before_its_transaction() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let _run = admitted(&cx, &root, admission_key(49), id(1), &mut fake);
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let child = child_command(fixture.path(), "control-release-race")
+        .env(
+            "EFFIGY_KERNEL_TEST_FAULT",
+            fault::env_spec(Point::RequestBefore, 0, Fault::Stall),
+        )
+        .spawn()
+        .unwrap();
+    let mut child = TestChild(child);
+    let pid = child.0.id() as libc::pid_t;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let mut state = 0;
+        // SAFETY: wait only for the exact child this test spawned.
+        let waited = unsafe { libc::waitpid(pid, &mut state, libc::WNOHANG | libc::WUNTRACED) };
+        if waited == pid {
+            assert!(
+                libc::WIFSTOPPED(state),
+                "control child exited instead of stalling"
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "control did not stall"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    owner.release(&cx, &root, Release::Detach).unwrap();
+    // SAFETY: continue only this test's stopped child.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGCONT) }, 0);
+    assert!(child.0.wait().unwrap().success());
+    assert_eq!(scalar(&cx, &root, "SELECT count(*) FROM requests"), 0);
+}
+
+struct TestChild(std::process::Child);
+impl Drop for TestChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn workspace_attachment_control_respects_its_budget_while_store_is_held() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(50), id(1), &mut fake);
+    let attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let fixture_home = fixture.path().to_path_buf();
+    let holder = std::thread::spawn(move || {
+        let cx = context();
+        let root = StateRoot::effects(&cx, &fixture_home).unwrap();
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .transaction(&cx, |_| {
+                ready_tx.send(()).unwrap();
+                // A bounded backstop avoids trapping the runner if the control
+                // mistakenly inherits settlement's thirty-second writer wait.
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+    });
+    ready_rx.recv().unwrap();
+    let result = attachment.control(
+        &cx.child(std::time::Duration::from_millis(100)),
+        &root,
+        id(89),
+        RequestAction::Stop,
+    );
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    assert!(
+        result.is_err(),
+        "a held writer must not exceed the control budget"
+    );
+    assert!(run.requests().unwrap().is_empty());
+    attachment
+        .control(&cx, &root, id(90), RequestAction::Stop)
+        .unwrap();
+    assert_eq!(
+        run.requests().unwrap().len(),
+        1,
+        "cancel remains serviceable after the held writer"
+    );
 }
 
 #[test]
@@ -700,7 +1035,8 @@ fn workspace_attachment_owner_eof_and_detach_are_recorded_apart() {
     let key = admission_key(7);
     let mut run = admitted(&cx, &root, key, id(1), &mut fake);
 
-    // EOF: the client went away without acknowledging a detach.
+    // EOF: the client went away without acknowledging a detach, so the handle
+    // records the stop its run needs (§8.11) besides the release.
     let mut owner = resume_owner(&cx, &root, session(), id(1)).expect("owner");
     owner.release(&cx, &root, Release::Eof).expect("owner eof");
     assert_eq!(
@@ -711,15 +1047,34 @@ fn workspace_attachment_owner_eof_and_detach_are_recorded_apart() {
         ),
         1
     );
-    // An owner that released cannot take its run back, and the release alone
-    // did not settle the run.
+    // An owner that released cannot take its run back.
     assert!(resume_owner(&cx, &root, session(), id(1)).is_err());
-    assert_eq!(run.phase().expect("phase"), Phase::Admitted);
+    let pending = run.requests().expect("requests");
+    assert_eq!(pending.len(), 1, "owner EOF must record the run's stop");
+    assert!(matches!(pending[0].action, RequestAction::Stop));
+    assert_eq!(pending[0].run, id(1));
 
-    run.finish(WorkloadOutcome::Succeeded).expect("finish");
+    // The owner loop drains that stop: the run is cancelled and settled once.
+    run.resolve_request(&pending[0]).expect("resolve");
+    run.interrupt(
+        &cleanup(&cx),
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    )
+    .expect("interrupt");
     run.settle(&cleanup(&cx), &mut fake).expect("settle");
+    match lookup_now(&cx, &root, key) {
+        Observed::Verified(Recovered::Completed { outcome, .. }, _) => match outcome.workload {
+            WorkloadOutcome::Cancelled { cause, .. } => assert_eq!(cause, StopCause::Requested),
+            other => panic!("owner EOF outcome {other:?}"),
+        },
+        other => panic!("owner EOF settlement {other:?}"),
+    }
 
-    // A detach is acknowledged before the client goes, and recorded apart.
+    // A detach is acknowledged before the client goes, and records no stop: the
+    // run keeps going.
     let key = admission_key(8);
     let mut run = admitted(&cx, &root, key, id(2), &mut fake);
     let mut owner = resume_owner(&cx, &root, session(), id(2)).expect("owner");
@@ -735,6 +1090,11 @@ fn workspace_attachment_owner_eof_and_detach_are_recorded_apart() {
         1
     );
     assert!(resume_owner(&cx, &root, session(), id(2)).is_err());
+    assert!(
+        run.requests().expect("requests").is_empty(),
+        "an acknowledged detach must not stop the run"
+    );
+    assert_eq!(run.phase().expect("phase"), Phase::Admitted);
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
     run.settle(&cleanup(&cx), &mut fake).expect("settle");
     // A run's close ends every client lifetime it had.
@@ -927,6 +1287,25 @@ fn workspace_attachment_bounds_terminals_and_control_requests() {
 }
 
 #[test]
+fn workspace_attachment_owner_loss_preserves_the_full_control_bound() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(51), id(1), &mut fake);
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    for n in 0..CONTROL_MAX {
+        owner
+            .control(&cx, &root, id(60 + n as u8), RequestAction::Stop)
+            .unwrap();
+    }
+    owner.release(&cx, &root, Release::Eof).unwrap();
+    owner.release(&cx, &root, Release::Eof).unwrap();
+    assert_eq!(run.requests().unwrap().len(), CONTROL_MAX);
+    assert!(!owner.attached(&cx, &root).unwrap());
+}
+
+#[test]
 fn workspace_attachment_cancellation_settles_the_run_once() {
     let fixture = home();
     let home = fixture.path();
@@ -1086,6 +1465,13 @@ fn child_step(home: &std::path::Path, step: &str) -> Result<(), RunError> {
     let mut fake = Fake::new(home);
     let key = admission_key(1);
     match step {
+        "control-release-race" => {
+            let attachment = resume_owner(&cx, &root, session(), id(1))?;
+            match attachment.control(&cx, &root, id(80), RequestAction::Stop) {
+                Err(RunError::Refused(rule)) if rule.contains("no longer attached") => {}
+                other => panic!("control after concurrent release: {other:?}"),
+            }
+        }
         "reserve" => {
             let _ = reserve(&cx, &root, key, digest(), id(1))?;
         }

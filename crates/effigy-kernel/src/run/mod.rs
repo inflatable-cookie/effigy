@@ -537,6 +537,11 @@ impl<'a> Run<'a> {
         }
         crate::fault_point!(BeginRecovered)?;
         let generation = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+            if admission.is_none() {
+                // A keyed workspace reservation keeps its run identity until it
+                // is admitted or its session generation ends.
+                workspace::refuse_unkeyed(txn, opts.id)?;
+            }
             txn.resource(&inv.spec().owner, "run")?;
             let generation = txn.next_generation(&inv.spec().owner)?;
             txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome,parent_run) \
@@ -1024,16 +1029,19 @@ pub struct Request {
 /// Requests never acquire the owner's gate. Only a current generation accepts
 /// them; owner handling rechecks the same fence immediately before acting.
 pub fn request(cx: &EffectContext, root: &StateRoot, request: &Request) -> Result<(), RunError> {
-    request_bounded(cx, root, request, None)
+    request_bounded(cx, root, request, None, None)
 }
-/// One control request, with an optional bound on how many may wait at once.
-/// The bound is counted and the request inserted in one transaction, so
-/// concurrent senders cannot exceed it between a check and an insert (§8.11).
+/// One control request, with an optional bound on how many may wait at once and
+/// an optional client attachment it must still hold. Both the bound and the
+/// attachment row are checked in the transaction that inserts the request, so a
+/// concurrent sender cannot exceed the bound and a release that lands first
+/// cannot be overtaken by a control (§8.11).
 pub(super) fn request_bounded(
     cx: &EffectContext,
     root: &StateRoot,
     request: &Request,
     max_pending: Option<usize>,
+    attached: Option<&Attachment>,
 ) -> Result<(), RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
         .map_err(|_| RunError::refused("request needs Mutate"))?;
@@ -1041,13 +1049,28 @@ pub(super) fn request_bounded(
         .map_err(|_| {
             RunError::refused("a managed run needs host authority, and this placement is a guest")
         })?;
-    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+    // Workspace controls respect their caller's budget (at most one second),
+    // rather than inheriting the patient thirty-second settlement writer wait.
+    let bounded = cx.child(std::time::Duration::from_secs(1));
+    let (cx, wait) = if max_pending.is_some() {
+        (&bounded, BusyWait::Context)
+    } else {
+        (cx, BusyWait::AtLeast(crate::store::STORE_BUSY_WAIT))
+    };
+    let mut store = Store::open_within(cx, root, wait)?;
     crate::fault_point!(RequestBefore)?;
-    store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+    store.transaction_within(cx, wait, |txn| {
         journal::check_fence(txn.conn(), &request.expected)?;
         let record = journal::run(txn.conn(), request.run)?;
         if record.owner != request.expected.resource.name().to_string() || record.generation != request.expected.generation || record.phase == Phase::Closed {
             return Err(RunError::refused("request run is not current"));
+        }
+        if let Some(attachment) = attached {
+            if !workspace::attached_row(txn.conn(), attachment.id(), attachment)? {
+                return Err(RunError::refused(
+                    "this attachment is no longer attached to the run",
+                ));
+            }
         }
         if let Some(max_pending) = max_pending {
             let pending: i64 = txn.conn().query_row(

@@ -248,20 +248,32 @@ fn insert_reservation(
     digest: &Digest,
     run: RunId,
 ) -> Result<Option<Recovered>, RunError> {
-    // One run identity belongs to exactly one keyed request. A second key
-    // proposing the same RunId is refused, never reserved: otherwise a later
-    // reader could attribute that run to whichever key it happened to find.
-    if let Some(holder) = admission_holder(conn, run)? {
-        if holder != key {
-            return Err(RunError::refused(
-                "this run id already belongs to another workspace request",
-            ));
-        }
+    // A key that already has a record is a replay, whatever run id it offers
+    // this time: classify it before looking at the proposed identity, so a
+    // same-key retry recovers its admission (or reports its digest conflict)
+    // even when its fresh entropy lands on an id another key holds.
+    if let Some(row) = row(conn, &key)? {
+        return replayed(conn, &row, digest).map(Some);
     }
-    let inserted = conn.execute(
+    // A genuinely new key takes a run identity that no other key holds and the
+    // journal does not already contain. Refusing here rolls the reservation
+    // back, because the caller holds the store's writer lock.
+    if admission_holder(conn, run)?.is_some() {
+        return Err(RunError::refused(
+            "this run id already belongs to another workspace request",
+        ));
+    }
+    let taken: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
+        [run.to_string()],
+        |r| r.get(0),
+    )?;
+    if taken {
+        return Err(RunError::refused("this run id already names a run"));
+    }
+    conn.execute(
         "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at) \
-         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6) \
-         ON CONFLICT(session_id,session_generation,request_id) DO NOTHING",
+         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6)",
         params![
             key.session.run.to_string(),
             key.session.generation.get() as i64,
@@ -271,21 +283,7 @@ fn insert_reservation(
             now
         ],
     )?;
-    if inserted == 1 {
-        // A fresh reservation never steals a run identity the journal already
-        // holds; refusing here rolls the reservation back.
-        let taken: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
-            [run.to_string()],
-            |r| r.get(0),
-        )?;
-        if taken {
-            return Err(RunError::refused("this run id already names a run"));
-        }
-        return Ok(None);
-    }
-    let row = row(conn, &key)?.ok_or_else(|| RunError::broken("a reserved request has no row"))?;
-    replayed(conn, &row, digest).map(Some)
+    Ok(None)
 }
 
 /// Read a keyed request without writing anything. `Absent` means nothing was
@@ -400,6 +398,24 @@ pub(super) fn bind(txn: &mut Txn<'_>, ticket: &AdmissionTicket) -> Result<(), Ru
     Ok(())
 }
 
+/// A reserved run identity belongs to its key until that key admits it or the
+/// session generation ends. An ordinary run that offers the same id is refused
+/// inside its admission transaction, so a reservation can never be swapped for
+/// another workload (§8.11).
+pub(super) fn refuse_unkeyed(txn: &Txn<'_>, run: RunId) -> Result<(), RunError> {
+    let reserved: bool = txn.conn().query_row(
+        "SELECT EXISTS(SELECT 1 FROM workspace_admissions WHERE run_id=?1)",
+        [run.to_string()],
+        |r| r.get(0),
+    )?;
+    if reserved {
+        return Err(RunError::refused(
+            "this run id is reserved for a keyed workspace request",
+        ));
+    }
+    Ok(())
+}
+
 /// The run's close transaction records the keyed request's final outcome and
 /// ends every client attachment in the same commit as `phase='closed'`.
 pub(super) fn closed(
@@ -412,9 +428,12 @@ pub(super) fn closed(
         workload: workload.clone(),
         cleanup_complete,
     })?;
+    // Only the binding that this run actually admitted records an outcome. An
+    // unadmitted reservation with the same run id stays `reserved`, so its key
+    // keeps answering Unknown instead of claiming another workload's outcome.
     txn.conn().execute(
         "UPDATE workspace_admissions SET state='closed',outcome=?2,updated_at=?3 \
-         WHERE run_id=?1 AND state<>'closed'",
+         WHERE run_id=?1 AND state='admitted'",
         params![run.to_string(), outcome, txn.now()],
     )?;
     txn.conn().execute(
@@ -446,7 +465,7 @@ pub enum Release {
 /// bounded control path, and nothing else. Every read and control re-checks the
 /// durable attachment row, so a released attachment, a run that closed, or a
 /// row that a newer attach replaced cannot keep reading or steering. Releasing
-/// it never touches the run.
+/// a secondary never touches the run; owner EOF requests stop.
 #[derive(Debug)]
 pub struct Attachment {
     id: AttachmentId,
@@ -577,11 +596,12 @@ impl Attachment {
                  release and settlement belongs to the run",
             ));
         }
-        let observed = cx
-            .operation()
-            .observe()
-            .map_err(|_| RunError::refused("this context cannot observe an attachment"))?;
-        self.lifetime(&observed, root)?;
+        if self.released {
+            return Err(RunError::refused("this attachment was already released"));
+        }
+        // The attachment row is checked inside the transaction that inserts the
+        // request, so a release that lands between this call and that commit
+        // cannot let a control through after the terminal is gone.
         request_bounded(
             cx,
             root,
@@ -592,11 +612,14 @@ impl Attachment {
                 action,
             },
             Some(CONTROL_MAX),
+            Some(self),
         )
     }
     /// Release this client's lifetime, recording an acknowledged detach apart
-    /// from an EOF. It changes no run row: a secondary terminal going away can
-    /// never stop, settle or detach the owning client's run.
+    /// from an EOF. An owning client's EOF records the stop its run needs
+    /// (§8.11) in the same commit; an acknowledged detach leaves the run going,
+    /// and a secondary terminal going away never stops, settles or detaches the
+    /// owning client's run.
     pub fn release(
         &mut self,
         cx: &EffectContext,
@@ -606,7 +629,7 @@ impl Attachment {
         if self.released {
             return Ok(());
         }
-        release_attachment(cx, root, self.id, cause)?;
+        release_attachment(cx, root, self, cause)?;
         self.released = true;
         Ok(())
     }
@@ -698,6 +721,7 @@ fn open(
             return Err(RunError::refused("this run is closed"));
         }
         let fence = fence(conn, &record.owner, record.generation)?;
+        journal::check_fence(conn, &fence)?;
         match client {
             Client::Owner => {
                 let attached: bool = conn.query_row(
@@ -757,22 +781,85 @@ fn open(
 fn release_attachment(
     cx: &EffectContext,
     root: &StateRoot,
-    id: AttachmentId,
+    attachment: &Attachment,
     cause: Release,
 ) -> Result<(), RunError> {
     mutations_only(cx, "a workspace attachment release")?;
-    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+    let cx = &cx.child(std::time::Duration::from_secs(1));
+    let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(RunAttachReleaseBefore)?;
-    store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
-        txn.conn().execute(
+    store.transaction_within(cx, BusyWait::Context, |txn| {
+        let released = txn.conn().execute(
             "UPDATE run_attachments SET state='released',release=?2,released_at=?3 \
              WHERE attachment_id=?1 AND state='attached'",
-            params![id.to_string(), release_name(cause), txn.now()],
+            params![attachment.id.to_string(), release_name(cause), txn.now()],
         )?;
+        if released == 1 && attachment.client == Client::Owner && cause == Release::Eof {
+            stop_owner_run(txn, attachment)?;
+        }
         Ok::<_, RunError>(())
     })?;
     crate::fault_point!(RunAttachReleaseAfter)?;
     Ok(())
+}
+
+/// An owning client's EOF without a detach stops its run (§8.11). The owner
+/// loop already drains these requests before it interprets EOF on its pipe, so
+/// the stop is durable even though the pipe is gone. A detach records none.
+fn stop_owner_run(txn: &Txn<'_>, attachment: &Attachment) -> Result<(), RunError> {
+    let Some(record) = journal_run(txn.conn(), attachment.run)? else {
+        return Ok(());
+    };
+    if record.phase == Phase::Closed
+        || record.owner != attachment.fence.resource.name().to_string()
+        || record.generation != attachment.fence.generation
+    {
+        // The run already closed or moved on; the release is the whole record.
+        return Ok(());
+    }
+    // A pending stop/escalation already guarantees owner shutdown. Reuse it
+    // when the terminal filled its control budget before disappearing.
+    let mut pending = txn
+        .conn()
+        .prepare("SELECT action FROM requests WHERE run_id=?1 AND state='pending'")?;
+    for action in pending.query_map([attachment.run.to_string()], |row| row.get::<_, String>(0))? {
+        let request: Request = serde_json::from_str(&action?)?;
+        if matches!(
+            request.action,
+            RequestAction::Stop | RequestAction::Escalate
+        ) {
+            return Ok(());
+        }
+    }
+    let id = owner_eof_request(attachment);
+    txn.conn().execute(
+        "INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) \
+         VALUES (?1,?2,?3,?4,'pending',?5) ON CONFLICT(request_id) DO NOTHING",
+        params![
+            id.to_string(),
+            attachment.run.to_string(),
+            attachment.fence.generation.get() as i64,
+            serde_json::to_string(&Request {
+                id,
+                run: attachment.run,
+                expected: attachment.fence.clone(),
+                action: RequestAction::Stop,
+            })?,
+            txn.now()
+        ],
+    )?;
+    Ok(())
+}
+
+/// One owning client's EOF names one stop for its attachment, so a repeated
+/// release cannot queue a second one.
+fn owner_eof_request(attachment: &Attachment) -> RunId {
+    let mut material = b"effigy.workspace.owner-eof-stop.v1".to_vec();
+    material.extend_from_slice(attachment.id.bytes());
+    let digest = Digest::of(&material);
+    let mut random = [0u8; 10];
+    random.copy_from_slice(&digest.0[..10]);
+    RunId::new(0, random).expect("a derived request id fits the identity range")
 }
 
 fn release_name(cause: Release) -> &'static str {
@@ -783,7 +870,7 @@ fn release_name(cause: Release) -> &'static str {
 }
 
 /// Whether this exact attachment row is still attached to this run and session.
-fn attached_row(
+pub(super) fn attached_row(
     conn: &Connection,
     id: AttachmentId,
     attachment: &Attachment,
@@ -854,8 +941,28 @@ fn admission_holder(conn: &Connection, run: RunId) -> Result<Option<AdmissionKey
     .transpose()
 }
 
+/// The session that actually admitted this run. A reservation that never
+/// reached its admission holds the run identity but admits nothing, so it is
+/// never reported here: an ordinary run that happened to reuse the id cannot be
+/// attached as, or closed for, that key.
 fn admission_session(conn: &Connection, run: RunId) -> Result<Option<Session>, RunError> {
-    Ok(admission_holder(conn, run)?.map(|key| key.session))
+    Ok(conn
+        .query_row(
+            "SELECT session_id,session_generation FROM workspace_admissions \
+             WHERE run_id=?1 AND state='admitted'",
+            [run.to_string()],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .optional()?
+        .map(|(session, generation)| {
+            Ok::<_, RunError>(Session {
+                run: session
+                    .parse()
+                    .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
+                generation: Generation::new(generation as u64),
+            })
+        })
+        .transpose()?)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -979,6 +1086,44 @@ fn fence(conn: &Connection, owner: &str, generation: Generation) -> Result<Fence
         resource,
         generation,
     })
+}
+
+impl Run<'_> {
+    pub(crate) fn workspace_attachment_attached(
+        &self,
+        attachment: &Attachment,
+    ) -> Result<bool, RunError> {
+        if attachment.run != self.id || attachment.fence != self.owner {
+            return Err(RunError::refused("this attachment belongs to another run"));
+        }
+        attached_row(self.store.conn(), attachment.id, attachment)
+    }
+
+    pub(crate) fn release_workspace_attachment(
+        &self,
+        attachment: &mut Attachment,
+    ) -> Result<(), RunError> {
+        if !self.workspace_attachment_attached(attachment)? {
+            return Ok(());
+        }
+        let cleanup = self
+            .cx
+            .operation()
+            .cleanup(std::time::Duration::from_secs(1))
+            .map_err(|_| RunError::broken("attachment cleanup budget overflow"))?;
+        let cx = cleanup
+            .operation()
+            .effects()
+            .map_err(|_| RunError::refused("attachment release needs effects"))?;
+        attachment.release(&cx, self.root, Release::Eof)
+    }
+
+    pub(crate) fn workspace_owner_detached(&self) -> Result<bool, RunError> {
+        Ok(self.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE run_id=?1 AND lifetime='owner' AND state='released' AND release='detach')",
+            [self.id.to_string()], |row| row.get(0),
+        )?)
+    }
 }
 
 #[cfg(test)]

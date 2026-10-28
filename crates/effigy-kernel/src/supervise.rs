@@ -889,6 +889,11 @@ pub struct SupervisorClient {
     closed: bool,
 }
 impl SupervisorClient {
+    /// Close this client's owning pipe. Without an acknowledged durable detach,
+    /// the supervisor stops the run; callers can still receive events and reap it.
+    pub fn close_input(&mut self) {
+        self.writer.take();
+    }
     pub fn event(&mut self, cx: &OperationContext) -> io::Result<Event> {
         loop {
             if self.buffer.len() >= 4 {
@@ -1317,6 +1322,7 @@ impl OwningChannel {
                 }
             }
         }
+        self.detached |= run.workspace_owner_detached()?;
         if eof && !self.detached {
             control.stop.get_or_insert(StopCause::OwnerLost);
         }
@@ -1350,6 +1356,7 @@ pub struct EngineSession {
     events: std::os::fd::OwnedFd,
     channel: OwningChannel,
     output: Option<OutputCapture>,
+    attachments: Vec<(run::Attachment, OwnerWatch)>,
 }
 impl std::fmt::Debug for EngineSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1380,6 +1387,7 @@ impl EngineSession {
                 detached: false,
             },
             output: None,
+            attachments: Vec::new(),
         })
     }
     pub fn payload(&self) -> &[u8] {
@@ -1439,7 +1447,47 @@ impl EngineSession {
         run: &mut Run<'_>,
         routed: &[crate::signal::RoutedSignal],
     ) -> Result<Control, RunError> {
+        // Observe client loss independently of stream reads and backpressure.
+        let mut index = 0;
+        while index < self.attachments.len() {
+            let (attachment, watch) = &mut self.attachments[index];
+            if !run.workspace_attachment_attached(attachment)? {
+                self.attachments.remove(index);
+            } else if watch.lost() {
+                run.release_workspace_attachment(attachment)?;
+                self.attachments.remove(index);
+            } else {
+                index += 1;
+            }
+        }
         self.channel.turn(run, routed)
+    }
+    /// Watch an authenticated client's liveness pipe in the existing supervisor.
+    /// EOF releases this attachment on the next control turn, even when its
+    /// terminal process is killed. Only owner loss requests stop. The caller
+    /// must retain the sole write end in that client, independently of data flow.
+    pub fn watch_attachment(
+        &mut self,
+        run: &Run<'_>,
+        attachment: run::Attachment,
+        input: &std::fs::File,
+    ) -> Result<(), RunError> {
+        if !run.workspace_attachment_attached(&attachment)? {
+            return Err(RunError::refused("this attachment was released"));
+        }
+        if self.attachments.len() >= run::SECONDARY_MAX + 1
+            || self
+                .attachments
+                .iter()
+                .any(|(held, _)| held.id() == attachment.id())
+        {
+            return Err(RunError::refused(
+                "this supervisor already watches this attachment or is full",
+            ));
+        }
+        self.attachments
+            .push((attachment, OwnerWatch::start(input)?));
+        Ok(())
     }
     /// Whether the owning client detached: its death no longer stops the run.
     pub fn detached(&self) -> bool {

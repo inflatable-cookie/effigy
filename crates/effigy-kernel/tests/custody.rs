@@ -1326,6 +1326,131 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
     ));
 }
 
+/// Handle EOF and acknowledged detach drive the real detached engine's custody,
+/// including a killed secondary's independent liveness pipe and slot reuse.
+#[test]
+fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
+    for cause in [Release::Eof, Release::Detach] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let key = AdmissionKey {
+            session: Session {
+                run: id(7),
+                generation: Generation::new(1),
+            },
+            request: RequestId::new([4; 16]),
+        };
+        let digest = Digest::of(b"workspace-lifetimes");
+        let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
+            Reservation::Fresh(ticket) => ticket,
+            other => panic!("reservation {other:?}"),
+        };
+        let mut client = start_engine(
+            &cx,
+            home.path(),
+            EngineLaunch {
+                payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+                cwd: home.path().into(),
+                env: vec![],
+                handoff: None,
+                admission: Some(ticket),
+            },
+            &Executable::capture(&fixture()).unwrap(),
+            ClientMode::Owning,
+        )
+        .unwrap();
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+
+        let listener = std::os::unix::net::UnixListener::bind(home.path().join("a.sock")).unwrap();
+        client.send_frame(b"watch-secondary").unwrap();
+        let (socket, _) = listener.accept().unwrap();
+        let mut terminal = ChildGuard(
+            Command::new("/bin/sleep")
+                .arg("40")
+                .stdin(Stdio::from(std::os::fd::OwnedFd::from(socket)))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Engine(_)) {}
+        terminal.0.kill().unwrap();
+        assert!(!terminal.0.wait().unwrap().success());
+        eventually(|| {
+            // The supervisor records only the secondary's EOF; the owner lives.
+            match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
+                Observed::Verified(_reader, _) => rusqlite::Connection::open_with_flags(root.path().join("kernel.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap().query_row(
+                    "SELECT count(*) FROM run_attachments WHERE lifetime='secondary' AND state='attached'", [], |r| r.get::<_, i64>(0)
+                ).unwrap() == 0,
+                _ => false,
+            }
+        });
+        assert!(matches!(
+            engine_status(home.path()),
+            Observed::Verified(RunStatus::Live(_), _)
+        ));
+        // All eight slots can be filled after the killed terminal is released.
+        for n in 0..SECONDARY_MAX {
+            attach_secondary(
+                &cx,
+                &root,
+                key.session,
+                id(9),
+                AttachmentId::new([20 + n as u8; 16]),
+            )
+            .unwrap();
+        }
+        let mut owner = resume_owner(&cx, &root, key.session, id(9)).unwrap();
+        owner.release(&cx, &root, cause).unwrap();
+        if cause == Release::Detach {
+            // Closing the original owning pipe must respect handle detach.
+            // Keep the Child handle so this test still reaps its own supervisor.
+            client.close_input();
+            std::thread::sleep(Duration::from_millis(150));
+            assert!(matches!(
+                engine_status(home.path()),
+                Observed::Verified(RunStatus::Live(_), _)
+            ));
+            client.stop(&cx, id(8)).unwrap();
+        }
+        client.wait(cx.operation()).unwrap();
+        assert!(workload_gone(home.path()));
+        let reader =
+            match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
+                Observed::Verified(reader, _) => reader,
+                other => panic!("store {other:?}"),
+            };
+        assert!(matches!(
+            lookup(&reader, key, digest),
+            Observed::Verified(
+                Recovered::Completed {
+                    outcome: RecordedOutcome {
+                        workload: WorkloadOutcome::Cancelled {
+                            cause: StopCause::Requested,
+                            ..
+                        },
+                        cleanup_complete: true
+                    },
+                    ..
+                },
+                _
+            )
+        ));
+        assert_eq!(
+            rusqlite::Connection::open_with_flags(
+                root.path().join("kernel.db"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            )
+            .unwrap()
+            .query_row("SELECT count(*) FROM run_attachments", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+            0
+        );
+    }
+}
+
 fn foreground_begin(cx: &EffectContext, root: &StateRoot) -> ForegroundRun {
     ForegroundRun::begin(
         cx,

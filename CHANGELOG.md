@@ -149,6 +149,9 @@ During v0.x, MINOR bumps may include breaking changes.
   group/world-writable binary. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes
   only unit and capability records Effigy wrote.
+- The kernel workspace seam recovers keyed admissions across reconnects and
+  gives secondary terminals independent lifetimes and bounded run controls.
+  Owner EOF stops the supervised run; acknowledged detach leaves it running.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
