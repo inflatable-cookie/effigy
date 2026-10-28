@@ -345,6 +345,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A container workload's spawn environment drops every session vault access
+  key, exactly as a host workload's does. A `.env` or task `env` entry named
+  `EFFIGY_SECRET_PASSPHRASE`, `EFFIGY_INTERNAL_SECRET_PASSPHRASE`,
+  `EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS`, `EFFIGY_INTERNAL_SECRET_GRANT` or
+  `EFFIGY_TEST_SECRETS_PASSPHRASE` no longer reaches a container; the run's
+  declared secrets and the user's own variables still do.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.

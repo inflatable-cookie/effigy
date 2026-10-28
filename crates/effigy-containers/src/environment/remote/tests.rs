@@ -7,6 +7,18 @@ use std::rc::Rc;
 const ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const NONCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+/// The names and values the caller's session sources have in the exec client's
+/// own environment. A relay forwards the names it is given and nothing else, so
+/// no relay may carry one of these into the guest (contract 032; effigy#338;
+/// effigy#445).
+const SESSION_SOURCES: [&str; 5] = [
+    "EFFIGY_SECRET_PASSPHRASE",
+    "relay-must-not-forward-this",
+    "retired-passphrase",
+    "test-passphrase",
+    "EFFIGY_INTERNAL_",
+];
+
 fn operation(budget: Duration) -> OperationContext {
     OperationContext::new(
         Deadline::At(Instant::now() + budget),
@@ -537,6 +549,11 @@ fn launch_refuses_multi_line_values_unportable_names_and_recovery_adapters() {
 }
 
 /// The relays run as written: a fake CLI echoes what it received.
+///
+/// The relay's own environment also holds the caller's session sources here.
+/// Neither relay contributes an ambient variable to the guest: the guest is
+/// handed the names it was given, and the exact expected outputs below show
+/// nothing else crossed (contract 032; effigy#338; effigy#445).
 #[test]
 fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
     use std::io::Write;
@@ -573,6 +590,14 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("EFFIGY_REMOTE_V0", "one")
             .env("EFFIGY_REMOTE_V1", "two words = more")
+            // The caller's session sources sit in the relay's environment, as
+            // they do in the real exec client. A relay forwards named values
+            // only, so none of these may reach the guest or an argument.
+            .env("EFFIGY_SECRET_PASSPHRASE", "relay-must-not-forward-this")
+            .env("EFFIGY_INTERNAL_SECRET_PASSPHRASE", "retired-passphrase")
+            .env("EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS", "1")
+            .env("EFFIGY_INTERNAL_SECRET_GRANT", "1")
+            .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "test-passphrase")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -602,6 +627,12 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
         docker_out,
         "A=one\nB=two words = more\nargv:exec -i\ntyped input\n"
     );
+    for forbidden in SESSION_SOURCES {
+        assert!(
+            !docker_out.contains(forbidden),
+            "`{forbidden}` crossed a relay into the guest: {docker_out}"
+        );
+    }
     for (mode, tail) in [("none", ""), ("stdin", "typed input\n")] {
         let out = run(
             vec![
@@ -627,6 +658,12 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
             format!("keep:A,B\nA=one B=two words = more\nargv:exec -e A\n{tail}"),
             "{mode}"
         );
+        for forbidden in SESSION_SOURCES {
+            assert!(
+                !out.contains(forbidden),
+                "`{forbidden}` crossed a relay into the guest: {out}"
+            );
+        }
     }
 }
 
