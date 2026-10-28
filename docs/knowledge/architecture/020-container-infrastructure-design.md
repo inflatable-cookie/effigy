@@ -928,27 +928,15 @@ route name to the reported HTTPS address; normal operator mode and its
 established host integration remain the default. Fixed-port consumer adapters
 and hybrid child-listener ownership are outside this capability.
 
-An isolated project's loopback assignment uses the same qualified identity in
-generated Compose and gateway registration:
-`project:<project-name>:<absolute-checkout>`. A legacy bare project key moves
-only when its saved scope matches that checkout and its IP is not assigned to
-another identity. Scope retirement removes qualified and attributable legacy
-keys; shared identities remain retained. Stale reclamation requires
-successful inventory across every participating runtime: Docker when it
-participates, and every running Colima profile. Participation is decided
-first, without launching a runtime. Docker considers every endpoint that could
-be effective (`DOCKER_CONTEXT`, `DOCKER_HOST`, the stored current context, then
-the platform default socket) and is inactive only when all of them are absent
-local Unix sockets; any remote, reachable, unresolvable, unreadable, or stale
-endpoint stays authoritative. Context names are case-sensitive, so a context
-named `DEFAULT` stays selectable. Colima is inactive only when its CLI is
-absent and its Colima home can be inspected with no Colima or Lima instance
-state remaining. A successful empty result is
-distinct from profile-list, `ps`, or parse failure. Incomplete discovery
-preserves uncertain assignments and reports the backend, profile, error, and
-skipped reclamation reason; identical warnings print once per process. If
-preservation leaves the bounded pool full, allocation reports capacity
-exhaustion with the discovery failure.
+A checkout's loopback alias is not a separate record: the gateway's route table
+is the only record of loopback ownership, so an address is in use exactly when
+some route references it as its `dns_ip` or as its target. `up` takes the
+address the checkout's routes already answer with, or the lowest address in the
+`127.1.0.1`-`127.1.0.50` pool that no route references; `down` and retirement
+free it by removing those routes, and any route write drops the routes of a
+checkout path that is missing. A deleted worktree therefore keeps neither a
+domain nor an address, and no inventory across runtimes, qualified project key
+or reclamation plan exists to run.
 
 ## 5. Persistent Data, Cache, and Volume Lifecycle
 

@@ -4,7 +4,7 @@ Q-010 storage model (Tom, 2026-10-22: "Approve"): foreground runs keep
 runtime state in memory; runs requiring retained state use their owning
 checkout journal; only gateway endpoints/routes, ports and admission facts use
 the machine store. §3.1, §7 and §11 govern classification, storage and migration.
-Engine adoption limits remain recorded in §10.
+Engine adoption limits are recorded per engine in that engine's own contract.
 
 Local shell tasks, statically resolved local sequences and local test suites,
 including the interactive test TUI, use `ForegroundRun`. Ancestor gate custody,
@@ -28,9 +28,8 @@ and no command: everything that release left on disk is ignored, never changed
 and never deleted, and a stack it left running is reconciled by the first `up`
 through the ordinary apply. Named volumes and Compose project names did not
 change, so the data stays and the upgrade costs one container recreate per
-stack. The importer for the unreleased-main central
-`~/.effigy/state/kernel.db` was retired in effigy#307; the v0.14.1 importer,
-the `run migrate` report and the PID-only v0.14 refusals in effigy#373.
+stack. No legacy layer remains: no importer, no migration report and no
+PID-only refusal.
 
 Runtime ownership is only the backend's own labels; there is no scope inventory
 to keep. After deletion, `container retire --dead` groups the labelled
@@ -73,12 +72,11 @@ supervisor is armed at every kernel crossing (`test:supervisor:faults`). That
 proof traces one immutable crossing list, assigns each entry once across six
 owned fixture workers, and reaps every worker before aggregation; per-run
 deadlines remain separate from the whole-matrix timeout.
-The task engine has adopted the kernel (effigy#217; §10.1 records each row),
+The task engine has adopted the kernel (effigy#217),
 and bundle-source preparation uses Prepare runs, source custody, store gating
 and atomic lock publication. The environment reconciler has adopted it
-(effigy#232; contract [053](053-environment-reconciler-contract.md), §10.3).
-Managed runs have one detached supervisor per run (effigy#235; §10.2 records
-each row). Other adoption limits remain recorded per engine in §10. QA-group runs are kernel runs,
+(effigy#232; contract [053](053-environment-reconciler-contract.md)).
+Managed runs have one detached supervisor per run (effigy#235). QA-group runs are kernel runs,
 but `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until the task
 engine exposes them.
@@ -800,10 +798,12 @@ effigy#275 after concurrent runs refused each other with `Busy`.
 
 Reads create no files and copy nothing: `Store::read` is one read-only SQLite
 connection with `PRAGMA query_only` and a short busy timeout (K1, Q-011). A
-store with write-ahead side files is read through SQLite's own WAL with a
-read-only shared-memory index (`readonly_shm=1`), so a writer beside the read is
+store with write-ahead side files is read through SQLite's own WAL with a plain
+read-only connection (`mode=ro`), so a writer beside the read is
 no obstacle: WAL already gives one consistent committed state, and a crashed
-writer's uncommitted frames are invisible to the reader and left untouched. A
+writer's uncommitted frames are invisible to the reader and left untouched. The
+read never asks for a read-only shared-memory index: that left the index
+unwritable and the next write in this process failed. A
 checkpointed store without side files is an immutable open, which needs no lock
 and no index. A read that fails is `Unknown`: the foreground path warns once and
 proceeds, and `runs` reports the journal as unavailable rather than refusing.
@@ -1398,7 +1398,7 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
 | --- | --- |
 | Supervisor Crash or Kill | The sentinel settles. |
 | Supervisor and sentinel both Crash or Kill | Status shows `interrupted`; the next Mutate on the owner, or `stop`, settles. |
-| Sentinel or supervisor dies, or stops answering, before it acknowledges | `Unavailable` (§6.1), naming the helper, how it ended, the parent's handshake cause and the helper's stderr tail; never a store error and never a refusal. The end is its code or signal; `Stopped` when it was still running after a 2-second bound (it is the parent's own unreaped, unregistered child, so stopping it is identity-safe); or `NotStarted` when this process refused the image before spawn or the spawn failed. Until it acknowledges, the helper's stderr is an unlinked private file under the state root; the outcome carries its last 4 KiB, and the hidden entry writes its refusal there before exiting. After acknowledgement stderr returns to the null device. An admitted run then settles `Closed(NotStarted)`: nothing ran on the helper's behalf. |
+| Sentinel or supervisor dies, or stops answering, before it acknowledges | `Unavailable` (§6.1), naming the helper, how it ended, the parent's handshake cause and the helper's stderr tail; never a store error and never a refusal. The end is its code or signal; `Stopped` when it was still running after a 2-second bound (it is the parent's own unreaped, unregistered child, so stopping it is identity-safe); or `NotStarted` when the spawn itself failed. Until it acknowledges, the helper's stderr is an unlinked private file under the state root; the outcome carries its last 4 KiB, and the hidden entry writes its refusal there before exiting. After acknowledgement stderr returns to the null device. An admitted run then settles `Closed(NotStarted)`: nothing ran on the helper's behalf. |
 | ENOSPC on the socket path | The admitted run launches no workload and settles with nothing applied: `Closed(NotStarted)`. If closing also fails, the run reads Interrupted under §5.6 recovery. |
 | Perm on the socket | The peer-uid check refuses. The request row remains; the supervisor reads requests when it polls the store. |
 | Clock | No time authority. |
@@ -1450,14 +1450,13 @@ pub enum AttachError {
     Store(StoreError),
 }
 
-pub enum ClaimState { Pending, Committed, Releasing, Quarantined { reusable_at: BootInstant } }
+pub enum ClaimState { Pending, Committed, Releasing }
 
 impl Claims {
     pub fn reserve(txn: &mut Txn, holder: &ResourceId, run: RunId, wanted: &[ResourceId])
         -> Result<ReservationToken, Conflict>;             // all or none, one transaction
     pub fn commit(txn: &mut Txn, token: ReservationToken, revision: u64) -> Result<(), StoreError>;
-    pub fn release(txn: &mut Txn, token: ReservationToken, quarantine: Duration)
-        -> Result<(), StoreError>;
+    pub fn release(txn: &mut Txn, token: ReservationToken) -> Result<(), StoreError>;
 }
 ```
 
@@ -1505,9 +1504,8 @@ Holder liveness:
 - I-A3: claims reserve the complete conflict set (data, domains, addresses,
   ports) in one transaction before any effect. A pending claim is protected
   while its holder's gate is held; reclaim needs that holder `Absent`.
-- I-A4: a released endpoint claim is quarantined for the published DNS time
-  to live plus the connection drain budget, measured on the boot clock. A
-  reboot ends quarantine.
+- I-A4: a released claim frees its resource immediately; nothing waits out a
+  reuse period.
 - I-A5: the release policy (`stop_on_release`, idle stop, persistence) is the
   environment engine's. The kernel only guarantees the holder protection.
 
@@ -1519,7 +1517,6 @@ Holder liveness:
 | Crash, Kill mid-reservation | The transaction rolls back; nothing reserved. |
 | ENOSPC | Reservation or attach fails before the effect. |
 | Perm | Reservation refuses before any effect. Holder observations become `Unknown`, which protects (R4). |
-| Clock | Quarantine uses the boot clock, so wall jumps cannot shorten it. |
 
 #### Proof
 
@@ -1533,8 +1530,6 @@ Holder liveness:
   the transition. No destructive call ever runs with an attachment present.
 - A holder settles and releases its attachment while a transition holds
   `Gate(Env)`; neither waits on the other.
-- An address released and immediately requested is refused until
-  quarantine ends.
 
 Implemented beyond the sketch above (effigy#232): `publish_active_for`
 inserts each requesting run's attachment in the environment apply run's
@@ -2011,7 +2006,7 @@ when a user actually named something that is not a task (effigy#360).
 | Crash or Kill anywhere | Intent before effect means every effect is findable; one settle resolves it later. | That the effect did not happen. |
 | ENOSPC | Every write fails before its effect or preserves the previous generation. | That work in flight completes. |
 | Perm | Refuse before effects; observations become `Unknown`. | That an `Unknown` resource is safe to act on. |
-| Clock jump, suspend | No authority from wall time; gates have no time; quarantine uses the boot clock. | Accurate displayed timestamps. |
+| Clock jump, suspend | No authority from wall time; gates have no time. | Accurate displayed timestamps. |
 | SIGSTOP of a holder | Never stolen; waiters time out naming it. | Progress. |
 | Lost group anchor | Unverifiable live groups stay `Unknown`; no numeric group signal. | Cleanup of nonce-free descendants after anchor loss, or session escapes. |
 | External boundaries | At-least-once attempts with idempotent undo, inspect-and-reconcile, or a recorded `Irreversible` or `Unknown`. | Exactly-once delivery across filesystem, engine or network. |
@@ -2066,7 +2061,7 @@ and mode are never consulted, so a umask-002 checkout, a CI container or
 Mutation on NFS, SMB, WebDAV, FUSE or sshfs refuses. SQLite keeps §5.5's
 WAL/FULL settings. Private fixtures use a fresh `HOME` **and independent
 checkout roots**, never real checkout links. No production state override is
-needed. Wall clocks are display only; persisted deadlines/quarantine retain
+needed. Wall clocks are display only; persisted deadlines retain
 boot identity and boot-monotonic nanoseconds. A different boot ends them.
 The state subtree, secrets and control sockets are masked from workspace guest
 mounts; guests continue through the host authority channel (R1).
@@ -2192,7 +2187,7 @@ on task close. Foreground completion leaves no history to retain.
 Scope removal still needs its scope gate exclusively, with no guards alive.
 Externally deleted checkouts are reported as missing (§7.1); discovery never
 creates tombstones or cleans their external resources. Machine endpoint and
-port records expire only through verified release/quarantine, never because a
+port records expire only through verified release, never because a
 checkout disappeared. Machine recovery records are compacted only after their
 effects are positively resolved, independently of checkout retention.
 
@@ -2209,8 +2204,8 @@ lock files contain no checkout registry or shared data-claim database. Internal
 database and object mutexes use their owning checkout's filesystem scope.
 
 The allowlist is closed: gateway daemon identity/control and endpoint/route
-claims (including manual routes, loopback addresses and quarantine), the port
-registry (pins/ranges and owning checkout identities), and host admission state
+claims (including manual routes and loopback addresses), and host admission
+state
 (opaque live grants/waiters if an admission provider uses this store). Schema,
 writer build and import receipts support those facts. Path hints on a claim are
 ownership evidence, not an enumeration of checkouts. No checkout catalogue,
@@ -2610,272 +2605,10 @@ only, and host access needs a terminal opened through Effigy.
 | Task with profile (managed) | run supervisor | `Task(TaskId with profile)` | detached | setup, attachments, gateway ensure, workloads (local, remote) | workloads (remote first), then release attachments |
 | Env | environment reconciler | `Env` | detached for sidecars; inline for `up` and `down` | applying stages, claims, sidecar workloads | per environment policy, under a permit |
 | Data | environment reconciler | through `Env` claims | — | claim reserve, commit, release | release claim |
-| Endpoint | gateway engine | through claims; `Gateway` for lifecycle | inline; daemon | reserve, commit revision, applied acknowledgement | release to quarantine |
+| Endpoint | gateway engine | through claims; `Gateway` for lifecycle | inline; daemon | reserve, commit revision, applied acknowledgement | release |
 | Gateway | gateway engine | `Gateway(instance)` | daemon lifecycle run | bind, publish | stop |
 | Store (vault, bundles, graph, deps) | owning lane | `Store(name)` | inline | replace commits | restore previous generation where declared |
 | Delivery (release, state, deploy) | owning lane | `Task` or `Store` | inline | checkpoints | `Irreversible` reported; reconcile, never replay |
-
-## 10. Adoption map
-
-Current mechanisms and their kernel replacements. Evidence is at main
-`bcb5bf40e`. Engine lanes own the migration.
-
-### 10.1 Task engine
-
-| Current mechanism | Evidence | Kernel replacement |
-| --- | --- | --- |
-| Lock key is the typed selector | `src/runner/manifest.rs:25-32` | `TaskId` from `ResolvedInvocation`; `Gate(Task)` (K1) |
-| Lease lock: hard-link publish, stale reclaim, heartbeat thread | `src/runner/locking/io.rs:118-164`, `:251-339`, `:466`; `src/runner/locking/io/stale.rs:17-18`, `:173-204` | `Gate` (K2) |
-| `tasks unlock` | `src/runner/locking/io.rs:202-249` | removed (I-G7) |
-| Hostname as PID namespace | `src/runner/locking/io/stale.rs:194-218`; `src/runner/managed_settle.rs:526-540` | host-only gates (R1) |
-| Status active, latest, history as three renames; 20 s staleness; FNV key over the typed selector | `src/runner/execute/task_status.rs:103-126`; `crates/effigy-runtime/src/task_status.rs:15`, `:241`; `crates/effigy-execution/src/task_status.rs:62-97`, `:245` | `runs` rows plus gate probe (§5.6 status) |
-| Status write failure replaces the result | `src/runner/execute/pipeline/standard.rs:94-102` | `Outcome` warnings (K10) |
-| Process group only inside a heavy scope | `src/runner/execute/process.rs:23-29` | `OwnedProcess` always (K6) |
-| Owned-children TERM, grace, KILL | `src/runner/owned_children.rs:503-545`, `:685` | absorbed into `OwnedProcess` and `SignalRouter` |
-| Generated sequence script with Python timeouts under `--json` | `src/runner/execute/sequence_run.rs:39`; `crates/effigy-managed/src/scheduler/script.rs:93` | one executor on `OwnedProcess` (K11) |
-| Env-schema commands before the lock; unbounded pipe drain | `crates/effigy-env/src/exec.rs:25-77` | after `Admitted`; bounded capture (K3, K8) |
-| `unsafe set_var` with threads alive | `src/runner/secret_session.rs:33`, `:52`, `:70`; `src/runner/execute/pipeline/managed.rs:229`; `src/runner/execute/sequence_run.rs:1034`, `:1044`; `crates/effigy-context/src/lib.rs:29`, `:45` | explicit context; spawn-spec env (K12) |
-| Task cache rewritten in place | `src/runner/cache/store.rs:58` | `atomic_replace`, or the cut-list removal |
-| Git exclude registration | Manifest composition reads only; source Prepare records registration before acting | Prepare and Mutate only (R2) |
-| Read-command presentation | Local window-size query and recorded version stamps only; no `tput` fallback or Git identity inference | Static (R2) |
-| Git provenance and identity diagnostics | Child Git probes disable optional index writes (`GIT_OPTIONAL_LOCKS=0`) | Observe (R2) |
-| Bundle and catalog source preparation | Checkout pins and immutable source generations; no read-time refresh or cache lock | Prepare run; `Gate(Store bundles)` with deadline; atomic checkout lock publication |
-| Scheduler client signal handler | retired with the host-run client (Q-006, effigy#227) | the admission hook is a custody process of the run; a routed signal while waiting cancels the run |
-| QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
-
-Task engine adoption (effigy#217, 2026-10-19):
-
-| Row | State |
-| --- | --- |
-| Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
-| Status rows | In progress. `effigy.tasks-status.v3` and `effigy.tasks-status-all.v3` combine transient foreground gate diagnostics with independently labelled durable history ([018](018-task-status-query-surface-and-read-model-contract.md)). Missing current evidence reads `not-recorded`; foreground completion creates no history. v0.14 status families remain retired. Generic run inventory and complete cross-checkout coverage are still required. |
-| Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
-| Process group always; owned-children stop | Local groups retain a recorded anchor before workload go (effigy#252), allowing recovery of nonce-free members after the leader is reaped; lost anchors and old unanchored receipts retain the conservative refusal (§5.7). Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container task routes, inline workspace tasks, sequence container steps, built-in `exec` steps and named-container managed setup run under remote custody (§5.10, effigy#236). Top-level `effigy exec`, aliases, shells and managed processes keep their current spawners until their owners adopt custody. |
-| Generated sequence script | One typed engine with child Runs for every placement, in text and JSON: host steps (effigy#226) and container steps under remote custody (effigy#236); the `legacy_container_step` seam and the generated named-container setup script are gone. Container setup embedded in a lifecycle-managed process command still runs inside that managed process, so its per-step journals need the run supervisor's custody of managed processes; not done in #236. |
-| Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
-| `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Sequence environments use lexical spawn inputs, never process-global mutation (effigy#226). The external task source isolation marker remains. |
-| Task cache | Done: removed. |
-| Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220). The scheduler client and its signal handler are gone (Q-006, effigy#227). |
-| Heavy admission and run control (Q-006) | Done (effigy#227). `admission = "heavy"` is metadata; `EFFIGY_ADMISSION_HOOK` runs as an auxiliary custody process held until settle; `--run-id` derives the run id; `runs`, `run status|logs|stop` read the journal, the per-stream logs (family 6) and request `Stop`. Contract [049](049-heavy-validation-admission-contract.md). |
-| QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
-| Per-run scratch directory (effigy#244, effigy#253, effigy#361, effigy#386) | Done. With user config `[scratch] root` naming any directory, each host-placed run — the built-in `effigy test` route too, through a standalone engine run — gets `<root>/effigy/<8-character run directory>/`, a name derived from the run's whole id so same-instant and keyed runs differ, and its host processes see that directory as `TMPDIR`, `TMP` and `TEMP`. `effigy/` is the only entry Effigy names at the top of the operator's root, so no sibling folder has to be told apart from a run: ownership is the marker, not a name list. A run an earlier build placed directly under the root stays where it is and retires in place by the same rules; it is never moved, renamed or bulk-cleaned, and a new namespaced run may carry the same run name beside it. It is a plain directory, not a kernel effect: the run records no intent, holds no journal record for it and settles nothing through this contract. `.effigy-scratch.json` inside it records the run, task, checkout, the creating process and its start identity, and the creation time; Effigy removes the tree when the run succeeds, restoring owner write through it first without following a symlink or crossing a mount, and a run that failed or was cancelled writes `keep: true` and a conclusion time and keeps the tree for 24 hours. Only the run that opened a directory concludes it: a step or nested run holds an inherited handle and decides nothing, so a step's success never removes the parent's tree. A bounded sweep at a later run's start removes a marked directory whose conclusion is over 24 hours old, whose creating process is gone when it has no conclusion, or that is over 7 days old; it reads only the marker and a process-liveness check, never a journal, and stops at its own time and count bounds, leaving whatever it did not reach to a later run. The same bounds cover the namespace and a legacy top-level run together. An unmarked entry under the root or the namespace is never touched, the `effigy/` namespace itself is never judged as a run, and a directory the sweep cannot decide is skipped silently. A killed Effigy leaves its directory until the next sweep: that costs disk until then, never correctness. A nested run or step reuses its parent's directory, container workloads never see it, and a task's `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0` opts out. The built-in route's host suites are child runs of its run, so each suite's process group is custody the run settles before the directory is removed. Without a configured root, local suites use an in-memory run and no state home or writable journal. A root Effigy cannot write degrades to the default temp directory with one warning; the run is never refused or failed for scratch. The marker is run metadata in the operator's directory, outside the state root and outside this contract's families, so `qa:kernel-ratchet` accounts for its one raw write by name and ceiling rather than routing it through a kernel it does not belong to. |
-
-Prerequisite kernel additions for that adoption: `run::history`,
-`run::unclosed` and `RunSummary` (§5.6 status reads); `TaskId` and
-`ResourceId::key` accessors (§5.1); `Terminal::Inherit { capture }` and
-separately redacted stdout and stderr queues (§5.7); and an `Executable` that
-is the binary's path. Helpers exec whatever that path names, so a build that
-replaces the running binary's path (`cargo run` of Effigy inside an Effigy
-sequence) is not a refusal. Each helper handshake frame carries
-`HELPER_PROTOCOL`; a binary that speaks another version refuses and names both
-versions, telling the operator to rerun the command. The version is read from
-the frame's `protocol` field *before* the rest of the frame is deserialised, so
-a frame whose shape an update changed still reads as `Effigy was updated; rerun
-the command` rather than as a broken store value (F8). The version covers the
-event frame's shape too, so a refusal event that carries a category (§6.1) is
-never decoded by a binary that predates it. There is no image pin, no clone or
-copy, and no identity check.
-
-Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,
-CLI and helper dispatch with release optimization and symbols stripped so macOS's
-pre-main loading does not dominate the unchanged eight-/ten-second fixture
-bounds. Ordinary dev, test and release profiles are unchanged.
-
-### 10.2 Run supervisor
-
-| Current mechanism | Evidence | Kernel replacement |
-| --- | --- | --- |
-| `session.json` written by the headless owner | `crates/effigy-managed/src/runtime/headless.rs:156-167`, `:1060` | `runs` row from `Run::begin` |
-| Setup steps before the task lock | `src/runner/execute/pipeline/managed.rs:256` before `:340` | setup after `Admitted` (K3) |
-| `stop.requested` marker | `crates/effigy-managed/src/runtime/headless.rs:157`, `:687` | `requests` table (I-R4) |
-| Exec group marker files in the bind mount | `crates/effigy-managed/src/runtime/headless.rs:764`; `crates/effigy-containers/src/session.rs:441-444` | in-band registration (§5.10) |
-| Lossy `safe_component` paths | `crates/effigy-managed/src/runtime/headless.rs:1047` | encoding v1 (K1) |
-| Settle budget as a sum of constants | `crates/effigy-managed/src/runtime/headless.rs:31-38` | settle observed from the journal; per-effect deadlines |
-| Signal handler for INT and TERM only | `crates/effigy-managed/src/runtime/headless.rs:1218-1231` | `SignalRouter` with HUP (K9) |
-| Owner discovery through lock files and run tokens | `src/runner/managed_settle.rs:42`, `:167-207`; `src/runner/locking/io.rs:349`, `:429-454` | attachments plus gate probe |
-| Directory scan for live sessions before handover | `crates/effigy-managed/src/runtime/headless.rs:416-423`; `src/runner/container_command/handover.rs:440`, `:468` | `Attachments::holders` (I-A2) |
-| Generated lifecycle shell, state file, EXIT trap, curl readiness, `starting` deadline bypass | `crates/effigy-containers/src/session.rs:221`, `:260`, `:317`, `:324`, `:405`, `:412-420` | attachment effect, `Probe`, deadlines |
-| Progressive spawn without rollback | `crates/effigy-process/src/lib.rs:211-238` | `spawn_all` with barrier and rollback |
-| Supervisor shutdown grace | `crates/effigy-process/src/supervisor_shutdown.rs:7-11` | `OwnedProcess::stop` |
-| Host sidecar supervisors: setsid, PID and spec files, blocking lifecycle lock, best-effort stop | `src/runner/host_process.rs`; `src/runner/container_command/closeout.rs:33-36` | environment-owned detached run; `StopReport` (adopted, effigy#320) |
-| Listener transition history | Removed; existing historical files are left untouched | No replacement writer or store |
-| Remote stop of a bare PGID in the current primary | `crates/effigy-containers/src/exec/managed_stop.rs:36` | `signal_session` on the registration (I-RC2) |
-
-Adoption (effigy#235). A managed run's client resolves the invocation and
-starts one detached engine supervisor (`start_engine`, §5.8). The supervisor
-admits the run, then runs setup, gateway, environment and workloads inside
-it, and its one settle is the only cleanup. TUI, attached text (`--headless`)
-and `--detach` are front ends over the same run. Row by row:
-
-- `session.json`: replaced. The `runs` row and its effects are the record;
-  `<task> status` projects them (`effigy.managed.status.v1`). A live v0.14
-  session is refused with its stop command; nothing is imported (§11).
-- Setup before the lock: replaced. Setup runs after `Admitted`.
-- `stop.requested`: replaced. `<task> stop`, signals and handover write a
-  `requests` row through the run-control stop path (#227).
-- Exec group markers: narrowed, not replaced. Each remote group is a
-  `managed:exec-group` effect intended before spawn. Its marker
-  (`.effigy/runtime/managed-exec/<task>+<profile>/<process>.pgid`) holds the
-  PGID and the run's nonce, and release refuses a marker without that nonce.
-  In-band registration (§5.10) stays open.
-- Lossy `safe_component`: replaced. Marker components are percent-encoded,
-  so distinct names never share a marker.
-- Settle budget sum: replaced. Settle reads the journal under one cleanup
-  deadline; each effect is observed before release.
-- INT/TERM handler: replaced. Clients route INT, TERM and HUP through
-  `SignalRouter`, and the supervisor's owning pipe makes client death
-  (terminal close, SIGHUP, SIGKILL) a stop.
-- Owner discovery through lock files and run tokens: replaced. The run
-  holds its environment through the reconciler's hold API (contract 053
-  §4): its bring-up names the run in `EFFIGY_INTERNAL_ENVIRONMENT_HOLDER`, so
-  the activation attaches it, and its settle's stop exempts only itself.
-  Remote task locks still carry `EFFIGY_MANAGED_RUN_TOKEN` for attribution.
-- Directory scan before handover: replaced. Handover ends the live managed
-  runs the environment record names as holders.
-- Lifecycle shell, state file, EXIT trap, curl readiness, `starting`
-  bypass: replaced. The environment phase is an `up` custody child and
-  exec readiness polled with backoff to a deadline; `health_wait` route
-  probes run through `Probe` once the workloads have started. No shell trap
-  remains.
-- Progressive spawn without rollback: replaced. Each workload is an intended
-  custody effect; a failed start settles everything already started.
-- Supervisor shutdown grace: replaced by `OwnedProcess::stop` in settle.
-- Host sidecars: adopted (effigy#320). Each `[[containers.<env>.host_processes]]`
-  entry is one detached `Run` owned by its own `HostProcess` resource in the
-  environment's checkout scope, so it holds a `Gate(HostProcess)` and never
-  `Gate(Env)` for its lifetime. The supervisor spawns each child generation
-  through `Custody`, which journals the group receipt, the anchor and the
-  grace; readiness, route publication and the declared restart policy stay
-  engine work. Bring-up waits in two phases: while the reserved port is closed
-  and the child runs it has no deadline, prints a progress line to the console
-  every 30 s as well as to the log, and ends on the stop a `down` from another
-  shell sends, so a live but hung child can never hold a start forever; once
-  the port first answers, the listener's declared `readiness_timeout_secs`
-  bounds reaching the declared status. A child that exits its leader before it
-  answers fails the start as `daemonised`, naming the successor Effigy cannot
-  observe. `up` keeps the owning pipe until the listener's declared
-  readiness is observed and then detaches; a bring-up that stops short drops
-  the pipe, which is the kernel's owner-loss stop. `down`, `reset` and session
-  settle stop a run with a fenced `StopRequest`, wait for the live supervisor,
-  and settle as the gate holder when it is gone, returning a
-  `HostProcessStopReport` that names each PID, the signals the kernel sent
-  (including a SIGKILL after the declared grace), the exit and any residue. The
-  supervisor takes a fresh cleanup budget for each stop and for its settle, so
-  a process that has been up for hours still stops and closes its run without
-  the environment having to settle it (effigy#357). The requester waits for
-  that supervisor for the run's declared shutdown grace plus the kernel's stop
-  margin, so it never gives up before the supervisor's own window, and a stop
-  that runs out of window reports a timeout with what it waited for rather
-  than inconsistent evidence (effigy#370). A
-  process that exits is recorded with its exit in the custody receipt and its
-  last log lines in the unchanged `.effigy/runtime/host-processes/<env>/`
-  log; `container status` projects the run, state and last exit. A v0.14.1
-  PID/spec supervisor is stopped by its recorded identity on the next `up` or
-  `down`, never by a process-name pattern.
-  That supervisor is an ordinary invocation: it outlives the `up` that started
-  it and keeps no authority from it (effigy#332, Acow #756). A host process's
-  own heavy work still runs its own admission hook, so nothing bypasses
-  admission. A managed run's supervisor likewise keeps nothing from its client
-  except the run it already owns. A store failure while supervising renders as
-  `Unavailable` (§6.1) — the failing step, its cause and the one next step —
-  never as a refusal and never as an invalid request. A supervisor that refuses
-  admission reports its category on its own event pipe, so its client renders
-  the refusal with the category the supervisor read, never a relabelled one.
-  A listener route records the kernel run that published it. The next run of
-  the same checkout scope reclaims a route only when this checkout's journal
-  proves that recorded run settled — its run row closed, or its resource gate
-  free, because the gate is held for exactly the supervisor's lifetime. A
-  route owned by a live run is refused by name (its run, its state and the
-  settle command), never as a foreign checkout; a run the journal cannot
-  observe (no recorded run, an absent or unreadable journal) is refused with
-  the same supported settle command, never reclaimed on a guess. `down`,
-  `reset` and session settle withdraw every listener route the environment's
-  declared host processes published, whatever generation or run published it
-  and whether or not that supervisor is still alive, and report each
-  withdrawal in the `HostProcessStopReport`. A process whose stop failed keeps
-  its route, because its run may still be live (effigy#335).
-  `container <env> restart <process>...` is the same start path narrowed to a
-  set of names: it settles each named process's current generation, starts a
-  new one on the address that listener published, waits for its readiness and
-  publishes its route, and it does the same for every process that `depends_on`
-  a named one, in dependency order, while the containers and the other host
-  processes keep running. Reusing the published address keeps every
-  `internal_url` a dependent already resolved valid, and the restart holds
-  `Gate(Env)` for its change exactly as `up` does, so a bring-up or a stop
-  cannot interleave with it (effigy#370).
-- Remote stop of a bare PGID: narrowed by the nonce check above;
-  `signal_session` on a registration stays open with §5.10.
-
-One dev session (effigy#322). A managed task bound to a container environment
-owns that environment: its `up`, readiness, stop or detach, and the
-environment's host processes as session tabs. The run's own output, one tab
-per `[[containers.<env>.host_processes]]` entry (status line plus its log) and
-one tab per workload are the session in hybrid and container placement alike,
-so a bundle needs no `*:tui` selector and no `concurrent` entry per process. A
-plain bound task with no `concurrent` entries runs its own `run` as the one
-workload, or the environment alone. Host processes stay environment-owned runs
-(adopted, effigy#320): the session reads the log their supervisor writes and
-the listener state file it publishes, and the environment's existing stop is
-their stop, in both directions (owned → stopped, borrowed → left running). A
-front end never scans a process tree for them. `start_after_ms` no longer
-orders a session — readiness does — and the manifest's one deprecation notice
-names `after = ["environment"]` / `depends_on`
-(`retired.toml` `managed-start-after-ordering`).
-
-### 10.3 Environment reconciler
-
-| Current mechanism | Evidence | Kernel replacement |
-| --- | --- | --- |
-| Compose up before the admission record | `src/runner/container_command/lifecycle.rs:204` before `:210`; `src/runner/host_container_lease.rs:250-280` | intent first (K3); `resources` row |
-| `.complete`, `.partial.json`, `.handover.json`, `.persistent` and lease markers | `src/runner/host_container_lease.rs:19-23`, `:79-110`, `:489-626` | desired and applied generation; attachments |
-| Lease reaper sleeper | `src/runner/host_container_lease.rs:631-720` | holder-based release under a permit (R4); idle policy is environment-lane |
-| Admission hashing | `crates/effigy-containers/src/policy/admission.rs:26-106` | immutable objects; generation digest |
-| Force-recreate, and the #328 `--no-recreate` guard | `crates/effigy-containers/src/compose.rs:134-137`; `src/runner/container_command/lifecycle.rs:499` | adapter call under a permit; recreation policy is Q-004 |
-| Restart after a failed exec probe | `src/runner/container_runtime_prep/mod.rs:574`, `:587`, `:815` | probes never repair (R3, I-O2) |
-| `reset` deletes every environment's renders | `crates/effigy-runtime/src/write/planning.rs:31-44` | objects per environment generation |
-| Backend metadata read-modify-write | `crates/effigy-containers/src/lib.rs:219-235` | `resources` field; backend in `ResourceId` (I-ID4) |
-| Allocators holding a global lock across runtime inventory | `crates/effigy-containers/src/policy_support/generated_compose.rs:1134`, `:1362`, `:1417` | claim transaction; no inventory under a gate (K14) |
-| Colima repair by `pkill -f` patterns | `crates/effigy-containers/src/exec/colima_runtime.rs:924-944` | retained identities only (I-P4, R3) |
-| Failed-run recovery downs inside `up` | `src/runner/container_command/lifecycle.rs:766` | predecessor settle (K5); permit (R4) |
-
-Adopted by effigy#232 ([053](053-environment-reconciler-contract.md)): the
-admission record, the lifecycle markers and lease, the reaper, recreation
-under a permit, the per-environment reset and failed-run recovery. The backend record is #230's
-(below); the reconciler reads it and targets every transition at it. The
-allocator, runtime-scope and Colima-repair rows remain current behavior.
-
-Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
-
-| Row | State |
-| --- | --- |
-| Backend metadata read-modify-write | Done. Prepare records engine, context and source in the environment's `resources` row through `Run::set_backend`, in the owner run that publishes the desired generation. One resolver serves Compose, runtime, volume, data and shared-service calls. The v0.14 file is read until imported and never written (M3, M6); an unreadable record is `Unknown` and volume and data actions refuse (R3). |
-| Exact resource adoption | Done for volumes: reset, cache prune and data transfer act only on volumes whose Effigy labels name the project and volume, on the exact backend endpoint; lookalikes are reported, never claimed. Containers keep the full-ID ownership check. Backend identity is not yet part of a `Data` `ResourceId` (I-ID4); that is the `data_from` claim task. |
-| Direct `compose_file` (Q-004) | Translated for one release to project catalog fragments; `container migrate` writes them with an unchanged render; `eject` retired. |
-
-### 10.4 Gateway
-
-| Current mechanism | Evidence | Kernel replacement |
-| --- | --- | --- |
-| PID, identity and version files published before standard binds | `crates/effigy-gateway/src/identity.rs:299`, `:436`; `crates/effigy-gateway/src/server.rs:1264-1265` before `:1388` | gateway lifecycle run: bind is `Applied` before publish (K3); liveness design is gateway-lane |
-| Record and transition locks | `crates/effigy-gateway/src/identity.rs:870`; `crates/effigy-gateway/src/transition_lock.rs` | `Gate(Gateway)` |
-| Routes, ports and loopback files under `RouteTableLock` | `crates/effigy-gateway/src/routes.rs:188`, `:262`; `crates/effigy-gateway/src/ports.rs:137-155`; `crates/effigy-gateway/src/ports/reclaim.rs:109-113`; `crates/effigy-gateway/src/loopback.rs:81` | endpoint claims with revisions (I-A3, I-A4) |
-| Listener claim check turns unknown into false | `crates/effigy-gateway/src/registration.rs:81` | `Observed` (R3) |
-| Reuse of an unverified gateway | `src/runner/gateway_command/mod.rs:140` | R3 |
-
-### 10.5 Other runs and stores
-
-| Current mechanism | Evidence | Kernel replacement |
-| --- | --- | --- |
-| Release run | `crates/effigy-release/src/run/` | Checkout journal/checkpoints and native process custody; irreversible pushes reconciled before retry (054) |
-| Deploy reports success for unexecuted work | `src/runner/deploy_command/transaction.rs:109`, `:287` | R5 and I-OC1; ownership is Q-003 |
-| Vault persistence | `crates/effigy-secrets/src/storage.rs` | Machine-scoped vault gate with no database; bounded pointer-generation commit (§5.5) |
-| Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
-| Catalog pack store lock | the retired catalog-pack runtime (removed under Q-005, effigy#234) | none: catalog sources reuse the bundle source pins |
-| Pending-facts journal with file and directory `fsync` | the retired host-run client (removed, effigy#227) | the pattern `atomic_replace` absorbs |
-| Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |
-| Rhai, runtime and doctor signal flags | `crates/effigy-rhai/src/lib.rs:219-221`; `crates/effigy-runtime/src/signals.rs:184-186`; `crates/effigy-scan/src/execution/doctor_inventory.rs:2064` | `SignalRouter` and `CancelToken` (K9) |
-| `init` writes in place | `crates/effigy-builtin/src/init/agent.rs:814` | `atomic_replace` |
-| Boot and start identity helpers | `crates/effigy-process/src/identity.rs:13-65`, `:214-245` | absorbed; macOS start identity via `proc_pidinfo` |
 
 ## 11. Legacy state
 
@@ -2891,9 +2624,8 @@ command: the runtime is the source of truth and one apply converges from it.
 | M7 | Running stacks survive. Named volumes and Compose project names are unchanged, so the first `up` reconciles the running stack through the ordinary apply: Compose recreates what changed, once, and the data stays. |
 | M8 | Downgrade is unsupported. The store records the writing build, and a binary that predates the schema refuses Mutate. |
 
-The gateway's former export-on-remove exception to M3/M8 is retired with the
-v0.14.1 handback: the endpoint Store is the only source of routes and loopback
-aliases, and no scope exports or re-imports them
+The gateway has no handback: the endpoint Store is the only source of routes
+and loopback aliases, and no scope exports or re-imports them
 ([architecture 035](../architecture/035-gateway-endpoint-store.md#no-downgrade-handback)).
 
 
@@ -2911,28 +2643,21 @@ aliases, and no scope exports or re-imports them
 | Vault | `<checkout>/.effigy/secrets/local.vault` | not moved; the next write uses the pointer commit | — | unreadable vault: never overwritten |
 | Host-run pending facts; retired admission store | `~/.local/state/host-run/`; `~/.cache/effigy/admission/` | untouched (contract 049) | — | — |
 
-### 11.1 Q-010 relocation from the central kernel store (retired 2026-10-24)
+### 11.1 The unreleased-main central store
 
-The importer for the current-main central `~/.effigy/state/kernel.db` is
-retired (effigy#307, Tom 2026-10-24). That schema existed only on unreleased
-main between `8fc1b9663` (2026-10-18) and effigy#276, so no released version
-ever wrote it, and v0.15 imports nothing (effigy#373).
+The central `~/.effigy/state/kernel.db` existed only on unreleased main between
+`8fc1b9663` (2026-10-18) and effigy#276, so no released version wrote it, and
+v0.15 imports nothing (effigy#307, effigy#373).
 
-- The single machine that held the store migrated once with Effigy main
-  `7b82d26`: 110,944 machine rows, one checkout destination and 50 history
-  partitions dropped. Its `state/migration/cutover.json` and per-checkout
-  `migration-committed.json` seals are that machine's evidence.
 - `kernel.db`, `migration/cutover.json`, `migration-committed.json` and
   `migration-prepared.json` are all ignored. They are never read on a durable
   open, never changed, never deleted and never a refusal. Per M3 removal is
-  explicit maintenance after one minor.
+  explicit maintenance.
 - A checkout database opens as its checkout's journal in place.
-- `effigy run migrate` and its `effigy.runtime-migration.v1` report are gone
-  (effigy#373); a cutover manifest is simply one more ignored file. The
-  importer's busy-writer preflight, stop controls, prepared/staged
-  destinations, commit manifest publication, seal resumption, the actual-copy
-  proof and the unreleased-main refusal are gone; `docs/knowledge/retired.toml`
-  lists their terms and paths.
+- There is no migration command and no migration report. The importer's
+  preflight, stop controls, staged destinations, seal resumption and copy proof
+  have no replacement; `docs/knowledge/retired.toml` lists their terms and
+  paths.
 
 ## 12. Proof plan
 

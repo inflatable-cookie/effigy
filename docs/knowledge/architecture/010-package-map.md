@@ -135,9 +135,9 @@ these callers. `deny.toml` remains the dependency policy authority.
 | --- | --- |
 | [`src/runner/runtime_session_context.rs`](../../../src/runner/runtime_session_context.rs) | typed runtime/session context for activation retention and public-workspace cleanup policy |
 | [`src/runner/container_runtime.rs`](../../../src/runner/container_runtime.rs) | handoff marker and in-container recursion guard surface |
-| [`src/runner/container_runtime_prep.rs`](../../../src/runner/container_runtime_prep/mod.rs) | side-effect adapter for `effigy-runtime-plan` activation stages: policy validation, running-state checks, mount prep, compose up, exec readiness, alias reconciliation, gateway readiness, and the command's environment hold |
-| [`src/runner/environment.rs`](../../../src/runner/environment.rs) | the runner's handle on the environment reconciler (contract 053): transitions, holds, idle stop and the v0.14.1 marker importer |
-| [`crates/effigy-containers/src/environment.rs`](../../../crates/effigy-containers/src/environment.rs) | environment record, reconciler runs, hold API, backend seam and importer |
+| [`src/runner/container_runtime_prep.rs`](../../../src/runner/container_runtime_prep/mod.rs) | side-effect adapter for `effigy-runtime-plan` activation stages: policy validation, running-state checks, mount prep, compose up, readiness, alias reconciliation, gateway readiness, and the command's environment hold |
+| [`src/runner/environment.rs`](../../../src/runner/environment.rs) | the runner's handle on the environment reconciler (contract 053): transitions, holds and idle stop |
+| [`crates/effigy-containers/src/environment.rs`](../../../crates/effigy-containers/src/environment.rs) | environment record, reconciler runs, hold API and backend seam |
 
 ### Execution surfaces
 

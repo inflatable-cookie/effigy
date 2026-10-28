@@ -545,18 +545,19 @@ effigy dev          # recreates the profile with Effigy's managed settings
 ```
 
 The run prints one line for what it did (`creating Colima profile … (first use,
-or it was deleted)`, `starting Colima profile …`, or `restarting Colima profile
-… to enable SSH agent forwarding`) and one line naming what the deletion lost:
-that profile's containers, images and volumes. The containers the run needs are
-rebuilt afterwards; `effigy-release` (the Linux workspace artifact builder's
-profile) is recreated the same way as `effigy`.
+or it was deleted)` or `starting Colima profile …`) and one line naming what
+the deletion lost: that profile's containers, images and volumes. The
+containers the run needs are rebuilt afterwards; `effigy-release` (the Linux
+workspace artifact builder's profile) is recreated the same way as `effigy`.
 
 Do not start the profile by hand with a bare `colima start <profile>`. That
 misses the managed arguments (`--ssh-agent`, the DNS fallbacks, managed
 resources and platform overrides); the missing SSH-agent socket then surfaces
 later as `mkdir /run/host-services/ssh-auth.sock: file exists` or a failing
-workspace `git push`. A profile that is running with drift is restarted with the
-managed arguments and says which setting it repaired.
+workspace `git push`. A profile that is already running is never stopped or
+restarted by Effigy, because other checkouts' stacks share the VM: when it
+lacks a managed setting, Effigy writes the managed config and warns with the
+command that applies it, `colima restart <profile>`.
 
 An owned container that survives the transition with an unreadable identity
 (`inspect owned binding … canonical full container identity is missing`) is

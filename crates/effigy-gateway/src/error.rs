@@ -13,14 +13,6 @@ pub enum GatewayError {
     #[error("failed to read route table at {path}: {reason}")]
     RouteTableReadError { path: PathBuf, reason: String },
 
-    /// The route table file contains invalid JSON.
-    #[error("invalid route table JSON at {path}: {reason}")]
-    RouteTableParseError { path: PathBuf, reason: String },
-
-    /// The route table file could not be written.
-    #[error("failed to write route table at {path}: {reason}")]
-    RouteTableWriteError { path: PathBuf, reason: String },
-
     /// Another checkout still serves this domain, so the claim is live.
     #[error("gateway domain `{domain}` is owned by checkout `{project}`, which still serves it; stop that checkout with `effigy container down` there, or configure a distinct domain for this worktree")]
     ForeignRoute { domain: String, project: String },
@@ -53,14 +45,6 @@ pub enum GatewayError {
     #[error("TCP alias stream forwarding failed for `{target}`: {reason}")]
     TcpAliasIoError { target: String, reason: String },
 
-    /// Failed to connect to upstream target.
-    #[error("failed to connect to upstream {target} for domain '{domain}': {reason}")]
-    UpstreamConnectError {
-        domain: String,
-        target: String,
-        reason: String,
-    },
-
     /// TLS certificate error.
     #[error("TLS certificate error for domain '{domain}': {reason}")]
     TlsError { domain: String, reason: String },
@@ -73,38 +57,12 @@ pub enum GatewayError {
     #[error("gateway is already running (PID {pid})")]
     AlreadyRunning { pid: u32 },
 
-    /// Port range conflicts with an existing allocation.
-    #[error(
-        "port range {base}–{} for project '{project}' conflicts with \
-         existing allocation for '{conflicting_project}'",
-        base + range
-    )]
-    PortConflict {
-        project: String,
-        conflicting_project: String,
-        base: u16,
-        range: u16,
-    },
-
-    /// No full port range remains available for a new project allocation.
-    #[error("port registry exhausted: no free {range}-port range remains; run `effigy container ports status` for capacity and reclaim candidates")]
-    PortRegistryExhausted { range: u16 },
-
     /// The bounded loopback-IP pool is exhausted.
     #[error("loopback pool exhausted for range {range_start}–{range_end}")]
     LoopbackPoolExhausted {
         range_start: Ipv4Addr,
         range_end: Ipv4Addr,
     },
-
-    /// Loopback alias provisioning failed.
-    #[error("failed to provision loopback alias {ip}: {reason}")]
-    LoopbackAliasProvision { ip: Ipv4Addr, reason: String },
-
-    /// A planned dead-claim release no longer matches the committed endpoint
-    /// snapshot.
-    #[error("gateway endpoint `{entry}` changed before its release; read and retry")]
-    DeadClaimChanged { entry: String },
 
     /// Gateway is not running.
     #[error("gateway is not running")]

@@ -8,13 +8,12 @@ its host authority channel are later work (§9).
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
 §7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
 records, renders and holders use their checkout journal; shared endpoint and
-port facts use the machine store. No legacy family is imported (Q-012 §3): the
-§11.1 central-store importer was retired in effigy#307 and the v0.14.1 marker
-importer in effigy#373. The later workflows named in §9 remain separate from
+port facts use the machine store. No legacy family is imported (Q-012 §3).
+The later workflows named in §9 remain separate from
 this relocation.
 
 Owner: environment reconciler (Queue lane `v015-environment`)
-Kernel: [052](052-runtime-kernel-contract.md) §5.9, §10.3, §11
+Kernel: [052](052-runtime-kernel-contract.md) §5.9, §11
 Supersedes: the lease, lifecycle-marker and per-site holder-check sections of
 [005](005-container-runtime-contract.md) (see [retired concepts](../retired.toml))
 Related: [006](006-compose-backend-compatibility.md),
@@ -206,9 +205,9 @@ show each environment's backend, why it was chosen, and its record.
 
 ## 7. No legacy import
 
-v0.15 imports nothing from an earlier release (Q-012 §3, Tom 2026-10-26). The
-v0.14.1 marker importer, its resumable import record and the wait for an
-unexpired lease are gone with it.
+v0.15 imports nothing from an earlier release (Q-012 §3, Tom 2026-10-26):
+there is no marker importer, no resumable import record and no wait for an
+unexpired lease.
 
 An environment's record is written by its own transitions. A stack a v0.14.1
 release left running is reconciled by the first `up`: the ordinary apply runs

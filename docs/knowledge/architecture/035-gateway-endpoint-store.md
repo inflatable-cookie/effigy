@@ -144,8 +144,7 @@ the failure; it does not claim the cause of a past unexplained refusal.
   of deleted checkouts dropped by any write.
 - `proof:gateway:operator:migration`: reads a redacted operator snapshot,
   redacts project paths and domains inside a fresh disposable home, and
-  verifies the imported record and unchanged backup bytes. The v0.14.1
-  importer's own tests are deferred with the importer (Q-012).
+  verifies the imported record and unchanged backup bytes.
 - `proof:gateway:proxy:baseline` and `proof:gateway:proxy:latency`: the same
   loopback workload records direct, plain-route and managed-route latency and
   upstream connection counts for 766 sequential requests.

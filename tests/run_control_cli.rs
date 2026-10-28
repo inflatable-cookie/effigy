@@ -277,7 +277,7 @@ fn a_v014_lock_naming_a_live_unrelated_pid_refuses_nothing() {
 /// Papercut 9e5134a4: v0.14 `effigy state` left `.effigy/state/` at the process
 /// umask, and Q-010 made that the kernel's private root. Both effect paths —
 /// the foreground tree (`foreground_effects`) and a retained run
-/// (`checkout_effects` through the cutover check) — must reach the one-release
+/// (`checkout_effects`) — must reach the one-release
 /// adoption that tightens it to 0700 instead of refusing every task with an
 /// unreadable journal.
 #[test]

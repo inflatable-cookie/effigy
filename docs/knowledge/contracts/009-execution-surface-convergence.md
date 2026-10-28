@@ -158,7 +158,7 @@ The following must converge across covered surfaces.
   contract
 - that contract owns:
   - startup
-  - exec readiness
+  - readiness
   - gateway and route reconciliation
   - alias reconciliation
   - lease refresh

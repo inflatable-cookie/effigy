@@ -12,10 +12,9 @@ environment, not production deployment export.
 Kernel supersession (2026-10-18): the runtime kernel contract
 [052](052-runtime-kernel-contract.md) supersedes this contract's lifecycle and
 ownership sections for v0.15: activation and session ownership, `data_from`
-handover, owned service start after a Colima restart, managed host listener
+handover, managed host listener
 lifecycle, owned completion and stop authority, fallback ownership and failure
-semantics. Until the environment lane reconciles them, those sections describe
-current behavior, not target design.
+semantics. Those sections describe current behavior.
 
 ## Purpose
 
@@ -255,10 +254,10 @@ mount. This ruling changes no scheduler credential or admission boundary.
 
 `[[containers.<name>.host_processes]]` may opt a process into Effigy's
 language-neutral listener contract. The manifest selects the process, bind
-preference, HTTP readiness request and browser route. Effigy reserves the
-address, waits for it to answer, and publishes the route. An ordinary server
-that listens on the reserved `HOST`/`PORT` needs no Effigy-specific convention:
-the answering port is the whole readiness and ownership story.
+address, HTTP readiness request and browser route. Effigy gives the listener
+its address, verifies that it answers, and publishes the route. An ordinary
+server that listens on the `HOST`/`PORT` it receives needs no Effigy-specific
+convention: the answering port is the whole readiness and ownership story.
 
 ```toml
 [[containers.web.host_processes]]
@@ -269,7 +268,7 @@ restart = "on-failure"
 restart_delay_ms = 500
 
 [containers.web.host_processes.listener]
-bind = "127.0.0.1:0"
+bind = "127.0.0.1:4173"
 
 [containers.web.host_processes.listener.readiness]
 path = "/health"
@@ -281,7 +280,7 @@ domain = "frontend.example.test"
 tls = true
 ```
 
-`readiness.timeout_secs` bounds only the wait after the reserved port first
+`readiness.timeout_secs` bounds only the wait after the listener's port first
 answers; a child still building has not opened its port, so the supervisor and
 the `up` that waits on it carry no deadline and the child's own exit is the
 failure that ends the wait.
@@ -291,17 +290,21 @@ the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
 `EFFIGY_HOST_PROCESS_INTERNAL_URL`, plus the `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`
 and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` that shipped adapter scripts
 read. Those two are only for existing adapter scripts; a new host process needs
-no adapter. `HOST`/`PORT` are the reserved address:
+no adapter, and Effigy never reads that report back. `HOST`/`PORT` are the
+listener's own address:
 they replace an ambient value inherited from the caller's environment, because
 a process reading them must bind the port the published route targets. Only a
-value the manifest declares outranks them. Port
-`0` asks Effigy for a concrete port: `container up` reserves one loopback port
-in the environment's generated range through the gateway endpoint store before
-any child launches, passes it as the bind, keeps the assignment across
-supervisor restarts within the run, and releases it when the environment
-settles. A fixed preference is the manifest's own, is never reserved, must be
-bound exactly, and a preference another process already answers fails the start
-naming that port.
+value the manifest declares outranks them.
+
+A declared port is the manifest's own: it is used untouched, is never reserved
+and must be bound exactly, and a port another process already answers fails the
+start naming that port. A `bind` whose port is `0` asks Effigy for one: before
+any child launches, Effigy takes the address this process last published (so a
+restart or a re-`up` keeps every `internal_url` a dependent resolved) or, when
+there is none, asks the OS for a free loopback port; the child receives the
+result as its bind, `HOST` and `PORT`, and the `internal_url` fact carries it.
+There is no port range and no endpoint-store reservation behind that choice,
+and nothing is recorded beside the listener's own state file.
 
 ## Host process environment
 
@@ -321,12 +324,12 @@ Each process also receives the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`.
 `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in only when the operator
 has not exported them and the process does not declare them, so an operator
 trust store is never replaced. The gateway contract records which runtimes read
-which variable and why. Effigy reads no adapter report: only the reserved
+which variable and why. Effigy reads no adapter report: only the listener
 address answering publishes the route, and the report path is a write-only
 courtesy for shipped adapters, removed when the generation stops. A child that
-binds a different address never answers the reserved one, so its generation
-stays in the no-deadline phase until that child exits, and the failure names the
-reserved address, the readiness request it never answered and the exit code.
+binds a different address never answers the one it was given, so its generation
+stays in the no-deadline phase until that child exits, and the failure names
+that address, the readiness request it never answered and the exit code.
 
 Routes publish to the caller's private gateway when
 `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` selects one, and otherwise to the shared
@@ -435,14 +438,12 @@ so later commands, probes and holds use its final identity and paths.
 Detached admission pins the kernel's desired object reference and verifies its
 complete immutable closure; it never fingerprints mutable declarations and
 renderer outputs, and it writes no receipt file. The environment record
-([053](053-environment-reconciler-contract.md)) keeps the admitted generation
-across invocations. Canonical checkout identity and scope remain fenced,
-including a checkout moved behind a symlink. Source edits leave an admitted
-snapshot intact; a later Prepare publishes a new desired generation and
-supersedes that admission. A v0.14.1 v2 or v3 receipt is read only by the
-marker importer's adoption check and is never rewritten. Attached workflows use the same
+([053](053-environment-reconciler-contract.md)) holds the object reference the
+environment points at, and every Prepare publishes a new desired generation.
+Canonical checkout identity and scope remain fenced,
+including a checkout moved behind a symlink. Attached workflows use the same
 immutable render path. Execution-only workspace builder recovery compares fresh
-source render references while retaining its original stack admission.
+source render references against the running stack.
 
 Reset and bootstrap fresh-session teardown resolve Prepare inputs and publish
 the selected generation before planning Compose or removing generated images,
@@ -527,7 +528,7 @@ Colima route every call through an SSH hop. A caller-supplied deadline (bounded
 commands) stays absolute. Detached JSON
 retains closed-vocabulary managed-listener readiness observations (including HTTP
 status mismatch) without copying backend output, process names or arguments.
-Inventory, exec readiness and exposure failures report the activation as
+Inventory and exposure failures report the activation as
 unavailable and do not tear down or restart running services. Reconciliation
 with `effigy container up --detach` verifies owned full-ID bindings before
 registering exposure. Verified checkout/scope ownership allows the apply when
@@ -542,7 +543,7 @@ that ownership and keeps volumes. Attached bring-up keeps its existing cleanup
 policy, run as a stop transition after the bring-up's own runs close.
 
 `container up` runs workspace permission preparation as an integration stage
-once exec readiness is verified, before secrets, gateway exposure, and
+before secrets, gateway exposure, and
 readiness reporting. `up` is the one stage every first creation, reuse, and
 handover passes through; managed children and `container shell` enter through
 exec without their own preparation. Owned-disposable cache and build volumes
@@ -605,7 +606,7 @@ connection: the gateway forwards the route to its published target like any
 other route.
 
 A published listener stays published while the supervisor's run is alive and
-the reserved port answers. The supervisor connects to that port every five
+the listener port answers. The supervisor connects to that port every five
 seconds; three consecutive misses withdraw the route and record `unavailable`,
 and the next answer republishes it and records `ready` again. A probe miss never
 kills or restarts the child, and never replaces a dependent: the child's own
@@ -613,7 +614,7 @@ exit drives restarts, and a dependent is replaced only when its dependency's
 supervisor generation changes. A restart, a watch-mode respawn that replaces the
 process serving the port, a double fork and a long compile are all ordinary.
 
-Readiness is one bounded HTTP/1.1 `GET` on the reserved loopback socket. Effigy
+Readiness is one bounded HTTP/1.1 `GET` on the listener's loopback socket. Effigy
 reads the first status line and accepts only the configured status. The line
 must be `HTTP/1.<digit>`, a space, a three-digit code, and a space before the
 reason phrase. The reason phrase may be empty and may contain only tabs,
@@ -631,7 +632,7 @@ repeated attempts, so a cold build's compile time is never spent against it.
 
 A generation that fails keeps a one-line `diagnostic` string in its state file
 after its child is cleaned up, and a settling supervisor does not replace that
-evidence with a blank terminal record. The line names the reserved address, the
+evidence with a blank terminal record. The line names the listener address, the
 readiness path and status, and the last probe outcome (`connect_failed`,
 `write_failed`, `no_status_line`, `malformed_status` or `status_mismatch`); a
 start refused because the port already answered names that port, and one whose
@@ -941,9 +942,9 @@ Final cleanup records an optional completion result before owner locks release;
 `stop` checks it so an owner whose `container down` failed cannot report a
 successful settle merely because its process exited. Older session records
 retain the existing process/lock checks. Remote group cleanup resolves full
-container IDs from fresh checkout/scope labels, without an exec-readiness or
-published-port requirement. A missing container is already ended; an exec
-failure against a still-live exact container remains a failure. Whole-stack
+container IDs from fresh checkout/scope labels, without a published-port
+requirement. A missing container is already ended; a cleanup failure against a
+still-live exact container remains a failure. Whole-stack
 cleanup proves every project container's labels, including stopped services and
 orphans, before down and keeps every volume.
 
@@ -1306,14 +1307,9 @@ distinguishes the two:
   (`/proc/loadavg`, or `sysctl vm.loadavg` on macOS). A host at or above one
   runnable task per CPU is saturated. The observation is read-only and never
   starts a container, VM or runtime command.
-- `container up` opens the first exec-readiness window from two seconds to
-  fifteen seconds once when the host is saturated, so the service gets a
-  bounded second attempt before any restart. A host below that threshold keeps
-  the two-second window, and every post-restart window, live-run refusal and
-  failure path is unchanged.
 - An owned inspect that times out on a saturated host is retried at most twice
-  with the same fifteen-second bound before the failure is reported. The
-  failure names the observed load and states that the container's state is
+  with the same bound before the failure is reported. The failure names the
+  observed load and states that the container's state is
   unproven and that Effigy did not start, stop or recreate it.
 - A readiness refusal that ran out on a saturated host names the host in the
   same error. Without an overload observation the error keeps its
@@ -1421,7 +1417,7 @@ establish the historical deadline's cause, a remote process, or any consumer
 diagnosis: they distinguish missing host transport observations, nothing more.
 No qualified binary or consumer admission is claimed by this source delivery.
 
-### Partial activation and recovery boundary
+### Activation failure and recovery boundary
 
 The 2026-10-14 Acowtancy report establishes a consumer observation: a scoped
 bring-up can time out before route registration despite containers starting.
@@ -1431,7 +1427,7 @@ SIGPIPE is unestablished; an exit code alone does not identify the sender or
 pipe owner. Current Compose startup already requests `up -d`, and scoped
 non-interactive retirement already supports `container retire --yes`.
 
-The requested recovery follow-through must preserve explicit partial-state
+The requested recovery follow-through must preserve explicit failure-state
 reporting, exact project/service/container ownership and fresh published-port
 evidence. An unavailable inventory cannot authorize a route or be treated as
 an empty or ready stack. A later exposure reconciliation must preserve sibling
@@ -1918,7 +1914,7 @@ execution target, Effigy should fail before dispatching the user command.
 
 Examples:
 
-- target service cannot satisfy exec readiness
+- the target service never reports Running with a healthy status
 - required alias reconciliation cannot resolve its backing service
 - runtime policy and live runtime state disagree in a way Effigy cannot repair
 
@@ -1953,8 +1949,6 @@ The minimum proof set should cover:
 - workspace handoff and bootstrap-backed task execution sharing the same alias
   guarantees
 - runtime prep repairing backend-sensitive gaps before the user command runs
-- owned Exited services after a Colima restart started or diagnosed without
-  deleting systemd units
 - compatibility behavior on the supported Colima + `nerdctl compose` path
 - runner container commands routing through `ContainerManager`
 - container-targeted execution plans consuming captured runtime context instead
@@ -1971,8 +1965,6 @@ Update this contract when Effigy changes:
 - which execution targets receive container-local alias guarantees
 - the boundary between gateway-owned and runtime-owned alias behavior
 - the runtime-prep steps required before exec or handoff
-- owned-service start after a Colima VM restart, including the boundary
-  against systemd unit deletion
 - the supported backend fallback model
 - runner-facing container manager operation ownership
 - runtime context facts used by container-backed execution

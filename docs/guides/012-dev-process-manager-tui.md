@@ -149,7 +149,7 @@ whoever else started it). `role = "lifecycle"` keeps working, and is no longer
 required for `gateway`, `health_wait` or a plain bound session.
 
 Readiness orders the session: workloads start after the environment's `up`
-finished and its exec readiness answered. Declare that dependency with
+finished and its primary service is running and healthy. Declare that dependency with
 `after = ["environment"]` when you want it written down, and order an
 environment's host processes with their own `depends_on`.
 
@@ -359,7 +359,7 @@ Headless runs never allocate an interactive TTY and never start shell-role
 tabs: shells belong to a terminal.
 
 The environment phase runs before any workload: `container up` as a child of
-the run, then container exec readiness, polled with backoff until the
+the run, then the service's own readiness, polled with backoff until the
 workspace service answers or the readiness budget runs out
 (`health_wait_timeout_secs`, default 60 seconds). Readiness is observed and
 never a fixed timer, so a slow first engine start delays the workloads

@@ -1022,7 +1022,7 @@ fn inject_service_env_vars(
 /// A manifest pin (`[containers.<name>.host].ports`) is used as written. A
 /// runtime-scoped checkout cannot pin the same host port as the primary, so it
 /// takes an OS-assigned one. With `stable_ports` an environment opts into a
-/// port derived from its checkout path; the value is probed here and never
+/// port derived from its checkout path; the value is never probed or
 /// stored. Everything else asks Compose for `127.0.0.1::<container-port>` and
 /// the OS picks the host port; `up` reads it back for the route.
 fn apply_generated_compose_port_policy(

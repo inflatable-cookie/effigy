@@ -55,9 +55,7 @@ does not provide them directly:
 
 - missing host bind-mount directory creation before `compose up`
 - sibling-service bring-up after a partial or failed runtime start
-- owned `Exited`/`Created` containers after a Colima VM restart, started by
-  name without recreating volumes or deleting systemd units
-- primary-service exec readiness after recreate or restart churn
+- a declared service Compose left stopped, brought back by the next apply
 - container-local TCP alias visibility inside Effigy-owned execution targets
 - generated Compose values that need a literal `$` for the container shell
   (`$code` written as `$$code` so Compose interpolation does not blank it)
@@ -129,115 +127,28 @@ Target compatibility case:
 
 - `runtime_prep_recovers_missing_sibling_services_before_dispatch`
 
-### Owned service start after Colima restart
+
+### Workspace artifact builder execution
 
 Expected product guarantee:
 
-- after Compose up, owned services that are still `Exited` or `Created` are
-  started or the failure names the live status and a start command
-- persistent volumes stay; systemd health-check timer units are not deleted
-- a stopped owned Colima/nerdctl container may recover its own stale
-  transient `{full_id}.timer` / `{full_id}.service` collision once, after
-  inspect proves the full hexadecimal ID and selected labels
+- an already running, strictly owned Linux builder can build the current bound
+  source of this checkout, and the artifact identity it reports is fresh
 
 Backend status:
 
-- Colima + `nerdctl compose up` may return success while containers stay
-  stopped after a VM restart
-- `nerdctl start` of an owned container can succeed while logging
-  `Unit <id>.timer was already loaded or has a fragment file`
-- leftover transient health-check units named after the full container ID
-  can block a later `systemd-run`
+- Compose and nerdctl can report a container as running while its mounts or
+  project membership have moved; a build must not trust a name
 
 Effigy ownership:
 
-- inspect owned Compose projects including stopped rows
-- start only currently declared services whose project label matches an
-  owned project; skip one-off `compose run` containers and undeclared
-  orphans
-- re-observe each candidate container with its own `inspect` immediately
-  before the start, and start it only when that observation proves a
-  stopped `created`, `exited` or `dead` container; a running or in-flight
-  container is left to the readiness wait
-- never rerun a one-time `compose run` command
-- bound inspect and start so a hung nerdctl command still names live status
-- treat a timer collision as a warning once inspect shows the container
-  running; start exit 0 is not readiness
-- when the owned Colima container stays stopped with that collision,
-  inspect the full ID, require stopped exact-owned labels, confirm the
-  unit pair is transient in the selected profile, stop only
-  `{full_id}.timer`, `reset-failed` `{full_id}.service`/`{full_id}.timer`,
-  retry start once, and prove readiness by inspect
-- operation exit 0 is not unload proof: after stop/reset, re-probe the exact
-  pair with a bounded wait until both units are unloaded; a late unload
-  recovers once, a never-unloaded pair fails bounded with its load/fragment
-  state, and a persistent/unverified unit appearing mid-flight refuses
-- a start that reports the collision while the container ends up running
-  hands the service to the normal readiness and health wait with the exact
-  inspect command in the recorded warning, never a stale-backend-state
-  failure; never repeat a unit mutation on a now-running container
-- refuse automatic repair for running, unknown, foreign, one-off,
-  undeclared, persistent, mismatched, wrong-profile, or missing-authority
-  cases; keep Docker start unchanged; never delete unit files
-- if the container stays stopped or post-start inspect fails, keep the start
-  backend text (including a stale-timer warning or refusal diagnostic) in
-  the bounded failure with
-  `colima nerdctl --profile <profile> -- start <container>`
-- a recurring collision refuses service-only recreation with the missing
-  preservation interfaces named in contract 005; inspect mount references
-  alone do not authorize replacement or mutable-volume retirement
-
-Contract detail: `005-container-runtime-contract.md`.
-
-Target compatibility cases:
-
-- `recoverable_exited_service_is_started_despite_stale_timer`
-- `stale_timer_collision_recovers_exact_units_then_retries_until_inspect_ready`
-- `refused_persistent_unit_does_not_retry_start_and_keeps_diagnostics`
-- `recoverable_transient_pair_stops_only_exact_timer_and_resets_pair`
-- `persistent_exited_service_is_a_bounded_backend_failure`
-- `successful_start_with_stale_timer_still_exited_is_a_bounded_failure`
-- `declared_stopped_service_recovers_while_oneoff_and_orphan_are_left_alone`
-- `inspect_timeout_after_successful_start_keeps_stale_timer_diagnosis`
-- `start_timeout_reports_observed_exited_status`
-- `recurring_health_collision_refuses_recreation_through_production_adapters`
-  (private fake transport and file markers; no real engine or live exec proof)
-- `unload_proof_stop_reset_exit_zero_but_still_loaded_fails_bounded`
-- `unload_proof_late_unload_within_bounded_probes_recovers_once`
-- `unload_proof_persistent_fragment_mid_flight_refuses`
-- `unload_proof_post_stop_probe_failure_fails_closed`
-- `pre_start_observation_skips_a_container_compose_already_started`
-- `pre_start_observation_skips_containers_the_backend_is_acting_on`
-- `pre_start_observation_still_recovers_a_genuinely_stopped_sibling`
-- `failed_pre_start_observation_refuses_the_start`
-- `reboot_timer_collision_with_a_running_container_hands_off_to_readiness`
-  (private fake transport; no real engine or readiness proof)
-- `docker_backend_does_not_recover_healthcheck_units`
-
-### Primary-service exec readiness
-
-Expected product guarantee:
-
-- routed exec and handoff can use the resolved working directory immediately
-  after runtime prep
-
-Backend status:
-
-- Colima + `nerdctl` may report a service running while `exec -w <dir>` still
-  fails after recreate churn
-
-Effigy ownership:
-
-- shared runtime-prep verifies full container ID, project, declared service,
-  non-oneoff/running status, canonical checkout and exact scope before probing
-- readiness returns an internal inspected binding. Mount probes and ordinary
-  shell/task exec retain that binding, reverify the expected full ID and owner,
-  and use native Docker or nerdctl exec against the full ID. Builtin suite
-  rendering obtains and reverifies its own readiness binding before rendering
-  native ID-targeted exec. No service-name cache authorizes these execs.
-- a missing/foreign binding or replacement refuses before exec or recovery;
-  a known owned primary may be restarted once by its verified ID. Legacy
-  dependent-service recovery retains its declared dependency selection.
+- exec into an owned container resolves and reverifies an inspected binding:
+  full container ID, project, declared service, non-oneoff/running status,
+  canonical checkout and exact scope, then a native ID-targeted exec. No
+  service-name cache authorizes those execs.
+- a missing, foreign or replaced binding refuses before exec rather than being
+  followed into the successor. Legacy dependent-service recovery keeps its
+  declared dependency selection.
 - argv, workdir, user, environment, capture/TTY and stdin-file behavior survive
   native transport. Unsupported exec options refuse rather than being dropped.
 - inspections and remote exec are separate observations, not an atomic remote
@@ -250,7 +161,6 @@ Effigy ownership:
 
 Target compatibility case:
 
-- `runtime_prep_recovers_exec_readiness_after_recreate`
 - `direct_builder_activation_tests` exercises direct and generated no-port,
   no-route activation through policy admission, readiness, registration and
   native exec, including replacement and sibling-state preservation.
@@ -394,9 +304,11 @@ Effigy ownership:
   depends on the state-home path; an activation that this failure interrupted
   is reconciled by a plain `effigy container up`
 - Compose's default `.env` lookup is the first Compose file's directory, which
-  inside a generation is the sealed object directory and never holds one, so
-  naming this file drops no interpolation the invocation had
-- a file older than a day, or beyond the retained count, is reclaimed
+  inside a generation is the object directory and never holds one, so naming
+  this file drops no interpolation the invocation had
+- nothing prunes the directory: the name is content-addressed, so an unchanged
+  plan reuses one file and a changed one adds one more; deleting the directory
+  by hand costs only a rewrite of the current plan's file
 
 Target compatibility cases:
 
@@ -421,10 +333,6 @@ The first useful coverage set is:
   non-root write/lock rather than mount-root owner heuristics
 - one proof that doctor ownership inspects share the remaining doctor budget
   and report timeout as unavailable rather than clean
-- one proof that exec-readiness recovery is attempted after recreate-style
-  failure
-- one proof that owned Exited services after a Colima restart are started or
-  diagnosed without deleting systemd units
 - one proof that container-local alias reconciliation runs on the supported
   Colima-sensitive path
 

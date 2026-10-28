@@ -374,8 +374,8 @@ WORKER_PID_FILE = {worker_pid}
 }
 
 /// A container environment's machine store lives beside the fixture, never
-/// inside the checkout's own `.effigy`: a checkout journal there reads as the
-/// retired central store to the endpoint store's cutover check.
+/// inside the checkout's own `.effigy`, so no fixture reaches the operator's
+/// machine store.
 fn private_containers_home(root: &std::path::Path) -> EnvGuard {
     let home = root.join("effigy-home/.effigy");
     fs::create_dir_all(&home).expect("private containers home");
@@ -401,8 +401,8 @@ fn wait_for_file(root: &std::path::Path, name: &str) {
 fn managed_headless_plain_environment_shows_host_processes_and_its_workload() {
     let _guard = lock_test();
     let root = temp_workspace("managed-headless-plain-environment");
-    // Owning a container environment resolves the port registry under the
-    // Effigy home, so this session gets a private one.
+    // Owning a container environment resolves its gateway and volume state
+    // under the Effigy home, so this session gets a private one.
     let home = root.join("home");
     fs::create_dir(&home).expect("fixture home");
     let _home = EnvGuard::set_many(&[("HOME", Some(home.display().to_string()))]);
