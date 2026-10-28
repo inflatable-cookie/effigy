@@ -200,6 +200,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **A pinned `[sources.<name>]` checkout is published in one step.** A missing
+  checkout is cloned into a hidden staging directory beside its declared path and
+  moved into place with one rename, so a path that exists is complete. Two fresh
+  linked worktrees whose manifests resolve the same path now both acquire it: the
+  first publishes, and the second adopts that checkout when it matches the pin.
+  A published checkout at another revision fails the second run and is left
+  untouched. Where the checkout lands does not change.
 - **Bundle source steps name what they do, and warnings stay off `--json`.** A
   local `path` source reads `snapshotting local bundle <name>` and
   `snapshotted local bundle <name>`, not a fetch. Each source's step ends once,

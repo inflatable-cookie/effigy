@@ -54,7 +54,9 @@ path = "../book"
   relative to the manifest, so a sibling path such as `../book` is normal. It is
   available outside bootstrap too, for example through `[systems.*.mounts]`;
   the first `dev` acquires any missing pinned checkout exactly as bootstrap
-  does, and still never resets an existing one.
+  does, and still never resets an existing one. When two fresh worktrees both
+  find it missing, each clones beside it and one published checkout appears, so
+  they share the one declared destination instead of colliding in it.
 
 ## Start Here
 

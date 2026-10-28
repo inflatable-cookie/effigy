@@ -1182,6 +1182,197 @@ fn included_tui_status_logs_and_stop_do_not_acquire_a_missing_pin() {
     );
 }
 
+/// Two fresh linked worktrees share one parent-relative pinned destination. Both
+/// run an ordinary task at the same moment: one run publishes the checkout with
+/// a single rename and the other adopts it, so neither fails on a clone
+/// collision and neither reads a partial checkout.
+#[test]
+fn two_fresh_worktrees_acquire_one_shared_pinned_destination_at_once() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("book-src");
+    fs::create_dir(&source).unwrap();
+    git_in(
+        &source,
+        &fixture.home,
+        &["init", "--initial-branch=main", "--quiet"],
+    );
+    fs::write(source.join("README"), "pinned book\n").unwrap();
+    // Enough content that one clone is not instantaneous: both runs are inside
+    // their acquisition long enough to overlap.
+    fs::create_dir(source.join("pages")).unwrap();
+    for page in 0..64 {
+        fs::write(source.join("pages").join(format!("{page}.txt")), "page\n").unwrap();
+    }
+    git_in(&source, &fixture.home, &["add", "."]);
+    git_in(
+        &source,
+        &fixture.home,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "book",
+            "--quiet",
+        ],
+    );
+    let rev = git_in(&source, &fixture.home, &["rev-parse", "HEAD"]);
+
+    // One checkout commits the declaration and two linked worktrees are created
+    // fresh from it, so both resolve `../book` to the same destination and both
+    // find it missing at the same time.
+    let project = fixture.owner.path().join("project");
+    fs::create_dir(&project).unwrap();
+    git_in(
+        &project,
+        &fixture.home,
+        &["init", "--initial-branch=main", "--quiet"],
+    );
+    fs::write(
+        project.join("effigy.toml"),
+        format!(
+            "[sources.book]\ngit = \"file://{git}\"\nrev = \"{rev}\"\npath = \"../book\"\n\n[tasks.need]\nrun = \"sh -c 'cat ../book/README'\"\n",
+            git = source.display(),
+        ),
+    )
+    .unwrap();
+    git_in(&project, &fixture.home, &["add", "."]);
+    git_in(
+        &project,
+        &fixture.home,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "manifest",
+            "--quiet",
+        ],
+    );
+    let mut worktrees = Vec::new();
+    for name in ["wt-a", "wt-b"] {
+        let path = fixture.owner.path().join(name);
+        git_in(
+            &project,
+            &fixture.home,
+            &["worktree", "add", "--quiet", path.to_str().unwrap()],
+        );
+        worktrees.push((name.to_owned(), path));
+    }
+    assert!(!fixture.owner.path().join("book").exists());
+
+    // Start both ordinary task runs before either can finish acquiring.
+    let mut running = Vec::new();
+    for (name, path) in &worktrees {
+        let stdout = fs::File::create(fixture.logs.join(format!("{name}.stdout"))).unwrap();
+        let stderr = fs::File::create(fixture.logs.join(format!("{name}.stderr"))).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        command
+            .args(["need"])
+            .current_dir(path)
+            .env("HOME", &fixture.home)
+            .env("NO_COLOR", "1")
+            .env_remove("EFFIGY_WORKSPACE_CONTAINER")
+            .env_remove("EFFIGY_CONTAINER_HANDOFF")
+            .env_remove("EFFIGY_ACTIVE_VERSION")
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .process_group(0);
+        let spawned = Instant::now();
+        running.push((name.clone(), spawned, command.spawn().unwrap()));
+    }
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut results = Vec::new();
+    for (name, spawned, mut child) in running {
+        let (status, finished) = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break (status, Instant::now());
+            }
+            if Instant::now() >= deadline {
+                // This PID/group was created above; no shared process search.
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.wait();
+                panic!(
+                    "effigy need in {name} exceeded its fixture deadline: {}",
+                    fs::read_to_string(fixture.logs.join(format!("{name}.stderr"))).unwrap()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        results.push((name, spawned, finished, status));
+    }
+
+    // Both runs really were in flight together, so the acquisition windows
+    // overlapped rather than one run observing the other's finished checkout.
+    let mut sorted = results
+        .iter()
+        .map(|(_, spawned, finished, _)| (*spawned, *finished))
+        .collect::<Vec<_>>();
+    sorted.sort();
+    assert!(
+        sorted[1].0 < sorted[0].1,
+        "the second run started before the first finished: {sorted:?}"
+    );
+
+    for (name, _, _, status) in results {
+        let output = format!(
+            "{}{}",
+            fs::read_to_string(fixture.logs.join(format!("{name}.stdout"))).unwrap(),
+            fs::read_to_string(fixture.logs.join(format!("{name}.stderr"))).unwrap(),
+        );
+        assert!(status.success(), "{name} failed: {output}");
+        assert!(
+            output.contains("pinned book"),
+            "{name} read the published checkout: {output}"
+        );
+    }
+
+    // One published destination, at the pin, clean, shared by both worktrees.
+    let destination = fixture.owner.path().join("book");
+    assert_eq!(
+        git_in(&destination, &fixture.home, &["rev-parse", "HEAD"]),
+        rev
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("README")).unwrap(),
+        "pinned book\n"
+    );
+    assert!(
+        git_in(&destination, &fixture.home, &["status", "--porcelain"]).is_empty(),
+        "the published checkout is clean"
+    );
+    for (_, path) in &worktrees {
+        assert!(
+            !path.join("book").exists(),
+            "a worktree keeps no private copy of a shared declaration"
+        );
+    }
+    let mut staging: Vec<PathBuf> = fs::read_dir(fixture.owner.path())
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().starts_with(".effigy-source."))
+                .unwrap_or(false)
+        })
+        .collect();
+    staging.sort();
+    assert!(
+        staging.is_empty(),
+        "no acquisition staging directory survives: {staging:?}"
+    );
+}
+
 /// A fresh checkout runs an ordinary task: the missing bundle and catalog pins
 /// are acquired before the strict parse (contract 020 §Behaviour rule 1).
 #[test]
