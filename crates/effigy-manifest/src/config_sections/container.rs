@@ -540,13 +540,14 @@ pub struct ManifestContainerLifecycleConfig {
 ///
 /// Started after `compose up` for the parent container, stopped before
 /// `compose down`. Output is appended to a per-process log file under
-/// `.effigy/runtime/host-processes/<container>/<name>.log`; the
-/// supervisor PID lives next to it as `<name>.pid`.
+/// `.effigy/runtime/host-processes/<container>/<name>.log`. The kernel run
+/// owns the process lifecycle; legacy PID, spec and listener records in this
+/// directory are ignored and do not establish ownership.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestContainerHostProcess {
-    /// Stable identifier for this process. Used for log/PID file names
-    /// and shutdown lookup. Must be unique within the container's
+    /// Stable identifier for this process. Used for its log name and
+    /// kernel-run lifecycle lookup. Must be unique within the container's
     /// `host_processes` list and contain only `[A-Za-z0-9_-]` characters.
     pub name: String,
     /// Host shell command to execute. Runs under `sh -lc <run>`.

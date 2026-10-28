@@ -814,11 +814,13 @@ Git config sets `effigy.runtimeScope = ephemeral` — get a stable generation
 suffix on generated Compose project names (`-wt-` for a worktree, `-ec-` for
 a marked clone). Containers, networks and managed volumes therefore use
 different identities from the primary checkout, other worktrees and other
-clones. Generated host ports are allocated separately, even if `host.ports`
-declares fixed numbers. The primary checkout and any unmarked clone keep
-their existing name and ports. Repeated commands in one scoped checkout
-reach the same stack; deleting and recreating it at the same path gets a
-new identity. To intentionally share one Compose stack, set
+clones. Unpinned host ports use Compose or OS assignment. A scoped checkout
+replaces fixed `host.ports` pins with OS-assigned ports unless
+`stable_ports = true` opts into checkout-path-derived ports; the primary and
+unmarked clones keep their declared pins unless that option is set. Repeated
+commands in one scoped checkout reach the same stack; deleting and recreating
+it at the same path gets a new identity. To intentionally share one Compose
+stack, set
 `share_runtime_identity = true` under `[containers.<name>]`.
 
 The clone marker is read from that checkout's own `.git/config` only — never
