@@ -50,8 +50,11 @@ pub(super) fn refuse_deploy_execution(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let message = format!(
-        "`deploy {operation}` is not yet supported in v0.15; no deployment was executed. Full execution design is tracked in the deploy lane (Q-003). Use `effigy deploy model --json` or `effigy deploy export <PROVIDER> --path <DIR> --plan`."
+        "`deploy {operation}` is not yet supported in v0.15; no deployment was executed. Full execution design is tracked in the deploy lane (Q-003)."
     );
+    // The one next step, shared by the text `next:` line and the JSON
+    // `next_action`. The first command is runnable as written in this checkout.
+    let next_action = "run `effigy deploy model --json` to read the deployment model, or `effigy deploy export <PROVIDER> --path <DIR> --plan` to export a provider plan";
     let obligations = [
         "state: state stacks and migrations are not executed",
         "hooks: before_state, after_state and after_deploy hooks are not executed",
@@ -72,12 +75,13 @@ pub(super) fn refuse_deploy_execution(
                 "env": env,
                 "message": message,
                 "blockers": obligations,
+                "next_action": next_action,
             })
             .to_string(),
         })
     } else {
         Err(RunnerError::task_invocation(format!(
-            "{message}\n{}",
+            "{message}\n{}\nnext: {next_action}",
             obligations.join("\n")
         )))
     }

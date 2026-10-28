@@ -306,6 +306,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A failed task run and a refused `deploy apply`/`redeploy` carry their next
+  action in `--json` as `error.human.next_action`, the same instruction the
+  text `next:` line prints. The deploy refusal's runnable command is now that
+  line, not prose inside its message.
 - A managed listener whose route republication failed retries while its port
   keeps answering, instead of staying unreachable until the child next goes
   silent. `container <env> restart` holds `Gate(Env)` for its stop and spawn

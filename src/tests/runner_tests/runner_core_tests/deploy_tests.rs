@@ -1139,6 +1139,11 @@ fn run_deploy_apply_refuses_all_unexecuted_obligations_without_effects() {
                     );
                 }
                 assert!(details.contains("not yet supported in v0.15"));
+                let human = error.human_error();
+                let next = human
+                    .next_action_text()
+                    .expect("refusal names its next action");
+                assert!(next.contains("`effigy deploy model --json`"), "{next}");
                 if output_json {
                     let parsed =
                         parse_json_output_with_schema_version(details, "effigy.deploy.apply.v1", 1);
@@ -1146,6 +1151,14 @@ fn run_deploy_apply_refuses_all_unexecuted_obligations_without_effects() {
                     assert_eq!(parsed["reason"], "not_supported");
                     assert_eq!(parsed["status"], "blocked");
                     assert_eq!(parsed["operation"], "apply");
+                    assert_eq!(parsed["next_action"], next);
+                    assert_eq!(human.what_failed(), parsed["message"]);
+                } else {
+                    assert!(
+                        human.render_text().contains(&format!("next: {next}")),
+                        "{}",
+                        human.render_text()
+                    );
                 }
             }
         }
