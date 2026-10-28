@@ -1,4 +1,5 @@
-//! Same-image group anchor. It announces its ready PID before go.
+//! Same-image group anchor. It announces its ready PID before go, and exits on
+//! SIGTERM or when settlement retires it.
 use super::*;
 use std::ffi::CString;
 use std::os::fd::OwnedFd;
@@ -28,12 +29,23 @@ pub(super) fn entry() -> Result<(), RunError> {
     {
         return Err(RunError::broken("anchor nonce missing"));
     }
-    // SAFETY: supported signals and SIG_IGN; this single-threaded helper never
-    // forwards or handles workload signals. Its only exit after go is KILL.
+    // SAFETY: supported signals and SIG_IGN/SIG_DFL; this single-threaded helper
+    // never forwards or handles workload signals. INT and HUP stay ignored
+    // because a terminal delivers them to the whole foreground group, where the
+    // anchor is only the group's evidence. TERM is the cooperative exit, so its
+    // default action is restored even when the binary installed a signal router
+    // before dispatching here; settlement still stops it last.
     unsafe {
-        for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM] {
+        for signal in [libc::SIGHUP, libc::SIGINT] {
             libc::signal(signal, libc::SIG_IGN);
         }
+        libc::signal(libc::SIGTERM, libc::SIG_DFL);
+        // A blocked TERM inherited across exec would otherwise survive the
+        // default action, so the anchor unblocks it here.
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
         // spawn::Blocked supplied only 0..=4 (plus Linux image fd 5).
         // The main-only helper dispatch and signal router open no descriptors.
         for fd in [0, 1, 2, 5] {
@@ -57,8 +69,8 @@ pub(super) fn entry() -> Result<(), RunError> {
         return Err(RunError::broken("invalid anchor go"));
     }
     loop {
-        // SAFETY: pause has no arguments; ignored signals cannot end the
-        // anchor, and a caught signal merely causes another wait. No fds remain.
+        // SAFETY: pause has no arguments. INT and HUP stay ignored, and TERM's
+        // default action ends the process; no fds remain either way.
         unsafe {
             libc::pause();
         }

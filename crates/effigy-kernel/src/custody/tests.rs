@@ -781,6 +781,62 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
     }
 }
 
+/// Q-014 (Tom 2026-10-27): an anchor is group evidence, not an indefinite
+/// lease. SIGTERM retires an idle anchor within a bounded grace, so a harness
+/// that stops its own tree never needs SIGKILL for custody evidence.
+#[test]
+fn idle_anchor_exits_on_term_within_a_bounded_grace() {
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "while :; do /bin/sleep 0.05; done".into(),
+        ],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(10),
+        lifetime: Lifetime::Finite(Duration::from_secs(60)),
+        terminal: Terminal::None,
+        label: "anchor term proof".into(),
+    };
+    let image = crate::supervise::anchor::Image::prepare(&executable()).unwrap();
+    let mut child =
+        spawn::Blocked::fork(&spec, "anchor-term", cx.operation(), &image, None, None).unwrap();
+    let anchor = fixture_identity(child.anchor.unwrap());
+    let leader = fixture_identity(child.pid);
+    let _fixture = AnchorFixture(vec![leader.clone(), anchor.clone()]);
+    child.go().unwrap();
+    child.executed(cx.operation()).unwrap();
+    let anchor_live = || {
+        matches!(
+            crate::ident::process_state(anchor.pid),
+            Observed::Verified(
+                crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    };
+    assert!(anchor_live(), "the anchor pins the live group");
+    platform::numeric(anchor.pid, false, libc::SIGTERM);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while anchor_live() {
+        assert!(
+            Instant::now() < deadline,
+            "an idle anchor must exit on TERM within two seconds"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        matches!(
+            crate::ident::process_state(leader.pid),
+            Observed::Verified(crate::ident::ProcessState::Active, _)
+        ),
+        "TERM retires the evidence, never the still-live workload"
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn fork_only_anchor_cannot_obtain_the_effect_nonce_or_join_a_pty_session() {

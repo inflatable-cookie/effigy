@@ -1726,6 +1726,10 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "check:fixtures:hygiene" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-bootstrap -p effigy-containers -p effigy-kernel -p effigy-test-support -p effigy-scan --all-targets --features effigy-kernel/fault-injection,effigy-containers/fault-injection", timeout_ms = 900000 }] }
 "lint:fixtures:hygiene" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-bootstrap -p effigy-containers -p effigy-kernel -p effigy-test-support -p effigy-scan --lib --tests --bins --features effigy-kernel/fault-injection,effigy-containers/fault-injection -- -D warnings", timeout_ms = 900000 }] }
 "test:fixtures:hygiene:guards" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+# The built-in `test` route owns the same sweep as a named selector; this proof
+# makes a suite leak a process into its own group and requires the route to name
+# and reap it.
+"test:fixtures:hygiene:builtin-sweep" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_builtin_test_sweeps_a_leaked_suite_process)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:fixtures:hygiene:leak-assertion" = { durable = true, visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --test suite_guard --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:fixtures:hygiene:guards:shared" = { durable = true, visibility = "internal", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --no-fail-fast --retries 0 --no-tests fail -j 8", timeout_ms = 900000 }] }
 
@@ -1812,6 +1816,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 
 "test:fixtures:hygiene:support" = { durable = true, visibility = "internal", run = [
   { task = "test:fixtures:hygiene:guards:both" },
+  { task = "test:fixtures:hygiene:builtin-sweep" },
   { task = "test:fixtures:hygiene:run-control" },
   { task = "test:fixtures:hygiene:container-policy" },
 ] }

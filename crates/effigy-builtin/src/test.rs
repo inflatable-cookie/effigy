@@ -12,6 +12,7 @@ mod render;
 mod requirement;
 pub use requirement::{test_run_requirement, TestRunRequirement, TestRunSource};
 mod suite_selection;
+mod sweep;
 
 pub(super) fn try_run_builtin_test(
     ports: &dyn BuiltinRuntimePorts,

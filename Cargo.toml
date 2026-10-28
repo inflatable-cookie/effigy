@@ -151,6 +151,8 @@ tempfile = "3"
 
 [dev-dependencies]
 effigy-test-support = { path = "crates/effigy-test-support" }
+# A settled-run proof asks the kernel whether a workload group still exists.
+libc = "0.2"
 base64 = "0.22"
 # Ordinary HTTP/1 server fixture for the managed listener readiness probe.
 bytes = "1"

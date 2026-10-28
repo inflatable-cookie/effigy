@@ -520,6 +520,18 @@ sweep or new state. It covers direct Effigy proof invocations as well as marked
 test selectors; Queue lead `d7ddb7fe-adc4-40e2-a9f7-1d5b98043830` records the
 observed gap.
 
+Implemented in effigy#388. `__kernel-anchor` now ignores only SIGINT and
+SIGHUP, so TERM retires an idle anchor immediately, and settlement still stops
+the anchor last after group closure. `idle_anchor_exits_on_term_within_a_bounded_grace`
+proves the bounded exit,
+`a_completed_invocation_leaves_no_custody_anchor` and
+`a_completed_hand_run_leaves_no_custody_group_behind` prove a completed direct
+invocation leaves no anchor, and
+`custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closure`
+still proves a deleted checkout retains custody until positive closure. The
+built-in `effigy test` route now also owns the suite sweep described in
+[test fixture hygiene](test-fixture-hygiene.md).
+
 ## Q-015: Argument-scoped task lock for focused tests
 
 Status: answered, implementation pending

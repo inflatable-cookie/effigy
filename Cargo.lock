@@ -863,6 +863,7 @@ dependencies = [
  "effigy-tui",
  "effigy-ui",
  "globset",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

@@ -575,6 +575,48 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
     );
 }
 
+/// Q-014 (Tom 2026-10-27): a run that completes on its own leaves no anchor.
+/// This is a direct hand-run invocation outside any suite marker, so settlement
+/// alone retires the group evidence; nothing sweeps it afterwards.
+#[test]
+fn a_completed_invocation_leaves_no_custody_anchor() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root);
+    let mut child = Custody::spawn(&mut run, spec(home.path(), "exit 0"), &cx).unwrap();
+    let anchor = child.anchor().expect("the run is anchored");
+    assert!(
+        matches!(
+            effigy_kernel::ident::process_state(anchor.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        ),
+        "the anchor pins the group while the run is live"
+    );
+    let exit = *child.wait(cx.operation()).verified().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let result = run
+        .settle(
+            &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+    assert_eq!(result.cleanup(), CleanupOutcome::Complete);
+    assert!(
+        matches!(
+            effigy_kernel::ident::process_state(anchor.pid),
+            Observed::Absent(_) | Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+        ),
+        "a settled run leaves no anchor"
+    );
+}
+
 #[test]
 fn custody_pty_is_a_controlling_terminal_and_drains_before_reap() {
     let home = home();

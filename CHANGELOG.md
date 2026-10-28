@@ -289,6 +289,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A custody anchor no longer ignores SIGTERM: an idle `__kernel-anchor` exits
+  within a bounded grace when a harness stops the tree it started, and a run
+  that completes still retires its anchor during settlement, so a settled run
+  leaves none. SIGINT and SIGHUP stay ignored, because a terminal delivers them
+  to the whole foreground group. Losing the anchor on TERM while workload
+  members remain stays the existing `Unknown` outcome; no numeric group signal
+  is inferred (Q-014).
+- The built-in `effigy test` route owns the same suite sweep as a named test
+  selector: after its last host suite it names, TERMs and KILLs any process
+  that still carries the suite, and fails the route listing it. The marker
+  rides the environment for Linux and a descriptor the suite's own shell opens
+  for macOS, so a kernel custody payload still carries it.
 - Concurrent runs no longer refuse each other with `state store: store busy`:
   the store uses write-ahead logging, one writer gate and a bounded busy
   timeout, and a racing first open of a checkout journal waits instead of

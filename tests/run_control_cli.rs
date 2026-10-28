@@ -736,6 +736,35 @@ fn run_stop_settles_a_running_task_and_its_children() {
     assert_eq!(run["cleanup"], "complete");
 }
 
+/// Q-014 (Tom 2026-10-27): a completed run leaves no custody anchor. This is a
+/// direct, hand-run invocation outside any suite marker, so only settlement can
+/// retire the anchor; the workload's recorded group is the proof that it did.
+#[test]
+fn a_completed_hand_run_leaves_no_custody_group_behind() {
+    let fixture = Fixture::new();
+    let run = fixture.run(&["--run-id", "anchor-settled-1", "report"]);
+    assert!(run.status.success(), "{}", text(&run));
+    assert!(fixture.exists("ran.txt"), "the task ran");
+    let leader: u32 = fixture
+        .read("leader.pid")
+        .trim()
+        .parse()
+        .expect("leader pid");
+    let group_present = || {
+        // SAFETY: signal 0 only observes the recorded workload group.
+        unsafe { libc::kill(-(leader as i32), 0) == 0 }
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while group_present() {
+        assert!(
+            Instant::now() < deadline,
+            "settled run {} left a live custody group {leader}",
+            run.status
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn logs_follow_ends_on_settle_with_the_runs_result() {
     let fixture = Fixture::new();

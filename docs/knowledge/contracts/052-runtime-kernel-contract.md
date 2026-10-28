@@ -1094,12 +1094,16 @@ channel when the blocked child exits, so an unrecorded anchor cannot persist.
 After the durable receipt and owner go byte, the child releases the anchor
 before execing the workload. The anchor closes its last descriptors and
 waits for custody settlement; owner or leader death alone cannot retire it.
-Tom's 2026-10-27 ruling permits it to exit on SIGTERM or once its run settles.
+Tom's 2026-10-27 ruling (Q-014) makes SIGTERM a cooperative exit and leaves
+settlement as the other one. An idle anchor therefore ends within a bounded
+grace when a harness stops the tree it started, and a run that completes
+retires its anchor during settlement; no anchor outlives a settled run.
+SIGINT and SIGHUP stay ignored, because a terminal delivers them to the whole
+foreground group where the anchor is only the group's evidence.
 Settlement stops the workload and verifies group closure before retiring the
 anchor. If SIGTERM removes the anchor while workload members remain, its
 positive group-identity evidence is gone and the existing `Unknown` rule below
-applies; no numeric group signal or new settlement state is inferred. The
-current binary still ignores TERM until the anchor-lifecycle change lands. It
+applies; no numeric group signal or new settlement state is inferred. It
 inherits no workload streams, gate descriptors or sentinel writer, and its output and
 exit never become workload output or status. This costs one persistent
 process and a transient reparenting fork per custody group. A protected OS
