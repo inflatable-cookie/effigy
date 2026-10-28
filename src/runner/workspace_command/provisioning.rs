@@ -776,10 +776,17 @@ fn workspace_artifact_receipt(artifact: &Path) -> Result<BTreeMap<String, String
     Ok(fields)
 }
 
-fn operator_workspace_for_policy(
+pub(super) fn operator_workspace_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Option<OperatorWorkspace>, RunnerError> {
+    // The mode boundary is the environment's *declared* operator workspace,
+    // never a mode name, an environment name or a catalog service's default
+    // user. §8.1: a hybrid environment that happens to resolve a user gets no
+    // guest.
+    if !environment_declares_operator_workspace(repo_root, policy)? {
+        return Ok(None);
+    }
     let (Some(user), Some(home)) = (policy.workspace_user.clone(), policy.workspace_home.clone())
     else {
         return Ok(None);
@@ -792,6 +799,34 @@ fn operator_workspace_for_policy(
         home,
         guest_checkout: guest_checkout.display().to_string(),
     }))
+}
+
+/// Whether a `[systems.*]` workspace names this container (§8.1).
+///
+/// This asks the manifest resolver the containers engine itself uses, so a
+/// catalog service's default workspace identity never promotes a hybrid
+/// environment to container mode.
+fn environment_declares_operator_workspace(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, RunnerError> {
+    let manifest =
+        crate::runner::manifest::load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    let binding = effigy_manifest::resolve_task_execution_binding_from_parts(
+        None,
+        manifest.systems.as_ref(),
+        manifest.containers.as_ref(),
+        "container",
+        &effigy_manifest::ManifestTask::default(),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let Some(effigy_manifest::ResolvedTaskExecutionBinding::Workspace(workspace)) = binding else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        workspace.container.as_ref(),
+        Some(effigy_manifest::ResolvedWorkspaceContainer::Named(name)) if name == &policy.name
+    ))
 }
 
 fn workspace_path_map(

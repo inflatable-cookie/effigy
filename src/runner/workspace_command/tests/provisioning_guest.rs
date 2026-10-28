@@ -21,10 +21,10 @@ use crate::runner::workspace_client::context::{
 };
 use crate::runner::workspace_client::guest_fake::{hex_sha256, DiskGuest, FakeGuest};
 use crate::runner::workspace_command::provisioning::{
-    environment_generation, parse_container_identity, prepare_workspace_guest,
-    verify_pinned_guest_binary, workspace_effigy_active_version_file, OperatorWorkspace,
-    PreparedWorkspaceGuest, WorkspacePrepareFacts, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
-    WORKSPACE_ARTIFACT_RECEIPT_FILE,
+    environment_generation, operator_workspace_for_policy, parse_container_identity,
+    prepare_workspace_guest, verify_pinned_guest_binary, workspace_effigy_active_version_file,
+    OperatorWorkspace, PreparedWorkspaceGuest, WorkspacePrepareFacts,
+    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, WORKSPACE_ARTIFACT_RECEIPT_FILE,
 };
 
 const ENTRY_PATH: &str = "/usr/local/bin/effigy";
@@ -1034,6 +1034,97 @@ fn a_workspace_without_an_activated_environment_has_no_fence_to_publish() {
 
     assert!(error.contains("no activation record"), "{error}");
     assert!(error.contains(HOST_REPREPARE_COMMAND));
+}
+
+// ------------------------------------------------------- the mode boundary
+
+/// A manifest whose primary service carries a catalog default workspace
+/// identity but declares no `[systems.*]` workspace.
+fn hybrid_manifest(repo: &Path) {
+    std::fs::write(
+        repo.join("effigy.toml"),
+        r#"[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.services.app]
+catalog = "node"
+"#,
+    )
+    .expect("hybrid manifest");
+}
+
+/// A policy for the `web` container the boundary fixtures declare.
+fn web_policy(repo: &Path, user: &str, home: &str) -> EffectiveContainerPolicy {
+    let mut policy = crate::runner::test_support::effective_container_policy(
+        "web",
+        "demo-web",
+        "app",
+        repo.join("compose.yml"),
+    );
+    policy.repo_root = repo.to_path_buf();
+    policy.workspace_user = Some(user.to_owned());
+    policy.workspace_home = Some(home.to_owned());
+    policy
+}
+
+fn container_mode_manifest(repo: &Path) {
+    std::fs::write(
+        repo.join("effigy.toml"),
+        r#"[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.services.app]
+catalog = "node"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+"#,
+    )
+    .expect("container-mode manifest");
+}
+
+#[test]
+fn a_catalog_default_workspace_identity_does_not_promote_hybrid_to_container_mode() {
+    let repo = fixture("hybrid-boundary");
+    hybrid_manifest(&repo);
+    // A catalog service's default identity resolves a user but declares no
+    // operator workspace: the environment stays hybrid.
+    let policy = web_policy(&repo, "node", "/home/node");
+
+    assert_eq!(
+        operator_workspace_for_policy(&repo, &policy).expect("resolve"),
+        None,
+        "hybrid mode provisions no guest even with a resolved user"
+    );
+}
+
+#[test]
+fn a_declared_workspace_is_the_container_mode_boundary() {
+    let repo = fixture("container-boundary");
+    container_mode_manifest(&repo);
+    let policy = web_policy(&repo, "dev", "/home/dev");
+
+    let workspace = operator_workspace_for_policy(&repo, &policy)
+        .expect("resolve")
+        .expect("a declared workspace is container mode");
+
+    assert_eq!(workspace.user, "dev");
+    assert_eq!(workspace.guest_checkout, "/workspace");
 }
 
 // ------------------------------------------------- identity probe parsing
