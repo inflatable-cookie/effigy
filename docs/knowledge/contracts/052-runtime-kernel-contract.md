@@ -2608,6 +2608,148 @@ only, and host access needs a terminal opened through Effigy.
 | R2 Pure reads | Local Static and Observe read an immutable context and the mounted checkout and write nothing. Host Observe requests create no run, token or log entry. `--plan` is Static and admits nothing. Context publication and the enrolment credential are Prepare effects; capability issue and enrolment are Mutate requests to the session run. |
 | R3 Unknown grants nothing | Disconnect, stale generation or an unreachable host is `Unknown` for the client and refuses Mutate with no local fallback. The host acts only on its own `Verified` observations and fences every request by generation (K7). |
 
+### 8.11 Workspace-client interface v1
+
+This is the implementation seam for §8, not a claim that the client or any
+transport is implemented or qualified. The channel is separate from the
+kernel's remote custody protocol: the former requests host authority; the
+latter proves and controls a workload already admitted by the host.
+
+**Wire.** TLS pins the server identity from the selected context before the
+client sends a credential. A length-prefixed UTF-8 JSON frame has a four-byte
+big-endian length, at most 1 MiB; malformed, oversized, duplicate-key or
+unknown-version frames close the connection before dispatch. Binary stream
+payloads are base64 in frames, at most 32 KiB decoded. Limits apply before
+allocation and decoding. Each connection begins with `hello` containing
+`schema: "effigy.workspace-channel.v1"`, supported protocol versions,
+client Effigy version and binary digest, context generation and session run
+id. The server returns `hello_ok` with the selected version and its Effigy
+version, or a refusal. V1 selects only protocol 1, and requires the client version and digest to match the context and the
+host-pinned guest artifact, and the client, context and host version and
+protocol to match §8.9;
+there is no downgrade. Authentication follows negotiation inside TLS: an
+`authenticate` frame presents the capability, or an `enrol` frame presents
+the enrolment credential. Neither credential is echoed or logged. No
+request is accepted before authentication; enrolment only issues a
+capability and cannot execute another operation. Version, identity or
+credential failures refuse before effects and tell the client to re-prepare
+where applicable.
+
+An authenticated `request` frame has `id` (128-bit random hex), `method`,
+`context_generation`, `environment_generation`, `session_run_id`,
+`container_id`, `vm_boot_id`, and `body`. The host binds these to its grant,
+not to the client's claims. An invocation body contains a selector or typed
+operation, checkout-relative cwd, intended target, argument array and output
+mode; it contains no resolved plan, executable path, entry point or state
+root. At most 256 arguments of at most 4096 bytes each are allowed, with a
+64 KiB total body; cwd and target are bounded to 4096 bytes and must resolve
+within the allowed checkout or target. Invalid encoding, traversal, unknown
+fields or methods and excess limits refuse before admission. Request IDs are
+unique per session generation, including across reconnects.
+
+A `response` carries `id` and exactly one of `observed`, `accepted`,
+`completed`, or `refused`. `observed` contains the host's typed Observe
+result; `accepted` contains the host `RunId` and placement; `completed`
+contains the typed outcome and exit status; `refused` contains a stable code
+and safe diagnostic. Codes include `invalid_request`, `unauthenticated`,
+`forbidden`, `stale_context`, `identity_mismatch`, `version_mismatch`,
+`held_by`, `unavailable`, `unknown` and `id_conflict`. Preserve the host
+CLI's result and error types: `--json` is rendered as the existing
+`effigy.command.v1` envelope, not as a channel frame. Channel control frames
+and credentials never enter stdout or that envelope.
+
+Mutating or admission requests are recorded by the host before admission,
+keyed by session generation and request ID with a canonical request digest.
+A concurrent or later retry with the same digest returns the recorded
+admission, run or outcome; a different digest returns `id_conflict`. The
+record survives a disconnect and supervisor restart and is retained for the
+session generation and its recoverable outcomes; it is never silently
+forgotten and readmitted. If recovery cannot establish the record or outcome,
+return `unknown`, not a new run. Observe requests have no admission record or
+side effects; retries re-observe and may return newer facts. Neither retry
+rule grants authority after capability revocation or generation change.
+
+A `stream` frame names `id`, `stream_id`, monotonically increasing `seq`,
+`kind` and payload. Kinds are `event`, `stdout`, `stderr`, `terminal_output`,
+`terminal_input`, `resize`, `ack`, `end` and `gap`; events carry typed host
+status or outcome, resize carries positive rows and columns, and `end`
+carries the final sequence and outcome where known. Per stream, the receiver
+acknowledges consumed sequence numbers; the sender permits at most 16
+unacknowledged data frames and at most 512 KiB of queued decoded data, then
+backpressures. Control and cancellation must remain serviceable under backpressure.
+A reconnect may request a sequence cursor; retained frames resume in order,
+otherwise `gap` reports the missing range and the client obtains current
+status or logs from the host. A gap is never presented as complete output.
+Terminal input is neither replayed nor buffered across reconnects; resize is
+latest-wins. Frames for an unknown stream, out-of-order input, invalid cursor
+or exhausted limits are refused or closed without dispatching effects.
+
+**Methods and custody.** `observe` is host `ObserveContext` only; it makes no
+run, token, journal or access log. `invoke` admits the host-resolved command;
+its actual effect class is determined by host policy, never by the method
+label or a guest claim. `attach` observes an authorised session or run and
+opens a bounded stream; `cancel` requests stop of an authorised run;
+`detach` explicitly releases the owning client without stopping a Detached
+run. Enrolment, invocation, cancellation and detach are authorised operations;
+the host checks the grant's operation and target scope and the same operator
+authorisation and elevation as the host CLI. A client cannot cancel or detach
+another client's run merely by naming its ID. A secondary attachment cannot
+stop the workspace session by disconnecting. EOF without detach cancels an
+Inline owner or stops its owned Detached child; EOF after acknowledged detach
+leaves that child running. Disconnect, capability loss, generation mismatch
+or host probe timeout yields `Unknown` for unfinished work and refuses further
+Mutate; reconnect queries the recorded ID. Host-side cancellation still
+settles through the run's custody, and an unproven stop remains Unknown.
+
+The grant is memory-only in the session supervisor and binds host user,
+checkout, session run and generation, environment generation, full container
+identity and VM boot id, and allowed operations and targets. TLS pinning and
+this binding are both mandatory. The enrolment credential is a separate,
+versioned, environment-generation and container-bound credential for enrolment
+only; it is 0600 in guest-private storage and is revoked on generation
+change. A first Effigy-opened terminal receives its capability as part of
+entry; direct terminals enrol only for authority-bearing operations. Static
+and local Observe do not enrol. All workspace-user processes share this trust
+boundary. Capability issuance is a session Mutate; authentication with an
+existing capability is read-only.
+
+For every request the host verifies the current context, environment and
+container fences and re-resolves selector, cwd, target, placement, privileges
+and effect class from host records into `ResolvedInvocation`. It acquires
+the canonical engine gates and journals effects before execution (§5 and §9).
+Origin does not change resource identity. The guest has no state root,
+store writer or gate: guest placement rejects `Gate::acquire` with
+`HostAuthorityRequired`, and dispatch cannot construct host effect contexts
+locally. State and vault mounts remain masked. No failed channel request falls
+back to guest execution. Hybrid provisions no guest binary, context, listener
+or enrolment credential.
+
+**Owners and coverage.** Paths below name the intended owners, including new
+modules; they do not imply those modules already exist. The only integration
+file allowed to join these lanes is `src/runner/workspace_client.rs`.
+
+| Interface or command class from §8.6 | Owner and boundary |
+| --- | --- |
+| Wire types, framing, authentication, replay and host dispatcher | New `crates/effigy-kernel/src/workspace_channel.rs`; delegates resolution and effects to owning host engines, never to remote custody. |
+| Workspace session, attachments, terminal control and down coordination | New `crates/effigy-kernel/src/workspace_session.rs`; runner entry adapts `src/runner/workspace_command/session.rs`. Existing `crates/effigy-kernel/src/remote/{session,stream}.rs` remain remote workload custody. |
+| Context, artifact and enrolment Prepare; placement detection and guest local reads | `src/runner/workspace_command/provisioning.rs` and new `src/runner/workspace_client/context.rs`; `crates/effigy-containers/src/workspace.rs` owns mount isolation. |
+| Help, version, plans, config and static task, bundle, service, graph, docs, scan, contracts, changelog, skill, state and artifact reads | Guest local reader in `src/runner/workspace_client/context.rs`, using the pinned snapshot and mounted checkout, with no refresh. |
+| Tasks, shell, references, Rhai, tests, drafts, QA, skill run, defer outside a workload, managed runs and workspace/system entry | Host task engine and session via dispatcher; defer inside a workload stays under that workload's custody. |
+| Managed status, logs, stop; task status and cache; doctor | Host task/run and store engines for live facts and mutations; local manifest/tool checks stay local. Unlock is refused. |
+| Container shell/exec, lifecycle, status, stats, logs, data, cache, volume, profile, migrate, hosts, scope and ports | `crates/effigy-containers/src/environment.rs` and its owning operations; static declarations local, live reads Observe, changes host requests. |
+| Secrets, deps, graph index, bundle sync, user config | Their host store engines; read or mutate as §8.6 specifies. Secret grants belong to the admitted run. |
+| State apply/capture, artifact stage/capture/push, init, docs index writes, release, deploy, bootstrap, uninstall and gateway | Respective host engines under their canonical policy and gates; gateway never runs in the guest. |
+| Hidden internal entry points | Refused at guest CLI and dispatcher; never a channel method. |
+
+Session activation is one Detached run owned by the environment workspace
+entry's `Task(TaskId)` and holds a Borrow attachment. Additional terminals
+attach, not create a second session. Down from within follows §8.7's holder
+check, child settlement, detached down operation and final gate recheck; the
+session does not cascade-settle other runs. This boundary requires the
+supervisor to expose replay-safe admission and attachment handles to the
+dispatcher; if that cannot be provided without a second authority, stop the
+integration and resolve the kernel interface before implementing a substitute.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |
