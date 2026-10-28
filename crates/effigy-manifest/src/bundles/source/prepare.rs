@@ -197,7 +197,7 @@ fn prepare(
     if std::env::var_os("EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS").is_some()
         && !TTL_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
-        eprintln!("[bundle] EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS is retired; a floating source is checked at most once per checkout every 10 minutes");
+        warn(&preparation.progress, "EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS is retired; a floating source is checked at most once per checkout every 10 minutes");
     }
     let manifest = std::fs::canonicalize(manifest).map_err(|err| io_error(manifest, err))?;
     let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(&manifest)?;
@@ -255,6 +255,7 @@ fn prepare(
                     policies.get(name).copied().unwrap_or_default(),
                     checked.checks.get(name).copied(),
                     now,
+                    &preparation.progress,
                 )?,
             };
             Ok((name.clone(), plan))
@@ -436,6 +437,7 @@ fn prepare(
 /// is re-snapshotted when its content digest moved, and a floating Git source
 /// gets a bounded remote check at most once per checkout per TTL. A full-SHA
 /// `ref`, an OCI pin and a source declared `update = "manual"` never move here.
+#[allow(clippy::too_many_arguments)]
 fn plan_source(
     manifest: &Path,
     name: &str,
@@ -444,6 +446,7 @@ fn plan_source(
     policy: crate::ManifestSourceUpdate,
     checked_at: Option<u64>,
     now: u64,
+    progress: &SourceProgress,
 ) -> Result<SourcePlan, ManifestError> {
     let Some(pin) = pin else {
         return Ok(SourcePlan::Acquire(RefreshReason::Missing));
@@ -461,7 +464,7 @@ fn plan_source(
             // A vanished or unreadable path keeps the pin, like any other
             // failed update attempt.
             Err(failure) => {
-                warn(&kept_warning(name, pin, &failure));
+                warn(progress, &kept_warning(name, pin, &failure));
                 Ok(SourcePlan::Keep)
             }
         },
@@ -607,8 +610,68 @@ fn kept_warning(name: &str, pin: &SourcePin, failure: &ManifestError) -> String 
     )
 }
 
-fn warn(message: &str) {
-    eprintln!("[bundle] {message}");
+/// A warning goes through the progress hook, which draws it above any running
+/// spinner and keeps it off stderr under `--json`.
+fn warn(progress: &SourceProgress, message: &str) {
+    progress.emit(SourceProgressEvent::Warning {
+        message: message.to_owned(),
+    });
+}
+
+/// One source's Started event and the single Finished that ends it. A step
+/// dropped before [`AcquisitionStep::finish`] reports a failure, so an early
+/// return cannot leave a spinner running.
+struct AcquisitionStep<'a> {
+    progress: &'a SourceProgress,
+    source: String,
+    subject: String,
+    done: bool,
+}
+
+impl<'a> AcquisitionStep<'a> {
+    fn start(
+        progress: &'a SourceProgress,
+        source: &str,
+        subject: String,
+        revision: String,
+        local: bool,
+    ) -> Self {
+        progress.emit(SourceProgressEvent::Started {
+            source: source.to_owned(),
+            subject: subject.clone(),
+            revision,
+            local,
+        });
+        Self {
+            progress,
+            source: source.to_owned(),
+            subject,
+            done: false,
+        }
+    }
+
+    fn finish(mut self, kept: Option<String>, failure: Option<String>) {
+        self.done = true;
+        self.progress.emit(SourceProgressEvent::Finished {
+            source: self.source.clone(),
+            subject: self.subject.clone(),
+            kept,
+            failure,
+        });
+    }
+}
+
+impl Drop for AcquisitionStep<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.progress.emit(SourceProgressEvent::Finished {
+                source: self.source.clone(),
+                subject: self.subject.clone(),
+                kept: None,
+                failure: Some("acquisition stopped before it finished".to_owned()),
+            });
+        }
+    }
 }
 
 /// The acquisition error with the one command that retries it appended, unless
@@ -793,7 +856,7 @@ fn acquire_and_publish(
                 Err(failure) => {
                     if let Some(pin) = &pinned {
                         let message = kept_warning(name, pin, &failure);
-                        warn(&message);
+                        warn(progress, &message);
                         warnings.push(message);
                     }
                 }
@@ -805,13 +868,14 @@ fn acquire_and_publish(
             }
             continue;
         };
-        let subject = source_subject(name, selection);
-        progress.emit(SourceProgressEvent::Started {
-            source: name.clone(),
-            subject: subject.clone(),
-            revision: source_revision(selection),
-        });
         let object = source_dir(&generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
+        let step = AcquisitionStep::start(
+            progress,
+            name,
+            source_subject(name, selection),
+            source_revision(selection),
+            matches!(selection, BundleSelection::Path { .. }),
+        );
         let acquired = acquire_source(
             manifest,
             name,
@@ -837,27 +901,18 @@ fn acquire_and_publish(
                 let keepable = pinned
                     .as_ref()
                     .is_some_and(|pin| same_declaration(&pin.declaration, selection));
-                if mode == Mode::Refresh && keepable {
-                    if let Some(pin) = &pinned {
-                        let message = kept_warning(name, pin, &failure);
-                        warn(&message);
-                        warnings.push(message.clone());
-                        progress.emit(SourceProgressEvent::Finished {
-                            source: name.clone(),
-                            subject: subject.clone(),
-                            kept: Some(short_pin(pin)),
-                            failure: Some(message),
-                        });
-                        reports.insert(name.clone(), pin_report(manifest, selection, pin));
-                    }
+                if let Some(pin) = pinned
+                    .as_ref()
+                    .filter(|_| mode == Mode::Refresh && keepable)
+                {
+                    let message = kept_warning(name, pin, &failure);
+                    warn(progress, &message);
+                    warnings.push(message.clone());
+                    step.finish(Some(short_pin(pin)), Some(message));
+                    reports.insert(name.clone(), pin_report(manifest, selection, pin));
                     continue;
                 }
-                progress.emit(SourceProgressEvent::Finished {
-                    source: name.clone(),
-                    subject: subject.clone(),
-                    kept: None,
-                    failure: Some(failure.to_string()),
-                });
+                step.finish(None, Some(failure.to_string()));
                 return Err(match mode {
                     // A task run keeps the strict parse's guidance when its own
                     // first acquisition cannot reach the source.
@@ -866,12 +921,7 @@ fn acquire_and_publish(
                 });
             }
         };
-        progress.emit(SourceProgressEvent::Finished {
-            source: name.clone(),
-            subject: subject.clone(),
-            kept: None,
-            failure: None,
-        });
+        step.finish(None, None);
         let selected = SourcePin {
             declaration: selection.spec(),
             object: relative_object(manifest, object.path())?,
@@ -1025,9 +1075,11 @@ fn acquire_and_publish(
             run,
         )?;
     }
-    prune_unpinned_generations(manifest, &objects, &pins, cx, run)?;
+    prune_unpinned_generations(manifest, &objects, &pins, cx, run, progress)?;
     for note in &notes {
-        eprintln!("[bundle] {note}");
+        progress.emit(SourceProgressEvent::Note {
+            message: note.clone(),
+        });
     }
     remember_update_notes(&notes);
     let primary = reports
@@ -1060,6 +1112,7 @@ fn prune_unpinned_generations(
     pins: &BTreeMap<String, SourcePin>,
     cx: &EffectContext,
     run: &mut Run<'_>,
+    progress: &SourceProgress,
 ) -> Result<(), ManifestError> {
     if pins.is_empty() {
         return Ok(());
@@ -1070,7 +1123,10 @@ fn prune_unpinned_generations(
         .ok()
         .and_then(|observe| objects.observe_entries(&observe, 4096).ok());
     let Some(entries) = listed else {
-        warn("source pruning skipped: the source cache could not be listed");
+        warn(
+            progress,
+            "source pruning skipped: the source cache could not be listed",
+        );
         return Ok(());
     };
     let mut pruned = 0usize;
@@ -1095,17 +1151,22 @@ fn prune_unpinned_generations(
                     .map_err(|err| error(manifest, err.to_string()))?;
                 pruned += 1;
             }
-            Err(error) => warn(&format!(
-                "source generation {} was not pruned: {error}",
-                name.as_str()
-            )),
+            Err(error) => warn(
+                progress,
+                &format!(
+                    "source generation {} was not pruned: {error}",
+                    name.as_str()
+                ),
+            ),
         }
     }
     if pruned > 0 {
-        eprintln!(
-            "[bundle] pruned {pruned} source generation{} nothing pins",
-            if pruned == 1 { "" } else { "s" }
-        );
+        progress.emit(SourceProgressEvent::Note {
+            message: format!(
+                "pruned {pruned} source generation{} nothing pins",
+                if pruned == 1 { "" } else { "s" }
+            ),
+        });
     }
     Ok(())
 }
@@ -1692,6 +1753,7 @@ mod tests {
                     source: "bundle".to_owned(),
                     subject: "bundle".to_owned(),
                     revision: "path".to_owned(),
+                    local: true,
                 },
                 SourceProgressEvent::Finished {
                     source: "bundle".to_owned(),
@@ -1703,12 +1765,81 @@ mod tests {
                     source: "catalog:extra".to_owned(),
                     subject: "extra".to_owned(),
                     revision: "path".to_owned(),
+                    local: true,
                 },
                 SourceProgressEvent::Finished {
                     source: "catalog:extra".to_owned(),
                     subject: "extra".to_owned(),
                     kept: None,
                     failure: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_acquisition_ends_its_step_once_with_the_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, mut prep) = fixture(tmp.path());
+        // The local bundle is gone, so its snapshot cannot be taken.
+        std::fs::remove_dir_all(tmp.path().join("bundle")).unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&seen);
+        prep.progress = SourceProgress::to(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+
+        assert!(prepare_bundle_sources(&manifest, &prep).is_err());
+
+        let events = seen.lock().unwrap().clone();
+        let [SourceProgressEvent::Started { subject, .. }, SourceProgressEvent::Finished {
+            subject: finished,
+            kept,
+            failure,
+            ..
+        }] = events.as_slice()
+        else {
+            panic!("expected one Started and one Finished, got {events:?}");
+        };
+        assert_eq!(subject, "bundle");
+        assert_eq!(finished, "bundle");
+        assert_eq!(*kept, None);
+        assert!(failure.is_some());
+    }
+
+    #[test]
+    fn a_step_dropped_before_it_finishes_reports_one_failure() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&seen);
+        let progress = SourceProgress::to(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+
+        // An early return between Started and the outcome must not leave the
+        // step open for the operator.
+        drop(AcquisitionStep::start(
+            &progress,
+            "catalog:extra",
+            "extra".to_owned(),
+            "path".to_owned(),
+            true,
+        ));
+
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            [
+                SourceProgressEvent::Started {
+                    source: "catalog:extra".to_owned(),
+                    subject: "extra".to_owned(),
+                    revision: "path".to_owned(),
+                    local: true,
+                },
+                SourceProgressEvent::Finished {
+                    source: "catalog:extra".to_owned(),
+                    subject: "extra".to_owned(),
+                    kept: None,
+                    failure: Some("acquisition stopped before it finished".to_owned()),
                 },
             ]
         );

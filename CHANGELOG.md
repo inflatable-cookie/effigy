@@ -196,6 +196,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **Bundle source steps name what they do, and warnings stay off `--json`.** A
+  local `path` source reads `snapshotting local bundle <name>` and
+  `snapshotted local bundle <name>`, not a fetch. Each source's step ends once,
+  with ✓ or ✗ naming the failure. On a terminal, a warning or note from source
+  acquisition prints above the spinner, and `--json` writes nothing to stderr
+  for it.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations
