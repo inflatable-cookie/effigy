@@ -9,10 +9,13 @@
 //! Inspection is pure: it reads the checkout and reports what it finds.
 //! Preparation acquires only a missing destination, bounded and without a
 //! prompt, so an offline or unreachable remote fails a task run instead of
-//! holding it.
+//! holding it. The clone lands in a staging directory beside the destination and
+//! is published with one rename, so a declared path that two fresh linked
+//! worktrees share is never read half-written.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::config_sections::ManifestPinnedSourceConfig;
@@ -250,7 +253,10 @@ pub fn prepare_pinned_sources(
 ///
 /// An existing checkout is neither inspected nor reported: a plain task pays
 /// no `git` call for a source it already has, and a fresh worktree acquires a
-/// missing one bounded and non-interactively.
+/// missing one bounded and non-interactively. Two fresh worktrees that share
+/// one declared destination both succeed: the clone is published with one
+/// rename, and the run that arrives second adopts the published checkout when
+/// it is at the same pin.
 pub fn prepare_missing_pinned_sources(manifest_path: &Path) -> Result<(), ManifestError> {
     for spec in resolve_pinned_sources(manifest_path)? {
         if !spec.path.exists() {
@@ -267,8 +273,16 @@ fn prepare_one(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestEr
     clone_at_pin(spec)
 }
 
-/// Clone `spec`'s missing destination at its pin. A clone that fails leaves no
-/// half-checkout behind, so a later run does not read it as silent drift.
+/// Clone `spec`'s missing destination at its pin.
+///
+/// The clone is made in a staging directory beside the destination and
+/// published with one rename, so a declared path that exists is always a
+/// complete checkout: two fresh linked worktrees that share one declared
+/// destination acquire it concurrently instead of racing inside it. Whichever
+/// run copies last sees the published checkout and adopts it, but only when the
+/// inspection an existing checkout always gets finds it at the pin. A clone
+/// that fails leaves neither a half-checkout at the destination nor staging
+/// bytes behind, so a later run does not read them as silent drift.
 fn clone_at_pin(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestError> {
     if let Some(parent) = spec.path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
@@ -276,29 +290,47 @@ fn clone_at_pin(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestE
             error,
         })?;
     }
+    let staging = staging_path(&spec.path);
     let cloned = git(
         None,
         &[
             "clone",
             "--quiet",
             spec.git.as_str(),
-            spec.path.to_str().unwrap_or_default(),
+            staging.to_str().unwrap_or_default(),
         ],
     )
     .and_then(|_| {
         git(
-            Some(&spec.path),
+            Some(&staging),
             &["checkout", "--quiet", "--detach", spec.revision.as_str()],
         )
     });
     if let Err(error) = cloned {
-        // The destination is Effigy's own creation from this run: nothing else
-        // has written into it yet.
-        let _ = std::fs::remove_dir_all(&spec.path);
+        // The staging directory is Effigy's own creation from this run: nothing
+        // else has written into it, and the declared path was never touched.
+        let _ = std::fs::remove_dir_all(&staging);
         return Err(error);
     }
+    match std::fs::rename(&staging, &spec.path) {
+        Ok(()) => Ok(cloned_report(spec)),
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            if !spec.path.exists() {
+                return Err(ManifestError::Read {
+                    path: spec.path.clone(),
+                    error,
+                });
+            }
+            adopt_published(spec)
+        }
+    }
+}
+
+/// The report for a checkout this run cloned and published.
+fn cloned_report(spec: &PinnedSourceSpec) -> PinnedSourceReport {
     let head = git(Some(&spec.path), &["rev-parse", "HEAD"]).ok();
-    Ok(PinnedSourceReport {
+    PinnedSourceReport {
         name: spec.name.clone(),
         git: spec.git.clone(),
         revision: spec.revision.clone(),
@@ -307,7 +339,47 @@ fn clone_at_pin(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestE
         head,
         dirty: false,
         detail: None,
+    }
+}
+
+/// Another run published `spec.path` while this one was cloning. The published
+/// checkout is adopted only when inspection finds it clean, at the pin and from
+/// the pinned remote; anything else is reported rather than used, so a run in a
+/// second worktree never continues on bytes it did not ask for.
+fn adopt_published(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestError> {
+    let report = inspect_one(spec)?;
+    if report.state == PinnedSourceState::Present {
+        return Ok(report);
+    }
+    Err(ManifestError::Compose {
+        path: spec.path.clone(),
+        detail: format!(
+            "pinned source `{}` at {} was published by a concurrent run that does not match its pin {}: {}",
+            spec.name,
+            spec.path.display(),
+            spec.revision,
+            report
+                .detail
+                .as_deref()
+                .unwrap_or("the checkout was left untouched")
+        ),
     })
+}
+
+/// Where one acquisition clones before it is published: beside the destination,
+/// so publishing is one rename on the destination's own filesystem, and unique
+/// per run, so two concurrent acquisitions never share one.
+fn staging_path(destination: &Path) -> PathBuf {
+    static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "source".to_owned());
+    destination.with_file_name(format!(
+        ".effigy-source.{name}.{}.{}",
+        std::process::id(),
+        STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 fn inspect_one(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestError> {
@@ -645,5 +717,154 @@ path = "book"
         let reports = inspect_pinned_sources(&manifest).expect("inspect");
         assert_eq!(reports[0].state, PinnedSourceState::NotCheckout);
         assert!(reports[0].drift_message().is_some());
+    }
+
+    fn git_fixture(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Effigy fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.test")
+            .env("GIT_COMMITTER_NAME", "Effigy fixture")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.test")
+            .output()
+            .expect("git fixture");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    /// A local git remote holding one published revision.
+    fn init_source_remote(dir: &Path, contents: &str) -> String {
+        std::fs::create_dir_all(dir).expect("mkdir source remote");
+        git_fixture(dir, &["init", "--initial-branch=main", "--quiet"]);
+        commit_source_remote(dir, contents)
+    }
+
+    fn commit_source_remote(dir: &Path, contents: &str) -> String {
+        std::fs::write(dir.join("README"), contents).expect("write source file");
+        git_fixture(dir, &["add", "."]);
+        git_fixture(
+            dir,
+            &[
+                "-c",
+                "user.name=Effigy fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "pin",
+                "--quiet",
+            ],
+        );
+        git_fixture(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// One fresh linked worktree that declares `../book` or the given path, so
+    /// sibling worktrees resolve one shared destination.
+    fn worktree_spec(
+        parent: &Path,
+        worktree: &str,
+        remote: &Path,
+        revision: &str,
+        path: &str,
+    ) -> PinnedSourceSpec {
+        let root = parent.join(worktree);
+        std::fs::create_dir_all(&root).expect("mkdir worktree");
+        let manifest = write_manifest(
+            &root,
+            &format!(
+                "[sources.book]\ngit = \"{}\"\nrev = \"{revision}\"\npath = \"{path}\"\n",
+                remote.display()
+            ),
+        );
+        resolve_pinned_sources(&manifest)
+            .expect("resolve source")
+            .remove(0)
+    }
+
+    /// Acquisition staging directories a run leaves beside a destination. A
+    /// published destination leaves none of them behind.
+    fn staging_entries(parent: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(parent)
+            .expect("read fixture parent")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().starts_with(".effigy-source."))
+                    .unwrap_or(false)
+            })
+            .collect()
+    }
+
+    /// Two fresh linked worktrees share one parent-relative destination. The
+    /// second acquisition finds the first run's published checkout and adopts
+    /// it at the same pin instead of failing on an existing destination.
+    #[test]
+    fn a_destination_another_run_published_is_adopted_at_the_same_pin() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let remote = dir.path().join("book-src");
+        let revision = init_source_remote(&remote, "pinned\n");
+        let first = worktree_spec(dir.path(), "wt-a", &remote, &revision, "../book");
+        let second = worktree_spec(dir.path(), "wt-b", &remote, &revision, "../book");
+        assert_eq!(
+            first.path, second.path,
+            "two worktrees in one parent declare one destination"
+        );
+        assert_eq!(first.path, dir.path().join("book"));
+
+        let cloned = clone_at_pin(&first).expect("the first run clones the destination");
+        assert_eq!(cloned.state, PinnedSourceState::Cloned);
+        assert_eq!(cloned.head.as_deref(), Some(revision.as_str()));
+
+        let adopted = clone_at_pin(&second).expect("the second run adopts it");
+        assert_eq!(adopted.state, PinnedSourceState::Present);
+        assert_eq!(adopted.head.as_deref(), Some(revision.as_str()));
+        assert_eq!(
+            std::fs::read_to_string(second.path.join("README")).expect("read published file"),
+            "pinned\n"
+        );
+        assert!(
+            staging_entries(dir.path()).is_empty(),
+            "no staging directory survives publication: {:?}",
+            staging_entries(dir.path())
+        );
+    }
+
+    /// A run in a second worktree never continues on a destination another run
+    /// published at a different revision: the mismatch is reported and the
+    /// checkout is left exactly as it was.
+    #[test]
+    fn a_destination_published_at_another_revision_is_reported_not_used() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let remote = dir.path().join("book-src");
+        let older = init_source_remote(&remote, "one\n");
+        let newer = commit_source_remote(&remote, "two\n");
+        let older_spec = worktree_spec(dir.path(), "wt-old", &remote, &older, "../book");
+        let newer_spec = worktree_spec(dir.path(), "wt-new", &remote, &newer, "../book");
+        assert_eq!(older_spec.path, newer_spec.path);
+
+        clone_at_pin(&older_spec).expect("the older pin publishes the destination");
+        let error = clone_at_pin(&newer_spec).expect_err("a different revision is never adopted");
+        let message = error.to_string();
+        assert!(message.contains("concurrent run"), "{message}");
+        assert!(message.contains(&newer), "{message}");
+
+        let head = git(Some(&newer_spec.path), &["rev-parse", "HEAD"]).expect("read head");
+        assert_eq!(head, older, "the published checkout is left untouched");
+        assert_eq!(
+            std::fs::read_to_string(newer_spec.path.join("README")).expect("read published file"),
+            "one\n"
+        );
+        assert!(
+            staging_entries(dir.path()).is_empty(),
+            "a refused adoption leaves no staging directory: {:?}",
+            staging_entries(dir.path())
+        );
     }
 }

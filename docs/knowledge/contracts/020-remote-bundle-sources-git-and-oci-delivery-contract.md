@@ -217,6 +217,16 @@ path = "../book"           # relative to the manifest, so siblings are normal
   clone, then check out exactly the pin. The clone is bounded to 120 seconds and
   never prompts, and a task run leaves a source it already has alone without
   inspecting it.
+- A missing checkout is cloned into a hidden `.effigy-source.<name>.<pid>.<n>`
+  staging directory beside its destination and published with one rename, so a
+  declared path that exists is a complete checkout. Two fresh linked worktrees
+  whose manifests resolve one declared destination therefore both acquire it:
+  the run that publishes first owns it, and the run that arrives second adopts
+  the published checkout only when the inspection below finds it clean, at the
+  pin and from the pinned remote. A published checkout at another revision fails
+  that run with the mismatch instead of being used. Staging bytes are removed on
+  every failed acquisition; nothing reads, republishes or reclaims them later,
+  and there is no lock or shared cache keeping two runs apart.
 - An existing checkout is verified against the remote on the Prepare paths. A
   different HEAD or local changes are reported as drift and left untouched.
   Nothing resets, fetches
@@ -320,6 +330,9 @@ Update this contract when any of these change:
   floating-source window, the 5-second remote-check bound, the
   `sources.update.json` record, the `update = "auto" | "manual"` policy and the
   `bundle updated …` wording
+- `[sources.<name>]` grammar, pin identity, the declared-path resolution and
+  the publication of a missing checkout (staging name, the rename, and when a
+  concurrent run's checkout is adopted or reported)
 - source generation layout under `.effigy/cache/sources/`, when a run step
   resolves its source path, and which generations a Prepare prunes
 - `bundle inspect` or `bundle sync` minimum source metadata
