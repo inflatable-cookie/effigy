@@ -560,6 +560,7 @@
 "release:linux:rehearse" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/rehearse-linux-release-container.rhai" } }
 "workspace:linux:artifact" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/build-linux-workspace-artifact.rhai" } }
 "test:release:macos-checksums" = { durable = true, visibility = "internal", group = "Maintenance", run = "bash tests/scripts/release-macos-checksums.sh" }
+"test:release:secret-audit" = { durable = true, visibility = "internal", group = "Maintenance", run = "bash tests/scripts/release-secret-audit.sh" }
 
 # Authorized in-place release Run. Heavy admission wraps the WHOLE operation
 # (current-source build, prepare, certify gates, artifact digests) before any
@@ -588,6 +589,7 @@
 "release:check:binaries" = { visibility = "internal", group = "Release", description = "Report whether this release tag already publishes its binary assets.", run = "sh scripts/release/checks.sh check-binaries" }
 "release:evidence:validate" = { visibility = "public", group = "Release", description = "Validate captured release artifact evidence.", run = "sh scripts/release/checks.sh evidence-validate {args}" }
 "release:evidence:closeout" = { visibility = "public", group = "Release", description = "Write the release closeout record from captured artifacts.", run = "sh scripts/release/checks.sh evidence-closeout {args}" }
+"release:secrets:audit" = { visibility = "internal", group = "Release", description = "Audit the tracked tree at HEAD and history since the release tag for credential-shaped text, bounded and cached by commit. Prints rule, path and commit, never the value.", run = "sh scripts/release/secret-audit.sh {args}" }
 
 # Container/runtime profiling
 "perf:container-shell-matrix" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/profile-container-shell-matrix.rhai" } }
