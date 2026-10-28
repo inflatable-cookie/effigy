@@ -1580,6 +1580,56 @@ mod tests {
         assert_eq!(fs::read_to_string(root.join("received")).unwrap(), secret);
     }
 
+    /// Design spike for the free-stdin route, not an end-to-end managed run.
+    #[test]
+    fn managed_free_stdin_bootstrap_spike_forwards_only_the_variable_name() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::{Command, Stdio};
+
+        let fixture = effigy_test_support::Fixture::workspace("managed-secret-stdin-")
+            .expect("private fixture");
+        let root = fixture.path().canonicalize().expect("fixture root");
+        let runtime = root.join("runtime");
+        fs::write(
+            &runtime,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > runtime-argv\n[ \"$1\" = -e ] && [ \"$2\" = DATABASE_URL ] || exit 1\nshift 2\nprintf '%s\\n' \"$@\" > guest-argv\nexec \"$@\"\n",
+        )
+        .expect("fake runtime");
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("runtime mode");
+        let secret = "secret with 'quotes'\nand a newline";
+        let bootstrap = format!(
+            "export DATABASE_URL={}\nexec {} -e DATABASE_URL /bin/sh -c {}\n",
+            effigy_core::shell::shell_quote(secret),
+            effigy_core::shell::shell_quote(&runtime.display().to_string()),
+            effigy_core::shell::shell_quote("printf '%s' \"$DATABASE_URL\" > received"),
+        );
+        let mut child = Command::new("/bin/sh")
+            .arg("-s")
+            .current_dir(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn bootstrap shell");
+        child
+            .stdin
+            .take()
+            .expect("bootstrap stdin")
+            .write_all(bootstrap.as_bytes())
+            .expect("write bootstrap");
+        let output = child.wait_with_output().expect("bootstrap exit");
+        assert!(output.status.success());
+        let runtime_argv = fs::read_to_string(root.join("runtime-argv")).unwrap();
+        let guest_argv = fs::read_to_string(root.join("guest-argv")).unwrap();
+        assert!(runtime_argv.starts_with("-e\nDATABASE_URL\n"));
+        assert!(!runtime_argv.contains(secret));
+        assert!(!guest_argv.contains(secret));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(secret));
+        assert_eq!(fs::read_to_string(root.join("received")).unwrap(), secret);
+    }
+
     #[test]
     fn a_managed_task_honours_its_scratch_opt_out() {
         let uses: effigy_manifest::ManifestTask =
