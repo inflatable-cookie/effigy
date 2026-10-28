@@ -343,9 +343,41 @@ impl ContextRefusal {
     }
 }
 
+impl From<ContextRefusal> for ContextReadError {
+    fn from(refusal: ContextRefusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
 impl fmt::Display for ContextRefusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}: {}", self.code.as_str(), self.message)
+    }
+}
+
+/// Why reading a published generation did not produce one.
+///
+/// A guest read can fail because the container could not be read at all (a
+/// transport or bounded-capture failure, which keeps its own details) or
+/// because what is published refuses (unprepared, stale or invalid).
+#[derive(Debug)]
+pub(crate) enum ContextReadError {
+    Guest(RunnerError),
+    Refused(ContextRefusal),
+}
+
+impl ContextReadError {
+    fn refused(refusal: ContextRefusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
+impl fmt::Display for ContextReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Guest(error) => write!(formatter, "{error}"),
+            Self::Refused(refusal) => write!(formatter, "{refusal}"),
+        }
     }
 }
 
@@ -388,26 +420,30 @@ pub(crate) struct PublishedWorkspaceContext {
 /// unprepared. Reads `current`, then one generation; nothing else.
 pub(crate) fn read_published_context(
     guest: &mut dyn GuestReader,
-) -> Result<Option<PublishedWorkspaceContext>, ContextRefusal> {
+) -> Result<Option<PublishedWorkspaceContext>, ContextReadError> {
     let Some(generation) = read_published_generation(guest)? else {
         return Ok(None);
     };
     let Some(body) = guest
         .read_file(&context_path(generation))
-        .map_err(|error| unreadable(&context_path(generation), &error))?
+        .map_err(ContextReadError::Guest)?
     else {
-        return Err(ContextRefusal::unavailable(format!(
-            "workspace context generation {generation} is named by \
+        return Err(ContextReadError::refused(ContextRefusal::unavailable(
+            format!(
+                "workspace context generation {generation} is named by \
              `{CONTEXT_CURRENT_PATH}` but its document is missing; run `{HOST_REPREPARE_COMMAND}` \
              on the host to re-prepare the workspace"
+            ),
         )));
     };
     let context = WorkspaceContext::parse(&body)?;
     if context.generation != generation {
-        return Err(ContextRefusal::unavailable(format!(
-            "workspace context generation {generation} carries generation {}; run \
+        return Err(ContextReadError::refused(ContextRefusal::unavailable(
+            format!(
+                "workspace context generation {generation} carries generation {}; run \
              `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
-            context.generation
+                context.generation
+            ),
         )));
     }
     Ok(Some(PublishedWorkspaceContext {
@@ -419,10 +455,10 @@ pub(crate) fn read_published_context(
 /// Read only the published generation number. Pure.
 pub(crate) fn read_published_generation(
     guest: &mut dyn GuestReader,
-) -> Result<Option<u64>, ContextRefusal> {
+) -> Result<Option<u64>, ContextReadError> {
     let Some(body) = guest
         .read_file(CONTEXT_CURRENT_PATH)
-        .map_err(|error| unreadable(CONTEXT_CURRENT_PATH, &error))?
+        .map_err(ContextReadError::Guest)?
     else {
         return Ok(None);
     };
@@ -430,15 +466,13 @@ pub(crate) fn read_published_generation(
     let trimmed = rendered.trim();
     match trimmed.parse::<u64>() {
         Ok(generation) if generation > 0 => Ok(Some(generation)),
-        _ => Err(ContextRefusal::unavailable(format!(
-            "`{CONTEXT_CURRENT_PATH}` does not name a context generation; run \
-             `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+        _ => Err(ContextReadError::refused(ContextRefusal::unavailable(
+            format!(
+                "`{CONTEXT_CURRENT_PATH}` does not name a context generation; run \
+                 `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+            ),
         ))),
     }
-}
-
-fn unreadable(path: &str, error: &RunnerError) -> ContextRefusal {
-    ContextRefusal::unavailable(format!("cannot read `{path}`: {error}"))
 }
 
 /// The facts one context generation is built from. The caller is the host's
@@ -474,9 +508,11 @@ impl WorkspaceContext {
         }
     }
 
-    /// Serialize for publication. Stable key order comes from the struct.
+    /// Serialize for publication. Compact: the document is machine-read, and a
+    /// bounded guest command reads it inside its own budget. Stable key order
+    /// comes from the struct.
     pub(crate) fn render(&self) -> Result<Vec<u8>, RunnerError> {
-        let mut rendered = serde_json::to_vec_pretty(self).map_err(|error| {
+        let mut rendered = serde_json::to_vec(self).map_err(|error| {
             RunnerError::task_invocation(format!("cannot serialize workspace context: {error}"))
         })?;
         rendered.push(b'\n');

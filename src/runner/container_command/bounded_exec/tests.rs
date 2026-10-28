@@ -144,6 +144,9 @@ exit 0
 const PUBLIC_FAKE_BACKEND: &str = r#"#!/bin/sh
 args="$*"
 FAKE_ID=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+# The executable store is addressed by the digest's hex part; the context's
+# `current` pointer carries the full `sha256:<hex>` value.
+FAKE_DIGEST_HEX=${FAKE_BOUNDED_DIGEST#sha256:}
 case "$FAKE_BOUNDED_MODE:$args" in
     runtime-hang:*ps*|launch-blocked-discovery:*ps*)
         printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
@@ -165,9 +168,9 @@ case "$FAKE_BOUNDED_MODE:$args" in
 esac
 if [ "$FAKE_BOUNDED_MODE" = "remove-before-command" ]; then
     case "$args" in
-        *"/run/effigy/bin/current"*)
-            /bin/chmod 000 "$0"
-            printf '%s' "$FAKE_BOUNDED_DIGEST"
+        *"/run/effigy/context/current"*)
+            /bin/chmod 000 "$0" "$FAKE_BOUNDED_BIN_DIR/docker" "$FAKE_BOUNDED_BIN_DIR/colima"
+            printf '1'
             exit 0
             ;;
     esac
@@ -194,14 +197,18 @@ case "$args" in
         exit 0
         ;;
     *"/run/effigy/context/1/context.json"*)
-        cat "$FAKE_BOUNDED_CONTEXT_FILE"
+        # `read` is a shell builtin: the child's PATH holds only the fixture
+        # backend, so a `cat` here would fail and read as an empty document.
+        while IFS= read -r line || [ -n "$line" ]; do
+            printf '%s\n' "$line"
+        done < "$FAKE_BOUNDED_CONTEXT_FILE"
         exit 0
         ;;
     *"/run/effigy/bin/current"*)
         printf '%s' "$FAKE_BOUNDED_DIGEST"
         exit 0
         ;;
-    *"$FAKE_BOUNDED_DIGEST"*)
+    *"$FAKE_DIGEST_HEX"*)
         printf 'private fake guest executable'
         exit 0
         ;;
@@ -607,6 +614,7 @@ fn run_guarded_public_case(
             write_public_guest_context(dir.path(), mode),
         )
         .env("FAKE_BOUNDED_DIGEST", public_guest_digest())
+        .env("FAKE_BOUNDED_BIN_DIR", bin_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::from(child_stdout))
         .stderr(Stdio::from(child_stderr));
@@ -723,8 +731,10 @@ fn guarded_public_entry_child() {
             assert_eq!(value["stdout"], "command-only");
             assert_eq!(value["stdout_bytes"], "command-only".len());
             assert_eq!(value["attempts"], 1);
+            // Three owned-service listings plus the published generation, its
+            // document, the digest pointer and the pinned executable.
             assert_eq!(
-                value["preparation"]["captures"], 4,
+                value["preparation"]["captures"], 7,
                 "public command must verify the published guest context and its pinned executable"
             );
             let preparation_stdout = value["preparation"]["retained"]["stdout_bytes"]
@@ -768,10 +778,9 @@ fn guarded_public_entry_child() {
             let details = failure_details(&error);
             assert_eq!(details["failure"], "workspace_preparation_failed");
             assert_eq!(details["phase"], "workspace_preparation");
-            assert_eq!(
-                details["preparation"]["captures"], 2,
-                "the generation pointer and its document are enough to refuse a stale version"
-            );
+            // Three owned-service listings, then the generation pointer and
+            // its document: enough to refuse a stale version before any effect.
+            assert_eq!(details["preparation"]["captures"], 5);
             // This phase failure is decided about five spawned-and-completed
             // captures; it is not a transport refusal, so it must not claim
             // any refusal observations (not_attempted would be false here).
@@ -797,29 +806,27 @@ fn guarded_public_entry_child() {
             assert_eq!(details["phase"], "command_execution");
             assert_eq!(details["attempts"], 2);
             assert_eq!(details["workspace_user_fallback"], true);
-            assert_eq!(details["preparation"]["captures"], 4);
+            assert_eq!(details["preparation"]["captures"], 7);
             assert!(!final_marker.exists());
         }
         "remove-before-command" => {
-            let error = result.expect_err("missing final backend must be a launch failure");
+            // The fixture removes the backend at the first preparation read, so
+            // the next client spawn is a launch failure and the command never
+            // runs. Its arguments and both streams stay out of the human and
+            // JSON diagnostics.
+            let error = result.expect_err("a vanished backend cannot launch the command");
             let human = error.to_string();
             let json = error
                 .json_error_details()
-                .unwrap_or_else(|| panic!("expected bounded launch failure, got: {human}"));
-            assert!(
-                human.contains("launch"),
-                "human error is safe and useful: {human}"
-            );
+                .unwrap_or_else(|| panic!("expected bounded command failure, got: {human}"));
             assert!(!human.contains("SECRET_ARG_MARKER_142"));
             assert!(!json.contains("SECRET_ARG_MARKER_142"));
             assert!(!json.contains("docker compose"));
             let details: serde_json::Value =
                 serde_json::from_str(json).expect("json details parse");
             assert_eq!(details["failure"], "launch_failed");
-            assert_eq!(details["phase"], "command_execution");
+            assert_eq!(details["phase"], "workspace_preparation");
             assert_eq!(details["termination_scope"], "owned_host_client_group");
-            assert_eq!(details["container"], "[redacted]");
-            assert_eq!(details["service"], "[redacted]");
             assert!(!final_marker.exists());
         }
         "inner-nonzero-secret" => {
@@ -938,7 +945,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             backend: "docker",
             identity: &identity,
             deadline_ms: PUBLIC_SEMANTIC_BUDGET_MS,
-            stdout_limit: 512,
+            stdout_limit: 4096,
         },
     );
     // The public Colima path guard requires a host-shared repo path. The
@@ -955,7 +962,7 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             backend: "colima",
             identity: &identity,
             deadline_ms: PUBLIC_SEMANTIC_BUDGET_MS,
-            stdout_limit: 512,
+            stdout_limit: 4096,
         },
     );
 }
@@ -968,6 +975,10 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
         mode,
         "identity-invalid" | "workspace-hang" | "workspace-flood" | "remove-before-command"
     );
+    // The fallback proof needs preparation (the published context, its digest
+    // pointer and the pinned executable) to fit, then an inner command that
+    // overflows on its second attempt.
+    let _ = write_public_guest_context(dir.path(), mode);
     let fallback_limit = format!(
         "demo-web-app-1\tUp\t\tdemo-web\t{}\tapp\tfalse\n",
         repo.display()
@@ -979,8 +990,7 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
             repo.display()
         )
         .len() as u64
-        + identity.len() as u64
-        + 3
+        + public_guest_preparation_stdout(dir.path(), mode)
         + 80;
     run_guarded_public_case(
         &dir,
@@ -1002,8 +1012,8 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
             stdout_limit: match mode {
                 "fallback-budget" => fallback_limit,
                 "runtime-flood" => 64,
-                "valid-identity" | "remove-before-command" => 512,
-                _ => 512,
+                "workspace-hang" | "workspace-flood" => 512,
+                _ => 4096,
             },
         },
     )

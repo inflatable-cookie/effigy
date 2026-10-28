@@ -14,9 +14,9 @@ use crate::runner::exec_command::{
 };
 use crate::runner::workspace_client::context::{
     binary_dir, binary_path, context_dir, context_path, read_published_context,
-    read_published_generation, render_digest, GuestBinaryIdentity, GuestReader, GuestWorkspace,
-    WorkspaceActivationIdentity, WorkspaceBackendDescriptor, WorkspaceChannelLocator,
-    WorkspaceContainerIdentity, WorkspaceContext, WorkspaceContextInput,
+    read_published_generation, render_digest, ContextReadError, GuestBinaryIdentity, GuestReader,
+    GuestWorkspace, WorkspaceActivationIdentity, WorkspaceBackendDescriptor,
+    WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext, WorkspaceContextInput,
     WorkspaceEnrolmentCredential, WorkspaceEnvironmentIdentity, WorkspaceHostIdentity,
     WorkspacePathMap, WorkspacePinnedSource, WorkspaceRoute, BINARY_CURRENT_PATH, BINARY_ROOT,
     CHANNEL_PROTOCOL_VERSION, CONTEXT_CURRENT_PATH, ENROL_CREDENTIAL_PATH, ENROL_ROOT,
@@ -433,15 +433,38 @@ pub(super) fn ensure_workspace_effigy_available_for_policy_bounded(
     target_id: &str,
     budget: &mut BoundedCommandBudget,
 ) -> Result<(), RunnerError> {
-    let mut guest = ComposeWorkspaceGuest::bounded(workspace_repo_root, policy, target_id, budget);
-    verify_pinned_guest_binary(&mut guest)
+    let verified = {
+        let mut guest =
+            ComposeWorkspaceGuest::bounded(workspace_repo_root, policy, target_id, budget);
+        verify_pinned_guest_binary(&mut guest)
+    };
+    verified.map_err(|error| {
+        // A bounded capture failure (deadline, stream limit) already carries
+        // its own phase detail; only a verification refusal is restated here.
+        if error.json_error_details().is_some() {
+            return error;
+        }
+        // Bounded failures carry only static text, so the refusal names the
+        // phase and the host re-prepare rather than a version, a digest or a
+        // path from the container.
+        bounded_phase_error(
+            policy,
+            policy.primary_service.as_str(),
+            budget,
+            BoundedCommandPhase::WorkspacePreparation,
+            "workspace_preparation_failed",
+            "bounded container command could not verify the prepared workspace guest; run \
+             `effigy container up` on the host to re-prepare the workspace",
+            None,
+        )
+    })
 }
 
 /// Check the published context against the host's own version and the guest's
 /// installed executable. Pure reads: no write, no build, no download.
 pub(super) fn verify_pinned_guest_binary(guest: &mut dyn GuestReader) -> Result<(), RunnerError> {
     let published = read_published_context(guest)
-        .map_err(|refusal| RunnerError::task_invocation(refusal.to_string()))?
+        .map_err(context_read_error)?
         .ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "this workspace has no prepared guest context; run `{HOST_REPREPARE_COMMAND}` on \
@@ -486,6 +509,15 @@ pub(super) fn verify_pinned_guest_binary(guest: &mut dyn GuestReader) -> Result<
     Ok(())
 }
 
+/// Keep a guest transport or capture failure (which carries its own bounded
+/// detail) and restate only a published-content refusal.
+fn context_read_error(error: ContextReadError) -> RunnerError {
+    match error {
+        ContextReadError::Guest(error) => error,
+        ContextReadError::Refused(refusal) => RunnerError::task_invocation(refusal.to_string()),
+    }
+}
+
 /// Publish one complete generation and switch `current`.
 ///
 /// A published generation is never edited: an identical document (ignoring the
@@ -495,8 +527,7 @@ fn publish_context_generation(
     guest: &mut dyn GuestWorkspace,
     context: &mut WorkspaceContext,
 ) -> Result<u64, RunnerError> {
-    let current = read_published_generation(guest)
-        .map_err(|refusal| RunnerError::task_invocation(refusal.to_string()))?;
+    let current = read_published_generation(guest).map_err(context_read_error)?;
     if let Some(current) = current {
         context.generation = current;
         let existing = guest.read_file(&context_path(current))?;

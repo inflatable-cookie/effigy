@@ -74,6 +74,13 @@ fn context(generation: u64) -> WorkspaceContext {
     })
 }
 
+fn refusal_of(error: ContextReadError) -> ContextRefusal {
+    match error {
+        ContextReadError::Refused(refusal) => refusal,
+        ContextReadError::Guest(error) => panic!("unexpected guest error: {error}"),
+    }
+}
+
 fn live(generation: u64) -> LiveGuestRun {
     LiveGuestRun {
         binary: binary(),
@@ -228,7 +235,7 @@ fn a_pointer_without_a_document_refuses_and_names_the_reprepare() {
     let mut guest = FakeGuest::new();
     guest.put_file(CONTEXT_CURRENT_PATH, "4\n", 0o644);
 
-    let refusal = read_published_context(&mut guest).expect_err("unprepared");
+    let refusal = refusal_of(read_published_context(&mut guest).expect_err("unprepared"));
 
     assert_eq!(refusal.code, ContextRefusalCode::Unavailable);
     assert!(refusal.message.contains(HOST_REPREPARE_COMMAND));
