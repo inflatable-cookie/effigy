@@ -630,6 +630,7 @@ where
         &policy,
         &policy.project_name,
         &policy.compose_files,
+        None,
     );
     let health = wait_for_container_ready(&policy)?;
     let gateway_routes = register_gateway_routes(repo_root, &policy)?;

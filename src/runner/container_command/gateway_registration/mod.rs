@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use effigy_containers::exec::{
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
+    list_running_compose_containers_for_policy_with_deadline,
     list_running_compose_containers_for_policy_with_timeout, ContainerExecError,
     RunningComposeContainer,
 };
@@ -470,9 +471,11 @@ fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
 pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows = list_running_compose_containers_for_policy(repo_root, policy)
-        .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
+    let rows =
+        list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline)
+            .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(

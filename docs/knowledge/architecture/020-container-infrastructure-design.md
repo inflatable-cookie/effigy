@@ -317,6 +317,17 @@ container task unexpectedly tearing down a workspace still in use.
 the Colima profile. `startup = "attached"` makes `container up` session owned,
 with graceful shutdown on interrupt. Detached startup returns after readiness.
 
+Every runtime read Effigy makes is bounded. A bring-up's reads after Compose
+returns are bounded by one deadline: the environment's own declared
+`[containers.<NAME>.health].timeout_secs` (60s when it declares none), started
+when Compose returned. The restart-policy read that follows the apply spends
+that budget first and the readiness wait spends the rest of it, so a runtime
+that stops answering an inventory read is reported once, with the readiness
+evidence and the probe child stopped and reaped at the deadline, instead of
+holding the command open or being answered with a second Compose activation
+(effigy#411). A read that names no deadline of its own still gets the standard
+runtime read budget, so no inventory read waits out a hung runtime.
+
 ## 4. Host Gateway, DNS, HTTP, and TCP Aliases
 
 The Rust gateway is a host process. It answers local DNS names, proxies HTTP

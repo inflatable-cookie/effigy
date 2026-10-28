@@ -10,8 +10,8 @@ use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
     error_is_timeout, format_args, run_command_capture, run_command_capture_allow_failure,
-    run_command_capture_allow_failure_with_deadline, run_command_capture_os,
-    run_command_capture_with_absolute_deadline, run_command_capture_with_timeout,
+    run_command_capture_allow_failure_with_deadline, run_command_capture_with_absolute_deadline,
+    run_command_capture_with_timeout,
 };
 use crate::{
     colima::{
@@ -607,20 +607,6 @@ pub(super) fn colima_profiles_for_all_states_inventory(
 
 pub(crate) fn default_runtime_profile() -> String {
     user_global_colima_profile().unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned())
-}
-
-pub(super) fn run_runtime_command_capture_for_policy(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    docker_args: &[OsString],
-    label: &str,
-) -> Result<Output, ContainerExecError> {
-    let detection = runtime_detection_for_policy(repo_root, policy);
-    let (program, args) = ContainerManager::defaults()
-        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", docker_args)
-        .map_err(container_manager_error)?;
-    let program = program.to_string_lossy().into_owned();
-    run_command_capture_os(repo_root, &program, &args, label)
 }
 
 pub(super) fn run_runtime_command_capture_for_policy_with_timeout(

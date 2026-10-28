@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -24,8 +24,33 @@ struct Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.stacks.clear();
+        // Stop the disposable gateway through its own control path while its
+        // PID record still exists; the root removal comes after this.
+        let _ = private_gateway(self.root.path(), "down");
     }
 }
+
+/// Run one `effigy gateway` lifecycle command against the fixture's private
+/// gateway root. Its CA comes from the fixture mkcert, never the host's.
+fn private_gateway(root: &Path, subcommand: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["gateway", subcommand, "--private-state-root"])
+        .arg(root.join("home/.effigy/gateway"))
+        .arg("--json")
+        .env("HOME", root.join("home"))
+        .env("EFFIGY_GATEWAY_MKCERT_BIN", root.join("bin/mkcert"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                root.join("bin").display(),
+                std::env::var("PATH").expect("PATH")
+            ),
+        )
+        .output()
+        .expect("private gateway command")
+}
+
 impl Fixture {
     fn new() -> Self {
         let root = effigy_test_support::Fixture::workspace("effigy-158-private-")
@@ -55,6 +80,24 @@ impl Fixture {
             fs::Permissions::from_mode(0o700),
         )
         .expect("mode");
+        // One disposable private gateway serves every stack. It lives under the
+        // fixture HOME, where the route store the assertions read also lives,
+        // and its CA comes from a fixture mkcert rather than the host's. It is
+        // started before any stack activates, so concurrent activations reuse
+        // it instead of racing for the gateway transition lock.
+        let gateway = root.path().join("home/.effigy/gateway");
+        fs::create_dir_all(&gateway).expect("disposable private gateway");
+        fs::set_permissions(&gateway, fs::Permissions::from_mode(0o700)).expect("gateway mode");
+        fs::write(root.path().join("bin/mkcert"), MKCERT).expect("fixture mkcert");
+        fs::set_permissions(
+            root.path().join("bin/mkcert"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .expect("mkcert mode");
+        for subcommand in ["setup-tls", "up"] {
+            let output = private_gateway(root.path(), subcommand);
+            assert!(output.status.success(), "{subcommand}: {output:?}");
+        }
         let mut fixture = Self {
             root,
             stacks: Vec::new(),
@@ -168,6 +211,35 @@ version = "16"
             port,
         });
     }
+    fn gateway_root(&self) -> PathBuf {
+        self.root.path().join("home/.effigy/gateway")
+    }
+    /// Give stack `i` an environment health budget of `secs`. The budget an
+    /// environment declares is the bound its activation's runtime inventory
+    /// reads share, so a proof can inject seconds instead of the default
+    /// minute.
+    fn set_health_budget(&self, i: usize, secs: u64) {
+        let root = &self.stacks[i].root;
+        let manifest = fs::read_to_string(root.join("effigy.toml")).expect("manifest");
+        fs::write(
+            root.join("effigy.toml"),
+            format!("{manifest}\n[containers.web.health]\ntimeout_secs = {secs}\n"),
+        )
+        .expect("declared health budget");
+    }
+    /// The PIDs of inventory probes that reported themselves hung, in order.
+    fn hung_probes(&self, i: usize) -> Vec<u32> {
+        fs::read_to_string(self.stacks[i].root.join("hung-probes.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                serde_json::from_str::<Value>(line)
+                    .ok()
+                    .and_then(|row| row["pid"].as_u64())
+                    .and_then(|pid| u32::try_from(pid).ok())
+            })
+            .collect()
+    }
     fn command(&self, i: usize, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_effigy"));
         c.args(args)
@@ -190,7 +262,11 @@ version = "16"
                     std::env::var("PATH").expect("PATH")
                 ),
             )
-            .env_remove("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT")
+            .env("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT", self.gateway_root())
+            .env(
+                "EFFIGY_GATEWAY_MKCERT_BIN",
+                self.root.path().join("bin/mkcert"),
+            )
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -797,6 +873,70 @@ fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
     );
 }
 
+/// A runtime whose inventory hangs must not spend minutes in one detached
+/// `container up`, and must not answer it with another Compose activation. The
+/// environment's own health budget is the bring-up's one observation budget, so
+/// the command reaches one truthful refusal, the hung probe child stops with
+/// that budget, and a healthy sibling stack still starts.
+#[test]
+fn private_hung_runtime_inventory_is_one_bounded_refusal() {
+    let mut fixture = Fixture::new();
+    // An injected budget keeps the proof seconds long instead of the default
+    // minute; production reads the same declared budget.
+    fixture.set_health_budget(0, 4);
+    fixture.set(0, "mode", json!("hang-after-up"));
+    let started = Instant::now();
+    let output = fixture
+        .command(0, &["container", "up", "--detach", "--json"])
+        .output()
+        .expect("one bounded detached activation");
+    let elapsed = started.elapsed();
+    let rendered = String::from_utf8_lossy(&output.stdout).into_owned();
+    let activations = up_count(&fixture, 0);
+    let hung = fixture.hung_probes(0);
+    println!(
+        "hung-inventory activation: {elapsed:?}, {activations} Compose up, probes {hung:?}\n{rendered}"
+    );
+    assert!(!output.status.success(), "{output:?}");
+    let failed: Value = serde_json::from_slice(&output.stdout).expect("one JSON failure envelope");
+    assert_eq!(
+        failed["error"]["details"]["state"], "unavailable",
+        "{failed}"
+    );
+    assert_eq!(
+        failed["error"]["details"]["readiness"], "unverified",
+        "{failed}"
+    );
+    // The declared 4s budget bounds the activation, not one probe of it: the
+    // tail is the wait's own last diagnostic probe, never the runtime's answer.
+    assert!(
+        elapsed < Duration::from_secs(20),
+        "a declared 4s budget took {elapsed:?} over {activations} Compose up: {failed}"
+    );
+    // A hung inventory is one refusal, never a reason to activate again.
+    assert_eq!(
+        activations, 1,
+        "the hung probe repeated activation: {rendered}"
+    );
+    // The probes that hung stopped with the budget: no child outlived it.
+    assert!(
+        !hung.is_empty(),
+        "the fixture never hung an inventory probe"
+    );
+    for pid in hung {
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("probe liveness")
+            .success();
+        assert!(!alive, "hung probe {pid} outlived the activation");
+    }
+    // A sibling whose runtime answers still starts.
+    let healthy = fixture.run(1, &["container", "up", "--detach"]);
+    assert!(healthy.status.success(), "healthy sibling: {healthy:?}");
+    fixture.probe(1);
+}
+
 #[test]
 fn private_startup_failure_and_interruption_withhold_ready_and_cleanup() {
     let mut fixture = Fixture::new();
@@ -897,6 +1037,42 @@ fn private_service_child() {
     }
 }
 
+/// Fixture mkcert: a disposable CA and server certificate, issued with the
+/// openssl steps the private gateway tests use. Never touches a host trust store.
+const MKCERT: &str = r#"#!/bin/sh
+set -eu
+if [ "${1-}" = "-help" ]; then
+    exit 0
+fi
+if [ "${1-}" = "-install" ]; then
+    exit 97
+fi
+cert=
+key=
+domain=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -cert-file) cert=$2; shift 2 ;;
+        -key-file) key=$2; shift 2 ;;
+        *) domain=$1; shift ;;
+    esac
+done
+mkdir -p "$CAROOT"
+if [ ! -f "$CAROOT/rootCA.pem" ] || [ ! -f "$CAROOT/rootCA-key.pem" ]; then
+    printf '[req]\ndistinguished_name=dn\nx509_extensions=v3_ca\nprompt=no\n[dn]\nCN=Effigy disposable fixture CA\n[v3_ca]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n' > "$CAROOT/rootCA.cnf"
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -keyout "$CAROOT/rootCA-key.pem" -out "$CAROOT/rootCA.pem" -config "$CAROOT/rootCA.cnf"
+    rm -f "$CAROOT/rootCA.cnf"
+fi
+csr="$cert.csr"
+ext="$cert.ext"
+printf '[req]\ndistinguished_name=dn\nreq_extensions=v3_req\nprompt=no\n[dn]\nCN=%s\n[v3_req]\nsubjectAltName=DNS:%s\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$domain" "$domain" > "$ext"
+openssl req -newkey rsa:2048 -nodes -sha256 -keyout "$key" -out "$csr" -config "$ext"
+openssl x509 -req -in "$csr" -CA "$CAROOT/rootCA.pem" -CAkey "$CAROOT/rootCA-key.pem" \
+    -CAcreateserial -sha256 -days 365 -extfile "$ext" -extensions v3_req -out "$cert"
+rm -f "$csr" "$ext"
+"#;
+
 const BACKEND: &str = r#"import sys,os,json,pathlib,time,socket
 root=pathlib.Path(os.environ['PRIVATE_BACKEND_ROOT']); cwd=pathlib.Path.cwd(); args=sys.argv[1:]
 if pathlib.Path(sys.argv[0]).name=='colima':
@@ -992,7 +1168,9 @@ if args and args[0]=='compose':
  elif sub in ['restart','down']: sys.exit(91)
  sys.exit(0)
 if args and args[0]=='ps':
- if state['active'] and mode=='hang-after-up' and '--format' in args: time.sleep(120)
+ if state['active'] and mode=='hang-after-up' and '--format' in args:
+  with open(cwd/'hung-probes.jsonl','a') as f: f.write(json.dumps({'pid':os.getpid(),'args':args})+'\n')
+  time.sleep(120)
  for p in root.glob('stack*/state.json'):
   s=json.load(open(p))
   if not s['active'] or not selected(s): continue
