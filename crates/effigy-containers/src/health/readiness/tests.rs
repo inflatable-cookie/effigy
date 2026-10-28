@@ -111,7 +111,7 @@ fn an_unreadable_inspect_is_never_readiness() {
 #[test]
 fn the_readiness_failure_names_every_service_its_check_and_the_next_commands() {
     let services = parse_inspect_health(INSPECT_TWO_UNHEALTHY.as_bytes()).expect("inspect parses");
-    let diagnostic = readiness_diagnostic("inventors", &services, 60, &BTreeMap::new());
+    let diagnostic = readiness_diagnostic("inventors", &services, 60, &BTreeMap::new(), None);
 
     assert!(diagnostic.starts_with("environment `inventors` did not become ready within 60s"));
     assert!(
@@ -131,16 +131,16 @@ fn the_readiness_failure_names_every_service_its_check_and_the_next_commands() {
         "{diagnostic}"
     );
     assert!(
-        diagnostic.contains("`effigy container logs --service web`"),
+        diagnostic.contains("next: read `web`'s output with `effigy container logs --service web`, fix its health check or image, then rerun `effigy container up`; retrying unchanged fails the same way"),
         "{diagnostic}"
     );
-    assert!(
-        diagnostic.contains("`effigy container status`"),
-        "{diagnostic}"
-    );
-    assert!(
-        diagnostic.contains("Retrying unchanged will fail the same way"),
-        "a person is told whether to retry or fix the definition: {diagnostic}"
+    assert_eq!(
+        diagnostic
+            .lines()
+            .filter(|line| line.starts_with("next:"))
+            .count(),
+        1,
+        "one next action, and it is the last line: {diagnostic}"
     );
     // The healthy service is not part of the failure.
     assert!(!diagnostic.contains("- db "), "{diagnostic}");
@@ -157,7 +157,7 @@ fn an_exited_service_reports_its_last_log_line() {
         "db".to_owned(),
         "FATAL: password authentication failed for user \"app\"".to_owned(),
     );
-    let diagnostic = readiness_diagnostic("demo", &services, 60, &logs);
+    let diagnostic = readiness_diagnostic("demo", &services, 60, &logs, None);
     assert!(
         diagnostic.contains("db exited with exit code 1 (demo-db-1)"),
         "{diagnostic}"
@@ -167,11 +167,42 @@ fn an_exited_service_reports_its_last_log_line() {
         "{diagnostic}"
     );
     assert!(
-        diagnostic.contains("`effigy container logs --service db`"),
+        diagnostic.contains("next: read `db`'s output with `effigy container logs --service db`, fix its configuration, then rerun `effigy container up`"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_failed_last_read_points_at_the_runtime_not_the_services() {
+    let services = parse_inspect_health(INSPECT_TWO_UNHEALTHY.as_bytes()).expect("inspect parses");
+    let diagnostic = readiness_diagnostic(
+        "inventors",
+        &services,
+        60,
+        &BTreeMap::new(),
+        Some("nerdctl inspect timed out"),
+    );
+    assert!(
+        diagnostic.contains("the last health read itself failed: nerdctl inspect timed out"),
         "{diagnostic}"
     );
     assert!(
-        diagnostic.contains("needs its own configuration fixed"),
+        diagnostic.ends_with(
+            "next: inspect the container runtime with `effigy doctor`, then rerun `effigy container up`"
+        ),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_stack_that_reads_healthy_is_pointed_at_its_status() {
+    let services = parse_inspect_health(
+        br#"[{"Name":"/demo-web-1","State":{"Status":"running"},"Config":{"Labels":{"com.docker.compose.service":"web"}}}]"#,
+    )
+    .expect("inspect parses");
+    let diagnostic = readiness_diagnostic("demo", &services, 60, &BTreeMap::new(), None);
+    assert!(
+        diagnostic.ends_with("next: inspect the stack with `effigy container status`"),
         "{diagnostic}"
     );
 }
@@ -196,8 +227,14 @@ fn a_shared_failure_is_recognised_only_when_every_unready_service_agrees() {
     let failure = shared_failure(&shared).expect("identical failures are shared");
     assert_eq!(failure.services, vec!["web", "pma"]);
     assert_eq!(failure.signature, "/bin/sh: wget: not found");
-    assert!(repeated_failure_diagnostic(&failure)
-        .contains("web, pma fail the same health check: `/bin/sh: wget: not found`"));
+    let diagnosis = repeated_failure_diagnostic(&failure);
+    assert!(
+        diagnosis.starts_with("web, pma fail the same health check: `/bin/sh: wget: not found`")
+    );
+    assert!(
+        diagnosis.ends_with("next: read `web`'s check output with `effigy container logs --service web`, fix the health check or the image, then rerun `effigy container up`; retrying unchanged fails the same way"),
+        "{diagnosis}"
+    );
 
     let different = vec![
         service("web", Some(HealthState::Unhealthy), 4, "GET / 404"),

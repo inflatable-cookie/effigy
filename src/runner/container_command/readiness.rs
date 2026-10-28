@@ -123,7 +123,9 @@ pub(super) fn await_services_ready(
                             step.fail(service.problem());
                         }
                     }
-                    parent.fail(&diagnosis);
+                    // The step ends on the diagnosis's first line; the error
+                    // carries the evidence and its `next:` line.
+                    parent.fail(diagnosis.lines().next().unwrap_or_default());
                     return Err(RunnerError::task_invocation(diagnosis));
                 }
             }
@@ -173,13 +175,13 @@ fn readiness_failure(
     steps: &BTreeMap<String, TimedStep>,
 ) -> Result<ReadinessEnd, RunnerError> {
     let logs = exited_logs(&policy.repo_root, policy, services);
-    let mut diagnostic =
-        readiness_diagnostic(&policy.name, services, policy.health_timeout_secs, &logs);
-    if let Some(error) = probe_error {
-        diagnostic.push_str(&format!(
-            "\nThe last health read itself failed: {error}. Inspect the backend with `effigy doctor`"
-        ));
-    }
+    let diagnostic = readiness_diagnostic(
+        &policy.name,
+        services,
+        policy.health_timeout_secs,
+        &logs,
+        probe_error.as_deref(),
+    );
     for service in unready(services) {
         if let Some(step) = steps.get(&service.service) {
             step.fail(service.problem());
@@ -255,6 +257,7 @@ fn report_services(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_containers::health::readiness::parse_inspect_health;
     use effigy_containers::health::readiness::HealthState;
 
     #[test]
@@ -315,6 +318,41 @@ mod tests {
         assert_eq!(
             probe_budget_deadline(nearly, deadline),
             nearly + PROBE_BUDGET_MINIMUM
+        );
+    }
+
+    #[test]
+    fn an_unready_bring_up_names_the_service_its_evidence_and_one_next_action() {
+        let services = parse_inspect_health(
+            br#"[{"Name":"/demo-web-1","State":{"Status":"running","Health":{"Status":"unhealthy","FailingStreak":4,"Log":[{"Output":"GET / HTTP/1.1 404"}]}},"Config":{"Labels":{"com.docker.compose.service":"web"}}}]"#,
+        )
+        .expect("inspect parses");
+        let human = RunnerError::task_invocation(readiness_diagnostic(
+            "demo",
+            &services,
+            60,
+            &BTreeMap::new(),
+            None,
+        ))
+        .human_error();
+
+        assert_eq!(
+            human.what_failed(),
+            "environment `demo` did not become ready within 60s"
+        );
+        assert!(
+            human.evidence_lines().iter().any(|line| line
+                .contains("web is unhealthy after 4 failed checks")
+                && line.contains("GET / HTTP/1.1 404")),
+            "{:?}",
+            human.evidence_lines()
+        );
+        assert!(human
+            .next_action_text()
+            .is_some_and(|action| action.contains("effigy container logs --service web")));
+        assert_eq!(
+            human.to_json()["next_action"],
+            human.next_action_text().expect("next action")
         );
     }
 }
