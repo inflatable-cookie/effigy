@@ -17,17 +17,20 @@
 //! Compose network aliases already use, so host execution introduces no second
 //! naming scheme. A primary checkout's declared and effective names are equal,
 //! so nothing is rewritten there.
+//!
+//! The rewrite itself is [`effigy_core::host_alias`], shared with the managed
+//! session's run specs; this module only decides which aliases a checkout has
+//! and which backing service each names.
+
+use effigy_core::host_alias::HostAlias;
 
 use super::hosts::{EffectiveHostMap, HostRouteKind};
 
 /// One declared backing-service alias rewritten to this checkout's effective
-/// alias.
+/// alias, with the service it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredAlias {
-    /// The canonical declared host application configuration carries.
-    pub declared: String,
-    /// The alias this checkout's own route and backing service answer on.
-    pub effective: String,
+    pub host: HostAlias,
     /// The backing service the alias names.
     pub service: String,
 }
@@ -50,18 +53,18 @@ impl HostExecutionAliases {
             .iter()
             .filter(|route| route.kind == HostRouteKind::Tcp)
             .filter_map(|route| {
-                let declared = route.declared.trim();
-                let effective = route.effective.trim();
-                if declared.is_empty() || effective.is_empty() || declared == effective {
-                    return None;
-                }
                 Some(DeclaredAlias {
-                    declared: declared.to_owned(),
-                    effective: effective.to_owned(),
+                    host: HostAlias::scoped(route.declared.as_str(), route.effective.as_str())?,
                     service: route.service.clone().unwrap_or_default(),
                 })
             })
             .collect();
+        Self { aliases }
+    }
+
+    /// The aliases already resolved for one checkout: a union across its
+    /// environments, each pair carrying its own service.
+    pub fn from_declared(aliases: Vec<DeclaredAlias>) -> Self {
         Self { aliases }
     }
 
@@ -73,92 +76,33 @@ impl HostExecutionAliases {
         &self.aliases
     }
 
-    /// Resolve every declared alias host this value names.
+    /// The declared/effective pairs every host-side renderer applies.
+    pub fn hosts(&self) -> Vec<HostAlias> {
+        self.aliases
+            .iter()
+            .map(|alias| alias.host.clone())
+            .collect()
+    }
+
+    /// Resolve every declared alias endpoint this value names.
     ///
-    /// `None` means the value names no declared alias; an untouched value
-    /// keeps its exact bytes. Otherwise the returned value carries this
-    /// checkout's effective aliases and the aliases it used, in first-match
-    /// order.
+    /// `None` means the value is unchanged. Otherwise the returned value
+    /// carries this checkout's effective aliases and the aliases it used, in
+    /// first-match order.
     pub fn resolve(&self, value: &str) -> Option<(String, Vec<DeclaredAlias>)> {
         let mut resolved = value.to_owned();
         let mut used: Vec<DeclaredAlias> = Vec::new();
         for alias in &self.aliases {
-            let Some(rewritten) = rewrite_host_tokens(&resolved, &alias.declared, &alias.effective)
-            else {
+            let Some(rewritten) = alias.host.resolve(&resolved) else {
                 continue;
             };
             resolved = rewritten;
-            if !used.iter().any(|existing| existing == alias) {
+            if !used.contains(alias) {
                 used.push(alias.clone());
             }
         }
         (!used.is_empty()).then_some((resolved, used))
     }
-}
-
-/// Rewrite every whole-hostname occurrence of `declared` to `effective`.
-///
-/// Only a complete host is rewritten: `postgres.acme.test` is a match in
-/// `postgres://user@postgres.acme.test:5432/db` and as a bare value, but never
-/// inside `notpostgres.acme.test` or `postgres.acme.test.example.com`.
-fn rewrite_host_tokens(value: &str, declared: &str, effective: &str) -> Option<String> {
-    if declared.is_empty() || declared == effective || value.len() < declared.len() {
-        return None;
-    }
-    let mut output = String::with_capacity(value.len());
-    let mut copied = 0;
-    let mut index = 0;
-    let mut matched = false;
-    while index < value.len() {
-        let candidate = value
-            .get(index..)
-            .and_then(|rest| rest.get(..declared.len()));
-        if let Some(candidate) = candidate {
-            if candidate.eq_ignore_ascii_case(declared)
-                && host_boundary_before(value, index)
-                && host_boundary_after(value, index + declared.len())
-            {
-                output.push_str(&value[copied..index]);
-                output.push_str(effective);
-                index += declared.len();
-                copied = index;
-                matched = true;
-                continue;
-            }
-        }
-        index += value[index..]
-            .chars()
-            .next()
-            .map(char::len_utf8)
-            .unwrap_or(1);
-    }
-    if !matched {
-        return None;
-    }
-    output.push_str(&value[copied..]);
-    Some(output)
-}
-
-/// A match starts at the beginning of the value or after a character that
-/// cannot be part of the preceding hostname.
-fn host_boundary_before(value: &str, index: usize) -> bool {
-    value[..index]
-        .chars()
-        .next_back()
-        .is_none_or(|previous| !host_char(previous))
-}
-
-/// A match ends at the end of the value or before a character that cannot
-/// continue the hostname, so a longer host is never truncated.
-fn host_boundary_after(value: &str, index: usize) -> bool {
-    value[index..]
-        .chars()
-        .next()
-        .is_none_or(|next| !host_char(next))
-}
-
-fn host_char(character: char) -> bool {
-    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
 }
 
 #[cfg(test)]
@@ -214,13 +158,13 @@ mod tests {
             aliases.aliases(),
             [
                 DeclaredAlias {
-                    declared: "postgres.acme.test".to_owned(),
-                    effective: "postgres.acme-wabcdef12.test".to_owned(),
+                    host: HostAlias::scoped("postgres.acme.test", "postgres.acme-wabcdef12.test")
+                        .expect("scoped alias"),
                     service: "postgres".to_owned(),
                 },
                 DeclaredAlias {
-                    declared: "redis.acme.test".to_owned(),
-                    effective: "redis.acme-wabcdef12.test".to_owned(),
+                    host: HostAlias::scoped("redis.acme.test", "redis.acme-wabcdef12.test")
+                        .expect("scoped alias"),
                     service: "redis".to_owned(),
                 },
             ],
@@ -240,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_alias_is_rewritten_wherever_it_names_a_whole_host() {
+    fn a_declared_alias_resolves_where_it_names_an_endpoint() {
         let aliases = HostExecutionAliases::for_scoped_checkout(&host_map(
             "acme.test",
             "acme-wabcdef12.test",
@@ -253,35 +197,30 @@ mod tests {
             ),
             ("postgres.acme.test", "postgres.acme-wabcdef12.test"),
             (
-                "host=postgres.acme.test port=5432",
-                "host=postgres.acme-wabcdef12.test port=5432",
+                "postgres.acme.test:5432",
+                "postgres.acme-wabcdef12.test:5432",
             ),
-            (
-                "postgres.acme.test,redis.acme.test",
-                "postgres.acme-wabcdef12.test,redis.acme-wabcdef12.test",
-            ),
-            ("POSTGRES.ACME.TEST", "postgres.acme-wabcdef12.test"),
         ] {
             let (resolved, used) = aliases.resolve(value).expect("a declared alias");
             assert_eq!(resolved, expected, "{value}");
-            assert!(!used.is_empty(), "{value}");
+            assert_eq!(used.len(), 1, "{value}");
+            assert_eq!(used[0].service, "postgres", "{value}");
         }
     }
 
     #[test]
-    fn a_longer_or_short_host_is_never_rewritten() {
+    fn a_value_that_only_names_the_alias_is_left_alone() {
         let aliases = HostExecutionAliases::for_scoped_checkout(&host_map(
             "acme.test",
             "acme-wabcdef12.test",
             true,
         ));
         for value in [
+            "grep -r postgres.acme.test fixtures/",
             "postgres.acme.test.example.com",
             "notpostgres.acme.test",
-            "postgres.acme.testing",
-            "postgres.acmeXtest",
+            "postgres.acme.test,redis.acme.test",
             "postgres.acme-wabcdef12.test",
-            "pg.acme.test",
         ] {
             assert_eq!(aliases.resolve(value), None, "{value}");
         }

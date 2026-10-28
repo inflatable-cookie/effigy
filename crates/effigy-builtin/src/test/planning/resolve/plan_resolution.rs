@@ -23,6 +23,7 @@ pub(super) fn resolve_target_test_plans(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
     host_runtime: bool,
+    ports: Option<&dyn crate::BuiltinRuntimePorts>,
 ) -> Result<ResolvedTargetTestPlans, BuiltinError> {
     let BuiltinTestTargetConfig {
         configured_suites,
@@ -30,7 +31,7 @@ pub(super) fn resolve_target_test_plans(
         runner_overrides,
         cargo_env,
         cargo_env_match,
-    } = resolve_target_test_config(catalogs, target_root)?;
+    } = resolve_target_test_config(catalogs, target_root, host_runtime.then_some(()).and(ports))?;
 
     if !configured_suites.is_empty() {
         return Ok((

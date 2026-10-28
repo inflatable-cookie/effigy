@@ -25,6 +25,9 @@ pub struct ManagedConcurrentPlanInput<'a> {
     pub passthrough: &'a [String],
     pub catalogs: &'a [LoadedCatalog],
     pub task_scope_cwd: &'a Path,
+    /// Declared backing-service aliases a host execution environment resolves
+    /// to this checkout's effective aliases (effigy#431, contract 005).
+    pub host_env_aliases: &'a [crate::run_spec::HostAlias],
     pub resolver: TaskResolverFn<'a>,
 }
 
@@ -57,6 +60,7 @@ pub fn resolve_managed_concurrent_task_plan(
         passthrough,
         catalogs,
         task_scope_cwd,
+        host_env_aliases,
         resolver,
     } = input;
     let environment_bound = task_is_environment_bound(catalog, selector, task)?;
@@ -73,6 +77,7 @@ pub fn resolve_managed_concurrent_task_plan(
             catalogs,
             task_scope_cwd,
             passthrough,
+            host_env_aliases,
             resolver,
         )? {
             resolved.push(own);
@@ -100,6 +105,7 @@ pub fn resolve_managed_concurrent_task_plan(
         catalog,
         catalogs,
         task_scope_cwd,
+        host_env_aliases,
         resolver,
     )?;
     build_managed_task_plan(
@@ -380,6 +386,7 @@ mod tests {
             &runtime_args,
             std::slice::from_ref(&catalog),
             &catalog.catalog_root,
+            &[],
             resolver,
         );
         (root, result)

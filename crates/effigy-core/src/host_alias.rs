@@ -1,0 +1,258 @@
+//! Whole-host rewriting of a declared backing-service alias (effigy#431).
+//!
+//! A runtime-scoped checkout answers its own backing service on an effective
+//! alias (`postgres.<apex>-w<key>`) while the consumer's configuration keeps
+//! the canonical declared name (`postgres.<apex>`). Effigy-owned host
+//! execution delivers the effective name in the environment it hands a host
+//! run, so the run reaches this checkout's own service instead of whichever
+//! checkout the declared name's route belongs to (contract 005).
+//!
+//! The rewrite lives here so every host-side renderer — the runner's task
+//! environment, the managed session's run specs and sequence steps — applies
+//! the one rule rather than growing its own.
+//!
+//! Only an endpoint-shaped occurrence is rewritten: the whole value, the host
+//! of a URL authority (after `//` or `@`), or a host carrying its own port
+//! (`host:5432`). A declared name that merely appears inside other text — a
+//! search pattern, a JSON blob, a list of names, a note — keeps its exact
+//! bytes, because Effigy cannot know that the text is meant as an endpoint.
+
+use std::collections::BTreeMap;
+
+/// One declared backing-service alias rewritten to the checkout's effective
+/// alias.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HostAlias {
+    /// The canonical declared host application configuration carries.
+    pub declared: String,
+    /// The alias this checkout's own route and backing service answer on.
+    pub effective: String,
+}
+
+impl HostAlias {
+    /// The alias a scoped checkout resolves, or `None` when the two names are
+    /// equal or either is empty: a checkout that keeps its declared names
+    /// rewrites nothing.
+    pub fn scoped(declared: impl Into<String>, effective: impl Into<String>) -> Option<Self> {
+        let declared = declared.into();
+        let effective = effective.into();
+        let declared = declared.trim();
+        let effective = effective.trim();
+        if declared.is_empty() || effective.is_empty() || declared == effective {
+            return None;
+        }
+        Some(Self {
+            declared: declared.to_owned(),
+            effective: effective.to_owned(),
+        })
+    }
+
+    /// Resolve every endpoint-shaped occurrence of the declared host in one
+    /// value. `None` means the value is unchanged.
+    pub fn resolve(&self, value: &str) -> Option<String> {
+        rewrite_endpoints(value, &self.declared, &self.effective)
+    }
+}
+
+/// Resolve every alias in one value. `None` means the value is unchanged.
+pub fn resolve_value(value: &str, aliases: &[HostAlias]) -> Option<String> {
+    let mut resolved = value.to_owned();
+    let mut changed = false;
+    for alias in aliases {
+        if let Some(rewritten) = alias.resolve(&resolved) {
+            resolved = rewritten;
+            changed = true;
+        }
+    }
+    changed.then_some(resolved)
+}
+
+/// Resolve every endpoint-shaped value in one environment map in place.
+pub fn resolve_env(env: &mut BTreeMap<String, String>, aliases: &[HostAlias]) {
+    if aliases.is_empty() {
+        return;
+    }
+    for value in env.values_mut() {
+        if let Some(resolved) = resolve_value(value, aliases) {
+            *value = resolved;
+        }
+    }
+}
+
+/// Rewrite every endpoint-shaped occurrence of `declared` to `effective`.
+fn rewrite_endpoints(value: &str, declared: &str, effective: &str) -> Option<String> {
+    if declared.is_empty() || declared == effective || value.len() < declared.len() {
+        return None;
+    }
+    let whole_value = value.trim();
+    let mut output = String::new();
+    let mut copied = 0;
+    let mut index = 0;
+    let mut matched = false;
+    while index < value.len() {
+        let candidate = value
+            .get(index..)
+            .and_then(|rest| rest.get(..declared.len()));
+        if let Some(candidate) = candidate {
+            let end = index + declared.len();
+            if candidate.eq_ignore_ascii_case(declared)
+                && host_boundary_before(value, index)
+                && host_boundary_after(value, end)
+                && (whole_value.eq_ignore_ascii_case(declared)
+                    || is_authority_host(value, index)
+                    || carries_a_port(value, end))
+            {
+                output.push_str(&value[copied..index]);
+                output.push_str(effective);
+                index = end;
+                copied = end;
+                matched = true;
+                continue;
+            }
+        }
+        index += value[index..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
+    }
+    if !matched {
+        return None;
+    }
+    output.push_str(&value[copied..]);
+    Some(output)
+}
+
+/// The host part of a URL authority: `scheme://host` or `user@host`.
+fn is_authority_host(value: &str, index: usize) -> bool {
+    let before = &value[..index];
+    before.ends_with("//") || before.ends_with('@')
+}
+
+/// `host:<digits>` — the declaration that names a port, so the value is an
+/// address rather than prose.
+fn carries_a_port(value: &str, index: usize) -> bool {
+    value[index..]
+        .strip_prefix(':')
+        .is_some_and(|rest| rest.starts_with(|character: char| character.is_ascii_digit()))
+}
+
+/// A match starts at the beginning of the value or after a character that
+/// cannot be part of the preceding hostname.
+fn host_boundary_before(value: &str, index: usize) -> bool {
+    value[..index]
+        .chars()
+        .next_back()
+        .is_none_or(|previous| !host_char(previous))
+}
+
+/// A match ends at the end of the value or before a character that cannot
+/// continue the hostname, so a longer host is never truncated.
+fn host_boundary_after(value: &str, index: usize) -> bool {
+    value[index..]
+        .chars()
+        .next()
+        .is_none_or(|next| !host_char(next))
+}
+
+fn host_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn alias() -> HostAlias {
+        HostAlias::scoped("postgres.acme.test", "postgres.acme-wabcdef12.test")
+            .expect("a scoped alias")
+    }
+
+    #[test]
+    fn an_equal_or_empty_pair_rewrites_nothing() {
+        assert_eq!(
+            HostAlias::scoped("postgres.acme.test", "postgres.acme.test"),
+            None
+        );
+        assert_eq!(HostAlias::scoped("", "postgres.acme-w1.test"), None);
+        assert_eq!(HostAlias::scoped("postgres.acme.test", " "), None);
+        let alias = alias();
+        assert_eq!(
+            HostAlias::scoped(" postgres.acme.test ", "postgres.acme-wabcdef12.test"),
+            Some(alias.clone())
+        );
+    }
+
+    #[test]
+    fn every_endpoint_shape_resolves() {
+        let alias = alias();
+        for (value, expected) in [
+            (
+                "postgres://app:secret@postgres.acme.test:5432/app",
+                "postgres://app:secret@postgres.acme-wabcdef12.test:5432/app",
+            ),
+            (
+                "postgres://postgres.acme.test:5432/app",
+                "postgres://postgres.acme-wabcdef12.test:5432/app",
+            ),
+            (
+                "postgres://postgres.acme.test/app",
+                "postgres://postgres.acme-wabcdef12.test/app",
+            ),
+            ("postgres.acme.test", "postgres.acme-wabcdef12.test"),
+            ("  postgres.acme.test  ", "  postgres.acme-wabcdef12.test  "),
+            (
+                "postgres.acme.test:5432",
+                "postgres.acme-wabcdef12.test:5432",
+            ),
+            (
+                "POSTGRES.ACME.TEST:5432",
+                "postgres.acme-wabcdef12.test:5432",
+            ),
+        ] {
+            assert_eq!(alias.resolve(value).as_deref(), Some(expected), "{value}");
+        }
+    }
+
+    #[test]
+    fn text_that_merely_names_the_declared_host_is_untouched() {
+        let alias = alias();
+        for value in [
+            "grep -r postgres.acme.test fixtures/",
+            "host=postgres.acme.test port=5432",
+            "{\"host\":\"postgres.acme.test\"}",
+            "postgres.acme.test,redis.acme.test",
+            "snapshot of postgres.acme.test taken",
+            "postgres.acme.test.example.com",
+            "notpostgres.acme.test",
+            "postgres.acme.testing",
+            "postgres.acme.test:",
+            "postgres.acme.test:notaport",
+            "postgres.acme-wabcdef12.test",
+        ] {
+            assert_eq!(alias.resolve(value), None, "{value}");
+        }
+    }
+
+    #[test]
+    fn a_map_resolves_every_value_and_keeps_others() {
+        let mut env = BTreeMap::from([
+            (
+                "DATABASE_URL".to_owned(),
+                "postgres://app@postgres.acme.test:5432/app".to_owned(),
+            ),
+            ("DB_HOST".to_owned(), "postgres.acme.test".to_owned()),
+            ("SEARCH".to_owned(), "postgres.acme.test".to_owned()),
+            ("UNRELATED".to_owned(), "nothing to see".to_owned()),
+        ]);
+        resolve_env(&mut env, &[alias()]);
+        assert_eq!(
+            env["DATABASE_URL"],
+            "postgres://app@postgres.acme-wabcdef12.test:5432/app"
+        );
+        assert_eq!(env["DB_HOST"], "postgres.acme-wabcdef12.test");
+        assert_eq!(env["SEARCH"], "postgres.acme-wabcdef12.test");
+        assert_eq!(env["UNRELATED"], "nothing to see");
+        assert_eq!(resolve_value("postgres.acme.test", &[]), None);
+    }
+}

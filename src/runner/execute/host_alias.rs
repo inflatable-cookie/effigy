@@ -22,7 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use effigy_containers::{DeclaredAlias, HostExecutionAliases};
+use effigy_containers::{DeclaredAlias, EffectiveContainerPolicy, HostExecutionAliases};
 use effigy_env::secret::SecretString;
 use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::routes::Route;
@@ -35,12 +35,38 @@ use crate::runner::execute::api::{
 use crate::runner::execute::planning::ExecutionPreflight;
 
 /// The alias resolution an Effigy-owned host run owes its environment, or
-/// `None` for a checkout that keeps its declared names and for every run
-/// Effigy does not place on the host.
+/// `None` for a checkout that keeps its declared names, for a run Effigy does
+/// not place on the host, and for a checkout whose container registry Effigy
+/// cannot read (which leaves host execution exactly as it was).
 pub(in crate::runner) fn host_alias_resolver(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<Option<HostAliasResolver>, RunnerError> {
+    match host_execution_scope_root(preflight, selection)? {
+        Some(scope_root) => HostAliasResolver::for_checkout(&scope_root),
+        None => Ok(None),
+    }
+}
+
+/// The declared/effective aliases a host-bound run's environment resolves
+/// without proving anything is published: what a `--plan` render shows.
+pub(in crate::runner) fn host_plan_env_aliases(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<Vec<effigy_core::host_alias::HostAlias>, RunnerError> {
+    match host_execution_scope_root(preflight, selection)? {
+        Some(scope_root) => host_env_aliases(&scope_root),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// The checkout whose environment an Effigy-owned host run delivers, or `None`
+/// for a run Effigy places in a container, a checkout with no container
+/// registry, and a process already inside a container handoff.
+fn host_execution_scope_root(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<Option<PathBuf>, RunnerError> {
     if super::workspace_seeded::inside_container_handoff() {
         return Ok(None);
     }
@@ -63,7 +89,7 @@ pub(in crate::runner) fn host_alias_resolver(
     ) {
         return Ok(None);
     }
-    HostAliasResolver::for_checkout(&inputs.scope_root)
+    Ok(Some(inputs.scope_root))
 }
 
 /// The declared/effective alias pairs of one scoped checkout, plus the
@@ -71,8 +97,9 @@ pub(in crate::runner) fn host_alias_resolver(
 #[derive(Debug)]
 pub(in crate::runner) struct HostAliasResolver {
     repo_root: PathBuf,
-    environment: String,
     aliases: HostExecutionAliases,
+    /// Effective alias domain to the environment whose stack answers it.
+    environments: BTreeMap<String, String>,
     /// Effective domains already proven published in this run.
     published: BTreeSet<String>,
 }
@@ -86,30 +113,44 @@ impl HostAliasResolver {
         if super::workspace_seeded::inside_container_handoff() {
             return Ok(None);
         }
-        let token = effigy_core::worktree_scope::load(scope_root)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let Some(token) = token else {
+        let Some(token) = effigy_core::worktree_scope::load(scope_root)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        else {
             return Ok(None);
         };
-        let policy =
-            effigy_containers::load_container_policy(scope_root, None).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "this checkout is a runtime scope, so a declared backing-service alias has to \
-                 resolve inside it, but its container policy did not load: {error}"
-                ))
-            })?;
-        let host_map =
-            crate::runner::container_command::scoped_host_map(scope_root, &policy, Some(&token))?;
-        let aliases = HostExecutionAliases::for_scoped_checkout(&host_map);
+        let mut aliases: Vec<DeclaredAlias> = Vec::new();
+        let mut environments = BTreeMap::new();
+        let mut repo_root = None;
+        for policy in scoped_environment_policies(scope_root) {
+            let host_map = crate::runner::container_command::scoped_host_map(
+                scope_root,
+                &policy,
+                Some(&token),
+            )?;
+            repo_root.get_or_insert_with(|| policy.repo_root.clone());
+            for alias in HostExecutionAliases::for_scoped_checkout(&host_map).aliases() {
+                environments
+                    .entry(alias.host.effective.clone())
+                    .or_insert_with(|| policy.name.clone());
+                if !aliases.contains(alias) {
+                    aliases.push(alias.clone());
+                }
+            }
+        }
         if aliases.is_empty() {
             return Ok(None);
         }
         Ok(Some(Self {
-            repo_root: policy.repo_root.clone(),
-            environment: policy.name.clone(),
-            aliases,
+            repo_root: repo_root.unwrap_or_else(|| scope_root.to_path_buf()),
+            aliases: HostExecutionAliases::from_declared(aliases),
+            environments,
             published: BTreeSet::new(),
         }))
+    }
+
+    /// The declared/effective pairs every host-side renderer applies.
+    pub(in crate::runner) fn hosts(&self) -> Vec<effigy_core::host_alias::HostAlias> {
+        self.aliases.hosts()
     }
 
     /// Resolve every plain value Effigy is about to deliver.
@@ -121,22 +162,6 @@ impl HostAliasResolver {
             if let Some(resolved) = self.resolve_value(key, value)? {
                 *value = resolved;
             }
-        }
-        Ok(())
-    }
-
-    /// Resolve every secret value Effigy is about to deliver. A secret keeps
-    /// its secret handling: only the host part changes, and no value reaches a
-    /// report.
-    fn resolve_secret_env(
-        &mut self,
-        env: &mut [(String, SecretString)],
-    ) -> Result<(), RunnerError> {
-        for (key, value) in env.iter_mut() {
-            let Some(resolved) = self.resolve_value(key, value.expose())? else {
-                continue;
-            };
-            *value = SecretString::new(resolved);
         }
         Ok(())
     }
@@ -160,8 +185,21 @@ impl HostAliasResolver {
         Ok(owned)
     }
 
-    /// Resolve one value, or `None` when it names no declared alias. The key
-    /// only ever appears in refusal text; a value never does.
+    fn resolve_secret_env(
+        &mut self,
+        env: &mut [(String, SecretString)],
+    ) -> Result<(), RunnerError> {
+        for (key, value) in env.iter_mut() {
+            let Some(resolved) = self.resolve_value(key, value.expose())? else {
+                continue;
+            };
+            *value = SecretString::new(resolved);
+        }
+        Ok(())
+    }
+
+    /// Resolve one value, or `None` when it names no declared alias endpoint.
+    /// The key only ever appears in refusal text; a value never does.
     fn resolve_value(&mut self, key: &str, value: &str) -> Result<Option<String>, RunnerError> {
         let Some((resolved, used)) = self.aliases.resolve(value) else {
             return Ok(None);
@@ -176,7 +214,8 @@ impl HostAliasResolver {
     /// backing service for the alias: the value would otherwise reach another
     /// checkout's database.
     fn require_published(&mut self, key: &str, alias: &DeclaredAlias) -> Result<(), RunnerError> {
-        if !self.published.insert(alias.effective.clone()) {
+        let effective = alias.host.effective.as_str();
+        if !self.published.insert(effective.to_owned()) {
             return Ok(());
         }
         let table_path = crate::runner::gateway_command::gateway_dir()?.join("routes.json");
@@ -186,15 +225,14 @@ impl HostAliasResolver {
             .map_err(|error| {
                 RunnerError::task_invocation(format!(
                     "task `{key}` uses `{}`, which this runtime-scoped checkout resolves to its \
-                     own `{}` service on `{}`, but Effigy could not read the gateway route table \
-                     at {}: {error}",
-                    alias.declared,
+                     own `{}` service on `{effective}`, but Effigy could not read the gateway \
+                     route table at {}: {error}",
+                    alias.host.declared,
                     alias.service,
-                    alias.effective,
                     table_path.display()
                 ))
             })?;
-        let Some(route) = table.lookup(&alias.effective) else {
+        let Some(route) = table.lookup(effective) else {
             return Err(self.unpublished(key, alias, "no route for it is recorded"));
         };
         if !self.owns(route) {
@@ -223,17 +261,61 @@ impl HostAliasResolver {
     }
 
     fn unpublished(&self, key: &str, alias: &DeclaredAlias, reason: &str) -> RunnerError {
+        let environment = self
+            .environments
+            .get(&alias.host.effective)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let start = match environment.is_empty() {
+            true => "start this checkout's stack first".to_owned(),
+            false => format!(
+                "start this checkout's stack first with `effigy container up {environment}`"
+            ),
+        };
         RunnerError::task_invocation(format!(
             "task `{key}` uses `{}`, which this runtime-scoped checkout resolves to its own `{}` \
-             service on `{}`, but {reason}. Running it would reach another checkout's `{}`; start \
-             this checkout's stack first with `effigy container up {}` in {}",
-            alias.declared,
+             service on `{}`, but {reason}. Running it would reach another checkout's `{}`; {start} \
+             in {}",
+            alias.host.declared,
             alias.service,
-            alias.effective,
+            alias.host.effective,
             alias.service,
-            self.environment,
             self.repo_root.display()
         ))
+    }
+}
+
+/// Resolve a host suite's delivered environment for one checkout.
+pub(in crate::runner) fn resolve_host_env(
+    root: &Path,
+    env: &mut BTreeMap<String, String>,
+) -> Result<(), RunnerError> {
+    let Some(mut resolver) = HostAliasResolver::for_checkout(root)? else {
+        return Ok(());
+    };
+    resolver.resolve_plain_env(env)
+}
+
+/// The declared/effective aliases one checkout's host environments resolve,
+/// for renders that happen before an environment exists.
+pub(in crate::runner) fn host_env_aliases(
+    root: &Path,
+) -> Result<Vec<effigy_core::host_alias::HostAlias>, RunnerError> {
+    Ok(HostAliasResolver::for_checkout(root)?
+        .map(|resolver| resolver.hosts())
+        .unwrap_or_default())
+}
+
+/// Every container environment of this scoped checkout, so a checkout that
+/// names no default environment still resolves its aliases instead of failing
+/// an ordinary host run (effigy#431 review).
+fn scoped_environment_policies(scope_root: &Path) -> Vec<EffectiveContainerPolicy> {
+    match effigy_containers::load_container_policy(scope_root, None) {
+        Ok(policy) => vec![policy],
+        // An unreadable registry leaves host execution as it was: this is not
+        // a backing-service refusal, and an ordinary host task must not fail
+        // for it.
+        Err(_) => effigy_containers::load_all_container_policies(scope_root).unwrap_or_default(),
     }
 }
 

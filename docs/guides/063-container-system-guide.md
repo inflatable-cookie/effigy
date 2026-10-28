@@ -1515,13 +1515,22 @@ environment - so `php artisan test` or `cargo test` in a worktree reaches that
 worktree's database. The consumer's manifest keeps the declared name and its
 value source precedence is unchanged.
 
+That covers a task's own `env`, an env-schema or `.env` value, a declared
+secret, a sequence step's environment, a managed session's process plan
+(`mode = "tui"`), and a configured test suite's own environment with its
+`setup`/`teardown` step environments. Only an endpoint is rewritten - a value
+that is exactly the host, a host in a URL authority, or a host carrying its
+own port - so text that merely names the alias (a search pattern, a JSON blob,
+a comma-separated list) keeps its bytes. Effigy rewrites the environment it
+delivers, never a command body.
+
 Before such a run starts, Effigy proves the scope's backing service: its route
 must belong to this checkout and publish an upstream port. When it does not,
 the task refuses with the alias, the service and the command that starts the
 stack (`effigy container up <NAME>`), and nothing runs. The primary checkout
 keeps its declared name, and a container-bound task is not rewritten because
-its target's own network already answers both names. A managed TUI session
-(`mode = "tui"`) is not covered yet.
+its target's own network already answers both names. A `--plan` render refuses
+nothing: a task plan shows the aliases it would deliver.
 
 By default, generated TCP aliases, the `container hosts` cookie apex and
 gateway service-alias registration all use the same apex.

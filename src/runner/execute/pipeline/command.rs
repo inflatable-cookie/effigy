@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use crate::runner::error::RunnerError;
 use crate::runner::execute::api::{effective_runtime_inputs, resolve_execution_binding_resolution};
-use crate::runner::execute::host_alias::{host_alias_resolver, HostAliasResolver};
+use crate::runner::execute::host_alias::{
+    host_alias_resolver, host_plan_env_aliases, HostAliasResolver,
+};
 use crate::runner::execute::planning::ExecutionPreflight;
 use crate::runner::execute::workspace_seeded::inside_container_handoff;
 use crate::runner::util::render_passthrough_args;
@@ -70,7 +72,7 @@ pub(in crate::runner) fn build_task_command(
     // reaches this checkout's own service instead of whoever published the
     // declared name (effigy#264). A container-bound run keeps the declared
     // name: the scope's own Compose network answers it, and a plan runs
-    // nothing, so it neither resolves nor refuses.
+    // nothing, so it renders the aliases it would deliver and refuses nothing.
     let mut host_aliases = match preflight.plan {
         true => None,
         false => host_alias_resolver(preflight, selection)?,
@@ -78,6 +80,11 @@ pub(in crate::runner) fn build_task_command(
     if let Some(resolver) = host_aliases.as_mut() {
         resolver.resolve_plain_env(&mut merged_env)?;
     }
+    let host_env_aliases = match (&host_aliases, preflight.plan) {
+        (Some(resolver), _) => resolver.hosts(),
+        (None, true) => host_plan_env_aliases(preflight, selection)?,
+        (None, false) => Vec::new(),
+    };
     let command = render_task_run_spec(
         run_spec,
         RunSpecContext {
@@ -93,6 +100,7 @@ pub(in crate::runner) fn build_task_command(
             task_scope_cwd: &selection.catalog.catalog_root,
             invocation_cwd: &preflight.invocation_cwd,
             runtime_env_schema_override,
+            host_env_aliases: &host_env_aliases,
             depth: 0,
             resolver: &effigy_routing::resolve_task_selection,
         },

@@ -97,6 +97,24 @@ pub(in crate::runner) fn run_managed_task(
         .as_ref()
         .map(|invocation| &invocation.runtime_args)
         .unwrap_or(&preflight.runtime_args_exec);
+    // A host-placed managed session in a runtime-scoped checkout resolves the
+    // canonical declared backing-service alias in every environment it renders
+    // (effigy#431, contract 005). A plan renders nothing, so it resolves
+    // nothing.
+    let mut host_aliases = match (execution_mode, container_binding) {
+        (ManagedExecutionMode::RenderPlan, _) => None,
+        (_, ContainerExecutionBinding::None | ContainerExecutionBinding::Host) => {
+            super::super::host_alias::host_alias_resolver(preflight, selection)?
+        }
+        _ => None,
+    };
+    let host_env_aliases = match (&host_aliases, execution_mode) {
+        (Some(resolver), _) => resolver.hosts(),
+        (None, ManagedExecutionMode::RenderPlan) => {
+            super::super::host_alias::host_plan_env_aliases(preflight, selection)?
+        }
+        (None, _) => Vec::new(),
+    };
     let plan = resolve_managed_task_plan(
         &preflight.selector,
         selection.catalog,
@@ -104,6 +122,7 @@ pub(in crate::runner) fn run_managed_task(
         runtime_args,
         &preflight.catalogs,
         &selection.catalog.catalog_root,
+        &host_env_aliases,
         &effigy_routing::resolve_task_selection,
     )?;
     let Some(plan) = plan else {
@@ -149,11 +168,12 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
-    let context = ManagedContext {
+    let mut context = ManagedContext {
         preflight,
         selection,
         binding_resolution: &binding_resolution,
         container_handoff,
+        host_aliases: &mut host_aliases,
     };
     if owner.is_none() && execution_mode == ManagedExecutionMode::RenderPlan {
         let plan = displayed_plan(&context, plan)?;
@@ -174,7 +194,7 @@ pub(in crate::runner) fn run_managed_task(
         )));
     }
     match owner {
-        Some(owner) => own_managed_run(owner, &context, plan),
+        Some(owner) => own_managed_run(owner, &mut context, plan),
         None => {
             let front = match (execution_mode, detach) {
                 (_, true) => Front::Detached,
@@ -239,14 +259,16 @@ fn run_managed_control(
 }
 
 /// What both sides of a managed run resolve from the same invocation.
-struct ManagedContext<'a, 'catalog> {
+struct ManagedContext<'a, 'catalog, 'aliases> {
     preflight: &'a ExecutionPreflight,
     selection: &'a TaskSelection<'catalog>,
     binding_resolution: &'a super::super::api::ExecutionBindingResolution,
     container_handoff: bool,
+    /// The scoped alias resolution this host session's environments use.
+    host_aliases: &'aliases mut Option<super::super::host_alias::HostAliasResolver>,
 }
 
-impl ManagedContext<'_, '_> {
+impl ManagedContext<'_, '_, '_> {
     fn target(&self, profile: &str) -> TaskTarget {
         let target = TaskTarget::for_selection(
             &self.preflight.resolved.resolved_root,
@@ -288,7 +310,7 @@ impl ManagedContext<'_, '_> {
 /// The client: resolve what only the operator can supply (the vault
 /// passphrase), start the run's supervisor and attach the front end.
 fn start_managed_run(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     plan: effigy_managed::ManagedTaskPlan,
     front: Front,
 ) -> Result<Option<String>, RunnerError> {
@@ -408,7 +430,7 @@ pub(in crate::runner) fn resolve_managed_session_secret_access(
 /// workload's command and each shell tab's attach. A pure read (R2): no
 /// secret is resolved, so none can reach the rendered plan.
 fn displayed_plan(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     mut plan: effigy_managed::ManagedTaskPlan,
 ) -> Result<effigy_managed::ManagedTaskPlan, RunnerError> {
     let environment = environment_plan(context, &plan, "<run token>", &BTreeMap::new())?;
@@ -448,7 +470,7 @@ fn displayed_plan(
 /// binding resolves to an environment policy. Placement is the environment's
 /// property, so both placements own it the same way (effigy#322, Q-007).
 fn environment_owned(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
 ) -> Result<bool, RunnerError> {
     if context.container_handoff || !plan.owns_environment {
@@ -460,7 +482,7 @@ fn environment_owned(
 /// The environment policy a session resolves for its tabs and for `up`: the
 /// task's inline workspace container first, then its named environment.
 fn environment_policy(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
 ) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
     match inline_policy(context)? {
         Some(policy) => Ok(Some(policy)),
@@ -472,7 +494,7 @@ fn environment_policy(
 /// environment's own (`[[containers.<env>.host_processes]]`), started by its
 /// `up`, so every placement of the run shows them the same way.
 fn environment_host_processes(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
 ) -> Result<Vec<HostProcessTab>, RunnerError> {
     if !environment_owned(context, plan)? {
@@ -497,7 +519,7 @@ struct ManagedTabs {
 /// The order names every tab, so a session whose first tab is the
 /// environment's also finishes its startup projection.
 fn tui_tabs(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
 ) -> Result<ManagedTabs, RunnerError> {
     let owns_environment = environment_owned(context, plan)?;
@@ -619,7 +641,7 @@ fn session_tabs(
 
 /// A shell tab's interactive attach, run by the TUI client itself.
 fn shell_command(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     process: &effigy_managed::ManagedProcessSpec,
 ) -> Result<String, RunnerError> {
     let repo = context.repo();
@@ -643,7 +665,7 @@ fn shell_command(
 }
 
 fn inline_policy(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
 ) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
     if context.binding_resolution.is_inline_container() {
         context.binding_resolution.effective_policy(context.repo())
@@ -653,7 +675,7 @@ fn inline_policy(
 }
 
 fn named_policy(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
 ) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
     if context.binding_resolution.is_inline_container() {
         Ok(None)
@@ -666,7 +688,7 @@ fn named_policy(
 /// admission: setup, gateway, environment and workloads.
 fn own_managed_run(
     owner: managed_run::OwnerSession,
-    context: &ManagedContext<'_, '_>,
+    context: &mut ManagedContext<'_, '_, '_>,
     mut plan: effigy_managed::ManagedTaskPlan,
 ) -> Result<Option<String>, RunnerError> {
     let pane_feedback = owner.payload.front == Front::Tui;
@@ -676,7 +698,18 @@ fn own_managed_run(
     // Anything that fails before admission is the supervisor's refusal: the
     // client reports it, and nothing ran.
     let inputs = (|| -> Result<_, RunnerError> {
-        let secrets = context.task_secrets()?;
+        let mut secrets = context.task_secrets()?;
+        // A host session in a runtime-scoped checkout resolves the canonical
+        // declared backing-service alias in the secret values it delivers, and
+        // refuses before the supervisor starts when this checkout has no
+        // published backing service for them (effigy#431, contract 005).
+        if let Some(resolver) = context.host_aliases.as_mut() {
+            let pairs = secrets
+                .iter()
+                .map(|(key, value)| (key.as_str(), value))
+                .collect::<Vec<_>>();
+            secrets = resolver.resolved_secret_env(&pairs)?;
+        }
         let env_schema_resolved = super::standard::resolve_env_schema_if_present(
             &selection.catalog.catalog_root,
             preflight.runtime_args_raw.env_schema_override.as_deref(),
@@ -1003,7 +1036,7 @@ fn normalize_managed_lifecycle_container_ref(container_name: &str) -> Option<&st
 /// Inside a container handoff the workspace container is already the
 /// environment: there is nothing to bring up.
 fn environment_plan(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
     token: &str,
     schema_env: &BTreeMap<String, String>,
@@ -1134,7 +1167,7 @@ fn managed_environment_up_command(
 /// environment, not in its rendered command, and not on a descriptor
 /// (effigy#338). A nested `effigy` run inside one is a top-level invocation.
 fn managed_workloads(
-    context: &ManagedContext<'_, '_>,
+    context: &ManagedContext<'_, '_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
     secrets: &[(String, SecretString)],
     token: &str,

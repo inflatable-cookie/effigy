@@ -76,6 +76,7 @@ fn resolve_selected_run_or_task(
                 runtime_env_schema_override: context.runtime_env_schema_override,
                 depth: context.depth,
                 resolver: context.resolver,
+                host_env_aliases: context.host_env_aliases,
                 host_launched: true,
             },
         ),

@@ -45,10 +45,11 @@ pub(super) struct BuiltinTestTargetConfig {
 pub(super) fn resolve_target_test_config(
     catalogs: &[LoadedCatalog],
     target_root: &Path,
+    host_ports: Option<&dyn crate::BuiltinRuntimePorts>,
 ) -> Result<BuiltinTestTargetConfig, BuiltinError> {
     let catalog = catalog_for_root(catalogs, target_root);
     let configured_suites = if let Some(entry) = catalog {
-        resolve_configured_suites(entry, target_root, catalogs)?
+        resolve_configured_suites(entry, target_root, catalogs, host_ports)?
     } else {
         Vec::new()
     };
@@ -103,9 +104,19 @@ fn resolve_configured_suites(
     catalog: &LoadedCatalog,
     target_root: &Path,
     catalogs: &[LoadedCatalog],
+    host_ports: Option<&dyn crate::BuiltinRuntimePorts>,
 ) -> Result<Vec<BuiltinConfiguredSuite>, BuiltinError> {
     let Some(test) = catalog.manifest.test.as_ref() else {
         return Ok(Vec::new());
+    };
+    // A host suite in a runtime-scoped checkout receives this checkout's own
+    // effective backing-service alias where its environment carries the
+    // declared one, and an unpublished one refuses here, before any suite
+    // starts (effigy#431, contract 005). A container-routed suite keeps the
+    // declared name: its target's own network answers it.
+    let host_env_aliases = match host_ports {
+        Some(ports) => ports.host_suite_env_aliases(target_root)?,
+        None => Vec::new(),
     };
 
     test.suites
@@ -113,7 +124,7 @@ fn resolve_configured_suites(
         .map(|(raw_suite, suite)| {
             let suite_name = normalize_suite_key(raw_suite);
             let suite_ref = format!("test.suites.{suite_name}");
-            let resolved_env = resolve_run_step_env(
+            let mut resolved_env = resolve_run_step_env(
                 &suite_ref,
                 suite.env(),
                 suite.env_file(),
@@ -121,13 +132,18 @@ fn resolve_configured_suites(
                 target_root,
                 catalogs,
                 None,
+                &host_env_aliases,
             )?;
+            if let Some(ports) = host_ports {
+                ports.resolve_host_suite_env(target_root, &mut resolved_env)?;
+            }
             let command = render_suite_run(
                 &suite_ref,
                 suite,
                 &catalog.manifest.env,
                 target_root,
                 catalogs,
+                &host_env_aliases,
             )?;
             let setup_command = render_suite_lifecycle_sequence(
                 &format!("{suite_ref}.setup"),
@@ -137,6 +153,7 @@ fn resolve_configured_suites(
                 &catalog.manifest.env,
                 target_root,
                 catalogs,
+                &host_env_aliases,
             )?;
             let teardown_command = render_suite_lifecycle_sequence(
                 &format!("{suite_ref}.teardown"),
@@ -146,6 +163,7 @@ fn resolve_configured_suites(
                 &catalog.manifest.env,
                 target_root,
                 catalogs,
+                &host_env_aliases,
             )?;
             Ok(BuiltinConfiguredSuite {
                 suite: suite_name,
@@ -171,6 +189,7 @@ fn render_suite_run(
     env_profiles: &BTreeMap<String, effigy_manifest::ManifestEnvEntry>,
     target_root: &Path,
     catalogs: &[LoadedCatalog],
+    host_env_aliases: &[effigy_managed::run_spec::HostAlias],
 ) -> Result<String, BuiltinError> {
     if let Some(command) = suite.command() {
         return Ok(command.to_owned());
@@ -197,6 +216,7 @@ fn render_suite_run(
             task_scope_cwd: target_root,
             invocation_cwd: target_root,
             runtime_env_schema_override: None,
+            host_env_aliases,
             depth: 0,
             resolver: &effigy_routing::resolve_task_selection,
         },
@@ -204,6 +224,7 @@ fn render_suite_run(
     .map_err(Into::into)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_suite_lifecycle_sequence(
     owner_label: &str,
     steps: &[ManifestManagedRunStep],
@@ -212,6 +233,7 @@ fn render_suite_lifecycle_sequence(
     env_profiles: &BTreeMap<String, ManifestEnvEntry>,
     target_root: &Path,
     catalogs: &[LoadedCatalog],
+    host_env_aliases: &[effigy_managed::run_spec::HostAlias],
 ) -> Result<Option<String>, BuiltinError> {
     if steps.is_empty() {
         return Ok(None);
@@ -232,6 +254,7 @@ fn render_suite_lifecycle_sequence(
             catalogs,
             task_scope_cwd: target_root,
             runtime_env_schema_override: None,
+            host_env_aliases,
             resolver: &effigy_routing::resolve_task_selection,
         },
     )

@@ -7,6 +7,8 @@ use effigy_manifest::{
 
 use effigy_manifest::TaskResolverFn;
 
+pub use effigy_core::host_alias::HostAlias;
+
 use crate::ManagedError;
 use effigy_manifest::LoadedCatalog;
 use effigy_manifest::ManifestManagedRun;
@@ -38,6 +40,11 @@ pub struct RunSpecContext<'a> {
     pub task_scope_cwd: &'a Path,
     pub invocation_cwd: &'a Path,
     pub runtime_env_schema_override: Option<&'a Path>,
+    /// Declared backing-service aliases this host run resolves to its own
+    /// checkout's effective aliases (effigy#431, contract 005). Empty for a
+    /// checkout that keeps its declared names and for every render that is not
+    /// a host execution environment.
+    pub host_env_aliases: &'a [HostAlias],
     pub depth: usize,
     pub resolver: TaskResolverFn<'a>,
 }
@@ -103,8 +110,9 @@ pub fn resolve_run_step_env(
     repo_root: &Path,
     catalogs: &[LoadedCatalog],
     runtime_env_schema_override: Option<&Path>,
+    host_env_aliases: &[HostAlias],
 ) -> Result<BTreeMap<String, String>, ManagedError> {
-    sequence::resolve_standalone_env(
+    let mut resolved = sequence::resolve_standalone_env(
         owner_label,
         env,
         env_file,
@@ -112,7 +120,9 @@ pub fn resolve_run_step_env(
         repo_root,
         catalogs,
         runtime_env_schema_override,
-    )
+    )?;
+    effigy_core::host_alias::resolve_env(&mut resolved, host_env_aliases);
+    Ok(resolved)
 }
 
 pub struct RunStepSequenceContext<'a> {
@@ -125,6 +135,9 @@ pub struct RunStepSequenceContext<'a> {
     pub catalogs: &'a [LoadedCatalog],
     pub task_scope_cwd: &'a Path,
     pub runtime_env_schema_override: Option<&'a Path>,
+    /// Declared backing-service aliases this host run resolves to its own
+    /// checkout's effective aliases (effigy#431, contract 005).
+    pub host_env_aliases: &'a [HostAlias],
     pub resolver: TaskResolverFn<'a>,
 }
 
@@ -142,6 +155,7 @@ pub fn render_run_step_sequence<'a>(
         catalogs,
         task_scope_cwd,
         runtime_env_schema_override,
+        host_env_aliases,
         resolver,
     } = context;
     sequence::render_run_sequence(
@@ -159,6 +173,7 @@ pub fn render_run_step_sequence<'a>(
             task_scope_cwd,
             invocation_cwd: task_scope_cwd,
             runtime_env_schema_override,
+            host_env_aliases,
             depth: 1,
             resolver,
         },

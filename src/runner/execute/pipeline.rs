@@ -156,6 +156,7 @@ fn plan_command_shape(
     selection: &effigy_manifest::TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
     if selection.task.mode.as_deref() == Some("tui") {
+        let host_env_aliases = super::host_alias::host_plan_env_aliases(preflight, selection)?;
         let Some(plan) = resolve_managed_task_plan(
             &preflight.selector,
             selection.catalog,
@@ -163,6 +164,7 @@ fn plan_command_shape(
             &preflight.runtime_args_exec,
             &preflight.catalogs,
             &selection.catalog.catalog_root,
+            &host_env_aliases,
             &effigy_routing::resolve_task_selection,
         )?
         else {

@@ -484,18 +484,25 @@ During v0.x, MINOR bumps may include breaking changes.
   port accepts a connection, `readiness.timeout_secs` bounds reaching the
   declared status. A restart binds the address its declaration names.
 - **A host run in a linked worktree reaches that worktree's database.** A
-  scoped checkout answers its backing services on its own apex, and a task
-  Effigy runs on the host receives the scoped alias where its configuration
-  carries the declared one - in `[tasks.<name>].env`, an env-schema or `.env`
-  value, a declared secret, or a sequence step's environment - so application
-  configuration keeps `postgres.<apex>` and the run still reaches this
-  checkout's own database. Value precedence is unchanged, only a whole hostname
-  is replaced, and a primary checkout keeps its declared name. Before the task
-  starts, Effigy proves the scope's route belongs to this checkout and
-  publishes an upstream port; otherwise the run refuses with the alias, the
-  service and `effigy container up <NAME>`, and the command never runs. A
-  container-bound task is untouched: its target's own network already answers
-  both names. A managed TUI session (`mode = "tui"`) is not covered yet. See
+  scoped checkout answers its backing services on its own apex, and everything
+  Effigy delivers to a host run receives the scoped alias where the
+  declaration carries the canonical one - `[tasks.<name>].env`, an env-schema
+  or `.env` value, a declared secret, a sequence step's environment, a managed
+  session's (`mode = "tui"`) process plan and setup steps, and a configured
+  test suite's own environment with its `setup`/`teardown` steps - so
+  application configuration keeps `postgres.<apex>` and the run still reaches
+  this checkout's own database. Value precedence is unchanged, a primary
+  checkout keeps its declared name, and a `--plan` render refuses nothing (a
+  task plan shows the aliases it would deliver). Only an endpoint is rewritten
+  - the whole value, a URL
+  authority host, or `host:port` - so text that merely names the alias keeps
+  its bytes, and Effigy never rewrites a command body. Before the run starts,
+  Effigy proves the scope's route belongs to this checkout and publishes an
+  upstream port; otherwise it refuses with the alias, the service and
+  `effigy container up <NAME>`, and the command never runs. A container-bound
+  run is untouched: its target's own network already answers both names. A
+  checkout that names no default container environment still resolves, and a
+  container registry Effigy cannot read leaves host execution as it was. See
   [contract 005](docs/knowledge/contracts/005-container-runtime-contract.md).
 - **Host processes get resolved facts instead of a wrapper script:**
   `${service.<name>.host}`, `${route.<domain>.public_url}`,

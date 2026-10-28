@@ -16,6 +16,7 @@ mod runtime;
 pub mod session;
 mod workspace;
 
+pub use effigy_core::host_alias::HostAlias;
 pub use manager::*;
 pub use ops::{
     ContainerCacheListOperation, ContainerCacheOperation, ContainerCachePruneOperation,

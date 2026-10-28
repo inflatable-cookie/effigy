@@ -23,7 +23,14 @@ pub(super) fn try_run_builtin_test(
     catalogs: &[LoadedCatalog],
 ) -> Result<Option<String>, BuiltinError> {
     let (flags, passthrough) = planning::extract_builtin_test_flags(&runtime_args.passthrough);
-    let mut target_set = planning::resolve_builtin_test_targets(selector, resolved_root, catalogs)?;
+    // A plan runs nothing, so it neither resolves a scoped backing-service
+    // alias nor refuses for one (effigy#431).
+    let planning_ports = match flags.plan_mode {
+        true => None,
+        false => Some(ports),
+    };
+    let mut target_set =
+        planning::resolve_builtin_test_targets(selector, resolved_root, catalogs, planning_ports)?;
     let runnable = planning::collect_builtin_test_runnable_targets(&target_set.targets);
     if runnable.is_empty() {
         return Ok(None);

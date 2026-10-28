@@ -102,6 +102,32 @@ pub trait HostSuiteCustody: Send {
 /// reach-back from the built-in layer into the rest of the runner goes
 /// through this trait.
 pub trait BuiltinRuntimePorts {
+    /// Resolve the declared backing-service aliases this suite's host
+    /// environment carries to the checkout's own effective aliases, refusing
+    /// when the checkout has no published backing service for one
+    /// (effigy#431, contract 005). Called before any suite starts. The default
+    /// implementation, and every container-routed suite, leaves the
+    /// environment as written: the container's own network answers both names.
+    fn resolve_host_suite_env(
+        &self,
+        root: &std::path::Path,
+        env: &mut std::collections::BTreeMap<String, String>,
+    ) -> Result<(), BuiltinError> {
+        let _ = (root, env);
+        Ok(())
+    }
+
+    /// The declared/effective backing-service aliases this checkout resolves in
+    /// a host environment, for renders that happen before the environment
+    /// exists (a suite's lifecycle step commands).
+    fn host_suite_env_aliases(
+        &self,
+        root: &std::path::Path,
+    ) -> Result<Vec<crate::BuiltinHostAlias>, BuiltinError> {
+        let _ = root;
+        Ok(Vec::new())
+    }
+
     /// Whether the caller wants test-only child evidence for built-in suite
     /// executions. Production implementations leave this disabled.
     fn builtin_test_child_evidence_enabled(&self) -> bool {

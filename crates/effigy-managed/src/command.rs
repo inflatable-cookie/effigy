@@ -5,6 +5,12 @@ use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 use crate::{plan, profiles, ManagedError, ManagedTaskPlan};
 
+/// Resolve a managed session's process plan.
+///
+/// `host_env_aliases` are the declared backing-service aliases the host
+/// execution environment resolves to this checkout's effective aliases
+/// (effigy#431); an empty slice renders every env value as written.
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_managed_task_plan<'a>(
     selector: &TaskSelector,
     catalog: &'a LoadedCatalog,
@@ -12,6 +18,7 @@ pub fn resolve_managed_task_plan<'a>(
     runtime_args: &'a TaskRuntimeArgs,
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &'a Path,
+    host_env_aliases: &'a [crate::run_spec::HostAlias],
     resolver: TaskResolverFn<'a>,
 ) -> Result<Option<ManagedTaskPlan>, ManagedError> {
     let Some(mode) = task.mode.as_deref() else {
@@ -57,6 +64,7 @@ pub fn resolve_managed_task_plan<'a>(
         passthrough: &runtime_args.passthrough,
         catalogs,
         task_scope_cwd,
+        host_env_aliases,
         resolver,
     })
     .map(Some)
