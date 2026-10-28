@@ -359,20 +359,24 @@ pub fn shared_failure(services: &[ServiceHealth]) -> Option<ContinuousHealthChec
     })
 }
 
-/// Render what is wrong with an environment that did not become ready, and
-/// the next commands, given the last logs observed for exited containers.
+/// Render what is wrong with an environment that did not become ready: the
+/// failing services and their evidence, then one `next:` line. `logs` holds the
+/// last log line of each exited container. `last_read_error` is set when the
+/// final health read itself failed, so the runtime is what a person inspects.
 pub fn readiness_diagnostic(
     environment: &str,
     services: &[ServiceHealth],
     timeout_secs: u64,
     logs: &BTreeMap<String, String>,
+    last_read_error: Option<&str>,
 ) -> String {
     let mut lines = vec![format!(
         "environment `{environment}` did not become ready within {timeout_secs}s"
     )];
     let unready = unready(services);
     if unready.is_empty() {
-        lines.push("every service reported healthy, so readiness could not be confirmed. Inspect it with `effigy container status`".to_owned());
+        lines
+            .push("every service reported healthy, so readiness could not be confirmed".to_owned());
     }
     for service in &unready {
         let mut line = format!("- {} ({})", service.problem(), service.container);
@@ -386,42 +390,51 @@ pub fn readiness_diagnostic(
         }
         lines.push(line);
     }
-    let mut logs_services = unready
-        .iter()
-        .map(|service| service.service.clone())
-        .collect::<Vec<_>>();
-    logs_services.dedup();
-    if let Some(first) = logs_services.first() {
-        lines.push(format!(
-            "Read a service's output with `effigy container logs --service {first}`, and every service's state with `effigy container status`"
-        ));
-    } else {
-        lines.push("Inspect the stack with `effigy container status`".to_owned());
+    if let Some(error) = last_read_error {
+        lines.push(format!("the last health read itself failed: {error}"));
     }
-    if unready.iter().any(|service| service.has_exited()) {
-        lines.push(
-            "A service that exited needs its own configuration fixed before the environment can start; \
-             `effigy container up` stops here rather than leaving an unverified stack running. \
-             Fix the service, then rerun `effigy container up`. Retrying unchanged will fail the same way."
-                .to_owned(),
-        );
-    } else {
-        lines.push(
-            "A health check that treats a working service as unhealthy is the service definition's bug: \
-             fix the check (or the image), then rerun `effigy container up`. Retrying unchanged will fail the same way."
-                .to_owned(),
-        );
-    }
+    lines.push(format!(
+        "next: {}",
+        readiness_next_action(&unready, last_read_error.is_some())
+    ));
     lines.join("\n")
 }
 
-/// The diagnostic for a stack whose unready services fail identically, said
-/// as the next thing a person should do.
-pub fn repeated_failure_diagnostic(failure: &ContinuousHealthCheckFailure) -> String {
+/// The one action that moves a stuck bring-up on. A failed read means the
+/// runtime is the thing to inspect; otherwise the first service a person reads
+/// is the one to fix, and its output is the way in.
+fn readiness_next_action(unready: &[&ServiceHealth], read_failed: bool) -> String {
+    if read_failed {
+        return "inspect the container runtime with `effigy doctor`, then rerun `effigy container up`".to_owned();
+    }
+    let Some(first) = unready
+        .iter()
+        .find(|service| service.has_exited())
+        .or(unready.first())
+    else {
+        return "inspect the stack with `effigy container status`".to_owned();
+    };
+    let service = &first.service;
+    let fix = if first.has_exited() {
+        "fix its configuration"
+    } else {
+        "fix its health check or image"
+    };
     format!(
-        "{} fail the same health check: `{}`. The services are running, so this is their definition \
-         (or their image) rather than the stack; fix the check before retrying, and inspect the \
-         services with `effigy container status`",
+        "read `{service}`'s output with `effigy container logs --service {service}`, {fix}, then rerun `effigy container up`; retrying unchanged fails the same way"
+    )
+}
+
+/// The diagnostic for a stack whose unready services fail identically: the
+/// services and the shared check output, then the one next action.
+pub fn repeated_failure_diagnostic(failure: &ContinuousHealthCheckFailure) -> String {
+    let service = failure
+        .services
+        .first()
+        .map(String::as_str)
+        .unwrap_or_default();
+    format!(
+        "{} fail the same health check: `{}`\nthe services are running, so the health check or the image is at fault, not the stack\nnext: read `{service}`'s check output with `effigy container logs --service {service}`, fix the health check or the image, then rerun `effigy container up`; retrying unchanged fails the same way",
         failure.services.join(", "),
         failure.signature
     )

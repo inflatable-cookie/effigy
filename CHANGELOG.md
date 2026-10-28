@@ -316,6 +316,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A container readiness refusal and a Colima profile refusal name the failed
+  service or profile, the cause they observed and one `next:` command. A
+  bring-up that never becomes ready ends its diagnostic with a single `next:`
+  line (`effigy container logs --service <NAME>`, then `effigy container up`),
+  and a failed health read points at `effigy doctor`. A failed Colima command
+  names its profile and carries its output as evidence. `--json` carries the
+  same action in `error.human.next_action`.
 - Human failures name their cause in words instead of printing a Rust `Debug`
   tree, across the container, release, managed-run and bundle-source planes: an
   unreadable kernel record reports the store's own sentence and next action, a

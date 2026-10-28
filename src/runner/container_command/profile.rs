@@ -21,6 +21,8 @@ const DEFAULT_PROFILE: &str = "effigy";
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 /// One absolute deadline for the prune's three bounded VM probes (inspect,
 /// prune, inspect). Pruning a profile that holds the leak takes seconds.
+/// The next step after a disk size the recreate prompt or flag cannot use.
+const DISK_NEXT: &str = "rerun with `--disk <GiB>` set to a positive whole number, or press Enter at the prompt for the managed default";
 const PROFILE_PRUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,7 +73,7 @@ pub(super) fn run_container_profile_command(
     }
     if repo_override.is_some() {
         return Err(RunnerError::task_invocation(
-            "`effigy container profile` does not accept `--repo`; Colima profiles are machine-level runtime state",
+            "`effigy container profile` does not accept `--repo`; Colima profiles are machine-level runtime state\nnext: drop `--repo` and rerun the profile command, for example `effigy container profile status`",
         ));
     }
     match subcommand {
@@ -119,8 +121,14 @@ fn run_container_profile_prune_health_pid_files(
         .as_ref()
         .is_none_or(|row| row.status != "Running")
     {
+        let state = status
+            .row
+            .as_ref()
+            .map_or("not listed by `colima list`".to_owned(), |row| {
+                format!("reported as {}", row.status)
+            });
         return Err(RunnerError::task_invocation(format!(
-            "`effigy container profile prune-health-pid-files` needs Colima profile `{profile}` running; a stopped profile keeps no `/run` pressure. Start it with `colima start --profile {profile}` or `effigy container up`."
+            "`effigy container profile prune-health-pid-files` needs Colima profile `{profile}` running; the profile is {state}\nnext: start it with `colima start --profile {profile}` or `effigy container up`, then rerun this command"
         )));
     }
     let deadline = Instant::now() + PROFILE_PRUNE_TIMEOUT;
@@ -240,9 +248,7 @@ fn run_container_profile_recreate(
 ) -> Result<String, RunnerError> {
     let profile = resolve_profile(profile);
     let Some(default_resources) = managed_colima_profile_resources(&profile) else {
-        return Err(RunnerError::task_invocation(format!(
-            "`effigy container profile recreate` only supports the managed `{DEFAULT_PROFILE}` Colima profile; `{profile}` is not managed by Effigy"
-        )));
+        return Err(not_managed_profile_error("recreate", &profile));
     };
     let disk_gib = resolve_profile_recreate_disk_gib(
         &profile,
@@ -287,9 +293,7 @@ fn run_container_profile_purge(
 ) -> Result<String, RunnerError> {
     let profile = resolve_profile(profile);
     if managed_colima_profile_resources(&profile).is_none() {
-        return Err(RunnerError::task_invocation(format!(
-            "`effigy container profile purge` only supports the managed `{DEFAULT_PROFILE}` Colima profile; `{profile}` is not managed by Effigy"
-        )));
+        return Err(not_managed_profile_error("purge", &profile));
     }
     let before = inspect_profile(&profile)?;
     maybe_confirm_destructive_container_action(
@@ -318,11 +322,8 @@ fn run_container_profile_resize(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let profile = resolve_profile(profile);
-    let resources = managed_colima_profile_resources(&profile).ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "`effigy container profile resize` only supports the managed `{DEFAULT_PROFILE}` Colima profile; `{profile}` is not managed by Effigy"
-        ))
-    })?;
+    let resources = managed_colima_profile_resources(&profile)
+        .ok_or_else(|| not_managed_profile_error("resize", &profile))?;
     let before = inspect_profile(&profile)?;
     prepare_managed_colima_profile_name(&profile).map_err(RunnerError::task_invocation)?;
 
@@ -345,9 +346,13 @@ fn run_container_profile_resize(
         .map(|row| bytes_to_gib(row.disk) >= resources.disk_gib)
         .unwrap_or(false);
     if !resized {
+        let disk = after
+            .row
+            .as_ref()
+            .map(|row| bytes_to_gib(row.disk))
+            .unwrap_or(0);
         return Err(RunnerError::task_invocation(format!(
-            "Colima profile `{profile}` restarted but still reports disk {}GiB below the managed target {}GiB. Try `effigy container profile recreate --disk {} --yes` only if you are prepared to lose local profile runtime data.",
-            after.row.as_ref().map(|row| bytes_to_gib(row.disk)).unwrap_or(0),
+            "Colima profile `{profile}` restarted but still reports disk {disk}GiB, below the managed target {}GiB\nnext: check `effigy container profile status`; `effigy container profile recreate --disk {} --yes` deletes local profile runtime data, so run it only if that is acceptable",
             resources.disk_gib,
             resources.disk_gib,
         )));
@@ -357,6 +362,14 @@ fn run_container_profile_resize(
         &after,
         was_running,
         output_json,
+    ))
+}
+
+/// A profile command on a profile Effigy does not manage. The managed profile
+/// is the only one these verbs may change, so the next step names it.
+fn not_managed_profile_error(verb: &str, profile: &str) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "`effigy container profile {verb}` only supports the managed `{DEFAULT_PROFILE}` Colima profile; `{profile}` is not managed by Effigy\nnext: rerun it with `--profile {DEFAULT_PROFILE}`"
     ))
 }
 
@@ -429,13 +442,13 @@ fn prompt_profile_recreate_disk_gib<R: BufRead, W: Write>(
     }
     let value = trimmed.parse::<u64>().map_err(|_| {
         RunnerError::task_invocation(format!(
-            "invalid Colima profile disk size `{trimmed}`; expected a positive integer GiB value"
+            "invalid Colima profile disk size `{trimmed}`; expected a positive integer GiB value\nnext: {DISK_NEXT}"
         ))
     })?;
     if value == 0 {
-        return Err(RunnerError::task_invocation(
-            "invalid Colima profile disk size `0`; expected a positive integer GiB value",
-        ));
+        return Err(RunnerError::task_invocation(format!(
+            "invalid Colima profile disk size `0`; expected a positive integer GiB value\nnext: {DISK_NEXT}"
+        )));
     }
     Ok(value)
 }
@@ -452,7 +465,7 @@ fn parse_colima_list(stdout: &str) -> Result<Vec<ColimaListRow>, RunnerError> {
         .map(|line| {
             serde_json::from_str::<ColimaListRow>(line).map_err(|error| {
                 RunnerError::task_invocation(format!(
-                    "failed to parse `colima list --json` row: {error}"
+                    "failed to parse `colima list --json` row: {error}\nnext: run `colima list` to check that Colima answers, then rerun the command"
                 ))
             })
         })
@@ -677,14 +690,43 @@ fn run_command(
             if output.status.success() || allow_failure {
                 Ok(output)
             } else {
-                Err(RunnerError::task_invocation(format!(
-                    "{label} failed ({})\nstdout:\n{}\nstderr:\n{}",
-                    effigy_ui::human::exit_code(output.status.code()),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                )))
+                Err(command_failure(
+                    label,
+                    args,
+                    output.status.code(),
+                    &output.stdout,
+                    &output.stderr,
+                ))
             }
         })
+}
+
+/// A Colima command that failed, named by its profile when it has one. Its own
+/// output is the cause, so it stays in the message after the next step.
+fn command_failure(
+    label: &str,
+    args: &[&str],
+    code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> RunnerError {
+    let subject = match profile_flag(args) {
+        Some(profile) => format!("{label} for profile `{profile}`"),
+        None => label.to_owned(),
+    };
+    RunnerError::task_invocation(format!(
+        "{subject} failed ({})\nnext: read the Colima output below, check `effigy container profile status`, then rerun the command\nstdout:\n{}\nstderr:\n{}",
+        effigy_ui::human::exit_code(code),
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    ))
+}
+
+/// The profile a Colima command names with `--profile`, when it names one.
+fn profile_flag<'a>(args: &[&'a str]) -> Option<&'a str> {
+    args.windows(2)
+        .find(|pair| pair[0] == "--profile")
+        .map(|pair| pair[1])
 }
 
 fn bytes_to_gib(bytes: u64) -> u64 {
@@ -853,5 +895,107 @@ mod tests {
             .expect("prompt");
 
         assert_eq!(disk, 220);
+    }
+
+    #[test]
+    fn an_unmanaged_profile_refusal_names_the_managed_profile_to_use() {
+        let error = run_container_profile_purge(Some("work"), true, false)
+            .expect_err("an unmanaged profile is refused before any Colima call");
+        let human = error.human_error();
+
+        assert_eq!(
+            human.what_failed(),
+            "`effigy container profile purge` only supports the managed `effigy` Colima profile; `work` is not managed by Effigy"
+        );
+        assert_eq!(
+            human.next_action_text(),
+            Some("rerun it with `--profile effigy`")
+        );
+
+        let error = run_container_profile_resize(Some("work"), false)
+            .expect_err("an unmanaged profile is refused before any Colima call");
+        assert!(error
+            .human_error()
+            .next_action_text()
+            .is_some_and(|action| action.contains("--profile effigy")));
+    }
+
+    #[test]
+    fn the_repo_refusal_points_at_a_profile_command_without_it() {
+        let error = run_container_profile_command(
+            Some(PathBuf::from(".")),
+            &ContainerProfileSubcommand::Status { profile: None },
+            false,
+        )
+        .expect_err("profiles are machine-level, so --repo is refused");
+
+        assert!(error
+            .human_error()
+            .next_action_text()
+            .is_some_and(|action| action.contains("effigy container profile status")));
+    }
+
+    #[test]
+    fn a_failed_colima_command_names_its_profile_its_output_and_the_next_step() {
+        let error = command_failure(
+            "colima start",
+            &["start", "--profile", "effigy"],
+            Some(1),
+            b"",
+            b"error: vm not found\n",
+        );
+        let human = error.human_error();
+
+        assert!(
+            human
+                .what_failed()
+                .starts_with("colima start for profile `effigy` failed"),
+            "{}",
+            human.what_failed()
+        );
+        assert!(
+            human
+                .evidence_lines()
+                .iter()
+                .any(|line| line.contains("error: vm not found")),
+            "{:?}",
+            human.evidence_lines()
+        );
+        assert!(human
+            .next_action_text()
+            .is_some_and(|action| action.contains("check `effigy container profile status`")));
+
+        let unnamed = command_failure("colima list", &["list", "--json"], Some(1), b"", b"");
+        assert!(unnamed
+            .human_error()
+            .what_failed()
+            .starts_with("colima list failed"));
+    }
+
+    #[test]
+    fn a_bad_disk_size_names_the_value_and_the_valid_form() {
+        let mut input = std::io::Cursor::new(b"lots\n".as_slice());
+        let mut output = Vec::new();
+        let error = prompt_profile_recreate_disk_gib("effigy", 180, &mut input, &mut output)
+            .expect_err("a non-number is not a disk size");
+        let human = error.human_error();
+
+        assert_eq!(
+            human.what_failed(),
+            "invalid Colima profile disk size `lots`; expected a positive integer GiB value"
+        );
+        assert!(human
+            .next_action_text()
+            .is_some_and(|action| action.contains("--disk <GiB>")));
+    }
+
+    #[test]
+    fn an_unreadable_colima_list_row_names_the_command_to_check() {
+        let error = parse_colima_list("not json").expect_err("a row must parse");
+
+        assert!(error
+            .human_error()
+            .next_action_text()
+            .is_some_and(|action| action.contains("`colima list`")));
     }
 }
