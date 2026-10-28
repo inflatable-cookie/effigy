@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -24,8 +24,33 @@ struct Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.stacks.clear();
+        // Stop the disposable gateway through its own control path while its
+        // PID record still exists; the root removal comes after this.
+        let _ = private_gateway(self.root.path(), "down");
     }
 }
+
+/// Run one `effigy gateway` lifecycle command against the fixture's private
+/// gateway root. Its CA comes from the fixture mkcert, never the host's.
+fn private_gateway(root: &Path, subcommand: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["gateway", subcommand, "--private-state-root"])
+        .arg(root.join("home/.effigy/gateway"))
+        .arg("--json")
+        .env("HOME", root.join("home"))
+        .env("EFFIGY_GATEWAY_MKCERT_BIN", root.join("bin/mkcert"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                root.join("bin").display(),
+                std::env::var("PATH").expect("PATH")
+            ),
+        )
+        .output()
+        .expect("private gateway command")
+}
+
 impl Fixture {
     fn new() -> Self {
         let root = effigy_test_support::Fixture::workspace("effigy-158-private-")
@@ -55,6 +80,24 @@ impl Fixture {
             fs::Permissions::from_mode(0o700),
         )
         .expect("mode");
+        // One disposable private gateway serves every stack. It lives under the
+        // fixture HOME, where the route store the assertions read also lives,
+        // and its CA comes from a fixture mkcert rather than the host's. It is
+        // started before any stack activates, so concurrent activations reuse
+        // it instead of racing for the gateway transition lock.
+        let gateway = root.path().join("home/.effigy/gateway");
+        fs::create_dir_all(&gateway).expect("disposable private gateway");
+        fs::set_permissions(&gateway, fs::Permissions::from_mode(0o700)).expect("gateway mode");
+        fs::write(root.path().join("bin/mkcert"), MKCERT).expect("fixture mkcert");
+        fs::set_permissions(
+            root.path().join("bin/mkcert"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .expect("mkcert mode");
+        for subcommand in ["setup-tls", "up"] {
+            let output = private_gateway(root.path(), subcommand);
+            assert!(output.status.success(), "{subcommand}: {output:?}");
+        }
         let mut fixture = Self {
             root,
             stacks: Vec::new(),
@@ -168,6 +211,9 @@ version = "16"
             port,
         });
     }
+    fn gateway_root(&self) -> PathBuf {
+        self.root.path().join("home/.effigy/gateway")
+    }
     fn command(&self, i: usize, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_effigy"));
         c.args(args)
@@ -190,7 +236,11 @@ version = "16"
                     std::env::var("PATH").expect("PATH")
                 ),
             )
-            .env_remove("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT")
+            .env("EFFIGY_GATEWAY_PRIVATE_STATE_ROOT", self.gateway_root())
+            .env(
+                "EFFIGY_GATEWAY_MKCERT_BIN",
+                self.root.path().join("bin/mkcert"),
+            )
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -896,6 +946,42 @@ fn private_service_child() {
         });
     }
 }
+
+/// Fixture mkcert: a disposable CA and server certificate, issued with the
+/// openssl steps the private gateway tests use. Never touches a host trust store.
+const MKCERT: &str = r#"#!/bin/sh
+set -eu
+if [ "${1-}" = "-help" ]; then
+    exit 0
+fi
+if [ "${1-}" = "-install" ]; then
+    exit 97
+fi
+cert=
+key=
+domain=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -cert-file) cert=$2; shift 2 ;;
+        -key-file) key=$2; shift 2 ;;
+        *) domain=$1; shift ;;
+    esac
+done
+mkdir -p "$CAROOT"
+if [ ! -f "$CAROOT/rootCA.pem" ] || [ ! -f "$CAROOT/rootCA-key.pem" ]; then
+    printf '[req]\ndistinguished_name=dn\nx509_extensions=v3_ca\nprompt=no\n[dn]\nCN=Effigy disposable fixture CA\n[v3_ca]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n' > "$CAROOT/rootCA.cnf"
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -keyout "$CAROOT/rootCA-key.pem" -out "$CAROOT/rootCA.pem" -config "$CAROOT/rootCA.cnf"
+    rm -f "$CAROOT/rootCA.cnf"
+fi
+csr="$cert.csr"
+ext="$cert.ext"
+printf '[req]\ndistinguished_name=dn\nreq_extensions=v3_req\nprompt=no\n[dn]\nCN=%s\n[v3_req]\nsubjectAltName=DNS:%s\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$domain" "$domain" > "$ext"
+openssl req -newkey rsa:2048 -nodes -sha256 -keyout "$key" -out "$csr" -config "$ext"
+openssl x509 -req -in "$csr" -CA "$CAROOT/rootCA.pem" -CAkey "$CAROOT/rootCA-key.pem" \
+    -CAcreateserial -sha256 -days 365 -extfile "$ext" -extensions v3_req -out "$cert"
+rm -f "$csr" "$ext"
+"#;
 
 const BACKEND: &str = r#"import sys,os,json,pathlib,time,socket
 root=pathlib.Path(os.environ['PRIVATE_BACKEND_ROOT']); cwd=pathlib.Path.cwd(); args=sys.argv[1:]
