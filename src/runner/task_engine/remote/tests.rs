@@ -756,3 +756,60 @@ fn a_container_workload_never_receives_the_host_scratch() {
         assert!(env.contains_key(std::ffi::OsStr::new("EXPLICIT")));
     });
 }
+
+/// A container workload is a workload: no session vault access rides in its
+/// spawn environment, while the values the run does declare and the user's own
+/// environment still arrive (contract 032; effigy#338; effigy#445).
+#[test]
+fn a_container_workload_never_receives_session_vault_access() {
+    let env = container_env(vec![
+        (
+            "DATABASE_URL".to_owned(),
+            EnvOverride::Secret("postgres://user@db/app".to_owned()),
+        ),
+        ("APP_ENV".to_owned(), EnvOverride::Plain("dev".to_owned())),
+        (
+            "EFFIGY_SECRET_PASSPHRASE".to_owned(),
+            EnvOverride::Plain("caller-passphrase".to_owned()),
+        ),
+        (
+            "EFFIGY_INTERNAL_SECRET_PASSPHRASE".to_owned(),
+            EnvOverride::Plain("retired-passphrase".to_owned()),
+        ),
+        (
+            "EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS".to_owned(),
+            EnvOverride::Plain("1".to_owned()),
+        ),
+        (
+            "EFFIGY_INTERNAL_SECRET_GRANT".to_owned(),
+            EnvOverride::Plain("1".to_owned()),
+        ),
+        (
+            "EFFIGY_TEST_SECRETS_PASSPHRASE".to_owned(),
+            EnvOverride::Plain("test-passphrase".to_owned()),
+        ),
+    ])
+    .expect("container env");
+    for key in [
+        "EFFIGY_SECRET_PASSPHRASE",
+        "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
+        "EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS",
+        "EFFIGY_INTERNAL_SECRET_GRANT",
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+    ] {
+        assert!(
+            !env.contains_key(std::ffi::OsStr::new(key)),
+            "`{key}` must not be forwarded into a container"
+        );
+    }
+    // The negative controls: the run's declared secret and the user's own
+    // values are exactly what a container workload is supposed to receive.
+    assert!(matches!(
+        env.get(std::ffi::OsStr::new("DATABASE_URL")),
+        Some(EnvValue::Secret(_))
+    ));
+    assert!(matches!(
+        env.get(std::ffi::OsStr::new("APP_ENV")),
+        Some(EnvValue::Plain(value)) if value == "dev"
+    ));
+}
