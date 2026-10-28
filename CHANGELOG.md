@@ -325,7 +325,8 @@ During v0.x, MINOR bumps may include breaking changes.
   interrupts a managed release now reads as the cancellation it is, instead of
   reporting that the evidence contradicts itself. The human-error Debug ratchet
   now covers the container policy, manifest and managed-run vocabularies that
-  the Q-017 audit found outside it, and its baseline fell by 30 specifiers.
+  the Q-017 audit found outside it, and its baseline dropped to 102 specifiers
+  from 135.
 - A failed task run and a refused `deploy apply`/`redeploy` carry their next
   action in `--json` as `error.human.next_action`, the same instruction the
   text `next:` line prints. The deploy refusal's runnable command is now that
