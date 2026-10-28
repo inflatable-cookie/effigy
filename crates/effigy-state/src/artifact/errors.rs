@@ -42,6 +42,10 @@ pub enum ArtifactStagingError {
         path: PathBuf,
     },
     NoPrimaryFiles,
+    DigestMismatch {
+        pinned: String,
+        observed: String,
+    },
     CreateDir {
         path: PathBuf,
         error: io::Error,
@@ -81,6 +85,10 @@ impl fmt::Display for ArtifactStagingError {
                 path.display()
             ),
             Self::NoPrimaryFiles => write!(f, "artifact has no primary files to stage"),
+            Self::DigestMismatch { pinned, observed } => write!(
+                f,
+                "staged OCI digest `{observed}` does not match digest-pinned source `{pinned}`"
+            ),
             Self::CreateDir { path, error } => {
                 write!(
                     f,

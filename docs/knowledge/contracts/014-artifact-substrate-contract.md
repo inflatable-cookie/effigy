@@ -288,6 +288,8 @@ Metadata packaged for push:
 Tag and digest rules:
 
 - digest-pinned refs are invalid push destinations
+- a digest pin is the `@sha256:` suffix, including when the ref has userinfo;
+  inspect, pull and stage refuse an observed digest that does not match the pin
 - mutable tags are allowed only as explicit operator input
 - pushing to a tag should report the immutable pushed digest
 - overwriting an existing tag requires an explicit future `--overwrite` flag;
