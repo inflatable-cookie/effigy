@@ -1750,19 +1750,11 @@ fn probe_low_ports(
     ];
     argv.extend(addresses.into_iter().map(OsString::from));
     let output = effigy_gateway::setup::command(run, cx, argv, false)?;
-    let report: effigy_gateway::linux_operator::BindProbeReport =
-        serde_json::from_slice(&output).map_err(probe_report_error)?;
+    let report = effigy_gateway::linux_operator::BindProbeReport::parse(&output)?;
     match report.refusal() {
         Some(reason) => Err(std::io::Error::other(reason)),
         None => Ok(()),
     }
-}
-
-#[cfg(target_os = "linux")]
-fn probe_report_error(failure: serde_json::Error) -> std::io::Error {
-    std::io::Error::other(format!(
-        "the low-port probe report was unreadable: {failure}"
-    ))
 }
 
 /// Run one setup stage. The label names the step while it runs, and the stage
