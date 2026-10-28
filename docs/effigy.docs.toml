@@ -39,32 +39,32 @@ historical = ["complete", "archived", "closed", "superseded", "deprecated"]
 [docs_policy.graph.kinds.contract]
 include = ["docs/knowledge/contracts/*.md"]
 authority = 100
-default-currentness = "current"
+default_currentness = "current"
 
 [docs_policy.graph.kinds.architecture]
 include = ["docs/knowledge/architecture/*.md"]
 authority = 90
-default-currentness = "current"
+default_currentness = "current"
 
 [docs_policy.graph.kinds.knowledge]
 include = ["docs/knowledge/*.md", "docs/knowledge/domain/*.md", "docs/knowledge/vision/*.md"]
 authority = 85
-default-currentness = "current"
+default_currentness = "current"
 
 [docs_policy.graph.kinds.guide]
 include = ["docs/guides/*.md"]
 authority = 50
-default-currentness = "current"
+default_currentness = "current"
 
 [docs_policy.graph.kinds.archived-guide]
 include = ["docs/guides/archive/*.md"]
 authority = 10
-default-currentness = "historical"
+default_currentness = "historical"
 
 [docs_policy.graph.kinds.front-door]
 include = ["README.md", "AGENTS.md", "CHANGELOG.md", "docs/README.md"]
 authority = 40
-default-currentness = "current"
+default_currentness = "current"
 
 # ---- Relations ---------------------------------------------------------------
 # Labels match `Label: [link](target)` metadata lines; headings match links found
