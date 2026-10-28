@@ -331,6 +331,14 @@ bun install
 The final install rematerializes the consumer's published dependency tree. A
 foreign, shared, stale, or unverifiable registration is retained and reported.
 
+If the consumer checkout is already gone, name it with `--repo`:
+
+```sh
+effigy deps unlink bun ../poodle --repo /path/to/gone-consumer
+```
+
+That retires only that consumer's registration. Shared consumers stay.
+
 ## Status And Doctor
 
 Use status for dependency-specific desired/observed state:

@@ -111,6 +111,8 @@ fn render_deps_help_shows_link_and_committed_bun_pin_operations() {
     assert!(rendered.contains("Apply or preview a verified local Cargo patch closure"));
     assert!(rendered.contains("Remove a local Cargo patch and verify committed-source recovery"));
     assert!(rendered.contains("Apply or preview one verified save-less Bun package closure"));
+    assert!(rendered.contains("including a gone --repo checkout"));
+    assert!(rendered.contains("effigy deps unlink bun ../poodle --repo /path/to/gone-consumer"));
     assert!(rendered.contains("--dry-run"));
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--json"));

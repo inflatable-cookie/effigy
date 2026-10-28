@@ -98,6 +98,10 @@ Unix.
   matches, and no desired consumer reference remains.
 - Unlink of an absent checkout still releases that exact consumer's index
   references. Shared, foreign, and unverifiable live-consumer claims stay.
+- `effigy deps unlink bun <LIBRARY> [--repo <CONSUMER>]` is the registration
+  lifecycle owner. Ordinary completion unlinks the live named consumer.
+  Interrupt recovery uses the same command with `--repo` naming the gone
+  checkout. There is no scavenger and no automatic Drop cleanup.
 - Validate other repo references before removal. Retain and report stale or
   unverifiable references rather than risk breaking another consumer.
 - Status and doctor report index/registry disagreement as drift.

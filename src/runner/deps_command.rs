@@ -1,3 +1,5 @@
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{DepsArgs, DepsManager, DepsSubcommand};
@@ -11,7 +13,7 @@ use effigy_deps::{
 };
 use serde_json::json;
 
-use super::command_context::resolve_active_repo_root;
+use super::command_context::{current_working_dir, resolve_active_repo_root};
 use super::RunnerError;
 
 mod pin;
@@ -290,8 +292,7 @@ fn run_bun_unlink(
     output_json: bool,
     process: &impl ReadOnlyProcess,
 ) -> Result<String, RunnerError> {
-    let resolved = resolve_active_repo_root(repo_override)?;
-    let repo_root = resolved.resolved_root;
+    let repo_root = bun_unlink_repo_root(repo_override)?;
     let report = execute_bun_unlink(&repo_root, library_path, home, dry_run, process)
         .map_err(map_deps_error)?;
     let rendered = render_bun_unlink(&repo_root, &report, output_json);
@@ -1008,12 +1009,37 @@ fn resolve_link_library_path(repo_root: &Path, library_path: &Path) -> PathBuf {
     }
 }
 
+/// Bun unlink may name a deleted checkout with `--repo`.
+/// Other deps commands still require a live root.
+fn bun_unlink_repo_root(repo_override: Option<PathBuf>) -> Result<PathBuf, RunnerError> {
+    if let Some(explicit) = repo_override.as_ref() {
+        let candidate = if explicit.is_absolute() {
+            explicit.clone()
+        } else {
+            current_working_dir()?.join(explicit)
+        };
+        if bun_unlink_path_is_missing(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Ok(resolve_active_repo_root(repo_override)?.resolved_root)
+}
+
+fn bun_unlink_path_is_missing(path: &Path) -> bool {
+    matches!(
+        fs::symlink_metadata(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
     use std::fs;
     use std::process::Command;
 
+    #[cfg(unix)]
+    use effigy_deps::{bun_registration_path, BunConsumerReference};
     use effigy_deps::{
         BunLinkOutcome, BunPeerDiagnostic, BunPeerResolutionStatus, BunUnlinkOutcome,
         CargoLinkOutcome, CargoLinkOwnership, CargoUnlinkOutcome, ConsumerRoot, DependencyLinkKey,
@@ -1588,6 +1614,232 @@ mod tests {
             index_before
         );
         assert_eq!(fs::canonicalize(consumer_link).unwrap(), library_root);
+    }
+
+    fn bun_unlink_args(repo: PathBuf, library: PathBuf) -> DepsArgs {
+        DepsArgs {
+            subcommand: DepsSubcommand::Unlink {
+                manager: DepsManager::Bun,
+                library_path: library,
+                dry_run: false,
+            },
+            repo_override: Some(repo),
+            output_json: true,
+        }
+    }
+
+    #[cfg(unix)]
+    fn remaining_bun_consumers(home: &Path) -> Vec<PathBuf> {
+        BunRegistrationIndexStore::for_home(home)
+            .read()
+            .unwrap()
+            .registrations
+            .into_iter()
+            .flat_map(|registration| registration.consumers)
+            .map(|consumer| consumer.consumer_repo)
+            .collect()
+    }
+
+    #[test]
+    fn bun_unlink_cli_accepts_a_missing_repo_that_cargo_unlink_still_rejects() {
+        let parent = TempDir::new().unwrap();
+        let missing = parent.path().join("gone-consumer");
+        let library = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        let cargo_error =
+            run_cargo_unlink(Some(missing.clone()), library.path(), true, false).unwrap_err();
+        assert!(
+            cargo_error
+                .to_string()
+                .contains("explicit --repo path is not a directory"),
+            "{cargo_error}"
+        );
+
+        let rendered = run_deps_with_home(
+            bun_unlink_args(missing, library.path().to_path_buf()),
+            home.path(),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(json["schema"], "effigy.deps.unlink.v1");
+        assert_eq!(json["report"]["outcome"], "no-op");
+        assert!(!BunRegistrationIndexStore::for_home(home.path())
+            .path()
+            .exists());
+    }
+
+    #[cfg(unix)]
+    struct SharedBunUnlinkFixture {
+        home: TempDir,
+        _library: TempDir,
+        _first: TempDir,
+        _second: TempDir,
+        library_root: PathBuf,
+        first_root: PathBuf,
+        second_root: PathBuf,
+    }
+
+    #[cfg(unix)]
+    fn shared_bun_unlink_fixture() -> SharedBunUnlinkFixture {
+        use std::os::unix::fs::symlink;
+
+        let first = repo();
+        let second = repo();
+        let library = TempDir::new().unwrap();
+        write(
+            &library.path().join("package.json"),
+            "{\"name\":\"underlay\",\"version\":\"0.1.0\"}\n",
+        );
+        let home = TempDir::new().unwrap();
+        let first_root = fs::canonicalize(first.path()).unwrap();
+        let second_root = fs::canonicalize(second.path()).unwrap();
+        let library_root = fs::canonicalize(library.path()).unwrap();
+        let desired = |consumer: PathBuf| DesiredDependencyLink {
+            key: DependencyLinkKey {
+                manager: PackageManager::Bun,
+                consumer_repo: consumer.clone(),
+                library_path: library_root.clone(),
+            },
+            mechanism: LinkMechanism::BunLink,
+            consumer_roots: vec![ConsumerRoot {
+                canonical_path: consumer.clone(),
+            }],
+            packages: vec![DependencyPackage {
+                name: "underlay".to_owned(),
+                local_path: library_root.clone(),
+                committed_sources: vec![CommittedSource {
+                    kind: effigy_deps::CommittedSourceKind::Registry,
+                    identity: "1.2.3".to_owned(),
+                }],
+            }],
+            cargo_resolutions: Vec::new(),
+            cargo_ownership: None,
+        };
+        for consumer in [&first_root, &second_root] {
+            RepoLinkStateStore::for_repo(consumer)
+                .write(&RepoLinkState {
+                    schema: effigy_deps::REPO_LINK_STATE_SCHEMA.to_owned(),
+                    schema_version: effigy_deps::REPO_LINK_STATE_SCHEMA_VERSION,
+                    links: vec![desired(consumer.clone())],
+                })
+                .unwrap();
+            let consumer_link = consumer.join("node_modules/underlay");
+            fs::create_dir_all(consumer_link.parent().unwrap()).unwrap();
+            symlink(&library_root, &consumer_link).unwrap();
+        }
+        BunRegistrationIndexStore::for_home(home.path())
+            .update(|index| {
+                index.add_reference(
+                    "underlay",
+                    library_root.clone(),
+                    true,
+                    BunConsumerReference {
+                        consumer_repo: first_root.clone(),
+                        library_path: library_root.clone(),
+                    },
+                )?;
+                index.add_reference(
+                    "underlay",
+                    library_root.clone(),
+                    true,
+                    BunConsumerReference {
+                        consumer_repo: second_root.clone(),
+                        library_path: library_root.clone(),
+                    },
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let registration = bun_registration_path(home.path(), "underlay");
+        fs::create_dir_all(registration.parent().unwrap()).unwrap();
+        symlink(&library_root, &registration).unwrap();
+        SharedBunUnlinkFixture {
+            home,
+            _library: library,
+            _first: first,
+            _second: second,
+            library_root,
+            first_root,
+            second_root,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bun_unlink_cli_completion_retires_only_the_named_consumer_registration() {
+        let fixture = shared_bun_unlink_fixture();
+        let rendered = run_deps_with_home(
+            bun_unlink_args(fixture.first_root.clone(), fixture.library_root.clone()),
+            fixture.home.path(),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(json["report"]["outcome"], "unlinked");
+        assert_eq!(
+            remaining_bun_consumers(fixture.home.path()),
+            vec![fixture.second_root.clone()]
+        );
+        assert!(RepoLinkStateStore::for_repo(&fixture.first_root)
+            .read()
+            .unwrap()
+            .links
+            .is_empty());
+        assert_eq!(
+            RepoLinkStateStore::for_repo(&fixture.second_root)
+                .read()
+                .unwrap()
+                .links
+                .len(),
+            1
+        );
+        assert_eq!(
+            fs::canonicalize(fixture.second_root.join("node_modules/underlay")).unwrap(),
+            fixture.library_root
+        );
+        assert_eq!(
+            fs::canonicalize(bun_registration_path(fixture.home.path(), "underlay")).unwrap(),
+            fixture.library_root
+        );
+        assert!(fs::symlink_metadata(fixture.first_root.join("node_modules/underlay")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bun_unlink_cli_interrupt_retires_only_the_named_gone_consumer_registration() {
+        let fixture = shared_bun_unlink_fixture();
+        let missing = fixture.first_root.clone();
+        fs::remove_dir_all(&missing).unwrap();
+
+        let rendered = run_deps_with_home(
+            bun_unlink_args(missing, fixture.library_root.clone()),
+            fixture.home.path(),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(json["report"]["outcome"], "unlinked");
+        assert_eq!(
+            remaining_bun_consumers(fixture.home.path()),
+            vec![fixture.second_root.clone()]
+        );
+        assert_eq!(
+            RepoLinkStateStore::for_repo(&fixture.second_root)
+                .read()
+                .unwrap()
+                .links
+                .len(),
+            1
+        );
+        assert_eq!(
+            fs::canonicalize(fixture.second_root.join("node_modules/underlay")).unwrap(),
+            fixture.library_root
+        );
+        assert_eq!(
+            fs::canonicalize(bun_registration_path(fixture.home.path(), "underlay")).unwrap(),
+            fixture.library_root
+        );
     }
 
     struct BunInventoryProcess {
