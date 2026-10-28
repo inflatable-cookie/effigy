@@ -72,6 +72,29 @@ pub(super) fn try_run_builtin_test(
     );
     check_js_hydration(&runnable, resolved_root)?;
     reject_unusable_suite_runtimes(&runnable)?;
+    // Every alias a selected host suite would use is proved before any suite
+    // starts: its own environment, its rendered command and both lifecycle
+    // commands (effigy#431, contract 005). A suite this run does not select is
+    // never proved, and an alias that only appears in prose is never proved
+    // either.
+    for suite in &runnable {
+        if !matches!(suite.runtime, planning::BuiltinTargetRuntime::Host) {
+            continue;
+        }
+        let mut texts = vec![suite.command.as_str()];
+        texts.extend(suite.env.values().map(String::as_str));
+        if let Some(setup) = suite.setup_command.as_deref() {
+            texts.push(setup);
+        }
+        if let Some(teardown) = suite.teardown_command.as_deref() {
+            texts.push(teardown);
+        }
+        ports.prove_host_suite_aliases(
+            &suite.root,
+            &format!("test.suites.{}", suite.runner),
+            &texts,
+        )?;
+    }
     let max_parallel = planning::builtin_test_max_parallel(catalogs, resolved_root);
     // The TUI spawns its own processes, so it cannot put suites behind the
     // caller's process custody. A caller that owns host suites runs them

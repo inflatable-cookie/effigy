@@ -52,6 +52,49 @@ impl HostAlias {
     pub fn resolve(&self, value: &str) -> Option<String> {
         rewrite_endpoints(value, &self.declared, &self.effective)
     }
+
+    /// Whether `text` names this alias's effective host as an endpoint: the
+    /// whole value, a host in a URL authority (`//host`, `@host`), an
+    /// assignment (`KEY=host`) or a host carrying its own port
+    /// (`host:5432`).
+    ///
+    /// This is the read-side twin of [`Self::resolve`]: it proves exactly the
+    /// aliases Effigy delivered, and never fires on text that merely mentions
+    /// the name — a search pattern, a JSON blob, a list, a note — or on a
+    /// longer host.
+    pub fn names_endpoint(&self, text: &str) -> bool {
+        let whole_value = text.trim();
+        if whole_value.eq_ignore_ascii_case(&self.effective) {
+            return true;
+        }
+        if self.effective.is_empty() || text.len() < self.effective.len() {
+            return false;
+        }
+        let mut index = 0;
+        while index < text.len() {
+            let candidate = text
+                .get(index..)
+                .and_then(|rest| rest.get(..self.effective.len()));
+            if let Some(candidate) = candidate {
+                let end = index + self.effective.len();
+                if candidate.eq_ignore_ascii_case(&self.effective)
+                    && host_boundary_before(text, index)
+                    && host_boundary_after(text, end)
+                    && (is_authority_host(text, index)
+                        || is_assignment(text, index)
+                        || carries_a_port(text, end))
+                {
+                    return true;
+                }
+            }
+            index += text[index..]
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(1);
+        }
+        false
+    }
 }
 
 /// Resolve every alias in one value. `None` means the value is unchanged.
@@ -127,6 +170,12 @@ fn rewrite_endpoints(value: &str, declared: &str, effective: &str) -> Option<Str
 fn is_authority_host(value: &str, index: usize) -> bool {
     let before = &value[..index];
     before.ends_with("//") || before.ends_with('@')
+}
+
+/// `KEY=host` — an environment assignment, so the host is a value rather than
+/// prose.
+fn is_assignment(value: &str, index: usize) -> bool {
+    value[..index].ends_with('=')
 }
 
 /// `host:<digits>` — the declaration that names a port, so the value is an
@@ -212,6 +261,34 @@ mod tests {
         ] {
             assert_eq!(alias.resolve(value).as_deref(), Some(expected), "{value}");
         }
+    }
+
+    #[test]
+    fn an_endpoint_is_recognised_and_prose_is_not() {
+        let alias = alias();
+        for endpoint in [
+            "postgres.acme-wabcdef12.test",
+            "  postgres.acme-wabcdef12.test  ",
+            "postgres://app@postgres.acme-wabcdef12.test:5432/app",
+            "postgres://postgres.acme-wabcdef12.test/app",
+            "DB_HOST=postgres.acme-wabcdef12.test",
+            "env 'DATABASE_URL=postgres://app@postgres.acme-wabcdef12.test:5432/app' sh -c true",
+            "postgres.acme-wabcdef12.test:5432",
+        ] {
+            assert!(alias.names_endpoint(endpoint), "{endpoint}");
+        }
+        for prose in [
+            "grep -r postgres.acme-wabcdef12.test fixtures/",
+            "searching postgres.acme-wabcdef12.test now",
+            "{\"host\":\"postgres.acme-wabcdef12.test\"}",
+            "postgres.acme-wabcdef12.test,redis.acme-wabcdef12.test",
+            "postgres.acme-wabcdef12.test.example.com",
+            "notpostgres.acme-wabcdef12.test",
+            "postgres.acme-wabcdef12.testing",
+        ] {
+            assert!(!alias.names_endpoint(prose), "{prose}");
+        }
+        assert!(!alias.names_endpoint("postgres.acme.test"));
     }
 
     #[test]

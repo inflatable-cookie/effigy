@@ -652,6 +652,7 @@ fn write_managed_session_manifest(checkout: &Path) {
 /// A configured test suite is a host environment too: its own `env`, its
 /// rendered command and its `setup`/`teardown` steps receive this checkout's
 /// effective alias, and an unpublished one refuses before any suite starts.
+/// A suite this run does not select is neither proved nor run.
 #[test]
 fn a_configured_test_suite_resolves_and_proves_its_scoped_alias() {
     with_short_scratch("scoped-host-alias-suite", || {
@@ -661,6 +662,7 @@ fn a_configured_test_suite_resolves_and_proves_its_scoped_alias() {
         let suite = checkout.join("suite-database-url.txt");
         let setup = checkout.join("setup-database-url.txt");
         let teardown = checkout.join("teardown-database-url.txt");
+        let unselected = checkout.join("unselected-database-url.txt");
         let manifest = format!(
             r#"{MANIFEST}
 [test.suites.unit]
@@ -672,14 +674,19 @@ setup = [
 teardown = [
   {{ id = "clear", run = "sh -lc 'printf %s $DATABASE_URL > {teardown}'", env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }} }},
 ]
+
+[test.suites.unselected]
+run = "sh -lc 'printf %s $DATABASE_URL > {unselected}'"
+env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }}
 "#,
             suite = suite.display(),
             setup = setup.display(),
             teardown = teardown.display(),
+            unselected = unselected.display(),
         );
-        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a test suite");
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with test suites");
 
-        let error = run_task(&checkout, "test", &[]).expect_err("the suite must refuse");
+        let error = run_task(&checkout, "test", &["unit"]).expect_err("the suite must refuse");
         assert_task_invocation_error_contains(
             error,
             &[
@@ -689,7 +696,7 @@ teardown = [
                 "effigy container up web",
             ],
         );
-        for path in [&suite, &setup, &teardown] {
+        for path in [&suite, &setup, &teardown, &unselected] {
             assert!(
                 !path.exists(),
                 "the refused suite never ran {}",
@@ -698,7 +705,7 @@ teardown = [
         }
 
         publish_alias_route(&checkout, &alias, 55432);
-        run_task(&checkout, "test", &[]).expect("the suite runs");
+        run_task(&checkout, "test", &["unit"]).expect("the suite runs");
         let expected = format!("postgres://app:secret@{alias}:5432/app");
         for (name, path) in [
             ("suite", &suite),
@@ -713,10 +720,55 @@ teardown = [
                 "the {name} environment received this checkout's own alias"
             );
         }
+        assert!(
+            !unselected.exists(),
+            "a suite this run did not select neither ran nor was proved"
+        );
     });
 }
 
-/// The command Effigy renders for one task, without dispatching anything.
+/// The proof follows the delivered endpoints, not the text around them: a
+/// suite that merely mentions the effective alias in prose runs without a
+/// published route, and a suite this run did not select is never proved.
+#[test]
+fn a_suite_alias_in_prose_or_in_unselected_suite_is_not_proved() {
+    with_short_scratch("scoped-host-alias-suite-prose", || {
+        let primary = primary_checkout("scoped-host-alias-suite-prose");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let prose = checkout.join("prose.txt");
+        let unselected = checkout.join("unselected-database-url.txt");
+        let manifest = format!(
+            r#"{MANIFEST}
+[test.suites.prose]
+run = "sh -lc 'printf %s searching-{alias}-now > {prose}'"
+
+[test.suites.other]
+run = "sh -lc 'printf %s $DATABASE_URL > {unselected}'"
+env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }}
+"#,
+            alias = alias,
+            prose = prose.display(),
+            unselected = unselected.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with prose suite");
+
+        run_task(&checkout, "test", &["prose"]).expect("a prose mention refuses nothing");
+        assert_eq!(
+            fs::read_to_string(&prose)
+                .expect("the prose suite ran")
+                .trim(),
+            format!("searching-{alias}-now"),
+            "text that merely names the alias keeps its bytes and proves nothing"
+        );
+        assert!(
+            !unselected.exists(),
+            "the unselected suite was neither proved nor run"
+        );
+    });
+}
+
+/// The command Effigy renders for one task, without dispatching anything./// The command Effigy renders for one task, without dispatching anything.
 fn rendered_command(root: &Path, selector: &str) -> crate::runner::execute::TaskCommand {
     use crate::runner::execute::api::build_execution_preflight;
     use crate::runner::execute::{build_task_command, resolve_task_selection, SelectionResolution};

@@ -496,11 +496,13 @@ During v0.x, MINOR bumps may include breaking changes.
   task plan shows the aliases it would deliver). Only an endpoint is rewritten
   - the whole value, a URL authority host, or `host:port` - so text that merely
   names the alias keeps its bytes, and Effigy never rewrites a command body.
-  Before the run starts - including every alias a configured suite would use,
-  before any suite runs - Effigy proves the scope's route belongs to this
+  Before the run starts - including every alias a selected test suite would
+  use, before any suite runs - Effigy proves the scope's route belongs to this
   checkout and publishes an upstream port; otherwise it refuses with the
   alias, the service and `effigy container up <NAME>`, and the command never
-  runs. A container-bound
+  runs. The proof reads the endpoints Effigy delivered, so text that merely
+  mentions the alias proves nothing, and a suite this run does not select is
+  never proved. A container-bound
   run is untouched: its target's own network already answers both names. A
   checkout that names no default container environment still resolves, and a
   container registry Effigy cannot read leaves host execution as it was. See

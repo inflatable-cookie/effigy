@@ -102,6 +102,9 @@ pub fn wrap_command_with_env(
     wrap_command_with_task_env(command, env, repo_root)
 }
 
+// One resolved environment from one declaration: the shape predates the scoped
+// alias input, and splitting it would move every caller's arguments around.
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_run_step_env(
     owner_label: &str,
     env: Option<&ManifestRunStepEnv>,

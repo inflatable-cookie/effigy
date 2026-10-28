@@ -210,7 +210,7 @@ impl HostAliasResolver {
             .aliases
             .aliases()
             .iter()
-            .filter(|alias| text.contains(alias.host.effective.as_str()))
+            .filter(|alias| alias.host.names_endpoint(text))
             .cloned()
             .collect::<Vec<_>>();
         for alias in used {

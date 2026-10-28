@@ -2000,8 +2000,8 @@ rewrite, used by the runner and by the managed session's run specs):
 - a managed session's process plan (`mode = "tui"`), its entry `env`, its
   sequence steps, its `setup` steps and the nested task references it renders
 - a configured test suite's own delivered environment, its rendered command,
-  and the step environment of that suite's `setup`/`teardown` commands, all
-  proved before any suite starts
+  and the step environment of that suite's `setup`/`teardown` commands — proved
+  for the suites the run selects, before any suite starts
 
 Each is delivered with this checkout's effective alias in place of the
 declared one. That env map is the one Effigy already owns: a consumer whose
@@ -2022,7 +2022,9 @@ through.
 
 Before the child starts, Effigy proves the alias: the record for the effective
 domain must belong to this checkout's path and must carry a published upstream
-port. A missing route, a route another checkout owns, or a route with no
+port. The proof reads the endpoints Effigy delivered, with the same shape rule
+as the rewrite, so text that merely mentions an effective alias proves nothing
+and refuses nothing. A missing route, a route another checkout owns, or a route with no
 published port refuses the run with the declared alias, the backing service and
 `effigy container up <NAME>`, and the task's command never runs. A primary
 checkout keeps its declared name and resolves nothing, and a container-bound

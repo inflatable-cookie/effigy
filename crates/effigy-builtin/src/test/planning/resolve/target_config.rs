@@ -162,20 +162,6 @@ fn resolve_configured_suites(
                 catalogs,
                 &host_env_aliases,
             )?;
-            // Every delivered alias this suite would use is proved before any
-            // suite starts: its own environment, the rendered command and the
-            // lifecycle commands (effigy#431, contract 005).
-            if let Some(ports) = host_ports {
-                let mut texts = vec![command.as_str()];
-                texts.extend(resolved_env.values().map(String::as_str));
-                if let Some(setup) = setup_command.as_deref() {
-                    texts.push(setup);
-                }
-                if let Some(teardown) = teardown_command.as_deref() {
-                    texts.push(teardown);
-                }
-                ports.prove_host_suite_aliases(target_root, &suite_ref, &texts)?;
-            }
             Ok(BuiltinConfiguredSuite {
                 suite: suite_name,
                 command,
