@@ -53,10 +53,13 @@ DEBUG_SPEC = re.compile(r"\{[^{}]*\?[^{}]*\}")
 DISPLAY_IMPL = re.compile(
     r"impl(?:\s*<[^>]*>)?\s+(?:(?:std|core|fmt)::)*(?:fmt::)?Display\s+for\s+"
 )
-# A file that constructs human-facing errors.
+# A file that constructs human-facing errors. The container, manifest and
+# managed-run vocabularies were added by effigy#402: the Q-017 audit found their
+# `UnknownReason` Debug renderings reached a person outside this ratchet.
 ERROR_VOCABULARY = re.compile(
     r"\b(?:RunnerError|BuiltinError|ManagedError|DoctorError|ContainerExecError|"
-    r"UnknownReason|StoreError|RunError|GateError|FsError|HumanError)::"
+    r"UnknownReason|StoreError|RunError|GateError|FsError|HumanError|"
+    r"ContainerPolicyError|ManifestError|NotReady)::"
     r"|\btask_invocation(?:_failed_\w+)?\("
 )
 # Test code is excluded by location: a Debug string in a test names a value.

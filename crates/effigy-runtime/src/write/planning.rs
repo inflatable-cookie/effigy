@@ -174,8 +174,8 @@ fn remove_runtime_image_allow_missing(
         return Ok(());
     }
     Err(EffigyRuntimeError::task_invocation(format!(
-        "failed to remove generated image `{image_ref}` (code {:?})\nstdout:\n{}\nstderr:\n{}",
-        output.status.code(),
+        "failed to remove generated image `{image_ref}` ({})\nstdout:\n{}\nstderr:\n{}",
+        effigy_ui::human::exit_code(output.status.code()),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )))

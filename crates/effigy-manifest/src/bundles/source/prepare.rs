@@ -1799,7 +1799,10 @@ mod tests {
             ..
         }] = events.as_slice()
         else {
-            panic!("expected one Started and one Finished, got {events:?}");
+            panic!(
+                "expected one Started and one Finished, got {} event(s)",
+                events.len()
+            );
         };
         assert_eq!(subject, "bundle");
         assert_eq!(finished, "bundle");

@@ -43,8 +43,10 @@ impl From<ContainerExecError> for EffigyRuntimeError {
                 stdout,
                 stderr,
             } => Self::task_invocation(format!(
-                "{command} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
-                code, stdout, stderr
+                "{command} failed ({})\nstdout:\n{}\nstderr:\n{}",
+                effigy_ui::human::exit_code(code),
+                stdout,
+                stderr
             )),
         }
     }

@@ -2418,3 +2418,32 @@ fn process_cleanup_budget_starts_after_child_exit() {
         effigy_kernel::outcome::CleanupOutcome::Complete
     );
 }
+
+/// A `release decide` on a target that already records an outcome names that
+/// outcome in words. The `Debug` variant name it used to print never reaches
+/// the operator (effigy#402, Q-017).
+#[test]
+fn deciding_a_target_that_already_has_an_outcome_reads_it_in_words() {
+    let rendered = super::not_an_unknown_publish("npm", RecordTargetState::Published).to_string();
+    assert!(
+        rendered.contains("release target `npm` records outcome `published`"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("rather than `unknown`"), "{rendered}");
+    assert!(
+        !rendered.contains("Published"),
+        "no variant name reaches a person: {rendered}"
+    );
+    for state in [
+        RecordTargetState::Pending,
+        RecordTargetState::Unknown,
+        RecordTargetState::Published,
+        RecordTargetState::Failed,
+    ] {
+        let label = state.label();
+        assert!(
+            label.chars().all(|c| c.is_ascii_lowercase()),
+            "a target state label reads as prose: {label}"
+        );
+    }
+}

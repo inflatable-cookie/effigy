@@ -678,8 +678,8 @@ fn run_command(
                 Ok(output)
             } else {
                 Err(RunnerError::task_invocation(format!(
-                    "{label} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
-                    output.status.code(),
+                    "{label} failed ({})\nstdout:\n{}\nstderr:\n{}",
+                    effigy_ui::human::exit_code(output.status.code()),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 )))

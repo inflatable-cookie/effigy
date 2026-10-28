@@ -116,6 +116,12 @@ pub fn load_inline_workspace_container_policy(
         detach_timeout_secs: DEFAULT_ATTACH_TIMEOUT_SECS,
         host_processes: Vec::new(),
     };
+    // Render provenance, not a message: this string becomes the closure's
+    // `inputs/manifest.toml`, and it must distinguish one inline config from
+    // another so two configs never share a render digest. An inline workspace
+    // container has no manifest file to name, so the config itself is the
+    // input. No command prints it, which is why the Debug ratchet records it
+    // by file rather than asking for a `Display`.
     draft.finish(&mut policy, &format!("{container:?}"))?;
     if let Some(render) = &mut policy.render {
         render.request = super::render::Request::Inline {

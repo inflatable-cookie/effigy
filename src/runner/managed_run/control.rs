@@ -150,7 +150,7 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
                     Observed::Absent(_) => {}
                     Observed::Unknown(reason) => status
                         .warnings
-                        .push(format!("run effects are unreadable: {reason:?}")),
+                        .push(format!("run effects are unreadable: {reason}")),
                 },
                 Lookup::NotFound => status
                     .warnings

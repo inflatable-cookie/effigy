@@ -73,7 +73,7 @@ impl EnvironmentView {
                 return "kept on the host; inside the workspace container it is read through the host"
                     .to_owned()
             }
-            Observed::Unknown(reason) => return format!("unreadable ({reason:?})"),
+            Observed::Unknown(reason) => return format!("unreadable ({reason})"),
         };
         let mut parts = vec![match record.state {
             EnvState::Active => "active".to_owned(),

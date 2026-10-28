@@ -300,6 +300,17 @@ pub fn human_duration(elapsed: std::time::Duration) -> String {
     format!("{}h{:02}m", minutes / 60, minutes % 60)
 }
 
+/// How a failure names a child's exit: words a person reads, never the
+/// `Some(1)` a `Debug` rendering of an optional status produces (effigy#402).
+/// A child that ended on a signal has no exit code, and the sentence says so
+/// rather than implying the status was missing.
+pub fn exit_code(code: Option<i32>) -> String {
+    match code {
+        Some(code) => format!("exit code {code}"),
+        None => "no exit code: the command ended on a signal".to_owned(),
+    }
+}
+
 /// Replace values that look like credentials. Evidence comes from command
 /// output and environment records, so it is redacted before it is stored,
 /// not only before it is printed.
@@ -355,6 +366,17 @@ mod tests {
             human_duration(std::time::Duration::from_secs(3_720)),
             "1h02m"
         );
+    }
+
+    #[test]
+    fn a_child_exit_reads_as_words_not_as_a_debug_status() {
+        assert_eq!(exit_code(Some(1)), "exit code 1");
+        assert_eq!(exit_code(Some(0)), "exit code 0");
+        assert_eq!(
+            exit_code(None),
+            "no exit code: the command ended on a signal"
+        );
+        assert!(!exit_code(Some(1)).contains("Some"));
     }
 
     #[test]
@@ -457,7 +479,7 @@ mod tests {
     #[test]
     fn a_folded_evidence_list_still_ends_with_the_backend_fatal_line() {
         let mut error = HumanError::new("detached activation did not complete")
-            .evidence("[effigy] detached backend failed (code Some(1))")
+            .evidence("[effigy] detached backend failed (exit code 1)")
             .evidence("[effigy] backend output tail:");
         for index in 0..58 {
             error = error.evidence(format!("build step {index}"));

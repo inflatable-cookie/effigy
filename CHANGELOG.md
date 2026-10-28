@@ -316,6 +316,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Human failures name their cause in words instead of printing a Rust `Debug`
+  tree, across the container, release, managed-run and bundle-source planes: an
+  unreadable kernel record reports the store's own sentence and next action, a
+  failed container command reports `exit code 1` rather than `Some(1)`, a
+  release refusal lists its unsettled effects as `publish tag` is `unknown`, and
+  a manifest's unparsable source lock names what could not be read. A stop that
+  interrupts a managed release now reads as the cancellation it is, instead of
+  reporting that the evidence contradicts itself. The human-error Debug ratchet
+  now covers the container policy, manifest and managed-run vocabularies that
+  the Q-017 audit found outside it, and its baseline dropped to 102 specifiers
+  from 135.
 - `effigy doctor` shows a named step for each scan check while it runs: `scanning for god files`,
   `scanning for duplicate blocks` and `running health task`. Each ends with one line that names
   the check: `✓ god files: no problems found`, or `✗ god files: 2 errors, see the findings below`.

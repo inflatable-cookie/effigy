@@ -216,9 +216,20 @@ Two rules keep the answer honest:
 `effigy qa:docs:human-error-debug` is the ratchet that keeps it that way. It
 counts Debug format specifiers inside string macros in files that define or
 construct human-facing errors, and fails when the count rises above
-`config/human-error-debug-ratchet.json`. When a change lowers a count, lower
-the baseline in the same change:
+`config/human-error-debug-ratchet.json`. The runner, built-in, managed, doctor,
+kernel and human-error vocabularies are counted, and so are the container
+policy and manifest errors (`ContainerPolicyError`, `ManifestError`) and the
+managed-run `NotReady` refusal that effigy#402 found outside the ratchet. When a
+change lowers a count, lower the baseline in the same change:
 
 ```bash
 python3 scripts/check-human-error-debug.py --write-baseline
 ```
+
+The baseline is a per-file count, so a file the ratchet newly covers records its
+current count. One such line is deliberately internal: `inline_workspace.rs`
+formats a `Debug` of the inline container config into the render closure's
+`inputs/manifest.toml`, which is the provenance of the generated Compose file and
+never part of a message a person reads (`container migrate` filters `inputs/` out
+of everything it writes). Keep such an entry only with the same evidence: say in
+a comment what the string is, and why no command prints it.

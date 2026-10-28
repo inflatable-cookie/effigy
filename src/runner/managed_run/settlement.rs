@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use effigy_kernel::ctx::CleanupContext;
+use effigy_kernel::ctx::{CleanupContext, Interrupt};
 use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use effigy_kernel::run::{Effect, Fence, Reconciled};
 use serde::{Deserialize, Serialize};
@@ -90,9 +90,15 @@ pub(in crate::runner) fn release(effect: &Effect, cx: &CleanupContext) -> Observ
             "managed effect `{other}` has no release"
         ))),
     };
-    if let Err(reason) = cx.operation().check("managed release") {
-        return Observed::Unknown(UnknownReason::TimedOut {
-            phase: format!("managed release: {reason:?}"),
+    if let Err(interrupt) = cx.operation().check("managed release") {
+        // The interrupt's own sentence is the cause: `Display` names the wait
+        // and how long it ran, or the stop request that ended it. A stop is a
+        // stop, so it never reads as contradictory evidence (effigy#402).
+        return Observed::Unknown(match interrupt {
+            Interrupt::TimedOut { phase, .. } => UnknownReason::TimedOut { phase },
+            Interrupt::Cancelled { cause } => {
+                UnknownReason::Cancelled(format!("the managed release was cancelled by {cause}"))
+            }
         });
     }
     match result {
@@ -229,6 +235,12 @@ pub(in crate::runner) fn marker_pgid(group: &ExecGroupEffect) -> Observed<u32> {
 
 #[cfg(test)]
 mod tests {
+    use effigy_kernel::ctx::{
+        CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement, StopCause,
+    };
+    use effigy_kernel::id::{Generation, ResourceId, Scope};
+    use effigy_kernel::run::{EffectSpec, EffectState, Settlement as EffectSettlement};
+
     use super::*;
 
     fn group(dir: &Path) -> ExecGroupEffect {
@@ -260,5 +272,109 @@ mod tests {
     fn managed_kinds_are_recognised() {
         assert!(owns(ENVIRONMENT) && owns(EXEC_GROUP) && owns(GATEWAY));
         assert!(!owns("kernel:process"));
+    }
+
+    /// A cleanup context for a managed-release proof. Its own token starts
+    /// clear (`cleanup` mints a fresh one), so a test escalates it by hand and
+    /// a zero budget expires it: both interrupts reach `release` the way the
+    /// kernel's escalation and deadline do.
+    fn cleanup(budget: std::time::Duration, cause: Option<StopCause>) -> CleanupContext {
+        let operation = OperationContext::new(
+            Deadline::At(std::time::Instant::now() + std::time::Duration::from_secs(30)),
+            CancelToken::default(),
+            Limits {
+                capture_tail: 1024,
+                log_rotate: 4096,
+                log_keep: 1,
+                line_max: 4096,
+                queue_bytes: 4096,
+                probe_concurrency: 1,
+            },
+            EffectClass::Mutate,
+            Placement::Host,
+        );
+        let cleanup = operation.cleanup(budget).expect("cleanup context");
+        if let Some(cause) = cause {
+            cleanup.operation().cancel_token().cancel(cause);
+        }
+        cleanup
+    }
+
+    /// An effect of a kind this engine does not own: `release` refuses it
+    /// without touching the host, so the interrupt is what the test proves.
+    fn proof_effect() -> Effect {
+        Effect {
+            sequence: 1,
+            spec: EffectSpec {
+                target: Fence {
+                    resource: ResourceId::store(Scope::Machine, "managed release")
+                        .expect("valid owner"),
+                    generation: Generation::new(1),
+                },
+                kind: "managed:proof".to_owned(),
+                payload: serde_json::json!({}),
+                settlement: EffectSettlement::Retain,
+                required: true,
+            },
+            state: EffectState::Intended,
+            receipt: None,
+            reason: None,
+        }
+    }
+
+    fn unknown_reason(effect: &Effect, cx: &CleanupContext) -> UnknownReason {
+        match release(effect, cx) {
+            Observed::Unknown(reason) => reason,
+            Observed::Absent(_) => panic!("a refused release proves nothing about ownership"),
+            Observed::Verified((), _) => panic!("a refused release did not release the effect"),
+        }
+    }
+
+    /// A stop request during a managed release is a cancellation, not
+    /// "the evidence contradicts itself": the reader is told the release was
+    /// stopped on purpose (effigy#402, Q-017).
+    #[test]
+    fn a_stop_request_during_a_managed_release_reads_as_a_cancellation() {
+        let rendered = unknown_reason(
+            &proof_effect(),
+            &cleanup(
+                std::time::Duration::from_secs(5),
+                Some(StopCause::Requested),
+            ),
+        )
+        .to_string();
+        assert!(
+            rendered.contains("the managed release was cancelled by a stop request"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("contradicts itself"),
+            "a stop is not contradictory evidence: {rendered}"
+        );
+    }
+
+    /// An expired cleanup window names the wait and the phase it was in, and
+    /// keeps the kernel's own next action. It must not print the `Interrupt`
+    /// `Debug` tree (effigy#402, Q-017).
+    #[test]
+    fn an_expired_managed_release_names_the_wait_and_the_phase() {
+        let reason = unknown_reason(&proof_effect(), &cleanup(std::time::Duration::ZERO, None));
+        assert!(
+            matches!(&reason, UnknownReason::TimedOut { phase } if phase == "managed release"),
+            "the refusal names the phase it timed out in: {reason}"
+        );
+        let rendered = reason.to_string();
+        assert!(
+            rendered.contains("timed out during managed release"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("retry once the host is less busy"),
+            "the kernel's next action survives: {rendered}"
+        );
+        assert!(
+            !rendered.contains("TimedOut"),
+            "no variant name reaches a person: {rendered}"
+        );
     }
 }
