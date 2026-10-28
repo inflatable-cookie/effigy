@@ -1404,6 +1404,15 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
         let mut owner = resume_owner(&cx, &root, key.session, id(9)).unwrap();
         owner.release(&cx, &root, cause).unwrap();
         if cause == Release::Detach {
+            // A round trip proves the supervisor consumed the handle's detach
+            // before EOF; a delayed control turn cannot make this proof pass.
+            client.send_frame(b"confirm-detached").unwrap();
+            loop {
+                if let Event::Engine(bytes) = client.event(cx.operation()).unwrap() {
+                    assert_eq!(bytes, [1]);
+                    break;
+                }
+            }
             // Closing the original owning pipe must respect handle detach.
             // Keep the Child handle so this test still reaps its own supervisor.
             client.close_input();

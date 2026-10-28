@@ -622,6 +622,10 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
             child.forward(*signal);
         }
         for frame in control.frames {
+            if frame == b"confirm-detached" {
+                session.event(vec![u8::from(session.detached())]);
+                continue;
+            }
             if frame == b"watch-secondary" {
                 let key = session.admission().expect("workspace ticket").key();
                 let attachment = attach_secondary(
