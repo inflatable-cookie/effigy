@@ -335,6 +335,15 @@ pub fn install(
     verify_executable(executable, operator_uid)?;
     let bytes = unit_definition(executable, &paths.home)?;
     create_user_unit_dir(paths, operator_uid)?;
+    // The login activation directory is validated before any manager request:
+    // `systemctl --user enable` resolves `default.target.wants` itself, so a
+    // linked or foreign directory must be refused here rather than after the
+    // manager has already followed it.
+    let activation = ActivationDir::open(paths, operator_uid)?;
+    let linked = match &activation {
+        Some(dir) => dir.is_ours(&paths.unit)?,
+        None => false,
+    };
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     let name = FileName::new(UNIT_NAME).map_err(error)?;
     let replace = ReplaceOpts {
@@ -348,16 +357,11 @@ pub fn install(
         }
         Observed::Verified(existing, _) if owned_unit(&existing.0) => {
             let previous = existing.0;
-            let was_linked = activation_linked(paths, operator_uid);
-            drop_activation_link(paths, operator_uid)?;
+            if linked {
+                drop_verified_entry(&activation)?;
+            }
             if let Err(failure) = run.replace_file(&dir, &name, &bytes, replace) {
-                return Err(rewrite_failed(
-                    paths,
-                    operator_uid,
-                    &previous,
-                    was_linked,
-                    failure,
-                ));
+                return Err(rewrite_failed(paths, operator_uid, &previous, linked, failure));
             }
         }
         Observed::Verified(_, _) | Observed::Unknown(_) => {
@@ -367,7 +371,9 @@ pub fn install(
             )))
         }
         Observed::Absent(_) => {
-            drop_activation_link(paths, operator_uid)?;
+            if linked {
+                drop_verified_entry(&activation)?;
+            }
             run.replace_file(&dir, &name, &bytes, replace).map_err(error)?;
         }
     }
@@ -443,14 +449,18 @@ fn rewrite_failed(
             "rewriting the launch unit failed: {failure}; the unit file on disk is no longer the previous one and the user manager has not been asked to reload it, with login activation off. Run `systemctl --user daemon-reload`, then `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again"
         ));
     }
-    match (was_linked, restore_activation_link(paths, operator_uid)) {
-        (false, _) => error(format!(
-            "rewriting the launch unit failed: {failure}; the previous unit file is unchanged and it was not enabled before this run. Nothing was upgraded; run `effigy gateway setup` again"
-        )),
-        (true, Ok(())) => error(format!(
+    // A unit that was not enabled must not be enabled by a recovery step: only
+    // restore an activation this run actually dropped.
+    if !was_linked {
+        return error(format!(
+            "rewriting the launch unit failed: {failure}; the previous unit file is unchanged and it was not enabled before this run, so login activation is still off. Nothing was upgraded; run `effigy gateway setup` again"
+        ));
+    }
+    match restore_activation_link(paths, operator_uid) {
+        Ok(()) => error(format!(
             "rewriting the launch unit failed: {failure}; the previous unit file is unchanged and its login activation is restored, so the installed launch route still works. Run `effigy gateway setup` again"
         )),
-        (true, Err(restore)) => error(format!(
+        Err(restore) => error(format!(
             "rewriting the launch unit failed: {failure}; the previous unit file is unchanged but its login activation could not be restored ({restore}). Run `systemctl --user daemon-reload`, then `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again"
         )),
     }
@@ -477,13 +487,20 @@ pub fn remove(
     match observe_unit(paths, operator_uid) {
         UnitState::Missing => {
             // A dangling activation link is residue from a removed unit file.
-            // It is Effigy's only when it names Effigy's unit path.
-            if activation_linked(paths, operator_uid) {
+            // It is Effigy's only when it names Effigy's unit path, verified
+            // before the manager is asked to do anything.
+            let activation = ActivationDir::open(paths, operator_uid)?;
+            let linked = match &activation {
+                Some(dir) => dir.is_ours(&paths.unit)?,
+                None => false,
+            };
+            if linked {
                 if let Some(reason) = manager_refusal(systemd.run(&["disable", UNIT_NAME])) {
                     return Err(error(format!(
                         "the login activation link for {UNIT_NAME} is still present ({reason}); run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup --remove`"
                     )));
                 }
+                drop_verified_entry(&activation)?;
             }
             return Ok(());
         }
@@ -497,6 +514,15 @@ pub fn remove(
             )))
         }
     }
+    // `systemctl --user disable --now` resolves `default.target.wants` itself,
+    // so the directory and the entry are verified *before* the manager is
+    // asked: a linked or foreign directory must not be followed by the manager
+    // on Effigy's behalf, and a non-link entry is not Effigy's to remove.
+    let activation = ActivationDir::open(paths, operator_uid)?;
+    let linked = match &activation {
+        Some(dir) => dir.is_ours(&paths.unit)?,
+        None => false,
+    };
     // `disable --now` runs the unit's ExecStop, which is the ordinary
     // kernel-owned `gateway down`. systemd requests the stop; the gateway
     // engine performs and records it.
@@ -505,10 +531,11 @@ pub fn remove(
             "stopping the login launch unit failed ({reason}); run `effigy gateway down`, then `systemctl --user disable --now {UNIT_NAME}`, then `effigy gateway setup --remove`"
         )));
     }
-    // The activation link goes first, through the directory it was verified in:
-    // a linked or foreign `default.target.wants` refuses here, before the unit
-    // file is deleted, so nothing is half-removed.
-    drop_activation_link(paths, operator_uid)?;
+    // The manager's own disable may already have removed the entry; the bound
+    // descriptor keeps this unlink to the directory that was verified.
+    if linked {
+        drop_verified_entry(&activation)?;
+    }
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     crate::setup::remove_managed_with(cx, &dir, UNIT_NAME, |path| std::fs::remove_file(path))?;
     // The unit file and its link are gone, so a manager that cannot reload is
@@ -565,6 +592,12 @@ impl ActivationDir {
             dir,
             entry: paths.wants.clone(),
         }))
+    }
+
+    /// Whether the entry is Effigy's own link to `unit`. A non-link entry is
+    /// refused: it is not Effigy's, and the manager would resolve it.
+    fn is_ours(&self, unit: &Path) -> io::Result<bool> {
+        Ok(self.entry_target()?.is_some_and(|target| target == unit))
     }
 
     /// The target of Effigy's activation entry, read inside the bound
@@ -683,17 +716,13 @@ fn refusal(paths: &LaunchPaths, operator_uid: u32, failure: impl std::fmt::Displ
     ))
 }
 
-/// Remove Effigy's login activation link, and only that one: the entry is
-/// Effigy's when it is a symlink naming Effigy's own unit path, read inside a
-/// directory that was verified and bound first.
-fn drop_activation_link(paths: &LaunchPaths, operator_uid: u32) -> io::Result<()> {
-    let Some(dir) = ActivationDir::open(paths, operator_uid)? else {
-        return Ok(());
-    };
-    match dir.entry_target()? {
-        Some(target) if target == paths.unit => dir.unlink_entry(),
-        // No entry, or an entry Effigy did not write: preserved untouched.
-        _ => Ok(()),
+/// Validate the activation directory, then drop Effigy's own entry through it.
+/// The handle is the one `install` and `remove` opened and verified *before*
+/// any manager request, so the unlink cannot be redirected afterwards.
+fn drop_verified_entry(activation: &Option<ActivationDir>) -> io::Result<()> {
+    match activation {
+        Some(dir) => dir.unlink_entry(),
+        None => Ok(()),
     }
 }
 
@@ -1671,11 +1700,33 @@ mod tests {
     }
 
     /// A second image in the same home, for an upgrade and its rollback.
+    ///
+    /// It records every invocation it receives and refuses `gateway up` while
+    /// its marker file exists, so the manager fake dispatches the installed
+    /// unit's own command to a real process instead of to a boolean.
     fn installed_binary_named(home: &Path, name: &str) -> PathBuf {
         let path = home.join(name);
-        std::fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/{name}-invocations\"\nif [ \"$1 $2\" = 'gateway up' ] && [ -e \"$(dirname \"$0\")/{name}-refuses-up\" ]; then\n  exit 1\nfi\nexit 0\n"
+            ),
+        )
+        .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    /// Every command the image at `name` was asked to run, one per line.
+    fn invocations(home: &Path, name: &str) -> Vec<String> {
+        std::fs::read_to_string(home.join(format!("{name}-invocations")))
+            .map(|text| text.lines().map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
+
+    /// Make the image at `name` refuse its `gateway up`.
+    fn refuse_up(home: &Path, name: &str) {
+        std::fs::write(home.join(format!("{name}-refuses-up")), b"1").unwrap();
     }
 
     /// Set the process umask for the scope and restore the caller's own. The
@@ -2367,11 +2418,12 @@ mod tests {
     /// unit's declared ExecStart, `stop`/`disable --now` runs its declared
     /// ExecStop, and `restart` is stop followed by start.
     ///
-    /// It executes only the commands the *installed* unit declares, so the
-    /// lifecycle assertions below are about production output rather than a
-    /// second copy of the expected text. Enablement lives only in the link on
-    /// disk, as it does for systemd, so a manager created after a reboot sees
-    /// what the last boot left behind rather than remembered state.
+    /// The command is parsed out of the *installed* unit and dispatched to the
+    /// executable it names as a real process, so a missing, unexecutable or
+    /// refusing image — or a malformed command — cannot simulate a lifecycle.
+    /// Enablement lives only in the link on disk, as it does for systemd, so a
+    /// manager created after a reboot sees what the last boot left behind
+    /// rather than remembered state.
     struct FakeManager {
         unit: PathBuf,
         wants: PathBuf,
@@ -2381,11 +2433,10 @@ mod tests {
         running: bool,
         /// Whether this boot's user manager has started yet.
         manager_started: bool,
-        /// Whether the unit's own `gateway up` refuses, as it does when the
-        /// low-port capability is not effective.
-        up_refused: bool,
         /// Gateway operations the unit's commands requested, in order.
         requests: Vec<&'static str>,
+        /// The complete argv of every declared command this manager dispatched.
+        invocations: Vec<Vec<String>>,
         /// Every manager request received, in order.
         calls: Vec<Vec<String>>,
     }
@@ -2399,8 +2450,8 @@ mod tests {
                 active: false,
                 running: false,
                 manager_started: false,
-                up_refused: false,
                 requests: Vec::new(),
+                invocations: Vec::new(),
                 calls: Vec::new(),
             }
         }
@@ -2412,18 +2463,38 @@ mod tests {
                 && std::fs::read_link(&self.wants).is_ok_and(|target| target == self.unit)
         }
 
-        /// The verb of one declared command line of the installed unit.
-        fn declared(&self, key: &str) -> &'static str {
+        /// One declared command of the installed unit, split the way systemd's
+        /// `Exec` quoting splits it: double quotes group, whitespace separates.
+        fn declared_argv(&self, key: &str) -> Vec<String> {
             let unit = std::fs::read_to_string(&self.unit).expect("the installed unit is readable");
             let value = unit
                 .lines()
                 .find_map(|line| line.strip_prefix(key))
-                .unwrap_or_else(|| panic!("the installed unit declares {key}"));
-            match value.rsplit(' ').next() {
-                Some("up") => "up",
-                Some("down") => "down",
-                other => panic!("unexpected {key} verb {other:?}"),
+                .unwrap_or_else(|| panic!("the installed unit declares {key}"))
+                .trim();
+            let mut argv: Vec<String> = Vec::new();
+            let mut token: Option<String> = None;
+            let mut quoted = false;
+            for character in value.chars() {
+                match character {
+                    '"' => {
+                        quoted = !quoted;
+                        token.get_or_insert_with(String::new);
+                    }
+                    character if character.is_whitespace() && !quoted => {
+                        if let Some(token) = token.take() {
+                            argv.push(token);
+                        }
+                    }
+                    character => token.get_or_insert_with(String::new).push(character),
+                }
             }
+            assert!(!quoted, "{key} has an unbalanced quote: {value}");
+            if let Some(token) = token.take() {
+                argv.push(token);
+            }
+            assert!(!argv.is_empty(), "{key} names no command");
+            argv
         }
 
         /// The user manager starts once per boot, at the first login or at
@@ -2450,22 +2521,28 @@ mod tests {
             }
         }
 
-        /// A `systemctl --user start` of an inactive unit.
-        fn start(&mut self) {
+        /// A `systemctl --user start` of an inactive unit: the installed
+        /// unit's own ExecStart, run as a real process.
+        fn start(&mut self) -> bool {
             self.calls.push(vec!["start".into(), UNIT_NAME.into()]);
             if self.active {
                 // RemainAfterExit=yes: a start of an active unit does nothing.
-                return;
+                return true;
             }
-            let verb = self.declared("ExecStart=");
+            let argv = self.declared_argv("ExecStart=");
+            let verb = command_verb(&argv);
             self.requests.push(verb);
-            if self.up_refused {
+            self.invocations.push(argv.clone());
+            if !dispatch(&argv) {
                 // A failed oneshot start leaves the unit inactive and nothing
                 // running: the kernel Run never began.
-                return;
+                self.active = false;
+                self.running = false;
+                return false;
             }
             self.active = true;
-            self.running = true;
+            self.running = verb == "up";
+            true
         }
 
         /// A `systemctl --user stop`, which runs the declared ExecStop.
@@ -2475,9 +2552,11 @@ mod tests {
                 return;
             }
             self.active = false;
-            let verb = self.declared("ExecStop=");
-            self.requests.push(verb);
             self.running = false;
+            let argv = self.declared_argv("ExecStop=");
+            self.requests.push(command_verb(&argv));
+            self.invocations.push(argv.clone());
+            let _ = dispatch(&argv);
         }
 
         fn restart(&mut self) {
@@ -2494,7 +2573,8 @@ mod tests {
         }
 
         /// `systemctl --user enable` is idempotent: it writes the login link
-        /// once and leaves an existing one that already names this unit.
+        /// once and leaves an existing one that already names this unit. A
+        /// path-based unlink, like the real one, follows every parent.
         fn link(&mut self) {
             if self.enabled() {
                 return;
@@ -2516,6 +2596,23 @@ mod tests {
                 std::fs::remove_file(&self.wants).unwrap();
             }
         }
+    }
+
+    /// The operation a declared command asks for, from its last argument.
+    fn command_verb(argv: &[String]) -> &'static str {
+        match argv.last().map(String::as_str) {
+            Some("up") => "up",
+            Some("down") => "down",
+            other => panic!("unexpected unit command {argv:?} (last argument {other:?})"),
+        }
+    }
+
+    /// Run one declared command exactly as the unit names it.
+    fn dispatch(argv: &[String]) -> bool {
+        std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
     impl SystemdUser for FakeManager {
@@ -2560,13 +2657,30 @@ mod tests {
             let installed = install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
             assert!(installed.enabled, "the fake manager wrote the login link");
             assert!(!manager.running);
-            assert_eq!(manager.declared("ExecStart="), "up");
-            assert_eq!(manager.declared("ExecStop="), "down");
+            // The unit's own commands, as the manager will dispatch them.
+            assert_eq!(
+                manager.declared_argv("ExecStart="),
+                vec![
+                    binary.display().to_string(),
+                    "gateway".to_owned(),
+                    "up".to_owned()
+                ]
+            );
+            assert_eq!(
+                manager.declared_argv("ExecStop="),
+                vec![
+                    binary.display().to_string(),
+                    "gateway".to_owned(),
+                    "down".to_owned()
+                ]
+            );
 
-            // First login: the enabled unit starts the gateway.
+            // First login: the enabled unit starts the gateway through the
+            // installed image itself, which records the command it received.
             manager.login();
             assert!(manager.running);
             assert_eq!(manager.requests, vec!["up"]);
+            assert_eq!(invocations(home.path(), "effigy"), vec!["gateway up"]);
 
             // `effigy gateway down` stops the gateway without touching the
             // manager, so the unit stays active and a start is a no-op.
@@ -2696,12 +2810,15 @@ mod tests {
             install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
             assert!(manager.enabled());
 
+            // The image's own `gateway up` refuses, as it does when the
+            // low-port capability is missing: the oneshot start fails.
+            refuse_up(home.path(), "effigy");
             let mut login = FakeManager::for_paths(&paths);
-            login.up_refused = true;
             login.login();
             assert!(!login.running, "a refused ExecStart starts no gateway");
             assert_eq!(login.requests, vec!["up"]);
             assert!(!login.active);
+            assert_eq!(invocations(home.path(), "effigy"), vec!["gateway up"]);
 
             // Status reports the unit as installed and the capability missing:
             // the login activation alone is never claimed as ready.
@@ -2735,11 +2852,20 @@ mod tests {
             assert!(!booted.running);
             assert!(booted.requests.is_empty());
 
-            // The first login of the new boot starts the unit once.
+            // The first login of the new boot starts the unit once, through the
+            // installed image's own ExecStart.
             booted.login();
             assert!(booted.running);
             assert_eq!(booted.requests, vec!["up"]);
-            assert_eq!(booted.declared("ExecStart="), "up");
+            assert_eq!(
+                booted.declared_argv("ExecStart="),
+                vec![
+                    binary.display().to_string(),
+                    "gateway".to_owned(),
+                    "up".to_owned()
+                ]
+            );
+            assert_eq!(invocations(home.path(), "effigy"), vec!["gateway up"]);
             assert_eq!(
                 declared_executable(&std::fs::read(&paths.unit).unwrap()),
                 Some(binary.clone())
@@ -2753,6 +2879,10 @@ mod tests {
             lingering.login();
             assert_eq!(lingering.requests, vec!["up"]);
             assert!(lingering.running);
+            assert_eq!(
+                invocations(home.path(), "effigy"),
+                vec!["gateway up", "gateway up"]
+            );
         });
     }
 
@@ -3134,6 +3264,21 @@ mod tests {
             assert!(!activation_linked(&paths, uid));
             assert!(!observe(&paths, uid, BindCapabilityState::Installed, Some(false)).enabled);
 
+            // These fakes *do* follow the path, like the real manager, so a
+            // refusal that happened after a manager request would show up here.
+            let calls = manager.calls.len();
+
+            // An identical-bytes setup refuses before any manager request.
+            let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("refusing the login activation directory"),
+                "{error}"
+            );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
+            assert!(std::fs::symlink_metadata(foreign.join(UNIT_NAME)).is_ok());
+
             // An upgrade refuses before writing, and the foreign entry survives.
             let error = install(run, cx, &paths, uid, &upgrade, &mut manager).unwrap_err();
             assert!(
@@ -3142,6 +3287,7 @@ mod tests {
                     .contains("refusing the login activation directory"),
                 "{error}"
             );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
             assert!(std::fs::symlink_metadata(foreign.join(UNIT_NAME)).is_ok());
             assert_eq!(
                 std::fs::read_link(foreign.join(UNIT_NAME)).unwrap(),
@@ -3157,17 +3303,16 @@ mod tests {
                 "the previous unit was not rewritten"
             );
 
-            // Removal refuses too, before the unit file is deleted. The fake
-            // here only answers the manager request; a real `systemctl disable`
-            // would resolve the same path Effigy refuses to resolve itself.
-            let mut manager_request = FakeSystemd::default();
-            let error = remove(cx, &paths, uid, &mut manager_request).unwrap_err();
+            // Removal refuses before the manager could stop or disable anything,
+            // and before the unit file is deleted.
+            let error = remove(cx, &paths, uid, &mut manager).unwrap_err();
             assert!(
                 error
                     .to_string()
                     .contains("refusing the login activation directory"),
                 "{error}"
             );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
             assert!(paths.unit.exists());
             assert!(std::fs::symlink_metadata(foreign.join(UNIT_NAME)).is_ok());
 
@@ -3180,6 +3325,7 @@ mod tests {
                     .contains("refusing the login activation directory"),
                 "{error}"
             );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
             assert!(!paths.unit.exists());
             assert!(std::fs::symlink_metadata(foreign.join(UNIT_NAME)).is_ok());
         });
@@ -3266,6 +3412,131 @@ mod tests {
             let mut login = FakeManager::for_paths(&paths);
             login.login();
             assert!(login.running, "the next login still starts the gateway");
+        });
+    }
+
+    /// A unit that was disabled before a failed rewrite stays disabled: the
+    /// recovery restores only an activation this run actually dropped.
+    #[test]
+    fn a_failed_rewrite_never_enables_a_unit_that_was_disabled() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let previous = installed_binary_named(home.path(), "effigy-previous");
+            let upgrade = installed_binary_named(home.path(), "effigy-upgrade");
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &previous, &mut manager).unwrap();
+
+            // The operator disabled the unit; the activation directory stays.
+            std::fs::remove_file(&paths.wants).unwrap();
+            assert!(!activation_linked(&paths, uid));
+            assert!(paths.wants.parent().unwrap().is_dir());
+
+            std::fs::create_dir_all(
+                paths
+                    .user_dir
+                    .join(format!(".{UNIT_NAME}.effigy-tmp-fixture")),
+            )
+            .unwrap();
+            let error = install(run, cx, &paths, uid, &upgrade, &mut manager).unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains("it was not enabled before this run"),
+                "{message}"
+            );
+            assert!(message.contains("Nothing was upgraded"), "{message}");
+
+            // Nothing re-enabled the unit behind the operator's decision.
+            assert!(!activation_linked(&paths, uid));
+            assert!(!paths.wants.exists());
+            assert!(!observe(&paths, uid, BindCapabilityState::Installed, Some(false)).enabled);
+            assert_eq!(
+                declared_executable(&std::fs::read(&paths.unit).unwrap()),
+                Some(previous)
+            );
+        });
+    }
+
+    /// The fake manager dispatches the installed unit's own command as a
+    /// process, so a missing, unexecutable or refusing image — or a unit that
+    /// names another executable — cannot simulate a lifecycle.
+    #[test]
+    fn a_login_needs_the_installed_units_own_command_to_succeed() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let expected = vec![
+                binary.display().to_string(),
+                "gateway".to_owned(),
+                "up".to_owned(),
+            ];
+            assert_eq!(manager.declared_argv("ExecStart="), expected);
+
+            // A login runs exactly that command, as a process.
+            let mut login = FakeManager::for_paths(&paths);
+            login.login();
+            assert!(login.running);
+            assert_eq!(login.invocations, vec![expected.clone()]);
+            assert_eq!(invocations(home.path(), "effigy"), vec!["gateway up"]);
+
+            // `gateway up` refusing starts nothing at all.
+            refuse_up(home.path(), "effigy");
+            let mut refusing = FakeManager::for_paths(&paths);
+            refusing.login();
+            assert!(!refusing.running);
+            assert!(!refusing.active);
+            assert_eq!(refusing.requests, vec!["up"]);
+            assert_eq!(
+                invocations(home.path(), "effigy"),
+                vec!["gateway up", "gateway up"]
+            );
+
+            // A missing image is a failed start, not a simulated success.
+            std::fs::remove_file(&binary).unwrap();
+            let mut missing = FakeManager::for_paths(&paths);
+            missing.login();
+            assert!(!missing.running);
+            assert!(!missing.active);
+            assert_eq!(invocations(home.path(), "effigy").len(), 2);
+
+            // An unexecutable image is a failed start too.
+            std::fs::remove_file(home.path().join("effigy-refuses-up")).unwrap();
+            installed_binary(home.path());
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let mut unexecutable = FakeManager::for_paths(&paths);
+            unexecutable.login();
+            assert!(!unexecutable.running);
+            assert_eq!(invocations(home.path(), "effigy").len(), 2);
+
+            // A unit that names another executable is dispatched as such: the
+            // installed image never runs, so the identity assertion above is
+            // what catches a wrong image.
+            installed_binary(home.path());
+            std::fs::write(
+                &paths.unit,
+                unit_definition(Path::new("/bin/true"), home.path()).unwrap(),
+            )
+            .unwrap();
+            let mut wrong = FakeManager::for_paths(&paths);
+            wrong.login();
+            assert_eq!(
+                wrong
+                    .invocations
+                    .first()
+                    .and_then(|argv| argv.first())
+                    .map(String::as_str),
+                Some("/bin/true")
+            );
+            assert_eq!(
+                invocations(home.path(), "effigy").len(),
+                2,
+                "the installed image never ran"
+            );
         });
     }
 

@@ -384,12 +384,19 @@ The login activation directory `~<home>/.config/systemd/user/default.target.want
 is treated as an identity of its own. It is opened from the verified unit
 directory with `O_NOFOLLOW | O_DIRECTORY`, verified as a real operator-owned
 directory with no group/other write, and the activation entry is read, unlinked
-and recreated with `readlinkat`/`unlinkat`/`symlinkat` on that descriptor. A
-path-based `remove_file` would resolve every parent component, so a
-`default.target.wants` symlink to a foreign directory could delete that
-directory's entry; instead it is refused, on upgrade, on fresh install and in
-`setup --remove` before the unit file is deleted. An entry that is not Effigy's
-link is preserved, and status reports such a directory as not enabled.
+and recreated with `readlinkat`/`unlinkat`/`symlinkat` on that descriptor. That
+validation happens *before* any `systemctl --user` request that could follow the
+directory — `enable` on a repeated setup, `disable --now` on `setup --remove` —
+and before the unit file is deleted. A path-based `remove_file` would resolve
+every parent component, so a `default.target.wants` symlink to a foreign
+directory could delete that directory's entry (and a manager following the same
+path could stop the service); instead it is refused with the exact
+`systemctl --user disable`/`chmod` recovery, on upgrade, on fresh install, on a
+repeated setup and in `setup --remove` alike. An entry that is not Effigy's link
+is preserved, and status reports such a directory as not enabled.
+
+A failed rewrite restores only an activation this run actually dropped, so a
+unit the operator had disabled is never enabled by a recovery path.
 
 The capability is bound to one install identity: the exact binary setup ran,
 with one link, owner-private mode and the operator (or root) as owner. A
