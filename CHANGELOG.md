@@ -351,6 +351,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS`, `EFFIGY_INTERNAL_SECRET_GRANT` or
   `EFFIGY_TEST_SECRETS_PASSPHRASE` no longer reaches a container; the run's
   declared secrets and the user's own variables still do.
+- Builtin `effigy test` now routes a named-container suite's setup and teardown
+  with the suite command, so those hooks run inside the selected container.
+  Nested effigy re-entries still keep their own routing.
+- `effigy contracts check-json` reports a payload schema or selection contract
+  that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
+  `effigy.contracts.check-json.v1`, and stops before any indexed command.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.
