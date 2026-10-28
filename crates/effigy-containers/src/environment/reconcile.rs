@@ -459,25 +459,27 @@ impl<'r> EnvRun<'r> {
         ));
         // The original deadline, kept for the refusal's own report.
         let started = Instant::now();
-        // Admission settles an interrupted predecessor under its own budget,
-        // made here, so the wait above cannot spend it (effigy#447).
-        let admitted = ctx.cleanup().and_then(|cleanup| {
-            Run::begin(
-                &ctx.cx,
-                ctx.root,
-                &invocation,
-                effigy_kernel::run::BeginOpts {
-                    id: new_run_id()?,
-                    wait,
-                    acknowledge: vec![],
-                    next: op.next(&env.name)?,
-                    custody: None,
-                },
-                &cleanup,
-                &mut EnvSettlement,
-            )
-            .map_err(|error| admission_error(env, wait, started, error))
-        });
+        // Admission settles an interrupted predecessor under a window this
+        // call makes once the gate is held, so the wait above (up to ten
+        // minutes) cannot spend it (effigy#447).
+        let admitted = Run::begin_with_fresh_cleanup(
+            &ctx.cx,
+            ctx.root,
+            &invocation,
+            effigy_kernel::run::BeginOpts {
+                id: new_run_id()?,
+                wait,
+                acknowledge: vec![],
+                next: op.next(&env.name)?,
+                custody: None,
+            },
+            || {
+                ctx.cleanup()
+                    .map_err(|error| RunError::broken(error.to_string()))
+            },
+            &mut EnvSettlement,
+        )
+        .map_err(|error| admission_error(env, wait, started, error));
         let run = match admitted {
             Ok(run) => {
                 waiting.succeed(&format!("environment `{}` is free", env.name));

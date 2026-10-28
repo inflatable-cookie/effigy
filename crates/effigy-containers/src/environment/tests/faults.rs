@@ -290,3 +290,50 @@ fn libc_eperm() -> i32 {
 fn libc_enospc() -> i32 {
     28
 }
+
+/// effigy#447: admission may wait up to ten minutes for `Gate(Env)`, so the
+/// window that settles an interrupted predecessor must start once the gate is
+/// held. The hook runs with the gate held and before that settlement, so its
+/// sleep stands in for a slow acquisition: the predecessor still settles on a
+/// whole budget and the transition is admitted. On a window made before the
+/// gate it refuses `TimedOut { phase: "settle" }`.
+#[test]
+fn a_slow_gate_acquisition_does_not_spend_the_predecessor_settlement() {
+    let home = home();
+    let root = root(home.path());
+    // The settlement budget the slow acquisition spends entirely.
+    let ctx = EnvContext::with_cleanup_budget(
+        &root,
+        CancelToken::default(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    // A transition whose process died before it settled: its gate is free and
+    // its row is open, so the next admission settles it (K5).
+    let abandoned = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    let predecessor = abandoned.id();
+    drop(abandoned);
+    let slept = Rc::new(Cell::new(false));
+    let slept_in = slept.clone();
+    let admitted = with_hook(
+        move |point| {
+            if point == "GateAcquire" && !slept_in.replace(true) {
+                // Longer than the settlement budget this admission was given.
+                std::thread::sleep(std::time::Duration::from_millis(900));
+            }
+            Ok(())
+        },
+        || EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast),
+    );
+    assert!(slept.get(), "the slow acquisition was never exercised");
+    let run = match admitted {
+        Ok(run) => run,
+        Err(error) => panic!("admission with predecessor {predecessor}: {error}"),
+    };
+    run.finish(true).unwrap();
+    // No run of the owner is left open: the predecessor settled.
+    assert_store_sound(&ctx);
+}

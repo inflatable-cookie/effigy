@@ -350,9 +350,12 @@ During v0.x, MINOR bumps may include breaking changes.
   cold stack whose activation ran past 60 seconds left its settlement already
   expired and the command failed with `environment record ... timed out ...
   waiting for the environment to settle` after an apply that had succeeded.
-  Admission, a settling holder and the run's own settle each now take a fresh
-  bounded 60-second budget, and `container up` and `container down` show the
-  gate wait and the settlement as steps.
+  Each settlement now takes a fresh bounded 60-second budget: admission makes
+  its own once `Gate(Env)` is held, so a transition that queued behind another
+  one settles an interrupted predecessor on a whole budget, and the run's own
+  settle and every settling holder make theirs when they start.
+  `container up` and `container down` show the gate wait and the settlement as
+  steps.
 - Builtin `effigy test` now routes a named-container suite's setup and teardown
   with the suite command, so those hooks run inside the selected container.
   Nested effigy re-entries still keep their own routing.
