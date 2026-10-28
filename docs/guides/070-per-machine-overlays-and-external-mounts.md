@@ -274,19 +274,23 @@ deprecation notice naming the replacement and that the form is
 removed in v0.16:
 
 - `optional` — omit a missing include, or rely on auto-discovered
-  `effigy.local.toml`.
+  `effigy.local.toml`. The notice fires when the key is present,
+  including `optional = false`.
 - `override` — use auto-discovered `effigy.local.toml` for
   machine-local replacement, or `[manifest].extend` for arrays.
 
-Public kebab-case aliases `schema-index`, `selection-contract`,
-`rev-file` and `default-currentness` still load as `schema_index`,
-`selection_contract`, `rev_file` and `default_currentness`. Canonical
-snake_case and path-only includes print no notice. Combined legacy
-forms still print one notice per manifest. `--json` carries that
-notice in the command envelope `warnings` array and never on stdout.
-Auto-discovered `effigy.local.toml` is not a manual optional/override
-and stays silent. User-global program preference aliases
-(`colima-nerdctl`, `docker-compose`) are out of this window.
+Public kebab-case aliases at their real positions still load:
+`[contracts].schema-index` / `selection-contract` as `schema_index` /
+`selection_contract`, and `[sources.<name>].rev-file` as `rev_file`.
+A task named `schema-index` is not an alias. Contract 041's
+`docs_policy.graph.kinds.<kind>.default-currentness` is the primary
+kebab spelling and is not in this window. Canonical snake_case and
+path-only includes print no notice. Combined legacy forms still print
+one notice per manifest. `--json` carries that notice in the command
+envelope `warnings` array and never on stdout. Auto-discovered
+`effigy.local.toml` is not a manual optional/override and stays
+silent. User-global program preference aliases (`colima-nerdctl`,
+`docker-compose`) are out of this window.
 
 ## CI And Determinism
 

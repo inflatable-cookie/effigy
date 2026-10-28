@@ -1861,13 +1861,79 @@ default-currentness = "current"
         assert!(notice.contains("`schema-index`"), "{notice}");
         assert!(notice.contains("`selection-contract`"), "{notice}");
         assert!(notice.contains("`rev-file`"), "{notice}");
-        assert!(notice.contains("`default-currentness`"), "{notice}");
+        assert!(!notice.contains("`default-currentness`"), "{notice}");
         assert!(notice.contains("removed in v0.16"), "{notice}");
         assert_eq!(notice.matches("effigy.toml").count(), 1, "{notice}");
         assert_eq!(
             loaded.manifest.retired_config.compat_statements().len(),
-            4,
+            3,
             "{notice}"
+        );
+    }
+
+    #[test]
+    fn a_task_named_schema_index_does_not_notice() {
+        let tmp = tempdir().expect("tempdir");
+        let root = write_manifest(
+            tmp.path(),
+            "effigy.toml",
+            r#"
+[tasks.schema-index]
+run = "true"
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert!(loaded.manifest.tasks.contains_key("schema-index"));
+        assert!(
+            loaded
+                .manifest
+                .retired_config
+                .notice(&loaded.manifest_path)
+                .is_none(),
+            "task names are not alias positions: {:?}",
+            loaded.manifest.retired_config.compat_statements()
+        );
+    }
+
+    #[test]
+    fn docs_policy_kind_default_currentness_is_canonical_and_silent() {
+        let tmp = tempdir().expect("tempdir");
+        let root = write_manifest(
+            tmp.path(),
+            "effigy.toml",
+            r#"
+[docs_policy.graph]
+roots = ["README.md"]
+
+[docs_policy.graph.kinds.guide]
+include = ["docs/*.md"]
+default-currentness = "current"
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            loaded
+                .manifest
+                .docs_policy
+                .as_ref()
+                .expect("docs policy")
+                .graph
+                .as_ref()
+                .expect("graph")
+                .kinds
+                .get("guide")
+                .expect("guide")
+                .default_currentness,
+            crate::config_sections::ManifestDocsPolicyGraphCurrentnessClass::Current
+        );
+        assert!(
+            loaded
+                .manifest
+                .retired_config
+                .notice(&loaded.manifest_path)
+                .is_none(),
+            "contract 041 kebab spelling stays silent: {:?}",
+            loaded.manifest.retired_config.compat_statements()
         );
     }
 

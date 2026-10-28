@@ -117,12 +117,16 @@ Conflicts inside a layer remain subject to normal composition rules.
 ## v0.15 include and alias compatibility
 
 Manual `[manifest].include` `optional` and `override`, and the public
-kebab-case aliases `schema-index`, `selection-contract`, `rev-file` and
-`default-currentness`, still parse through v0.15 with the same effective
-values. Composition records one compat notice per manifest naming the
-snake_case or auto-discovery replacement and v0.16 removal. Canonical
-snake_case and path-only includes are silent. Auto-discovered
-`effigy.local.toml` is not a manual optional include. Local overlay
-precedence above is unchanged. User-global program preference aliases
-are out of this window. JSON diagnostics carry the notice in envelope
-`warnings` and never print it on stdout.
+kebab-case aliases `[contracts].schema-index`,
+`[contracts].selection-contract` and `[sources.<name>].rev-file`, still
+parse through v0.15 with the same effective values. Composition records
+one compat notice per manifest naming the snake_case or auto-discovery
+replacement and v0.16 removal. The scan matches those alias positions
+only: a task named `schema-index` is silent.
+`docs_policy.graph.kinds.<kind>.default-currentness` is the contract 041
+kebab spelling and is not in this window. Canonical snake_case and
+path-only includes are silent. Auto-discovered `effigy.local.toml` is
+not a manual optional include. Local overlay precedence above is
+unchanged. User-global program preference aliases are out of this
+window. JSON diagnostics carry the notice in envelope `warnings` and
+never print it on stdout.

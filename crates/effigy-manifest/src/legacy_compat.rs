@@ -5,17 +5,20 @@
 //! form is recorded on the manifest's [`RetiredConfigDeclaration`] so the
 //! invocation prints a single notice naming the canonical replacement.
 //!
-//! Inventory of public non-snake serde aliases (kebab → snake):
-//! - `schema-index` → `schema_index`
-//! - `selection-contract` → `selection_contract`
-//! - `rev-file` → `rev_file`
-//! - `default-currentness` → `default_currentness`
+//! Inventory of public kebab serde aliases (position → snake):
+//! - `[contracts].schema-index` → `schema_index`
+//! - `[contracts].selection-contract` → `selection_contract`
+//! - `[sources.<name>].rev-file` → `rev_file`
+//!
+//! `docs_policy.graph.kinds.<kind>.default-currentness` is the contract 041
+//! spelling (`rename_all = "kebab-case"`). It is not in this window.
 //!
 //! Out of scope: user-global program preference aliases (`colima-nerdctl`,
 //! `docker-compose`) and snake_case aliases such as `threshold` / `js_ts`.
 //!
 //! 2026-10-28 scan: `default-currentness` in Effigy's docs config and Northstar
-//! starter; no active external consumer `effigy.toml` hit in projects/legacy.
+//! starter (canonical); no active external consumer `effigy.toml` hit in
+//! projects/legacy.
 
 use toml::Value;
 
@@ -24,13 +27,6 @@ use crate::retired_config::RetiredConfigDeclaration;
 pub(crate) const OPTIONAL_STATEMENT: &str = "`[manifest].include` `optional` is accepted through v0.15; omit a missing include, or rely on auto-discovered `effigy.local.toml`. This form is removed in v0.16";
 
 pub(crate) const OVERRIDE_STATEMENT: &str = "`[manifest].include` `override` is accepted through v0.15; use auto-discovered `effigy.local.toml` for machine-local replacement, or `[manifest].extend` for arrays. This form is removed in v0.16";
-
-const KEBAB_ALIASES: &[(&str, &str)] = &[
-    ("schema-index", "schema_index"),
-    ("selection-contract", "selection_contract"),
-    ("rev-file", "rev_file"),
-    ("default-currentness", "default_currentness"),
-];
 
 pub(crate) fn scan(value: &Value) -> RetiredConfigDeclaration {
     let mut declaration = RetiredConfigDeclaration::default();
@@ -61,23 +57,32 @@ fn scan_include_directives(value: &Value, declaration: &mut RetiredConfigDeclara
 }
 
 fn scan_aliases(value: &Value, declaration: &mut RetiredConfigDeclaration) {
-    match value {
-        Value::Table(table) => {
-            for (key, child) in table {
-                for (legacy, canonical) in KEBAB_ALIASES {
-                    if key == legacy {
-                        declaration.record_compat(alias_statement(legacy, canonical));
-                    }
-                }
-                scan_aliases(child, declaration);
+    if let Some(table) = value.get("contracts").and_then(Value::as_table) {
+        notice_key(table, "schema-index", "schema_index", declaration);
+        notice_key(
+            table,
+            "selection-contract",
+            "selection_contract",
+            declaration,
+        );
+    }
+    if let Some(sources) = value.get("sources").and_then(Value::as_table) {
+        for source in sources.values() {
+            if let Some(table) = source.as_table() {
+                notice_key(table, "rev-file", "rev_file", declaration);
             }
         }
-        Value::Array(items) => {
-            for item in items {
-                scan_aliases(item, declaration);
-            }
-        }
-        _ => {}
+    }
+}
+
+fn notice_key(
+    table: &toml::Table,
+    legacy: &str,
+    canonical: &str,
+    declaration: &mut RetiredConfigDeclaration,
+) {
+    if table.contains_key(legacy) {
+        declaration.record_compat(alias_statement(legacy, canonical));
     }
 }
 
@@ -147,7 +152,7 @@ default-currentness = "current"
         .expect("parse");
         let declaration = scan(&value);
         let statements = declaration.compat_statements();
-        assert_eq!(statements.len(), 4, "{statements:?}");
+        assert_eq!(statements.len(), 3, "{statements:?}");
         assert!(statements
             .iter()
             .any(|item| item.contains("`schema-index`")));
@@ -157,7 +162,7 @@ default-currentness = "current"
         assert!(statements.iter().any(|item| item.contains("`rev-file`")));
         assert!(statements
             .iter()
-            .any(|item| item.contains("`default-currentness`")));
+            .all(|item| !item.contains("`default-currentness`")));
         assert!(statements
             .iter()
             .all(|item| item.contains("removed in v0.16")));
@@ -175,9 +180,6 @@ include = [
 
 [contracts]
 schema-index = "one.json"
-
-[other.contracts]
-schema-index = "two.json"
 "#,
         )
         .expect("parse");
@@ -198,5 +200,48 @@ schema-index = "two.json"
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn a_task_named_schema_index_is_silent() {
+        let value: toml::Value = toml::from_str(
+            r#"
+[tasks.schema-index]
+run = "echo hi"
+"#,
+        )
+        .expect("parse");
+        assert!(scan(&value).is_empty());
+    }
+
+    #[test]
+    fn nested_unrelated_schema_index_keys_are_silent() {
+        let value: toml::Value = toml::from_str(
+            r#"
+[other.contracts]
+schema-index = "two.json"
+
+[sources.book]
+git = "git@example.com:acme/book.git"
+rev = "abc"
+path = "book"
+schema-index = "not-an-alias.json"
+"#,
+        )
+        .expect("parse");
+        assert!(scan(&value).is_empty());
+    }
+
+    #[test]
+    fn docs_policy_kind_default_currentness_is_canonical_and_silent() {
+        let value: toml::Value = toml::from_str(
+            r#"
+[docs_policy.graph.kinds.guide]
+include = ["docs/guides/*.md"]
+default-currentness = "current"
+"#,
+        )
+        .expect("parse");
+        assert!(scan(&value).is_empty());
     }
 }
