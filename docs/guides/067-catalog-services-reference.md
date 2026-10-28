@@ -119,8 +119,9 @@ the Effigy range, schema and capabilities it lacks. See
 
 The installed catalog-pack runtime and `effigy service pack` are retired in
 v0.15. Existing `~/.effigy/catalog-packs/` state is ignored with a notice and
-left untouched; delete it when convenient. Pack v1.2.0 was byte-identical to
-the compiled baseline, so projects that used it resolve the same services. To
+left untouched; delete it when convenient. Pack v1.2.0 added `silo`; the
+0.15.0 baseline goes one step further and retires `minio` (below), so a project
+that resolved `minio` from the pack or the baseline must move to `silo`. To
 ship services without an Effigy release, publish them as a bundle `catalog/`
 or a declared source.
 

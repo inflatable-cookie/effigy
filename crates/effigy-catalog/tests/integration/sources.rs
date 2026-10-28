@@ -311,8 +311,8 @@ fn retired_baseline_minio_refuses_while_source_local_minio_still_resolves() {
         "lower sources that also define it are listed as shadows"
     );
 
-    // With no higher-priority definition the same name refuses, naming silo,
-    // and an explicit baseline request refuses instead of silently remapping.
+    // With no higher-priority definition the unqualified name and an explicit
+    // baseline request refuse, naming silo, instead of silently remapping.
     let bare = Sources::new();
     let bare_resolver = bare.resolver();
     for name in ["minio", "baseline/minio"] {
@@ -330,4 +330,15 @@ fn retired_baseline_minio_refuses_while_source_local_minio_still_resolves() {
         bare_resolver.list().iter().all(|info| info.name != "minio"),
         "the compiled baseline no longer ships the fragment"
     );
+
+    // A qualified request for a source that simply lacks the fragment is not a
+    // retirement: it keeps the ordinary not-found diagnostic, so the refusal
+    // never disguises a typo or a missing source fragment as a baseline cut.
+    for name in ["project/minio", "bundle/minio", "acme/minio"] {
+        let error = bare_resolver.resolve(name).expect_err("no such fragment");
+        assert!(
+            matches!(error, CatalogError::FragmentNotFound { .. }),
+            "{name} must keep the plain not-found diagnostic, got {error:?}"
+        );
+    }
 }

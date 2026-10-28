@@ -224,17 +224,24 @@ impl CatalogResolver {
     /// Resolve a fragment by name, or by `source/service` from one source.
     ///
     /// A name this release retired is refused only where it would otherwise
-    /// fall back to the removed baseline fragment. A project, bundle or
-    /// declared source that still defines it wins first under the ordinary
-    /// precedence rules, and the refusal never remaps it onto its replacement.
+    /// fall back to the removed baseline fragment: unqualified with no
+    /// higher-priority definition, or an explicit `baseline/<name>`. A project,
+    /// bundle or declared source that still defines it wins first under the
+    /// ordinary precedence rules, and the refusal never remaps it onto its
+    /// replacement. A qualified request for a source that lacks the name keeps
+    /// the ordinary not-found (or unknown-source) diagnostic.
     pub fn resolve(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
+        let (qualifier, service) = split_qualified(name);
         match self.resolve_named(name) {
-            Err(CatalogError::FragmentNotFound { .. }) => Err(retired_catalog_service(
-                split_qualified(name).1,
-            )
-            .unwrap_or(CatalogError::FragmentNotFound {
-                name: name.to_owned(),
-            })),
+            Err(CatalogError::FragmentNotFound { .. })
+                if matches!(qualifier, None | Some("baseline")) =>
+            {
+                Err(
+                    retired_catalog_service(service).unwrap_or(CatalogError::FragmentNotFound {
+                        name: name.to_owned(),
+                    }),
+                )
+            }
             resolved => resolved,
         }
     }
