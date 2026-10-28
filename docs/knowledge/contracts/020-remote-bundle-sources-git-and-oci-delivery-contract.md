@@ -133,8 +133,10 @@ that only `effigy bundle sync` moved selected bytes.
   existing usable pin never moves there - no changed declaration, path
   re-snapshot or floating Git check - and no update record is written. A
   failed acquisition fails the task with the acquisition error and the
-  `effigy bundle sync` hint. Task-local `status`, `logs` and `stop` do not
-  apply rule 1: they inspect or stop the existing session and never clone.
+  `effigy bundle sync` hint. Managed (`mode = "tui"`) task-local `status`,
+  `logs` and `stop` do not apply rule 1: they inspect or stop the existing
+  session and never clone. A task whose first argument happens to be those
+  words still acquires.
 
 Every acquisition is bounded to 120 seconds and non-interactive
 (`GIT_TERMINAL_PROMPT=0`, and an SSH command with `BatchMode=yes` when the

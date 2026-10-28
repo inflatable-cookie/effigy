@@ -28,13 +28,45 @@ pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
     }
 }
 
-/// First-argument `status`, `logs` or `stop` on a task: inspect or stop an
-/// existing session. They never acquire a missing pin and they are not a
-/// Prepare path. A CLI invocation joins Effigy flags with
+/// First-argument `status`, `logs` or `stop` on a task. On a managed TUI
+/// task this inspects or stops the session; on any other task those words
+/// are ordinary arguments and the run still acquires a missing pin. A CLI
+/// invocation joins Effigy flags with
 /// [`effigy_core::task_args::TASK_ARGS_BOUNDARY`] before the task's
 /// arguments; the verb is the first task-side argument after that split.
 pub(crate) fn is_task_local_session_invocation(task: &effigy_cli::TaskInvocation) -> bool {
     first_task_arg(&task.args).is_some_and(|arg| matches!(arg, "status" | "logs" | "stop"))
+}
+
+/// Managed TUI companions (`mode = "tui"`) with first-argument status, logs
+/// or stop. They skip missing-pin acquisition. The overlay is read as TOML
+/// so a missing bundle pin is not cloned just to classify the task.
+pub(crate) fn is_managed_tui_session_invocation(
+    task: &effigy_cli::TaskInvocation,
+    manifest_path: &Path,
+) -> bool {
+    is_task_local_session_invocation(task)
+        && declared_task_mode(manifest_path, &task.name).as_deref() == Some("tui")
+}
+
+fn declared_task_mode(manifest_path: &Path, task_name: &str) -> Option<String> {
+    let name = task_name.rsplit('/').next().unwrap_or(task_name);
+    manifest_path
+        .parent()
+        .map(|parent| parent.join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE))
+        .and_then(|overlay| task_mode_from_toml_file(&overlay, name))
+        .or_else(|| task_mode_from_toml_file(manifest_path, name))
+}
+
+fn task_mode_from_toml_file(path: &Path, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    value
+        .get("tasks")?
+        .get(name)?
+        .get("mode")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 fn first_task_arg(args: &[String]) -> Option<&str> {
@@ -466,6 +498,54 @@ mod tests {
         };
         assert!(!is_task_local_session_invocation(&joined_dev));
         assert!(is_source_prepare_command(&Command::Task(joined_dev)));
+    }
+
+    #[test]
+    fn only_a_tui_task_skips_missing_pin_acquisition_for_session_verbs() {
+        use effigy_cli::TaskInvocation;
+
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let manifest = directory.path().join("effigy.toml");
+        std::fs::write(
+            &manifest,
+            "[tasks.dev]\nmode = \"tui\"\n\n[tasks.need]\nrun = \"sh -c 'cat book/README'\"\n\n[tasks.serve]\nrun = \"echo serve\"\n",
+        )
+        .expect("write overlay");
+
+        let status = TaskInvocation {
+            name: "dev".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(
+            is_managed_tui_session_invocation(&status, &manifest),
+            "dev status on a tui overlay skips the missing pin"
+        );
+
+        let joined = TaskInvocation {
+            name: "dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+        };
+        assert!(is_managed_tui_session_invocation(&joined, &manifest));
+
+        let need_status = TaskInvocation {
+            name: "need".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(is_task_local_session_invocation(&need_status));
+        assert!(!is_managed_tui_session_invocation(&need_status, &manifest));
+
+        let serve_status = TaskInvocation {
+            name: "serve".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(is_task_local_session_invocation(&serve_status));
+        assert!(!is_managed_tui_session_invocation(&serve_status, &manifest));
+
+        let overlay = directory
+            .path()
+            .join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE);
+        std::fs::write(&overlay, "[tasks.serve]\nmode = \"tui\"\n").expect("write local overlay");
+        assert!(is_managed_tui_session_invocation(&serve_status, &manifest));
     }
 
     #[test]

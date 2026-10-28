@@ -915,8 +915,9 @@ fn read_paths_never_check_a_floating_remote() {
     assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
 }
 
-/// Task-local status/logs/stop inspect or stop a session without acquiring a
-/// missing pin. A real task run on the same checkout still acquires.
+/// Managed TUI status/logs/stop inspect or stop a session without acquiring a
+/// missing pin. A real non-tui task whose first argument is `status` still
+/// acquires.
 #[test]
 fn task_local_status_logs_and_stop_do_not_acquire_a_missing_pin() {
     let fixture = Fixture::new();
@@ -954,7 +955,7 @@ fn task_local_status_logs_and_stop_do_not_acquire_a_missing_pin() {
     fs::write(
         fixture.repo.join("effigy.toml"),
         format!(
-            "[sources.book]\ngit = \"file://{git}\"\nrev = \"{rev}\"\npath = \"book\"\n\n[tasks.dev]\nmode = \"tui\"\nconcurrent = [\n  {{ name = \"api\", run = \"true\", start = 1 }}\n]\n\n[tasks.hello]\nrun = \"echo hello local\"\n",
+            "[sources.book]\ngit = \"file://{git}\"\nrev = \"{rev}\"\npath = \"book\"\n\n[tasks.dev]\nmode = \"tui\"\nconcurrent = [\n  {{ name = \"api\", run = \"true\", start = 1 }}\n]\n\n[tasks.need]\nrun = \"sh -c 'cat book/README'\"\n\n[tasks.hello]\nrun = \"echo hello local\"\n",
             git = source.display(),
         ),
     )
@@ -1021,13 +1022,20 @@ fn task_local_status_logs_and_stop_do_not_acquire_a_missing_pin() {
         }
     }
 
+    let (ok, output) = fixture.run(&["need", "status"], &[], Duration::from_secs(30));
+    assert!(
+        ok,
+        "a real non-tui task with first-arg status still acquires: {output}"
+    );
+    assert!(output.contains("book"), "{output}");
+    assert!(
+        fixture.repo.join("book").is_dir(),
+        "the missing pin is acquired for a real run whose first argument is status: {output}"
+    );
+
     let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
     assert!(ok, "a real task run still acquires: {output}");
     assert!(output.contains("hello local"), "{output}");
-    assert!(
-        fixture.repo.join("book").is_dir(),
-        "the missing pin is acquired for a real run: {output}"
-    );
 }
 
 /// A fresh checkout runs an ordinary task: the missing bundle and catalog pins
