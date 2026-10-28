@@ -208,7 +208,7 @@ fn build_workspace_runtime_mounts(
         &canonical_repo_root,
         working_dir,
     ));
-    enforce_guest_mount_isolation(container_name, &canonical_repo_root, &mounts)?;
+    enforce_guest_mount_isolation(container_name, &canonical_repo_root, working_dir, &mounts)?;
     Ok((mounts, extra_mount_decisions))
 }
 
@@ -264,51 +264,199 @@ fn guest_mask_volume_name(
     format!("efi-mask-{:016x}", hasher.finish())
 }
 
-/// Refuse a mount that would hand the guest a host state root or shadow the
+/// Whether a guest mount target is one of the host state masks. The rewrite
+/// keeps these last, so no retained Compose entry can be applied over them.
+pub(crate) fn is_guest_mask_target(target: &str, working_dir: &Path) -> bool {
+    GUEST_MASKED_CHECKOUT_PATHS
+        .iter()
+        .any(|relative| target == working_dir.join(relative).display().to_string())
+}
+
+/// The host paths a workspace container must never be given, whatever the
+/// mount's guest target is (§7.3 families 1, 3 and 10-12).
+fn guest_protected_host_paths(canonical_repo_root: &Path) -> Vec<PathBuf> {
+    let mut protected = GUEST_MASKED_CHECKOUT_PATHS
+        .iter()
+        .map(|relative| canonical_repo_root.join(relative))
+        .collect::<Vec<_>>();
+    if let Some(home) = crate::effigy_home() {
+        // The machine store, the gateway's certificates and sockets, and the
+        // machine preferences. Shared caches (`~/.effigy/shared`) are derived
+        // data a workspace legitimately mounts, so the whole home is not
+        // refused here; mounting it elsewhere is refused by the ancestor rule.
+        protected.push(home.join("state"));
+        protected.push(home.join("gateway"));
+        protected.push(home.join("config.toml"));
+    }
+    protected
+}
+
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    path == root || path.starts_with(root)
+}
+
+/// One effective mount, as Compose will apply it.
+struct EffectiveMount {
+    target: String,
+    /// A host path, when this mount binds one.
+    source: Option<PathBuf>,
+}
+
+/// Refuse a mount that would hand the guest a host state root, expose a
+/// protected checkout family outside the masked checkout mount, or shadow the
 /// guest's own store (§8.1, §8.2, §8.10 R1).
 ///
-/// The masks above cover the checkout's own families. A declared mount that
-/// names the guest store, the checkout store or the machine state root is a
-/// mistake this refuses by name rather than mounting and hoping.
-fn enforce_guest_mount_isolation(
+/// `checkout_target` is the guest path the checkout is mounted at: the masks
+/// cover the protected families inside that one mount, so only that mount may
+/// carry them.
+fn check_guest_mount(
     container_name: &str,
-    canonical_repo_root: &Path,
-    mounts: &[RenderedWorkspaceMount],
+    protected: &[PathBuf],
+    checkout_target: &str,
+    mount: &EffectiveMount,
 ) -> Result<(), ContainerPolicyError> {
-    let checkout_state = canonical_repo_root.join(GUEST_MASKED_CHECKOUT_PATHS[0]);
-    let checkout_vault = canonical_repo_root.join(GUEST_MASKED_CHECKOUT_PATHS[1]);
-    let machine_state = crate::effigy_home().map(|home| home.join("state"));
-    for mount in mounts {
-        if mount.target == GUEST_PRIVATE_ROOT
-            || mount.target.starts_with(&format!("{GUEST_PRIVATE_ROOT}/"))
-        {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` mount target `{target}` is the guest's own store; \
-                 a host mount cannot provide `{GUEST_PRIVATE_ROOT}`",
-                target = mount.target,
-            )));
-        }
-        let Some(source) = mount.source.as_ref() else {
-            continue;
-        };
-        let host_state = [
-            Some(&checkout_state),
-            Some(&checkout_vault),
-            machine_state.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        .any(|root| source == root || source.starts_with(root));
-        if host_state {
+    let target = Path::new(&mount.target);
+    if path_is_within(target, Path::new(GUEST_PRIVATE_ROOT))
+        || path_is_within(Path::new(GUEST_PRIVATE_ROOT), target)
+    {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` mount target `{target}` overlaps the guest's own \
+             store; a host mount cannot provide or shadow `{GUEST_PRIVATE_ROOT}`",
+            target = mount.target,
+        )));
+    }
+    let Some(source) = mount.source.as_ref() else {
+        return Ok(());
+    };
+    let resolved_source = source
+        .canonicalize()
+        .unwrap_or_else(|_| source.to_path_buf());
+    for root in protected {
+        let root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        if path_is_within(&resolved_source, &root) {
             return Err(ContainerPolicyError::TaskInvocation(format!(
                 "container `{container_name}` mount source `{source}` is a host state root; \
-                 the checkout store, the local vault and the machine state root are host-only \
-                 and never mount into a workspace container",
+                 the checkout store, the local vault and the machine state are host-only and \
+                 never mount into a workspace container",
                 source = source.display(),
+            )));
+        }
+        // An ancestor of a protected family (`<checkout>/.effigy`, the home
+        // directory above `~/.effigy`) carries it too. The one mount allowed to
+        // carry the checkout's families is the checkout mount itself, where the
+        // masks apply.
+        if path_is_within(&root, &resolved_source) && mount.target != checkout_target {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` mount source `{source}` contains a host state \
+                 root and mounts it at `{target}`, outside the masked checkout mount \
+                 `{checkout_target}`; host state never reaches another guest path",
+                source = source.display(),
+                target = mount.target,
             )));
         }
     }
     Ok(())
+}
+
+fn check_guest_mounts(
+    container_name: &str,
+    canonical_repo_root: &Path,
+    working_dir: &Path,
+    mounts: impl IntoIterator<Item = EffectiveMount>,
+) -> Result<(), ContainerPolicyError> {
+    let protected = guest_protected_host_paths(canonical_repo_root);
+    let checkout_target = working_dir.display().to_string();
+    for mount in mounts {
+        check_guest_mount(container_name, &protected, &checkout_target, &mount)?;
+    }
+    Ok(())
+}
+
+/// Validate the mounts the workspace rewrite injects, before they are written.
+fn enforce_guest_mount_isolation(
+    container_name: &str,
+    canonical_repo_root: &Path,
+    working_dir: &Path,
+    mounts: &[RenderedWorkspaceMount],
+) -> Result<(), ContainerPolicyError> {
+    check_guest_mounts(
+        container_name,
+        canonical_repo_root,
+        working_dir,
+        mounts.iter().map(|mount| EffectiveMount {
+            target: mount.target.clone(),
+            source: mount.source.clone(),
+        }),
+    )
+}
+
+/// Validate the complete effective service mount list, including entries the
+/// source Compose file already declared, in both the short `source:target`
+/// form and the long mapping form (§8.1, §8.2).
+pub(crate) fn enforce_guest_volume_isolation(
+    container_name: &str,
+    canonical_repo_root: &Path,
+    working_dir: &Path,
+    compose_dir: &Path,
+    volumes: &[serde_yaml::Value],
+) -> Result<(), ContainerPolicyError> {
+    check_guest_mounts(
+        container_name,
+        canonical_repo_root,
+        working_dir,
+        volumes
+            .iter()
+            .filter_map(|entry| effective_volume_mount(entry, compose_dir)),
+    )
+}
+
+/// Read one Compose `volumes` entry as an effective mount. Named volumes and
+/// tmpfs mounts carry no host path, so only their target is checked.
+fn effective_volume_mount(entry: &serde_yaml::Value, compose_dir: &Path) -> Option<EffectiveMount> {
+    if let Some(raw) = entry.as_str() {
+        let mut parts = raw.splitn(3, ':');
+        let source = parts.next().unwrap_or_default().trim();
+        let target = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        let source = source.trim();
+        let host_source = if source.is_empty() {
+            None
+        } else if Path::new(source).is_absolute() {
+            Some(PathBuf::from(source))
+        } else if source.starts_with('.') || source.contains('/') {
+            Some(compose_dir.join(source))
+        } else {
+            // A named volume, not a host path.
+            None
+        };
+        return Some(EffectiveMount {
+            target: target.to_owned(),
+            source: host_source,
+        });
+    }
+    let mapping = entry.as_mapping()?;
+    let field = |name: &str| {
+        mapping
+            .get(serde_yaml::Value::String(name.to_owned()))
+            .and_then(serde_yaml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let target = field("target")?;
+    let source = match (field("type"), field("source")) {
+        (Some("volume"), _) | (Some("tmpfs"), _) => None,
+        (_, Some(source)) if Path::new(source).is_absolute() => Some(PathBuf::from(source)),
+        (_, Some(source)) if source.starts_with('.') || source.contains('/') => {
+            Some(compose_dir.join(source))
+        }
+        _ => None,
+    };
+    Some(EffectiveMount {
+        target: target.to_owned(),
+        source,
+    })
 }
 
 /// Expose the shared git directory behind a linked worktree checkout.

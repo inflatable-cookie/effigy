@@ -389,7 +389,7 @@
       "std.process.Command.status": 1,
       "std::fs::remove_file": 1,
       "std::fs::rename": 1,
-      "std::fs::write": 5
+      "std::fs::write": 6
     }
   },
   "tests": {

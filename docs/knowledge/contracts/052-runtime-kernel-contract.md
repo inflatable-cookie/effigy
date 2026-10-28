@@ -2371,6 +2371,16 @@ workspace is admitted:
   whenever a fact it carries changes on the host, then switches `current`.
   It never edits a published generation. A guest invocation reads one
   generation for its whole run.
+- The environment fence is the environment record's activation generation,
+  which the activation run advances; `container up`, a task's environment apply
+  and the workspace handoff all publish through the same Prepare, so the
+  recovery a refusal names prepares the workspace rather than repeating it.
+- Local reads: version, the pinned task list and the pinned source identities
+  come from the context and the mounted checkout alone. The manifest snapshot
+  is digest-checked against the context before it is parsed, so a checkout that
+  changed since Prepare refuses instead of reading bytes the host never
+  approved. A local reader holds no capability, so a Static or Observe read
+  cannot enrol, and an authority-bearing command refuses rather than enrol.
 - Staleness: the context is input, not liveness proof. Every request carries
   the context generation; the host refuses a stale one (K7) and the client
   rereads `current`. A missing context means the workspace is unprepared:
@@ -2592,7 +2602,14 @@ only, and host access needs a terminal opened through Effigy.
   with a checksum and provenance manifest naming the version, protocol
   version, target and libc baseline, and catalog schema.
 - The store is `/run/effigy/bin/<digest>/effigy`, one immutable file per
-  digest, selected by the digest in `/run/effigy/bin/current`. The stable
+  digest, selected by the digest in `/run/effigy/bin/current`. An artifact is
+  authenticated before it is published: its producer receipt names the target
+  and the digest its bytes must have, a release download also matches the
+  checksum published beside the artifact, and the installed executable is
+  re-hashed in the container. A release that publishes no checksum cannot be
+  installed, and an image without a SHA-256 utility refuses Prepare. The guest
+  authenticates an installed executable with one digest probe, never by reading
+  the file into a bounded command's output. The stable
   entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
   store, so a running invocation keeps the bytes it resolved and only a new
   invocation sees a new generation.

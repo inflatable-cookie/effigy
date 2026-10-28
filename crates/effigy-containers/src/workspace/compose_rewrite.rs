@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::ContainerPolicyError;
 
 use super::{
-    build_workspace_runtime_environment, build_workspace_runtime_mounts, RenderedWorkspaceMount,
+    build_workspace_runtime_environment, build_workspace_runtime_mounts,
+    enforce_guest_volume_isolation, is_guest_mask_target, RenderedWorkspaceMount,
     WorkspaceComposeRewrite, WorkspaceExtraMountDecision,
 };
 
@@ -77,6 +78,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
             })?;
         rewrite_workspace_service_volumes(
             service,
+            container_name,
             compose_dir,
             repo_root,
             workspace_root,
@@ -103,6 +105,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
 
 fn rewrite_workspace_service_volumes(
     service: &mut serde_yaml::Mapping,
+    container_name: &str,
     compose_dir: &Path,
     repo_root: &Path,
     workspace_root: &Path,
@@ -135,7 +138,12 @@ fn rewrite_workspace_service_volumes(
         .iter()
         .map(|mount| mount.target.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    let mut rewritten = injected_mounts
+    // The host state masks are applied last: an entry the source Compose file
+    // already declared must not be mounted over them.
+    let (mask_mounts, ordinary_mounts): (Vec<_>, Vec<_>) = injected_mounts
+        .iter()
+        .partition(|mount| is_guest_mask_target(&mount.target, working_dir));
+    let mut rewritten = ordinary_mounts
         .iter()
         .map(|mount| serde_yaml::Value::String(mount.rendered.clone()))
         .collect::<Vec<_>>();
@@ -169,6 +177,20 @@ fn rewrite_workspace_service_volumes(
         rewritten.push(entry.clone());
     }
 
+    rewritten.extend(
+        mask_mounts
+            .into_iter()
+            .map(|mount| serde_yaml::Value::String(mount.rendered.clone())),
+    );
+    // Validate the complete effective list, including entries this rewrite
+    // retained, before it is published.
+    enforce_guest_volume_isolation(
+        container_name,
+        &canonical_repo_root,
+        working_dir,
+        compose_dir,
+        &rewritten,
+    )?;
     *volumes = rewritten;
     Ok(())
 }

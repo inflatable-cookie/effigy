@@ -1133,7 +1133,8 @@ mod guest_isolation_tests {
             Path::new("/workspace"),
         ));
 
-        enforce_guest_mount_isolation("dev", &canonical, &mounts).expect("allowed");
+        enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+            .expect("allowed");
         let _ = fs::remove_dir_all(repo_root);
     }
 
@@ -1145,8 +1146,9 @@ mod guest_isolation_tests {
         fs::create_dir_all(&host).expect("host context");
         let mounts = vec![bind_mount(&host, "/run/effigy/context")];
 
-        let error = enforce_guest_mount_isolation("dev", &canonical, &mounts)
-            .expect_err("the guest store is not a host mount");
+        let error =
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect_err("the guest store is not a host mount");
 
         assert!(error.to_string().contains("guest's own store"));
         let _ = fs::remove_dir_all(repo_root);
@@ -1163,8 +1165,9 @@ mod guest_isolation_tests {
 
         for source in [&state, &vault] {
             let mounts = vec![bind_mount(source, "/workspace/leaked")];
-            let error = enforce_guest_mount_isolation("dev", &canonical, &mounts)
-                .expect_err("a host state root never mounts into the guest");
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("a host state root never mounts into the guest");
             assert!(error.to_string().contains("host state root"));
         }
         let _ = fs::remove_dir_all(repo_root);
@@ -1179,10 +1182,133 @@ mod guest_isolation_tests {
         fs::create_dir_all(&machine_state).expect("machine state");
         crate::with_test_effigy_home(&home.join(".effigy"), || {
             let mounts = vec![bind_mount(&machine_state, "/workspace/machine")];
-            let error = enforce_guest_mount_isolation("dev", &canonical, &mounts)
-                .expect_err("the machine state root is host-only");
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("the machine state root is host-only");
             assert!(error.to_string().contains("host state root"));
         });
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_mount_above_the_guest_private_store_is_refused() {
+        let repo_root = temp_dir("guest-store-parent");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let host = repo_root.join("host-run");
+        fs::create_dir_all(&host).expect("host directory");
+
+        for target in ["/run", "/"] {
+            let mounts = vec![bind_mount(&host, target)];
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("a store ancestor would shadow the guest store");
+            assert!(error.to_string().contains("guest's own store"), "{error}");
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_checkout_family_mounted_at_another_guest_path_is_refused() {
+        let repo_root = temp_dir("checkout-family");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let effigy_dir = canonical.join(".effigy");
+
+        // `<checkout>/.effigy` carries both the store and the vault, so mounting
+        // it anywhere but the masked checkout mount is refused.
+        for source in [&effigy_dir, &canonical] {
+            let mounts = vec![bind_mount(source, "/workspace/elsewhere")];
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("an ancestor of host state carries it too");
+            let message = error.to_string();
+            assert!(
+                message.contains("contains a host state root")
+                    || message.contains("host state root"),
+                "{message}"
+            );
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn the_checkout_mount_itself_may_carry_the_masked_families() {
+        let repo_root = temp_dir("checkout-mount");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        fs::create_dir_all(canonical.join(".effigy/state")).expect("state root");
+        let mounts = vec![
+            bind_mount(&canonical, "/workspace"),
+            bind_mount(&canonical.join(".effigy/state"), "/workspace/.effigy/state"),
+        ];
+
+        // The second entry is the mask's own target; a bind there is refused,
+        // while the checkout mount itself is the one allowed carrier.
+        let error =
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect_err("the checkout store is never a bind source");
+        assert!(error.to_string().contains("host state root"), "{error}");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn effective_compose_volumes_are_checked_in_short_and_long_form() {
+        let repo_root = temp_dir("effective-volumes");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let compose_dir = repo_root.join("infra");
+        fs::create_dir_all(&compose_dir).expect("compose dir");
+
+        let short = vec![serde_yaml::Value::String(format!(
+            "{}:/workspace/leaked",
+            state.display()
+        ))];
+        let error = enforce_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            &short,
+        )
+        .expect_err("a retained short-form mount is checked");
+        assert!(error.to_string().contains("host state root"), "{error}");
+
+        let mut long_form = serde_yaml::Mapping::new();
+        long_form.insert(
+            serde_yaml::Value::String("type".to_owned()),
+            serde_yaml::Value::String("bind".to_owned()),
+        );
+        long_form.insert(
+            serde_yaml::Value::String("source".to_owned()),
+            serde_yaml::Value::String(canonical.join(".effigy").display().to_string()),
+        );
+        long_form.insert(
+            serde_yaml::Value::String("target".to_owned()),
+            serde_yaml::Value::String("/workspace/effigy".to_owned()),
+        );
+        let error = enforce_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            &[serde_yaml::Value::Mapping(long_form)],
+        )
+        .expect_err("a retained long-form mount is checked");
+        assert!(error.to_string().contains("host state root"), "{error}");
+
+        let ordinary = vec![
+            serde_yaml::Value::String("node_modules:/workspace/node_modules".to_owned()),
+            serde_yaml::Value::String(format!("{}:/workspace", canonical.display())),
+        ];
+        enforce_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            &ordinary,
+        )
+        .expect("ordinary volumes and the checkout mount are allowed");
         let _ = fs::remove_dir_all(repo_root);
     }
 }

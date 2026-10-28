@@ -242,16 +242,31 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - **A container-mode workspace is prepared for the workspace client.** Host
   Prepare publishes an immutable guest context and a version-locked Linux
-  Effigy into the container, outside the bind-mounted checkout:
+  Effigy into the container, outside the bind-mounted checkout. Activation
+  publishes it — `effigy container up`, a task's environment apply and the
+  workspace handoff all go through the same Prepare — so the recovery command
+  the entry refusals name really does repair the state. The context carries:
   `/run/effigy/context/<generation>/context.json` with the exact host and guest
   versions, the executable digest, the protocol, and the checkout,
   environment, container and VM-boot generations it belongs to;
   `/run/effigy/bin/<digest>/effigy` in a guest-private store that new
   invocations reach through `/usr/local/bin/effigy`; and, when the session
-  supplies one, a 0600 enrolment credential. A published generation and an
+  supplies one, a 0600 enrolment credential. The digest is verified, not
+  declared: the artifact must carry a producer receipt naming its target and
+  SHA-256, a release download must match the checksum the release publishes
+  beside it, and the executable the guest will run is re-hashed in the
+  container. A guest authenticates it with one digest probe, so a
+  multi-megabyte executable never lands in a bounded command's stdout budget. A published generation and an
   installed executable are never rewritten, so a run that started on one keeps
   its exact bytes. Hybrid mode publishes none of this. The context document is
-  `effigy.workspace-context.v1` (contract 052 §8.2, §8.11).
+  `effigy.workspace-context.v1` (contract 052 §8.2, §8.9, §8.11).
+- **Local Static and Observe reads run against the pinned snapshot.** Version,
+  the pinned task list (digest-verified against the context) and the pinned
+  source identities are read from the context and the mounted checkout alone: no
+  refresh, no enrolment, no host state write. A checkout whose manifest changed
+  since Prepare refuses instead of reading a snapshot the host never approved,
+  and an authority-bearing command refuses as `HostAuthorityRequired` rather
+  than enrolling.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
@@ -369,10 +384,13 @@ During v0.x, MINOR bumps may include breaking changes.
   (contract 052 §8.9).
 - **A workspace container no longer sees the checkout's host-only state.** The
   checkout's `.effigy/state` and `.effigy/secrets` (the local vault, its
-  previous generation and key wraps) are masked with empty read-only volumes,
-  and a declared mount of a host state root or of the guest's own
-  `/run/effigy` store is refused by name (contract 052 §7.3 families 1 and
-  10-11, §8.10 R1).
+  previous generation and key wraps) are masked with empty read-only volumes
+  applied last, so an entry the source Compose file already declared cannot be
+  mounted over them. The complete effective mount set — short and long form,
+  including retained entries — is validated: a host state root, an ancestor of
+  one (such as `<checkout>/.effigy`) mounted anywhere but the masked checkout
+  mount, or anything overlapping the guest's own `/run/effigy` store is refused
+  by name (contract 052 §7.3 families 1 and 10-11, §8.10 R1).
 - Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
   scopes after changed publications. Legacy v1 cache is left for manual cleanup.
 

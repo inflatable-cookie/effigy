@@ -20,10 +20,12 @@ build_script += "cargo build --release --bin effigy\n";
 build_script += "printf '%s\\n' \"$EFFIGY_ACTIVE_VERSION\" > \"${CARGO_TARGET_DIR}/release/effigy.active-version\"\n";
 build_script += "cp \"${CARGO_TARGET_DIR}/release/effigy\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n";
 build_script += "cp \"${CARGO_TARGET_DIR}/release/effigy.active-version\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + ".active-version\"\n";
+build_script += "artifact_sha256=$(sha256sum \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\" | cut -d' ' -f1)\n";
 build_script += "{\n";
 build_script += "  echo \"binary=${CARGO_TARGET_DIR}/release/effigy\"\n";
 build_script += "  echo \"copied_binary=/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n";
 build_script += "  echo \"release_triple=" + release_triple + "\"\n";
+build_script += "  echo \"sha256=$artifact_sha256\"\n";
 build_script += "  echo \"build_kind=workspace-artifact\"\n";
 build_script += "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n";
 build_script += "} > /workspace/.effigy/linux-release/artifacts/rehearsal.txt\n";
@@ -43,5 +45,10 @@ if !fs::is_file(version_path) || str::trim(fs::read_file(version_path)) != activ
 let receipt = fs::env_file_map(receipt_path);
 if receipt["release_triple"] != release_triple || fs::file_size(copied_binary) == 0 {
     throw "[error] Linux workspace artifact build did not produce valid output for " + release_triple;
+}
+// The producer receipt names the digest its consumer authenticates; a receipt
+// without one cannot bless the bytes (contract 052 §8.9).
+if !receipt.contains("sha256") || receipt["sha256"] == "" {
+    throw "[error] Linux workspace artifact receipt names no sha256 digest";
 }
 log("[ok] linux workspace artifact built");

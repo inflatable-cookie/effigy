@@ -121,8 +121,8 @@ pub(crate) struct WorkspaceEnvironmentIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkspaceContainerIdentity {
-    /// Container identity: the full id when the backend exposes one to the
-    /// guest, otherwise the container hostname the backend assigns.
+    /// The backend's full container id, as the host verified it before
+    /// publishing. A guest compares what it can observe about itself to it.
     pub(crate) container_id: String,
     /// The VM (or Linux host) boot the container belongs to (§8.4, §8.5).
     pub(crate) vm_boot_id: String,
@@ -132,7 +132,37 @@ pub(crate) struct WorkspaceContainerIdentity {
 
 impl WorkspaceContainerIdentity {
     pub(crate) fn matches(&self, live: &Self) -> bool {
-        self == live
+        self.container_id == live.container_id && self.boot_matches(live)
+    }
+
+    /// The boot and platform half of the fence. The container id is checked by
+    /// [`Self::container_matches`] so a short guest id can match its full id.
+    pub(crate) fn boot_matches(&self, live: &Self) -> bool {
+        self.vm_boot_id == live.vm_boot_id && self.platform == live.platform
+    }
+
+    /// The container half of the fence: equal, or one id is the other's
+    /// prefix of at least 12 hex digits. Docker and containerd expose a 12-hex
+    /// short id as the container hostname, so a guest that cannot read its
+    /// cgroup still names the same container; a replacement changes the id
+    /// whatever the container's configured hostname is.
+    pub(crate) fn container_matches(&self, live: &Self) -> bool {
+        let published = self.container_id.trim().to_ascii_lowercase();
+        let live_id = live.container_id.trim().to_ascii_lowercase();
+        if published.is_empty() || live_id.is_empty() {
+            return false;
+        }
+        if published == live_id {
+            return true;
+        }
+        let (shorter, longer) = if published.len() <= live_id.len() {
+            (&published, &live_id)
+        } else {
+            (&live_id, &published)
+        };
+        shorter.len() >= 12
+            && shorter.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && longer.starts_with(shorter.as_str())
     }
 }
 
@@ -385,6 +415,217 @@ impl fmt::Display for ContextReadError {
 /// local Static and Observe reads write nothing (R2).
 pub(crate) trait GuestReader {
     fn read_file(&mut self, path: &str) -> Result<Option<Vec<u8>>, RunnerError>;
+
+    /// SHA-256 of the file at `path`, or `None` when it is absent.
+    ///
+    /// This is the only way a caller checks an installed executable: the bytes
+    /// never enter the caller's capture budget or its memory, and only one
+    /// digest line comes back.
+    fn file_sha256(&mut self, path: &str) -> Result<Option<String>, RunnerError>;
+}
+
+/// A read of the mounted checkout, restricted to the guest checkout root.
+pub(crate) trait CheckoutReader {
+    /// Read a checkout-relative file. Absolute paths, `..` components and
+    /// symlink escapes are refused before any read.
+    fn read_checkout_file(&mut self, relative: &str) -> Result<Option<Vec<u8>>, RunnerError>;
+}
+
+/// One local read a container-mode guest performs without the host (§8.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LocalRead {
+    /// Version and the pinned identity this guest is running under.
+    Version,
+    /// Task names from the digest-verified manifest snapshot the context pins.
+    Tasks,
+    /// The pinned source identities the context carries.
+    Sources,
+    /// One file inside the mounted checkout.
+    CheckoutFile(String),
+}
+
+impl LocalRead {
+    /// `Version`, `Tasks` and `Sources` are Static; a checkout read is Observe.
+    /// Neither enrols (§8.8).
+    pub(crate) fn class(&self) -> GuestOperationClass {
+        match self {
+            Self::Version | Self::Tasks | Self::Sources => GuestOperationClass::Static,
+            Self::CheckoutFile(_) => GuestOperationClass::Observe,
+        }
+    }
+}
+
+/// What a local read returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LocalReadOutcome {
+    Version {
+        host_version: String,
+        guest_version: String,
+        digest: String,
+        protocol: u32,
+        context_generation: u64,
+    },
+    Tasks(Vec<String>),
+    Sources(Vec<WorkspacePinnedSource>),
+    CheckoutFile(Vec<u8>),
+}
+
+/// Why a local read did not produce a value.
+#[derive(Debug)]
+pub(crate) enum LocalReadError {
+    /// The published context or the mounted checkout refused.
+    Refused(ContextRefusal),
+    /// The guest filesystem could not be read.
+    Guest(RunnerError),
+    /// The command needs host authority, which this placement does not have.
+    /// It refuses rather than enrolling (§8.8, §8.10 R1).
+    HostAuthorityRequired(&'static str),
+}
+
+impl fmt::Display for LocalReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(refusal) => write!(formatter, "{refusal}"),
+            Self::Guest(error) => write!(formatter, "{error}"),
+            Self::HostAuthorityRequired(operation) => write!(
+                formatter,
+                "{operation} needs host authority; a container-mode guest has none and does not \
+                 enrol for it. Run `{HOST_REPREPARE_COMMAND}` on the host, or open the command \
+                 in a terminal Effigy opened"
+            ),
+        }
+    }
+}
+
+impl From<ContextRefusal> for LocalReadError {
+    fn from(refusal: ContextRefusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
+impl From<RunnerError> for LocalReadError {
+    fn from(error: RunnerError) -> Self {
+        Self::Guest(error)
+    }
+}
+
+/// A container-mode guest's local read surface: the pinned context and the
+/// mounted checkout, nothing else (R2).
+///
+/// It holds no capability and no enrolment credential, so a local read cannot
+/// enrol, and it has no writer, so a local read cannot write.
+pub(crate) struct GuestLocalReads<'a> {
+    pub(crate) context: &'a WorkspaceContext,
+    pub(crate) guest: &'a mut dyn GuestReader,
+    pub(crate) checkout: &'a mut dyn CheckoutReader,
+}
+
+impl GuestLocalReads<'_> {
+    /// Read one local command. The context generation is checked first, so a
+    /// stale generation refuses before any read.
+    pub(crate) fn read(
+        &mut self,
+        request: &LocalRead,
+        context_generation: u64,
+    ) -> Result<LocalReadOutcome, LocalReadError> {
+        if context_generation != self.context.generation {
+            return Err(
+                ContextRefusal::stale_context(context_generation, self.context.generation).into(),
+            );
+        }
+        match request {
+            LocalRead::Version => Ok(LocalReadOutcome::Version {
+                host_version: self.context.host.version.clone(),
+                guest_version: self.context.binary.version.clone(),
+                digest: self.context.binary.digest.clone(),
+                protocol: self.context.binary.protocol,
+                context_generation: self.context.generation,
+            }),
+            LocalRead::Sources => Ok(LocalReadOutcome::Sources(self.context.sources.clone())),
+            LocalRead::Tasks => self.read_pinned_tasks(),
+            LocalRead::CheckoutFile(relative) => {
+                let bytes = self.checkout.read_checkout_file(relative)?;
+                match bytes {
+                    Some(bytes) => Ok(LocalReadOutcome::CheckoutFile(bytes)),
+                    None => Err(LocalReadError::Refused(ContextRefusal::unavailable(
+                        format!(
+                            "`{relative}` is not in the mounted checkout at `{guest}`",
+                            guest = self.context.paths.guest_checkout
+                        ),
+                    ))),
+                }
+            }
+        }
+    }
+
+    /// Task names from the manifest snapshot the context pins, digest first: a
+    /// checkout whose manifest changed since Prepare refuses instead of reading
+    /// a snapshot the host never approved (§8.2).
+    fn read_pinned_tasks(&mut self) -> Result<LocalReadOutcome, LocalReadError> {
+        let Some(pin) = self
+            .context
+            .sources
+            .iter()
+            .find(|source| source.kind == "manifest")
+        else {
+            return Err(LocalReadError::Refused(ContextRefusal::unavailable(
+                "the workspace context pins no manifest snapshot; run \
+                 `effigy container up` on the host to re-prepare the workspace"
+                    .to_owned(),
+            )));
+        };
+        let Some(bytes) = self.checkout.read_checkout_file(&pin.name)? else {
+            return Err(LocalReadError::Refused(ContextRefusal::unavailable(
+                format!(
+                    "the pinned manifest `{}` is not in the mounted checkout",
+                    pin.name
+                ),
+            )));
+        };
+        let digest = sha256_text(&bytes);
+        if digest != pin.digest {
+            return Err(LocalReadError::Refused(ContextRefusal::unavailable(
+                format!(
+                    "the mounted manifest `{}` is {digest} but the context pins {}; run \
+                 `effigy container up` on the host to re-prepare the workspace",
+                    pin.name, pin.digest
+                ),
+            )));
+        }
+        let document: toml::Value =
+            toml::from_str(&String::from_utf8_lossy(&bytes)).map_err(|error| {
+                LocalReadError::Guest(RunnerError::task_invocation(format!(
+                    "the pinned manifest `{}` is not readable: {error}",
+                    pin.name
+                )))
+            })?;
+        let mut tasks = document
+            .get("tasks")
+            .and_then(toml::Value::as_table)
+            .map(|table| table.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        tasks.sort();
+        Ok(LocalReadOutcome::Tasks(tasks))
+    }
+}
+
+/// The one digest function this module uses for pinned snapshots.
+pub(crate) fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(bytes);
+    digest.finalize().into()
+}
+
+/// The refusal a container-mode guest gives an authority-bearing command: it
+/// has no host authority and does not enrol for one (§8.8, §8.10 R1).
+pub(crate) fn refuse_host_authority(operation: &'static str) -> LocalReadError {
+    LocalReadError::HostAuthorityRequired(operation)
+}
+
+/// A digest as `sha256:<hex>`, the form the context pins.
+pub(crate) fn sha256_text(bytes: &[u8]) -> String {
+    render_digest(sha256(bytes))
 }
 
 /// The guest filesystem surface Prepare may use. Each call is a journalled
@@ -584,7 +825,9 @@ impl WorkspaceContext {
                 self.generation,
             ));
         }
-        if !self.activation.container.matches(&live.container) {
+        if !self.activation.container.boot_matches(&live.container)
+            || !self.activation.container.container_matches(&live.container)
+        {
             return Err(ContextRefusal::identity_mismatch(format!(
                 "workspace context belongs to container `{}` on VM boot `{}` ({}), but this is \
                  container `{}` on VM boot `{}` ({}); run `{HOST_REPREPARE_COMMAND}` on the host \

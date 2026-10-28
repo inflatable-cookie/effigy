@@ -143,6 +143,24 @@ impl GuestReader for FakeGuest {
             .filter(|node| node.kind == FakeNodeKind::File)
             .map(|node| node.bytes.clone()))
     }
+
+    fn file_sha256(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        Ok(self
+            .nodes
+            .get(path)
+            .filter(|node| node.kind == FakeNodeKind::File)
+            .map(|node| hex_sha256(&node.bytes)))
+    }
+}
+
+/// The digest half of the `sha256:<hex>` form the context pins.
+pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = super::context::sha256(bytes);
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
 }
 
 impl GuestWorkspace for FakeGuest {
@@ -222,4 +240,181 @@ impl GuestWorkspace for FakeGuest {
         self.nodes.insert(path.to_owned(), node);
         Ok(())
     }
+}
+
+/// A guest filesystem rooted in a real directory.
+///
+/// The in-memory [`FakeGuest`] is enough for publication logic; this one makes
+/// the store a real filesystem, so a test can publish an executable, start it,
+/// and publish a new generation while it runs.
+#[cfg(test)]
+pub(crate) struct DiskGuest {
+    root: std::path::PathBuf,
+    container: super::context::WorkspaceContainerIdentity,
+}
+
+#[cfg(test)]
+impl DiskGuest {
+    pub(crate) fn new(
+        root: std::path::PathBuf,
+        container: super::context::WorkspaceContainerIdentity,
+    ) -> Self {
+        Self { root, container }
+    }
+
+    /// The real path a guest path names.
+    pub(crate) fn host_path(&self, path: &str) -> Result<std::path::PathBuf, RunnerError> {
+        let trimmed = path.trim_start_matches('/');
+        if trimmed.split('/').any(|part| part == ".." || part == ".") {
+            return Err(RunnerError::task_invocation(format!(
+                "guest path `{path}` escapes the guest root"
+            )));
+        }
+        Ok(self.root.join(trimmed))
+    }
+}
+
+#[cfg(test)]
+impl GuestReader for DiskGuest {
+    fn read_file(&mut self, path: &str) -> Result<Option<Vec<u8>>, RunnerError> {
+        let host = self.host_path(path)?;
+        match std::fs::read(&host) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(RunnerError::task_invocation(format!(
+                "cannot read guest file `{path}`: {error}"
+            ))),
+        }
+    }
+
+    fn file_sha256(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        Ok(self.read_file(path)?.map(|bytes| hex_sha256(&bytes)))
+    }
+}
+
+#[cfg(test)]
+impl GuestWorkspace for DiskGuest {
+    fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError> {
+        let host = self.host_path(path)?;
+        std::fs::create_dir_all(&host).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot create guest directory `{path}`: {error}"))
+        })?;
+        set_mode(&host, mode)
+    }
+
+    fn write_file(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError> {
+        let host = self.host_path(path)?;
+        if let Some(parent) = host.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot create guest directory for `{path}`: {error}"
+                ))
+            })?;
+        }
+        std::fs::write(&host, bytes).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot write guest file `{path}`: {error}"))
+        })?;
+        set_mode(&host, mode)
+    }
+
+    fn set_owner(&mut self, _path: &str, _owner: &str) -> Result<(), RunnerError> {
+        Ok(())
+    }
+
+    fn stage_host_file(
+        &mut self,
+        host_path: &std::path::Path,
+        guest_path: &str,
+    ) -> Result<(), RunnerError> {
+        let bytes = std::fs::read(host_path).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot read staged workspace file `{}`: {error}",
+                host_path.display()
+            ))
+        })?;
+        self.write_file(guest_path, &bytes, 0o700)
+    }
+
+    fn install_executable(&mut self, staging: &str, path: &str) -> Result<(), RunnerError> {
+        let staged = self.host_path(staging)?;
+        let bytes = std::fs::read(&staged).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot install `{path}`: staging `{staging}` is unreadable: {error}"
+            ))
+        })?;
+        self.write_file(path, &bytes, 0o555)?;
+        let _ = std::fs::remove_file(&staged);
+        Ok(())
+    }
+
+    fn replace_pointer(&mut self, path: &str, target: &str) -> Result<(), RunnerError> {
+        let host = self.host_path(path)?;
+        create_parent(&host)?;
+        let temporary = host.with_extension("tmp");
+        std::fs::write(&temporary, target).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot stage pointer `{path}`: {error}"))
+        })?;
+        std::fs::rename(&temporary, &host).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot switch pointer `{path}`: {error}"))
+        })
+    }
+
+    fn replace_link(&mut self, path: &str, target: &str) -> Result<(), RunnerError> {
+        let host = self.host_path(path)?;
+        create_parent(&host)?;
+        let temporary = host.with_extension("tmp");
+        let _ = std::fs::remove_file(&temporary);
+        // A guest path names a real filesystem path inside a container; in this
+        // rooted fake it maps under the fixture root.
+        let resolved_target = if target.starts_with('/') {
+            self.host_path(target)?
+        } else {
+            std::path::PathBuf::from(target)
+        };
+        std::os::unix::fs::symlink(&resolved_target, &temporary).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot stage entry link `{path}`: {error}"))
+        })?;
+        std::fs::rename(&temporary, &host).map_err(|error| {
+            RunnerError::task_invocation(format!("cannot switch entry link `{path}`: {error}"))
+        })
+    }
+
+    fn probe_container_identity(
+        &mut self,
+    ) -> Result<super::context::WorkspaceContainerIdentity, RunnerError> {
+        Ok(self.container.clone())
+    }
+}
+
+#[cfg(test)]
+fn create_parent(path: &std::path::Path) -> Result<(), RunnerError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot create guest directory `{}`: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn set_mode(path: &std::path::Path, mode: u32) -> Result<(), RunnerError> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = std::fs::metadata(path)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot stat guest path `{}`: {error}",
+                path.display()
+            ))
+        })?
+        .permissions();
+    permissions.set_mode(mode);
+    std::fs::set_permissions(path, permissions).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "cannot set mode on guest path `{}`: {error}",
+            path.display()
+        ))
+    })
 }

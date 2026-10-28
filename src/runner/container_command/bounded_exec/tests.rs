@@ -209,7 +209,9 @@ case "$args" in
         exit 0
         ;;
     *"$FAKE_DIGEST_HEX"*)
-        printf 'private fake guest executable'
+        # The entry authenticates the installed executable with a digest probe,
+        # never by reading its bytes into the caller's capture budget.
+        printf '%s\n' "$FAKE_DIGEST_HEX"
         exit 0
         ;;
 esac
@@ -540,7 +542,9 @@ fn public_guest_preparation_stdout(dir: &Path, mode: &str) -> u64 {
     let context = fs::read(dir.join(format!("guest-context-{mode}.json")))
         .map(|bytes| bytes.len() as u64)
         .unwrap_or(0);
-    1 + context + public_guest_digest().len() as u64 + "private fake guest executable".len() as u64
+    // The generation number, the document, the digest pointer and the digest
+    // probe's one line: never the executable's own bytes.
+    1 + context + public_guest_digest().len() as u64 + 64
 }
 
 #[cfg(unix)]
@@ -739,9 +743,8 @@ fn guarded_public_entry_child() {
             let preparation_stdout = value["preparation"]["retained"]["stdout_bytes"]
                 .as_u64()
                 .unwrap();
-            let minimum_preparation_stdout = 1
-                + std::env::var("FAKE_BOUNDED_DIGEST").unwrap().len() as u64
-                + "private fake guest executable".len() as u64;
+            let minimum_preparation_stdout =
+                1 + std::env::var("FAKE_BOUNDED_DIGEST").unwrap().len() as u64 + 64;
             assert!(
                 preparation_stdout >= minimum_preparation_stdout,
                 "preparation must read the context, the pointer and the executable: {preparation_stdout}"
