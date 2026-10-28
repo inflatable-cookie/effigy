@@ -310,6 +310,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- `effigy doctor` shows a named step for each scan check while it runs: `scanning for god files`,
+  `scanning for duplicate blocks` and `running health task`. Each ends with one line that names
+  the check: `✓ god files: no problems found`, or `✗ god files: 2 errors, see the findings below`.
+  Before, the deep scan showed no step and the health step cleared without a result. JSON and
+  piped output are unchanged.
 - A failed task run and a refused `deploy apply`/`redeploy` carry their next
   action in `--json` as `error.human.next_action`, the same instruction the
   text `next:` line prints. The deploy refusal's runnable command is now that

@@ -11,7 +11,7 @@ mod scan_checks;
 #[path = "checks/source_checks.rs"]
 mod source_checks;
 
-use super::progress::DoctorProgressReporter;
+use super::progress::{DoctorProgressReporter, ScanOutcome};
 use crate::{manifest_snapshot::ManifestSnapshot, DoctorRuntimePorts, DoctorState};
 use definitions::DoctorCheckContext;
 use std::time::Instant;
@@ -48,7 +48,7 @@ pub(super) fn run_health_check(
     workspace_root: &Path,
     catalogs: &[effigy_manifest::LoadedCatalog],
     state: &mut DoctorState,
-    progress: Option<&mut DoctorProgressReporter>,
+    mut progress: Option<&mut DoctorProgressReporter>,
     ports: &dyn DoctorRuntimePorts,
     deadline: Option<Instant>,
 ) {
@@ -59,9 +59,10 @@ pub(super) fn run_health_check(
         state.record_budget_exhausted(check.name, std::time::Duration::ZERO);
         return;
     }
-    if let (Some(progress), Some(label)) = (progress, check.progress_label) {
+    if let (Some(progress), Some(label)) = (progress.as_deref_mut(), check.progress_label) {
         progress.start_scan(label);
     }
+    let findings_before = state.findings.len();
     let started = Instant::now();
     crate::health::check_health_task(
         scope_root,
@@ -72,7 +73,16 @@ pub(super) fn run_health_check(
         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now())),
     );
     let elapsed = started.elapsed();
-    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+    let stopped = deadline.is_some_and(|deadline| Instant::now() >= deadline);
+    if let (Some(progress), Some(label)) = (progress, check.progress_label) {
+        let outcome = if stopped {
+            ScanOutcome::Stopped("stopped at the time budget")
+        } else {
+            ScanOutcome::from_findings(&state.findings[findings_before..])
+        };
+        progress.finish_scan(label, &outcome);
+    }
+    if stopped {
         state.record_budget_exhausted(check.name, elapsed);
     } else {
         state.record_completed_check(check.name, elapsed);
