@@ -1688,6 +1688,71 @@ and both workflows request no administrator access. Capture status and URL
 results on the exact candidate. The private fixture proofs do not establish
 cross-boot resolution or trust on a real installation.
 
+#### Linux qualification on a clean base
+
+Linux boot, restart and low-port qualification is also a separate, explicitly
+authorised exact-candidate proof on a clean base (Ubuntu 24.04 with systemd as
+PID 1, `systemd-resolved`, `util-linux`, `libcap2-bin`, `mkcert`, and a real
+login session for the operator). It is not part of a source task, and these
+commands are the proof to run, not a record of one. The operator identity is
+`dev` (`uid=$(id -u dev)`) with home `/home/dev`; administrator actions use
+`sudo` from `dev`, and no unit file may end up root-owned.
+
+```sh
+# 1. Clean base and negative control at the distro default.
+id -u; id -un
+sysctl net.ipv4.ip_unprivileged_port_start          # expect 1024
+getcap "$(readlink -f "$(command -v effigy)")"      # expect no output
+python3 -c 'import socket; socket.socket().bind(("127.0.0.1", 80))'  # expect EACCES
+
+# 2. Setup under the native login umask, then the records it wrote.
+umask 0002
+effigy gateway setup                                 # approve the admin prompt
+bin=$(readlink -f "$(command -v effigy)")
+getcap "$bin"                                        # expect cap_net_bind_service=ep
+stat -c '%a %U %n' ~/.config/systemd ~/.config/systemd/user \
+  ~/.config/systemd/user/effigy-gateway.service
+ls -l ~/.config/systemd/user/default.target.wants/effigy-gateway.service
+stat -c '%a %U %n' "$HOME/.effigy/gateway" "$HOME/.effigy/gateway/certs"
+stat -c '%a %U %n' ~/.local/share/mkcert/rootCA-key.pem      # expect 600 dev
+systemctl --user is-enabled effigy-gateway.service           # expect enabled
+effigy __gateway-bind-probe 127.0.0.1:80 127.0.0.1:443         # capability_effective true
+effigy gateway status --json | jq '.result.launcher'
+
+# 3. Start, stop and restart requests against the kernel-owned lifecycle.
+effigy gateway down; effigy gateway status --json | jq '.result.status'
+systemctl --user restart effigy-gateway.service; effigy gateway status --json | jq '.result.status'
+systemctl --user stop effigy-gateway.service; effigy gateway status --json | jq '.result.status'
+systemctl --user start effigy-gateway.service
+
+# 4. Boot persistence, only if the proof covers a login-less boot.
+loginctl enable-linger "$USER"
+sudo reboot
+# before any login:
+systemctl --user is-active effigy-gateway.service
+effigy gateway status --json | jq '.result.launcher'
+loginctl disable-linger "$USER"
+
+# 5. A replaced binary and a foreign unit must be reported, not hidden.
+effigy install:local
+effigy gateway status --json | jq '.result.launcher.low_port' # expect "missing"
+effigy gateway setup                                          # restores it
+printf '[Unit]\nDescription=foreign\n' > ~/.config/systemd/user/effigy-gateway.service
+effigy gateway setup; echo $?                                 # expect non-zero, file unchanged
+
+# 6. Exact cleanup of everything this proof installed.
+effigy gateway setup --remove
+getcap "$bin"                                                 # expect no output
+test ! -e ~/.config/systemd/user/effigy-gateway.service
+test ! -e ~/.config/systemd/user/default.target.wants/effigy-gateway.service
+loginctl disable-linger "$USER" 2>/dev/null || true
+systemctl --user daemon-reload
+```
+
+Destroy the VM afterwards instead of reusing its mkcert CA, trust store or
+endpoint Store. Capture the candidate identity, the commands above, and each
+result on the exact candidate; a passing source test is not this proof.
+
 ### Private gateway for disposable consumers
 
 Use private mode when a disposable checkout needs real HTTPS without changing

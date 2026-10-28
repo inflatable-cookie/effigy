@@ -317,7 +317,10 @@ directly, so `systemctl --user restart` is a reconcile request and the
 kernel `Run`, gate, journal and settlement stay the sole lifecycle
 authority. The unit is user-owned, marker-verified, idempotent, removed only
 when Effigy wrote it, and `gateway setup --remove` disables it before the
-capability is removed. A login-session user manager starts it without help;
+capability is removed. A unit directory Effigy creates is explicitly 0755, so
+the Ubuntu login umask 002 cannot leave Effigy's own directory group-writable
+and then refused after the administrator step; a directory that already exists
+is never repaired, and an unsafe one is refused with the exact `chmod`. A login-session user manager starts it without help;
 a login-less boot start is the operator's explicit `loginctl enable-linger`
 opt-in (reversed with `disable-linger`) and setup never enables it or needs
 passwordless administration.
@@ -333,7 +336,8 @@ denial fails setup rather than leaving a gateway that cannot serve 80/443.
 capability record without repairing or elevating, omits an unobservable linger
 state, and reports a foreign unit or capability as `foreign` with the exact
 recovery commands. Boot and native user-manager qualification on a Linux host
-remains a separate exact-candidate VM proof.
+remains a separate exact-candidate clean-base proof; guide 063 carries its
+commands, identities and cleanup.
 
 The accepted prerequisite kernel APIs remain Run replace_file/enable_custody,
 pure latest-run/effects projections, gateway control-socket placement and

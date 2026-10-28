@@ -254,8 +254,20 @@ fn legacy_status(config: &GatewayConfig) -> io::Result<Status> {
 /// Pure, bounded observation: no repair, privilege request or exclusive gate.
 pub fn status(config: &GatewayConfig) -> io::Result<Status> {
     let mut result = observed_status(config)?;
-    result.launcher = home(config).ok().and_then(crate::linux_operator::current);
+    result.launcher = operator_home(config)
+        .ok()
+        .and_then(crate::linux_operator::current);
     Ok(result)
+}
+/// The operator account home, which owns the Linux launch unit and is the
+/// `$HOME` `gateway setup` wrote it under. A private gateway is a disposable
+/// instance under its own state root: it has no machine unit, and its state
+/// path is not an operator home.
+fn operator_home(config: &GatewayConfig) -> io::Result<&Path> {
+    if config.private_state_root().is_some() {
+        return Err(error("a private gateway has no operator launch unit"));
+    }
+    home(config)
 }
 fn observed_status(config: &GatewayConfig) -> io::Result<Status> {
     let op = context(Duration::from_secs(3), EffectClass::Observe);
@@ -833,6 +845,37 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A private gateway's state path is not an operator home, so it must never
+    /// acquire the machine launch unit. The operator layout still derives the
+    /// account home from its gateway directory.
+    #[test]
+    fn only_an_operator_gateway_has_a_launch_unit_home() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("private");
+        std::fs::create_dir_all(&state).unwrap();
+        let private = GatewayConfig::private(state.clone());
+        let error = operator_home(&private).unwrap_err();
+        assert!(error.to_string().contains("private gateway"), "{error}");
+
+        let home = tempfile::tempdir().unwrap();
+        let operator = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        assert_eq!(operator_home(&operator).unwrap(), home.path());
+    }
+
+    /// Status of a private gateway omits the launcher block entirely: there is
+    /// no machine unit to observe, and its state path must not be read as one.
+    #[test]
+    fn private_status_never_reports_an_operator_launcher() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("private");
+        std::fs::create_dir_all(&state).unwrap();
+        let config = GatewayConfig::private(state);
+        let status = status(&config).unwrap();
+        assert!(status.launcher.is_none(), "{status:?}");
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(!json.contains("launcher"), "{json}");
+    }
 
     /// A finished daemon is described in words: what ended it, the phase it
     /// was in and the observed tail, and never a `Debug` rendering of the

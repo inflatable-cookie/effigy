@@ -428,21 +428,85 @@ fn owned_unit(bytes: &[u8]) -> bool {
 
 /// Create the operator's unit directory with the ownership and mode systemd
 /// needs, refusing a directory another account could rewrite.
+///
+/// A directory Effigy creates itself gets mode 0755 explicitly: the login umask
+/// on Ubuntu is 002, so a plain `mkdir` would leave it group-writable and the
+/// trust check below would refuse Effigy's own directory after the
+/// administrator step. A directory that already exists is never repaired; it
+/// is refused with the exact `chmod` that fixes it.
 fn create_user_unit_dir(paths: &LaunchPaths, operator_uid: u32) -> io::Result<()> {
-    std::fs::create_dir_all(&paths.user_dir).map_err(|failure| {
-        error(format!(
-            "creating the systemd user unit directory {} failed: {failure}",
-            paths.user_dir.display()
-        ))
-    })?;
+    match std::fs::symlink_metadata(&paths.user_dir) {
+        Ok(metadata) => return verify_user_unit_dir(paths, &metadata, operator_uid),
+        Err(failure) if failure.kind() == io::ErrorKind::NotFound => {}
+        Err(failure) => {
+            return Err(error(format!(
+                "the systemd user unit directory {} is unreadable: {failure}",
+                paths.user_dir.display()
+            )))
+        }
+    }
+    create_missing_directories(&paths.user_dir)?;
     let metadata = std::fs::symlink_metadata(&paths.user_dir).map_err(error)?;
+    verify_user_unit_dir(paths, &metadata, operator_uid)
+}
+
+/// Create only the missing components of one path, each with mode 0755.
+fn create_missing_directories(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut missing = Vec::new();
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        match std::fs::symlink_metadata(candidate) {
+            Ok(_) => break,
+            Err(failure) if failure.kind() == io::ErrorKind::NotFound => {
+                missing.push(candidate.to_path_buf());
+                current = candidate.parent();
+            }
+            Err(failure) => {
+                return Err(error(format!(
+                    "the systemd user unit path {} is unreadable: {failure}",
+                    candidate.display()
+                )))
+            }
+        }
+    }
+    for directory in missing.into_iter().rev() {
+        std::fs::DirBuilder::new()
+            .mode(0o755)
+            .create(&directory)
+            .map_err(|failure| {
+                error(format!(
+                    "creating the systemd user unit directory {} failed: {failure}",
+                    directory.display()
+                ))
+            })?;
+        // The creation mode is masked by the caller's umask; make the shape
+        // deterministic so the trust check below cannot depend on it.
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).map_err(
+            |failure| {
+                error(format!(
+                    "setting the mode of the systemd user unit directory {} failed: {failure}",
+                    directory.display()
+                ))
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn verify_user_unit_dir(
+    paths: &LaunchPaths,
+    metadata: &std::fs::Metadata,
+    operator_uid: u32,
+) -> io::Result<()> {
     if metadata.file_type().is_symlink()
         || !metadata.is_dir()
         || metadata.uid() != operator_uid
         || metadata.mode() & 0o022 != 0
     {
         return Err(error(format!(
-            "unsafe systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable",
+            "unsafe systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable. Run `chmod 755 {}`, then run `effigy gateway setup` again",
+            paths.user_dir.display(),
             paths.user_dir.display()
         )));
     }
@@ -1012,9 +1076,14 @@ pub fn observe(
         UnitState::Missing => recovery.push(
             "run `effigy gateway setup` to install the login launch unit".to_owned(),
         ),
-        UnitState::Foreign | UnitState::Unsafe => recovery.push(format!(
+        UnitState::Foreign => recovery.push(format!(
             "preserving the systemd unit Effigy does not own at {}; move it aside, then run `effigy gateway setup`",
             paths.unit.display()
+        )),
+        UnitState::Unsafe => recovery.push(format!(
+            "the systemd user unit path {} is unsafe: it must be a real directory owned by you and not group- or world-writable. Run `chmod 755 {}`, then run `effigy gateway setup`",
+            paths.user_dir.display(),
+            paths.user_dir.display()
         )),
         UnitState::Installed => {}
     }
@@ -1352,7 +1421,66 @@ mod tests {
             assert!(status
                 .recovery
                 .iter()
-                .any(|line| line.contains("move it aside")));
+                .any(|line| line.contains("chmod 755")));
+        });
+    }
+
+    #[test]
+    fn a_fresh_unit_directory_is_created_owner_only_under_a_permissive_umask() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            // Ubuntu's login umask is 002, so the parent Effigy inherits looks
+            // like this: group-writable already, and `systemd/user` missing.
+            let config = home.path().join("config");
+            std::fs::create_dir_all(config.join("systemd")).unwrap();
+            for directory in [&config, &config.join("systemd")] {
+                std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o775))
+                    .unwrap();
+            }
+            let paths = LaunchPaths::at(config.join("systemd/user"), home.path());
+            let mut systemd = FakeSystemd::default();
+            let installed = install(run, cx, &paths, uid, &binary, &mut systemd).unwrap();
+            assert!(installed
+                .recovery
+                .iter()
+                .any(|line| line == "systemctl --user enable effigy-gateway.service"));
+            // The directory Effigy created is owner-only despite the umask, so
+            // setup does not refuse its own output after the admin step.
+            let mode = std::fs::metadata(&paths.user_dir).unwrap().mode() & 0o777;
+            assert_eq!(mode, 0o755, "fresh unit directory mode {mode:o}");
+            assert_eq!(
+                std::fs::metadata(&paths.unit).unwrap().mode() & 0o777,
+                0o644
+            );
+            assert_eq!(observe_unit(&paths, uid), UnitState::Installed);
+        });
+    }
+
+    #[test]
+    fn a_fresh_unit_directory_chain_is_created_owner_only() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let paths = LaunchPaths::at(home.path().join("config/systemd/user"), home.path());
+            assert!(!paths.user_dir.exists());
+            let mut systemd = FakeSystemd::default();
+            install(run, cx, &paths, uid, &binary, &mut systemd).unwrap();
+            for directory in [
+                home.path().join("config"),
+                home.path().join("config/systemd"),
+                paths.user_dir.clone(),
+            ] {
+                let mode = std::fs::metadata(&directory).unwrap().mode() & 0o777;
+                assert_eq!(mode, 0o755, "{} is {mode:o}", directory.display());
+                assert!(
+                    mode & 0o022 == 0,
+                    "{} is group-writable",
+                    directory.display()
+                );
+            }
         });
     }
 
@@ -1723,93 +1851,201 @@ mod tests {
         assert!(empty.refusal().is_some());
     }
 
-    #[test]
-    fn the_launch_unit_routes_every_manager_action_to_the_gateway_engine() {
-        // systemd can only ask for what the unit declares. Modelling the
-        // manager against those two commands proves the unit's start, stop and
-        // restart requests are the operator route, and that the gateway
-        // engine's own state stays the authority the manager cannot see.
-        let unit = String::from_utf8(
-            unit_definition(
-                Path::new("/opt/effigy/bin/effigy"),
-                Path::new("/home/operator"),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let declared: Vec<&str> = unit
-            .lines()
-            .filter_map(|line| line.strip_prefix("Exec"))
-            .collect();
-        assert_eq!(
-            declared,
-            vec![
-                "Start=\"/opt/effigy/bin/effigy\" gateway up",
-                "Stop=\"/opt/effigy/bin/effigy\" gateway down",
-            ]
-        );
+    /// A fake systemd user manager that behaves like the real one for this
+    /// unit: `enable` writes the login activation link, `start` runs the
+    /// unit's declared ExecStart, `stop`/`disable --now` runs its declared
+    /// ExecStop, and `restart` is stop followed by start.
+    ///
+    /// It executes only the commands the *installed* unit declares, so the
+    /// lifecycle assertions below are about production output rather than a
+    /// second copy of the expected text.
+    struct FakeManager {
+        unit: PathBuf,
+        wants: PathBuf,
+        active: bool,
+        enabled: bool,
+        running: bool,
+        /// Gateway operations the unit's commands requested, in order.
+        requests: Vec<&'static str>,
+        /// Every manager request received, in order.
+        calls: Vec<Vec<String>>,
+    }
 
-        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-        enum Gateway {
-            Stopped,
-            Running,
-        }
-        #[derive(Default)]
-        struct FakeManager {
-            gateway: Option<Gateway>,
-            active: bool,
-            requests: Vec<&'static str>,
-        }
-        impl FakeManager {
-            fn start(&mut self) {
-                self.active = true;
-                // `gateway up` is idempotent: it uses a running gateway.
-                self.requests.push("up");
-                self.gateway = Some(Gateway::Running);
+    impl FakeManager {
+        fn for_paths(paths: &LaunchPaths) -> Self {
+            Self {
+                unit: paths.unit.clone(),
+                wants: paths.wants.clone(),
+                active: false,
+                enabled: false,
+                running: false,
+                requests: Vec::new(),
+                calls: Vec::new(),
             }
-            fn stop(&mut self) {
-                if self.active {
-                    self.active = false;
-                    self.requests.push("down");
-                    self.gateway = Some(Gateway::Stopped);
-                }
+        }
+
+        /// The verb of one declared command line of the installed unit.
+        fn declared(&self, key: &str) -> &'static str {
+            let unit = std::fs::read_to_string(&self.unit).expect("the installed unit is readable");
+            let value = unit
+                .lines()
+                .find_map(|line| line.strip_prefix(key))
+                .unwrap_or_else(|| panic!("the installed unit declares {key}"));
+            match value.rsplit(' ').next() {
+                Some("up") => "up",
+                Some("down") => "down",
+                other => panic!("unexpected {key} verb {other:?}"),
             }
-            fn restart(&mut self) {
-                self.stop();
+        }
+
+        /// A `systemctl --user start` of an inactive unit.
+        fn start(&mut self) {
+            self.calls.push(vec!["start".into(), UNIT_NAME.into()]);
+            if self.active {
+                // RemainAfterExit=yes: a start of an active unit does nothing.
+                return;
+            }
+            self.active = true;
+            let verb = self.declared("ExecStart=");
+            self.requests.push(verb);
+            self.running = verb == "up";
+        }
+
+        /// A `systemctl --user stop`, which runs the declared ExecStop.
+        fn stop(&mut self) {
+            self.calls.push(vec!["stop".into(), UNIT_NAME.into()]);
+            if !self.active {
+                return;
+            }
+            self.active = false;
+            let verb = self.declared("ExecStop=");
+            self.requests.push(verb);
+            self.running = false;
+        }
+
+        fn restart(&mut self) {
+            self.calls.push(vec!["restart".into(), UNIT_NAME.into()]);
+            self.stop();
+            self.start();
+        }
+
+        /// The operator's own command, outside the manager.
+        fn gateway_down(&mut self) {
+            self.requests.push("down");
+            self.running = false;
+        }
+
+        /// A fresh login: a new user manager starts every enabled unit.
+        fn login(&mut self) {
+            self.active = false;
+            if self.enabled {
                 self.start();
             }
-            /// The operator's own command, outside the manager.
-            fn gateway_down(&mut self) {
-                self.requests.push("down");
-                self.gateway = Some(Gateway::Stopped);
-            }
         }
 
-        let mut manager = FakeManager::default();
-        // First login: the unit starts the gateway.
-        manager.start();
-        assert_eq!(manager.gateway, Some(Gateway::Running));
-        assert_eq!(manager.requests, vec!["up"]);
+        fn link(&mut self) {
+            std::fs::create_dir_all(self.wants.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&self.unit, &self.wants).unwrap();
+            self.enabled = true;
+        }
 
-        // `effigy gateway down` stops it without touching the manager, and the
-        // next login starts the gateway again.
-        manager.gateway_down();
-        manager.active = false;
-        manager.start();
-        assert_eq!(manager.gateway, Some(Gateway::Running));
-        assert_eq!(manager.requests, vec!["up", "down", "up"]);
+        fn unlink(&mut self) {
+            if self.wants.exists() || std::fs::symlink_metadata(&self.wants).is_ok() {
+                std::fs::remove_file(&self.wants).unwrap();
+            }
+            self.enabled = false;
+        }
+    }
 
-        // A restart is a reconcile request: down, then up, never a supervisor.
-        manager.requests.clear();
-        manager.restart();
-        assert_eq!(manager.requests, vec!["down", "up"]);
-        assert_eq!(manager.gateway, Some(Gateway::Running));
+    impl SystemdUser for FakeManager {
+        fn run(&mut self, args: &[&str]) -> io::Result<SystemdOutcome> {
+            self.calls
+                .push(args.iter().map(|arg| (*arg).to_owned()).collect());
+            let code = match args {
+                ["daemon-reload"] => 0,
+                ["enable", UNIT_NAME] => {
+                    self.link();
+                    0
+                }
+                ["disable", "--now", UNIT_NAME] => {
+                    self.stop();
+                    self.unlink();
+                    0
+                }
+                ["disable", UNIT_NAME] => {
+                    self.unlink();
+                    0
+                }
+                _ => 1,
+            };
+            Ok(SystemdOutcome {
+                code,
+                stderr: Vec::new(),
+            })
+        }
+    }
 
-        // A clean stop is the ordinary `gateway down` request.
-        manager.requests.clear();
-        manager.stop();
-        assert_eq!(manager.requests, vec!["down"]);
-        assert_eq!(manager.gateway, Some(Gateway::Stopped));
+    #[test]
+    fn install_and_remove_drive_only_the_units_own_operator_commands() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let mut manager = FakeManager::for_paths(&paths);
+
+            // Setup: production install writes the unit and enables it. The
+            // gateway itself is not started by the unit file's mere existence.
+            let installed = install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(installed.enabled, "the fake manager wrote the login link");
+            assert!(!manager.running);
+            assert_eq!(manager.declared("ExecStart="), "up");
+            assert_eq!(manager.declared("ExecStop="), "down");
+
+            // First login: the enabled unit starts the gateway.
+            manager.login();
+            assert!(manager.running);
+            assert_eq!(manager.requests, vec!["up"]);
+
+            // `effigy gateway down` stops the gateway without touching the
+            // manager, so the unit stays active and a start is a no-op.
+            manager.gateway_down();
+            assert!(!manager.running);
+            manager.start();
+            assert!(!manager.running, "RemainAfterExit makes start a no-op");
+            assert_eq!(manager.requests, vec!["up", "down"]);
+
+            // The next login starts it again, because the unit is enabled.
+            manager.login();
+            assert!(manager.running);
+            assert_eq!(manager.requests, vec!["up", "down", "up"]);
+
+            // A restart is the documented reconcile request: down, then up.
+            manager.requests.clear();
+            manager.restart();
+            assert_eq!(manager.requests, vec!["down", "up"]);
+            assert!(manager.running);
+
+            // Production removal asks the manager to disable and stop the unit;
+            // the manager runs ExecStop, which is the ordinary `gateway down`.
+            manager.requests.clear();
+            remove(cx, &paths, uid, &mut manager).unwrap();
+            assert_eq!(manager.requests, vec!["down"]);
+            assert!(!manager.running);
+            assert!(!manager.enabled);
+            assert!(!paths.unit.exists());
+            assert!(!paths.wants.exists());
+            assert_eq!(
+                manager.calls.last().map(Vec::as_slice),
+                Some(&["daemon-reload".to_owned()][..])
+            );
+            assert!(manager.calls.iter().any(|call| call
+                == &[
+                    "disable".to_owned(),
+                    "--now".to_owned(),
+                    UNIT_NAME.to_owned()
+                ]));
+        });
     }
 
     #[test]
