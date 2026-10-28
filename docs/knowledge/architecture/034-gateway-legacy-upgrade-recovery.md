@@ -308,6 +308,37 @@ lifecycle remain unprivileged. Linux uses the executable-local
 CAP_NET_BIND_SERVICE adapter; setup never changes the host port threshold.
 Both adapters refuse foreign setup output before changing it.
 
+Linux keeps the same one-authority model with a launch-only systemd **user**
+unit. `gateway setup` writes and enables
+`~/.config/systemd/user/effigy-gateway.service`, whose only actions are the
+operator commands `effigy gateway up` (start) and `effigy gateway down`
+(stop). The unit declares no `Restart=` policy and never runs the daemon
+directly, so `systemctl --user restart` is a reconcile request and the
+kernel `Run`, gate, journal and settlement stay the sole lifecycle
+authority. The unit is user-owned, marker-verified, idempotent, removed only
+when Effigy wrote it, and `gateway setup --remove` disables it before the
+capability is removed. A unit directory Effigy creates is explicitly 0755, so
+the Ubuntu login umask 002 cannot leave Effigy's own directory group-writable
+and then refused after the administrator step; a directory that already exists
+is never repaired, and an unsafe one is refused with the exact `chmod`. A login-session user manager starts it without help;
+a login-less boot start is the operator's explicit `loginctl enable-linger`
+opt-in (reversed with `disable-linger`) and setup never enables it or needs
+passwordless administration.
+
+The capability is bound to one install identity: the exact binary setup ran,
+with one link, owner-private mode and the operator (or root) as owner. A
+changed, linked or group/world-writable image is refused before a capability
+or unit names it. Setup verifies the result instead of assuming it: after the
+privileged stage, a fresh exec of the installed binary as the operator binds
+the configured low ports and reports `bound`, `in_use` or `denied`, and a
+denial fails setup rather than leaving a gateway that cannot serve 80/443.
+`gateway status` observes the unit, its login activation, `linger` and the
+capability record without repairing or elevating, omits an unobservable linger
+state, and reports a foreign unit or capability as `foreign` with the exact
+recovery commands. Boot and native user-manager qualification on a Linux host
+remains a separate exact-candidate clean-base proof; guide 063 carries its
+commands, identities and cleanup.
+
 The accepted prerequisite kernel APIs remain Run replace_file/enable_custody,
 pure latest-run/effects projections, gateway control-socket placement and
 setup-only descriptor-relative ownership transfer. They require independent

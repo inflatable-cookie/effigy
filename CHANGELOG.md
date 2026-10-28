@@ -136,6 +136,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- **Linux runs the operator gateway from a launch-only systemd user unit.**
+  `effigy gateway setup` installs and enables
+  `~/.config/systemd/user/effigy-gateway.service`, whose only actions are
+  `effigy gateway up` at login and `effigy gateway down` on stop; the daemon's
+  kernel Run stays the lifecycle authority, so the unit declares no restart
+  policy and `systemctl --user restart` is an ordinary reconcile request. A
+  login-less boot start is your explicit `loginctl enable-linger "$USER"`
+  opt-in (undo with `disable-linger`). After the administrator step, setup
+  re-execs the installed binary as you and binds the configured low ports to
+  prove the `CAP_NET_BIND_SERVICE` capability, refusing a changed, linked or
+  group/world-writable binary. `gateway status --json` reports the observed
+  `launcher` facts and recovery commands, and `gateway setup --remove` removes
+  only unit and capability records Effigy wrote.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
