@@ -1,7 +1,8 @@
 use super::{
-    default_local_artifact_root, stage_local_artifact, stage_oci_artifact, ArtifactKind,
-    ArtifactMetadata, ArtifactRefError, ArtifactSourceRef, LocalArtifactStagingRequest,
-    OciArtifactDescriptor, OciArtifactStagingRequest, ARTIFACT_METADATA_SCHEMA,
+    default_local_artifact_root, parse_oras_descriptor, stage_local_artifact, stage_oci_artifact,
+    ArtifactKind, ArtifactMetadata, ArtifactRefError, ArtifactSourceRef,
+    LocalArtifactStagingRequest, OciArtifactDescriptor, OciArtifactStagingRequest,
+    ARTIFACT_METADATA_SCHEMA,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -236,6 +237,74 @@ fn descriptor_captures_digest_from_ref() {
 }
 
 #[test]
+fn descriptor_captures_digest_from_ref_with_userinfo() {
+    let parsed =
+        ArtifactSourceRef::parse("oci://token:secret@ghcr.io/acowtancy/private@sha256:abc123")
+            .expect("parse ref");
+
+    let ArtifactSourceRef::Oci(oci) = parsed else {
+        panic!("expected oci source");
+    };
+    let descriptor = OciArtifactDescriptor::new(&oci);
+
+    assert_eq!(descriptor.digest.as_deref(), Some("sha256:abc123"));
+    assert_eq!(
+        descriptor.redacted_reference,
+        "***@ghcr.io/acowtancy/private@sha256:abc123"
+    );
+}
+
+#[test]
+fn descriptor_does_not_treat_userinfo_at_as_a_digest() {
+    let parsed = ArtifactSourceRef::parse("oci://token:secret@ghcr.io/acowtancy/private:latest")
+        .expect("parse ref");
+
+    let ArtifactSourceRef::Oci(oci) = parsed else {
+        panic!("expected oci source");
+    };
+    let descriptor = OciArtifactDescriptor::new(&oci);
+
+    assert_eq!(descriptor.digest, None);
+}
+
+#[test]
+fn parse_oras_descriptor_refuses_digest_mismatch_against_the_pin() {
+    let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private@sha256:abc123")
+        .expect("parse ref");
+    let ArtifactSourceRef::Oci(oci) = parsed else {
+        panic!("expected oci source");
+    };
+
+    let error = parse_oras_descriptor(
+        &oci,
+        br#"{"digest":"sha256:ffffff","mediaType":"application/vnd.oci.image.manifest.v1+json"}"#,
+    )
+    .expect_err("mismatched pin must fail closed");
+
+    assert!(
+        error.contains("does not match digest-pinned reference `sha256:abc123`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn parse_oras_descriptor_binds_the_pin_when_oras_omits_digest() {
+    let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private@sha256:abc123")
+        .expect("parse ref");
+    let ArtifactSourceRef::Oci(oci) = parsed else {
+        panic!("expected oci source");
+    };
+
+    let descriptor = parse_oras_descriptor(
+        &oci,
+        br#"{"mediaType":"application/vnd.oci.image.manifest.v1+json"}"#,
+    )
+    .expect("pin fills omitted digest");
+
+    assert_eq!(descriptor.digest.as_deref(), Some("sha256:abc123"));
+}
+
+#[test]
 fn stages_pulled_oci_artifact_with_same_metadata_model() {
     let repo = temp_dir();
     let pulled_root = repo.join("pulled");
@@ -283,6 +352,60 @@ fn stages_pulled_oci_artifact_with_same_metadata_model() {
         b"media"
     );
     assert!(report.metadata_path.is_file());
+}
+
+#[test]
+fn stage_oci_binds_the_pin_when_digest_is_omitted() {
+    let repo = temp_dir();
+    let pulled_root = repo.join("pulled");
+    fs::create_dir_all(&pulled_root).expect("create pulled root");
+    fs::write(pulled_root.join("legacy.sql"), b"create table legacy;")
+        .expect("write pulled payload");
+
+    let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/legacy@sha256:abc123")
+        .expect("parse ref");
+    let ArtifactSourceRef::Oci(oci) = parsed else {
+        panic!("expected oci source");
+    };
+    let request = OciArtifactStagingRequest::new(
+        oci,
+        pulled_root,
+        default_local_artifact_root(&repo),
+        vec![PathBuf::from("legacy.sql")],
+        ArtifactKind::LegacySourceSnapshot,
+    );
+
+    let report = stage_oci_artifact(&request).expect("stage binds the pin");
+    assert_eq!(report.metadata.digest.as_deref(), Some("sha256:abc123"));
+}
+
+#[test]
+fn stage_oci_refuses_digest_that_does_not_match_the_pin() {
+    let repo = temp_dir();
+    let pulled_root = repo.join("pulled");
+    fs::create_dir_all(&pulled_root).expect("create pulled root");
+    fs::write(pulled_root.join("legacy.sql"), b"create table legacy;")
+        .expect("write pulled payload");
+
+    let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/legacy@sha256:abc123")
+        .expect("parse ref");
+    let ArtifactSourceRef::Oci(oci) = parsed else {
+        panic!("expected oci source");
+    };
+    let request = OciArtifactStagingRequest::new(
+        oci,
+        pulled_root,
+        default_local_artifact_root(&repo),
+        vec![PathBuf::from("legacy.sql")],
+        ArtifactKind::LegacySourceSnapshot,
+    )
+    .with_digest("sha256:ffffff");
+
+    let error = stage_oci_artifact(&request).expect_err("mismatched pin must fail closed");
+    assert_eq!(
+        error.to_string(),
+        "staged OCI digest `sha256:ffffff` does not match digest-pinned source `sha256:abc123`"
+    );
 }
 
 #[test]
