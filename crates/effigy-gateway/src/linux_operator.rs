@@ -29,7 +29,7 @@ use effigy_kernel::fs::{DirFd, FileName};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::record::{read_record, Record, ReplaceOpts};
 use effigy_kernel::run::Run;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::operator::error;
 use crate::setup::MARKER;
@@ -38,6 +38,8 @@ use crate::setup::MARKER;
 pub const UNIT_NAME: &str = "effigy-gateway.service";
 /// The hidden probe entry setup spawns; the binary and setup share one name.
 pub const BIND_PROBE_ENTRY: &str = "__gateway-bind-probe";
+/// Checked schema of the JSON report that child prints.
+pub const BIND_PROBE_SCHEMA: &str = "effigy.gateway.bind-probe.v1";
 const SYSTEMCTL: &str = "/usr/bin/systemctl";
 const LINGER_DIR: &str = "/var/lib/systemd/linger";
 /// Bound on any single `systemctl --user` invocation. Setup must never wait on
@@ -847,7 +849,7 @@ pub fn current_capability_state(operator_uid: u32) -> BindCapabilityState {
 }
 
 /// One bounded low-port bind attempt as the operator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BindOutcome {
     /// The capability let this unprivileged process bind the exact endpoint.
@@ -860,16 +862,18 @@ pub enum BindOutcome {
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BindProbe {
     pub address: String,
     pub outcome: BindOutcome,
 }
 
 /// The report the `__gateway-bind-probe` child prints for setup.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BindProbeReport {
-    pub schema: &'static str,
+    pub schema: String,
     pub effective_uid: u32,
     pub root: bool,
     /// Whether this fresh exec carries `CAP_NET_BIND_SERVICE` effectively. This
@@ -879,6 +883,19 @@ pub struct BindProbeReport {
 }
 
 impl BindProbeReport {
+    /// Parse the child's JSON report. Unknown schema and a malformed outcome
+    /// are refused before setup reads bind results.
+    pub fn parse(bytes: &[u8]) -> io::Result<Self> {
+        let report: Self = serde_json::from_slice(bytes).map_err(unreadable_probe_report)?;
+        if report.schema != BIND_PROBE_SCHEMA {
+            return Err(unreadable_probe_report(format!(
+                "unknown schema `{}`",
+                report.schema
+            )));
+        }
+        Ok(report)
+    }
+
     /// Why setup must refuse this probe, if it must. The probe must not be root
     /// (a privileged bind proves nothing about the operator), the fresh exec
     /// must carry the capability, and no endpoint may be refused or fail.
@@ -941,12 +958,18 @@ pub fn probe(addresses: &[SocketAddr]) -> BindProbeReport {
         })
         .collect();
     BindProbeReport {
-        schema: "effigy.gateway.bind-probe.v1",
+        schema: BIND_PROBE_SCHEMA.to_string(),
         effective_uid,
         root,
         capability_effective: capability_effective(),
         addresses,
     }
+}
+
+fn unreadable_probe_report(failure: impl std::fmt::Display) -> io::Error {
+    error(format!(
+        "the low-port probe report was unreadable: {failure}"
+    ))
 }
 
 /// Whether this process carries `CAP_NET_BIND_SERVICE` in its effective set.
@@ -1785,7 +1808,7 @@ mod tests {
     #[test]
     fn probe_reports_bound_in_use_denied_and_unexpected_failures() {
         let report = BindProbeReport {
-            schema: "effigy.gateway.bind-probe.v1",
+            schema: BIND_PROBE_SCHEMA.to_string(),
             effective_uid: 501,
             root: false,
             capability_effective: true,
@@ -1842,13 +1865,67 @@ mod tests {
         assert!(root.refusal().is_some());
 
         let empty = BindProbeReport {
-            schema: "effigy.gateway.bind-probe.v1",
+            schema: BIND_PROBE_SCHEMA.to_string(),
             effective_uid: 501,
             root: false,
             capability_effective: true,
             addresses: Vec::new(),
         };
         assert!(empty.refusal().is_some());
+    }
+
+    #[test]
+    fn bind_probe_report_round_trips_and_refuses_unknown_schema_or_malformed_outcome() {
+        let report = BindProbeReport {
+            schema: BIND_PROBE_SCHEMA.to_string(),
+            effective_uid: 501,
+            root: false,
+            capability_effective: true,
+            addresses: vec![
+                BindProbe {
+                    address: "127.0.0.1:80".into(),
+                    outcome: BindOutcome::Bound,
+                },
+                BindProbe {
+                    address: "127.0.0.1:443".into(),
+                    outcome: BindOutcome::InUse,
+                },
+                BindProbe {
+                    address: "127.0.0.1:53".into(),
+                    outcome: BindOutcome::Failed("address family not supported".into()),
+                },
+            ],
+        };
+        let bytes = serde_json::to_vec(&report).unwrap();
+        assert_eq!(BindProbeReport::parse(&bytes).unwrap(), report);
+
+        let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(wire["schema"], BIND_PROBE_SCHEMA);
+        assert_eq!(wire["addresses"][0]["outcome"], "bound");
+        assert_eq!(wire["addresses"][1]["outcome"], "in_use");
+        assert_eq!(
+            wire["addresses"][2]["outcome"]["failed"],
+            "address family not supported"
+        );
+
+        let mut unknown = report.clone();
+        unknown.schema = "effigy.gateway.bind-probe.v0".into();
+        let error = BindProbeReport::parse(&serde_json::to_vec(&unknown).unwrap()).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("unreadable") && message.contains("unknown schema"),
+            "{message}"
+        );
+
+        let malformed = serde_json::json!({
+            "schema": BIND_PROBE_SCHEMA,
+            "effective_uid": 501,
+            "root": false,
+            "capability_effective": true,
+            "addresses": [{ "address": "127.0.0.1:80", "outcome": "nope" }],
+        });
+        let error = BindProbeReport::parse(malformed.to_string().as_bytes()).unwrap_err();
+        assert!(error.to_string().contains("unreadable"), "{error}");
     }
 
     /// A fake systemd user manager that behaves like the real one for this
