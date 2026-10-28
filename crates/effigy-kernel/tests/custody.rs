@@ -1251,6 +1251,21 @@ fn custody_engine_detached_client_exit_keeps_the_run_until_stop() {
 fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
     let home = home();
     let cx = context();
+    // 052 §8.11: a host dispatcher reserves the keyed request and hands the
+    // ticket to the detached supervisor, whose engine admits under it.
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let key = AdmissionKey {
+        session: Session {
+            run: id(7),
+            generation: Generation::new(1),
+        },
+        request: RequestId::new([3; 16]),
+    };
+    let digest = Digest::of(b"effigy.custody.engine.fixture.v1");
+    let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("expected the one reservation, saw {other:?}"),
+    };
     let mut client = start_engine(
         &cx,
         home.path(),
@@ -1259,12 +1274,25 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             cwd: home.path().into(),
             env: vec![],
             handoff: None,
+            admission: Some(ticket),
         },
         &Executable::capture(&fixture()).unwrap(),
         ClientMode::Owning,
     )
     .unwrap();
     assert_eq!(client.run, RunId::new(1, [9; 10]).unwrap());
+    // The detached engine's admission bound the key, in its own process.
+    let reader = match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root)
+    {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("store reader {other:?}"),
+    };
+    match lookup(&reader, key, digest.clone()) {
+        Observed::Verified(Recovered::Admitted { run, .. }, _) => {
+            assert_eq!(run, RunId::new(1, [9; 10]).unwrap())
+        }
+        other => panic!("detached engine admission {other:?}"),
+    }
     while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
     client.send_frame(b"hello engine").unwrap();
     loop {
@@ -1281,6 +1309,7 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             cwd: home.path().into(),
             env: vec![],
             handoff: None,
+            admission: None,
         },
         &Executable::capture(&fixture()).unwrap(),
         ClientMode::Owning,

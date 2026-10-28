@@ -539,6 +539,7 @@ fn engine_launch(home: &Path) -> EngineLaunch {
         env: vec![("FIXTURE_ENGINE_ENV".into(), "present".into())],
 
         handoff: None,
+        admission: None,
     }
 }
 
@@ -558,23 +559,32 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
     let cx = op.effects().unwrap();
     let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
     let root = StateRoot::effects(&cx, &home).unwrap();
-    let mut run = match Run::begin(
-        &cx,
-        &root,
-        &invocation(),
-        BeginOpts {
-            id: RunId::new(1, [9; 10]).unwrap(),
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next: next(),
-            custody: Some(LifecyclePlan {
-                executable: Executable::current().unwrap(),
-                placement: effigy_kernel::supervise::Placement::Detached,
-            }),
-        },
-        &cleanup,
-        &mut Strict,
-    ) {
+    let opts = BeginOpts {
+        id: RunId::new(1, [9; 10]).unwrap(),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: Some(LifecyclePlan {
+            executable: Executable::current().unwrap(),
+            placement: effigy_kernel::supervise::Placement::Detached,
+        }),
+    };
+    // A dispatcher that reserved a keyed workspace request hands the ticket to
+    // this detached supervisor; admitting under it is the same `begin` with the
+    // binding committed in its one admission transaction (052 §8.11).
+    let begun = match session.admission().cloned() {
+        Some(ticket) => Run::begin_admitted(
+            &cx,
+            &root,
+            &invocation(),
+            opts,
+            &cleanup,
+            &mut Strict,
+            ticket,
+        ),
+        None => Run::begin(&cx, &root, &invocation(), opts, &cleanup, &mut Strict),
+    };
+    let mut run = match begun {
         Ok(run) => run,
         Err(error) => {
             session.refused_message(error.category(), error.to_string());

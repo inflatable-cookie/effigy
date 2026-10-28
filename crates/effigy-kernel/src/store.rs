@@ -1561,6 +1561,7 @@ CREATE INDEX IF NOT EXISTS foreground_terminals_closed
     (
         "workspace_admissions",
         "CREATE TABLE IF NOT EXISTS workspace_admissions (
+  session_id TEXT NOT NULL,
   session_generation INTEGER NOT NULL,
   request_id TEXT NOT NULL,
   digest BLOB NOT NULL,
@@ -1569,7 +1570,7 @@ CREATE INDEX IF NOT EXISTS foreground_terminals_closed
   outcome TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  PRIMARY KEY (session_generation, request_id)
+  PRIMARY KEY (session_id, session_generation, request_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS workspace_admissions_run
   ON workspace_admissions(run_id)",
@@ -1581,6 +1582,7 @@ CREATE INDEX IF NOT EXISTS workspace_admissions_run
         "CREATE TABLE IF NOT EXISTS run_attachments (
   attachment_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   session_generation INTEGER NOT NULL,
   lifetime TEXT NOT NULL CHECK (lifetime IN ('owner','secondary')),
   state TEXT NOT NULL CHECK (state IN ('attached','released')),
@@ -1769,6 +1771,7 @@ CREATE TABLE foreground_terminals (
 ) STRICT;
 CREATE INDEX foreground_terminals_closed ON foreground_terminals(closed_at);
 CREATE TABLE workspace_admissions (
+  session_id TEXT NOT NULL,
   session_generation INTEGER NOT NULL,
   request_id TEXT NOT NULL,
   digest BLOB NOT NULL,
@@ -1777,11 +1780,12 @@ CREATE TABLE workspace_admissions (
   outcome TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  PRIMARY KEY (session_generation, request_id)
+  PRIMARY KEY (session_id, session_generation, request_id)
 ) STRICT;
 CREATE TABLE run_attachments (
   attachment_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   session_generation INTEGER NOT NULL,
   lifetime TEXT NOT NULL CHECK (lifetime IN ('owner','secondary')),
   state TEXT NOT NULL CHECK (state IN ('attached','released')),

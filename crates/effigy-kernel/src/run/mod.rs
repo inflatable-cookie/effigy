@@ -38,7 +38,7 @@ pub use logs::{read_log, LogRead};
 pub use workspace::{
     attach_secondary, lookup, reserve, resume_owner, AdmissionKey, AdmissionTicket, Attachment,
     AttachmentId, Chunk, Client, Gap, RecordedOutcome, Recovered, Release, RequestId, Reservation,
-    UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
+    Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
 };
 mod workspace;
 pub(crate) use settle::settle_interrupted_wait;
@@ -1024,6 +1024,17 @@ pub struct Request {
 /// Requests never acquire the owner's gate. Only a current generation accepts
 /// them; owner handling rechecks the same fence immediately before acting.
 pub fn request(cx: &EffectContext, root: &StateRoot, request: &Request) -> Result<(), RunError> {
+    request_bounded(cx, root, request, None)
+}
+/// One control request, with an optional bound on how many may wait at once.
+/// The bound is counted and the request inserted in one transaction, so
+/// concurrent senders cannot exceed it between a check and an insert (§8.11).
+pub(super) fn request_bounded(
+    cx: &EffectContext,
+    root: &StateRoot,
+    request: &Request,
+    max_pending: Option<usize>,
+) -> Result<(), RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
         .map_err(|_| RunError::refused("request needs Mutate"))?;
     cx.require(crate::ctx::Capability::HostAuthority)
@@ -1037,6 +1048,18 @@ pub fn request(cx: &EffectContext, root: &StateRoot, request: &Request) -> Resul
         let record = journal::run(txn.conn(), request.run)?;
         if record.owner != request.expected.resource.name().to_string() || record.generation != request.expected.generation || record.phase == Phase::Closed {
             return Err(RunError::refused("request run is not current"));
+        }
+        if let Some(max_pending) = max_pending {
+            let pending: i64 = txn.conn().query_row(
+                "SELECT count(*) FROM requests WHERE run_id=?1 AND state='pending'",
+                [request.run.to_string()],
+                |r| r.get(0),
+            )?;
+            if pending >= max_pending as i64 {
+                return Err(RunError::refused(format!(
+                    "this run already has {max_pending} control requests waiting"
+                )));
+            }
         }
         txn.conn().execute("INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) VALUES (?1,?2,?3,?4,'pending',?5)",
             params![request.id.to_string(), request.run.to_string(), request.expected.generation.get() as i64,

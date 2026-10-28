@@ -467,3 +467,48 @@ fn helper_restores_machine_resource_gate_domain_instead_of_a_checkout_shadow() {
     assert!(!helper.path().join("gates/machine").exists());
     assert!(!world.home().join(".effigy/state/machine.db").exists());
 }
+
+/// 052 §8.11: the reservation a host dispatcher holds reaches a detached
+/// engine supervisor in its private config frame, so the engine's own process
+/// can admit under it.
+#[test]
+fn engine_supervisor_config_carries_the_workspace_admission() {
+    let fixture = effigy_test_support::Fixture::new("effigy-engine-config-").unwrap();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let key = crate::run::AdmissionKey {
+        session: crate::run::Session {
+            run: RunId::new(1, [2; 10]).unwrap(),
+            generation: Generation::new(3),
+        },
+        request: crate::run::RequestId::new([4; 16]),
+    };
+    let digest = Digest::of(b"effigy.supervise.admission.v1");
+    let run = RunId::new(1, [5; 10]).unwrap();
+    let ticket = match crate::run::reserve(&cx, &root, key, digest, run).unwrap() {
+        crate::run::Reservation::Fresh(ticket) => ticket,
+        other => panic!("expected the one reservation, saw {other:?}"),
+    };
+    let config = SupervisorConfig {
+        protocol: HELPER_PROTOCOL,
+        home: fixture.path().into(),
+        machine: false,
+        machine_gates: None,
+        executable: Executable::current().unwrap(),
+        work: Work::Engine {
+            payload: b"engine payload".to_vec(),
+            admission: Some(ticket.clone()),
+        },
+    };
+    let frame = serde_json::to_vec(&config).unwrap();
+    frame_protocol(&frame).expect("this binary reads its own config frame");
+    let read: SupervisorConfig = serde_json::from_slice(&frame).unwrap();
+    match read.work {
+        Work::Engine { payload, admission } => {
+            assert_eq!(payload, b"engine payload");
+            assert_eq!(admission.as_ref(), Some(&ticket));
+            assert_eq!(admission.map(|ticket| ticket.run()), Some(run));
+        }
+        _ => panic!("the config frame lost the engine work"),
+    }
+}

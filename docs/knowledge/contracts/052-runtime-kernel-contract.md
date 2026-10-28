@@ -2751,17 +2751,26 @@ dispatcher; if that cannot be provided without a second authority, stop the
 integration and resolve the kernel interface before implementing a substitute.
 
 **Kernel seam.** `crates/effigy-kernel/src/run/workspace.rs` implements that half.
-`reserve` records `(session generation, request ID, canonical request digest)`
+A session is its run and its generation, so two sessions at one generation stay
+distinct. `reserve` records `(session, request ID, canonical request digest)`
 with the one run it reserved, and `Run::begin_admitted` commits that binding, the
 run row and the owning client's attachment in one transaction; `lookup` answers
-a reconnect from the same records, `Unknown` included, and never admits again.
-The run's close transaction records the keyed request's outcome and ends its
-client attachments in the same commit that closes it. `attach_secondary` gives a
-second terminal its own attachment row, a bounded stream cursor that reports a
-rotation gap, and bounded stop/escalate control; `resume_owner` reopens the
-owning client's handle and no other. Both refuse a run this session generation
-did not admit and grant nothing: the dispatcher's grant check remains the
-authority. `test:kernel:workspace` owns these proofs.
+a reconnect from the same records, `Unknown` included, and never admits again. A
+reservation whose admission cannot be established is `Unknown` and names no run:
+an id the client offered is not evidence that the request produced it. The run's
+close transaction records the keyed request's outcome and ends its client
+attachments in the same commit that closes it. The ticket is transferable — a
+dispatcher hands it to a detached engine supervisor through
+`supervise::EngineLaunch::admission`, and the engine reads it as
+`EngineSession::admission` — but admission re-checks the durable reservation, so
+the ticket alone binds nothing. `attach_secondary` gives a second terminal its
+own attachment row, a bounded stream cursor that reports a rotation gap, and
+stop/escalate control bounded at four waiting requests, counted in the same
+transaction that records one; every read and control re-checks the attachment
+row, so a released attachment or a closed run stops both. `resume_owner` reopens
+the owning client's handle and no other. Both refuse a run this session did not
+admit and grant nothing: the dispatcher's grant check remains the authority.
+`test:kernel:workspace` owns these proofs.
 
 ## 9. Authority map
 

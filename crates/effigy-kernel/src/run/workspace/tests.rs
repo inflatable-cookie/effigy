@@ -1,6 +1,6 @@
 //! §8.11 proofs: replay-safe admission and secondary attachments against the
-//! journal, its gate and the strict fake. No workload runs here; the named
-//! kill boundaries re-execute this test binary and are the only children.
+//! journal, its gate and the strict fake. The only children are the named kill
+//! boundaries and the reservation handoff, each a re-execution of this binary.
 use super::*;
 use crate::ctx::*;
 use crate::custody::Stream;
@@ -18,16 +18,11 @@ use rusqlite::OptionalExtension;
 use std::collections::BTreeSet;
 #[cfg(feature = "fault-injection")]
 use std::os::unix::process::ExitStatusExt;
-#[cfg(feature = "fault-injection")]
-use std::path::{Path, PathBuf};
-#[cfg(feature = "fault-injection")]
-use std::process::{Command, Stdio};
+use std::sync::{Arc, Barrier};
 
-#[cfg(feature = "fault-injection")]
 const CHILD_HOME: &str = "EFFIGY_WORKSPACE_TEST_HOME";
-#[cfg(feature = "fault-injection")]
 const CHILD_STEP: &str = "EFFIGY_WORKSPACE_TEST_STEP";
-#[cfg(feature = "fault-injection")]
+const CHILD_TICKET: &str = "EFFIGY_WORKSPACE_TEST_TICKET";
 const CHILD: &str = "run::workspace::tests::helper_workspace_child";
 
 fn observe() -> ObserveContext {
@@ -36,9 +31,16 @@ fn observe() -> ObserveContext {
         .observe()
         .expect("observation context")
 }
-fn admission_key(session: u64, request: u8) -> AdmissionKey {
+/// One workspace session: its own run and generation.
+fn session() -> Session {
+    Session {
+        run: id(200),
+        generation: Generation::new(1),
+    }
+}
+fn admission_key(request: u8) -> AdmissionKey {
     AdmissionKey {
-        session: Generation::new(session),
+        session: session(),
         request: RequestId::new([request; 16]),
     }
 }
@@ -97,12 +99,18 @@ fn scalar(cx: &EffectContext, root: &StateRoot, sql: &str) -> i64 {
 fn runs(cx: &EffectContext, root: &StateRoot) -> i64 {
     scalar(cx, root, "SELECT count(*) FROM runs")
 }
-fn state_of(cx: &EffectContext, root: &StateRoot) -> Option<String> {
+fn state_of(cx: &EffectContext, root: &StateRoot, key: AdmissionKey) -> Option<String> {
     reader(cx, root)
         .conn()
-        .query_row("SELECT state FROM workspace_admissions", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT state FROM workspace_admissions WHERE session_id=?1 AND session_generation=?2 AND request_id=?3",
+            rusqlite::params![
+                key.session.run.to_string(),
+                key.session.generation.get() as i64,
+                key.request.to_string()
+            ],
+            |row| row.get(0),
+        )
         .optional()
         .unwrap()
 }
@@ -147,67 +155,96 @@ fn duplicate_launches(launches: &[(AdmissionKey, RunId)]) -> Vec<AdmissionKey> {
 }
 
 #[test]
-fn workspace_admission_two_identical_requests_admit_exactly_one_run() {
+fn workspace_admission_two_concurrent_identical_requests_admit_exactly_one_run() {
     let fixture = home();
-    let home = fixture.path();
-    let cx = context();
-    let root = StateRoot::effects(&cx, home).expect("root");
-    let mut fake = Fake::new(home);
-    let key = admission_key(1, 1);
+    let home = fixture.path().to_path_buf();
+    let key = admission_key(1);
+    // Create the journal before the race: this test is about the reservation,
+    // not about two processes creating a brand-new store at once.
+    {
+        let warm = context();
+        let root = StateRoot::effects(&warm, &home).expect("root");
+        let _ = reserve(&warm, &root, admission_key(99), digest(), id(99)).expect("warm store");
+    }
+    // Two sessions race the same key. The store's one writer, not a caller's
+    // check, decides which of them may launch.
+    let barrier = Arc::new(Barrier::new(2));
+    let offered = |n: u8| id(10 + n);
+    let results: Vec<Reservation> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..2u8)
+            .map(|n| {
+                let home = home.clone();
+                let barrier = Arc::clone(&barrier);
+                scope.spawn(move || {
+                    let cx = context();
+                    let root = StateRoot::effects(&cx, &home).expect("root");
+                    barrier.wait();
+                    reserve(&cx, &root, key, digest(), offered(n)).expect("reserve")
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("racing reservation"))
+            .collect()
+    });
     let mut launches = Vec::new();
+    let mut tickets = Vec::new();
+    for result in results {
+        match result {
+            Reservation::Fresh(ticket) => {
+                launches.push((key, ticket.run()));
+                tickets.push(ticket);
+            }
+            // The loser never launches and is told it cannot establish an
+            // admission, never that a run exists.
+            Reservation::Recorded(Recovered::Unknown {
+                reason: UnknownAdmission::ReservedNotAdmitted,
+            }) => {}
+            other => panic!("a concurrent identical request saw {other:?}"),
+        }
+    }
+    assert_eq!(tickets.len(), 1, "exactly one caller may launch");
+    assert!(duplicate_launches(&launches).is_empty());
 
-    // The first request wins the one reservation and may launch.
-    let ticket = match reserve(&cx, &root, key, digest(), id(1)).expect("reserve") {
-        Reservation::Fresh(ticket) => {
-            launches.push((key, ticket.run()));
-            ticket
-        }
-        other => panic!("expected the one reservation, saw {other:?}"),
-    };
-    // A concurrent identical request sees the reservation and launches nothing.
-    assert_eq!(
-        recorded(&cx, &root, key, id(2)),
-        Recovered::Unknown {
-            run: id(1),
-            reason: UnknownAdmission::ReservedNotAdmitted
-        }
-    );
+    let ticket = tickets.into_iter().next().expect("the one reservation");
+    let run_id = ticket.run();
+    let cx = context();
+    let root = StateRoot::effects(&cx, &home).expect("root");
+    let mut fake = Fake::new(&home);
     let mut run = Run::begin_admitted(
         &cx,
         &root,
         &inv(owner()),
-        begin_opts(id(1)),
+        begin_opts(run_id),
         &cleanup(&cx),
         &mut fake,
         ticket,
     )
     .expect("admitted run");
-    // A later retry with the same digest recovers the admitted run, whatever
-    // run id it offered.
+    // Every later replay recovers the same run, whatever run id it offers.
     assert_eq!(
-        recorded(&cx, &root, key, id(2)),
+        recorded(&cx, &root, key, offered(0)),
         Recovered::Admitted {
-            run: id(1),
+            run: run_id,
             fence: run.fence().clone()
         }
     );
-    // A retry that offers the run's own id is a replay too, not a reuse.
     assert_eq!(
-        recorded(&cx, &root, key, id(1)),
+        recorded(&cx, &root, key, offered(1)),
         Recovered::Admitted {
-            run: id(1),
+            run: run_id,
             fence: run.fence().clone()
         }
     );
     assert_eq!(runs(&cx, &root), 1, "a key admits one run, not two");
-    assert_eq!(state_of(&cx, &root).as_deref(), Some("admitted"));
-    assert!(duplicate_launches(&launches).is_empty());
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("admitted"));
 
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
     run.settle(&cleanup(&cx), &mut fake).expect("settle");
     match lookup_now(&cx, &root, key) {
         Observed::Verified(Recovered::Completed { run, outcome }, _) => {
-            assert_eq!(run, id(1));
+            assert_eq!(run, run_id);
             assert_eq!(outcome.workload, WorkloadOutcome::Succeeded);
             assert!(outcome.cleanup_complete);
         }
@@ -219,14 +256,14 @@ fn workspace_admission_two_identical_requests_admit_exactly_one_run() {
     );
     // A new key never reuses a run identity the journal already holds.
     assert!(
-        reserve(&cx, &root, admission_key(1, 11), digest(), id(1)).is_err(),
+        reserve(&cx, &root, admission_key(11), digest(), run_id).is_err(),
         "a settled run id is not a fresh admission"
     );
 }
 
 #[test]
 fn workspace_admission_duplicate_oracle_fails_on_a_broken_rebind() {
-    let key = admission_key(1, 1);
+    let key = admission_key(1);
     let clean = vec![(key, id(1))];
     assert!(duplicate_launches(&clean).is_empty());
     // Reversible break probe: a rebind that admits the same key twice must
@@ -239,13 +276,45 @@ fn workspace_admission_duplicate_oracle_fails_on_a_broken_rebind() {
 }
 
 #[test]
+fn workspace_admission_a_reserved_request_never_names_a_run() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    // A run that is in the journal, but belongs to another key.
+    settled(&cx, &root, admission_key(21), id(1), &mut fake);
+    // A reservation for a different run id that never reached its admission.
+    let key = admission_key(22);
+    let ticket = fresh(&cx, &root, key, id(2));
+    assert_eq!(ticket.run(), id(2));
+    // The unadmitted reservation answers `Unknown` and names no run at all:
+    // claiming id(2), or the unrelated live id(1), would attribute an
+    // admission that never happened.
+    match lookup_now(&cx, &root, key) {
+        Observed::Verified(Recovered::Unknown { reason }, _) => {
+            assert_eq!(reason, UnknownAdmission::ReservedNotAdmitted);
+        }
+        other => panic!("unadmitted reservation {other:?}"),
+    }
+    assert_eq!(
+        recorded(&cx, &root, key, id(2)),
+        Recovered::Unknown {
+            reason: UnknownAdmission::ReservedNotAdmitted
+        }
+    );
+    assert_eq!(runs(&cx, &root), 1, "a reservation admits no run");
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+}
+
+#[test]
 fn workspace_admission_changed_digest_conflicts_and_never_readmits() {
     let fixture = home();
     let home = fixture.path();
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 2);
+    let key = admission_key(2);
     settled(&cx, &root, key, id(1), &mut fake);
 
     match lookup(&reader(&cx, &root), key, other_digest()) {
@@ -264,7 +333,7 @@ fn workspace_admission_reconnect_after_restart_recovers_the_same_run() {
     let fixture = home();
     let home = fixture.path();
     let cx = context();
-    let key = admission_key(1, 3);
+    let key = admission_key(3);
     let fence = {
         let root = StateRoot::effects(&cx, home).expect("root");
         let mut fake = Fake::new(home);
@@ -290,18 +359,66 @@ fn workspace_admission_reconnect_after_restart_recovers_the_same_run() {
         recorded(&cx, &root, key, id(2)),
         Recovered::Admitted { run: id(1), fence }
     );
-    let owner = resume_owner(&cx, &root, key.session, id(1)).expect("owner reconnect");
+    let owner = resume_owner(&cx, &root, session(), id(1)).expect("owner reconnect");
     assert_eq!(owner.run(), id(1));
+    assert_eq!(owner.session(), session());
     assert_eq!(runs(&cx, &root), 1);
 }
 
-#[cfg(feature = "fault-injection")]
+/// The reservation the host dispatcher holds is handed to a detached engine
+/// supervisor in its config frame (see `supervise::EngineSession::admission`);
+/// here the same ticket crosses a process boundary and admits there.
 #[test]
+fn workspace_admission_hands_a_reservation_to_another_process() {
+    let fixture = home();
+    let home = fixture.path().to_path_buf();
+    let cx = context();
+    let root = StateRoot::effects(&cx, &home).expect("root");
+    let key = admission_key(4);
+    let ticket = fresh(&cx, &root, key, id(1));
+    let encoded = serde_json::to_string(&ticket).expect("ticket frame");
+
+    let mut child = child_command(&home, "detached-admit")
+        .env(CHILD_TICKET, encoded)
+        .spawn()
+        .expect("handoff child");
+    wait_for(&home.join("admitted"));
+    // The other process admitted under the handed ticket.
+    match lookup_now(&cx, &root, key) {
+        Observed::Verified(Recovered::Admitted { run, .. }, _) => assert_eq!(run, id(1)),
+        other => panic!("handed-off admission {other:?}"),
+    }
+    std::fs::write(home.join("release"), b"settle").expect("release");
+    assert!(child.wait().expect("handoff child").success());
+    match lookup_now(&cx, &root, key) {
+        Observed::Verified(Recovered::Completed { run, outcome }, _) => {
+            assert_eq!(run, id(1));
+            assert_eq!(outcome.workload, WorkloadOutcome::Succeeded);
+        }
+        other => panic!("handed-off outcome {other:?}"),
+    }
+    assert_eq!(runs(&cx, &root), 1);
+}
+
+fn wait_for(path: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !path.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} never appeared",
+            path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
 fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
     // Every named boundary is a real SIGKILL in a re-executed child.
     fn boundary(step: &str, point: Point) -> effigy_test_support::Fixture {
         let fixture = home();
-        let status = run_child(fixture.path(), step, point);
+        let status = run_kill_child(fixture.path(), step, point);
         assert_eq!(
             status.signal(),
             Some(libc::SIGKILL),
@@ -310,6 +427,7 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
         fixture
     }
     let cx = context();
+    let key = admission_key(1);
 
     // Before the reservation: nothing was recorded, so admitting now is the
     // first admission.
@@ -322,14 +440,11 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
         scalar(&cx, &root, "SELECT count(*) FROM workspace_admissions"),
         0
     );
-    assert!(matches!(
-        lookup_now(&cx, &root, admission_key(1, 1)),
-        Observed::Absent(_)
-    ));
-    settled(&cx, &root, admission_key(1, 1), id(1), &mut fake);
+    assert!(matches!(lookup_now(&cx, &root, key), Observed::Absent(_)));
+    settled(&cx, &root, key, id(1), &mut fake);
     assert_eq!(runs(&cx, &root), 1);
     assert!(matches!(
-        lookup_now(&cx, &root, admission_key(1, 1)),
+        lookup_now(&cx, &root, key),
         Observed::Verified(Recovered::Completed { .. }, _)
     ));
 
@@ -339,21 +454,19 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
     let home = second.path().to_path_buf();
     let root = StateRoot::effects(&cx, &home).expect("root");
     assert_eq!(runs(&cx, &root), 0);
-    assert_eq!(state_of(&cx, &root).as_deref(), Some("reserved"));
-    match lookup_now(&cx, &root, admission_key(1, 1)) {
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    match lookup_now(&cx, &root, key) {
         Observed::Verified(
             Recovered::Unknown {
-                run,
                 reason: UnknownAdmission::ReservedNotAdmitted,
             },
             _,
-        ) => assert_eq!(run, id(1)),
+        ) => {}
         other => panic!("reserved-but-unadmitted lookup {other:?}"),
     }
     assert_eq!(
-        recorded(&cx, &root, admission_key(1, 1), id(1)),
+        recorded(&cx, &root, key, id(1)),
         Recovered::Unknown {
-            run: id(1),
             reason: UnknownAdmission::ReservedNotAdmitted
         }
     );
@@ -364,7 +477,7 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
     let home = third.path().to_path_buf();
     let root = StateRoot::effects(&cx, &home).expect("root");
     assert_eq!(runs(&cx, &root), 1);
-    let fence = match lookup_now(&cx, &root, admission_key(1, 1)) {
+    let fence = match lookup_now(&cx, &root, key) {
         Observed::Verified(
             Recovered::Admitted {
                 run: recovered_run,
@@ -378,7 +491,7 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
         other => panic!("admission after commit {other:?}"),
     };
     assert_eq!(
-        recorded(&cx, &root, admission_key(1, 1), id(2)),
+        recorded(&cx, &root, key, id(2)),
         Recovered::Admitted { run: id(1), fence }
     );
     assert_eq!(runs(&cx, &root), 1);
@@ -390,15 +503,15 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
     let root = StateRoot::effects(&cx, &home).expect("root");
     let mut fake = Fake::new(&home);
     assert_eq!(runs(&cx, &root), 1);
-    assert_eq!(state_of(&cx, &root).as_deref(), Some("admitted"));
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("admitted"));
     assert!(matches!(
-        lookup_now(&cx, &root, admission_key(1, 1)),
+        lookup_now(&cx, &root, key),
         Observed::Verified(Recovered::Admitted { .. }, _)
     ));
     // The next run on this owner settles the interrupted one, and that
     // recorded outcome is the answer for the key from then on.
-    let successor = admitted(&cx, &root, admission_key(1, 2), id(2), &mut fake);
-    match lookup_now(&cx, &root, admission_key(1, 1)) {
+    let successor = admitted(&cx, &root, admission_key(2), id(2), &mut fake);
+    match lookup_now(&cx, &root, key) {
         Observed::Verified(Recovered::Completed { run, outcome }, _) => {
             assert_eq!(run, id(1));
             assert_eq!(outcome.workload, WorkloadOutcome::Succeeded);
@@ -409,22 +522,59 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
 }
 
 #[test]
+fn workspace_attachment_sessions_are_distinguished_by_run_and_generation() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    let key = admission_key(5);
+    let _run = admitted(&cx, &root, key, id(1), &mut fake);
+
+    // Same generation, different session run: a different session.
+    let other_run = Session {
+        run: id(201),
+        generation: session().generation,
+    };
+    // Same session run, next generation: a stale capability generation.
+    let other_generation = Session {
+        run: session().run,
+        generation: Generation::new(2),
+    };
+    for other in [other_run, other_generation] {
+        assert!(
+            attach_secondary(&cx, &root, other, id(1), AttachmentId::new([9; 16])).is_err(),
+            "session {other:?} attached another session's run"
+        );
+        assert!(
+            resume_owner(&cx, &root, other, id(1)).is_err(),
+            "session {other:?} took another session's owning client"
+        );
+    }
+    assert_eq!(
+        scalar(&cx, &root, "SELECT count(*) FROM run_attachments"),
+        1
+    );
+}
+
+#[test]
 fn workspace_attachment_second_terminal_has_its_own_lifetime() {
     let fixture = home();
     let home = fixture.path();
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 4);
+    let key = admission_key(6);
     let run = admitted(&cx, &root, key, id(1), &mut fake);
     let phase = run.phase().expect("phase");
-    let mut owner = resume_owner(&cx, &root, key.session, id(1)).expect("owner");
-    let mut first = attach_secondary(&cx, &root, key.session, id(1), AttachmentId::new([1; 16]))
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).expect("owner");
+    let mut first = attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([1; 16]))
         .expect("first terminal");
-    let mut second = attach_secondary(&cx, &root, key.session, id(1), AttachmentId::new([2; 16]))
+    let mut second = attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([2; 16]))
         .expect("second terminal");
     assert_eq!(first.client(), Client::Secondary);
     assert_eq!(owner.client(), Client::Owner);
+    assert_eq!(first.session(), session());
     assert!(!first.released() && !second.released() && !owner.released());
     assert_eq!(
         scalar(
@@ -436,6 +586,7 @@ fn workspace_attachment_second_terminal_has_its_own_lifetime() {
     );
 
     first.release(&cx, &root, Release::Eof).expect("release");
+    assert!(!first.attached(&cx, &root).expect("lifetime"));
     // The owner's lifetime and the run are untouched by a secondary going.
     assert_eq!(
         scalar(
@@ -477,11 +628,11 @@ fn workspace_attachment_owner_eof_and_detach_are_recorded_apart() {
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 5);
+    let key = admission_key(7);
     let mut run = admitted(&cx, &root, key, id(1), &mut fake);
 
     // EOF: the client went away without acknowledging a detach.
-    let mut owner = resume_owner(&cx, &root, key.session, id(1)).expect("owner");
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).expect("owner");
     owner.release(&cx, &root, Release::Eof).expect("owner eof");
     assert_eq!(
         scalar(
@@ -493,16 +644,16 @@ fn workspace_attachment_owner_eof_and_detach_are_recorded_apart() {
     );
     // An owner that released cannot take its run back, and the release alone
     // did not settle the run.
-    assert!(resume_owner(&cx, &root, key.session, id(1)).is_err());
+    assert!(resume_owner(&cx, &root, session(), id(1)).is_err());
     assert_eq!(run.phase().expect("phase"), Phase::Admitted);
 
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
     run.settle(&cleanup(&cx), &mut fake).expect("settle");
 
     // A detach is acknowledged before the client goes, and recorded apart.
-    let key = admission_key(1, 6);
+    let key = admission_key(8);
     let mut run = admitted(&cx, &root, key, id(2), &mut fake);
-    let mut owner = resume_owner(&cx, &root, key.session, id(2)).expect("owner");
+    let mut owner = resume_owner(&cx, &root, session(), id(2)).expect("owner");
     owner
         .release(&cx, &root, Release::Detach)
         .expect("owner detach");
@@ -514,7 +665,7 @@ fn workspace_attachment_owner_eof_and_detach_are_recorded_apart() {
         ),
         1
     );
-    assert!(resume_owner(&cx, &root, key.session, id(2)).is_err());
+    assert!(resume_owner(&cx, &root, session(), id(2)).is_err());
     run.finish(WorkloadOutcome::Succeeded).expect("finish");
     run.settle(&cleanup(&cx), &mut fake).expect("settle");
     // A run's close ends every client lifetime it had.
@@ -535,21 +686,11 @@ fn workspace_attachment_refuses_foreign_and_unknown_runs() {
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 7);
+    let key = admission_key(9);
     let run = admitted(&cx, &root, key, id(1), &mut fake);
 
-    // Another session generation may not name this run.
-    assert!(attach_secondary(
-        &cx,
-        &root,
-        Generation::new(2),
-        id(1),
-        AttachmentId::new([9; 16])
-    )
-    .is_err());
-    assert!(resume_owner(&cx, &root, Generation::new(2), id(1)).is_err());
-    // A run the workspace channel never admitted is not attachable either: a
-    // known run id is not authority.
+    // A run the workspace channel never admitted is not attachable: a known
+    // run id is not authority.
     let plain = Run::begin(
         &cx,
         &root,
@@ -560,11 +701,104 @@ fn workspace_attachment_refuses_foreign_and_unknown_runs() {
     )
     .expect("plain run");
     assert_ne!(plain.fence(), run.fence());
-    assert!(attach_secondary(&cx, &root, key.session, id(2), AttachmentId::new([9; 16])).is_err());
+    assert!(attach_secondary(&cx, &root, session(), id(2), AttachmentId::new([9; 16])).is_err());
     // A run id that names nothing is refused, never created.
-    assert!(resume_owner(&cx, &root, key.session, id(3)).is_err());
-    assert!(attach_secondary(&cx, &root, key.session, id(3), AttachmentId::new([9; 16])).is_err());
+    assert!(resume_owner(&cx, &root, session(), id(3)).is_err());
+    assert!(attach_secondary(&cx, &root, session(), id(3), AttachmentId::new([9; 16])).is_err());
     assert_eq!(runs(&cx, &root), 2);
+}
+
+#[test]
+fn workspace_attachment_lifetime_ends_with_the_run() {
+    let fixture = home();
+    let home = fixture.path();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home).expect("root");
+    let mut fake = Fake::new(home);
+    let key = admission_key(10);
+    let mut run = admitted(&cx, &root, key, id(1), &mut fake);
+    write_segment(&root, id(1), 1, Stream::Stdout, 0, b"before-close");
+    let mut terminal = attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([6; 16]))
+        .expect("secondary");
+    assert!(terminal.attached(&cx, &root).expect("lifetime"));
+    terminal
+        .read(&observe(), &root, 1, Stream::Stdout, 4096)
+        .expect("read");
+
+    // The run closes while this handle is still alive: its row goes with the
+    // run, so the handle stops reading and steering even though it was never
+    // released itself.
+    run.finish(WorkloadOutcome::Succeeded).expect("finish");
+    run.settle(&cleanup(&cx), &mut fake).expect("settle");
+    assert!(!terminal.attached(&cx, &root).expect("lifetime"));
+    assert!(terminal
+        .read(&observe(), &root, 1, Stream::Stdout, 4096)
+        .is_err());
+    assert!(terminal
+        .control(&cx, &root, id(40), RequestAction::Stop)
+        .is_err());
+}
+
+#[test]
+fn workspace_attachment_control_bound_holds_under_concurrency() {
+    let fixture = home();
+    let home = fixture.path().to_path_buf();
+    let cx = context();
+    let root = StateRoot::effects(&cx, &home).expect("root");
+    let mut fake = Fake::new(&home);
+    let key = admission_key(11);
+    let _run = admitted(&cx, &root, key, id(1), &mut fake);
+    let mut terminals = Vec::new();
+    for n in 0..2u8 {
+        terminals.push(
+            attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([n; 16]))
+                .expect("secondary"),
+        );
+    }
+    // Two terminals each try a full bound of stops at the same time. The bound
+    // and the insert commit together, so the run can never hold more than
+    // CONTROL_MAX waiting requests.
+    let barrier = Arc::new(Barrier::new(2));
+    let accepted: Vec<usize> = std::thread::scope(|scope| {
+        let handles: Vec<_> = terminals
+            .into_iter()
+            .enumerate()
+            .map(|(index, terminal)| {
+                let home = home.clone();
+                let barrier = Arc::clone(&barrier);
+                scope.spawn(move || {
+                    let cx = context();
+                    let root = StateRoot::effects(&cx, &home).expect("root");
+                    barrier.wait();
+                    (0..CONTROL_MAX)
+                        .filter(|n| {
+                            terminal
+                                .control(
+                                    &cx,
+                                    &root,
+                                    id(40 + index as u8 * 10 + *n as u8),
+                                    RequestAction::Stop,
+                                )
+                                .is_ok()
+                        })
+                        .count()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("racing control"))
+            .collect()
+    });
+    assert_eq!(accepted.iter().sum::<usize>(), CONTROL_MAX);
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM requests WHERE state='pending'"
+        ),
+        CONTROL_MAX as i64
+    );
 }
 
 #[test]
@@ -574,51 +808,52 @@ fn workspace_attachment_bounds_terminals_and_control_requests() {
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 8);
+    let key = admission_key(12);
     let _run = admitted(&cx, &root, key, id(1), &mut fake);
     let mut terminals = Vec::new();
     for n in 0..SECONDARY_MAX {
         let mut bytes = [0u8; 16];
         bytes[0] = n as u8;
         terminals.push(
-            attach_secondary(&cx, &root, key.session, id(1), AttachmentId::new(bytes))
+            attach_secondary(&cx, &root, session(), id(1), AttachmentId::new(bytes))
                 .expect("secondary"),
         );
     }
     assert!(
-        attach_secondary(&cx, &root, key.session, id(1), AttachmentId::new([63; 16])).is_err(),
+        attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([63; 16])).is_err(),
         "a run holds at most {SECONDARY_MAX} terminals"
     );
     // The same id twice is a conflict, not a second handle.
-    assert!(attach_secondary(&cx, &root, key.session, id(1), AttachmentId::new([0; 16])).is_err());
+    assert!(attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([0; 16])).is_err());
     let terminal = terminals.remove(0);
 
     // Control is bounded while the run is live.
     for n in 0..CONTROL_MAX {
         terminal
-            .control(&cx, &root, id(20 + n as u8), RequestAction::Stop)
+            .control(&cx, &root, id(50 + n as u8), RequestAction::Stop)
             .expect("control");
     }
     assert!(terminal
-        .control(&cx, &root, id(19), RequestAction::Stop)
+        .control(&cx, &root, id(59), RequestAction::Stop)
         .is_err());
     assert_eq!(
         scalar(&cx, &root, "SELECT count(*) FROM requests"),
         CONTROL_MAX as i64
     );
-    // A detach or settlement is not a secondary terminal's control.
+    // A detach or settlement is not a secondary terminal's control, and a
+    // released terminal has no control path at all.
     let mut second = terminals.remove(0);
     assert!(second
-        .control(&cx, &root, id(30), RequestAction::Detach)
+        .control(&cx, &root, id(60), RequestAction::Detach)
         .is_err());
     assert!(second
-        .control(&cx, &root, id(30), RequestAction::Settle)
+        .control(&cx, &root, id(60), RequestAction::Settle)
         .is_err());
     second
         .release(&cx, &root, Release::Detach)
         .expect("release");
     assert!(second
-        .control(&cx, &root, id(31), RequestAction::Stop)
+        .control(&cx, &root, id(61), RequestAction::Stop)
         .is_err());
 }
 
@@ -629,12 +864,12 @@ fn workspace_attachment_cancellation_settles_the_run_once() {
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 9);
+    let key = admission_key(13);
     let mut run = admitted(&cx, &root, key, id(1), &mut fake);
-    let terminal = attach_secondary(&cx, &root, key.session, id(1), AttachmentId::new([4; 16]))
+    let terminal = attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([4; 16]))
         .expect("secondary");
     terminal
-        .control(&cx, &root, id(20), RequestAction::Stop)
+        .control(&cx, &root, id(70), RequestAction::Stop)
         .expect("cancel");
     let pending = run.requests().expect("requests");
     assert_eq!(pending.len(), 1);
@@ -658,9 +893,9 @@ fn workspace_attachment_cancellation_settles_the_run_once() {
     // Settlement happens once: control on the closed run is refused, and its
     // one key record is closed exactly once.
     assert!(terminal
-        .control(&cx, &root, id(21), RequestAction::Stop)
+        .control(&cx, &root, id(71), RequestAction::Stop)
         .is_err());
-    assert_eq!(state_of(&cx, &root).as_deref(), Some("closed"));
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("closed"));
     assert_eq!(
         scalar(
             &cx,
@@ -682,9 +917,9 @@ fn workspace_attachment_cursor_reports_a_gap_and_refuses_an_invalid_position() {
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 10);
+    let key = admission_key(14);
     let _run = admitted(&cx, &root, key, id(1), &mut fake);
-    let mut terminal = attach_secondary(&cx, &root, key.session, id(1), AttachmentId::new([5; 16]))
+    let mut terminal = attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([5; 16]))
         .expect("secondary");
 
     // Bytes 0..100 rotated away before this terminal attached.
@@ -754,10 +989,10 @@ fn write_segment(
     file.write_all(bytes).expect("segment bytes");
 }
 
-#[cfg(feature = "fault-injection")]
-/// Re-executes this binary as `helper_workspace_child`, armed at one crossing.
-fn run_child(home: &Path, step: &str, point: Point) -> std::process::ExitStatus {
-    let mut command = Command::new(std::env::current_exe().expect("test binary"));
+/// A re-execution of this binary as the helper, for the handoff and for the
+/// kill boundaries.
+fn child_command(home: &std::path::Path, step: &str) -> std::process::Command {
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
     command
         .args([
             CHILD,
@@ -768,24 +1003,19 @@ fn run_child(home: &Path, step: &str, point: Point) -> std::process::ExitStatus 
         ])
         .env(CHILD_HOME, home)
         .env(CHILD_STEP, step)
-        .env(
-            "EFFIGY_KERNEL_TEST_FAULT",
-            fault::env_spec(point, 0, Fault::Kill),
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
-    command.status().expect("child status")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit());
+    command
 }
 
-#[cfg(feature = "fault-injection")]
-/// The child runs the dispatcher's shape from reservation to settle, so the
+/// The helper runs the dispatcher's shape from reservation to settle, so the
 /// armed fault lands on the boundary the parent named.
-fn child_step(home: &Path, step: &str) -> Result<(), RunError> {
+fn child_step(home: &std::path::Path, step: &str) -> Result<(), RunError> {
     let cx = context();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    let key = admission_key(1, 1);
+    let key = admission_key(1);
     match step {
         "reserve" => {
             let _ = reserve(&cx, &root, key, digest(), id(1))?;
@@ -816,21 +1046,66 @@ fn child_step(home: &Path, step: &str) -> Result<(), RunError> {
             run.finish(WorkloadOutcome::Succeeded)?;
             run.settle(&cleanup(&cx), &mut fake)?;
         }
+        "detached-admit" => {
+            // What an engine supervisor's own process does with the ticket its
+            // dispatcher handed it (052 §8.11, supervise::EngineLaunch).
+            let frame = std::env::var(CHILD_TICKET).expect("ticket frame");
+            let ticket: AdmissionTicket =
+                serde_json::from_str(&frame).expect("ticket this store wrote");
+            let run_id = ticket.run();
+            let mut run = Run::begin_admitted(
+                &cx,
+                &root,
+                &inv(owner()),
+                begin_opts(run_id),
+                &cleanup(&cx),
+                &mut fake,
+                ticket,
+            )?;
+            std::fs::write(home.join("admitted"), run_id.to_string())
+                .map_err(|error| RunError::unavailable(format!("handoff marker ({error})")))?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            while !home.join("release").exists() {
+                if std::time::Instant::now() > deadline {
+                    return Err(RunError::unavailable("handoff release wait ran out"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            run.finish(WorkloadOutcome::Succeeded)?;
+            run.settle(&cleanup(&cx), &mut fake)?;
+        }
         other => panic!("unknown step {other}"),
     }
     Ok(())
 }
 
-#[cfg(feature = "fault-injection")]
 #[test]
 #[ignore = "helper process"]
 fn helper_workspace_child() {
     let Ok(home) = std::env::var(CHILD_HOME) else {
         return;
     };
-    let home = PathBuf::from(home);
+    let home = std::path::PathBuf::from(home);
     let step = std::env::var(CHILD_STEP).expect("step");
-    fault::arm_from_env();
-    let _ = child_step(&home, &step);
-    fault::arm(None);
+    #[cfg(feature = "fault-injection")]
+    crate::fault::arm_from_env();
+    let result = child_step(&home, &step);
+    #[cfg(feature = "fault-injection")]
+    crate::fault::arm(None);
+    if result.is_err() {
+        std::process::exit(1);
+    }
+}
+
+/// One kill boundary: the child is re-executed with a named fault that kills
+/// its own process, so the parent recovers from the durable state it left.
+#[cfg(feature = "fault-injection")]
+fn run_kill_child(home: &std::path::Path, step: &str, point: Point) -> std::process::ExitStatus {
+    child_command(home, step)
+        .env(
+            "EFFIGY_KERNEL_TEST_FAULT",
+            fault::env_spec(point, 0, Fault::Kill),
+        )
+        .status()
+        .expect("child status")
 }

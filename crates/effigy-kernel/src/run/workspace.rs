@@ -5,15 +5,17 @@
 //! settlement authority. This module adds two narrow journal records beside
 //! them:
 //!
-//! - a keyed request row `(session generation, request ID)` carrying the
-//!   canonical request digest, the one run it reserved and, once the run
-//!   closes, that run's recorded outcome. A replay of the same key and digest
-//!   recovers what was recorded; a changed digest is a conflict; a reservation
-//!   whose admission cannot be established is `Unknown` and is never readmitted.
+//! - a keyed request row `(session, request ID)` carrying the canonical request
+//!   digest, the one run it reserved and, once the run closes, that run's
+//!   recorded outcome. A replay of the same key and digest recovers what was
+//!   recorded; a changed digest is a conflict; a reservation whose admission
+//!   cannot be established is `Unknown` and is never readmitted.
 //! - a durable attachment row per client, so a second terminal has its own
 //!   lifetime, bounded stream cursor and bounded control access without ever
 //!   stopping, detaching or releasing the owning client's run.
 //!
+//! A session is its run *and* its generation: two sessions at the same
+//! generation are different sessions and neither can name the other's run.
 //! Neither record grants authority. The dispatcher has already checked the
 //! session grant before it calls any of this; here a run that this session did
 //! not admit, and a run whose journal is gone, are refused or `Unknown`.
@@ -32,7 +34,7 @@ use std::collections::BTreeMap;
 pub const MAX_CHUNK: usize = 32 * 1024;
 /// The most terminals that may hold the same run at once.
 pub const SECONDARY_MAX: usize = 8;
-/// The most control requests one attachment may leave pending on a run.
+/// The most control requests that may wait on a run at once.
 pub const CONTROL_MAX: usize = 4;
 
 const ADMISSIONS: &str = "workspace_admissions";
@@ -108,12 +110,21 @@ impl<'de> Deserialize<'de> for HexId {
     }
 }
 
-/// One mutating request in one workspace session generation. Request ids are
-/// unique per generation, including across reconnects, so this key names at
-/// most one admitted run for the life of the session.
+/// One workspace session, as the grant binds it: the session's own run and its
+/// generation. Two sessions that share a generation are still different
+/// sessions, so neither may name the other's run (§8.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Session {
+    pub run: RunId,
+    pub generation: Generation,
+}
+
+/// One mutating request in one workspace session. Request ids are unique per
+/// session, including across reconnects, so this key names at most one admitted
+/// run for the life of the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AdmissionKey {
-    pub session: Generation,
+    pub session: Session,
     pub request: RequestId,
 }
 
@@ -130,7 +141,9 @@ pub struct RecordedOutcome {
 /// Both are answers; neither is permission to admit again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnknownAdmission {
-    /// A reservation committed but the run's admission cannot be established.
+    /// A reservation committed but no admission can be established for it. The
+    /// run id it was reserved with is not reported: no journal row ever bound
+    /// it to this request, so claiming it would attribute another run.
     ReservedNotAdmitted,
     /// The run's journal row is gone and no outcome was recorded for it.
     AdmissionNotRecovered,
@@ -160,10 +173,7 @@ pub enum Recovered {
         outcome: RecordedOutcome,
     },
     /// The record exists and cannot be resolved to an admission or an outcome.
-    Unknown {
-        run: RunId,
-        reason: UnknownAdmission,
-    },
+    Unknown { reason: UnknownAdmission },
     /// The key already names a request with a different canonical digest.
     Conflict { recorded: Digest },
 }
@@ -178,9 +188,13 @@ pub enum Reservation {
     Recorded(Recovered),
 }
 
-/// The one right to admit a reserved key. Not constructible outside the
-/// kernel, and consumed by [`Run::begin_admitted`].
-#[derive(Debug, PartialEq)]
+/// The one right to admit a reserved key. Only `reserve` constructs one, and
+/// only [`Run::begin_admitted`] consumes it. It is transferable — a host
+/// dispatcher hands it to a detached engine supervisor through
+/// [`crate::supervise::EngineLaunch::admission`] — but it is not authority:
+/// admission re-checks the durable reservation in its own transaction, so a
+/// ticket for a key that is not reserved for that run binds nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdmissionTicket {
     key: AdmissionKey,
     run: RunId,
@@ -192,6 +206,11 @@ impl AdmissionTicket {
     }
     pub fn run(&self) -> RunId {
         self.run
+    }
+    /// The canonical request digest this reservation was recorded with. A
+    /// replay must present the same one.
+    pub fn digest(&self) -> &Digest {
+        &self.digest
     }
 }
 
@@ -208,40 +227,54 @@ pub fn reserve(
 ) -> Result<Reservation, RunError> {
     mutations_only(cx, "a workspace admission")?;
     let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
-    let session = key.session.get() as i64;
     crate::fault_point!(AdmissionReserveBefore)?;
-    let recorded = store.transaction(
-        &cx.child(std::time::Duration::from_secs(30)),
-        |txn| {
-            let inserted = txn.conn().execute(
-                "INSERT INTO workspace_admissions(session_generation,request_id,digest,run_id,state,created_at,updated_at) \
-                 VALUES (?1,?2,?3,?4,'reserved',?5,?5) \
-                 ON CONFLICT(session_generation,request_id) DO NOTHING",
-                params![session, key.request.to_string(), digest.0.as_slice(), run.to_string(), txn.now()],
-            )?;
-            if inserted == 1 {
-                // A fresh reservation never steals a run identity the journal
-                // already holds; refusing here rolls the reservation back.
-                let taken: bool = txn.conn().query_row(
-                    "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
-                    [run.to_string()],
-                    |r| r.get(0),
-                )?;
-                if taken {
-                    return Err(RunError::refused("this run id already names a run"));
-                }
-                return Ok(None);
-            }
-            let row = row(txn.conn(), &key)?
-                .ok_or_else(|| RunError::broken("a reserved request has no row"))?;
-            replayed(txn.conn(), &row, &digest).map(Some)
-        },
-    )?;
+    let recorded = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+        insert_reservation(txn.conn(), txn.now(), key, &digest, run)
+    })?;
     crate::fault_point!(AdmissionReserveAfter)?;
     Ok(match recorded {
         None => Reservation::Fresh(AdmissionTicket { key, run, digest }),
         Some(recorded) => Reservation::Recorded(recorded),
     })
+}
+
+/// The one insert-and-classify step. Callers hold the store's writer lock, so
+/// two concurrent identical requests cannot both see an empty key.
+fn insert_reservation(
+    conn: &Connection,
+    now: i64,
+    key: AdmissionKey,
+    digest: &Digest,
+    run: RunId,
+) -> Result<Option<Recovered>, RunError> {
+    let inserted = conn.execute(
+        "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at) \
+         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6) \
+         ON CONFLICT(session_id,session_generation,request_id) DO NOTHING",
+        params![
+            key.session.run.to_string(),
+            key.session.generation.get() as i64,
+            key.request.to_string(),
+            digest.0.as_slice(),
+            run.to_string(),
+            now
+        ],
+    )?;
+    if inserted == 1 {
+        // A fresh reservation never steals a run identity the journal already
+        // holds; refusing here rolls the reservation back.
+        let taken: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
+            [run.to_string()],
+            |r| r.get(0),
+        )?;
+        if taken {
+            return Err(RunError::refused("this run id already names a run"));
+        }
+        return Ok(None);
+    }
+    let row = row(conn, &key)?.ok_or_else(|| RunError::broken("a reserved request has no row"))?;
+    replayed(conn, &row, digest).map(Some)
 }
 
 /// Read a keyed request without writing anything. `Absent` means nothing was
@@ -279,10 +312,10 @@ fn replayed(conn: &Connection, row: &Row, offered: &Digest) -> Result<Recovered,
     }
     let journal = journal_run(conn, row.run)?;
     match (row.state, journal) {
-        // A reservation whose admission never committed is never readmitted:
-        // the journal cannot prove what the killed client was about to do.
+        // A reservation whose admission never committed is never readmitted,
+        // and never names a run: the journal cannot prove what the killed
+        // client was about to do, or that the id it offered was its own.
         (State::Reserved, _) => Ok(Recovered::Unknown {
-            run: row.run,
             reason: UnknownAdmission::ReservedNotAdmitted,
         }),
         (State::Closed, _) => match &row.outcome {
@@ -291,7 +324,6 @@ fn replayed(conn: &Connection, row: &Row, offered: &Digest) -> Result<Recovered,
                 outcome: outcome.clone(),
             }),
             None => Ok(Recovered::Unknown {
-                run: row.run,
                 reason: UnknownAdmission::AdmissionNotRecovered,
             }),
         },
@@ -307,12 +339,14 @@ fn replayed(conn: &Connection, row: &Row, offered: &Digest) -> Result<Recovered,
                 },
             })
         }
+        // Only the admission transaction moves a reservation to `admitted`,
+        // and it does so with the run row it had just inserted, so this run is
+        // the one this key bound.
         (State::Admitted, Some(record)) => Ok(Recovered::Admitted {
             run: row.run,
             fence: fence(conn, &record.owner, record.generation)?,
         }),
         (_, None) => Ok(Recovered::Unknown {
-            run: row.run,
             reason: UnknownAdmission::AdmissionNotRecovered,
         }),
     }
@@ -323,14 +357,15 @@ fn replayed(conn: &Connection, row: &Row, offered: &Digest) -> Result<Recovered,
 /// commit together or not at all.
 pub(super) fn bind(txn: &mut Txn<'_>, ticket: &AdmissionTicket) -> Result<(), RunError> {
     let claimed = txn.conn().execute(
-        "UPDATE workspace_admissions SET state='admitted',updated_at=?4 \
-         WHERE session_generation=?1 AND request_id=?2 AND run_id=?3 AND digest=?5 AND state='reserved'",
+        "UPDATE workspace_admissions SET state='admitted',updated_at=?6 \
+         WHERE session_id=?1 AND session_generation=?2 AND request_id=?3 AND run_id=?4 AND digest=?5 AND state='reserved'",
         params![
-            ticket.key.session.get() as i64,
+            ticket.key.session.run.to_string(),
+            ticket.key.session.generation.get() as i64,
             ticket.key.request.to_string(),
             ticket.run.to_string(),
-            txn.now(),
-            ticket.digest.0.as_slice()
+            ticket.digest.0.as_slice(),
+            txn.now()
         ],
     )?;
     if claimed != 1 {
@@ -341,12 +376,13 @@ pub(super) fn bind(txn: &mut Txn<'_>, ticket: &AdmissionTicket) -> Result<(), Ru
     // The owning client's lifetime begins with its admission. Only it may
     // release this row; a second terminal never can (§8.11).
     txn.conn().execute(
-        "INSERT INTO run_attachments(attachment_id,run_id,session_generation,lifetime,state,created_at) \
-         VALUES (?1,?2,?3,'owner','attached',?4)",
+        "INSERT INTO run_attachments(attachment_id,run_id,session_id,session_generation,lifetime,state,created_at) \
+         VALUES (?1,?2,?3,?4,'owner','attached',?5)",
         params![
             owner_attachment(ticket.run).to_string(),
             ticket.run.to_string(),
-            ticket.key.session.get() as i64,
+            ticket.key.session.run.to_string(),
+            ticket.key.session.generation.get() as i64,
             txn.now()
         ],
     )?;
@@ -396,13 +432,16 @@ pub enum Release {
 }
 
 /// One client's attachment to an admitted run: a bounded stream cursor and a
-/// bounded control path, and nothing else. Releasing it never touches the run.
+/// bounded control path, and nothing else. Every read and control re-checks the
+/// durable attachment row, so a released attachment, a run that closed, or a
+/// row that a newer attach replaced cannot keep reading or steering. Releasing
+/// it never touches the run.
 #[derive(Debug)]
 pub struct Attachment {
     id: AttachmentId,
     run: RunId,
     fence: Fence,
-    session: Generation,
+    session: Session,
     client: Client,
     /// Absolute byte position per `(process sequence, stream)`.
     cursors: BTreeMap<(i64, &'static str), u64>,
@@ -418,14 +457,33 @@ impl Attachment {
     pub fn fence(&self) -> &Fence {
         &self.fence
     }
-    pub fn session(&self) -> Generation {
+    pub fn session(&self) -> Session {
         self.session
     }
     pub fn client(&self) -> Client {
         self.client
     }
+    /// Whether this handle has released its own lifetime. A durable release by
+    /// another holder is reported by `attached`, not here.
     pub fn released(&self) -> bool {
         self.released
+    }
+    /// Whether this attachment is still attached in the journal.
+    pub fn attached(&self, cx: &EffectContext, root: &StateRoot) -> Result<bool, RunError> {
+        let observed = cx
+            .operation()
+            .observe()
+            .map_err(|_| RunError::refused("this context cannot observe an attachment"))?;
+        self.attached_now(&observed, root)
+    }
+    fn attached_now(&self, cx: &ObserveContext, root: &StateRoot) -> Result<bool, RunError> {
+        match Store::read(cx, root) {
+            Observed::Verified(reader, _) => attached_row(reader.conn(), self.id, self),
+            Observed::Absent(_) => Ok(false),
+            Observed::Unknown(reason) => Err(RunError::unavailable(format!(
+                "this attachment's lifetime could not be read ({reason})"
+            ))),
+        }
     }
     /// The next byte this attachment will read from one process stream.
     pub fn cursor(&self, sequence: i64, stream: Stream) -> u64 {
@@ -445,9 +503,6 @@ impl Attachment {
         stream: Stream,
         max: usize,
     ) -> Result<Chunk, RunError> {
-        if self.released {
-            return Err(RunError::refused("this attachment was already released"));
-        }
         if sequence < 0 {
             return Err(RunError::refused("a stream sequence is not negative"));
         }
@@ -456,6 +511,9 @@ impl Attachment {
                 "a stream read is between 1 and {MAX_CHUNK} bytes"
             )));
         }
+        // The terminal's own lifetime, not a remembered flag: a released
+        // attachment, or one whose run closed and took its row, stops here.
+        self.lifetime(cx, root)?;
         let offset = self.cursor(sequence, stream);
         let read = match read_log(cx, root, self.run, sequence, stream, offset, max) {
             Observed::Verified(read, _) => read,
@@ -490,9 +548,11 @@ impl Attachment {
             truncated: read.truncated,
         })
     }
-    /// Record one bounded control request against this run's current owner
-    /// generation. The dispatcher's grant check has already authorised it;
-    /// this refuses the actions that belong to the owning client instead.
+    /// Record one bounded stop or escalation against this run's current owner
+    /// generation. The dispatcher's grant check has already authorised it; this
+    /// refuses the actions that belong to the owning client instead. The bound
+    /// and the insert commit in one transaction, so concurrent controls cannot
+    /// exceed [`CONTROL_MAX`] between them.
     pub fn control(
         &self,
         cx: &EffectContext,
@@ -500,42 +560,18 @@ impl Attachment {
         id: RunId,
         action: RequestAction,
     ) -> Result<(), RunError> {
-        if self.released {
-            return Err(RunError::refused("this attachment was already released"));
-        }
         if !matches!(action, RequestAction::Stop | RequestAction::Escalate) {
             return Err(RunError::refused(
                 "a stop or escalation is this attachment's only control; a detach is its own \
                  release and settlement belongs to the run",
             ));
         }
-        // A control path stays serviceable under backpressure, so it is
-        // bounded rather than queued without limit. Counting needs the
-        // journal; a read that does not answer refuses instead of admitting
-        // an unbounded number of requests.
         let observed = cx
             .operation()
             .observe()
-            .map_err(|_| RunError::refused("this context cannot observe a run's requests"))?;
-        let pending: i64 = match Store::read(&observed, root) {
-            Observed::Verified(reader, _) => reader.conn().query_row(
-                "SELECT count(*) FROM requests WHERE run_id=?1 AND state='pending'",
-                [self.run.to_string()],
-                |r| r.get(0),
-            )?,
-            Observed::Absent(_) => 0,
-            Observed::Unknown(reason) => {
-                return Err(RunError::unavailable(format!(
-                    "this run's control requests could not be read ({reason})"
-                )))
-            }
-        };
-        if pending >= CONTROL_MAX as i64 {
-            return Err(RunError::refused(format!(
-                "this run already has {CONTROL_MAX} control requests waiting"
-            )));
-        }
-        request(
+            .map_err(|_| RunError::refused("this context cannot observe an attachment"))?;
+        self.lifetime(&observed, root)?;
+        request_bounded(
             cx,
             root,
             &Request {
@@ -544,6 +580,7 @@ impl Attachment {
                 expected: self.fence.clone(),
                 action,
             },
+            Some(CONTROL_MAX),
         )
     }
     /// Release this client's lifetime, recording an acknowledged detach apart
@@ -560,6 +597,16 @@ impl Attachment {
         }
         release_attachment(cx, root, self.id, cause)?;
         self.released = true;
+        Ok(())
+    }
+    /// This handle's own durable lifetime: its row must still be attached to
+    /// this run in this session.
+    fn lifetime(&self, cx: &ObserveContext, root: &StateRoot) -> Result<(), RunError> {
+        if self.released || !self.attached_now(cx, root)? {
+            return Err(RunError::refused(
+                "this attachment is no longer attached to the run",
+            ));
+        }
         Ok(())
     }
 }
@@ -595,7 +642,7 @@ pub struct Gap {
 pub fn resume_owner(
     cx: &EffectContext,
     root: &StateRoot,
-    session: Generation,
+    session: Session,
     run: RunId,
 ) -> Result<Attachment, RunError> {
     open(cx, root, session, run, Client::Owner, None)
@@ -607,7 +654,7 @@ pub fn resume_owner(
 pub fn attach_secondary(
     cx: &EffectContext,
     root: &StateRoot,
-    session: Generation,
+    session: Session,
     run: RunId,
     id: AttachmentId,
 ) -> Result<Attachment, RunError> {
@@ -617,7 +664,7 @@ pub fn attach_secondary(
 fn open(
     cx: &EffectContext,
     root: &StateRoot,
-    session: Generation,
+    session: Session,
     run: RunId,
     client: Client,
     id: Option<AttachmentId>,
@@ -625,64 +672,65 @@ fn open(
     mutations_only(cx, "a workspace attachment")?;
     let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
     crate::fault_point!(RunAttachBefore)?;
-    let (id, fence) = store.transaction(
-        &cx.child(std::time::Duration::from_secs(30)),
-        |txn| {
-            let conn = txn.conn();
-            let admitted = admission_session(conn, run)?
-                .ok_or_else(|| RunError::refused("this run was not admitted by a session"))?;
-            if admitted != session {
-                return Err(RunError::refused(
-                    "this run was admitted in another workspace session generation",
-                ));
-            }
-            let record = journal_run(conn, run)?
-                .ok_or_else(|| RunError::refused("this run is no longer in its journal"))?;
-            if record.phase == Phase::Closed {
-                return Err(RunError::refused("this run is closed"));
-            }
-            let fence = fence(conn, &record.owner, record.generation)?;
-            match client {
-                Client::Owner => {
-                    let state: Option<String> = conn
-                        .query_row(
-                            "SELECT state FROM run_attachments WHERE run_id=?1 AND lifetime='owner'",
-                            [run.to_string()],
-                            |r| r.get(0),
-                        )
-                        .optional()?;
-                    if state.as_deref() != Some("attached") {
-                        return Err(RunError::refused(
-                            "this run has no attached owning client",
-                        ));
-                    }
-                    Ok((owner_attachment(run), fence))
+    let (id, fence) = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+        let conn = txn.conn();
+        let admitted = admission_session(conn, run)?
+            .ok_or_else(|| RunError::refused("this run was not admitted by a session"))?;
+        if admitted != session {
+            return Err(RunError::refused(
+                "this run was admitted in another workspace session",
+            ));
+        }
+        let record = journal_run(conn, run)?
+            .ok_or_else(|| RunError::refused("this run is no longer in its journal"))?;
+        if record.phase == Phase::Closed {
+            return Err(RunError::refused("this run is closed"));
+        }
+        let fence = fence(conn, &record.owner, record.generation)?;
+        match client {
+            Client::Owner => {
+                let attached: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE run_id=?1 AND lifetime='owner' AND state='attached')",
+                    [run.to_string()],
+                    |r| r.get(0),
+                )?;
+                if !attached {
+                    return Err(RunError::refused(
+                        "this run has no attached owning client",
+                    ));
                 }
-                Client::Secondary => {
-                    let id = id.ok_or_else(|| RunError::broken("a secondary needs its id"))?;
-                    let attached: i64 = conn.query_row(
-                        "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'",
-                        [run.to_string()],
-                        |r| r.get(0),
-                    )?;
-                    if attached >= SECONDARY_MAX as i64 {
-                        return Err(RunError::refused(format!(
-                            "this run already has {SECONDARY_MAX} attached terminals"
-                        )));
-                    }
-                    let inserted = conn.execute(
-                        "INSERT INTO run_attachments(attachment_id,run_id,session_generation,lifetime,state,created_at) \
-                         VALUES (?1,?2,?3,'secondary','attached',?4) ON CONFLICT(attachment_id) DO NOTHING",
-                        params![id.to_string(), run.to_string(), session.get() as i64, txn.now()],
-                    )?;
-                    if inserted != 1 {
-                        return Err(RunError::refused("this attachment id is already in use"));
-                    }
-                    Ok((id, fence))
-                }
+                Ok((owner_attachment(run), fence))
             }
-        },
-    )?;
+            Client::Secondary => {
+                let id = id.ok_or_else(|| RunError::broken("a secondary needs its id"))?;
+                let attached: i64 = conn.query_row(
+                    "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'",
+                    [run.to_string()],
+                    |r| r.get(0),
+                )?;
+                if attached >= SECONDARY_MAX as i64 {
+                    return Err(RunError::refused(format!(
+                        "this run already has {SECONDARY_MAX} attached terminals"
+                    )));
+                }
+                let inserted = conn.execute(
+                    "INSERT INTO run_attachments(attachment_id,run_id,session_id,session_generation,lifetime,state,created_at) \
+                     VALUES (?1,?2,?3,?4,'secondary','attached',?5) ON CONFLICT(attachment_id) DO NOTHING",
+                    params![
+                        id.to_string(),
+                        run.to_string(),
+                        session.run.to_string(),
+                        session.generation.get() as i64,
+                        txn.now()
+                    ],
+                )?;
+                if inserted != 1 {
+                    return Err(RunError::refused("this attachment id is already in use"));
+                }
+                Ok((id, fence))
+            }
+        }
+    })?;
     crate::fault_point!(RunAttachAfter)?;
     Ok(Attachment {
         id,
@@ -707,7 +755,7 @@ fn release_attachment(
     store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
         txn.conn().execute(
             "UPDATE run_attachments SET state='released',release=?2,released_at=?3 \
-                 WHERE attachment_id=?1 AND state='attached'",
+             WHERE attachment_id=?1 AND state='attached'",
             params![id.to_string(), release_name(cause), txn.now()],
         )?;
         Ok::<_, RunError>(())
@@ -721,6 +769,25 @@ fn release_name(cause: Release) -> &'static str {
         Release::Eof => "eof",
         Release::Detach => "detach",
     }
+}
+
+/// Whether this exact attachment row is still attached to this run and session.
+fn attached_row(
+    conn: &Connection,
+    id: AttachmentId,
+    attachment: &Attachment,
+) -> Result<bool, RunError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM run_attachments \
+         WHERE attachment_id=?1 AND run_id=?2 AND session_id=?3 AND session_generation=?4 AND state='attached')",
+        params![
+            id.to_string(),
+            attachment.run.to_string(),
+            attachment.session.run.to_string(),
+            attachment.session.generation.get() as i64
+        ],
+        |r| r.get(0),
+    )?)
 }
 
 /// The id of a run's owning attachment. It is derived from the run, so a
@@ -745,15 +812,23 @@ fn mutations_only(cx: &EffectContext, what: &str) -> Result<(), RunError> {
     Ok(())
 }
 
-fn admission_session(conn: &Connection, run: RunId) -> Result<Option<Generation>, RunError> {
-    Ok(conn
-        .query_row(
-            "SELECT session_generation FROM workspace_admissions WHERE run_id=?1 ORDER BY session_generation DESC",
-            [run.to_string()],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()?
-        .map(|value| Generation::new(value as u64)))
+fn admission_session(conn: &Connection, run: RunId) -> Result<Option<Session>, RunError> {
+    conn.query_row(
+        "SELECT session_id,session_generation FROM workspace_admissions \
+             WHERE run_id=?1 ORDER BY session_generation DESC",
+        [run.to_string()],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+    )
+    .optional()?
+    .map(|(session, generation)| {
+        Ok::<_, RunError>(Session {
+            run: session
+                .parse()
+                .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
+            generation: Generation::new(generation as u64),
+        })
+    })
+    .transpose()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -786,8 +861,12 @@ struct Row {
 fn row(conn: &Connection, key: &AdmissionKey) -> Result<Option<Row>, RunError> {
     conn.query_row(
         "SELECT digest,run_id,state,outcome FROM workspace_admissions \
-         WHERE session_generation=?1 AND request_id=?2",
-        params![key.session.get() as i64, key.request.to_string()],
+         WHERE session_id=?1 AND session_generation=?2 AND request_id=?3",
+        params![
+            key.session.run.to_string(),
+            key.session.generation.get() as i64,
+            key.request.to_string()
+        ],
         |r| {
             Ok((
                 r.get::<_, Vec<u8>>(0)?,

@@ -104,7 +104,7 @@ impl Generation {
         self.0.checked_add(1).map(Self)
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RunId([u8; 16]);
 impl RunId {
     /// Caller supplies cryptographic entropy. Time is only an ordering hint.
