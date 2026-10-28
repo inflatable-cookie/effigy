@@ -151,19 +151,13 @@ fn private_builder_fixture_removes_sealed_object_directories() {
     assert!(!root.exists());
 }
 
-// The real Colima preflight rejects OS temp paths on Linux as well as macOS.
+// The real Colima preflight rejects OS temp paths on Linux as well as macOS, and
+// on macOS the scratch TMPDIR is a temp path too. The host HOME is the parent
+// Colima shares, lives outside the checkout, and is removed on drop.
 fn builder_fixture() -> effigy_test_support::Fixture {
-    #[cfg(target_os = "macos")]
-    return effigy_test_support::Fixture::workspace("effigy-parent-fixtures-recovery-").unwrap();
-    #[cfg(not(target_os = "macos"))]
-    {
-        let home = std::env::var_os("HOME").expect("host HOME for shared Colima fixture");
-        effigy_test_support::Fixture::in_parent(
-            "effigy-parent-fixtures-recovery-",
-            Path::new(&home),
-        )
+    let home = std::env::var_os("HOME").expect("host HOME for shared Colima fixture");
+    effigy_test_support::Fixture::in_parent("effigy-parent-fixtures-recovery-", Path::new(&home))
         .unwrap()
-    }
 }
 
 #[test]
@@ -205,9 +199,8 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
 }
 
 // Path contract: the Colima preflight refuses OS temp roots, so the shared
-// builder fixture must sit outside them on Linux. A `/tmp` root fails here by
-// name instead of as a preflight refusal inside the recovery cases.
-#[cfg(not(target_os = "macos"))]
+// builder fixture must sit outside them. A temp root fails here by name instead
+// of as a preflight refusal inside the recovery cases.
 #[test]
 fn builder_fixture_root_stays_outside_the_linux_temp_root() {
     let _lock = crate::contract_test_support::lock_test();
@@ -642,10 +635,10 @@ fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
 /// A v0.14.1 partial-activation receipt, exactly as that release left it.
 /// Nothing reads or rewrites it (contract 052 M3).
 fn write_legacy_partial_marker(root: &Path, policy: &effigy_containers::EffectiveContainerPolicy) {
-    let base = std::env::var_os("EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join(".effigy"));
-    let dir = base
+    // The fixture's private home (EFFIGY_TEST_CONTAINERS_HOME) and the lease
+    // root that preserve_tree reads. Writing anywhere else leaves that read ENOENT.
+    let dir = root
+        .join("host-home/.effigy")
         .join("runtime/host-container-leases")
         .join(&policy.profile)
         .join(&policy.project_name);
