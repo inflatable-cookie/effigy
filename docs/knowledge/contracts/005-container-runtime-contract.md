@@ -1307,6 +1307,16 @@ bring-up nor a failed apply, and no failure text (an offline registry lookup
 included) triggers one — because that would take down every stack on the
 profile. A detected problem prints the manual command instead. Other Colima
 profiles are never touched.
+Explicit profile repair and reset first request a graceful stop. Their only
+direct escalation reads the selected Lima instance's `ha.pid` and `vz.pid`,
+checks the exact host-agent arguments and process start against the pidfile's
+write time, and rechecks the evidence before signalling. Missing or changed
+evidence is a refusal. External shell and SSH clients are not signalled.
+When a residual host agent requires escalation on a QEMU profile with
+`qemu.pid` instead of `vz.pid`, Effigy reports the missing `vz.pid` and does
+not signal the QEMU driver.
+Effigy does not invoke Colima's force-stop route, whose PID-file handling can
+signal a reused PID; the operator may choose it after verifying ownership.
 A newly started profile also waits for both probes. Failures identify the
 runtime stage and include the last probe result.
 

@@ -1223,8 +1223,11 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   leader; in recovery, a verified anchor's continuous group membership plus
   the target's fresh identity and membership; or, for an unanchored receipt,
   the leader's verified start and boot identity or a member's custody nonce
-  plus start time. A non-empty group or session is
-  never ownership evidence. No pattern kills (`pkill -f`). Missing evidence
+  plus start time. Explicit Colima profile repair uses the selected Lima
+  pidfile, exact instance arguments, pidfile write time and freshly rechecked
+  process start and boot identity as its external-process authority. A
+  non-empty group or session is never ownership evidence. No pattern kills
+  (`pkill -f`). Missing evidence
   is residue only while the member is still present: a member that exited
   between the group inventory and its evidence read is re-inventoried, so a
   clean settle cannot report residue for a process that is already gone.
@@ -2455,7 +2458,7 @@ Transport candidates by backend. None is supported until qualified:
 
 | Backend | Topology | The kernel relies on | Remote custody identity | Notes |
 | --- | --- | --- | --- | --- |
-| Colima (macOS; VZ or QEMU; docker or containerd) | one Lima VM per profile | `flock` never crosses virtiofs, sshfs or 9p, so gates are host-only; the state root is never mounted into containers; checkouts sit under the home mount | full container id, VM boot id from the guest's `/proc`, pid namespace, session, leader start ticks | `colima restart` changes the VM boot id, proving prior sessions `Absent`. Profile repair acts on retained identities, never `pkill -f` patterns. |
+| Colima (macOS; VZ or QEMU; docker or containerd) | one Lima VM per profile | `flock` never crosses virtiofs, sshfs or 9p, so gates are host-only; the state root is never mounted into containers; checkouts sit under the home mount | full container id, VM boot id from the guest's `/proc`, pid namespace, session, leader start ticks | `colima restart` changes the VM boot id, proving prior sessions `Absent`. Explicit profile repair checks exact pidfile, process arguments and start identity before signalling; it never uses process patterns. |
 | Docker Desktop (macOS) | LinuxKit VM; host CLI | the same | the same | default file sharing covers `/Users` |
 | Docker Engine (Linux) | shared kernel | the same rule, although `flock` would cross; container pids live in their own namespace and are never signalled from the host by number | the same; VM boot id is the host boot id | membership of the `docker` group is root-equivalent; the kernel never escalates |
 | Apple Containers (planned) | one lightweight VM per container | the same rules; `container exec` | container id plus its VM boot id | the Compose relationship is open (Q-004); the adapter must pass the §5.10 conformance suite first |

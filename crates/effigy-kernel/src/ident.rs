@@ -39,6 +39,142 @@ pub struct ProcessIdentity {
     pub pid: u32,
     pub start: ProcessStartIdentity,
 }
+
+/// Prove the process started no later than a filesystem timestamp.
+pub fn started_before(identity: &ProcessIdentity, time: std::time::SystemTime) -> bool {
+    let Some(limit) = time.duration_since(std::time::UNIX_EPOCH).ok() else {
+        return false;
+    };
+    match identity.start {
+        ProcessStartIdentity::MacOs {
+            seconds,
+            microseconds,
+        } => {
+            microseconds < 1_000_000
+                && Duration::new(seconds, (microseconds * 1_000) as u32) <= limit
+        }
+        ProcessStartIdentity::LinuxTicks(ticks) => {
+            #[cfg(target_os = "linux")]
+            {
+                let Ok(stat) = std::fs::read_to_string("/proc/stat") else {
+                    return false;
+                };
+                let Some(boot) = stat
+                    .lines()
+                    .find_map(|line| line.strip_prefix("btime ")?.parse::<u64>().ok())
+                else {
+                    return false;
+                };
+                // SAFETY: sysconf reads a constant process-wide clock property.
+                let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+                let Ok(hz) = u64::try_from(hz) else {
+                    return false;
+                };
+                if hz == 0 {
+                    return false;
+                }
+                // btime is rounded to a second; use an upper bound, not a guess.
+                let Some(secs) = boot
+                    .checked_add(1)
+                    .and_then(|v| v.checked_add(ticks / hz))
+                    .and_then(|v| v.checked_add(1))
+                else {
+                    return false;
+                };
+                Duration::from_secs(secs) <= limit
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = ticks;
+                false
+            }
+        }
+    }
+}
+
+/// Read exact argument boundaries without using a process-table pattern scan.
+pub fn process_arguments(pid: u32) -> std::io::Result<Vec<std::ffi::OsString>> {
+    use std::os::unix::ffi::OsStringExt;
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
+        let mut bytes = vec![0u8; 1 << 20];
+        let mut size = bytes.len();
+        // SAFETY: the three-element MIB, size and byte buffer are initialized,
+        // writable, live and disjoint for the call; null newp makes it read-only.
+        if unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                3,
+                bytes.as_mut_ptr().cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        if size > bytes.len() {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        bytes.truncate(size);
+        let argc = i32::from_ne_bytes(
+            bytes
+                .get(..4)
+                .ok_or(std::io::ErrorKind::InvalidData)?
+                .try_into()
+                .map_err(|_| std::io::ErrorKind::InvalidData)?,
+        );
+        if !(1..=4096).contains(&argc) {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        let mut offset = 4;
+        while bytes
+            .get(offset)
+            .copied()
+            .ok_or(std::io::ErrorKind::InvalidData)?
+            != 0
+        {
+            offset += 1;
+        }
+        while bytes.get(offset) == Some(&0) {
+            offset += 1;
+        }
+        let mut args = Vec::new();
+        for _ in 0..argc {
+            let end = bytes
+                .get(offset..)
+                .ok_or(std::io::ErrorKind::InvalidData)?
+                .iter()
+                .position(|b| *b == 0)
+                .ok_or(std::io::ErrorKind::InvalidData)?
+                + offset;
+            args.push(std::ffi::OsString::from_vec(bytes[offset..end].to_vec()));
+            offset = end + 1;
+        }
+        return Ok(args);
+    };
+    #[cfg(target_os = "linux")]
+    let bytes = std::fs::read(format!("/proc/{pid}/cmdline"))?;
+    #[cfg(target_os = "linux")]
+    {
+        if bytes.is_empty() || bytes.last() != Some(&0) || bytes.len() > 1 << 20 {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        Ok(bytes[..bytes.len() - 1]
+            .split(|b| *b == 0)
+            .map(|part| std::ffi::OsString::from_vec(part.to_vec()))
+            .collect())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootInstant {
     pub boot: BootIdentity,
@@ -387,6 +523,11 @@ compile_error!("effigy-kernel requires macOS or Linux");
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn colima_runtime_process_arguments_preserve_own_argv() {
+        let args = super::process_arguments(std::process::id()).expect("read own arguments");
+        assert_eq!(args, std::env::args_os().collect::<Vec<_>>());
+    }
     use super::*;
     #[test]
     fn linux_stat_handles_comm_delimiters_and_rejects_bad_evidence() {

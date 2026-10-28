@@ -570,7 +570,7 @@ fn bundle_step_override_preserves_retired_draft_error() {
 [bundle]
 base = { type = "path", dir = "bundles/steps" }
 [tasks.seed]
-run = { draft = "old" }
+run = { draft = 'old' }
 "#,
     )
     .expect("write manifest");
@@ -604,7 +604,7 @@ run = { rhai = "default.rhai", env = { run = "default", shared = "default" } }
 [bundle]
 base = { type = "path", dir = "bundles/steps" }
 [tasks]
-draft = "consumer command"
+draft = 'consumer command'
 [tasks.seed]
 run = { task = "consumer", env = { task = "consumer", shared = "consumer" } }
 "#,

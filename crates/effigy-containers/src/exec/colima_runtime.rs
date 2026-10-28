@@ -9,7 +9,7 @@ use super::healthcheck_pidfiles::prune_stale_health_check_pidfiles;
 use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
-    error_is_timeout, format_args, run_command_capture, run_command_capture_allow_failure,
+    error_is_timeout, format_args, run_command_capture,
     run_command_capture_allow_failure_with_deadline, run_command_capture_with_absolute_deadline,
     run_command_capture_with_timeout,
 };
@@ -721,15 +721,23 @@ pub fn recover_colima_runtime(
         policy.profile
     )];
 
-    match stop_colima_profile_for_repair(policy, repo_root) {
-        Ok(_) => steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile)),
-        Err(error) => steps.push(format!(
-            "[warning] graceful stop failed for profile `{}`; forcing stale process cleanup\n{}",
-            policy.profile, error
-        )),
-    }
+    let graceful_ok = match stop_colima_profile_for_repair(policy, repo_root) {
+        Ok(_) => {
+            steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile));
+            true
+        }
+        Err(error) => {
+            steps.push(format!(
+                "[warning] graceful stop failed for profile `{}`; inspecting profile pidfiles\n{}",
+                policy.profile, error
+            ));
+            false
+        }
+    };
 
-    force_terminate_colima_profile_processes(policy, repo_root, &mut steps)?;
+    force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps)?;
+
+    verify_profile_stopped(policy, repo_root, &steps, true)?;
 
     if let Err(error) = restart_and_verify_colima_profile(policy, repo_root, &mut steps) {
         let runtime_state_loss = match &error {
@@ -746,7 +754,15 @@ pub fn recover_colima_runtime(
             "[warning] profile `{}` still reported an empty runtime after restart; retrying one deeper repair pass",
             policy.profile
         ));
-        force_terminate_colima_profile_processes(policy, repo_root, &mut steps)?;
+        let stopped = match stop_colima_profile_for_repair(policy, repo_root) {
+            Ok(()) => true,
+            Err(error) => {
+                steps.push(format!("[warning] retry graceful stop failed: {error}"));
+                false
+            }
+        };
+        force_terminate_colima_profile_processes(policy, stopped, &mut steps)?;
+        verify_profile_stopped(policy, repo_root, &steps, true)?;
         restart_and_verify_colima_profile(policy, repo_root, &mut steps)?;
     }
 
@@ -765,26 +781,22 @@ pub fn reset_colima_runtime(
         policy.profile
     )];
 
-    match stop_colima_profile_for_repair(policy, repo_root) {
-        Ok(_) => steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile)),
-        Err(error) => steps.push(format!(
-            "[warning] graceful stop failed for profile `{}`; forcing stale process cleanup\n{}",
-            policy.profile, error
-        )),
-    }
+    let graceful_ok = match stop_colima_profile_for_repair(policy, repo_root) {
+        Ok(_) => {
+            steps.push(format!("[ok] stopped Colima profile `{}`", policy.profile));
+            true
+        }
+        Err(error) => {
+            steps.push(format!(
+                "[warning] graceful stop failed for profile `{}`; inspecting profile pidfiles\n{}",
+                policy.profile, error
+            ));
+            false
+        }
+    };
 
-    force_terminate_colima_profile_processes(policy, repo_root, &mut steps)?;
-    if colima_running_probe_after_stop(policy, repo_root)?.unwrap_or(false) {
-        return Err(ContainerExecError::Failure {
-            command: "colima status".to_owned(),
-            code: None,
-            stdout: String::new(),
-            stderr: format!(
-                "Colima profile `{}` still appears to be running after reset-runtime",
-                policy.profile
-            ),
-        });
-    }
+    force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps)?;
+    verify_profile_stopped(policy, repo_root, &steps, false)?;
     steps.push(format!(
         "[ok] verified Colima profile `{}` is fully stopped",
         policy.profile
@@ -988,98 +1000,72 @@ fn colima_running_probe_after_stop(
 ) -> Result<Option<bool>, ContainerExecError> {
     let status = colima_status_command(policy);
     let args: Vec<&str> = status.args.iter().map(|value| value.as_str()).collect();
-    let output = run_command_capture_allow_failure(repo_root, &status.program, &args)?;
+    let output = run_command_capture_allow_failure_with_deadline(
+        repo_root,
+        &status.program,
+        &args,
+        &status.label,
+        Some(Instant::now() + COLIMA_STATUS_TIMEOUT),
+    )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.status.success() {
-        return Ok(Some(parse_colima_running(&stdout, &stderr)));
-    }
     if docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) {
         return Ok(None);
     }
-    Ok(Some(parse_colima_running(&stdout, &stderr)))
+    if output.status.success() && parse_colima_running(&stdout, &stderr) {
+        return Ok(Some(true));
+    }
+    if format!("{stdout}\n{stderr}")
+        .to_ascii_lowercase()
+        .contains("not running")
+    {
+        return Ok(Some(false));
+    }
+    Err(ContainerExecError::Failure {
+        command: status.label,
+        code: output.status.code(),
+        stdout: stdout.into_owned(),
+        stderr: format!("Colima stop status is unproven: {stderr}"),
+    })
+}
+
+fn verify_profile_stopped(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    steps: &[String],
+    allow_empty_runtime: bool,
+) -> Result<(), ContainerExecError> {
+    let reason = match colima_running_probe_after_stop(policy, repo_root) {
+        Ok(Some(false)) => return Ok(()),
+        Ok(None) if allow_empty_runtime => return Ok(()),
+        Ok(Some(true)) => "profile is still running".to_owned(),
+        Ok(None) => "profile status is unavailable".to_owned(),
+        Err(error) => error.to_string(),
+    };
+    Err(ContainerExecError::Failure {
+        command: "colima status".to_owned(),
+        code: None,
+        stdout: steps.join("\n"),
+        stderr: format!("{reason}; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p {} --force`; Effigy did not run it.", policy.profile),
+    })
 }
 
 fn force_terminate_colima_profile_processes(
     policy: &EffectiveContainerPolicy,
-    repo_root: &Path,
+    graceful_ok: bool,
     steps: &mut Vec<String>,
 ) -> Result<(), ContainerExecError> {
-    let instance_name = format!("colima-{}", policy.profile);
-    let ssh_sock = std::env::var_os("HOME")
-        .map(|home| {
-            Path::new(&home)
-                .join(".colima/_lima")
-                .join(&instance_name)
-                .join("ssh.sock")
-                .display()
-                .to_string()
-        })
-        .unwrap_or_else(|| format!("~/.colima/_lima/{instance_name}/ssh.sock"));
-    let pkill_patterns = [
-        format!("colima daemon start {}", policy.profile),
-        format!("limactl hostagent.*{instance_name}"),
-        format!("limactl start {instance_name}"),
-        format!("limactl shell --instance {instance_name}"),
-        ssh_sock,
-    ];
-    for pattern in pkill_patterns {
-        run_pkill_pattern(repo_root, &pattern)?;
-    }
-    remove_stale_colima_runtime_files(policy, steps);
-    thread::sleep(Duration::from_millis(400));
-    steps.push(format!(
-        "[ok] cleared stale local Colima processes for profile `{}`",
-        policy.profile
-    ));
+    let stopped =
+        super::colima_cleanup::terminate(&policy.profile, graceful_ok).map_err(|error| {
+            ContainerExecError::Failure {
+                command: "Colima profile pidfile cleanup".to_owned(),
+                code: None,
+                stdout: steps.join("\n"),
+                stderr: error,
+            }
+        })?;
+    steps.extend(stopped);
     Ok(())
-}
-
-fn run_pkill_pattern(repo_root: &Path, pattern: &str) -> Result<(), ContainerExecError> {
-    let command = format!("pkill -f {} || true", shell_quote(pattern));
-    let output = run_command_capture_with_timeout(
-        repo_root,
-        "sh",
-        &["-lc", command.as_str()],
-        "pkill",
-        Duration::from_secs(5),
-    )?;
-    let _ = output;
-    Ok(())
-}
-
-fn remove_stale_colima_runtime_files(policy: &EffectiveContainerPolicy, steps: &mut Vec<String>) {
-    let Some(home) = std::env::var_os("HOME") else {
-        return;
-    };
-    let instance_dir = Path::new(&home)
-        .join(".colima/_lima")
-        .join(format!("colima-{}", policy.profile));
-    let stale_paths = [
-        instance_dir.join("ha.pid"),
-        instance_dir.join("vz.pid"),
-        instance_dir.join("ha.sock"),
-        instance_dir.join("ssh.sock"),
-    ];
-    let mut removed = Vec::new();
-    for path in stale_paths {
-        if std::fs::remove_file(&path).is_ok() {
-            removed.push(path.display().to_string());
-        }
-    }
-    if !removed.is_empty() {
-        steps.push(format!(
-            "[ok] removed stale Colima control files for profile `{}`",
-            policy.profile
-        ));
-    }
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_owned();
-    }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(test)]
@@ -1091,6 +1077,12 @@ mod tests {
         ManifestContainerShutdownMode, ManifestContainerStartup,
     };
     use std::path::PathBuf;
+
+    #[test]
+    fn colima_runtime_graceful_stop_never_delegates_force() {
+        let stop = colima_stop_command(&test_policy());
+        assert_eq!(stop.args, ["stop", "--profile", "effigy"]);
+    }
 
     #[test]
     fn default_runtime_profile_honors_user_global_preference() {
@@ -1335,7 +1327,10 @@ root="$EFFIGY_MANAGED_PROFILE_FIXTURE"
 printf '%s\n' "$*" >> "$root/colima-calls"
 case "$1" in
   status)
-    if [ -f "$root/running" ]; then
+    if [ -f "$root/status-unknown" ]; then
+      printf 'status unavailable\n' >&2
+      exit 1
+    elif [ -f "$root/running" ]; then
       printf 'INFO[0000] colima is running\n'
     else
       printf 'time="now" level=fatal msg="colima [profile=effigy] is not running"\n'
@@ -1349,7 +1344,7 @@ case "$1" in
     fi
     ;;
   start) : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
-  stop) rm -f "$root/running"; printf 'stopped\n' ;;
+  stop) if [ ! -f "$root/stop-stays-running" ]; then rm -f "$root/running"; fi; printf 'stopped\n' ;;
   nerdctl)
     if [ -f "$root/offline" ]; then
       printf '%s\n' 'failed to solve: rust:1.88-bookworm: failed to resolve source metadata for docker.io/library/rust:1.88-bookworm: dial tcp: lookup registry-1.docker.io on 192.168.5.3:53: read udp: connection refused' >&2
@@ -1464,6 +1459,50 @@ esac
                 .map(str::to_owned)
                 .collect()
         }
+    }
+
+    #[test]
+    fn colima_runtime_explicit_repair_and_reset_use_only_graceful_colima_stop() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        let policy = fixture.policy();
+        recover_colima_runtime(&policy, &fixture.root).expect("repair profile");
+        reset_colima_runtime(&policy, &fixture.root).expect("reset profile");
+        let calls = fixture.calls();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| *call == "stop --profile effigy")
+                .count(),
+            2,
+            "{calls:#?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call.contains("--force")),
+            "{calls:#?}"
+        );
+        assert!(!fixture.has_state("running"));
+    }
+
+    #[test]
+    fn colima_runtime_refuses_running_or_unknown_status() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.state("stop-stays-running");
+        let policy = fixture.policy();
+        let error = recover_colima_runtime(&policy, &fixture.root).unwrap_err();
+        assert!(error.to_string().contains("still running"));
+        assert!(!fixture
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("start ")));
+        fixture.state("status-unknown");
+        let error = reset_colima_runtime(&policy, &fixture.root).unwrap_err();
+        assert!(error.to_string().contains("status is unproven"));
     }
 
     /// An offline registry lookup used to take the shared VM down and start

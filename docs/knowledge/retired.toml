@@ -1,4 +1,14 @@
 [[retired]]
+id = "colima-profile-pattern-kill"
+retired = "2026-10-28; profile repair process identity (effigy#422)"
+replacement = "Explicit repair uses the selected Lima pidfiles and checks host-agent arguments and process start identity before signalling; unprovable processes are refused."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["run_pkill_pattern"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
 id = "effigy-demo-surface"
 retired = "2026-10-21"
 replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Each `[demos.<name>]` converts to `[tasks.\"demo:<name>\"]` with the same `run`, the `title` and `summary` merged into the task `description` (effigy#271), and optional `group = \"Demos\"`. `effigy demo` refuses with this explanation. For the whole v0.15 line a `[demos]` table still loads and is ignored with one deprecation notice per manifest that carries the conversion recipe (effigy#274), and `effigy config --target demos` refuses with it. Historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
