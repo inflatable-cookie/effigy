@@ -147,10 +147,9 @@
   { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-cli -p effigy-containers -p effigy-gateway --all-targets -- -D warnings", timeout_ms = 900000 },
 ] }
 
-# Domain takeover: a route is owned by its checkout path, so a deleted checkout
-# or a stopped target releases the domain and a live owner refuses by name. The
-# daemon sweep keeps `gateway status` honest. Private stores and injected probes
-# only (#296).
+# Domain takeover follows route ownership by checkout path: a missing checkout
+# or stopped target releases the domain, and a live route refuses. Gateway
+# status reads the route table; no daemon sweep repairs ownership (#296).
 "test:gateway:stale-http-owners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(policy_support::generated_compose::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(registration::tests::a_deleted_checkout_claim_is_taken_over_automatically) | test(registration::tests::a_recorded_target_that_stopped_listening_releases_the_domain) | test(registration::tests::a_live_checkout_serving_the_domain_refuses_a_second_checkout) | test(registration::tests::the_same_checkout_path_replaces_its_own_route)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },

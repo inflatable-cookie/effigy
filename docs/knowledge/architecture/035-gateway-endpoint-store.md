@@ -135,10 +135,12 @@ the failure; it does not claim the cause of a past unexplained refusal.
 
 ## Proof surfaces
 
-- `test:gateway:endpoints`: import preservation and idempotence, persistent
+- `test:gateway:endpoints`: snapshot publication and idempotence, persistent
   owners, immediate reuse after release, concurrent conflict races, stale
   revisions, collision refusal, untrusted inputs, Unknown reads and
   publication/retention faults; the route model tests also run.
+- `proof:gateway:pinned-reader`: a pinned build decodes a route snapshot
+  written by the current build.
 - `test:gateway:loopback-lifecycle`: alias addresses derived from the route
   table, a new checkout taking an address no live route references, and routes
   of deleted checkouts dropped by any write.

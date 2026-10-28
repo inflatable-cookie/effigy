@@ -856,11 +856,14 @@ Direct operator use of raw compose commands is outside this contract.
 Effigy gives each linked Git worktree generation a stable runtime token stored
 in Git's private worktree directory, outside the checkout. Generated Compose
 project names include that token even when a manifest supplies `project_name`.
-The project name scopes Compose containers, networks and managed volumes;
-generated published ports use a project-specific allocation, including when
-the manifest names a fixed host port. Repeated commands in one worktree reuse
-the token. Recreating a worktree at the same path creates a new token. The
-primary checkout keeps its existing project name and port behavior.
+The project name scopes Compose containers, networks and managed volumes, not
+host-port allocation. Unpinned published ports use Compose or OS assignment;
+`stable_ports` opts into a checkout-path-derived host port. In a runtime-scoped
+checkout, a manifest's fixed host port is replaced with an OS-assigned value
+unless `stable_ports` is enabled, so it does not compete with the primary.
+Repeated commands in one worktree reuse the token. Recreating a worktree at the
+same path creates a new token. Without `stable_ports`, the primary checkout
+keeps its existing project name and explicit-port behavior.
 
 `effigy container scope --json` is the policy-independent checkout identity
 query for archive callers. It resolves the selected checkout before deletion
@@ -924,8 +927,8 @@ listener mode in either direction, and between any two of its environments,
 as one preflighted handover. Before any effect, `container up` of the
 incoming environment evaluates everything that could refuse: route claims,
 loopback pool capacity, manifest, policy, ownership and backend validation. A
-route held by another checkout, scope or a non-container source refuses with
-no effects. When another environment of the same checkout and scope is live
+live route owned by another checkout path refuses with no effects. When
+another environment of the same checkout and scope is live
 and conflicts — the pair shares data volumes through `data_from`, or the
 incoming environment's route claims collide with the live environment's
 declared claims — the live environment comes down whole with the ordinary
