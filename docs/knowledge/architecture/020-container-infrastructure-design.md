@@ -788,6 +788,22 @@ a durable stop request, cancellation or interrupted-run recovery, even when no
 `gateway down` command ran. This identifies possible causes of the 2026-10-26
 clean exits, without attributing an unobserved incident to one of them.
 
+The 2026-10-28 15:26:25Z stop of the installed Mac gateway showed what those
+fields could not answer: which terminal, session, agent or task asked for it.
+The same event now carries a bounded `caller` record for `up`, `down` and
+`setup`: the start identity, session and controlling terminal of the invoking
+process, its parent chain up to and including the session leader (at most eight
+entries, each with pid, start identity, session and redacted command), and only
+allowlisted `PASEO_*`, `NS_*` and `EFFIGY_RUN_*` identity markers whose value
+passes length and identity validation. An unreadable parent, argument or marker,
+or a pid whose start identity changed while it was read, becomes a bounded
+unknown reason instead of a guess, and no environment value is read unless its
+name is on that allowlist. The record names the action before its first effect,
+so a refused or failed `up` or `setup` is attributable as well. Logging stays
+best effort and never authorizes, refuses or delays an action; the elevated
+child of `gateway setup` writes nothing, because the file would become
+root-owned in the operator's directory.
+
 ### Gateway process identity ruling
 
 Tom ruled on 2026-10-06: "Approved, but you need to fix this so other users

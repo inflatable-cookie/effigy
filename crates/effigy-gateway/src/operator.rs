@@ -552,6 +552,11 @@ pub fn up_with_executable_within(
 ) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
+    // An `up` is attributable even when it then refuses or fails: one bounded
+    // event names its caller before the first effect, in the same log as a stop.
+    if let Some(directory) = config.pid_file_path.parent() {
+        run::record_gateway_operator(directory, run::OperatorAction::Up, "gateway up command");
+    }
     let before = status(config)?;
     if before.ready {
         note_reused_gateway_build(&before);
@@ -995,7 +1000,8 @@ mod tests {
         );
     }
     /// A stop is never silent: the gateway's log names the pid, argv and cwd of
-    /// the process that asked for it (papercut 06d1cd9e).
+    /// the process that asked for it (papercut 06d1cd9e), and the bounded caller
+    /// provenance that tells two hosts or agents apart (effigy#450).
     #[test]
     fn a_stop_request_is_recorded_in_the_gateway_log_with_its_caller() {
         let home = tempfile::tempdir().unwrap();
@@ -1014,6 +1020,8 @@ mod tests {
         )
         .expect("the stop record is written beside the gateway records");
         let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(record["event"], "gateway_stop");
+        assert_eq!(record["action"], "down");
         assert_eq!(record["pid"], std::process::id());
         assert_eq!(record["cause"], "gateway down command");
         assert!(
@@ -1026,6 +1034,28 @@ mod tests {
                 .is_some_and(|args| !args.is_empty()),
             "{log}"
         );
+        let caller = &record["caller"];
+        assert_eq!(caller["pid"], std::process::id());
+        assert!(caller["start"].is_string(), "{log}");
+        assert!(caller["markers"].is_object(), "{log}");
+        assert!(caller["unknown"].is_array(), "{log}");
+        // The chain reaches the parent this harness was started from, with the
+        // parent's own start identity so a reused pid stays distinguishable.
+        let parents = caller["parents"].as_array().expect("a caller chain");
+        assert!(
+            parents.iter().all(|link| link["start"].is_string()),
+            "{log}"
+        );
+        let parent = std::os::unix::process::parent_id();
+        let first = parents.first().and_then(|link| link["pid"].as_u64());
+        let parent_unreadable = caller["unknown"].as_array().is_some_and(|reasons| {
+            reasons.iter().any(|reason| {
+                reason
+                    .as_str()
+                    .is_some_and(|reason| reason.contains(&format!("parent {parent}")))
+            })
+        });
+        assert!(first == Some(parent as u64) || parent_unreadable, "{log}");
     }
 
     #[test]

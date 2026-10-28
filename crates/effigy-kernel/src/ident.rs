@@ -175,6 +175,42 @@ pub fn process_arguments(pid: u32) -> std::io::Result<Vec<std::ffi::OsString>> {
         Err(std::io::ErrorKind::Unsupported.into())
     }
 }
+/// A process's place in its session, for bounded caller attribution. The
+/// parent and session are read-only facts; an unreadable one is uncertainty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessLineage {
+    pub parent: u32,
+    pub session: Option<u32>,
+}
+
+/// Read the parent and session of one process.
+pub fn process_lineage(pid: u32) -> std::io::Result<ProcessLineage> {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+    }
+    platform::lineage(pid)
+}
+
+/// The invoking process's controlling terminal, when it has one. A diagnostic
+/// names a terminal session; a process without a terminal records nothing.
+pub fn controlling_terminal() -> Option<String> {
+    // SAFETY: isatty only reads the state of one descriptor.
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+        return None;
+    }
+    let mut buffer = [0 as libc::c_char; 128];
+    // SAFETY: fd 0 is a terminal per isatty above, and ttyname_r writes at most
+    // buffer.len() bytes into the live, writable and correctly typed buffer.
+    if unsafe { libc::ttyname_r(libc::STDIN_FILENO, buffer.as_mut_ptr(), buffer.len()) } != 0 {
+        return None;
+    }
+    // SAFETY: a successful ttyname_r NUL-terminates the buffer.
+    let path = unsafe { std::ffi::CStr::from_ptr(buffer.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    (path.starts_with("/dev/") && path.len() <= 96).then_some(path)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootInstant {
     pub boot: BootIdentity,
@@ -311,6 +347,24 @@ fn parse_linux_start(stat: &str, expected_pid: u32) -> Option<ProcessStartIdenti
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn parse_linux_lineage(stat: &str, expected_pid: u32) -> Option<ProcessLineage> {
+    let (pid, _) = stat.split_once(" (")?;
+    if pid.parse::<u32>().ok()? != expected_pid {
+        return None;
+    }
+    let (_, rest) = stat.rsplit_once(')')?;
+    let mut fields = rest.split_whitespace();
+    // Field 3 is state, so parent is index 1 and session index 3.
+    fields.next()?;
+    let parent = fields.next()?.parse::<u32>().ok()?;
+    fields.next()?;
+    Some(ProcessLineage {
+        parent,
+        session: fields.next()?.parse::<u32>().ok(),
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn parse_linux_state(stat: &str, expected_pid: u32) -> Option<ProcessState> {
     let (pid, _) = stat.split_once(" (")?;
     if pid.parse::<u32>().ok()? != expected_pid {
@@ -400,6 +454,10 @@ mod platform {
         let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
         parse_linux_start(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
     }
+    pub fn lineage(pid: u32) -> io::Result<ProcessLineage> {
+        let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
+        parse_linux_lineage(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
+    }
     pub fn state(pid: u32) -> io::Result<ProcessState> {
         let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
         parse_linux_state(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
@@ -454,6 +512,16 @@ mod platform {
         Ok(ProcessStartIdentity::MacOs {
             seconds: info.pbi_start_tvsec,
             microseconds: info.pbi_start_tvusec,
+        })
+    }
+    pub fn lineage(pid: u32) -> io::Result<ProcessLineage> {
+        let info = bsdinfo(pid)?;
+        // SAFETY: getsid takes one pid and has no other precondition. A
+        // negative result means no session fact, never a guessed session.
+        let session = unsafe { libc::getsid(pid as libc::pid_t) };
+        Ok(ProcessLineage {
+            parent: info.pbi_ppid,
+            session: (session > 0).then_some(session as u32),
         })
     }
     pub fn state(pid: u32) -> io::Result<ProcessState> {
@@ -546,6 +614,30 @@ mod tests {
         let stopped = stat.replace(") S ", ") T ");
         assert_eq!(parse_linux_state(&stopped, 42), Some(ProcessState::Stopped));
         assert_eq!(parse_linux_state(&stopped, 41), None);
+        assert_eq!(
+            parse_linux_lineage(&stat, 42),
+            Some(ProcessLineage {
+                parent: 0,
+                session: Some(0)
+            })
+        );
+        let lineage = format!("42 (n) S 7 8 9 {}", vec!["0"; 16].join(" "));
+        assert_eq!(
+            parse_linux_lineage(&lineage, 42),
+            Some(ProcessLineage {
+                parent: 7,
+                session: Some(9)
+            })
+        );
+        assert_eq!(parse_linux_lineage(&lineage, 41), None);
+        assert_eq!(parse_linux_lineage("42 (short) S 0", 42), None);
+        assert_eq!(parse_linux_lineage(&stat, 41), None);
+        // The invoking process always has a readable lineage, and a pid outside
+        // the process id domain is an error rather than a guessed parent.
+        let own = process_lineage(std::process::id()).expect("read own lineage");
+        assert_eq!(own.parent, std::os::unix::process::parent_id());
+        assert!(process_lineage(0).is_err());
+        assert!(process_lineage(i32::MAX as u32 + 1).is_err());
     }
     #[test]
     fn boot_uuid_and_cross_boot_clock_are_strict() {

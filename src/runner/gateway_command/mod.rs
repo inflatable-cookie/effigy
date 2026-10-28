@@ -511,6 +511,15 @@ fn run_private_gateway_up(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    // The shared `up` records its own event; a private root keeps the same
+    // attribution in its own gateway log, before the first effect.
+    if let Some(directory) = config.pid_file_path.parent() {
+        effigy_kernel::run::record_gateway_operator(
+            directory,
+            effigy_kernel::run::OperatorAction::Up,
+            "gateway up command",
+        );
+    }
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
@@ -1783,6 +1792,24 @@ fn run_gateway_setup(
 ) -> Result<String, RunnerError> {
     use effigy_gateway::{operator, setup};
     refuse_a_fixtures_operator_gateway_mutation(&GatewayConfig::standard(standard_gateway_dir()?))?;
+    // The operator's own invocation records one bounded setup event in the same
+    // gateway log, before the platform steps. The escalated child repeats the
+    // command as root; it does not write a root-owned record into the
+    // operator's log, and the chain already names this process.
+    if !nix::unistd::Uid::effective().is_root() {
+        let config = GatewayConfig::standard(standard_gateway_dir()?);
+        if let Some(directory) = config.pid_file_path.parent() {
+            effigy_kernel::run::record_gateway_operator(
+                directory,
+                effigy_kernel::run::OperatorAction::Setup,
+                if remove {
+                    "gateway setup remove command"
+                } else {
+                    "gateway setup command"
+                },
+            );
+        }
+    }
     let execute = || -> std::io::Result<String> {
         if nix::unistd::Uid::effective().is_root() {
             let (uid, home) = setup_step("verifying the operator account", |_| {

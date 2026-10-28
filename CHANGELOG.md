@@ -213,6 +213,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **A gateway operator action names its caller, not just its arguments.**
+  `gateway up`, `gateway down` and `gateway setup` each append one bounded
+  event to `gateway.stderr.log` — when its gateway state directory exists —
+  before their first effect, so a refused or failed action is attributable
+  too. The existing `event`, `pid`, `argv`,
+  `cwd` and `cause` fields stay; argument values that look like credentials
+  are redacted, and a `caller` record adds the invoking process's start
+  identity, session and controlling terminal, its parent chain up to the
+  session leader with each pid's start identity and redacted command, and only
+  allowlisted `PASEO_*`, `NS_*` and `EFFIGY_RUN_*` identity markers. Anything
+  unreadable or invalid becomes a bounded `unknown` reason, no other
+  environment value is read, and logging still never authorizes, refuses or
+  delays the action. The 2026-10-28 15:26:25Z Mac gateway stop could not have
+  been traced to a terminal, session, agent or task from the old record.
 - **Manual `[manifest].include` `optional`/`override` and kebab-case aliases
   still load through v0.15, with one deprecation notice.** `optional` is
   replaced by omitting a missing include or auto-discovered

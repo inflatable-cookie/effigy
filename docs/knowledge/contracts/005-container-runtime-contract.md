@@ -354,8 +354,37 @@ without gating on daemon identity. Managed startup reuses a running daemon and
 warns when its build differs; only positive absence starts one. An unavailable
 observation warns and proceeds without starting a second daemon. Replacement
 belongs to explicit `gateway down` / `gateway up`. Fixture commands require a
-private root, including stops. Command stops and custody settlement log the
-caller's pid, argv, cwd and cause in `gateway.stderr.log`.
+private root, including stops.
+
+Every operative `gateway up`, `gateway down` and `gateway setup` action appends
+one bounded event to `gateway.stderr.log` in the gateway state directory it
+targets, before its first effect, so an action that then refuses or fails is
+attributable too. Recording appends to the log the gateway already keeps and
+never creates its directory, so an `up` or `setup` on a machine without
+gateway state stays read-only. Kernel custody settlement appends the same
+record for a machine gateway stop it performs. An event keeps the existing
+`event`, `pid`, `argv`, `cwd` and `cause` fields, redacts credential-shaped
+argument values, and adds a `caller` record:
+
+- the invoking process's start identity (the platform's own process-start
+evidence, so two processes that held one pid stay distinguishable), its
+session and its controlling terminal when it has one;
+- the parent chain from the invoking process's parent up to and including its
+session leader, capped at eight entries, each with pid, start identity, session
+and redacted argument boundaries;
+- only allowlisted agent/task/run identity markers, read by name from
+`PASEO_*`, `NS_*` and `EFFIGY_RUN_*`, and only when the value is a short,
+identity-shaped value; every other environment value is never read;
+- a bounded `unknown` list naming what could not be read: an unreadable or
+vanished parent, unreadable arguments, a pid whose start identity changed while
+it was read, a truncated chain, or a marker whose value failed validation. No
+reason ever quotes the value it rejected.
+
+This record is diagnostic evidence only. It never authorizes, refuses or
+delays an operator action, and an unavailable log never fails one. The
+elevated child of `gateway setup` writes no record, because root would own the
+operator's log file; the operator's own invocation records the action and its
+chain already names that child.
 
 
 Dependencies use `depends_on` and must name a declared managed listener. They

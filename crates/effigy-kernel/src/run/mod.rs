@@ -17,10 +17,14 @@ mod logs;
 mod machine;
 mod memory;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
-pub use machine::{machine_completion, record_gateway_stop, MachineCompletion};
+pub use machine::{
+    machine_completion, record_gateway_operator, record_gateway_stop, MachineCompletion,
+};
 pub use memory::{ForegroundRecord, Incarnation};
 #[path = "../objects/run.rs"]
 mod objects;
+mod provenance;
+pub use provenance::{Caller, OperatorAction};
 mod settle;
 mod socket;
 pub use socket::{connect_control_socket, control_socket_path};
