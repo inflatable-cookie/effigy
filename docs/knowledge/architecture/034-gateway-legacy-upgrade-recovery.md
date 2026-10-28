@@ -325,6 +325,40 @@ a login-less boot start is the operator's explicit `loginctl enable-linger`
 opt-in (reversed with `disable-linger`) and setup never enables it or needs
 passwordless administration.
 
+The unit's own text is the launch contract. `ExecStart`/`ExecStop` are the
+quoted installed image plus `gateway up`/`gateway down`, and
+`WorkingDirectory=` is the operator home written bare: that value takes one
+literal path and has no quoting rule, so a quoted value would name a directory
+whose name includes the quotes. `Environment=` keeps its `HOME=` assignment
+quoting. The source regression layer (`linux_operator` fake systemd manager and
+fault fakes) proves clean install, repeated setup, an upgrade that rewrites the
+owned unit, login and reboot starts from the installed unit's own `ExecStart`,
+`stop`/`restart` as ordinary requests, `RemainAfterExit` no-ops, a failed
+`gateway up` leaving nothing running, foreign unit and capability refusal, a
+replaced image and exact cleanup, without a live user manager. A reversible
+break probe on those tests is part of the change's proof, not a live claim.
+
+Status reports `unit` as `missing`, `installed`, `foreign`, `unsafe` or
+`stale`. `stale` is Effigy's own marker-carrying unit whose declared
+`ExecStart` image this account can no longer run safely — deleted by a rollback
+or no longer one owner-only executable — and it is never reported ready: the
+login activation may still be linked, so recovery names the image, the rollback
+restore, `effigy gateway setup` and a `systemctl --user restart` reconcile
+request. A stale unit is still Effigy's own file, so `setup --remove` disables
+and removes it. A replaced image (an upgrade) carries no file capability, so
+status reports `low_port: missing` until setup restores the exact record and,
+when the path changed, rewrites the unit to name the image setup ran.
+
+After the unit file is written, the user manager is an observation rather than
+a setup precondition. A `daemon-reload`/`enable` that cannot be spawned,
+refuses, or does not answer within 20 seconds returns the unit as installed and
+not enabled, prints the manager's own sentence, and names the exact
+`systemctl --user daemon-reload`, `enable` and `start` commands (and the
+`loginctl enable-linger` opt-in) that finish the job. Removal keeps the same
+shape: it disables, removes and unlinks the owned unit, and a manager that
+cannot reload afterwards is not treated as a failed removal. A refused disable
+does preserve the unit and names `effigy gateway down` plus the two commands.
+
 The capability is bound to one install identity: the exact binary setup ran,
 with one link, owner-private mode and the operator (or root) as owner. A
 changed, linked or group/world-writable image is refused before a capability

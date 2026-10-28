@@ -148,7 +148,13 @@ During v0.x, MINOR bumps may include breaking changes.
   prove the `CAP_NET_BIND_SERVICE` capability, refusing a changed, linked or
   group/world-writable binary. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes
-  only unit and capability records Effigy wrote.
+  only unit and capability records Effigy wrote. A replaced binary is reported
+  as a missing capability instead of being trusted, an upgrade rewrites the
+  owned unit to name the image setup ran, and a rollback that leaves the unit
+  naming a deleted or no-longer-owner-only image is reported as
+  `launcher.unit: "stale"` with the restore and `effigy gateway setup` routes.
+  A user manager that cannot be reached or does not answer keeps the installed
+  unit and prints the exact `systemctl --user` commands that finish the enable.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

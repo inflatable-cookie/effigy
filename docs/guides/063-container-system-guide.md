@@ -1624,6 +1624,29 @@ for anything that is not ready. Nothing there is inferred: an unobservable linge
 state is omitted, and a foreign unit or capability is reported as `foreign`
 rather than claimed.
 
+`unit` is one of `missing`, `installed`, `foreign`, `unsafe` or `stale`. Setup
+writes the unit's own `ExecStart` as quoted `"<installed effigy>" gateway up`
+and `WorkingDirectory=` as the operator home written bare, because that value
+takes one literal path and has no quoting rule.
+
+An executable upgrade replaces the file, so its capability does not carry over:
+run `effigy gateway setup` again, which reports `launcher.low_port: "missing"`
+until it does. Setup then rewrites the owned unit to name the image it ran, and
+the next login runs that command. A rollback that removes the image the unit
+names, or leaves it linked, group- or world-writable, is reported as
+`launcher.unit: "stale"` — never as ready — with the restore path,
+`effigy gateway setup` and a `systemctl --user restart` reconcile request in
+`recovery`. A stale unit is still Effigy's own file, so
+`effigy gateway setup --remove` disables and removes it.
+
+If the systemd user manager cannot be reached, refuses, or does not answer
+within 20 seconds, setup does not fail after writing the unit: it prints the
+manager's own sentence and the exact `systemctl --user daemon-reload`, `enable`
+and `start` commands that finish the enable, and keeps the installed unit.
+Removal behaves the same way: it disables, removes and unlinks the unit Effigy
+owns, and a manager that cannot reload is reported rather than treated as a
+failed removal.
+
 `effigy gateway setup --remove` stops the gateway, disables and removes the unit
 it owns, removes the split-DNS unit and the file capability, and preserves
 certificates, CA trust and interface addresses. A unit or capability Effigy did
@@ -1716,6 +1739,7 @@ ls -l ~/.config/systemd/user/default.target.wants/effigy-gateway.service
 stat -c '%a %U %n' "$HOME/.effigy/gateway" "$HOME/.effigy/gateway/certs"
 stat -c '%a %U %n' ~/.local/share/mkcert/rootCA-key.pem      # expect 600 dev
 systemctl --user is-enabled effigy-gateway.service           # expect enabled
+systemd-analyze --user verify ~/.config/systemd/user/effigy-gateway.service
 effigy __gateway-bind-probe 127.0.0.1:80 127.0.0.1:443         # capability_effective true
 effigy gateway status --json | jq '.result.launcher'
 
@@ -1733,12 +1757,20 @@ systemctl --user is-active effigy-gateway.service
 effigy gateway status --json | jq '.result.launcher'
 loginctl disable-linger "$USER"
 
-# 5. A replaced binary and a foreign unit must be reported, not hidden.
+# 5. An upgrade, a rollback and a foreign unit must be reported, not hidden.
 effigy install:local
+bin=$(readlink -f "$(command -v effigy)")
 effigy gateway status --json | jq '.result.launcher.low_port' # expect "missing"
 effigy gateway setup                                          # restores it
+# A rollback that leaves the unit naming an image that moved away:
+mv "$bin" "$HOME/effigy-upgraded"
+effigy gateway status --json | jq '.result.launcher.unit'       # expect "stale"
+mv "$HOME/effigy-upgraded" "$bin"
+effigy gateway setup                                          # unit names this image again
 printf '[Unit]\nDescription=foreign\n' > ~/.config/systemd/user/effigy-gateway.service
 effigy gateway setup; echo $?                                 # expect non-zero, file unchanged
+# A user manager that is not running must not fail a written unit:
+effigy gateway setup; echo $?                                 # expect the exact systemctl steps
 
 # 6. Exact cleanup of everything this proof installed.
 effigy gateway setup --remove

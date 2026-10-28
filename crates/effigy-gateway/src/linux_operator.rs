@@ -89,12 +89,16 @@ impl LaunchPaths {
 pub enum UnitState {
     /// No unit file at the owned path.
     Missing,
-    /// A unit file carrying Effigy's setup marker.
+    /// A unit file carrying Effigy's setup marker and naming a usable image.
     Installed,
     /// A unit file Effigy must not replace or remove.
     Foreign,
     /// An unreadable, linked or group/world-writable unit or unit directory.
     Unsafe,
+    /// Effigy's own unit, naming an executable this account can no longer run
+    /// safely: a rollback that moved the binary, or an image changed under it.
+    /// The login activation may still be in place, so the route is not ready.
+    Stale,
 }
 
 /// Verified state of the executable-local low-port capability.
@@ -120,6 +124,8 @@ pub struct LaunchStatus {
     /// Unit file state.
     pub unit: UnitState,
     /// Whether the unit is wired into the login session's `default.target`.
+    /// The link is observed on its own: a `stale` unit can still be linked, and
+    /// `unit` is where readiness is denied.
     pub enabled: bool,
     /// Whether a login-less boot start is opted in. `None` is unobservable.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,6 +236,11 @@ impl SystemdUser for Systemctl {
 
 /// The exact unit Effigy installs. Every action is the existing operator route,
 /// and nothing here runs the daemon directly or declares a restart policy.
+///
+/// `WorkingDirectory=` takes one literal path and has no quoting rule, so it is
+/// written bare: a quoted value would name a directory whose name includes the
+/// quotes. `Environment=` and each `Exec` argument have their own documented
+/// quoting and keep it.
 pub fn unit_definition(executable: &Path, home: &Path) -> io::Result<Vec<u8>> {
     let executable = unit_value("installed gateway binary", executable)?;
     let home = unit_value("operator home", home)?;
@@ -243,7 +254,7 @@ pub fn unit_definition(executable: &Path, home: &Path) -> io::Result<Vec<u8>> {
          [Service]\n\
          Type=oneshot\n\
          RemainAfterExit=yes\n\
-         WorkingDirectory=\"{home}\"\n\
+         WorkingDirectory={home}\n\
          Environment=\"HOME={home}\"\n\
          ExecStart=\"{executable}\" gateway up\n\
          ExecStop=\"{executable}\" gateway down\n\
@@ -295,6 +306,10 @@ impl Record for Bytes {
 pub struct LaunchInstall {
     pub enabled: bool,
     pub recovery: Vec<String>,
+    /// Why the user manager did not finish the enable, when it did not: a
+    /// refusal sentence, an unreachable manager or a deadline. Setup prints it
+    /// next to the recovery commands; it is never a readiness claim.
+    pub reason: Option<String>,
 }
 
 /// Install or refresh the launch unit, then enable it for the login session.
@@ -335,26 +350,57 @@ pub fn install(
         }
     }
     // The unit file is truthful from here. A user manager that is absent (a
-    // container, a bare ssh command) is reported with the exact commands
-    // instead of failing setup or claiming a login launch that does not exist.
-    let reload = systemd.run(&["daemon-reload"])?;
-    if !reload.succeeded() {
-        return Ok(unenabled(paths));
+    // container, a bare ssh command), refuses, or never answers is reported
+    // with the exact commands instead of failing setup after the unit file is
+    // already in place, or claiming a login launch that does not exist.
+    if let Some(reason) = manager_refusal(systemd.run(&["daemon-reload"])) {
+        return Ok(unenabled(
+            paths,
+            Some(format!(
+                "the systemd user manager refused `daemon-reload`: {reason}"
+            )),
+        ));
     }
-    let enable = systemd.run(&["enable", UNIT_NAME])?;
-    if !enable.succeeded() || !activation_linked(paths) {
-        return Ok(unenabled(paths));
+    if let Some(reason) = manager_refusal(systemd.run(&["enable", UNIT_NAME])) {
+        return Ok(unenabled(
+            paths,
+            Some(format!(
+                "the systemd user manager refused `enable {UNIT_NAME}`: {reason}"
+            )),
+        ));
+    }
+    if !activation_linked(paths) {
+        return Ok(unenabled(
+            paths,
+            Some(format!(
+                "`systemctl --user enable {UNIT_NAME}` left no login activation link at {}",
+                paths.wants.display()
+            )),
+        ));
     }
     Ok(LaunchInstall {
         enabled: true,
         recovery: Vec::new(),
+        reason: None,
     })
 }
 
-fn unenabled(paths: &LaunchPaths) -> LaunchInstall {
+fn unenabled(paths: &LaunchPaths, reason: Option<String>) -> LaunchInstall {
     LaunchInstall {
         enabled: false,
         recovery: recovery_steps(paths),
+        reason,
+    }
+}
+
+/// The manager's own refusal sentence, or `None` when it did what was asked.
+/// A spawn failure and a deadline are observations like a non-zero exit: the
+/// unit file is already written, so setup reports them instead of failing.
+fn manager_refusal(outcome: io::Result<SystemdOutcome>) -> Option<String> {
+    match outcome {
+        Ok(outcome) if outcome.succeeded() => None,
+        Ok(outcome) => Some(outcome.reason()),
+        Err(failure) => Some(failure.to_string()),
     }
 }
 
@@ -370,17 +416,17 @@ pub fn remove(
             // A dangling activation link is residue from a removed unit file.
             // It is Effigy's only when it names Effigy's unit path.
             if activation_linked(paths) {
-                let outcome = systemd.run(&["disable", UNIT_NAME])?;
-                if !outcome.succeeded() {
+                if let Some(reason) = manager_refusal(systemd.run(&["disable", UNIT_NAME])) {
                     return Err(error(format!(
-                        "the login activation link for {UNIT_NAME} is still present ({}); run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup --remove`",
-                        outcome.reason()
+                        "the login activation link for {UNIT_NAME} is still present ({reason}); run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup --remove`"
                     )));
                 }
             }
             return Ok(());
         }
-        UnitState::Installed => {}
+        // A stale unit is still Effigy's own file: a rollback that moved the
+        // binary must not leave an enabled unit behind that cannot run.
+        UnitState::Installed | UnitState::Stale => {}
         UnitState::Foreign | UnitState::Unsafe => {
             return Err(error(format!(
                 "preserving foreign or unsafe systemd unit {}; remove it yourself, then run `effigy gateway setup --remove`",
@@ -391,11 +437,9 @@ pub fn remove(
     // `disable --now` runs the unit's ExecStop, which is the ordinary
     // kernel-owned `gateway down`. systemd requests the stop; the gateway
     // engine performs and records it.
-    let disabled = systemd.run(&["disable", "--now", UNIT_NAME])?;
-    if !disabled.succeeded() {
+    if let Some(reason) = manager_refusal(systemd.run(&["disable", "--now", UNIT_NAME])) {
         return Err(error(format!(
-            "stopping the login launch unit failed ({}); run `effigy gateway down`, then `systemctl --user disable --now {UNIT_NAME}`, then `effigy gateway setup --remove`",
-            disabled.reason()
+            "stopping the login launch unit failed ({reason}); run `effigy gateway down`, then `systemctl --user disable --now {UNIT_NAME}`, then `effigy gateway setup --remove`"
         )));
     }
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
@@ -409,7 +453,9 @@ pub fn remove(
             ))
         })?;
     }
-    let _ = systemd.run(&["daemon-reload"])?;
+    // The unit file and its link are gone, so a manager that cannot reload is
+    // not a removal failure: it only keeps a definition systemd already knows.
+    let _ = systemd.run(&["daemon-reload"]);
     Ok(())
 }
 
@@ -1022,11 +1068,49 @@ pub fn observe_unit(paths: &LaunchPaths, operator_uid: u32) -> UnitState {
         return UnitState::Unsafe;
     }
     match read_unit_file(paths) {
-        Ok(Some(bytes)) if owned_unit(&bytes) => UnitState::Installed,
+        Ok(Some(bytes)) if owned_unit(&bytes) => match declared_executable(&bytes) {
+            Some(executable) if usable_executable(&executable, operator_uid) => {
+                UnitState::Installed
+            }
+            _ => UnitState::Stale,
+        },
         Ok(Some(_)) => UnitState::Foreign,
         Ok(None) => UnitState::Missing,
         Err(_) => UnitState::Unsafe,
     }
+}
+
+/// The image a unit declares it runs, read from its own `ExecStart=`. Effigy
+/// writes one quoted absolute path followed by the verb; a bare first word is
+/// still read as the path so an older owned unit is reported, never trusted.
+fn declared_executable(bytes: &[u8]) -> Option<PathBuf> {
+    let text = String::from_utf8_lossy(bytes);
+    let value = text
+        .lines()
+        .find_map(|line| line.strip_prefix("ExecStart="))?
+        .trim();
+    let executable = match value.strip_prefix('"') {
+        Some(quoted) => Path::new(&quoted[..quoted.find('"')?]),
+        None => Path::new(value.split_whitespace().next()?),
+    };
+    executable.is_absolute().then(|| executable.to_path_buf())
+}
+
+fn declared_unit_executable(paths: &LaunchPaths) -> Option<PathBuf> {
+    read_unit_file(paths)
+        .ok()
+        .flatten()
+        .and_then(|bytes| declared_executable(&bytes))
+}
+
+/// Whether this account can still run the image the unit names, by the same
+/// rules the install applies: one owner-only executable file owned by the
+/// operator (or root). A rollback that leaves the unit naming a moved, linked,
+/// writable or deleted image is reported instead of trusted.
+fn usable_executable(executable: &Path, operator_uid: u32) -> bool {
+    std::fs::metadata(executable)
+        .map(|metadata| validate_executable(&ExecutableFacts::of(&metadata), operator_uid).is_ok())
+        .unwrap_or(false)
 }
 
 fn read_unit_file(paths: &LaunchPaths) -> io::Result<Option<Vec<u8>>> {
@@ -1090,11 +1174,26 @@ pub fn observe(
     linger: Option<bool>,
 ) -> LaunchStatus {
     let unit = observe_unit(paths, operator_uid);
-    let linked = unit == UnitState::Installed && activation_linked(paths);
+    // The login activation link is the observation; whether the unit it starts
+    // can still work is the unit state's own answer.
+    let linked =
+        matches!(unit, UnitState::Installed | UnitState::Stale) && activation_linked(paths);
     let mut recovery = Vec::new();
     match unit {
         UnitState::Installed if !linked => {
             recovery.extend(recovery_steps(paths).into_iter().take(3));
+        }
+        UnitState::Stale => {
+            let executable = declared_unit_executable(paths)
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "an unreadable executable".to_owned());
+            recovery.push(format!(
+                "the login launch unit names {executable}, which is missing or no longer a safe owner-only executable for uid {operator_uid}; restore the binary it names (a rollback to the previous install) or run `effigy gateway setup` from the installed binary"
+            ));
+            if !linked {
+                recovery.push(format!("systemctl --user enable {UNIT_NAME}"));
+            }
+            recovery.push(format!("systemctl --user restart {UNIT_NAME}"));
         }
         UnitState::Missing => recovery.push(
             "run `effigy gateway setup` to install the login launch unit".to_owned(),
@@ -1164,19 +1263,33 @@ mod tests {
         crate::setup::tests::with_run(|run, cx, _| work(run, cx));
     }
 
+    /// How one fake `systemctl --user` request fails.
+    #[derive(Clone, Copy)]
+    enum Fault {
+        /// A non-zero exit with the manager's own diagnostic.
+        Refused,
+        /// The manager could not be reached: the spawn failed.
+        Unreachable,
+        /// The manager never answered within the bound.
+        Wedged,
+    }
+
     /// A fake systemd user manager: records every request, and reports the
-    /// configured refusal for one request kind.
+    /// configured failure for one request kind.
     #[derive(Default)]
     struct FakeSystemd {
         calls: Vec<Vec<String>>,
-        fail: Option<&'static str>,
+        fault: Option<(&'static str, Fault)>,
     }
 
     impl FakeSystemd {
         fn failing(kind: &'static str) -> Self {
+            Self::with_fault(kind, Fault::Refused)
+        }
+        fn with_fault(kind: &'static str, fault: Fault) -> Self {
             Self {
                 calls: Vec::new(),
-                fail: Some(kind),
+                fault: Some((kind, fault)),
             }
         }
         fn requested(&self, first: &str) -> usize {
@@ -1191,15 +1304,26 @@ mod tests {
         fn run(&mut self, args: &[&str]) -> io::Result<SystemdOutcome> {
             self.calls
                 .push(args.iter().map(|arg| (*arg).to_owned()).collect());
-            let code = if args.first().copied() == self.fail {
-                1
-            } else {
-                0
-            };
-            Ok(SystemdOutcome {
-                code,
-                stderr: b"fixture refusal\n".to_vec(),
-            })
+            match self.fault {
+                Some((kind, fault)) if args.first().copied() == Some(kind) => match fault {
+                    Fault::Refused => Ok(SystemdOutcome {
+                        code: 1,
+                        stderr: b"fixture refusal\n".to_vec(),
+                    }),
+                    Fault::Unreachable => Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "cannot reach the systemd user manager (`systemctl --user`): no such file",
+                    )),
+                    Fault::Wedged => Err(io::Error::other(format!(
+                        "`systemctl --user {}` did not answer within 20s",
+                        args.join(" ")
+                    ))),
+                },
+                _ => Ok(SystemdOutcome {
+                    code: 0,
+                    stderr: Vec::new(),
+                }),
+            }
         }
     }
 
@@ -1239,6 +1363,13 @@ mod tests {
                 removed: 0,
             }
         }
+
+        /// The image at the same path was replaced (`effigy install:local`): a
+        /// new file carries no capability record.
+        fn replace_image(&mut self) {
+            self.identity.ino += 1;
+            self.state = BindCapabilityState::Missing;
+        }
     }
 
     impl CapabilityHost for FakeCapability {
@@ -1275,10 +1406,34 @@ mod tests {
 
     /// A throwaway installed binary with the exact mode setup accepts.
     fn installed_binary(home: &Path) -> PathBuf {
-        let path = home.join("effigy");
+        installed_binary_named(home, "effigy")
+    }
+
+    /// A second image in the same home, for an upgrade and its rollback.
+    fn installed_binary_named(home: &Path, name: &str) -> PathBuf {
+        let path = home.join(name);
         std::fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    /// Set the process umask for the scope and restore the caller's own. The
+    /// login umask on Ubuntu is 002, which is the case a created directory has
+    /// to survive.
+    struct ScopedUmask(nix::sys::stat::Mode);
+
+    impl ScopedUmask {
+        fn new(mask: u32) -> Self {
+            Self(nix::sys::stat::umask(
+                nix::sys::stat::Mode::from_bits_truncate(mask as libc::mode_t),
+            ))
+        }
+    }
+
+    impl Drop for ScopedUmask {
+        fn drop(&mut self) {
+            nix::sys::stat::umask(self.0);
+        }
     }
 
     fn paths(home: &Path) -> LaunchPaths {
@@ -1312,6 +1467,13 @@ mod tests {
             unit.contains("Environment=\"HOME=/home/operator\""),
             "{unit}"
         );
+        // `WorkingDirectory=` is one literal path and has no quoting rule, so a
+        // quoted value would name a directory that includes the quotes.
+        assert!(
+            unit.contains("\nWorkingDirectory=/home/operator\n"),
+            "{unit}"
+        );
+        assert!(!unit.contains("WorkingDirectory=\""));
         assert!(unit.contains("WantedBy=default.target"), "{unit}");
         // No second lifecycle authority: no restart policy, no direct daemon
         // entry, no privileged command and no reload hook.
@@ -1454,13 +1616,14 @@ mod tests {
             let home = tempfile::tempdir().unwrap();
             let binary = installed_binary(home.path());
             let uid = nix::unistd::Uid::effective().as_raw();
-            // Ubuntu's login umask is 002, so the parent Effigy inherits looks
-            // like this: group-writable already, and `systemd/user` missing.
+            // Ubuntu's login umask is 002: every parent Effigy inherits is
+            // group-writable and `systemd/user` is missing.
+            let _umask = ScopedUmask::new(0o002);
             let config = home.path().join("config");
             std::fs::create_dir_all(config.join("systemd")).unwrap();
             for directory in [&config, &config.join("systemd")] {
-                std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o775))
-                    .unwrap();
+                let mode = std::fs::metadata(directory).unwrap().mode() & 0o777;
+                assert_eq!(mode, 0o775, "the ambient umask is 002");
             }
             let paths = LaunchPaths::at(config.join("systemd/user"), home.path());
             let mut systemd = FakeSystemd::default();
@@ -1664,11 +1827,8 @@ mod tests {
             .any(|line| line.contains("effigy gateway setup")));
 
         std::fs::create_dir_all(&paths.user_dir).unwrap();
-        std::fs::write(
-            &paths.unit,
-            unit_definition(Path::new("/fixture/effigy"), home.path()).unwrap(),
-        )
-        .unwrap();
+        let binary = installed_binary(home.path());
+        std::fs::write(&paths.unit, unit_definition(&binary, home.path()).unwrap()).unwrap();
         let disabled = observe(&paths, uid, BindCapabilityState::Installed, None);
         assert_eq!(disabled.unit, UnitState::Installed);
         assert!(!disabled.enabled);
@@ -1935,13 +2095,21 @@ mod tests {
     ///
     /// It executes only the commands the *installed* unit declares, so the
     /// lifecycle assertions below are about production output rather than a
-    /// second copy of the expected text.
+    /// second copy of the expected text. Enablement lives only in the link on
+    /// disk, as it does for systemd, so a manager created after a reboot sees
+    /// what the last boot left behind rather than remembered state.
     struct FakeManager {
         unit: PathBuf,
         wants: PathBuf,
+        /// Whether the unit is active. `RemainAfterExit=yes` keeps it active
+        /// after ExecStart returns, so a start of an active unit does nothing.
         active: bool,
-        enabled: bool,
         running: bool,
+        /// Whether this boot's user manager has started yet.
+        manager_started: bool,
+        /// Whether the unit's own `gateway up` refuses, as it does when the
+        /// low-port capability is not effective.
+        up_refused: bool,
         /// Gateway operations the unit's commands requested, in order.
         requests: Vec<&'static str>,
         /// Every manager request received, in order.
@@ -1949,16 +2117,25 @@ mod tests {
     }
 
     impl FakeManager {
+        /// A user manager for one boot that has not started yet.
         fn for_paths(paths: &LaunchPaths) -> Self {
             Self {
                 unit: paths.unit.clone(),
                 wants: paths.wants.clone(),
                 active: false,
-                enabled: false,
                 running: false,
+                manager_started: false,
+                up_refused: false,
                 requests: Vec::new(),
                 calls: Vec::new(),
             }
+        }
+
+        /// The link on disk is the only record of enablement, as with systemd.
+        fn enabled(&self) -> bool {
+            std::fs::symlink_metadata(&self.wants)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                && std::fs::read_link(&self.wants).is_ok_and(|target| target == self.unit)
         }
 
         /// The verb of one declared command line of the installed unit.
@@ -1975,6 +2152,30 @@ mod tests {
             }
         }
 
+        /// The user manager starts once per boot, at the first login or at
+        /// boot with linger, and starts every enabled unit through its own
+        /// ExecStart. A unit that is already active is not started again.
+        fn login(&mut self) {
+            if self.manager_started {
+                return;
+            }
+            self.manager_started = true;
+            if self.enabled() {
+                self.start();
+            }
+        }
+
+        /// A boot: the daemon is gone, the unit is inactive, and the manager
+        /// starts only under the operator's linger opt-in.
+        fn boot(&mut self, linger: bool) {
+            self.active = false;
+            self.running = false;
+            self.manager_started = false;
+            if linger {
+                self.login();
+            }
+        }
+
         /// A `systemctl --user start` of an inactive unit.
         fn start(&mut self) {
             self.calls.push(vec!["start".into(), UNIT_NAME.into()]);
@@ -1982,10 +2183,15 @@ mod tests {
                 // RemainAfterExit=yes: a start of an active unit does nothing.
                 return;
             }
-            self.active = true;
             let verb = self.declared("ExecStart=");
             self.requests.push(verb);
-            self.running = verb == "up";
+            if self.up_refused {
+                // A failed oneshot start leaves the unit inactive and nothing
+                // running: the kernel Run never began.
+                return;
+            }
+            self.active = true;
+            self.running = true;
         }
 
         /// A `systemctl --user stop`, which runs the declared ExecStop.
@@ -2006,31 +2212,28 @@ mod tests {
             self.start();
         }
 
-        /// The operator's own command, outside the manager.
+        /// The operator's own command, outside the manager. The unit stays
+        /// active, so its next start is the RemainAfterExit no-op.
         fn gateway_down(&mut self) {
             self.requests.push("down");
             self.running = false;
         }
 
-        /// A fresh login: a new user manager starts every enabled unit.
-        fn login(&mut self) {
-            self.active = false;
-            if self.enabled {
-                self.start();
-            }
-        }
-
+        /// `systemctl --user enable` is idempotent: it writes the login link
+        /// once and leaves an existing one that already names this unit.
         fn link(&mut self) {
+            if self.enabled() {
+                return;
+            }
             std::fs::create_dir_all(self.wants.parent().unwrap()).unwrap();
+            let _ = std::fs::remove_file(&self.wants);
             std::os::unix::fs::symlink(&self.unit, &self.wants).unwrap();
-            self.enabled = true;
         }
 
         fn unlink(&mut self) {
             if self.wants.exists() || std::fs::symlink_metadata(&self.wants).is_ok() {
                 std::fs::remove_file(&self.wants).unwrap();
             }
-            self.enabled = false;
         }
     }
 
@@ -2092,11 +2295,6 @@ mod tests {
             assert!(!manager.running, "RemainAfterExit makes start a no-op");
             assert_eq!(manager.requests, vec!["up", "down"]);
 
-            // The next login starts it again, because the unit is enabled.
-            manager.login();
-            assert!(manager.running);
-            assert_eq!(manager.requests, vec!["up", "down", "up"]);
-
             // A restart is the documented reconcile request: down, then up.
             manager.requests.clear();
             manager.restart();
@@ -2109,7 +2307,7 @@ mod tests {
             remove(cx, &paths, uid, &mut manager).unwrap();
             assert_eq!(manager.requests, vec!["down"]);
             assert!(!manager.running);
-            assert!(!manager.enabled);
+            assert!(!manager.enabled());
             assert!(!paths.unit.exists());
             assert!(!paths.wants.exists());
             assert_eq!(
@@ -2123,6 +2321,411 @@ mod tests {
                     UNIT_NAME.to_owned()
                 ]));
         });
+    }
+
+    /// A user manager that is absent, wedged or refusing is an observation the
+    /// operator acts on, not a setup failure: the unit file is already truthful
+    /// and the promised manual recovery is what finishes the enable.
+    #[test]
+    fn an_unreachable_or_wedged_manager_returns_the_promised_recovery() {
+        with_run(|run, cx| {
+            let uid = nix::unistd::Uid::effective().as_raw();
+            for (label, kind, fault) in [
+                ("daemon-reload spawn", "daemon-reload", Fault::Unreachable),
+                ("daemon-reload bound", "daemon-reload", Fault::Wedged),
+                ("enable spawn", "enable", Fault::Unreachable),
+                ("enable bound", "enable", Fault::Wedged),
+            ] {
+                let home = tempfile::tempdir().unwrap();
+                let paths = paths(home.path());
+                let binary = installed_binary(home.path());
+                let mut systemd = FakeSystemd::with_fault(kind, fault);
+                let installed = install(run, cx, &paths, uid, &binary, &mut systemd)
+                    .unwrap_or_else(|failure| panic!("{label} failed setup: {failure}"));
+                assert!(!installed.enabled, "{label}");
+                assert_eq!(installed.recovery, recovery_steps(&paths), "{label}");
+                let reason = installed.reason.as_deref().unwrap_or_default();
+                assert!(reason.contains(kind), "{label}: {reason}");
+                // Nothing was claimed and nothing was hidden: the unit is
+                // installed, and status reports it as not enabled.
+                assert_eq!(observe_unit(&paths, uid), UnitState::Installed, "{label}");
+                let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+                assert_eq!(status.unit, UnitState::Installed, "{label}");
+                assert!(!status.enabled, "{label}");
+                assert!(
+                    status
+                        .recovery
+                        .iter()
+                        .any(|line| line == "systemctl --user enable effigy-gateway.service"),
+                    "{label}: {status:?}"
+                );
+            }
+        });
+    }
+
+    /// A partial enable leaves the unit installed and reports both the state and
+    /// the commands; a repeat setup is a manager request, not a file rewrite.
+    #[test]
+    fn a_partial_enable_is_reported_and_a_repeat_setup_finishes_it() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let mut refusing = FakeSystemd::failing("enable");
+            let partial = install(run, cx, &paths, uid, &binary, &mut refusing).unwrap();
+            assert!(!partial.enabled);
+            assert_eq!(partial.recovery, recovery_steps(&paths));
+            assert!(partial
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("fixture refusal")));
+            assert!(!paths.wants.exists());
+            assert_eq!(observe_unit(&paths, uid), UnitState::Installed);
+
+            let effects = run.effects().unwrap().len();
+            let mut manager = FakeManager::for_paths(&paths);
+            let finished = install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(finished.enabled);
+            assert!(finished.reason.is_none(), "{finished:?}");
+            assert!(finished.recovery.is_empty());
+            assert_eq!(
+                run.effects().unwrap().len(),
+                effects,
+                "the unit file was already truthful"
+            );
+            // The finished enable is what starts the gateway at the login.
+            let mut login = FakeManager::for_paths(&paths);
+            login.login();
+            assert!(login.running);
+            assert_eq!(login.requests, vec!["up"]);
+        });
+    }
+
+    /// The unit can be enabled while its own `gateway up` still refuses — the
+    /// replaced image has no capability — and that leaves nothing running.
+    #[test]
+    fn a_login_start_that_cannot_bind_leaves_no_running_gateway() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(manager.enabled());
+
+            let mut login = FakeManager::for_paths(&paths);
+            login.up_refused = true;
+            login.login();
+            assert!(!login.running, "a refused ExecStart starts no gateway");
+            assert_eq!(login.requests, vec!["up"]);
+            assert!(!login.active);
+
+            // Status reports the unit as installed and the capability missing:
+            // the login activation alone is never claimed as ready.
+            let status = observe(&paths, uid, BindCapabilityState::Missing, Some(false));
+            assert_eq!(status.unit, UnitState::Installed);
+            assert_eq!(status.low_port, BindCapabilityState::Missing);
+            assert!(status
+                .recovery
+                .iter()
+                .any(|line| line.contains("CAP_NET_BIND_SERVICE")));
+        });
+    }
+
+    /// Enablement survives a reboot because it is the link on disk, and only the
+    /// login or the linger opt-in starts the unit — once per boot.
+    #[test]
+    fn a_reboot_and_login_start_the_enabled_unit_once_from_its_own_exec_start() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(!manager.running, "setup does not start the gateway itself");
+
+            // A boot with no linger and no login starts no gateway at all.
+            let mut booted = FakeManager::for_paths(&paths);
+            booted.boot(false);
+            assert!(booted.enabled(), "the login activation link survived");
+            assert!(!booted.running);
+            assert!(booted.requests.is_empty());
+
+            // The first login of the new boot starts the unit once.
+            booted.login();
+            assert!(booted.running);
+            assert_eq!(booted.requests, vec!["up"]);
+            assert_eq!(booted.declared("ExecStart="), "up");
+            assert_eq!(
+                declared_executable(&std::fs::read(&paths.unit).unwrap()),
+                Some(binary.clone())
+            );
+
+            // The linger opt-in starts it at boot, and the later login does not
+            // start a second owner.
+            let mut lingering = FakeManager::for_paths(&paths);
+            lingering.boot(true);
+            assert!(lingering.running);
+            lingering.login();
+            assert_eq!(lingering.requests, vec!["up"]);
+            assert!(lingering.running);
+        });
+    }
+
+    /// An upgrade installs a new image: the owned unit is rewritten to name it
+    /// and the login runs that command, without touching anything else.
+    #[test]
+    fn an_upgrade_to_a_new_binary_rewrites_the_owned_unit() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let previous = installed_binary_named(home.path(), "effigy-previous");
+            let upgrade = installed_binary_named(home.path(), "effigy-upgrade");
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &previous, &mut manager).unwrap();
+            assert_eq!(
+                declared_executable(&std::fs::read(&paths.unit).unwrap()),
+                Some(previous.clone())
+            );
+
+            let effects = run.effects().unwrap().len();
+            let installed = install(run, cx, &paths, uid, &upgrade, &mut manager).unwrap();
+            assert!(installed.enabled);
+            let unit = std::fs::read_to_string(&paths.unit).unwrap();
+            assert!(
+                unit.contains(&format!("ExecStart=\"{}\" gateway up", upgrade.display())),
+                "{unit}"
+            );
+            assert!(!unit.contains(&previous.display().to_string()), "{unit}");
+            assert_eq!(run.effects().unwrap().len(), effects + 1);
+            assert_eq!(
+                observe_unit(&paths, uid),
+                UnitState::Installed,
+                "the upgraded image is the unit's new owner"
+            );
+
+            // The manager runs the upgraded unit's own command.
+            let mut login = FakeManager::for_paths(&paths);
+            login.login();
+            assert!(login.running);
+            assert_eq!(login.requests, vec!["up"]);
+        });
+    }
+
+    /// Rolling back removes the upgraded image, so the unit the login runs still
+    /// names it. That is `stale`, with the rollback and the setup routes named.
+    #[test]
+    fn a_rollback_that_leaves_the_unit_naming_the_removed_binary_is_stale() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let previous = installed_binary_named(home.path(), "effigy-previous");
+            let upgrade = installed_binary_named(home.path(), "effigy-upgrade");
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &previous, &mut manager).unwrap();
+            install(run, cx, &paths, uid, &upgrade, &mut manager).unwrap();
+
+            std::fs::remove_file(&upgrade).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Stale);
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Stale);
+            assert!(status.enabled, "the login activation link is still there");
+            let restore = status.recovery.first().cloned().unwrap_or_default();
+            assert!(
+                restore.contains(&upgrade.display().to_string()),
+                "{restore}"
+            );
+            assert!(restore.contains("effigy gateway setup"), "{restore}");
+            assert_eq!(
+                status.recovery.last().map(String::as_str),
+                Some("systemctl --user restart effigy-gateway.service")
+            );
+
+            // The same unit is stale when the image it names is back but no
+            // longer owner-only.
+            installed_binary_named(home.path(), "effigy-upgrade");
+            std::fs::set_permissions(&upgrade, std::fs::Permissions::from_mode(0o777)).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Stale);
+
+            // The supported recovery: setup with the rolled-back binary makes
+            // the unit name it again.
+            std::fs::remove_file(&upgrade).unwrap();
+            let recovered = install(run, cx, &paths, uid, &previous, &mut manager).unwrap();
+            assert!(recovered.enabled);
+            assert_eq!(observe_unit(&paths, uid), UnitState::Installed);
+            let healthy = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(healthy.unit, UnitState::Installed);
+            assert!(healthy.enabled);
+            assert!(healthy.recovery.is_empty(), "{healthy:?}");
+        });
+    }
+
+    /// A stale unit is still Effigy's own file, so cleanup removes exactly it.
+    #[test]
+    fn cleanup_still_removes_a_stale_owned_unit() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            std::fs::remove_file(&binary).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Stale);
+
+            remove(cx, &paths, uid, &mut manager).unwrap();
+            assert!(!paths.unit.exists());
+            assert!(!paths.wants.exists());
+            assert_eq!(observe_unit(&paths, uid), UnitState::Missing);
+        });
+    }
+
+    /// A replaced image is a new file with no capability record, so status says
+    /// `missing` and setup restores exactly that capability on the new image.
+    #[test]
+    fn a_replaced_binary_drops_its_capability_and_status_names_the_restore() {
+        let mut host = FakeCapability::new(BindCapabilityState::Missing);
+        let operator = host.identity.uid;
+        install_capability(&mut host, operator).unwrap();
+        assert_eq!(host.state, BindCapabilityState::Installed);
+
+        host.replace_image();
+        assert_eq!(host.state, BindCapabilityState::Missing);
+
+        let home = tempfile::tempdir().unwrap();
+        let paths = paths(home.path());
+        let binary = installed_binary(home.path());
+        let uid = nix::unistd::Uid::effective().as_raw();
+        std::fs::create_dir_all(&paths.user_dir).unwrap();
+        std::fs::write(&paths.unit, unit_definition(&binary, home.path()).unwrap()).unwrap();
+        enable_link(&paths);
+        let status = observe(&paths, uid, host.state, Some(false));
+        assert_eq!(status.unit, UnitState::Installed);
+        assert_eq!(status.low_port, BindCapabilityState::Missing);
+        assert!(status
+            .recovery
+            .iter()
+            .any(|line| line.contains("CAP_NET_BIND_SERVICE")));
+
+        // Setup restores the exact record on the image that replaced it.
+        assert_eq!(
+            install_capability(&mut host, operator).unwrap(),
+            BindCapabilityState::Installed
+        );
+        assert_eq!(host.applied, 2);
+        let restored = observe(&paths, uid, host.state, Some(false));
+        assert!(restored.recovery.is_empty(), "{restored:?}");
+    }
+
+    /// Cleanup does not depend on the manager answering a reload: the owned
+    /// file and its link are already gone.
+    #[test]
+    fn cleanup_does_not_fail_when_the_manager_cannot_reload() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+
+            let mut wedged = FakeSystemd::with_fault("daemon-reload", Fault::Wedged);
+            remove(cx, &paths, uid, &mut wedged).unwrap();
+            assert!(!paths.unit.exists());
+            assert!(!paths.wants.exists());
+            assert_eq!(observe_unit(&paths, uid), UnitState::Missing);
+            assert!(wedged
+                .calls
+                .iter()
+                .any(|call| call.first().map(String::as_str) == Some("disable")));
+        });
+    }
+
+    #[test]
+    fn the_installed_unit_is_one_well_formed_systemd_file_with_one_owner() {
+        let home = Path::new("/home/operator");
+        let unit = String::from_utf8(
+            unit_definition(Path::new("/home/operator/bin/effigy"), home).unwrap(),
+        )
+        .unwrap();
+        let mut sections = Vec::new();
+        let mut values = std::collections::BTreeMap::new();
+        for line in unit.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            assert!(!line.contains('\t'), "a unit line carries no tab: {line}");
+            if let Some(section) = line.strip_prefix('[') {
+                let name = section
+                    .strip_suffix(']')
+                    .unwrap_or_else(|| panic!("closed section header: {line}"));
+                sections.push(name.to_owned());
+                continue;
+            }
+            let (key, value) = line
+                .split_once('=')
+                .unwrap_or_else(|| panic!("key=value: {line}"));
+            assert!(
+                values.insert(key.to_owned(), value.to_owned()).is_none(),
+                "duplicate key {key}"
+            );
+        }
+        assert_eq!(sections, ["Unit", "Service", "Install"]);
+        // Every value Effigy writes parses as the systemd syntax for its key.
+        assert_eq!(values["WorkingDirectory"], "/home/operator");
+        assert_eq!(values["Environment"], "\"HOME=/home/operator\"");
+        assert_eq!(
+            values["ExecStart"],
+            "\"/home/operator/bin/effigy\" gateway up"
+        );
+        assert_eq!(
+            values["ExecStop"],
+            "\"/home/operator/bin/effigy\" gateway down"
+        );
+        assert_eq!(values["WantedBy"], "default.target");
+        // One command owner: start and stop are the unit's only lifecycle
+        // entries, with no restart policy, reload hook or daemon entry.
+        let commands: Vec<&str> = values
+            .keys()
+            .filter(|key| key.starts_with("Exec"))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(commands, ["ExecStart", "ExecStop"]);
+        assert!(!values.contains_key("Restart"), "{unit}");
+        // The production parser reads the same image the service line names.
+        assert_eq!(
+            declared_executable(unit.as_bytes()),
+            Some(PathBuf::from("/home/operator/bin/effigy"))
+        );
+    }
+
+    #[test]
+    fn a_home_with_a_space_keeps_an_unquoted_working_directory_and_one_argument() {
+        let unit = String::from_utf8(
+            unit_definition(
+                Path::new("/home/operator staff/effigy"),
+                Path::new("/home/operator staff"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            unit.contains("\nWorkingDirectory=/home/operator staff\n"),
+            "{unit}"
+        );
+        assert!(
+            unit.contains("ExecStart=\"/home/operator staff/effigy\" gateway up"),
+            "{unit}"
+        );
+        assert_eq!(
+            declared_executable(unit.as_bytes()),
+            Some(PathBuf::from("/home/operator staff/effigy"))
+        );
     }
 
     #[test]
