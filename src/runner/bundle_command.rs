@@ -22,13 +22,36 @@ pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
         effigy_cli::Command::Task(task) => {
             task.name.rsplit('/').next() == Some("dev")
                 && !is_read_only_task_invocation(task)
-                && !task
-                    .args
-                    .first()
-                    .is_some_and(|arg| matches!(arg.as_str(), "status" | "logs" | "stop"))
+                && !is_task_local_session_invocation(task)
         }
         _ => false,
     }
+}
+
+/// First-argument `status`, `logs` or `stop` on a task: inspect or stop an
+/// existing session. They never acquire a missing pin and they are not a
+/// Prepare path. A CLI invocation joins Effigy flags with
+/// [`effigy_core::task_args::TASK_ARGS_BOUNDARY`] before the task's
+/// arguments; the verb is the first task-side argument after that split.
+pub(crate) fn is_task_local_session_invocation(task: &effigy_cli::TaskInvocation) -> bool {
+    first_task_arg(&task.args).is_some_and(|arg| matches!(arg, "status" | "logs" | "stop"))
+}
+
+fn first_task_arg(args: &[String]) -> Option<&str> {
+    let mut rest = match args
+        .iter()
+        .position(|arg| arg == effigy_core::task_args::TASK_ARGS_BOUNDARY)
+    {
+        Some(index) => &args[index + 1..],
+        None => args,
+    };
+    while rest
+        .first()
+        .is_some_and(|arg| effigy_core::task_args::COMPAT_TRAILING_FLAGS.contains(&arg.as_str()))
+    {
+        rest = &rest[1..];
+    }
+    rest.first().map(String::as_str)
 }
 
 /// A task invocation that only reads: `--plan`, `--help` or `-h` before any
@@ -380,6 +403,70 @@ fn source_type_label(source_type: BundleSourceType) -> &'static str {
 mod tests {
     use super::*;
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
+
+    #[test]
+    fn task_local_status_logs_and_stop_are_not_prepare_or_pin_paths() {
+        use effigy_cli::{Command, TaskInvocation};
+
+        fn task(name: &str, args: &[&str]) -> TaskInvocation {
+            TaskInvocation {
+                name: name.to_owned(),
+                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+            }
+        }
+
+        for verb in ["status", "logs", "stop"] {
+            for name in ["dev", "api/dev", "serve"] {
+                let invocation = task(name, &[verb]);
+                assert!(
+                    is_task_local_session_invocation(&invocation),
+                    "{name} {verb} is a session companion"
+                );
+                assert!(
+                    !is_source_prepare_command(&Command::Task(invocation)),
+                    "{name} {verb} is not a Prepare path"
+                );
+
+                let joined = TaskInvocation {
+                    name: name.to_owned(),
+                    args: effigy_core::task_args::join_task_args(Vec::new(), vec![verb.to_owned()]),
+                };
+                assert!(
+                    is_task_local_session_invocation(&joined),
+                    "{name} {verb} after the CLI boundary is a session companion"
+                );
+                assert!(
+                    !is_source_prepare_command(&Command::Task(joined)),
+                    "{name} {verb} after the CLI boundary is not a Prepare path"
+                );
+            }
+        }
+
+        let trailing_json = TaskInvocation {
+            name: "dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(
+                Vec::new(),
+                vec!["--json".to_owned(), "status".to_owned()],
+            ),
+        };
+        assert!(is_task_local_session_invocation(&trailing_json));
+        assert!(!is_source_prepare_command(&Command::Task(trailing_json)));
+
+        let hello = task("hello", &[]);
+        assert!(!is_task_local_session_invocation(&hello));
+        assert!(!is_source_prepare_command(&Command::Task(hello)));
+
+        let dev = task("dev", &[]);
+        assert!(!is_task_local_session_invocation(&dev));
+        assert!(is_source_prepare_command(&Command::Task(dev)));
+
+        let joined_dev = TaskInvocation {
+            name: "dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(Vec::new(), Vec::new()),
+        };
+        assert!(!is_task_local_session_invocation(&joined_dev));
+        assert!(is_source_prepare_command(&Command::Task(joined_dev)));
+    }
 
     #[test]
     fn source_steps_name_the_bundle_its_revision_and_the_outcome() {

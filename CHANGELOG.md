@@ -316,6 +316,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Task-local `status`, `logs` and `stop` inspect or stop an existing session
+  without acquiring a missing pinned source. A real task run still acquires the
+  pin.
 - A container readiness refusal and a Colima profile refusal name the failed
   service or profile, the cause they observed and one `next:` command. A
   bring-up that never becomes ready ends its diagnostic with a single `next:`

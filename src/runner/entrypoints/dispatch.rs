@@ -64,7 +64,17 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     // Both a task run and the task listing read the checkout's sources. Neither
     // refuses over a pin this checkout does not hold yet: a missing one is
     // acquired (rule 1 only), and only a Prepare path refreshes what is behind.
-    let reads_sources = matches!(cmd, Command::Task(_) | Command::Tasks(_));
+    // Task-local status/logs/stop inspect or stop an existing session and never
+    // acquire.
+    let reads_sources = match &cmd {
+        Command::Task(task)
+            if crate::runner::bundle_command::is_task_local_session_invocation(task) =>
+        {
+            false
+        }
+        Command::Task(_) | Command::Tasks(_) => true,
+        _ => false,
+    };
     if reads_sources {
         let root = crate::runner::command_context::active_runtime_context()
             .map(|context| context.command_root().to_path_buf())
