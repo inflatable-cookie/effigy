@@ -192,6 +192,65 @@ mod tests {
         }
     }
 
+    /// Q-005 preserves project, bundle and declared sources ahead of the
+    /// baseline, so a project-owned `minio` fragment still serves the service
+    /// and `catalog_service_sources` attributes it to `project`. Only a
+    /// `minio` that would fall back to the removed baseline refuses, naming
+    /// `silo` (effigy#424).
+    #[test]
+    fn retired_baseline_minio_refuses_while_a_project_fragment_still_serves() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("effigy.toml"),
+            "[containers]\ndefault = \"stack\"\n\n[containers.stack]\nprimary_service = \"app\"\n\n[containers.stack.services.app]\ncatalog = \"workspace-rust-bun\"\n\n[containers.stack.services.storage]\ncatalog = \"minio\"\n",
+        )
+        .unwrap();
+
+        let resolver = catalog_resolver(Some(&repo)).unwrap();
+        for name in ["minio", "baseline/minio"] {
+            let error = resolver
+                .resolve(name)
+                .expect_err("the baseline minio is retired");
+            assert!(
+                matches!(
+                    error,
+                    effigy_catalog::CatalogError::RetiredCatalogService { .. }
+                ),
+                "{name}: {error:?}"
+            );
+            assert!(
+                error.to_string().contains("catalog = \"silo\""),
+                "{name}: {error}"
+            );
+        }
+
+        write_fragment(&repo.join(PROJECT_LOCAL_CATALOG_DIR), "minio", "project");
+        let resolver = catalog_resolver(Some(&repo)).unwrap();
+        assert_eq!(
+            resolver.resolve("minio").unwrap().source.handle(),
+            "project",
+            "the project fragment wins over the removed baseline entry"
+        );
+
+        let sources = catalog_service_sources(&repo, "stack").unwrap();
+        let storage = sources
+            .iter()
+            .find(|source| source.service == "storage")
+            .expect("storage service");
+        assert_eq!(storage.catalog, "minio");
+        assert_eq!(storage.source, "project");
+        assert_eq!(storage.layer, "project");
+        assert!(
+            storage
+                .path
+                .as_deref()
+                .is_some_and(|path| path.ends_with("infra/dev/catalog/minio")),
+            "the attribution names the project fragment: {storage:?}"
+        );
+    }
+
     #[test]
     fn unprepared_declared_source_names_bundle_sync() {
         let temp = tempfile::tempdir().unwrap();

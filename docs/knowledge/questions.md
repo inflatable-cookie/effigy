@@ -146,8 +146,12 @@ Silo (PGSTY Silo), and the one live external `catalog = "minio"` consumer found
 by the root scan was Convergence, which Tom retired and shields from edits.
 Effigy's baseline catalog therefore ships `silo` only: the built-in `minio`
 fragment is removed (effigy#424), `effigy service list` no longer offers it, and
-a manifest that still declares `catalog = "minio"` is refused with a message
-naming `silo`. The name is never remapped and no data migration is invented.
+a manifest whose `catalog = "minio"` would fall back to it is refused with a
+message naming `silo`. The retirement covers Effigy's own baseline: Q-005
+precedence is unchanged, so a project, bundle or declared source that defines
+its own `minio` fragment still resolves from that source, and list and render
+attribute it there. The name is never remapped and no data migration is
+invented.
 Silo keeps the `MINIO_ROOT_*` environment names and `minioadmin` defaults as its
 own compatibility surface. Existing volumes and data stay untouched.
 

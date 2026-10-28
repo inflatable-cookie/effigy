@@ -2090,8 +2090,10 @@ coherent main assurance. No consumer repin or retry follows from this policy.
 Retired — 2026-10-28 (v0.15, effigy#424). Tom ruled MinIO unsupported and both
 Acowtancy and the upstream Underlay bundle use Silo. Effigy removed the
 built-in `minio` catalog service: `effigy service list` no longer offers it and
-a manifest that still declares `catalog = "minio"` is refused with a message
-naming `silo`, never remapped. Silo keeps the `MINIO_ROOT_*` environment names
+a manifest whose `catalog = "minio"` would fall back to it is refused with a
+message naming `silo`, never remapped. Q-005 precedence still applies: a
+project, bundle or declared source that defines its own `minio` fragment
+resolves from that source, and list and render name it. Silo keeps the `MINIO_ROOT_*` environment names
 and `minioadmin` default credentials as its own compatibility surface, not as a
 MinIO service. Existing MinIO volumes and data are not migrated, deleted or
 otherwise touched, Convergence is neither a migration target nor edited, and no

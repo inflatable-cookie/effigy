@@ -267,19 +267,56 @@ fn compiled_baseline_fragments_meet_their_own_requirements() {
     }
 }
 
-/// A retired catalog name is refused from every layer, not only the compiled
-/// baseline: a project, bundle or declared source that still carries `minio/`
-/// cannot reintroduce it, and `service list` never advertises it (effigy#424).
+/// Q-005 keeps project, bundle and declared sources ahead of the baseline. A
+/// source-local `minio` fragment therefore still resolves and is attributed to
+/// its own layer, while a `minio` that would fall back to the removed baseline
+/// fragment refuses and names `silo` (effigy#424).
 #[test]
-fn a_source_local_retired_catalog_name_is_refused_not_resolved() {
+fn retired_baseline_minio_refuses_while_source_local_minio_still_resolves() {
     let sources = Sources::new();
-    write_fragment(&sources.roots[0], "minio", "project-local retry", "");
-    write_fragment(&sources.roots[1], "minio", "bundle-local retry", "");
-    write_fragment(&sources.roots[2], "minio", "declared-local retry", "");
+    let project = write_fragment(&sources.roots[0], "minio", "project-local", "");
+    let bundle = write_fragment(&sources.roots[1], "minio", "bundle-local", "");
+    let declared = write_fragment(&sources.roots[2], "minio", "declared-local", "");
     let resolver = sources.resolver();
 
-    for name in ["minio", "project/minio", "bundle/minio", "acme/minio"] {
-        let error = resolver.resolve(name).expect_err("minio is retired");
+    for (name, dir) in [
+        ("minio", &project),
+        ("project/minio", &project),
+        ("bundle/minio", &bundle),
+        ("acme/minio", &declared),
+    ] {
+        let resolved = resolver.resolve(name).unwrap();
+        assert_eq!(resolved.name, "minio", "{name}");
+        assert_eq!(
+            resolved.source.path(),
+            Some(dir.as_path()),
+            "{name} must resolve from its own source"
+        );
+    }
+
+    let listed = resolver
+        .list()
+        .into_iter()
+        .find(|info| info.name == "minio")
+        .expect("a source-local minio fragment is listed");
+    assert_eq!(
+        listed.source.handle(),
+        "project",
+        "the winning source is the project, not the baseline"
+    );
+    let shadows: Vec<&str> = listed.shadows.iter().map(FragmentSource::handle).collect();
+    assert_eq!(
+        shadows,
+        vec!["bundle", "acme"],
+        "lower sources that also define it are listed as shadows"
+    );
+
+    // With no higher-priority definition the same name refuses, naming silo,
+    // and an explicit baseline request refuses instead of silently remapping.
+    let bare = Sources::new();
+    let bare_resolver = bare.resolver();
+    for name in ["minio", "baseline/minio"] {
+        let error = bare_resolver.resolve(name).expect_err("minio is retired");
         assert!(
             matches!(error, CatalogError::RetiredCatalogService { .. }),
             "{name} should refuse as retired, got {error:?}"
@@ -290,22 +327,7 @@ fn a_source_local_retired_catalog_name_is_refused_not_resolved() {
         );
     }
     assert!(
-        resolver.list().iter().all(|info| info.name != "minio"),
-        "a retired name must never be listed as resolvable: {:?}",
-        resolver
-            .list()
-            .iter()
-            .map(|info| info.name.as_str())
-            .collect::<Vec<_>>()
-    );
-
-    // A non-retired name from the same layers still resolves normally.
-    let silo = write_fragment(&sources.roots[0], "silo", "project-local silo", "");
-    let resolved = resolver.resolve("project/silo").unwrap();
-    assert_eq!(resolved.name, "silo");
-    assert_eq!(
-        resolved.source,
-        FragmentSource::Project(silo),
-        "only retired names are blocked; ordinary project fragments still win"
+        bare_resolver.list().iter().all(|info| info.name != "minio"),
+        "the compiled baseline no longer ships the fragment"
     );
 }

@@ -300,9 +300,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `silo.<host>`. `minimum_effigy_version` moves from `0.10.0` to `0.15.0`.
   Default object-store credentials stay `minioadmin`.
 - **The built-in `minio` catalog service is retired.** Effigy no longer ships
-  the MinIO fragment and does not accept the name: a manifest that declares
-  `catalog = "minio"` fails with a refusal that names `silo`, and nothing is
-  remapped. Silo keeps the same S3 API on `9000`, console on `9001`,
+  the MinIO fragment. A manifest whose `catalog = "minio"` would fall back to
+  it - unqualified with no project, bundle or declared-source definition, or an
+  explicit `baseline/minio` - fails with a refusal that names `silo`, and
+  nothing is remapped. A `minio` fragment a consumer's own catalog source
+  defines still resolves from that source, as Q-005 precedence requires. Silo
+  keeps the same S3 API on `9000`, console on `9001`,
   `MINIO_ROOT_*` credentials (`minioadmin` defaults), persistent `/data` volume
   and `mc ready local` health check, so moving a service is a catalog-name
   change. Existing volumes and data are untouched; there is no migration. See

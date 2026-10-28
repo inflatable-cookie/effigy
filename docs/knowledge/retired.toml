@@ -1790,7 +1790,7 @@ allow = [
 [[retired]]
 id = "effigy-minio-catalog-service"
 retired = "2026-10-28; v0.15 (Tom's ruling, effigy#424)"
-replacement = "Use the shipped `silo` catalog service. `catalog = \"silo\"` serves the same S3 API on port 9000 (console 9001) with the same `MINIO_ROOT_*` credentials (`minioadmin` defaults), persistent `/data` volume and `mc ready local` health check. A manifest that still names `minio` is refused before any source is read, with a message naming `silo`; the name is never remapped, existing volumes and data are untouched, and no data migration is performed. Rename routes and tasks that named the old service (`minio.<host>`, `minio:reconcile`) yourself."
+replacement = "Use the shipped `silo` catalog service. `catalog = \"silo\"` serves the same S3 API on port 9000 (console 9001) with the same `MINIO_ROOT_*` credentials (`minioadmin` defaults), persistent `/data` volume and `mc ready local` health check. A manifest whose `minio` would fall back to the removed baseline fragment is refused with a message naming `silo`; a project, bundle or declared-source `minio` fragment still resolves from its own source under Q-005 precedence, and the name is never remapped, existing volumes and data are untouched, and no data migration is performed. Rename routes and tasks that named the old service (`minio.<host>`, `minio:reconcile`) yourself."
 owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
 terms = [
   "catalog = \"minio\"",
