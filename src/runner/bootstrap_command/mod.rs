@@ -238,7 +238,7 @@ impl BootstrapProgressReporter {
     }
 
     fn start(&mut self, label: String) {
-        self.clear();
+        self.fail_unfinished();
         self.running = Some(effigy_ui::steps::step(&label));
     }
 
@@ -260,18 +260,21 @@ impl BootstrapProgressReporter {
         }
     }
 
-    fn clear(&mut self) {
+    /// A phase still running when the reporter moves on or is dropped did not
+    /// finish. It ends as ✗ with its own label, so a failure never vanishes
+    /// from the terminal. The error the command returns carries the cause.
+    fn fail_unfinished(&mut self) {
         if let Some(step) = self.running.take() {
-            step.finish_clear();
+            step.fail(&format!("{} failed", step.label()));
         }
     }
 }
 
 impl Drop for BootstrapProgressReporter {
     fn drop(&mut self) {
-        // A phase still running when bootstrap returns must not leave a stale
-        // spinner on the terminal.
-        self.clear();
+        // Bootstrap returns early on any failing phase; that phase's step must
+        // end visibly rather than clear.
+        self.fail_unfinished();
     }
 }
 

@@ -121,6 +121,7 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
                     refresh: self.config.refresh,
                 },
                 state,
+                self.progress.as_deref_mut(),
             );
             if !state.is_complete() {
                 state.record_skipped_check("health_task");

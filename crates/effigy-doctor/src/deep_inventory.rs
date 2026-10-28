@@ -8,6 +8,9 @@ use effigy_scan::{
 };
 
 use crate::contracts::{check_id, remediation};
+use crate::progress::{
+    DoctorProgressReporter, ScanLabel, ScanOutcome, DUPLICATE_BLOCKS, GOD_FILES,
+};
 use crate::scan_checks::core::{DoctorIntegratedScanFinding, DoctorIntegratedScanResult};
 use crate::DoctorState;
 
@@ -15,6 +18,9 @@ const SCAN_CHECK_NAMES: [(&str, &str); 2] = [
     ("god_files", check_id::SCAN_GOD_FILES),
     ("duplicate_blocks", check_id::SCAN_DUPLICATE_BLOCKS),
 ];
+
+/// The step each scan check shows, in `SCAN_CHECK_NAMES` order.
+const SCAN_STEP_LABELS: [ScanLabel; 2] = [GOD_FILES, DUPLICATE_BLOCKS];
 
 pub(super) struct DeepInventoryRequest<'a> {
     pub(super) workspace_root: &'a Path,
@@ -26,7 +32,11 @@ pub(super) struct DeepInventoryRequest<'a> {
     pub(super) refresh: bool,
 }
 
-pub(super) fn run_deep_inventory(request: DeepInventoryRequest<'_>, state: &mut DoctorState) {
+pub(super) fn run_deep_inventory(
+    request: DeepInventoryRequest<'_>,
+    state: &mut DoctorState,
+    mut progress: Option<&mut DoctorProgressReporter>,
+) {
     let Some(options) = load_options(request.scope_root, request.catalogs, state) else {
         for (name, _) in SCAN_CHECK_NAMES {
             state.record_skipped_check(name);
@@ -34,6 +44,8 @@ pub(super) fn run_deep_inventory(request: DeepInventoryRequest<'_>, state: &mut 
         return;
     };
     let enabled = enabled_checks(&options);
+    start_scan_steps(progress.as_deref_mut(), &enabled);
+    let findings_before = state.findings.len();
     let started = Instant::now();
     let result = run_doctor_scan_inventory(
         request.workspace_root,
@@ -52,6 +64,13 @@ pub(super) fn run_deep_inventory(request: DeepInventoryRequest<'_>, state: &mut 
             for (name, _) in SCAN_CHECK_NAMES {
                 state.record_skipped_check(name);
             }
+            finish_scan_steps(
+                progress.as_deref_mut(),
+                [
+                    ScanOutcome::Stopped("stopped at the time budget"),
+                    ScanOutcome::Stopped("stopped at the time budget"),
+                ],
+            );
             return;
         }
         Err(error) => {
@@ -63,6 +82,13 @@ pub(super) fn run_deep_inventory(request: DeepInventoryRequest<'_>, state: &mut 
             for (name, _) in SCAN_CHECK_NAMES {
                 state.record_skipped_check(name);
             }
+            finish_scan_steps(
+                progress.as_deref_mut(),
+                [
+                    outcome_for(state, findings_before, check_id::SCAN_GOD_FILES),
+                    ScanOutcome::Stopped("skipped, the shared scan failed"),
+                ],
+            );
             return;
         }
     };
@@ -81,6 +107,13 @@ pub(super) fn run_deep_inventory(request: DeepInventoryRequest<'_>, state: &mut 
     }
     debug_assert_eq!(result.physical_walks, 1, "deep inventory must use one walk");
     apply_results(result, state);
+    finish_scan_steps(
+        progress,
+        [
+            outcome_for(state, findings_before, check_id::SCAN_GOD_FILES),
+            outcome_for(state, findings_before, check_id::SCAN_DUPLICATE_BLOCKS),
+        ],
+    );
     for (index, (name, _)) in SCAN_CHECK_NAMES.iter().enumerate() {
         if enabled[index] {
             let duration = if index == 0 { elapsed } else { Duration::ZERO };
@@ -93,6 +126,37 @@ pub(super) fn run_deep_inventory(request: DeepInventoryRequest<'_>, state: &mut 
             state.record_skipped_check(name);
         }
     }
+}
+
+fn start_scan_steps(progress: Option<&mut DoctorProgressReporter>, enabled: &[bool; 2]) {
+    let Some(progress) = progress else {
+        return;
+    };
+    for (index, label) in SCAN_STEP_LABELS.into_iter().enumerate() {
+        if enabled[index] {
+            progress.start_scan(label);
+        }
+    }
+}
+
+/// End each scan check's step. A check that never started has no step, so its
+/// outcome is ignored.
+fn finish_scan_steps(progress: Option<&mut DoctorProgressReporter>, outcomes: [ScanOutcome; 2]) {
+    let Some(progress) = progress else {
+        return;
+    };
+    for (label, outcome) in SCAN_STEP_LABELS.into_iter().zip(outcomes.iter()) {
+        progress.finish_scan(label, outcome);
+    }
+}
+
+/// The outcome of one scan check: the findings it raised since `from`.
+fn outcome_for(state: &DoctorState, from: usize, check: &str) -> ScanOutcome {
+    ScanOutcome::from_findings(
+        state.findings[from..]
+            .iter()
+            .filter(|finding| finding.check_id == check),
+    )
 }
 
 fn load_options(

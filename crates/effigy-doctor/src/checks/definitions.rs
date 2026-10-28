@@ -7,6 +7,7 @@ use super::catalog_checks::{
 };
 use super::scan_checks::{run_duplicate_blocks_check, run_god_files_check};
 use super::source_checks::run_pinned_source_drift_check;
+use crate::progress::{ScanLabel, DUPLICATE_BLOCKS, GOD_FILES, HEALTH_TASK};
 use crate::{manifest_snapshot::ManifestSnapshot, DoctorRuntimePorts, DoctorState};
 
 pub(super) struct DoctorCheckContext<'a> {
@@ -42,7 +43,7 @@ pub(super) type DoctorCheckFn = fn(&DoctorCheckContext<'_>, &mut DoctorState);
 #[derive(Clone, Copy)]
 pub(super) struct DoctorCheckDefinition {
     pub(super) name: &'static str,
-    pub(super) progress_label: Option<&'static str>,
+    pub(super) progress_label: Option<ScanLabel>,
     pub(super) run: DoctorCheckFn,
 }
 
@@ -72,17 +73,17 @@ const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 4] = [
 const DEEP_CHECKS: [DoctorCheckDefinition; 3] = [
     DoctorCheckDefinition {
         name: "god_files",
-        progress_label: Some("Doctor scan: god-files"),
+        progress_label: Some(GOD_FILES),
         run: run_god_files_check,
     },
     DoctorCheckDefinition {
         name: "duplicate_blocks",
-        progress_label: Some("Doctor scan: duplicate-blocks"),
+        progress_label: Some(DUPLICATE_BLOCKS),
         run: run_duplicate_blocks_check,
     },
     DoctorCheckDefinition {
         name: "health_task",
-        progress_label: Some("Doctor task: health"),
+        progress_label: Some(HEALTH_TASK),
         run: run_health_task_check,
     },
 ];

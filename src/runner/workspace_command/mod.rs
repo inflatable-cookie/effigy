@@ -341,8 +341,8 @@ pub(super) fn cleanup_workspace_session(
         return Ok(());
     }
 
-    let mut progress = WorkspaceShutdownProgressReporter::new();
-    run_container(ContainerArgs {
+    let mut progress = WorkspaceShutdownProgressReporter::new(container_label);
+    let result = run_container(ContainerArgs {
         subcommand: ContainerSubcommand::Down {
             name: container_name,
             system: None,
@@ -350,10 +350,12 @@ pub(super) fn cleanup_workspace_session(
         },
         repo_override,
         output_json: false,
-    })
-    .inspect(|_| progress.finish(true))
-    .inspect_err(|_| progress.finish(false))
-    .map(|_| ())
+    });
+    match &result {
+        Ok(_) => progress.finish(),
+        Err(error) => progress.fail(error),
+    }
+    result.map(|_| ())
 }
 
 fn validate_workspace_runtime_match(
@@ -468,10 +470,11 @@ fn workspace_handoff_terminal_reset_sequence() -> &'static str {
 
 struct WorkspaceShutdownProgressReporter {
     spinner: Option<Box<dyn SpinnerHandle>>,
+    system: String,
 }
 
 impl WorkspaceShutdownProgressReporter {
-    fn new() -> Self {
+    fn new(system: &str) -> Self {
         let transient = WorkspaceTransientProgressReporter::new(
             false,
             "waiting for workspace system shutdown",
@@ -479,19 +482,39 @@ impl WorkspaceShutdownProgressReporter {
         );
         Self {
             spinner: transient.spinner,
+            system: system.to_owned(),
         }
     }
 
-    fn finish(&mut self, success: bool) {
+    fn finish(&mut self) {
         let Some(spinner) = self.spinner.take() else {
             return;
         };
-        if success {
-            spinner.finish_clear();
-        } else {
-            spinner.finish_error("workspace system shutdown failed");
-        }
+        spinner.finish_clear();
     }
+
+    /// Off a terminal there is no spinner to end; the error the command returns
+    /// carries the same cause.
+    fn fail(&mut self, error: &RunnerError) {
+        let Some(spinner) = self.spinner.take() else {
+            return;
+        };
+        spinner.finish_error(&workspace_shutdown_failure_line(&self.system, error));
+    }
+}
+
+/// The one terminal line for a failed shutdown: the system, then the first
+/// line of what the stop error says failed. The full error and its next action
+/// still print after the spinner.
+fn workspace_shutdown_failure_line(system: &str, error: &RunnerError) -> String {
+    let cause = error
+        .human_error()
+        .what_failed()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    format!("workspace system {system} shutdown failed: {cause}")
 }
 
 pub(super) struct WorkspaceTransientProgressReporter {
