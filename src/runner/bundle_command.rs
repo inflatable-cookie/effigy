@@ -188,68 +188,105 @@ fn source_preparation() -> Result<effigy_manifest::SourcePreparation, RunnerErro
         progress: source_progress_steps(),
     })
 }
+/// A source's live step, and whether it snapshots a local path rather than
+/// fetching over the network.
+struct RunningSource {
+    step: Step,
+    local: bool,
+}
+
 /// Draw each source acquisition as a live step: `fetching bundle decodelabs
-/// main`, then one line saying what now holds. The engine reports the events;
-/// this plane decides how they look, so `--json` and piped output stay silent.
+/// main`, then one line saying what now holds. Warnings and notes print above
+/// any spinner. The engine reports the events; this plane decides how they
+/// look, so `--json` and piped output stay silent on the step lines.
 fn source_progress_steps() -> SourceProgress {
-    let running: Mutex<BTreeMap<String, Step>> = Mutex::new(BTreeMap::new());
+    let running: Mutex<BTreeMap<String, RunningSource>> = Mutex::new(BTreeMap::new());
     SourceProgress::to(move |event| {
         let mut running = running.lock().unwrap_or_else(PoisonError::into_inner);
-        match event {
-            SourceProgressEvent::Started {
-                source,
-                subject,
-                revision,
-            } => {
-                let label = fetching_label(&source, &subject, &revision);
-                running.insert(source.clone(), effigy_ui::steps::step(&label));
-            }
-            SourceProgressEvent::Finished {
-                source,
-                subject,
-                kept,
-                failure,
-            } => {
-                let step = running.remove(&source);
-                let (ok, summary) =
-                    finished_summary(&source, &subject, kept.as_deref(), failure.as_deref());
-                match step {
-                    Some(step) if ok => step.succeed(&summary),
-                    Some(step) => step.fail(&summary),
-                    None if !ok => eprintln!("[warn] {summary}"),
-                    None => {}
-                }
-            }
-        }
+        draw_source_event(&mut running, event);
     })
 }
 
+/// Turn one engine event into what the operator sees: a step started, a step
+/// ended, or a line above any spinner.
+fn draw_source_event(running: &mut BTreeMap<String, RunningSource>, event: SourceProgressEvent) {
+    match event {
+        SourceProgressEvent::Started {
+            source,
+            subject,
+            revision,
+            local,
+        } => {
+            let label = fetching_label(&source, &subject, &revision, local);
+            let step = effigy_ui::steps::step(&label);
+            running.insert(source, RunningSource { step, local });
+        }
+        SourceProgressEvent::Finished {
+            source,
+            subject,
+            kept,
+            failure,
+        } => {
+            let running = running.remove(&source);
+            let local = running.as_ref().is_some_and(|running| running.local);
+            let (ok, summary) = finished_summary(
+                &source,
+                &subject,
+                kept.as_deref(),
+                failure.as_deref(),
+                local,
+            );
+            match running {
+                Some(running) if ok => running.step.succeed(&summary),
+                Some(running) => running.step.fail(&summary),
+                None if !ok => effigy_ui::steps::print_line(&format!("[bundle] {summary}")),
+                None => {}
+            }
+        }
+        SourceProgressEvent::Warning { message } | SourceProgressEvent::Note { message } => {
+            effigy_ui::steps::print_line(&format!("[bundle] {message}"));
+        }
+    }
+}
+
 /// A fetch's spinner label: `fetching bundle decodelabs main`. Short, present
-/// tense, and it names the source handle, the subject and the revision.
-pub(in crate::runner) fn fetching_label(source: &str, subject: &str, revision: &str) -> String {
+/// tense, and it names the source handle, the subject and the revision. A
+/// local path is a snapshot: `snapshotting local bundle decodelabs`.
+pub(in crate::runner) fn fetching_label(
+    source: &str,
+    subject: &str,
+    revision: &str,
+    local: bool,
+) -> String {
     let noun = if source == "bundle" {
         "bundle"
     } else {
         "catalog"
     };
+    if local {
+        return format!("snapshotting local {noun} {subject}");
+    }
     format!("fetching {noun} {subject} {revision}")
 }
 
-/// The one line a finished fetch leaves: what was fetched, or why it was not
-/// and which pin still holds.
+/// The one line a finished acquisition leaves: what was fetched or snapshotted,
+/// or why it was not and which pin still holds.
 pub(in crate::runner) fn finished_summary(
     source: &str,
     subject: &str,
     kept: Option<&str>,
     failure: Option<&str>,
+    local: bool,
 ) -> (bool, String) {
+    let (done, failed) = if local {
+        ("snapshotted local", "could not snapshot local")
+    } else {
+        ("fetched", "could not fetch")
+    };
     match (failure, kept) {
-        (Some(failure), _) => (
-            false,
-            format!("could not fetch {source} `{subject}`: {failure}"),
-        ),
+        (Some(failure), _) => (false, format!("{failed} {source} `{subject}`: {failure}")),
         (None, Some(pin)) => (true, format!("kept {source} `{subject}` at {pin}")),
-        (None, None) => (true, format!("fetched {source} `{subject}`")),
+        (None, None) => (true, format!("{done} {source} `{subject}`")),
     }
 }
 
@@ -347,15 +384,15 @@ mod tests {
     #[test]
     fn source_steps_name_the_bundle_its_revision_and_the_outcome() {
         assert_eq!(
-            fetching_label("bundle", "decodelabs", "main"),
+            fetching_label("bundle", "decodelabs", "main", false),
             "fetching bundle decodelabs main"
         );
         assert_eq!(
-            fetching_label("catalog:acme", "acme", "path"),
-            "fetching catalog acme path"
+            fetching_label("catalog:acme", "acme", "main", false),
+            "fetching catalog acme main"
         );
         assert_eq!(
-            finished_summary("bundle", "decodelabs", None, None),
+            finished_summary("bundle", "decodelabs", None, None, false),
             (true, "fetched bundle `decodelabs`".to_owned())
         );
         assert_eq!(
@@ -363,13 +400,89 @@ mod tests {
                 "bundle",
                 "decodelabs",
                 Some("1a2b3c4d"),
-                Some("bundle update failed: the remote refused the fetch")
+                Some("bundle update failed: the remote refused the fetch"),
+                false,
             ),
             (
                 false,
                 "could not fetch bundle `decodelabs`: bundle update failed: the remote refused the fetch"
                     .to_owned()
             )
+        );
+    }
+
+    #[test]
+    fn a_local_path_source_is_a_snapshot_not_a_fetch() {
+        assert_eq!(
+            fetching_label("bundle", "decodelabs", "path", true),
+            "snapshotting local bundle decodelabs"
+        );
+        assert_eq!(
+            finished_summary("bundle", "decodelabs", None, None, true),
+            (true, "snapshotted local bundle `decodelabs`".to_owned())
+        );
+        assert_eq!(
+            finished_summary(
+                "catalog:extra",
+                "extra",
+                None,
+                Some("the directory is gone"),
+                true
+            ),
+            (
+                false,
+                "could not snapshot local catalog:extra `extra`: the directory is gone".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_source_step_ends_once_with_a_check_or_a_cross() {
+        let ((), lines) = effigy_ui::steps::capture_lines(|| {
+            let mut running = BTreeMap::new();
+            draw_source_event(
+                &mut running,
+                SourceProgressEvent::Started {
+                    source: "bundle".to_owned(),
+                    subject: "decodelabs".to_owned(),
+                    revision: "path".to_owned(),
+                    local: true,
+                },
+            );
+            draw_source_event(
+                &mut running,
+                SourceProgressEvent::Finished {
+                    source: "bundle".to_owned(),
+                    subject: "decodelabs".to_owned(),
+                    kept: None,
+                    failure: None,
+                },
+            );
+            draw_source_event(
+                &mut running,
+                SourceProgressEvent::Started {
+                    source: "catalog:extra".to_owned(),
+                    subject: "extra".to_owned(),
+                    revision: "path".to_owned(),
+                    local: true,
+                },
+            );
+            draw_source_event(
+                &mut running,
+                SourceProgressEvent::Finished {
+                    source: "catalog:extra".to_owned(),
+                    subject: "extra".to_owned(),
+                    kept: None,
+                    failure: Some("the directory is gone".to_owned()),
+                },
+            );
+        });
+        assert_eq!(
+            lines,
+            [
+                "✓ snapshotted local bundle `decodelabs`",
+                "✗ could not snapshot local catalog:extra `extra`: the directory is gone",
+            ]
         );
     }
 

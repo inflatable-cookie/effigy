@@ -314,11 +314,15 @@ impl Sink {
             crate::style_text(self.color, style, mark),
             summary
         );
-        // While spinners draw, a finish line has to be written between two
-        // redraws, or a bar's escape sequence can land in the middle of it.
+        self.write_above_bars(&line);
+    }
+
+    /// A plain line, written between spinner redraws so a bar's escape
+    /// sequence never lands in the middle of it.
+    fn write_above_bars(&self, line: &str) {
         match self.multi.get() {
-            Some(multi) => multi.suspend(|| self.write_line(&line)),
-            None => self.write_line(&line),
+            Some(multi) => multi.suspend(|| self.write_line(line)),
+            None => self.write_line(line),
         }
     }
 
@@ -331,6 +335,7 @@ impl Sink {
 
 static MODE: AtomicU8 = AtomicU8::new(0);
 static SINK: OnceLock<Arc<Sink>> = OnceLock::new();
+static JSON_OUTPUT: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     /// Finish lines a test asked this thread to record instead of draw.
@@ -387,6 +392,7 @@ pub fn configure(mode: StepMode) {
 
 /// Configure the mode from the terminal and the invocation's output mode.
 pub fn configure_from_terminal(output_json: bool, verbose: bool) {
+    JSON_OUTPUT.store(output_json, Ordering::SeqCst);
     configure(StepMode::resolve(
         output_json,
         verbose,
@@ -398,6 +404,20 @@ pub fn configure_from_terminal(output_json: bool, verbose: bool) {
 /// The mode steps draw in right now.
 pub fn mode() -> StepMode {
     global_sink().mode()
+}
+
+/// Write one plain line to stderr, above any running spinner: a warning or a
+/// note that is not a step's outcome. `--json` writes none; the envelope
+/// carries what the operator needs.
+pub fn print_line(line: &str) {
+    print_line_to(global_sink(), JSON_OUTPUT.load(Ordering::SeqCst), line);
+}
+
+fn print_line_to(sink: &Sink, json: bool, line: &str) {
+    if json {
+        return;
+    }
+    sink.write_above_bars(&format!("{line}\n"));
 }
 
 /// Start a top-level step. The label is short, present tense and names its
@@ -600,6 +620,23 @@ mod tests {
         assert_eq!(
             buffer.text(),
             "✓ fetched bundle decodelabs\n✗ web never answered on port 8080\n"
+        );
+    }
+
+    #[test]
+    fn a_plain_line_lands_between_finishes_and_json_writes_none() {
+        let (sink, buffer) = silent_spinner_sink();
+        let step = Step::new(sink.clone(), None, "fetching bundle decodelabs main");
+        print_line_to(
+            &sink,
+            false,
+            "[bundle] kept bundle `decodelabs` at 1a2b3c4d",
+        );
+        step.succeed("fetched bundle `decodelabs`");
+        print_line_to(&sink, true, "[bundle] this warning belongs in the envelope");
+        assert_eq!(
+            buffer.text(),
+            "[bundle] kept bundle `decodelabs` at 1a2b3c4d\n✓ fetched bundle `decodelabs`\n"
         );
     }
 

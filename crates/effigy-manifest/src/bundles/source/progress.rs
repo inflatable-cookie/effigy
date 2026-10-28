@@ -22,8 +22,11 @@ pub enum SourceProgressEvent {
         /// The revision pinned for this acquisition: a ref, a commit, a
         /// content digest or `path`.
         revision: String,
+        /// A local path copied into a snapshot, not a network fetch.
+        local: bool,
     },
-    /// The source finished: acquired, or kept at its current pin.
+    /// The source finished: acquired, or kept at its current pin. Every
+    /// [`Self::Started`] gets exactly one of these, even when acquisition fails.
     Finished {
         /// The source's handle: `bundle` or `catalog:<name>`.
         source: String,
@@ -34,6 +37,18 @@ pub enum SourceProgressEvent {
         kept: Option<String>,
         /// What went wrong, when it did. The source's pin, if any, is kept.
         failure: Option<String>,
+    },
+    /// Something the operator should see that does not end a step: a kept pin
+    /// after a failed refresh, or a retired setting.
+    Warning {
+        /// The whole line, without the `[bundle]` prefix.
+        message: String,
+    },
+    /// What this Prepare changed, for the operator: an updated pin or a pruned
+    /// generation.
+    Note {
+        /// The whole line, without the `[bundle]` prefix.
+        message: String,
     },
 }
 
@@ -82,6 +97,7 @@ mod tests {
             source: "bundle".to_owned(),
             subject: "decodelabs".to_owned(),
             revision: "main".to_owned(),
+            local: false,
         });
         assert!(matches!(SourceProgress::default(), SourceProgress(None)));
     }
@@ -97,6 +113,7 @@ mod tests {
             source: "bundle".to_owned(),
             subject: "decodelabs".to_owned(),
             revision: "main".to_owned(),
+            local: false,
         });
         progress.emit(SourceProgressEvent::Finished {
             source: "bundle".to_owned(),
