@@ -1521,8 +1521,8 @@ mod tests {
         let cause = document["cause"].as_str().expect("cause");
         assert!(cause.contains("api.app.test"), "{cause}");
         assert!(cause.contains("/gone/worktree"), "{cause}");
-        assert!(cause.contains("DB_PASSWORD=[redacted]"), "{cause}");
-        assert!(cause.contains("EFFIGY_TOKEN=[redacted]"), "{cause}");
+        assert!(cause.contains("DB_PASSWORD=<redacted>"), "{cause}");
+        assert!(cause.contains("EFFIGY_TOKEN=<redacted>"), "{cause}");
         assert!(!cause.contains("hunter2"), "{cause}");
         assert!(!cause.contains("abcd1234"), "{cause}");
 
