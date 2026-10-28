@@ -103,6 +103,17 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   disposition calls no adapter, so it needs no holder check. A launch failure
   is `Failed` with proof; any other backend failure is `Unknown`, never
   manufactured success (R5).
+- **Settlement budget.** Settlement is bounded on its own clock: admission,
+  each settling holder and the run's own settle make a fresh bounded cleanup
+  context (60 seconds) when they begin, never one made when the transition
+  opened (effigy#447). A cold stack whose activation outlasts a minute is
+  therefore still settled afterwards instead of refusing `environment record
+  ... timed out ... waiting for the environment to settle` on a budget its own
+  apply had already spent. The budget stays bounded, and because an apply is
+  `Retain` and a stop `Irreversible`, settlement dispatches no backend effect:
+  it can neither act after a stop nor hold `Gate(Env)` longer than its bounded
+  work. The transition reports its gate wait and its settlement as steps, so
+  an operator sees which phase is running.
 - **Bring-up** is two runs. The apply run publishes the render the
   environment points at, records retention, and runs the one apply unless a
   live run holds the environment:

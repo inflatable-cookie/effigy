@@ -345,6 +345,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- An environment transition settles on a budget that starts when settlement
+  does. The cleanup context used to be made when the transition opened, so a
+  cold stack whose activation ran past 60 seconds left its settlement already
+  expired and the command failed with `environment record ... timed out ...
+  waiting for the environment to settle` after an apply that had succeeded.
+  Admission, a settling holder and the run's own settle each now take a fresh
+  bounded 60-second budget, and `container up` and `container down` show the
+  gate wait and the settlement as steps.
 - Builtin `effigy test` now routes a named-container suite's setup and teardown
   with the suite command, so those hooks run inside the selected container.
   Nested effigy re-entries still keep their own routing.
