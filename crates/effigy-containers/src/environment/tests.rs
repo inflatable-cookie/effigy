@@ -13,7 +13,7 @@ use effigy_kernel::id::{
 };
 use effigy_kernel::ident::ProcessState;
 use effigy_kernel::objects::Closure;
-use effigy_kernel::observe::{AbsenceProof, Evidence, Observed};
+use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation, WorkloadOutcome};
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{AttachMode, BeginOpts, Liveness, Run};
@@ -396,6 +396,51 @@ fn record_read_is_pure_and_absent_without_a_store() {
         EnvRecord::read(&ctx.observe(), &root, &env("stack").resource),
         Observed::Absent(_)
     ));
+}
+
+/// Q-011: an unreadable holder list is not held. The apply still runs and the
+/// engine reports it, so the runner can warn; a known empty list stays quiet.
+#[test]
+fn an_unreadable_holder_list_applies_and_says_so() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let render = closure("one");
+    let backend = selection();
+    let up = || Up {
+        render: Some(&render),
+        project: PROJECT,
+        backend: &backend,
+        retention: Retention::Held,
+    };
+    let fake = Fake::new();
+    let observer = |_: &EnvRun<'_>| {
+        Observed::Unknown(UnknownReason::StoreUnreadable("fake observer".to_owned()))
+    };
+    let applied =
+        super::ops::reconcile_observing(&ctx, &stack, up(), || fake.apply(), observer).unwrap();
+    assert_eq!(
+        applied,
+        Applied::ReconciledUnreadableHolders(UnknownReason::StoreUnreadable(
+            "fake observer".to_owned()
+        ))
+    );
+    assert_eq!(fake.calls(), ["apply"]);
+    activate(&ctx, &stack, &[]).unwrap();
+    assert!(record(&ctx, &stack).active());
+
+    let quiet = Fake::new();
+    let empty = |_: &EnvRun<'_>| {
+        let evidence = Evidence::new("fake observer".to_owned(), None).expect("evidence");
+        Observed::Verified(Vec::new(), evidence)
+    };
+    assert_eq!(
+        super::ops::reconcile_observing(&ctx, &stack, up(), || quiet.apply(), empty).unwrap(),
+        Applied::Reconciled
+    );
+    assert_eq!(quiet.calls(), ["apply"]);
+    assert_store_sound(&ctx);
 }
 
 #[test]

@@ -110,7 +110,8 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   | Holders | Result |
   | --- | --- |
   | none, or only interrupted ones it settles | `Reconciled`: one apply |
-  | live or unknown | `HeldByRuns`: the running stack is kept and the requesting runs attach |
+  | live | `HeldByRuns`: the running stack is kept and the requesting runs attach |
+  | unknown (holder list unreadable) | `Reconciled` with a warning: not held (Q-011), so the apply runs and the caller says the holders were not checked |
 
   The command's own steps (readiness, permissions, secrets, routes, host
   processes) run between the runs, outside the gate. The activation run
