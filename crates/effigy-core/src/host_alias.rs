@@ -80,7 +80,7 @@ impl HostAlias {
                 if candidate.eq_ignore_ascii_case(&self.effective)
                     && host_boundary_before(text, index)
                     && host_boundary_after(text, end)
-                    && (is_authority_host(text, index)
+                    && (is_authority_host(text, index, end)
                         || is_assignment(text, index)
                         || carries_a_port(text, end))
                 {
@@ -142,7 +142,7 @@ fn rewrite_endpoints(value: &str, declared: &str, effective: &str) -> Option<Str
                 && host_boundary_before(value, index)
                 && host_boundary_after(value, end)
                 && (whole_value.eq_ignore_ascii_case(declared)
-                    || is_authority_host(value, index)
+                    || is_authority_host(value, index, end)
                     || carries_a_port(value, end))
             {
                 output.push_str(&value[copied..index]);
@@ -166,10 +166,36 @@ fn rewrite_endpoints(value: &str, declared: &str, effective: &str) -> Option<Str
     Some(output)
 }
 
-/// The host part of a URL authority: `scheme://host` or `user@host`.
-fn is_authority_host(value: &str, index: usize) -> bool {
+/// The host part of a URL authority: the component after `scheme://`, or after
+/// the userinfo's last `@`.
+///
+/// URL credentials are never the host. A name that appears in
+/// `user:password@` — as either half of the userinfo — is left alone, so a task
+/// pointing at an unrelated server keeps its bytes and proves nothing.
+fn is_authority_host(value: &str, index: usize, end: usize) -> bool {
     let before = &value[..index];
-    before.ends_with("//") || before.ends_with('@')
+    let Some(scheme_end) = before.rfind("://") else {
+        return false;
+    };
+    let authority = &before[scheme_end + 3..];
+    // The authority ends at the first path, query or whitespace.
+    if authority
+        .chars()
+        .any(|character| matches!(character, '/' | '?' | '#') || character.is_whitespace())
+    {
+        return false;
+    }
+    // The host follows the authority start or the userinfo's last `@`.
+    if !(authority.is_empty() || authority.ends_with('@')) {
+        return false;
+    }
+    // A host never contains `@`, so another `@` in this authority's host
+    // segment makes this match part of the userinfo instead.
+    !value[end..]
+        .split(['/', '?', '#', '"', '\'', '`', ' ', ',', ';'])
+        .next()
+        .unwrap_or_default()
+        .contains('@')
 }
 
 /// `KEY=host` — an environment assignment, so the host is a value rather than
@@ -289,6 +315,33 @@ mod tests {
             assert!(!alias.names_endpoint(prose), "{prose}");
         }
         assert!(!alias.names_endpoint("postgres.acme.test"));
+    }
+
+    #[test]
+    fn url_credentials_are_never_the_host() {
+        let alias = alias();
+        // The declared name in either half of the userinfo, and a URL that
+        // points at an unrelated server, keep their exact bytes.
+        for value in [
+            "postgres://postgres.acme.test:secret@database.elsewhere.test:5432/app",
+            "postgres://user:postgres.acme.test@database.elsewhere.test:5432/app",
+            "postgres://postgres.acme.test@database.elsewhere.test:5432/app",
+            "redis://:postgres.acme.test@cache.elsewhere.test:6379",
+            "postgres://user@database.elsewhere.test:5432/app",
+        ] {
+            assert_eq!(alias.resolve(value), None, "{value}");
+            assert!(!alias.names_endpoint(value), "{value}");
+        }
+        // The host after the userinfo is still the host.
+        assert_eq!(
+            alias
+                .resolve("postgres://user:secret@postgres.acme.test:5432/app")
+                .as_deref(),
+            Some("postgres://user:secret@postgres.acme-wabcdef12.test:5432/app")
+        );
+        assert!(
+            alias.names_endpoint("postgres://user:secret@postgres.acme-wabcdef12.test:5432/app")
+        );
     }
 
     #[test]

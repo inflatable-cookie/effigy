@@ -1521,9 +1521,10 @@ secret, a sequence step's environment, a managed session's process plan
 `setup`/`teardown` step environments. Every alias a selected suite would use is
 proved before any suite starts, and the proof reads only the endpoints Effigy
 delivered — text that merely mentions the alias proves nothing. Only an endpoint is rewritten - a value
-that is exactly the host, a host in a URL authority, or a host carrying its
+that is exactly the host, the host of a URL authority, or a host carrying its
 own port - so text that merely names the alias (a search pattern, a JSON blob,
-a comma-separated list) keeps its bytes. Effigy rewrites the environment it
+a comma-separated list), a URL credential and a URL naming another server keep
+their bytes. Effigy rewrites the environment it
 delivers, never a command body.
 
 Before such a run starts, Effigy proves the scope's backing service: its route

@@ -495,7 +495,9 @@ During v0.x, MINOR bumps may include breaking changes.
   checkout keeps its declared name, and a `--plan` render refuses nothing (a
   task plan shows the aliases it would deliver). Only an endpoint is rewritten
   - the whole value, a URL authority host, or `host:port` - so text that merely
-  names the alias keeps its bytes, and Effigy never rewrites a command body.
+  names the alias keeps its bytes, and Effigy never rewrites a command body. URL
+  credentials are never the host: a name that appears in `user:password@`, or a
+  URL naming another server, keeps its bytes and proves nothing.
   Before the run starts - including every alias a selected test suite would
   use, before any suite runs - Effigy proves the scope's route belongs to this
   checkout and publishes an upstream port; otherwise it refuses with the

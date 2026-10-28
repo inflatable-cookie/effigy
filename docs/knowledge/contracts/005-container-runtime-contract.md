@@ -2012,9 +2012,11 @@ decided first and is unchanged — a task's `env` still beats an env-schema
 value, which still beats a `.env` value or a schema default — and the winning
 value is then resolved.
 
-Only an endpoint is rewritten: a value that is exactly the host, a host in a
+Only an endpoint is rewritten: a value that is exactly the host, the host of a
 URL authority (`scheme://host`, `user@host`), or a host carrying its own port
-(`host:5432`). Text that merely names the alias keeps its exact bytes — a
+(`host:5432`). URL credentials are never the host: a name that appears in
+`user:password@`, or a URL naming another server, keeps its exact bytes and
+proves nothing. Text that merely names the alias keeps its exact bytes — a
 search pattern, a JSON blob, a comma-separated list, a note, or a longer host
 such as `postgres.<apex>.example.com`. Effigy rewrites the environment it
 delivers; it never rewrites a command body or configuration text it only passes

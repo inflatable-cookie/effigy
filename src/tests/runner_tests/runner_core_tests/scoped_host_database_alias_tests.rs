@@ -649,6 +649,41 @@ fn write_managed_session_manifest(checkout: &Path) {
     fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a managed session");
 }
 
+/// A URL that only carries the declared name in its credentials, or that names
+/// an unrelated server, is neither rewritten nor proved: it keeps its bytes and
+/// reaches the server it names, with no route published at all.
+#[test]
+fn a_task_targeting_an_unrelated_server_keeps_its_url() {
+    with_short_scratch("scoped-host-alias-credentials", || {
+        let primary = primary_checkout("scoped-host-alias-credentials");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let out = checkout.join("credentials.txt");
+        let credential_url =
+            "postgres://postgres.acme.test:secret@database.elsewhere.test:5432/app";
+        let password_url = "postgres://user:postgres.acme.test@database.elsewhere.test:5432/app";
+        let username_url = "postgres://postgres.acme.test@database.elsewhere.test:5432/app";
+        let manifest = format!(
+            r#"{MANIFEST}
+[tasks.elsewhere]
+run_in = "host"
+run = "sh -lc 'echo $CREDENTIAL_URL > {out}; echo $PASSWORD_URL >> {out}; echo $USERNAME_URL >> {out}'"
+env = {{ CREDENTIAL_URL = "{credential_url}", PASSWORD_URL = "{password_url}", USERNAME_URL = "{username_url}" }}
+"#,
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with an unrelated task");
+
+        run_task(&checkout, "elsewhere", &[]).expect("the task runs without a published alias");
+        assert_eq!(
+            fs::read_to_string(&out)
+                .expect("the task recorded the URLs it received")
+                .trim_end(),
+            format!("{credential_url}\n{password_url}\n{username_url}"),
+            "a URL whose credentials contain the declared name keeps its exact bytes"
+        );
+    });
+}
+
 /// A configured test suite is a host environment too: its own `env`, its
 /// rendered command and its `setup`/`teardown` steps receive this checkout's
 /// effective alias, and an unpublished one refuses before any suite starts.
