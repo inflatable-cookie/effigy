@@ -7,7 +7,10 @@
 //! heartbeat, no unlock and no task cache.
 
 mod admission;
-mod checkout;
+// Prepare mints the checkout identity for the materialised workspace context
+// (contract 052 §8.2); the context carries the same `CheckoutId` the kernel
+// resolves, so it is never derived twice.
+pub(in crate::runner) mod checkout;
 mod control;
 pub(in crate::runner) mod discovery;
 mod holders;

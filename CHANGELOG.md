@@ -239,6 +239,19 @@ During v0.x, MINOR bumps may include breaking changes.
   attachment records rather than keeping a second set. Nothing user-facing
   invokes it yet; the client, transport and supervisor serving loop are later
   tasks.
+
+- **A container-mode workspace is prepared for the workspace client.** Host
+  Prepare publishes an immutable guest context and a version-locked Linux
+  Effigy into the container, outside the bind-mounted checkout:
+  `/run/effigy/context/<generation>/context.json` with the exact host and guest
+  versions, the executable digest, the protocol, and the checkout,
+  environment, container and VM-boot generations it belongs to;
+  `/run/effigy/bin/<digest>/effigy` in a guest-private store that new
+  invocations reach through `/usr/local/bin/effigy`; and, when the session
+  supplies one, a 0600 enrolment credential. A published generation and an
+  installed executable are never rewritten, so a run that started on one keeps
+  its exact bytes. Hybrid mode publishes none of this. The context document is
+  `effigy.workspace-context.v1` (contract 052 §8.2, §8.11).
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
@@ -346,6 +359,20 @@ During v0.x, MINOR bumps may include breaking changes.
   `default-currentness` stays the kind spelling. Canonical snake_case and
   path-only includes stay silent. `--json` carries the notice in
   `warnings`, never stdout.
+
+- **Workspace entry verifies the prepared guest instead of installing one.**
+  `effigy exec`, `effigy container shell` and a workspace task no longer
+  download, build or copy Effigy into the workspace container. They read the
+  published context and refuse before the command runs when it is missing,
+  pins another version or names an executable that is not installed, naming
+  `effigy container up` to re-prepare. Container-mode Prepare owns acquisition
+  (contract 052 §8.9).
+- **A workspace container no longer sees the checkout's host-only state.** The
+  checkout's `.effigy/state` and `.effigy/secrets` (the local vault, its
+  previous generation and key wraps) are masked with empty read-only volumes,
+  and a declared mount of a host state root or of the guest's own
+  `/run/effigy` store is refused by name (contract 052 §7.3 families 1 and
+  10-11, §8.10 R1).
 - Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
   scopes after changed publications. Legacy v1 cache is left for manual cleanup.
 

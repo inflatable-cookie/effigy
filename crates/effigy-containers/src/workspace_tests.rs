@@ -1070,3 +1070,119 @@ mod worktree_git_mount_tests {
         let _ = fs::remove_dir_all(root);
     }
 }
+
+#[cfg(test)]
+mod guest_isolation_tests {
+    use super::super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn temp_dir(label: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-guest-mount-{label}-"))
+            .expect("fixture directory")
+    }
+
+    fn bind_mount(source: &Path, target: &str) -> RenderedWorkspaceMount {
+        RenderedWorkspaceMount {
+            target: target.to_owned(),
+            rendered: format!("{}:{target}", source.display()),
+            source: Some(source.to_path_buf()),
+            named_volume: None,
+        }
+    }
+
+    #[test]
+    fn guest_masks_cover_the_checkout_store_and_local_vault_read_only() {
+        let repo_root = temp_dir("masks");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+
+        let masks = build_guest_mask_mounts("dev", &canonical, Path::new("/workspace"));
+
+        assert_eq!(masks.len(), GUEST_MASKED_CHECKOUT_PATHS.len());
+        let targets = masks
+            .iter()
+            .map(|mount| mount.target.as_str())
+            .collect::<Vec<_>>();
+        assert!(targets.contains(&"/workspace/.effigy/state"));
+        assert!(targets.contains(&"/workspace/.effigy/secrets"));
+        for mask in &masks {
+            assert!(
+                mask.rendered.ends_with(":ro"),
+                "a mask is read-only: {}",
+                mask.rendered
+            );
+            assert!(
+                mask.source.is_none(),
+                "a mask never names a host path: {}",
+                mask.rendered
+            );
+            assert!(mask.named_volume.is_some(), "a mask is an empty volume");
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn an_ordinary_workspace_mount_set_passes_isolation() {
+        let repo_root = temp_dir("allowed");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let checkout = bind_mount(&canonical, "/workspace");
+        let mut mounts = vec![checkout];
+        mounts.extend(build_guest_mask_mounts(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+        ));
+
+        enforce_guest_mount_isolation("dev", &canonical, &mounts).expect("allowed");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_mount_into_the_guest_private_store_is_refused() {
+        let repo_root = temp_dir("guest-store");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let host = repo_root.join("context");
+        fs::create_dir_all(&host).expect("host context");
+        let mounts = vec![bind_mount(&host, "/run/effigy/context")];
+
+        let error = enforce_guest_mount_isolation("dev", &canonical, &mounts)
+            .expect_err("the guest store is not a host mount");
+
+        assert!(error.to_string().contains("guest's own store"));
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_declared_checkout_state_or_vault_mount_is_refused() {
+        let repo_root = temp_dir("checkout-state");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let vault = canonical.join(".effigy/secrets");
+        fs::create_dir_all(&vault).expect("vault root");
+
+        for source in [&state, &vault] {
+            let mounts = vec![bind_mount(source, "/workspace/leaked")];
+            let error = enforce_guest_mount_isolation("dev", &canonical, &mounts)
+                .expect_err("a host state root never mounts into the guest");
+            assert!(error.to_string().contains("host state root"));
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_machine_state_root_mount_is_refused() {
+        let repo_root = temp_dir("machine-state");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let home = repo_root.join("home");
+        let machine_state = home.join(".effigy/state");
+        fs::create_dir_all(&machine_state).expect("machine state");
+        crate::with_test_effigy_home(&home.join(".effigy"), || {
+            let mounts = vec![bind_mount(&machine_state, "/workspace/machine")];
+            let error = enforce_guest_mount_isolation("dev", &canonical, &mounts)
+                .expect_err("the machine state root is host-only");
+            assert!(error.to_string().contains("host state root"));
+        });
+        let _ = fs::remove_dir_all(repo_root);
+    }
+}

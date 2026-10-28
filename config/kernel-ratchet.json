@@ -387,7 +387,8 @@
     "src/runner/workspace_command/provisioning.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.status": 1,
-      "std::fs::rename": 2,
+      "std::fs::remove_file": 1,
+      "std::fs::rename": 1,
       "std::fs::write": 5
     }
   },

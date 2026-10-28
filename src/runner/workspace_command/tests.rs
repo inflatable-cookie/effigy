@@ -1,4 +1,5 @@
 mod builder_recovery;
+mod provisioning_guest;
 
 use super::*;
 use crate::contract_test_support::EnvGuard;
@@ -21,11 +22,10 @@ use crate::runner::workspace_command::provisioning::{
     linux_workspace_effigy_cache_path, linux_workspace_effigy_release_url,
     linux_workspace_release_cache_is_current, plan_workspace_permission_prep,
     read_trimmed_identity_file, read_trimmed_workspace_effigy_active_version,
-    render_workspace_effigy_install_command, render_workspace_effigy_staging_path,
-    resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
-    run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
-    wait_for_in_progress_linux_workspace_artifact_build, workspace_effigy_active_version_file,
-    workspace_effigy_install_identity_file, workspace_effigy_install_is_current,
+    render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
+    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
+    sibling_effigy_repo_root, wait_for_in_progress_linux_workspace_artifact_build,
+    workspace_effigy_active_version_file, workspace_effigy_install_identity_file,
     workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
     LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, WorkspacePermissionMode,
     EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
@@ -1794,37 +1794,12 @@ fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active
 }
 
 #[test]
-fn workspace_effigy_install_command_targets_usr_local_bin() {
-    let rendered = render_workspace_effigy_install_command(
-        "/tmp/effigy-host-1",
-        Some("/tmp/effigy-host-1.active-version"),
-        Some("/tmp/effigy-host-1.install-identity"),
-    );
-    assert!(rendered.contains("/tmp/effigy-host"));
-    assert!(rendered.contains("/usr/local/bin/effigy"));
-    assert!(rendered.contains("/usr/local/bin/effigy.active-version"));
-    assert!(rendered.contains("/usr/local/bin/effigy.install-identity"));
-    assert!(rendered.contains("install -m 0755"));
-    assert!(rendered.contains("install -m 0644"));
-}
-
-#[test]
 fn workspace_effigy_staging_path_is_unique() {
     let first = render_workspace_effigy_staging_path();
     let second = render_workspace_effigy_staging_path();
     assert_ne!(first, second);
     assert!(first.starts_with("/tmp/effigy-host-"));
     assert!(second.starts_with("/tmp/effigy-host-"));
-}
-
-#[test]
-fn workspace_effigy_install_is_current_only_for_matching_trimmed_versions() {
-    assert!(workspace_effigy_install_is_current(
-        Some("0.7.1\n"),
-        "0.7.1"
-    ));
-    assert!(!workspace_effigy_install_is_current(Some("0.7.0"), "0.7.1"));
-    assert!(!workspace_effigy_install_is_current(None, "0.7.1"));
 }
 
 #[test]

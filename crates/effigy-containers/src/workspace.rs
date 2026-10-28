@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -200,7 +201,114 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_host_mkcert_ca_mount(config, primary_service, catalog_capabilities) {
         mounts.push(mount);
     }
+    // Masks go last so they win over every earlier mount that overlaps them,
+    // including a workspace `mounts` entry nested under a masked path.
+    mounts.extend(build_guest_mask_mounts(
+        container_name,
+        &canonical_repo_root,
+        working_dir,
+    ));
+    enforce_guest_mount_isolation(container_name, &canonical_repo_root, &mounts)?;
     Ok((mounts, extra_mount_decisions))
+}
+
+/// Checkout paths a container-mode guest never sees: the checkout runtime
+/// store, and the private vault with its previous generation and key wraps
+/// (contract 052 §7.3 families 1 and 10-11, §8.2).
+///
+/// The checkout itself is bind-mounted so ordinary source edits and task
+/// outputs stay workspace files. These two families are host records, so each
+/// is covered by its own empty read-only mount.
+const GUEST_MASKED_CHECKOUT_PATHS: [&str; 2] = [".effigy/state", ".effigy/secrets"];
+
+/// The guest's own store inside the container (§8.2, §8.3). It never comes
+/// from a host mount: Prepare publishes into it and a host mount would let a
+/// checkout shadow the context, the pinned executable or a capability.
+const GUEST_PRIVATE_ROOT: &str = "/run/effigy";
+
+/// Empty read-only masks over the host-only checkout families (§8.2).
+///
+/// The named volumes are declared in the generated Compose file with fixed
+/// names, so a service that is recreated over a retained volume still finds it
+/// empty and always mounts it read-only. Nothing writes to them, so they stay
+/// empty across reconciles.
+fn build_guest_mask_mounts(
+    container_name: &str,
+    canonical_repo_root: &Path,
+    working_dir: &Path,
+) -> Vec<RenderedWorkspaceMount> {
+    GUEST_MASKED_CHECKOUT_PATHS
+        .iter()
+        .map(|relative| {
+            let target = working_dir.join(relative).display().to_string();
+            let volume_name = guest_mask_volume_name(container_name, canonical_repo_root, relative);
+            RenderedWorkspaceMount {
+                target: target.clone(),
+                rendered: format!("{volume_name}:{target}:ro"),
+                source: None,
+                named_volume: Some(volume_name),
+            }
+        })
+        .collect()
+}
+
+fn guest_mask_volume_name(
+    container_name: &str,
+    canonical_repo_root: &Path,
+    relative: &str,
+) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    container_name.hash(&mut hasher);
+    canonical_repo_root.hash(&mut hasher);
+    relative.hash(&mut hasher);
+    format!("efi-mask-{:016x}", hasher.finish())
+}
+
+/// Refuse a mount that would hand the guest a host state root or shadow the
+/// guest's own store (§8.1, §8.2, §8.10 R1).
+///
+/// The masks above cover the checkout's own families. A declared mount that
+/// names the guest store, the checkout store or the machine state root is a
+/// mistake this refuses by name rather than mounting and hoping.
+fn enforce_guest_mount_isolation(
+    container_name: &str,
+    canonical_repo_root: &Path,
+    mounts: &[RenderedWorkspaceMount],
+) -> Result<(), ContainerPolicyError> {
+    let checkout_state = canonical_repo_root.join(GUEST_MASKED_CHECKOUT_PATHS[0]);
+    let checkout_vault = canonical_repo_root.join(GUEST_MASKED_CHECKOUT_PATHS[1]);
+    let machine_state = crate::effigy_home().map(|home| home.join("state"));
+    for mount in mounts {
+        if mount.target == GUEST_PRIVATE_ROOT
+            || mount.target.starts_with(&format!("{GUEST_PRIVATE_ROOT}/"))
+        {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` mount target `{target}` is the guest's own store; \
+                 a host mount cannot provide `{GUEST_PRIVATE_ROOT}`",
+                target = mount.target,
+            )));
+        }
+        let Some(source) = mount.source.as_ref() else {
+            continue;
+        };
+        let host_state = [
+            Some(&checkout_state),
+            Some(&checkout_vault),
+            machine_state.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|root| source == root || source.starts_with(root));
+        if host_state {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` mount source `{source}` is a host state root; \
+                 the checkout store, the local vault and the machine state root are host-only \
+                 and never mount into a workspace container",
+                source = source.display(),
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Expose the shared git directory behind a linked worktree checkout.

@@ -2363,7 +2363,10 @@ workspace is admitted:
 - Location: `/run/effigy/context/<generation>/` inside the container,
   outside the bind-mounted checkout, owned by root and read-only to the
   workspace user. `/run/effigy/context/current` names the published
-  generation.
+  generation. The document is `context.json`, schema
+  `effigy.workspace-context.v1`; a guest reads the pointer and then one
+  generation, and an unknown schema or field is unprepared rather than a
+  newer version to guess at.
 - Refresh: the host publishes a new complete generation on every Prepare and
   whenever a fact it carries changes on the host, then switches `current`.
   It never edits a published generation. A guest invocation reads one
@@ -2588,6 +2591,11 @@ only, and host access needs a terminal opened through Effigy.
 - Each release publishes version-locked Linux x86_64 and aarch64 artifacts
   with a checksum and provenance manifest naming the version, protocol
   version, target and libc baseline, and catalog schema.
+- The store is `/run/effigy/bin/<digest>/effigy`, one immutable file per
+  digest, selected by the digest in `/run/effigy/bin/current`. The stable
+  entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
+  store, so a running invocation keeps the bytes it resolved and only a new
+  invocation sees a new generation.
 - Workspace Prepare acquires the artifact on the host, verifies its digest,
   and installs it into a guest-private executable store, selected per
   workspace generation by an atomic pointer. The architecture comes from the

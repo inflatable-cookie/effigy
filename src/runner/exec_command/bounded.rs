@@ -444,6 +444,10 @@ impl BoundedCommandBudget {
         self.preparation_stderr_retained
     }
 
+    /// Remaining budget for the workspace artifact rehearsal probes, which are
+    /// their own cfg(test) deadlines. No shipping caller needs it: the bounded
+    /// workspace entry path verifies the pinned guest instead of acquiring one.
+    #[cfg(test)]
     pub(in crate::runner) fn remaining_time(&self) -> Option<Duration> {
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         (!remaining.is_zero()).then_some(remaining)

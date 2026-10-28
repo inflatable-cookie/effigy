@@ -165,13 +165,47 @@ case "$FAKE_BOUNDED_MODE:$args" in
 esac
 if [ "$FAKE_BOUNDED_MODE" = "remove-before-command" ]; then
     case "$args" in
-        *"install -m 0755"*)
+        *"/run/effigy/bin/current"*)
             /bin/chmod 000 "$0"
-            printf 'installed'
+            printf '%s' "$FAKE_BOUNDED_DIGEST"
             exit 0
             ;;
     esac
 fi
+# The bounded entry verifies the prepared guest context instead of installing
+# one (contract 052 §8.9). These answers are the published context the fixture
+# wrote: one generation, one pinned executable, nothing refreshed.
+case "$args" in
+    *"/run/effigy/context/current"*)
+        if [ "$FAKE_BOUNDED_MODE" = "workspace-hang" ]; then
+            printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
+            exec /bin/sleep 30
+        fi
+        if [ "$FAKE_BOUNDED_MODE" = "workspace-flood" ]; then
+            i=0
+            while [ "$i" -lt 4096 ]; do
+                printf 'x'
+                printf 'y' >&2
+                i=$((i + 1))
+            done
+            exit 0
+        fi
+        printf '1'
+        exit 0
+        ;;
+    *"/run/effigy/context/1/context.json"*)
+        cat "$FAKE_BOUNDED_CONTEXT_FILE"
+        exit 0
+        ;;
+    *"/run/effigy/bin/current"*)
+        printf '%s' "$FAKE_BOUNDED_DIGEST"
+        exit 0
+        ;;
+    *"$FAKE_BOUNDED_DIGEST"*)
+        printf 'private fake guest executable'
+        exit 0
+        ;;
+esac
 case "$args" in
     *"ps --no-trunc"*)
         printf '%s\tUp 1 minute\tFalse\t%s\t\t\n' "$FAKE_ID" "$FAKE_BOUNDED_REPO"
@@ -186,31 +220,6 @@ case "$args" in
         ;;
     *"status --profile"*)
         printf 'colima running'
-        exit 0
-        ;;
-    *"effigy.install-identity"*)
-        printf '%s' "$FAKE_BOUNDED_IDENTITY"
-        exit 0
-        ;;
-    *"uname -m"*)
-        if [ "$FAKE_BOUNDED_MODE" = "workspace-hang" ]; then
-            printf '%s\n' "$$" > "$FAKE_BOUNDED_PID_FILE"
-            exec /bin/sleep 30
-        fi
-        if [ "$FAKE_BOUNDED_MODE" = "workspace-flood" ]; then
-            i=0
-            while [ "$i" -lt 4096 ]; do
-                printf 'x'
-                printf 'y' >&2
-                i=$((i + 1))
-            done
-            exit 0
-        fi
-        if [ "$FAKE_BOUNDED_MODE" = "identity-invalid" ]; then
-            printf s390x
-            exit 0
-        fi
-        printf x86_64
         exit 0
         ;;
     *"fallback-budget"*)
@@ -296,24 +305,6 @@ fn public_fixture(
     let (dir, bin_dir, repo_root) = fixture_in(name, shared_parent);
     let home = dir.path().join("home");
     fs::create_dir_all(&home).expect("mkdir isolated home");
-    let release_cache = home
-        .join(".effigy/workspace-bin/linux/x86_64-unknown-linux-gnu")
-        .join(format!("v{}", env!("CARGO_PKG_VERSION")))
-        .join("effigy-x86_64-unknown-linux-gnu");
-    fs::create_dir_all(release_cache.parent().expect("release cache parent"))
-        .expect("mkdir isolated release cache");
-    fs::write(&release_cache, b"private fake release artifact")
-        .expect("seed isolated release cache");
-    // The isolated child uses this fixed package version, so its private
-    // cache must carry both identities required by the current release path.
-    let version = effigy_core::build_info::package_version();
-    fs::write(release_cache.with_extension("active-version"), version)
-        .expect("seed isolated release version");
-    fs::write(
-        release_cache.with_extension("install-identity"),
-        format!("release:v{version}"),
-    )
-    .expect("seed isolated release identity");
     fs::write(
         repo_root.join("docker-compose.yml"),
         "services:\n  app:\n    image: busybox\n",
@@ -464,6 +455,87 @@ struct GuardedPublicOutcome {
     stderr: Vec<u8>,
 }
 
+/// The digest the fixture's pinned guest executable is published under.
+fn public_guest_digest() -> String {
+    format!("sha256:{}", "ab".repeat(32))
+}
+
+/// Write the guest context the fixture pretends Prepare published.
+///
+/// The document is the real one: `identity-invalid` pins a version this host
+/// cannot speak to, and every other mode pins this build.
+fn write_public_guest_context(dir: &Path, mode: &str) -> PathBuf {
+    use crate::runner::workspace_client::context::{
+        GuestBinaryIdentity, WorkspaceActivationIdentity, WorkspaceBackendDescriptor,
+        WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext,
+        WorkspaceContextInput, WorkspaceEnvironmentIdentity, WorkspaceHostIdentity,
+        WorkspacePathMap, CHANNEL_PROTOCOL_VERSION,
+    };
+    let host_version = effigy_core::build_info::active_version();
+    let guest_version = if mode == "identity-invalid" {
+        "9.9.9".to_owned()
+    } else {
+        host_version.clone()
+    };
+    let context = WorkspaceContext::new(WorkspaceContextInput {
+        generation: 1,
+        host: WorkspaceHostIdentity {
+            version: host_version,
+            protocol: CHANNEL_PROTOCOL_VERSION,
+        },
+        binary: GuestBinaryIdentity {
+            version: guest_version,
+            digest: public_guest_digest(),
+            protocol: CHANNEL_PROTOCOL_VERSION,
+        },
+        activation: WorkspaceActivationIdentity {
+            host_user: "tester".to_owned(),
+            checkout_id: "0:00".to_owned(),
+            environment: WorkspaceEnvironmentIdentity {
+                resource_id: "env:demo-web".to_owned(),
+                generation: "sha256:aa".to_owned(),
+            },
+            container: WorkspaceContainerIdentity {
+                container_id: "0123456789abcdef".to_owned(),
+                vm_boot_id: "boot".to_owned(),
+                platform: "x86_64".to_owned(),
+            },
+        },
+        session_run_id: Some("run-1".to_owned()),
+        paths: WorkspacePathMap {
+            host_checkout: "/workspace".to_owned(),
+            guest_checkout: "/workspace".to_owned(),
+            workdir: "/workspace".to_owned(),
+            user: "dev".to_owned(),
+            home: "/home/dev".to_owned(),
+        },
+        backend: WorkspaceBackendDescriptor {
+            kind: "Docker Engine".to_owned(),
+            profile: "default".to_owned(),
+            runtime: None,
+            vm_type: None,
+        },
+        sources: Vec::new(),
+        routes: Vec::new(),
+        channel: WorkspaceChannelLocator {
+            endpoint: Some("host:1".to_owned()),
+            server_identity: Some("sha256:s".to_owned()),
+        },
+    });
+    let path = dir.join(format!("guest-context-{mode}.json"));
+    fs::write(&path, context.render().expect("render guest context")).expect("write guest context");
+    path
+}
+
+/// Bytes the bounded entry reads during workspace preparation: the generation
+/// number, the context document, the digest pointer and the executable.
+fn public_guest_preparation_stdout(dir: &Path, mode: &str) -> u64 {
+    let context = fs::read(dir.join(format!("guest-context-{mode}.json")))
+        .map(|bytes| bytes.len() as u64)
+        .unwrap_or(0);
+    1 + context + public_guest_digest().len() as u64 + "private fake guest executable".len() as u64
+}
+
 #[cfg(unix)]
 fn run_guarded_public_case(
     dir: &effigy_test_support::Fixture,
@@ -530,6 +602,11 @@ fn run_guarded_public_case(
             effigy_core::build_info::package_version(),
         )
         .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
+        .env(
+            "FAKE_BOUNDED_CONTEXT_FILE",
+            write_public_guest_context(dir.path(), mode),
+        )
+        .env("FAKE_BOUNDED_DIGEST", public_guest_digest())
         .stdin(Stdio::null())
         .stdout(Stdio::from(child_stdout))
         .stderr(Stdio::from(child_stderr));
@@ -648,19 +725,18 @@ fn guarded_public_entry_child() {
             assert_eq!(value["attempts"], 1);
             assert_eq!(
                 value["preparation"]["captures"], 4,
-                "public command must include the owned-service listing and the bounded workspace identity probe"
+                "public command must verify the published guest context and its pinned executable"
             );
             let preparation_stdout = value["preparation"]["retained"]["stdout_bytes"]
                 .as_u64()
                 .unwrap();
-            let minimum_preparation_stdout = std::env::var("FAKE_BOUNDED_IDENTITY").unwrap().len()
-                as u64
-                + if backend == "colima" {
-                    "colima running".len() as u64
-                } else {
-                    0
-                };
-            assert!(preparation_stdout >= minimum_preparation_stdout);
+            let minimum_preparation_stdout = 1
+                + std::env::var("FAKE_BOUNDED_DIGEST").unwrap().len() as u64
+                + "private fake guest executable".len() as u64;
+            assert!(
+                preparation_stdout >= minimum_preparation_stdout,
+                "preparation must read the context, the pointer and the executable: {preparation_stdout}"
+            );
             assert!(
                 value["retained"]["stdout_bytes"].as_u64().unwrap()
                     == preparation_stdout + value["stdout_bytes"].as_u64().unwrap()
@@ -692,7 +768,10 @@ fn guarded_public_entry_child() {
             let details = failure_details(&error);
             assert_eq!(details["failure"], "workspace_preparation_failed");
             assert_eq!(details["phase"], "workspace_preparation");
-            assert_eq!(details["preparation"]["captures"], 5);
+            assert_eq!(
+                details["preparation"]["captures"], 2,
+                "the generation pointer and its document are enough to refuse a stale version"
+            );
             // This phase failure is decided about five spawned-and-completed
             // captures; it is not a transport refusal, so it must not claim
             // any refusal observations (not_attempted would be false here).
