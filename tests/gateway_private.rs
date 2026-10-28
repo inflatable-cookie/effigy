@@ -4786,7 +4786,7 @@ impl HostEffectSentinels {
         // A private fixture never reads the operator's real listeners. Gateway
         // registration lsof-probes the port a route targets, and the
         // operator's own user gateway holds loopback aliases for ordinary
-        // bundle ports (minio 9000, dbgate 3000, ...), so a real probe would
+        // bundle ports (silo 9000, dbgate 3000, ...), so a real probe would
         // borrow the machine's state and refuse the fixture. The quiet stub
         // answers "no host listeners" and records nothing in the host-effect
         // log those proofs require to stay empty.
@@ -5907,8 +5907,8 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         vec![5432],
     );
-    let minio = (
-        "minio",
+    let silo = (
+        "silo",
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         vec![9000, 9001],
     );
@@ -5928,7 +5928,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
             vec![
                 workspace.clone(),
                 postgres.clone(),
-                minio.clone(),
+                silo.clone(),
                 dbgate.clone(),
                 mailpit.clone(),
             ],
@@ -6245,8 +6245,8 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         vec![5432],
     );
-    let minio = (
-        "minio",
+    let silo = (
+        "silo",
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         vec![9000, 9001],
     );
@@ -6266,7 +6266,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             vec![
                 workspace.clone(),
                 postgres.clone(),
-                minio.clone(),
+                silo.clone(),
                 dbgate.clone(),
                 mailpit.clone(),
             ],

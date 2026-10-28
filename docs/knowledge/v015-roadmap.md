@@ -22,7 +22,7 @@ handoff chain reopen only for a demonstrated failure (Q-012).
 Tom retired Convergence from the v0.15 consumer cohort on 2026-10-28. Its
 checkout is not a migration or qualification target; historical references in
 contracts and release records remain historical. The shipped MinIO catalog is
-being retired in favor of Silo separately from that consumer decision.
+retired in favor of Silo (effigy#424), separately from that consumer decision.
 
 ## Sequence and gates
 
@@ -45,7 +45,7 @@ Colima profile or install is touched. Tom's explicit release decision is last.
 
 Q-005 retires the installed catalog-pack runtime; Tom archived the pack
 repository on 2026-10-28. Immutable pack 1.2.0
-remains resolvable for older Effigy consumers. The MinIO cut belongs only to
+remains resolvable for older Effigy consumers. The MinIO cut landed only in
 Effigy's baseline catalog (#424), with no new pack release in this set.
 
 ## Open papercut disposition

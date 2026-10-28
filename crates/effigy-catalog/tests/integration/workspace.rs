@@ -457,8 +457,8 @@ fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
             config: None,
         },
         ServiceDeclaration {
-            name: "minio".to_string(),
-            catalog: "minio".to_string(),
+            name: "silo".to_string(),
+            catalog: "silo".to_string(),
             params: HashMap::new(),
             variant: None,
             config: None,
@@ -477,7 +477,7 @@ fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
         .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
 
-    for name in &["workspace", "postgres", "dbgate", "mailpit", "minio"] {
+    for name in &["workspace", "postgres", "dbgate", "mailpit", "silo"] {
         validate_service(&doc, name);
     }
 
@@ -522,7 +522,7 @@ fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
         "postgres"
     );
 
-    // Named volumes expected: cargo-registry, cargo-git, Postgres data, minio
+    // Named volumes expected: cargo-registry, cargo-git, Postgres data, silo
     // data, and dbgate settings. Mailpit has no persistent volume.
     let vol_names: std::collections::BTreeSet<&str> =
         result.volumes.iter().map(|v| v.name.as_str()).collect();
@@ -530,7 +530,7 @@ fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
         "workspace-app-reference-dev-workspace-cargo-registry",
         "workspace-app-reference-dev-workspace-cargo-git",
         "workspace-app-reference-dev-postgres-data",
-        "workspace-app-reference-dev-minio-data",
+        "workspace-app-reference-dev-silo-data",
         "workspace-app-reference-dev-dbgate-data",
     ] {
         assert!(

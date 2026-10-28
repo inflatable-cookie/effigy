@@ -119,10 +119,25 @@ the Effigy range, schema and capabilities it lacks. See
 
 The installed catalog-pack runtime and `effigy service pack` are retired in
 v0.15. Existing `~/.effigy/catalog-packs/` state is ignored with a notice and
-left untouched; delete it when convenient. Pack v1.2.0 was byte-identical to
-the compiled baseline, so projects that used it resolve the same services. To
+left untouched; delete it when convenient. Pack v1.2.0 added `silo`; the
+0.15.0 baseline goes one step further and retires `minio` (below), so a project
+that resolved `minio` from the pack or the baseline must move to `silo`. To
 ship services without an Effigy release, publish them as a bundle `catalog/`
 or a declared source.
+
+### Retired catalog services
+
+The built-in baseline `minio` service is retired in v0.15 (effigy#424): Effigy
+no longer ships a MinIO fragment. A manifest whose `catalog = "minio"` would
+fall back to that removed baseline fragment fails with a refusal that names
+`silo`, and the old name is never silently remapped. Existing volumes and data
+are untouched.
+
+Catalog sources still come first (Q-005): a project, bundle or declared source
+that defines its own `minio` fragment keeps serving it, and `effigy service
+list` / `effigy container render` attribute the service to that source instead
+of the baseline. Use `silo` for new object storage; Effigy supports no shipped
+MinIO fragment.
 
 ## Catalog Services
 
@@ -292,26 +307,11 @@ For shipped PHP workspaces, Effigy also configures a sendmail-compatible
 `msmtp` shim so PHP `mail()` calls are forwarded to the local Mailpit SMTP
 listener by default.
 
-### `minio`
-
-Local S3-compatible object storage and console.
-
-- Image: `minio/minio:RELEASE.2025-09-07T16-13-09Z` (override via
-  `version`; upstream stopped moving `latest` after 2025-09).
-- Parameters: `version` (`"RELEASE.2025-09-07T16-13-09Z"`),
-  `root_user` (`"minioadmin"`), `root_password` (`"minioadmin"`),
-  `api_port` (`9000`), `console_port` (`9001`).
-- Exposed ports: S3 API on `9000`, console on `9001`.
-- Volume: persistent `data` volume at `/data`.
-- Healthcheck: `mc ready local`.
-- Shell target: yes (`/bin/sh`).
-- Gateway: eligible for HTTPS app-facing routes (for example `https://s3.<host>`
-  and `https://minio.<host>`) plus a TCP loopback alias for the raw S3 port.
-
 ### `silo`
 
-Local S3-compatible object storage from PGSTY Silo, a maintained MinIO fork.
-Use it where new work would otherwise pick `minio`.
+Local S3-compatible object storage from PGSTY Silo, a maintained
+S3-compatible server. This is the only shipped object-storage fragment; the
+retired `minio` name is refused with a pointer here, not remapped.
 
 - Image: digest-pinned `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z`
   (override via `image`).
@@ -471,8 +471,7 @@ the environment declares `[containers.<name>.dns]`:
 
 - `postgres` (`5432`), `dbgate` (`3000`), `pgweb` (`8081`), `mariadb` (`3306`),
   `redis` (`6379`), `memcached` (`11211`), `mailpit` (`1025`, `8025`),
-  `minio` (`9000`, `9001`), `silo` (`9000`, `9001`), `elasticsearch` (`9200`),
-  `phpmyadmin` (`80`),
+  `silo` (`9000`, `9001`), `elasticsearch` (`9200`), `phpmyadmin` (`80`),
   `nginx` (`80`), `workspace-rust-bun` (via `host_ports`).
 
 See [`063-container-system-guide.md`](063-container-system-guide.md) for

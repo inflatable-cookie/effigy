@@ -697,7 +697,7 @@ parameter surface.
 A container environment can borrow another environment's service data volumes
 with `data_from`. Services that both environments declare with the same name
 and the same catalog entry mount the named environment's volumes — one
-Postgres, one MinIO bucket per checkout. Switching between the two
+Postgres, one Silo bucket per checkout. Switching between the two
 environments hands the other live environment over whole: `container up`
 brings it down with data kept before starting the requested one and prints
 one line naming the handover, with no refusal.
@@ -716,7 +716,7 @@ catalog = "workspace-rust-bun"
 catalog = "postgres"
 
 [containers.dev.services.s3]
-catalog = "minio"
+catalog = "silo"
 
 [containers.dev-hybrid]
 primary_service = "app"
@@ -729,7 +729,7 @@ catalog = "workspace-rust-bun"
 catalog = "postgres"
 
 [containers.dev-hybrid.services.s3]
-catalog = "minio"
+catalog = "silo"
 ```
 
 `dev-hybrid` mounts `dev`'s `db` and `s3` volumes for the same checkout and
@@ -898,7 +898,7 @@ grants automatic deletion authority.
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
 `"127.0.0.1:<allocated-host-port>:3000"`, so dev services (dbgate,
-postgres, minio, mailpit, ...) are reachable from the local machine and
+postgres, silo, mailpit, ...) are reachable from the local machine and
 the gateway's TCP aliases but not from the LAN. Opt back into public
 binding per container environment:
 

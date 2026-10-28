@@ -298,8 +298,18 @@ During v0.x, MINOR bumps may include breaking changes.
   `4d4eb230979ce30ecb051388d1510ca471e781ad`): `services.silo`,
   `catalog = "silo"`, `silo:reconcile` / `bootstrap-silo.rhai`, and
   `silo.<host>`. `minimum_effigy_version` moves from `0.10.0` to `0.15.0`.
-  Default object-store credentials stay `minioadmin`. Effigy's catalog still
-  ships `minio`; that retirement is separate.
+  Default object-store credentials stay `minioadmin`.
+- **The built-in `minio` catalog service is retired.** Effigy no longer ships
+  the MinIO fragment. A manifest whose `catalog = "minio"` would fall back to
+  it - unqualified with no project, bundle or declared-source definition, or an
+  explicit `baseline/minio` - fails with a refusal that names `silo`, and
+  nothing is remapped. A `minio` fragment a consumer's own catalog source
+  defines still resolves from that source, as Q-005 precedence requires. Silo
+  keeps the same S3 API on `9000`, console on `9001`,
+  `MINIO_ROOT_*` credentials (`minioadmin` defaults), persistent `/data` volume
+  and `mc ready local` health check, so moving a service is a catalog-name
+  change. Existing volumes and data are untouched; there is no migration. See
+  [guide 085](docs/guides/085-v0.15.0-consumer-migration.md#service-catalog-packs-retired-sources-added).
 
 ### Removed
 
@@ -330,6 +340,8 @@ During v0.x, MINOR bumps may include breaking changes.
   cutover and import seals.
 - `effigy contracts check-json --fast`, the `:cargo` selector escapes and
   `effigy gateway repair`/`recover`.
+- The baseline `minio` catalog fragment. `effigy service list` no longer offers
+  it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
 

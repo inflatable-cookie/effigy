@@ -19,7 +19,6 @@ fn list_bundled_fragments() {
             "mailpit",
             "mariadb",
             "memcached",
-            "minio",
             "nginx",
             "node",
             "pgweb",
@@ -767,6 +766,41 @@ fn fragment_not_found_error() {
         result.unwrap_err(),
         effigy_catalog::CatalogError::FragmentNotFound { .. }
     ));
+}
+
+/// The built-in `minio` service is retired in v0.15 (effigy#424). A manifest
+/// that still names it gets a refusal naming `silo`, never a silent remap.
+#[test]
+fn retired_minio_catalog_service_refuses_and_names_silo() {
+    let resolver = bundled_resolver();
+    for name in ["minio", "baseline/minio"] {
+        let error = resolver.resolve(name).expect_err("minio is retired");
+        assert!(
+            matches!(
+                error,
+                effigy_catalog::CatalogError::RetiredCatalogService { .. }
+            ),
+            "{name} should refuse as a retired service, got {error:?}"
+        );
+        let message = error.to_string();
+        assert!(message.contains("minio"), "{message}");
+        assert!(
+            message.contains("catalog = \"silo\""),
+            "the refusal must name the replacement: {message}"
+        );
+    }
+
+    assert!(
+        resolver
+            .list()
+            .iter()
+            .all(|fragment| fragment.name != "minio"),
+        "the retired service must not be listed as a baseline fragment"
+    );
+    assert_eq!(
+        resolver.resolve("silo").unwrap().schema.service.name,
+        "silo"
+    );
 }
 
 #[test]

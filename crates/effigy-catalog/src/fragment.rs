@@ -222,7 +222,31 @@ impl CatalogResolver {
     }
 
     /// Resolve a fragment by name, or by `source/service` from one source.
+    ///
+    /// A name this release retired is refused only where it would otherwise
+    /// fall back to the removed baseline fragment: unqualified with no
+    /// higher-priority definition, or an explicit `baseline/<name>`. A project,
+    /// bundle or declared source that still defines it wins first under the
+    /// ordinary precedence rules, and the refusal never remaps it onto its
+    /// replacement. A qualified request for a source that lacks the name keeps
+    /// the ordinary not-found (or unknown-source) diagnostic.
     pub fn resolve(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
+        let (qualifier, service) = split_qualified(name);
+        match self.resolve_named(name) {
+            Err(CatalogError::FragmentNotFound { .. })
+                if matches!(qualifier, None | Some("baseline")) =>
+            {
+                Err(
+                    retired_catalog_service(service).unwrap_or(CatalogError::FragmentNotFound {
+                        name: name.to_owned(),
+                    }),
+                )
+            }
+            resolved => resolved,
+        }
+    }
+
+    fn resolve_named(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
         let (qualifier, service) = split_qualified(name);
         if !is_fragment_segment(service) {
             return Err(CatalogError::FragmentNotFound {
@@ -656,6 +680,33 @@ pub fn split_qualified(name: &str) -> (Option<&str>, &str) {
 /// entry rather than on where it came from.
 pub fn service_name(catalog: &str) -> &str {
     split_qualified(catalog).1
+}
+
+/// Catalog service names this release retired, each with the service that
+/// replaces it and the migration a manifest describes.
+///
+/// A manifest that still names one is refused with the replacement spelled
+/// out wherever it would resolve to the removed baseline fragment; a project,
+/// bundle or declared source that defines the name itself still wins under
+/// Q-005 precedence, and Effigy never remaps the name onto its replacement
+/// (effigy#424).
+const RETIRED_CATALOG_SERVICES: &[(&str, &str)] = &[(
+    "minio",
+    "the built-in MinIO service is gone in v0.15. Declare `catalog = \"silo\"` instead: \
+     PGSTY Silo serves the same S3 API on port 9000 (console 9001) with the same \
+     `MINIO_ROOT_*` credentials, `/data` volume and `mc ready local` health check. \
+     Effigy does not remap `minio` automatically, and existing volumes are untouched",
+)];
+
+/// The refusal for a retired catalog service name, if `service` is one.
+fn retired_catalog_service(service: &str) -> Option<CatalogError> {
+    RETIRED_CATALOG_SERVICES
+        .iter()
+        .find(|(name, _)| *name == service)
+        .map(|(name, replacement)| CatalogError::RetiredCatalogService {
+            name: (*name).to_owned(),
+            replacement: (*replacement).to_owned(),
+        })
 }
 
 /// Whether a declared source handle is usable in qualified names.

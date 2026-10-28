@@ -161,9 +161,11 @@ compatibility shim here.
 
 The retirement removed only Effigy's old Rhai object-storage functions and
 their vendored client library. It did not touch live objects, buckets,
-secrets, or assets; generic MinIO catalog services and workspace-bundle
-configuration remain; independent consumer S3 adapters (for example Farmyard
-and Underlay) are unrelated infrastructure and keep their own owners. A
+secrets, or assets; generic S3-compatible catalog services and
+workspace-bundle configuration remained (v0.15 later retired the built-in
+`minio` service in favor of `silo`, effigy#424); independent consumer S3
+adapters (for example Farmyard and Underlay) are unrelated infrastructure and
+keep their own owners. A
 future optional-provider object-store surface remains unplanned: planning
 must choose the transport and the minimum contract before any replacement
 exists, and no cleanup may assume those choices.

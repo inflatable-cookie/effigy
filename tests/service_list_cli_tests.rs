@@ -44,7 +44,6 @@ const EXPECTED_BUNDLED: &[&str] = &[
     "mailpit",
     "mariadb",
     "memcached",
-    "minio",
     "nginx",
     "node",
     "pgweb",
@@ -114,5 +113,51 @@ fn service_list_json_exposes_only_bundled_service_manifests() {
     assert!(
         !names.contains(&"README.md") && !names.contains(&"compose.override.example.yml"),
         "root catalog assets leaked into JSON output: {names:?}"
+    );
+}
+
+/// Q-005 keeps the project catalog ahead of the baseline, so a project-owned
+/// `minio` fragment is listed with its own source rather than as something
+/// Effigy still ships (effigy#424). A `minio` with no higher-priority
+/// definition has no entry at all, because only the baseline entry was
+/// retired.
+#[test]
+fn service_list_attributes_a_project_local_minio_fragment_to_the_project() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    let repo = bare_repo(temp.path());
+    let repo_arg = repo.to_str().expect("utf-8 path");
+
+    let before = effigy(&home, &["service", "list", "--repo", repo_arg]);
+    assert!(before.success, "service list failed: {}", before.stderr);
+    assert!(
+        !before.stdout.contains("minio ["),
+        "the compiled baseline no longer ships minio:\n{}",
+        before.stdout
+    );
+
+    let catalog = repo.join("infra/dev/catalog/minio");
+    write(
+        &catalog.join("service.toml"),
+        "[service]\nname = \"minio\"\ndescription = \"project-owned object storage\"\n",
+    );
+    write(
+        &catalog.join("compose.fragment.yml"),
+        "services:\n  \"{{ service_name }}\":\n    image: fixture\n",
+    );
+
+    let run = effigy(&home, &["service", "list", "--repo", repo_arg]);
+    assert!(run.success, "service list failed: {}", run.stderr);
+    assert!(
+        run.stdout
+            .contains("minio [project: infra/dev/catalog/minio]"),
+        "a project-local minio fragment must be attributed to the project:\n{}",
+        run.stdout
+    );
+    assert!(
+        !run.stdout.contains("minio [baseline]"),
+        "the baseline must not claim the project's fragment:\n{}",
+        run.stdout
     );
 }
