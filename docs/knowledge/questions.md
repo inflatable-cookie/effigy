@@ -469,7 +469,7 @@ Rules for the simplification work:
 - A task removes a mechanism and installs its simpler replacement.
 - No new state files, records or refusal variants without a stated reason.
 - Net lines go down.
-- The planner proves the final candidate live on real consumer stacks (Acowtancy hybrid, inventors, a basic Effigy run, plus reboot, crash and restart, an interrupted `up`, a manifest edit and a deleted worktree) before claiming release qualification. Tom approved separately cleared intermediate local installs on 2026-10-28 so he can test workflows early; those installations are exploratory evidence and do not waive the final candidate proofs.
+- The planner proves the final candidate live on real consumer stacks (Acowtancy hybrid, inventors, a basic Effigy run, plus reboot, crash and restart, an interrupted `up`, a manifest edit and a deleted worktree) before claiming release qualification. Tom approved intermediate local installs on 2026-10-28 so he can test workflows early; those installations require a pinned binary, private-root smoke, Acow scratch-checkout compatibility check, timed rollback rehearsal and exact protected-state inventory. They are exploratory evidence and do not waive the final candidate proofs.
 
 The effect journal around Compose apply stays deferred only if the exact
 candidate's live interrupted-`up` proof passes without manual repair. A failure
