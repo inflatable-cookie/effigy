@@ -369,6 +369,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- An environment transition settles on a budget that starts when settlement
+  does. The cleanup context used to be made when the transition opened, so a
+  cold stack whose activation ran past 60 seconds left its settlement already
+  expired and the command failed with `environment record ... timed out ...
+  waiting for the environment to settle` after an apply that had succeeded.
+  Each settlement now takes a fresh bounded 60-second budget: admission makes
+  its own once `Gate(Env)` is held, so a transition that queued behind another
+  one settles an interrupted predecessor on a whole budget, and the run's own
+  settle and every settling holder make theirs when they start.
+  `container up` and `container down` show the gate wait and the settlement as
+  steps.
 - A container workload's spawn environment drops every session vault access
   key, exactly as a host workload's does. A `.env` or task `env` entry named
   `EFFIGY_SECRET_PASSPHRASE`, `EFFIGY_INTERNAL_SECRET_PASSPHRASE`,

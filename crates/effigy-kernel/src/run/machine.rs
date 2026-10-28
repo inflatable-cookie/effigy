@@ -121,7 +121,7 @@ impl<'a> Run<'a> {
             root,
             invocation,
             options,
-            cleanup,
+            || Ok(cleanup.clone()),
             adapter,
             None,
             Some(planned),

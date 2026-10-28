@@ -365,6 +365,32 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
+        Self::begin_under(
+            cx,
+            root,
+            inv,
+            opts,
+            || Ok(cleanup.clone()),
+            adapter,
+            None,
+            None,
+        )
+    }
+
+    /// [`Run::begin`] with the cleanup window made once the gate is held.
+    ///
+    /// `cleanup` is called after `Gate(Env)` is acquired and before any
+    /// predecessor is settled, so a wait for the gate cannot spend the budget
+    /// that settlement needs (effigy#447). A caller whose admission waits on a
+    /// real deadline uses this; every other caller keeps [`Run::begin`].
+    pub fn begin_with_fresh_cleanup(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Self, RunError> {
         Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None)
     }
 
@@ -374,7 +400,7 @@ impl<'a> Run<'a> {
         root: &'a StateRoot,
         inv: &ResolvedInvocation,
         opts: BeginOpts,
-        cleanup: &CleanupContext,
+        cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
         adapter: &mut impl SettlementAdapter,
         parent: Option<RunId>,
         planned: Option<EffectSpec>,
@@ -419,6 +445,9 @@ impl<'a> Run<'a> {
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         // A refused writer wait names this run, not a nameless process.
         store.set_run(opts.id);
+        // The gate is held: only now does the settlement window start, so the
+        // wait above cannot spend it (effigy#447).
+        let cleanup = cleanup()?;
         let mut predecessors = Vec::new();
         for owner in guard.ids() {
             predecessors.extend(
@@ -448,7 +477,7 @@ impl<'a> Run<'a> {
                 ancestor_closure: None,
                 processes: Default::default(),
             };
-            previous.settle_inner(cleanup, adapter)?;
+            previous.settle_inner(&cleanup, adapter)?;
             let residue = previous
                 .effects()?
                 .into_iter()
@@ -462,7 +491,7 @@ impl<'a> Run<'a> {
                     });
                 }
                 previous.store.transaction_within(
-                    &settle::cleanup_effects(cleanup)?,
+                    &settle::cleanup_effects(&cleanup)?,
                     BusyWait::AtLeast(SETTLE_BUSY_WAIT),
                     |txn| {
                         txn.conn().execute(
@@ -526,7 +555,7 @@ impl<'a> Run<'a> {
             {
                 Ok(()) => {}
                 Err(error) => {
-                    run.settle_inner(cleanup, adapter)?;
+                    run.settle_inner(&cleanup, adapter)?;
                     return Err(error);
                 }
             }

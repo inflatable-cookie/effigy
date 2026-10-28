@@ -24,8 +24,8 @@ pub use backend::{
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use ops::{activate, down, reconcile, reset, Applied, Up};
 pub use reconcile::{
-    EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, APPLY_EFFECT, GATE_WAIT,
-    RUN_BUDGET, STOP_EFFECT,
+    EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation, APPLY_EFFECT, CLEANUP_BUDGET,
+    GATE_WAIT, RUN_BUDGET, STOP_EFFECT,
 };
 pub use record::{EngineRecord, EnvRecord, EnvState, Retention, RECORD_SCHEMA};
 pub use remote::{BackendCli, CliOutput, ComposeRemote, ExecOptions, HostCli, RemoteContainer};

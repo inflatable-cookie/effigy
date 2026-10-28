@@ -188,7 +188,10 @@ fn keep(record: &EnvRecord) -> Option<&'static str> {
 #[derive(Debug)]
 pub struct Session<'r> {
     run: Option<Run<'r>>,
-    cleanup: effigy_kernel::ctx::CleanupContext,
+    /// The capability and the settlement budget the session renews on close:
+    /// a shell can hold an environment far longer than one bounded cleanup.
+    cx: effigy_kernel::ctx::EffectContext,
+    cleanup_budget: std::time::Duration,
 }
 
 impl<'r> Session<'r> {
@@ -221,6 +224,7 @@ impl<'r> Session<'r> {
             provenance: Default::default(),
         })
         .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        let cleanup = ctx.cleanup()?;
         let run = Run::begin(
             &ctx.cx,
             ctx.root,
@@ -240,13 +244,14 @@ impl<'r> Session<'r> {
                 .map_err(|_| EnvError::Invalid("invalid recovery command".into()))?,
                 custody: None,
             },
-            &ctx.cleanup,
+            &cleanup,
             &mut super::reconcile::EnvSettlement,
         )
         .map_err(|error| EnvError::Invalid(format!("environment session refused: {error}")))?;
         Ok(Self {
             run: Some(run),
-            cleanup: ctx.cleanup.clone(),
+            cx: ctx.cx.clone(),
+            cleanup_budget: ctx.cleanup_budget(),
         })
     }
 
@@ -268,7 +273,12 @@ impl<'r> Session<'r> {
             return effigy_kernel::outcome::CleanupOutcome::NotNeeded;
         };
         let _ = run.finish(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
-        match run.settle(&self.cleanup, &mut super::reconcile::EnvSettlement) {
+        // The session's own settlement gets a budget that starts now: the
+        // command it held for may have run for hours (effigy#447).
+        let Ok(cleanup) = super::reconcile::cleanup(&self.cx, self.cleanup_budget) else {
+            return effigy_kernel::outcome::CleanupOutcome::Incomplete;
+        };
+        match run.settle(&cleanup, &mut super::reconcile::EnvSettlement) {
             Ok(outcome) => outcome.cleanup(),
             Err(_) => effigy_kernel::outcome::CleanupOutcome::Incomplete,
         }

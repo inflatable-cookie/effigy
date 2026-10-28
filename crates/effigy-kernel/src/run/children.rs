@@ -62,7 +62,7 @@ impl<'a> Run<'a> {
             self.root,
             invocation,
             opts,
-            cleanup,
+            || Ok(cleanup.clone()),
             adapter,
             Some(self.id),
             None,

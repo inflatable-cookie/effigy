@@ -44,7 +44,9 @@ pub const STOP_EFFECT: &str = "environment:stop";
 pub const GATE_WAIT: Duration = Duration::from_secs(600);
 /// Every environment run is bounded (K8); bring-up includes image builds.
 pub const RUN_BUDGET: Duration = Duration::from_secs(2 * 60 * 60);
-const CLEANUP_BUDGET: Duration = Duration::from_secs(60);
+/// Each settlement is bounded on its own clock: the cleanup context is made
+/// when the settlement starts, so a slow activation never spends it (effigy#447).
+pub const CLEANUP_BUDGET: Duration = Duration::from_secs(60);
 
 /// One environment's identity: the checkout it belongs to and its name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,19 +126,48 @@ impl Operation {
 pub struct EnvContext<'r> {
     pub root: &'r StateRoot,
     pub cx: EffectContext,
-    pub cleanup: CleanupContext,
+    cleanup_budget: Duration,
 }
 
 impl<'r> EnvContext<'r> {
     pub fn new(root: &'r StateRoot, cancel: CancelToken) -> Result<Self, EnvError> {
+        Self::with_cleanup_budget(root, cancel, CLEANUP_BUDGET)
+    }
+
+    /// The same context with a shorter settlement budget. A proof crosses the
+    /// boundary the former one-shot budget had with this, instead of waiting
+    /// a minute of wall clock.
+    pub fn with_cleanup_budget(
+        root: &'r StateRoot,
+        cancel: CancelToken,
+        cleanup_budget: Duration,
+    ) -> Result<Self, EnvError> {
         let operation = operation(EffectClass::Mutate, cancel, RUN_BUDGET);
         let cx = operation
             .effects()
             .map_err(|_| EnvError::Invalid("Mutate capability refused".into()))?;
-        let cleanup = operation
-            .cleanup(CLEANUP_BUDGET)
+        // An unusable budget is refused when the context is opened, not once
+        // the run has already changed something.
+        operation
+            .cleanup(cleanup_budget)
             .map_err(|_| EnvError::Invalid("cleanup budget overflow".into()))?;
-        Ok(Self { root, cx, cleanup })
+        Ok(Self {
+            root,
+            cx,
+            cleanup_budget,
+        })
+    }
+
+    /// A fresh bounded cleanup context, made when the settlement that uses it
+    /// starts. Each admission, holder settlement and run settle takes its own,
+    /// so activation time can never spend it (effigy#447).
+    pub fn cleanup(&self) -> Result<CleanupContext, EnvError> {
+        cleanup(&self.cx, self.cleanup_budget)
+    }
+
+    /// The bounded settlement budget a caller renews for itself.
+    pub(super) fn cleanup_budget(&self) -> Duration {
+        self.cleanup_budget
     }
 
     pub fn observe(&self) -> effigy_kernel::ctx::ObserveContext {
@@ -148,6 +179,13 @@ impl<'r> EnvContext<'r> {
         .observe()
         .expect("observe context")
     }
+}
+
+/// The bounded cleanup context every settlement begins with.
+pub(crate) fn cleanup(cx: &EffectContext, budget: Duration) -> Result<CleanupContext, EnvError> {
+    cx.operation()
+        .cleanup(budget)
+        .map_err(|_| EnvError::Invalid("cleanup budget overflow".into()))
 }
 
 pub(crate) fn operation(
@@ -377,7 +415,7 @@ pub struct EnvRun<'r> {
     cx: EffectContext,
     root: &'r StateRoot,
     env: EnvRef,
-    cleanup: CleanupContext,
+    cleanup_budget: Duration,
     began: EnvRecord,
     published: bool,
     failed: bool,
@@ -413,9 +451,18 @@ impl<'r> EnvRun<'r> {
             provenance: BTreeMap::new(),
         })
         .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        // The operator watches the gate wait: a transition can queue behind
+        // another one for up to ten minutes, and silence reads as a hang.
+        let waiting = effigy_ui::steps::step(&format!(
+            "waiting for environment `{}` to be free",
+            env.name
+        ));
         // The original deadline, kept for the refusal's own report.
         let started = Instant::now();
-        let run = Run::begin(
+        // Admission settles an interrupted predecessor under a window this
+        // call makes once the gate is held, so the wait above (up to ten
+        // minutes) cannot spend it (effigy#447).
+        let admitted = Run::begin_with_fresh_cleanup(
             &ctx.cx,
             ctx.root,
             &invocation,
@@ -426,10 +473,23 @@ impl<'r> EnvRun<'r> {
                 next: op.next(&env.name)?,
                 custody: None,
             },
-            &ctx.cleanup,
+            || {
+                ctx.cleanup()
+                    .map_err(|error| RunError::broken(error.to_string()))
+            },
             &mut EnvSettlement,
         )
-        .map_err(|error| admission_error(env, wait, started, error))?;
+        .map_err(|error| admission_error(env, wait, started, error));
+        let run = match admitted {
+            Ok(run) => {
+                waiting.succeed(&format!("environment `{}` is free", env.name));
+                run
+            }
+            Err(error) => {
+                waiting.fail(&format!("environment `{}` was not entered", env.name));
+                return Err(error);
+            }
+        };
         // The gate is held: only this run writes the row until it settles.
         let began = match EnvRecord::read(&ctx.observe(), ctx.root, &env.resource) {
             Observed::Verified(record, _) => record,
@@ -438,7 +498,9 @@ impl<'r> EnvRun<'r> {
                     Observed::Unknown(reason) => format!("{reason}"),
                     _ => "row missing after admission".to_owned(),
                 };
-                let _ = run.settle(&ctx.cleanup, &mut EnvSettlement);
+                if let Ok(cleanup) = ctx.cleanup() {
+                    let _ = run.settle(&cleanup, &mut EnvSettlement);
+                }
                 return Err(EnvError::Invalid(format!(
                     "environment record unreadable after admission: {reason}"
                 )));
@@ -449,7 +511,7 @@ impl<'r> EnvRun<'r> {
             cx: ctx.cx.clone(),
             root: ctx.root,
             env: env.clone(),
-            cleanup: ctx.cleanup.clone(),
+            cleanup_budget: ctx.cleanup_budget,
             began,
             published: false,
             failed: false,
@@ -558,13 +620,16 @@ impl<'r> EnvRun<'r> {
                 |_| true,
             )
             .map_err(|_| EnvError::Invalid("invalid recovery command".into()))?;
+            // A holder settlement is its own bounded cleanup: it is made now,
+            // not when the environment run opened (effigy#447).
+            let cleanup = self.cleanup()?;
             match effigy_kernel::run::settle_interrupted(
                 &self.cx,
                 self.root,
                 &owner,
                 holder.run,
                 next,
-                &self.cleanup,
+                &cleanup,
                 &mut EnvSettlement,
             ) {
                 // A successor holds the owner gate and settles it first (K5).
@@ -724,11 +789,30 @@ impl<'r> EnvRun<'r> {
         // A poisoned run cannot record its outcome; settle still closes it.
         let _ = self.run.finish(workload);
         let env = self.env.name.clone();
-        let outcome = self
-            .run
-            .settle(&self.cleanup, &mut EnvSettlement)
-            .map_err(|error| EnvError::from_run(&env, error))?;
+        // Settlement begins here, so its budget starts here: an activation that
+        // outlived the budget handed to the run's opening still gets the whole
+        // of it (effigy#447). It is bounded, and it dispatches no backend
+        // effect, so it neither extends the owner gate nor acts after a stop.
+        let cleanup = self.cleanup()?;
+        let settling = effigy_ui::steps::step(&format!("settling environment `{env}`"));
+        let outcome = match self.run.settle(&cleanup, &mut EnvSettlement) {
+            Ok(outcome) => {
+                settling.succeed(&format!("environment `{env}` settled"));
+                Ok(outcome)
+            }
+            Err(error) => {
+                settling.fail(&format!(
+                    "settling environment `{env}` did not complete: {error}"
+                ));
+                Err(EnvError::from_run(&env, error))
+            }
+        }?;
         Ok(outcome.cleanup())
+    }
+
+    /// A fresh bounded cleanup context for this run's own settlement work.
+    fn cleanup(&self) -> Result<CleanupContext, EnvError> {
+        cleanup(&self.cx, self.cleanup_budget)
     }
 
     pub(super) fn kernel<T>(&mut self, result: Result<T, RunError>) -> Result<T, EnvError> {
