@@ -302,8 +302,26 @@ fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
         let setup = run_gateway(&root, "setup-tls", &effects, None, &[]);
         parse_json_success(setup);
         save_plain_localhost_route(&root, upstream.address);
-        let route_path = root.join("routes.json");
-        let route_before = fs::read(&route_path).expect("trusted private route table");
+        let store =
+            effigy_gateway::endpoint_store::EndpointStore::for_routes(&root.join("routes.json"));
+        let route_before = store
+            .snapshot()
+            .expect("authoritative endpoint snapshot")
+            .routes()
+            .expect("trusted private route table")
+            .lookup("localhost")
+            .expect("trusted localhost route")
+            .clone();
+        assert_eq!(
+            route_before.target.as_deref(),
+            Some(upstream.address.to_string()).as_deref(),
+            "persisted route target before signal {signal}"
+        );
+        assert_eq!(
+            route_before.project,
+            root.display().to_string(),
+            "persisted route owner before signal {signal}"
+        );
 
         let mut child = spawn_private_gateway_daemon(&root, inherit_ignored_term);
         let addresses = wait_for_private_gateway_http_ready(
@@ -351,9 +369,17 @@ fn private_gateway_shutdown_handles_owned_term_int_and_inherited_ignore() {
                 "graceful signal shutdown left owned record {record}"
             );
         }
+        let route_after = store
+            .snapshot()
+            .expect("authoritative endpoint snapshot after shutdown")
+            .routes()
+            .expect("retained route table")
+            .lookup("localhost")
+            .expect("retained localhost route")
+            .clone();
         assert_eq!(
-            fs::read(&route_path).expect("retained route table"),
-            route_before
+            route_after, route_before,
+            "graceful signal shutdown must retain the route and its owner"
         );
     }
 

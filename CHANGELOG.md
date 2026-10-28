@@ -200,6 +200,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
+  scopes after changed publications. Legacy v1 cache is left for manual cleanup.
+
 - **A pinned `[sources.<name>]` checkout is published in one step.** A missing
   checkout is cloned into a hidden staging directory beside its declared path and
   moved into place with one rename, so a path that exists is complete. Two fresh
@@ -290,6 +293,13 @@ During v0.x, MINOR bumps may include breaking changes.
   table, `[catalog.graph]` and `[shell]` are ignored the same way.
   `[secrets.vault].identity`, `.unlock` and `.external` are errors that name the
   file and line.
+- **The vendored Underlay bundle uses Silo.** `external/bundles/underlay`
+  now points at `61dc5aa8405698ea757f0ff5c481cb6d7cb92314` (from
+  `4d4eb230979ce30ecb051388d1510ca471e781ad`): `services.silo`,
+  `catalog = "silo"`, `silo:reconcile` / `bootstrap-silo.rhai`, and
+  `silo.<host>`. `minimum_effigy_version` moves from `0.10.0` to `0.15.0`.
+  Default object-store credentials stay `minioadmin`. Effigy's catalog still
+  ships `minio`; that retirement is separate.
 
 ### Removed
 
@@ -335,6 +345,7 @@ During v0.x, MINOR bumps may include breaking changes.
   `settlement` field only while settlement is pending. An unreadable release
   journal, a journal that has gone missing while release state remains, or an
   unreadable record now blocks `release status` instead of reporting no Run.
+- Bundle step overrides replace the execution kind, including retired `draft` defaults, while retaining other step metadata.
 - A container runtime that stops answering an inventory read can no longer
   hold one `container up` open for minutes. Every runtime read Effigy makes is
   bounded, and a bring-up's read after Compose returns and its readiness wait

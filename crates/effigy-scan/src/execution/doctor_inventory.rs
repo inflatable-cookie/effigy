@@ -57,9 +57,19 @@ struct CachedNormalizedLine {
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheGeneration {
     schema: String,
+    owner: CacheOwner,
     config_identity: String,
     files: BTreeMap<String, Observation>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CacheOwner {
+    alias: String,
+    scope_root: String,
+}
+
+const CACHE_BYTE_LIMIT: u64 = 128 * 1024 * 1024;
+const CACHE_GENERATION_LIMIT: usize = 32;
 
 struct PreparedOptions {
     god_files: Filter,
@@ -104,7 +114,7 @@ pub fn run_doctor_scan_inventory(
     let config_identity = config_identity(scope_root, pruned_roots, options);
     let cache_paths = cache_paths(workspace_root, scope_alias, scope_root);
     let (cached_files, mut invalid_cache_entries, mut warnings) =
-        load_cache(&cache_paths.current, &config_identity, refresh);
+        load_cache(&cache_paths, &config_identity, refresh);
     let git_identities = git_identities(scope_root, deadline)?;
     let mut observations = Vec::new();
     let mut cache_hits = 0usize;
@@ -178,7 +188,8 @@ pub fn run_doctor_scan_inventory(
     if let Err(error) = publish_cache(
         &cache_paths,
         &CacheGeneration {
-            schema: "effigy.doctor.cache.v1".to_owned(),
+            schema: "effigy.doctor.cache.v2".to_owned(),
+            owner: cache_paths.owner.clone(),
             config_identity: config_identity.clone(),
             files,
         },
@@ -243,32 +254,45 @@ fn analyze_file(
 }
 
 struct CachePaths {
+    owner: CacheOwner,
     directory: PathBuf,
     current: PathBuf,
     lock: PathBuf,
 }
 
 fn cache_paths(workspace_root: &Path, scope_alias: &str, scope_root: &Path) -> CachePaths {
-    let mut hasher = Sha256::new();
-    hasher.update(scope_root.to_string_lossy().as_bytes());
-    let digest = hex_digest(hasher.finalize().as_slice());
-    let safe_alias = scope_alias
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
+    let owner = CacheOwner {
+        alias: scope_alias.to_owned(),
+        scope_root: scope_root.to_string_lossy().into_owned(),
+    };
     let directory = workspace_root
-        .join(".effigy/doctor/cache/v1")
-        .join(format!("{safe_alias}-{}", &digest[..12]));
+        .join(".effigy/doctor/cache/v2")
+        .join(owner.directory_name());
     CachePaths {
         current: directory.join("generation.json"),
         lock: directory.join("publish.lock"),
+        owner,
         directory,
+    }
+}
+
+impl CacheOwner {
+    fn directory_name(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.scope_root.as_bytes());
+        let digest = hex_digest(hasher.finalize().as_slice());
+        let alias = self
+            .alias
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        format!("{alias}-{}", &digest[..12])
     }
 }
 
@@ -302,11 +326,12 @@ fn hex_digest(bytes: &[u8]) -> String {
 }
 
 fn load_cache(
-    path: &Path,
+    paths: &CachePaths,
     config_identity: &str,
     refresh: bool,
 ) -> (BTreeMap<String, Observation>, usize, Vec<String>) {
-    if refresh || !path.is_file() {
+    let path = &paths.current;
+    if refresh || !std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file()) {
         return (BTreeMap::new(), 0, Vec::new());
     }
     let source = match std::fs::read(path) {
@@ -335,7 +360,8 @@ fn load_cache(
             )
         }
     };
-    if generation.schema != "effigy.doctor.cache.v1"
+    if generation.schema != "effigy.doctor.cache.v2"
+        || generation.owner != paths.owner
         || generation.config_identity != config_identity
     {
         return (
@@ -351,12 +377,92 @@ fn load_cache(
 }
 
 fn publish_cache(paths: &CachePaths, generation: &CacheGeneration) -> Result<(), String> {
+    publish_cache_with_limit(paths, generation, CACHE_BYTE_LIMIT)
+}
+
+fn publish_cache_with_limit(
+    paths: &CachePaths,
+    generation: &CacheGeneration,
+    limit: u64,
+) -> Result<(), String> {
     let encoded = serde_json::to_vec(generation)
         .map_err(|error| format!("doctor cache serialization failed: {error}"))?;
+    // Reject symlinked or unreadable ancestors before even reading a cache.
+    for ancestor in paths.directory.ancestors().take(5) {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(meta) if !meta.file_type().is_dir() => {
+                return Err(format!("doctor cache unowned path: {}", ancestor.display()))
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("doctor cache path unreadable: {error}"))
+            }
+            _ => {}
+        }
+    }
+    match std::fs::symlink_metadata(&paths.current) {
+        Ok(meta) if !meta.file_type().is_file() => {
+            return Err(format!(
+                "doctor cache unowned path: {}",
+                paths.current.display()
+            ))
+        }
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!("doctor cache path unreadable: {error}"))
+        }
+        _ => {}
+    }
     // Compare before creating even the publication lock: a warm deep scan is
     // an observation, and identical generations need no filesystem mutation.
-    if std::fs::read(&paths.current).ok().as_deref() == Some(encoded.as_slice()) {
-        return Ok(());
+    match std::fs::read(&paths.current) {
+        Ok(existing) if existing == encoded => return Ok(()),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!("doctor cache read failed: {error}"))
+        }
+        _ => {}
+    }
+    check_generation_size(encoded.len() as u64, limit)?;
+    if paths.directory.exists() {
+        let entries = std::fs::read_dir(&paths.directory)
+            .map_err(|e| format!("doctor cache directory unreadable: {e}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("doctor cache directory unreadable: {e}"))?;
+            if (entry.file_name() != "generation.json" && entry.file_name() != "publish.lock")
+                || !entry.file_type().map_err(|e| e.to_string())?.is_file()
+            {
+                return Err(format!(
+                    "doctor cache unowned entry: {}",
+                    entry.path().display()
+                ));
+            }
+        }
+        if paths.current.exists() {
+            let source = std::fs::read(&paths.current)
+                .map_err(|e| format!("doctor cache read failed: {e}"))?;
+            if serde_json::from_slice::<serde_json::Value>(&source)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("schema")
+                        .and_then(|schema| schema.as_str())
+                        .map(str::to_owned)
+                })
+                .as_deref()
+                == Some("effigy.doctor.cache.v1")
+            {
+                return Err(format!(
+                    "doctor cache unowned generation: {}",
+                    paths.current.display()
+                ));
+            }
+            if let Ok(existing) = serde_json::from_slice::<CacheGeneration>(&source) {
+                if existing.owner != paths.owner {
+                    return Err(format!(
+                        "doctor cache unowned generation: {}",
+                        paths.current.display()
+                    ));
+                }
+            }
+        }
     }
     std::fs::create_dir_all(&paths.directory).map_err(|error| {
         format!(
@@ -374,16 +480,30 @@ fn publish_cache(paths: &CachePaths, generation: &CacheGeneration) -> Result<(),
                 paths.lock.display()
             )
         })?;
-    let result = publish_cache_locked(paths, &encoded);
+    let result = publish_cache_locked(paths, &encoded).and_then(|changed| {
+        if changed {
+            evict_cache(paths, CACHE_BYTE_LIMIT, CACHE_GENERATION_LIMIT)
+        } else {
+            Ok(())
+        }
+    });
     drop(lock);
     let _ = std::fs::remove_file(&paths.lock);
     result
 }
 
-fn publish_cache_locked(paths: &CachePaths, encoded: &[u8]) -> Result<(), String> {
+fn check_generation_size(size: u64, limit: u64) -> Result<(), String> {
+    if size > limit {
+        Err("doctor cache generation exceeds the 128 MiB limit; not published".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn publish_cache_locked(paths: &CachePaths, encoded: &[u8]) -> Result<bool, String> {
     // A concurrent publisher may have installed these facts while we waited.
     if std::fs::read(&paths.current).ok().as_deref() == Some(encoded) {
-        return Ok(());
+        return Ok(false);
     }
     let temporary = paths.directory.join(format!(
         ".generation-{}-{}.tmp",
@@ -419,7 +539,125 @@ fn publish_cache_locked(paths: &CachePaths, encoded: &[u8]) -> Result<(), String
     if result.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
-    result
+    result.map(|()| true)
+}
+
+// Only a regular v2 generation whose embedded owner maps back to this
+// directory is eligible. Any extra entry is unknown, not disposable cache.
+fn inspect_generation(directory: &Path, allow_lock: bool) -> Result<(u64, SystemTime), String> {
+    let metadata = std::fs::symlink_metadata(directory).map_err(|e| e.to_string())?;
+    if !metadata.file_type().is_dir() {
+        return Err("not a directory".into());
+    }
+    for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        if name != "generation.json" && !(allow_lock && name == "publish.lock") {
+            return Err("unknown directory entry".into());
+        }
+        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+            return Err("non-regular directory entry".into());
+        }
+    }
+    let file = directory.join("generation.json");
+    let metadata = std::fs::symlink_metadata(&file).map_err(|e| e.to_string())?;
+    if !metadata.file_type().is_file() || metadata.len() > CACHE_BYTE_LIMIT {
+        return Err("unowned generation file".into());
+    }
+    let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
+    let generation: CacheGeneration = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    if generation.schema != "effigy.doctor.cache.v2"
+        || directory.file_name() != Some(std::ffi::OsStr::new(&generation.owner.directory_name()))
+    {
+        return Err("unowned generation identity".into());
+    }
+    Ok((
+        metadata.len(),
+        metadata.modified().map_err(|e| e.to_string())?,
+    ))
+}
+
+fn evict_cache(paths: &CachePaths, byte_limit: u64, generation_limit: usize) -> Result<(), String> {
+    let root = paths
+        .directory
+        .parent()
+        .ok_or("doctor cache root unavailable")?;
+    let mut entries = Vec::new();
+    let mut unknown = 0usize;
+    let mut bytes = 0u64;
+    for entry in
+        std::fs::read_dir(root).map_err(|e| format!("doctor cache enumeration failed: {e}"))?
+    {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                unknown += 1;
+                continue;
+            }
+        };
+        let directory = entry.path();
+        match inspect_generation(&directory, true) {
+            Ok((size, modified)) => {
+                bytes = bytes.saturating_add(size);
+                entries.push((modified, directory, size));
+            }
+            Err(_) => unknown += 1,
+        }
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let mut count = entries.len();
+    let mut failed = 0usize;
+    for (modified, directory, _) in entries {
+        if bytes <= byte_limit && count <= generation_limit {
+            break;
+        }
+        if directory == paths.directory {
+            continue;
+        }
+        let lock_path = directory.join("publish.lock");
+        let lock = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(lock) => lock,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        // Recheck after taking the publisher's lock: the generation may have
+        // changed since enumeration. Never recursively delete a directory.
+        let mut removed = false;
+        match inspect_generation(&directory, true) {
+            Ok((size, current_modified)) if current_modified == modified => {
+                if std::fs::remove_file(directory.join("generation.json")).is_ok() {
+                    bytes = bytes.saturating_sub(size);
+                    count -= 1;
+                    removed = true;
+                } else {
+                    failed += 1;
+                }
+            }
+            _ => failed += 1,
+        }
+        drop(lock);
+        if std::fs::remove_file(&lock_path).is_err() {
+            failed += 1;
+        }
+        // This fails safely if another publisher or an unknown entry appeared.
+        if removed {
+            let _ = std::fs::remove_dir(&directory);
+        }
+    }
+    let old_root = root.parent().map(|parent| parent.join("v1"));
+    let legacy = old_root
+        .as_ref()
+        .is_some_and(|path| std::fs::symlink_metadata(path).is_ok());
+    if unknown > 0 || failed > 0 || bytes > byte_limit || count > generation_limit || legacy {
+        return Err(format!("doctor cache retained unowned or locked entries (unknown: {unknown}, unavailable: {failed}, v1 present: {legacy}); limits may not be met"));
+    }
+    Ok(())
 }
 
 /// Exact Git index identities for clean tracked files, bounded by the shared
@@ -1071,6 +1309,137 @@ mod tests {
                 ..DuplicateBlockScanOptions::default()
             },
         }
+    }
+
+    fn fixture_generation(paths: &CachePaths) -> CacheGeneration {
+        CacheGeneration {
+            schema: "effigy.doctor.cache.v2".into(),
+            owner: paths.owner.clone(),
+            config_identity: "fixture".into(),
+            files: BTreeMap::new(),
+        }
+    }
+
+    fn fixture_cache(root: &Path, alias: &str) -> CachePaths {
+        let paths = cache_paths(root, alias, &root.join(alias));
+        std::fs::create_dir_all(&paths.directory).unwrap();
+        std::fs::write(
+            &paths.current,
+            serde_json::to_vec(&fixture_generation(&paths)).unwrap(),
+        )
+        .unwrap();
+        paths
+    }
+
+    #[test]
+    fn eviction_checks_ownership_and_respects_locks_and_unknown_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let old = fixture_cache(root, "old");
+        let locked = fixture_cache(root, "locked");
+        let current = fixture_cache(root, "current");
+        let mismatch = fixture_cache(root, "mismatch");
+        let mut generation = fixture_generation(&mismatch);
+        generation.owner.alias = "someone-else".into();
+        std::fs::write(&mismatch.current, serde_json::to_vec(&generation).unwrap()).unwrap();
+        let unknown = fixture_cache(root, "unknown");
+        std::fs::write(unknown.directory.join("user-data"), b"keep").unwrap();
+        let legacy = root.join(".effigy/doctor/cache/v1/old");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("generation.json"), b"v1").unwrap();
+        std::fs::write(&locked.lock, b"busy").unwrap();
+        let result = evict_cache(&current, 0, 0);
+        assert!(result.is_err());
+        assert!(!old.current.exists());
+        for path in [
+            &locked.current,
+            &current.current,
+            &mismatch.current,
+            &unknown.current,
+            &legacy.join("generation.json"),
+        ] {
+            assert!(path.exists(), "{}", path.display());
+        }
+    }
+
+    #[test]
+    fn eviction_uses_mtime_then_directory_name_and_byte_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let a = fixture_cache(root, "a");
+        let b = fixture_cache(root, "b");
+        let current = fixture_cache(root, "current");
+        let stamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100);
+        for path in [&a.current, &b.current] {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(stamp))
+                .unwrap();
+        }
+        evict_cache(&current, u64::MAX, 2).unwrap();
+        assert!(!a.current.exists());
+        assert!(b.current.exists());
+        let current_size = std::fs::metadata(&current.current).unwrap().len();
+        evict_cache(&current, current_size, usize::MAX).unwrap();
+        assert!(!b.current.exists());
+        assert!(current.current.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn eviction_retains_symlinks() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let current = fixture_cache(temp.path(), "current");
+        let target = fixture_cache(temp.path(), "target");
+        let link = current.directory.parent().unwrap().join("unowned-link");
+        symlink(&target.directory, &link).unwrap();
+        assert!(evict_cache(&current, u64::MAX, usize::MAX).is_err());
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(target.current.exists());
+    }
+
+    #[test]
+    fn changed_publication_evicts_without_changing_findings() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+        let options = options();
+        let cold =
+            run_doctor_scan_inventory(root, "root", root, &[], &options, false, None).unwrap();
+        for i in 0..32 {
+            fixture_cache(root, &format!("other-{i:02}"));
+        }
+        std::fs::write(root.join("main.rs"), "fn main() { println!(\"hi\"); }\n").unwrap();
+        let changed =
+            run_doctor_scan_inventory(root, "root", root, &[], &options, false, None).unwrap();
+        assert!(changed.warnings.is_empty(), "{:?}", changed.warnings);
+        let root_paths = cache_paths(root, "root", root);
+        assert_eq!(
+            std::fs::read_dir(root_paths.directory.parent().unwrap())
+                .unwrap()
+                .count(),
+            32
+        );
+        let warm =
+            run_doctor_scan_inventory(root, "root", root, &[], &options, false, None).unwrap();
+        assert_eq!(changed.god_files, warm.god_files);
+        assert_eq!(changed.duplicate_blocks, warm.duplicate_blocks);
+        assert_eq!(cold.physical_walks, warm.physical_walks);
+    }
+
+    #[test]
+    fn oversized_generation_is_not_published() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = cache_paths(temp.path(), "root", temp.path());
+        let result = publish_cache_with_limit(&paths, &fixture_generation(&paths), 1);
+        assert!(result.unwrap_err().contains("exceeds"));
+        assert!(!paths.directory.exists());
     }
 
     #[test]

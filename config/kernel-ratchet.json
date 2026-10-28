@@ -146,7 +146,8 @@
     },
     "crates/effigy-manifest/src/sources.rs": {
       "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1
+      "std.process.Command.spawn": 1,
+      "std::fs::rename": 1
     },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 1
