@@ -60,12 +60,17 @@ routes and never need a row.
   Oxide uplifts to `target/release/effigy`; a missing release output fails
   instead of falling back to another profile or to Cargo.
   `EFFIGY_OXIDE_ESCAPE=cargo effigy install:local` runs the same build as plain
-  Cargo and produces the same `target/release/effigy`.
+  Cargo and produces the same `target/release/effigy`. Signing the activated
+  copy (guide 010) runs after that build, through `scripts/local-codesign.sh`,
+  and runs no Cargo command.
 - `test:install:local` runs the installer's private fixture suite. The fixture
   builds the driver through the same selector and then stubs `oxide` inside the
   fixture, so the suite exercises release-artifact selection without a real
-  release build. `EFFIGY_OXIDE_ESCAPE=cargo effigy test:install:local` runs it
-  as plain Cargo.
+  release build. It also stubs `security` and `codesign` against a private
+  keychain file, so identity selection, provisioning and signing are exercised
+  without reading or writing the host keychain; `openssl` is real, so the
+  identity the stub imports is the certificate the script generated.
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy test:install:local` runs it as plain Cargo.
 - The scan covers every repository-relative script path a catalog route names,
   including a crate-owned one
   (`crates/effigy-kernel/tests/scripts/linux-custody.sh`); `./scripts/x.sh` and

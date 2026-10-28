@@ -1,13 +1,21 @@
 #!/bin/sh
 # Fixture tests for the local installer:
-#   scripts/build-local-bin.rhai       (release build, staged activation, rollback)
+#   scripts/build-local-bin.rhai       (release build, staged activation, rollback,
+#                                       local code signing)
+#   scripts/local-codesign.sh          (stable macOS signing identity)
 #   scripts/install-local-bin-links.rhai (launcher disposition)
 #
 # Everything lives under a fresh mktemp root: a private HOME, a private fixture
-# checkout, and stub `oxide`, `cargo`, `cp`, `mv` and `chmod` programs that
-# record their argv and delegate to the real tools. Nothing outside the fixture
-# is written: no real ~/.local/bin, no real .local-install, no real build, no
-# host install, no global permission change.
+# checkout, a private keychain file, and stub `oxide`, `cargo`, `uname`,
+# `security`, `codesign`, `cp`, `mv` and `chmod` programs that record their argv
+# and delegate to the real tools. Nothing outside the fixture is written: no real
+# ~/.local/bin, no real .local-install, no real build, no host install, no
+# keychain identity, no host code signature and no global permission change.
+#
+# The signing identity itself is real: /usr/bin/openssl generates the key and
+# certificate, and the stub `security` reads the certificate back out of the
+# import's PKCS#12 container, so the fixture proves the identity it "imports" is
+# the one the script asked for. `-P` values are redacted from the event log.
 #
 # Usage: sh tests/scripts/install-local-bin.sh [effigy-binary]
 # Without an argument the script builds this checkout's `target/debug/effigy`
@@ -96,12 +104,14 @@ new_fixture() {
   log="$fx/events.log"
   out="$fx/out.log"
   launcher="$home/.local/bin/effigy"
+  keychain="$home/keychain"
   active="$repo/.local-install/bin/effigy"
   active_version="$repo/.local-install/bin/effigy.active-version"
   previous="$repo/.local-install/bin/effigy.previous"
   previous_version="$repo/.local-install/bin/effigy.previous.version"
   mkdir -p "$repo/scripts" "$home" "$stubs"
   cp "$here/scripts/build-local-bin.rhai" \
+    "$here/scripts/local-codesign.sh" \
     "$here/scripts/install-local-bin-links.rhai" \
     "$here/scripts/oxide-selector.sh" "$repo/scripts/"
   cat >"$repo/Cargo.toml" <<'TOML'
@@ -123,6 +133,7 @@ alias = "effigy"
 TOML
   : >"$log"
   : >"$out"
+  : >"$keychain"
   write_stubs
 }
 
@@ -146,6 +157,77 @@ STUB
 printf 'cargo %s\n' "$*" >>"$FIXTURE_LOG"
 echo "stub cargo: the local installer must not fall back to plain Cargo" >&2
 exit 87
+STUB
+  cat >"$stubs/uname" <<'STUB'
+#!/bin/sh
+printf 'uname %s\n' "$*" >>"$FIXTURE_LOG"
+printf '%s\n' "${STUB_UNAME:-Darwin}"
+STUB
+  cat >"$stubs/security" <<'STUB'
+#!/bin/sh
+# The fixture's private keychain is a file listing the common names it holds.
+# `-P` values are redacted, so no passphrase, not even the throwaway one that
+# guards the transient PKCS#12 container, reaches the event log.
+prev=""
+logged=""
+for arg in "$@"; do
+  if [ "$prev" = "-P" ]; then
+    arg="<redacted>"
+  fi
+  logged="$logged $arg"
+  prev=$arg
+done
+printf 'security%s\n' "$logged" >>"$FIXTURE_LOG"
+case ${1:-} in
+  find-identity)
+    count=0
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      count=$((count + 1))
+      printf '  %s) 0123456789ABCDEF0123456789ABCDEF01234567 "%s" (CSSMERR_TP_NOT_TRUSTED)\n' "$count" "$name"
+    done <"$FIXTURE_KEYCHAIN"
+    printf '     %s identities found\n' "$count"
+    ;;
+  import)
+    if [ "${STUB_SECURITY_IMPORT_FAIL:-}" = "1" ]; then
+      echo "stub security: refusing the import" >&2
+      exit 7
+    fi
+    p12=""
+    pass=""
+    prev=""
+    for arg in "$@"; do
+      if [ "$prev" = "-P" ]; then
+        pass=$arg
+      fi
+      case $arg in
+        *.p12) p12=$arg ;;
+      esac
+      prev=$arg
+    done
+    [ -n "$p12" ] || { echo "stub security: no PKCS#12 container to import" >&2; exit 7; }
+    # Prove the container really carries the identity that was requested.
+    name=$(openssl pkcs12 -in "$p12" -passin "pass:$pass" -nokeys -clcerts 2>/dev/null \
+      | openssl x509 -noout -subject 2>/dev/null \
+      | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p')
+    [ -n "$name" ] || { echo "stub security: the container carries no readable certificate" >&2; exit 7; }
+    printf '%s\n' "$name" >>"$FIXTURE_KEYCHAIN"
+    echo "1 identity imported."
+    ;;
+  *)
+    echo "stub security: unsupported subcommand ${1:-}" >&2
+    exit 64
+    ;;
+esac
+STUB
+  cat >"$stubs/codesign" <<'STUB'
+#!/bin/sh
+printf 'codesign %s\n' "$*" >>"$FIXTURE_LOG"
+if [ "${STUB_CODESIGN_FAIL:-}" = "1" ]; then
+  echo "stub codesign: refusing to sign" >&2
+  exit 9
+fi
+exit 0
 STUB
   cat >"$stubs/cp" <<'STUB'
 #!/bin/sh
@@ -186,7 +268,8 @@ if [ -n "${STUB_CHMOD_FAIL_MATCH:-}" ]; then
 fi
 exec "$REAL_CHMOD" "$@"
 STUB
-  chmod 0755 "$stubs/oxide" "$stubs/cargo" "$stubs/cp" "$stubs/mv" "$stubs/chmod"
+  chmod 0755 "$stubs/oxide" "$stubs/cargo" "$stubs/uname" "$stubs/security" "$stubs/codesign" \
+    "$stubs/cp" "$stubs/mv" "$stubs/chmod"
 }
 
 run_install() { # [env assignment ...]
@@ -194,10 +277,20 @@ run_install() { # [env assignment ...]
   # otherwise ask the stub `oxide` for `status` and the fixture log would carry
   # an extra call that no install step made.
   (cd "$repo" && env -u GITHUB_ACTIONS -u EFFIGY_OXIDE_ESCAPE \
-    HOME="$home" OXIDE_POOL="$fx/pool" FIXTURE_LOG="$log" GIT_CEILING_DIRECTORIES="$fx" \
+    HOME="$home" OXIDE_POOL="$fx/pool" FIXTURE_LOG="$log" FIXTURE_KEYCHAIN="$keychain" \
+    GIT_CEILING_DIRECTORIES="$fx" \
     REAL_CP="$real_cp" REAL_MV="$real_mv" REAL_CHMOD="$real_chmod" \
     PATH="$stubs:/usr/bin:/bin:/usr/sbin:/sbin" \
     "$@" "$binary" install:local) >"$out" 2>&1
+}
+
+# Run the signing helper itself, against the same private keychain.
+# Usage: run_helper [env assignment ...] sh scripts/local-codesign.sh <args>
+run_helper() {
+  (cd "$repo" && env HOME="$home" FIXTURE_LOG="$log" FIXTURE_KEYCHAIN="$keychain" \
+    REAL_CP="$real_cp" REAL_MV="$real_mv" REAL_CHMOD="$real_chmod" \
+    PATH="$stubs:/usr/bin:/bin:/usr/sbin:/sbin" \
+    "$@") >"$out" 2>&1
 }
 
 set_version() {
@@ -415,6 +508,115 @@ check_contains "symlinked active binary refusal is reported" "$out" "refusing to
 check_eq "symlinked active binary target is preserved" "$(readlink "$active")" "$fx/operator-effigy"
 check_file_eq "symlink destination bytes are untouched" "$fx/operator-effigy" "operator-binary"
 check_absent "symlinked active binary stages no copy" "$log" "cp "
+
+# ---- 15. macOS signing: two builds select the one stable identity -----------
+new_fixture
+run_install
+rc=$?
+check_eq "first signed install exits 0" "$rc" 0
+check_file_eq "first install provisions one local signing identity" "$keychain" "Effigy Local Signing"
+check_contains "first install signs the staged binary" "$log" "codesign --force --sign Effigy Local Signing --identifier com.effigy.local"
+check_contains "first install verifies the signature it applied" "$log" "codesign --verify --strict"
+check_contains "provisioning is explained" "$out" 'provisioned the local code-signing identity "Effigy Local Signing"'
+check_file_eq "signed install still activates the release artifact bytes" "$active" "release-1"
+: >"$log"
+run_install STUB_RELEASE_BODY=release-2
+rc=$?
+check_eq "second signed install exits 0" "$rc" 0
+check_file_eq "second install reuses that same identity" "$keychain" "Effigy Local Signing"
+check_absent "second install imports no identity" "$log" "security import"
+check_contains "second install signs with the same identity" "$log" "codesign --force --sign Effigy Local Signing --identifier com.effigy.local"
+check_contains "reuse is explained" "$out" 'reusing the local code-signing identity "Effigy Local Signing"'
+check_file_eq "signed install activates the new release artifact" "$active" "release-2"
+check_mode "signed active binary is executable" "$active" 755
+
+# ---- 16. a refused signature leaves the active install and rollback intact --
+new_fixture
+run_install
+snapshot_install
+: >"$log"
+run_install STUB_CODESIGN_FAIL=1
+rc=$?
+[ "$rc" -ne 0 ] && ok "signing failure fails the install" || fail "signing failure exited 0"
+check_contains "signing failure is reported" "$out" "sign staged local effigy binary failed"
+check_contains "signing failure names the signing opt-out" "$out" "EFFIGY_LOCAL_CODESIGN=off"
+check_snapshot_unchanged "signing failure leaves the active install and launcher untouched"
+check_file_eq "signing failure leaves the rollback binary" "$previous" "release-1"
+[ -e "$repo/.local-install/bin/effigy.new" ] && fail "signing failure left the staged binary" || ok "signing failure consumes the staged binary"
+check_absent "signing failure never activates" "$log" "effigy.new $active"
+
+# ---- 17. a host that is not macOS selects nothing and signs nothing --------
+new_fixture
+run_install STUB_UNAME=Linux
+rc=$?
+check_eq "non-macOS install exits 0" "$rc" 0
+check_absent "non-macOS install touches no keychain" "$log" "security "
+check_absent "non-macOS install signs nothing" "$log" "codesign "
+check_file_eq "non-macOS install activates the release artifact" "$active" "release-1"
+check_contains "non-macOS skip is explained" "$out" "this host is not macOS"
+[ -s "$keychain" ] && fail "non-macOS install recorded a keychain identity" || ok "non-macOS install leaves the keychain empty"
+
+# ---- 18. EFFIGY_LOCAL_CODESIGN=off skips signing on macOS ------------------
+new_fixture
+run_install EFFIGY_LOCAL_CODESIGN=off
+rc=$?
+check_eq "signing opt-out install exits 0" "$rc" 0
+check_absent "signing opt-out touches no keychain" "$log" "security "
+check_absent "signing opt-out signs nothing" "$log" "codesign "
+check_file_eq "signing opt-out activates the release artifact" "$active" "release-1"
+check_contains "signing opt-out is explained" "$out" "skipped: EFFIGY_LOCAL_CODESIGN=off"
+
+# ---- 19. EFFIGY_LOCAL_CODESIGN_IDENTITY pins the identity ------------------
+new_fixture
+run_install EFFIGY_LOCAL_CODESIGN_IDENTITY="Apple Development: Fixture (TEAMID1234)"
+rc=$?
+check_eq "pinned identity install exits 0" "$rc" 0
+check_absent "pinned identity discovers nothing" "$log" "security find-identity"
+check_absent "pinned identity provisions nothing" "$log" "security import"
+check_contains "pinned identity is the identity used" "$log" "codesign --force --sign Apple Development: Fixture (TEAMID1234)"
+check_file_eq "pinned identity install activates the release artifact" "$active" "release-1"
+
+# ---- 20. a refused identity provision fails before the build ---------------
+new_fixture
+run_install
+snapshot_install
+: >"$keychain"
+: >"$log"
+run_install STUB_SECURITY_IMPORT_FAIL=1
+rc=$?
+[ "$rc" -ne 0 ] && ok "identity provision failure fails the install" || fail "identity provision failure exited 0"
+check_contains "identity provision failure is reported" "$out" "local effigy signing identity selection failed"
+check_contains "identity provision failure names the signing opt-out" "$out" "EFFIGY_LOCAL_CODESIGN=off"
+check_absent "identity provision failure never builds" "$log" "oxide "
+check_snapshot_unchanged "identity provision failure leaves the active install untouched"
+
+# ---- 21. the signing helper explains its own refusals ----------------------
+new_fixture
+printf 'unsigned-binary\n' >"$fx/unsigned-binary"
+: >"$out"
+run_helper STUB_CODESIGN_FAIL=1 sh scripts/local-codesign.sh sign "Effigy Local Signing" "$fx/unsigned-binary"
+rc=$?
+[ "$rc" -ne 0 ] && ok "helper refuses a signature it cannot apply" || fail "helper exited 0 for a refused signature"
+check_contains "helper reports the refused signature" "$out" "codesign could not sign"
+check_contains "helper names the signing opt-out" "$out" "EFFIGY_LOCAL_CODESIGN=off"
+run_helper STUB_SECURITY_IMPORT_FAIL=1 sh scripts/local-codesign.sh select
+rc=$?
+[ "$rc" -ne 0 ] && ok "helper refuses an identity it cannot import" || fail "helper exited 0 for a refused import"
+check_contains "helper reports the refused import" "$out" "could not import the local signing identity"
+check_contains "helper names the Keychain Access path" "$out" 'certificate named "Effigy Local Signing"'
+[ -s "$keychain" ] && fail "a refused import recorded a keychain identity" || ok "a refused import records no identity"
+
+# ---- 22. an unknown subcommand is a usage error ---------------------------
+new_fixture
+run_helper sh scripts/local-codesign.sh sign
+rc=$?
+[ "$rc" -ne 0 ] && ok "helper refuses an incomplete sign invocation" || fail "incomplete sign invocation exited 0"
+check_contains "helper usage is reported" "$out" "usage: local-codesign.sh sign <ID> <BINARY>"
+check_absent "usage error signs nothing" "$log" "codesign "
+run_helper sh scripts/local-codesign.sh
+rc=$?
+[ "$rc" -ne 0 ] && ok "helper refuses an unknown subcommand" || fail "bare helper invocation exited 0"
+check_contains "helper top-level usage is reported" "$out" "usage: local-codesign.sh select | sign <ID> <BINARY>"
 
 echo
 if [ "$fails" -eq 0 ]; then
