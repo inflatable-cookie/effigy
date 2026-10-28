@@ -168,17 +168,17 @@ fn prepare_publishes_a_version_locked_binary_and_an_immutable_context() {
         "a generation directory is sealed"
     );
     let document = guest.text(&directory).expect("context document");
-    assert!(document.contains("\"schema\": \"effigy.workspace-context.v1\""));
+    assert!(document.contains("\"schema\":\"effigy.workspace-context.v1\""));
     assert!(document.contains(&format!(
-        "\"version\": \"{}\"",
+        "\"version\":\"{}\"",
         effigy_core::build_info::active_version()
     )));
-    assert!(document.contains("\"protocol\": 1"));
+    assert!(document.contains("\"protocol\":1"));
     assert!(document.contains("9d1c0b6a7f5e"));
     assert!(document.contains("3f6a1c92-5b7e-4c1d-8a2f-0e9d7c6b5a41"));
-    assert!(document.contains("\"session_run_id\": \"run-7\""));
+    assert!(document.contains("\"session_run_id\":\"run-7\""));
     assert!(document.contains("\"host_checkout\""));
-    assert!(document.contains("\"user\": \"vscode\""));
+    assert!(document.contains("\"user\":\"vscode\""));
 
     let executable = binary_path(&prepared.binary.digest);
     assert_eq!(guest.mode(&executable), Some(0o555));
@@ -414,10 +414,10 @@ fn a_context_pinning_another_version_refuses_and_names_the_reprepare() {
         .expect("context document")
         .replace(
             &format!(
-                "\"version\": \"{}\"",
+                "\"version\":\"{}\"",
                 effigy_core::build_info::active_version()
             ),
-            "\"version\": \"9.9.9\"",
+            "\"version\":\"9.9.9\"",
         );
     guest.put_file(&context_path(prepared.context_generation), document, 0o444);
 

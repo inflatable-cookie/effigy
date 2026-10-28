@@ -657,7 +657,6 @@ fn guarded_public_entry_child() {
         return;
     }
     let mode = std::env::var("FAKE_BOUNDED_MODE").expect("fake mode");
-    let backend = std::env::var("FAKE_BOUNDED_BACKEND").expect("fake backend");
     let repo_root = PathBuf::from(std::env::var_os("FAKE_BOUNDED_REPO").expect("repo root"));
     let final_marker =
         PathBuf::from(std::env::var_os("FAKE_BOUNDED_FINAL_MARKER").expect("final marker"));
