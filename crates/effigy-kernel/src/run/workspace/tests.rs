@@ -652,7 +652,9 @@ fn workspace_attachment_release_wins_while_control_is_before_its_transaction() {
     assert_eq!(scalar(&cx, &root, "SELECT count(*) FROM requests"), 0);
 }
 
+#[cfg(feature = "fault-injection")]
 struct TestChild(std::process::Child);
+#[cfg(feature = "fault-injection")]
 impl Drop for TestChild {
     fn drop(&mut self) {
         let _ = self.0.kill();
