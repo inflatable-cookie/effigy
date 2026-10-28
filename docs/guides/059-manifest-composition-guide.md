@@ -122,36 +122,24 @@ include = [
 ```
 
 A missing optional file is silently skipped; a present one loads and
-merges normally. This is the foundation for env-folder overlays and the
-auto-discovered local overlay (see §4b).
+merges normally. Auto-discovery uses different conflict rules (see §4b).
 
 ## 4b) Auto-Discovered `effigy.local.toml`
 
 If a file named `effigy.local.toml` sits next to the root manifest,
-Effigy treats it as if the root declared
-`{ path = "effigy.local.toml", optional = true }` at the very end of its
-include list. The synthetic include is appended last, so the local file
-always wins over committed layers (consistent with "local overrides
-committed").
+Effigy auto-discovers it after the committed layers. Conflicting leaves
+are replaced by the local value; inspection reports their sources and
+replacement history. The local file may declare `[manifest].extend` to
+append at selected paths, or include further fragments under ordinary
+composition rules.
 
-The local file can carry its own `[manifest]` block — including
-`extend`, `include`, `override`, and further `optional` directives — to layer
-in additional env folders or per-machine fragments.
+Add `effigy.local.toml` to `.gitignore` to keep it machine-local.
+Discovery does not change Git ignore files.
 
-The first time auto-discovery activates against a Git working tree,
-Effigy idempotently appends `effigy.local.toml` to Git's local
-`$GIT_COMMON_DIR/info/exclude` so the local fragment is never committed
-accidentally. That file is shared by every worktree of the repository.
-Ordinary cache, lock, and overlay registration never creates or amends
-`.gitignore`; `effigy init` still writes its reviewed ignore block there.
-A `.git` file, symlink, linked worktree, separate git dir, or real
-directory that does not resolve to a non-bare admin directory — including
-a dangling marker or last-wins `core.bare=true` — fails without writing
-working-tree files or inventing `.git/info/exclude`.
-
-If the committed manifest already declares an `effigy.local.toml`
-include explicitly, Effigy detects that by canonical path and does not
-double-merge.
+If the committed manifest explicitly includes the same file, Effigy detects
+it by canonical path and does not auto-discover it again. That explicit
+include follows ordinary conflict and override rules, even when
+`EFFIGY_NO_LOCAL_OVERLAY=1` is set.
 
 For CI determinism, set `EFFIGY_NO_LOCAL_OVERLAY=1` to skip
 auto-discovery entirely.

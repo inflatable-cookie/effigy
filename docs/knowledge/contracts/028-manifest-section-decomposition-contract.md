@@ -104,3 +104,12 @@ The lane deliberately did not move deploy/state parsing into
 `effigy-manifest`. Those surfaces currently use raw manifest values so command
 domain crates can evolve without forcing all manifest consumers to depend on
 deployment or state semantics.
+
+## Local overlay precedence
+
+Bundle defaults are below the committed composed manifest. An auto-discovered
+`effigy.local.toml` is merged last and replaces conflicting leaves, recording
+the winning source and each replacement. Its declared extensions still append.
+An explicit include follows normal include conflict rules and is not included
+again automatically. `EFFIGY_NO_LOCAL_OVERLAY=1` disables auto-discovery.
+Conflicts inside a layer remain subject to normal composition rules.

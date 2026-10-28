@@ -76,6 +76,7 @@ struct ManifestIncludeSpec {
     resolved_path: PathBuf,
     override_paths: Vec<String>,
     optional: bool,
+    local_overlay: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -369,6 +370,7 @@ fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<Manifes
         resolved_path: local_path,
         override_paths: Vec::new(),
         optional: true,
+        local_overlay: true,
     });
 }
 
@@ -405,6 +407,7 @@ fn take_include_specs(
             resolved_path,
             override_paths,
             optional,
+            local_overlay: false,
         });
     }
     Ok((specs, config.extend))
@@ -430,6 +433,7 @@ struct MergeContext<'a> {
     overridden_paths: &'a mut Vec<ManifestCompositionOverride>,
     current_sources: &'a mut BTreeMap<String, PathBuf>,
     incoming_fragment: &'a Path,
+    local_overlay: bool,
     root_manifest_path: &'a Path,
 }
 
@@ -459,6 +463,7 @@ fn merge_values(request: MergeRequest<'_>) -> Result<(), ManifestError> {
         overridden_paths,
         current_sources,
         incoming_fragment: &include.resolved_path,
+        local_overlay: include.local_overlay,
         root_manifest_path,
     };
     merge_value_inner("", current, incoming, &mut context)?;
@@ -528,11 +533,14 @@ fn merge_value_inner(
         });
     }
 
-    if !path.is_empty() && context.override_set.contains(path) {
+    if !path.is_empty()
+        && (context.override_set.contains(path)
+            || (context.local_overlay && !(current.is_table() && incoming.is_table())))
+    {
         let existing_source =
             current_value_source(path, context.current_sources, context.root_manifest_path)
                 .to_path_buf();
-        if value_kind(current) != value_kind(incoming) {
+        if !context.local_overlay && value_kind(current) != value_kind(incoming) {
             return Err(ManifestError::Compose {
                 path: context.root_manifest_path.to_path_buf(),
                 detail: format!(
@@ -544,6 +552,7 @@ fn merge_value_inner(
                 ),
             });
         }
+        let changed = current != incoming;
         *current = incoming.clone();
         remove_source_entries(path, context.current_sources);
         copy_source_entries(
@@ -553,11 +562,13 @@ fn merge_value_inner(
             context.incoming_fragment,
             incoming,
         );
-        context.overridden_paths.push(ManifestCompositionOverride {
-            path: path.to_owned(),
-            replaced_source: existing_source,
-            by_fragment: context.incoming_fragment.to_path_buf(),
-        });
+        if changed || !context.local_overlay {
+            context.overridden_paths.push(ManifestCompositionOverride {
+                path: path.to_owned(),
+                replaced_source: existing_source,
+                by_fragment: context.incoming_fragment.to_path_buf(),
+            });
+        }
         context.used_overrides.insert(path.to_owned());
         return Ok(());
     }
@@ -1324,6 +1335,74 @@ paths = ["b"]
 
     /// Serialise tests that toggle process-global `EFFIGY_NO_LOCAL_OVERLAY`.
     static LOCAL_OVERLAY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn local_overlay_wins_committed_and_bundle_leaves_with_sources() {
+        let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        write_bundle_with_catalog_alias(dir, "bundle");
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[bundle]
+base = { type = "path", dir = "bundle" }
+[catalog]
+alias = "committed"
+[isolation]
+paths = ["committed"]
+"#,
+        );
+        let local = write_manifest(
+            dir,
+            "effigy.local.toml",
+            r#"
+[catalog]
+alias = "local"
+[isolation]
+paths = ["local"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            loaded.manifest.catalog.as_ref().unwrap().alias.as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            array_strings(&loaded.effective_value, "isolation.paths"),
+            ["local"]
+        );
+        for path in ["catalog.alias", "isolation.paths"] {
+            assert!(loaded
+                .value_sources
+                .iter()
+                .any(|source| source.path == path && source.source == local));
+            assert!(loaded.overridden_paths.iter().any(|item| item.path == path
+                && item.replaced_source == root
+                && item.by_fragment == local));
+        }
+        assert!(loaded.effective_manifest.contains("local"));
+    }
+
+    #[test]
+    fn missing_local_overlay_keeps_committed_value() {
+        let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
+        let tmp = tempdir().expect("tempdir");
+        let root = write_manifest(
+            tmp.path(),
+            "effigy.toml",
+            "[catalog]\nalias = \"committed\"\n",
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        assert_eq!(
+            loaded.manifest.catalog.unwrap().alias.as_deref(),
+            Some("committed")
+        );
+        assert!(loaded.include_graph.is_empty());
+    }
 
     #[test]
     fn auto_discovers_local_overlay_alongside_root_manifest() {
