@@ -1475,7 +1475,7 @@ impl EngineSession {
         if !run.workspace_attachment_attached(&attachment)? {
             return Err(RunError::refused("this attachment was released"));
         }
-        if self.attachments.len() >= run::SECONDARY_MAX + 1
+        if self.attachments.len() > run::SECONDARY_MAX
             || self
                 .attachments
                 .iter()

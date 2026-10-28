@@ -946,23 +946,22 @@ fn admission_holder(conn: &Connection, run: RunId) -> Result<Option<AdmissionKey
 /// never reported here: an ordinary run that happened to reuse the id cannot be
 /// attached as, or closed for, that key.
 fn admission_session(conn: &Connection, run: RunId) -> Result<Option<Session>, RunError> {
-    Ok(conn
-        .query_row(
-            "SELECT session_id,session_generation FROM workspace_admissions \
+    conn.query_row(
+        "SELECT session_id,session_generation FROM workspace_admissions \
              WHERE run_id=?1 AND state='admitted'",
-            [run.to_string()],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
-        )
-        .optional()?
-        .map(|(session, generation)| {
-            Ok::<_, RunError>(Session {
-                run: session
-                    .parse()
-                    .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
-                generation: Generation::new(generation as u64),
-            })
+        [run.to_string()],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+    )
+    .optional()?
+    .map(|(session, generation)| {
+        Ok::<_, RunError>(Session {
+            run: session
+                .parse()
+                .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
+            generation: Generation::new(generation as u64),
         })
-        .transpose()?)
+    })
+    .transpose()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
