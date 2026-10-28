@@ -192,7 +192,7 @@ fn workspace_app_bundle_renders_defaults_overrides_and_bootstraps() {
             "s3.acme.test",
             "dbgate.acme.test",
             "mailpit.acme.test",
-            "minio.acme.test",
+            "silo.acme.test",
         ] {
             assert!(
                 domains.contains(&expected),

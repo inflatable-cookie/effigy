@@ -15,7 +15,7 @@ use crate::{
 
 /// Host address used for generated compose port bindings when the manifest
 /// does not declare `[containers.<name>.host].publish_address`. Loopback keeps
-/// generated dev services (dbgate, postgres, minio, mailpit, ...) reachable
+/// generated dev services (dbgate, postgres, silo, mailpit, ...) reachable
 /// from the local machine — including through the gateway's TCP aliases and
 /// proxy, which already target `127.0.0.1` — without exposing them to the LAN.
 const DEFAULT_PUBLISH_ADDRESS: std::net::Ipv4Addr = std::net::Ipv4Addr::LOCALHOST;

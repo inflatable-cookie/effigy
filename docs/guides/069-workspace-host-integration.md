@@ -414,6 +414,31 @@ A malformed block refuses the run instead of being ignored: a missing
 non-literal `allow` entry, a fallback that is not an executable on the
 inherited `PATH`, or an unreadable user config.
 
+### CI machines without Oxide
+
+Keep `[programs]` in user config, including in CI. A project manifest cannot
+set a fallback for every contributor. On a fresh CI runner that has Cargo but
+does not install Oxide, create that runner's user config before invoking an
+Effigy selector:
+
+```sh
+install -d -m 0700 "$HOME/.effigy"
+cat > "$HOME/.effigy/config.toml" <<'TOML'
+[programs.oxide]
+fallback = "cargo"
+force = false
+TOML
+effigy qa:gates
+```
+
+The selector still runs through Effigy; the per-run shim sends its `oxide`
+calls to Cargo because Oxide is absent. If CI installs Oxide, `force = false`
+uses Oxide. This example omits `allow`, so it allows any first argument for
+that program on this disposable runner; set an exact allow list if the CI job
+needs a narrower policy. Direct shell invocations outside an Effigy task do not
+receive this per-run shim. Tom kept this machine-local boundary for v0.15
+(2026-10-28); no project-level `[programs]` fallback is supported.
+
 ## Host Git/SSH Integration
 
 Two default-on params plus one explicit opt-in param on the `php-fpm`,

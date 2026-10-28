@@ -9,6 +9,11 @@ pub enum CatalogError {
     #[error("catalog fragment not found: {name}")]
     FragmentNotFound { name: String },
 
+    /// A manifest names a catalog service this release retired. The refusal
+    /// states the replacement and never remaps the old name.
+    #[error("catalog service `{name}` is retired: {replacement}")]
+    RetiredCatalogService { name: String, replacement: String },
+
     /// A qualified name (`source/service`) names a source that is not declared.
     #[error("unknown catalog source `{source_handle}` in `{name}`; known sources: {known}")]
     UnknownSource {

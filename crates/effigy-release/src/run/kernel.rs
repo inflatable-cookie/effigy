@@ -28,7 +28,9 @@ use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{BeginOpts, Fence, Reconciled, Run, SettlementAdapter};
 use effigy_kernel::store::{Store, StoreReader};
 
+use super::receipt::ReleaseReceipt;
 use super::record::{ReleaseCheckpoint, ReleaseRecord, RELEASE_CHECKPOINT_SCHEMA};
+use super::RELEASE_RECEIPT_FILE;
 use crate::ReleaseError;
 
 /// The state-root directory a release's record and candidate live in.
@@ -231,19 +233,47 @@ impl ReleaseState {
         if bytes.len() as u64 > <ReleaseRecord as effigy_kernel::record::Record>::MAX_BYTES {
             return Err(storage_error("release record exceeds 4 MiB"));
         }
+        self.replace_file(run, "record.json", "release:checkpoint-file", &bytes)
+    }
+
+    /// Write the receipt rendered from `record`, through the same atomic route
+    /// as the record, so `receipt.json` and `release receipt --json` agree at
+    /// every checkpoint (054 §5). Unchanged bytes write nothing, so a re-read or
+    /// resume that changes nothing adds no effect.
+    pub fn write_receipt(
+        &self,
+        record: &ReleaseRecord,
+        run: &mut Run<'_>,
+    ) -> Result<(), ReleaseError> {
+        let receipt = ReleaseReceipt::from_record(record);
+        let bytes = serde_json::to_vec_pretty(&receipt).map_err(storage_error)?;
+        let path = self.record_path.with_file_name(RELEASE_RECEIPT_FILE);
+        if std::fs::read(&path).ok().as_deref() == Some(bytes.as_slice()) {
+            return Ok(());
+        }
+        self.replace_file(run, RELEASE_RECEIPT_FILE, "release:receipt-file", &bytes)
+    }
+
+    fn replace_file(
+        &self,
+        run: &mut Run<'_>,
+        name: &str,
+        kind: &str,
+        bytes: &[u8],
+    ) -> Result<(), ReleaseError> {
+        let path = self.record_path.with_file_name(name);
         let ticket = run.intend(effigy_kernel::run::EffectSpec {
-            target: run.fence().clone(), kind: "release:checkpoint-file".into(),
-            payload: serde_json::json!({"record":self.record_path,"sha256":super::artifacts::sha256_bytes(&bytes)}),
+            target: run.fence().clone(), kind: kind.into(),
+            payload: serde_json::json!({"file":path,"sha256":super::artifacts::sha256_bytes(bytes)}),
             settlement: effigy_kernel::run::Settlement::Retain, required: false,
         }).map_err(storage_error)?;
         let directory = effigy_kernel::fs::DirFd::open(
-            self.record_path
-                .parent()
-                .ok_or_else(|| storage_error("record parent missing"))?,
+            path.parent()
+                .ok_or_else(|| storage_error("release state parent missing"))?,
         )
         .map_err(storage_error)?;
-        let name = effigy_kernel::fs::FileName::new("record.json").map_err(storage_error)?;
-        run.replace_record(&directory, &name, &bytes, Default::default())
+        let file = effigy_kernel::fs::FileName::new(name).map_err(storage_error)?;
+        run.replace_record(&directory, &file, bytes, Default::default())
             .map_err(storage_error)?;
         run.applied(&ticket, serde_json::Value::Null)
             .map_err(storage_error)
@@ -406,19 +436,6 @@ impl ReleaseSession {
         checkpoint_from_reader(&reader, &self.owner)
     }
 
-    pub fn project_record(&self, record: &mut ReleaseRecord) -> Result<(), ReleaseError> {
-        let observe = self
-            .cx
-            .operation()
-            .observe()
-            .map_err(|_| storage_error("record observation context"))?;
-        match Store::read(&observe, &self.root) {
-            Observed::Verified(reader, _) => project_cleanup(&observe, &self.root, &reader, record),
-            Observed::Absent(_) => Ok(()),
-            Observed::Unknown(reason) => Err(storage_error(format!("release journal: {reason}"))),
-        }
-    }
-
     pub fn begin(&self, id: RunId, adapter: &mut ReportsOnly) -> Result<Run<'_>, ReleaseError> {
         let deadline = std::time::Instant::now() + OWNER_GATE_WAIT;
         Run::begin(
@@ -561,6 +578,28 @@ fn checkpoint_from_reader(
     }
 }
 
+/// What the journal says about the invocation that wrote a record. It is an
+/// observation for `release status`; it never changes the recorded stage
+/// outcome, which is what the receipt renders (contract 054 §12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseSettlement {
+    /// The invocation still holds the Run.
+    Live,
+    /// The invocation was interrupted and `release settle` has not run.
+    Interrupted,
+    /// The invocation closed, but its cleanup did not settle.
+    Incomplete,
+    /// The invocation closed and its cleanup settled.
+    Settled,
+}
+
+/// A record and the settlement its invocation reached in the journal.
+#[derive(Debug, Clone)]
+pub struct ReleaseObservation {
+    pub record: ReleaseRecord,
+    pub settlement: ReleaseSettlement,
+}
+
 /// Read a release's record without opening the state root for effects.
 ///
 /// Every surface that is a pure read — `release status`, `release receipt` —
@@ -569,6 +608,24 @@ pub fn read_release_record(
     home: &Path,
     repo_root: &Path,
 ) -> Result<Option<ReleaseRecord>, ReleaseError> {
+    Ok(read_release_observation(home, repo_root)?.map(|observation| observation.record))
+}
+
+/// `read_release_observation` for the user's `HOME`, when it is absolute.
+pub fn read_release_observation_for_root(
+    repo_root: &Path,
+) -> Result<Option<ReleaseObservation>, ReleaseError> {
+    match StateRoot::home_from_env() {
+        Some(home) => read_release_observation(&home, repo_root),
+        None => Ok(None),
+    }
+}
+
+/// Read a release's record and its journal settlement, as a pure read.
+pub fn read_release_observation(
+    home: &Path,
+    repo_root: &Path,
+) -> Result<Option<ReleaseObservation>, ReleaseError> {
     let op = OperationContext::new(
         Deadline::At(std::time::Instant::now() + Duration::from_secs(30)),
         CancelToken::default(),
@@ -590,7 +647,19 @@ pub fn read_release_record(
     };
     let reader = match Store::read(&observe, &root) {
         Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Ok(None),
+        // The state root exists but its journal does not. A checkout that never
+        // ran a release left no release state either, so it has no Run; durable
+        // release state whose journal has gone missing is an error, never no
+        // Run (contract 054 §12).
+        Observed::Absent(_) => match remaining_release_state(root.path())? {
+            Some(directory) => {
+                return Err(storage_error(format!(
+                    "the release journal is missing while release state remains at {}; the journal is the only record of settled effects, so restore it or remove that release state before continuing",
+                    directory.display()
+                )))
+            }
+            None => return Ok(None),
+        },
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state store: {reason}"
@@ -609,69 +678,59 @@ pub fn read_release_record(
                     checkpoint.release_id
                 )));
             }
-            let mut record = state.read_record()?.ok_or_else(|| storage_error(format!(
+            let record = state.read_record()?.ok_or_else(|| storage_error(format!(
                 "release {} has a checkpoint but its record is missing; preserving the journal for recovery", checkpoint.release_id)))?;
-            project_cleanup(&observe, &root, &reader, &mut record)?;
-            Ok(Some(record))
+            let settlement = settlement_of(&observe, &root, &reader, &record)?;
+            Ok(Some(ReleaseObservation { record, settlement }))
         }
         None => Ok(None),
     }
 }
 
-/// Incomplete cleanup stays in the journal. Project it without a late file
-/// write after the owner's gate was released by settle.
-fn project_cleanup(
+/// Durable release state a missing journal would otherwise hide: any release
+/// record or receipt left under the state root's release directory.
+fn remaining_release_state(state_root: &Path) -> Result<Option<PathBuf>, ReleaseError> {
+    let directory = state_root.join(RELEASE_STATE_DIR);
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(storage_error(error)),
+    };
+    for entry in entries {
+        let path = entry.map_err(storage_error)?.path();
+        if path.join("record.json").is_file() || path.join(RELEASE_RECEIPT_FILE).is_file() {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// Observe the record's invocation in the journal. A missing or unreadable
+/// row is an error, never a guess; a pending or incomplete settlement is a
+/// value, not a change to the record.
+fn settlement_of(
     observe: &effigy_kernel::ctx::ObserveContext,
     root: &StateRoot,
     reader: &StoreReader,
-    record: &mut ReleaseRecord,
-) -> Result<(), ReleaseError> {
-    use effigy_kernel::run::RunStatus;
+    record: &ReleaseRecord,
+) -> Result<ReleaseSettlement, ReleaseError> {
     let id = record.run_id.parse::<RunId>().map_err(storage_error)?;
     match effigy_kernel::run::status(observe, root, reader, id, next_invocation()) {
-        Observed::Verified(RunStatus::Live(_), _) => {}
-        Observed::Verified(RunStatus::Interrupted { .. }, _) => {
-            record.status = super::record::ReleaseRunStatus::Failed;
-            record.errors.push(format!("release Run {} is interrupted; settlement pending; `effigy release settle {}` settles it without advancing stages", record.run_id, record.release_id));
-        }
-        Observed::Verified(
-            RunStatus::Closed {
-                workload, complete, ..
-            },
-            _,
-        ) => {
-            if matches!(
-                workload,
-                effigy_kernel::outcome::WorkloadOutcome::Interrupted
-            ) {
-                record.status = super::record::ReleaseRunStatus::Failed;
-                record.errors.push(format!(
-                    "release stage outcome: interrupted (Run {})",
-                    record.run_id
-                ));
-            }
-            if !complete {
-                record.status = super::record::ReleaseRunStatus::Failed;
-                record.errors.push(format!("release stage outcome: {workload}; release settlement incomplete for Run {}; `effigy release settle {}` retries cleanup", record.run_id, record.release_id));
-            }
-        }
-        Observed::Unknown(reason) => {
-            return Err(storage_error(format!("release Run status: {reason}")))
-        }
-        Observed::Absent(_) => {
-            return Err(storage_error("release Run is missing from the journal"))
-        }
+        Observed::Verified(status, _) => Ok(settlement_from(&status)),
+        Observed::Unknown(reason) => Err(storage_error(format!("release Run status: {reason}"))),
+        Observed::Absent(_) => Err(storage_error("release Run is missing from the journal")),
     }
-    Ok(())
 }
 
-/// `read_release_record` for the user's `HOME`, when it is absolute.
-pub fn read_release_record_for_root(
-    repo_root: &Path,
-) -> Result<Option<ReleaseRecord>, ReleaseError> {
-    match StateRoot::home_from_env() {
-        Some(home) => read_release_record(&home, repo_root),
-        None => Ok(None),
+fn settlement_from(status: &effigy_kernel::run::RunStatus) -> ReleaseSettlement {
+    use effigy_kernel::run::RunStatus;
+    match status {
+        RunStatus::Live(_) => ReleaseSettlement::Live,
+        RunStatus::Interrupted { .. } => ReleaseSettlement::Interrupted,
+        RunStatus::Closed {
+            complete: false, ..
+        } => ReleaseSettlement::Incomplete,
+        RunStatus::Closed { complete: true, .. } => ReleaseSettlement::Settled,
     }
 }
 
@@ -688,6 +747,22 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn a_closed_run_reports_settlement_without_changing_its_outcome() {
+        use effigy_kernel::outcome::WorkloadOutcome;
+        use effigy_kernel::run::RunStatus;
+        let closed = |complete| RunStatus::Closed {
+            workload: WorkloadOutcome::Succeeded,
+            complete,
+            effects: Vec::new(),
+        };
+        assert_eq!(settlement_from(&closed(true)), ReleaseSettlement::Settled);
+        assert_eq!(
+            settlement_from(&closed(false)),
+            ReleaseSettlement::Incomplete
+        );
+    }
 
     fn effect(kind: &str, state: EffectState) -> Effect {
         Effect {

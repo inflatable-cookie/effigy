@@ -1,3 +1,4 @@
+mod colima_cleanup;
 mod colima_runtime;
 mod compose_progress;
 mod compose_steps;

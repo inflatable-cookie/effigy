@@ -302,7 +302,7 @@ fn a_legacy_open_state_root_mode_is_adopted_by_foreground_and_retained_runs() {
     assert!(fixture.exists("light.txt"));
     assert_eq!(mode(), 0o700, "the foreground effect adopts the mode");
 
-    // A retained run, which decides its cutover on the same root.
+    // A retained run follows the same direct state-root adoption path.
     fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).expect("legacy mode");
     let output = fixture.run(&["--run-id", "open-mode-adopted", "slow"]);
     assert!(output.status.success(), "{}", text(&output));

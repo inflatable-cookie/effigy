@@ -697,7 +697,7 @@ parameter surface.
 A container environment can borrow another environment's service data volumes
 with `data_from`. Services that both environments declare with the same name
 and the same catalog entry mount the named environment's volumes — one
-Postgres, one MinIO bucket per checkout. Switching between the two
+Postgres, one Silo bucket per checkout. Switching between the two
 environments hands the other live environment over whole: `container up`
 brings it down with data kept before starting the requested one and prints
 one line naming the handover, with no refusal.
@@ -716,7 +716,7 @@ catalog = "workspace-rust-bun"
 catalog = "postgres"
 
 [containers.dev.services.s3]
-catalog = "minio"
+catalog = "silo"
 
 [containers.dev-hybrid]
 primary_service = "app"
@@ -729,7 +729,7 @@ catalog = "workspace-rust-bun"
 catalog = "postgres"
 
 [containers.dev-hybrid.services.s3]
-catalog = "minio"
+catalog = "silo"
 ```
 
 `dev-hybrid` mounts `dev`'s `db` and `s3` volumes for the same checkout and
@@ -814,11 +814,13 @@ Git config sets `effigy.runtimeScope = ephemeral` — get a stable generation
 suffix on generated Compose project names (`-wt-` for a worktree, `-ec-` for
 a marked clone). Containers, networks and managed volumes therefore use
 different identities from the primary checkout, other worktrees and other
-clones. Generated host ports are allocated separately, even if `host.ports`
-declares fixed numbers. The primary checkout and any unmarked clone keep
-their existing name and ports. Repeated commands in one scoped checkout
-reach the same stack; deleting and recreating it at the same path gets a
-new identity. To intentionally share one Compose stack, set
+clones. Unpinned host ports use Compose or OS assignment. A scoped checkout
+replaces fixed `host.ports` pins with OS-assigned ports unless
+`stable_ports = true` opts into checkout-path-derived ports; the primary and
+unmarked clones keep their declared pins unless that option is set. Repeated
+commands in one scoped checkout reach the same stack; deleting and recreating
+it at the same path gets a new identity. To intentionally share one Compose
+stack, set
 `share_runtime_identity = true` under `[containers.<name>]`.
 
 The clone marker is read from that checkout's own `.git/config` only — never
@@ -896,7 +898,7 @@ grants automatic deletion authority.
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into
 `"127.0.0.1:<allocated-host-port>:3000"`, so dev services (dbgate,
-postgres, minio, mailpit, ...) are reachable from the local machine and
+postgres, silo, mailpit, ...) are reachable from the local machine and
 the gateway's TCP aliases but not from the LAN. Opt back into public
 binding per container environment:
 
@@ -991,8 +993,8 @@ Use this with `effigy.local.toml` for per-machine mounts.
    profile's runtime stays unavailable (for example after the VM restarted
    outside Colima's boot provisioning and came back with containerd and
    BuildKit stopped), Effigy first starts those units inside the VM and
-   reports it; only if that fails does it repair the profile once by
-   restarting it
+   reports it; if that fails it refuses and names the explicit profile repair
+   and reset commands
 2. bring the compose environment up
 3. prove the owned binding of the primary service; readiness is every
    service Running with its own health check healthy, and the runtime restarts
@@ -1002,6 +1004,17 @@ Use this with `effigy.local.toml` for per-machine mounts.
 5. wait for each declared gateway service port to appear on the matching
    Compose project before registering its route
 6. either return immediately or attach, based on startup mode
+
+For an explicit `effigy container profile repair` or `reset-runtime`, Effigy
+tries a graceful stop and then checks the selected profile's Lima pidfiles. It
+signals only an agent whose profile arguments and start identity are proven.
+If evidence is missing or changed, it refuses and reports the PID and reason.
+When a residual host agent requires escalation, Effigy checks `ha.pid` and
+`vz.pid`. For a QEMU profile with `qemu.pid` instead, it reports the missing
+`vz.pid` without signalling the QEMU driver.
+Before manually using `colima stop -p <profile> --force`, verify the pidfiles
+belong to that profile: Colima's force stop can signal reused PIDs. Shell and
+SSH clients are never directly signalled by Effigy.
 
 These waits are bounded. A readiness wait polls every service's own health
 check and names it while it waits:

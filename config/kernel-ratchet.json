@@ -23,10 +23,8 @@
       "std::fs::write": 1
     },
     "crates/effigy-containers/src/exec/colima_runtime.rs": {
-      "literal.pkill": 2,
       "std.process.Command.new": 1,
-      "std.process.Command.output": 1,
-      "std::fs::remove_file": 1
+      "std.process.Command.output": 1
     },
     "crates/effigy-containers/src/exec/exit141_tests.rs": {
       "nix::sys::signal::kill": 2,
@@ -146,7 +144,8 @@
     },
     "crates/effigy-manifest/src/sources.rs": {
       "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1
+      "std.process.Command.spawn": 1,
+      "std::fs::rename": 1
     },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 1
@@ -229,9 +228,9 @@
     },
     "crates/effigy-scan/src/execution/doctor_inventory.rs": {
       "nix::sys::signal::kill": 2,
-      "std.fs.OpenOptions.write": 4,
+      "std.fs.OpenOptions.write": 6,
       "std.process.Command.new": 2,
-      "std::fs::remove_file": 2,
+      "std::fs::remove_file": 4,
       "std::fs::rename": 1
     },
     "crates/effigy-secrets/src/storage.rs": {

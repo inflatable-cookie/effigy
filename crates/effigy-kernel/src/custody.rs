@@ -2,6 +2,14 @@
 mod anchor;
 pub(crate) mod capture;
 pub(crate) mod platform;
+/// Signal one external process only after the caller's fresh authority check.
+pub fn signal_verified_process(
+    identity: &ProcessIdentity,
+    signal: i32,
+    authority: impl FnOnce() -> bool,
+) -> Observed<SignalDelivered> {
+    platform::signal_checked(identity, signal, authority)
+}
 pub use capture::Stream;
 pub(crate) mod spawn;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};

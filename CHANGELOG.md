@@ -200,6 +200,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
+  scopes after changed publications. Legacy v1 cache is left for manual cleanup.
+
 - **A pinned `[sources.<name>]` checkout is published in one step.** A missing
   checkout is cloned into a hidden staging directory beside its declared path and
   moved into place with one rename, so a path that exists is complete. Two fresh
@@ -290,6 +293,23 @@ During v0.x, MINOR bumps may include breaking changes.
   table, `[catalog.graph]` and `[shell]` are ignored the same way.
   `[secrets.vault].identity`, `.unlock` and `.external` are errors that name the
   file and line.
+- **The vendored Underlay bundle uses Silo.** `external/bundles/underlay`
+  now points at `61dc5aa8405698ea757f0ff5c481cb6d7cb92314` (from
+  `4d4eb230979ce30ecb051388d1510ca471e781ad`): `services.silo`,
+  `catalog = "silo"`, `silo:reconcile` / `bootstrap-silo.rhai`, and
+  `silo.<host>`. `minimum_effigy_version` moves from `0.10.0` to `0.15.0`.
+  Default object-store credentials stay `minioadmin`.
+- **The built-in `minio` catalog service is retired.** Effigy no longer ships
+  the MinIO fragment. A manifest whose `catalog = "minio"` would fall back to
+  it - unqualified with no project, bundle or declared-source definition, or an
+  explicit `baseline/minio` - fails with a refusal that names `silo`, and
+  nothing is remapped. A `minio` fragment a consumer's own catalog source
+  defines still resolves from that source, as Q-005 precedence requires. Silo
+  keeps the same S3 API on `9000`, console on `9001`,
+  `MINIO_ROOT_*` credentials (`minioadmin` defaults), persistent `/data` volume
+  and `mc ready local` health check, so moving a service is a catalog-name
+  change. Existing volumes and data are untouched; there is no migration. See
+  [guide 085](docs/guides/085-v0.15.0-consumer-migration.md#service-catalog-packs-retired-sources-added).
 
 ### Removed
 
@@ -320,6 +340,8 @@ During v0.x, MINOR bumps may include breaking changes.
   cutover and import seals.
 - `effigy contracts check-json --fast`, the `:cargo` selector escapes and
   `effigy gateway repair`/`recover`.
+- The baseline `minio` catalog fragment. `effigy service list` no longer offers
+  it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
 
@@ -327,6 +349,27 @@ During v0.x, MINOR bumps may include breaking changes.
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.
 
+- A release's `receipt.json` now matches `effigy release receipt <run> --json`
+  at every checkpoint. It used to be written only once, before the final
+  `complete` status, so a completed Run's file read as unfinished. It is now
+  rewritten with each record write, through the same atomic route, and a
+  paused or failed Run keeps its recorded non-complete status.
+- Release settlement is no longer written into a release's receipt. A
+  completed release stays `complete` even when its cleanup has not settled;
+  `effigy release status` shows `Settlement: pending` or `incomplete` with the
+  `effigy release settle <run>` action, and the JSON `run` object gains a
+  `settlement` field only while settlement is pending. An unreadable release
+  journal, a journal that has gone missing while release state remains, or an
+  unreadable record now blocks `release status` instead of reporting no Run.
+- Bundle step overrides replace the execution kind, including retired `draft` defaults, while retaining other step metadata.
+- A shared service whose render directory is gone is refused before anything
+  changes. When a container whose own render is gone still exists, whichever
+  render it was created from, `container up` names it and the recovery (remove
+  that exact container with `rm -f`, then `effigy container up <NAME>`), and
+  does not restore the render or stop, remove or start anything. Its named data
+  volume is kept. A container whose render is present and differs is replaced
+  as before, and a missing render with no container takes the normal creation
+  path.
 - A container runtime that stops answering an inventory read can no longer
   hold one `container up` open for minutes. Every runtime read Effigy makes is
   bounded, and a bring-up's read after Compose returns and its readiness wait
@@ -350,6 +393,8 @@ During v0.x, MINOR bumps may include breaking changes.
   since an unreadable list is not held, and prints a `[warn]` line on stderr
   that the holders were not checked. A readable list keeps its held-environment
   warning.
+- Explicit Colima profile repair and reset no longer kill processes by command
+  pattern. They refuse unprovable pidfiles and name the manual recovery option.
 - A container readiness refusal and a Colima profile refusal name the failed
   service or profile, the cause they observed and one `next:` command. A
   bring-up that never becomes ready ends its diagnostic with a single `next:`

@@ -404,7 +404,17 @@ shared container from another render is stopped and removed before Compose
 creates the new one, so its published host port is never held twice, and its
 named data volume is kept. An unchanged shared container is not touched. One
 machine gate per shared Compose project serialises the ensure, so two checkouts'
-`up`s never interleave a replacement.
+`up`s never interleave a replacement. The render is published by that ensure,
+not by `prepare`, so a vanished directory is seen before it is restored. A
+container whose own render directory is gone (its `<project>/<digest>` the
+runtime labels it with) refuses the ensure before any publish, stop, remove or
+Compose call, and the refusal names the container. An unreadable inventory
+refuses when the current render is also missing, because no container can be
+ruled out. The container and its named data volume are left as they are; the
+operator removes that exact container with the runtime's `rm -f`, and a re-run
+of `up` publishes the render and creates the service on the preserved volume.
+A container whose render is present and differs from the current one is
+replaced as before, and a missing render with no container is created.
 `build.dockerfile` is the one relative input Compose reads against the *build
 context* rather than the project directory, so a catalog Dockerfile is rendered
 inline as `dockerfile_inline` from the generation's own content: the stack names
@@ -846,11 +856,14 @@ Direct operator use of raw compose commands is outside this contract.
 Effigy gives each linked Git worktree generation a stable runtime token stored
 in Git's private worktree directory, outside the checkout. Generated Compose
 project names include that token even when a manifest supplies `project_name`.
-The project name scopes Compose containers, networks and managed volumes;
-generated published ports use a project-specific allocation, including when
-the manifest names a fixed host port. Repeated commands in one worktree reuse
-the token. Recreating a worktree at the same path creates a new token. The
-primary checkout keeps its existing project name and port behavior.
+The project name scopes Compose containers, networks and managed volumes, not
+host-port allocation. Unpinned published ports use Compose or OS assignment;
+`stable_ports` opts into a checkout-path-derived host port. In a runtime-scoped
+checkout, a manifest's fixed host port is replaced with an OS-assigned value
+unless `stable_ports` is enabled, so it does not compete with the primary.
+Repeated commands in one worktree reuse the token. Recreating a worktree at the
+same path creates a new token. Without `stable_ports`, the primary checkout
+keeps its existing project name and explicit-port behavior.
 
 `effigy container scope --json` is the policy-independent checkout identity
 query for archive callers. It resolves the selected checkout before deletion
@@ -914,8 +927,8 @@ listener mode in either direction, and between any two of its environments,
 as one preflighted handover. Before any effect, `container up` of the
 incoming environment evaluates everything that could refuse: route claims,
 loopback pool capacity, manifest, policy, ownership and backend validation. A
-route held by another checkout, scope or a non-container source refuses with
-no effects. When another environment of the same checkout and scope is live
+live route owned by another checkout path refuses with no effects. When
+another environment of the same checkout and scope is live
 and conflicts — the pair shares data volumes through `data_from`, or the
 incoming environment's route claims collide with the live environment's
 declared claims — the live environment comes down whole with the ordinary
@@ -1294,6 +1307,16 @@ bring-up nor a failed apply, and no failure text (an offline registry lookup
 included) triggers one — because that would take down every stack on the
 profile. A detected problem prints the manual command instead. Other Colima
 profiles are never touched.
+Explicit profile repair and reset first request a graceful stop. Their only
+direct escalation reads the selected Lima instance's `ha.pid` and `vz.pid`,
+checks the exact host-agent arguments and process start against the pidfile's
+write time, and rechecks the evidence before signalling. Missing or changed
+evidence is a refusal. External shell and SSH clients are not signalled.
+When a residual host agent requires escalation on a QEMU profile with
+`qemu.pid` instead of `vz.pid`, Effigy reports the missing `vz.pid` and does
+not signal the QEMU driver.
+Effigy does not invoke Colima's force-stop route, whose PID-file handling can
+signal a reused PID; the operator may choose it after verifying ownership.
 A newly started profile also waits for both probes. Failures identify the
 runtime stage and include the last probe result.
 
@@ -2086,6 +2109,19 @@ this capture without independent controlled proof, exact-head review/CI and
 coherent main assurance. No consumer repin or retry follows from this policy.
 
 ## Private legacy MinIO fixture distribution — 2026-10-12
+
+Retired — 2026-10-28 (v0.15, effigy#424). Tom ruled MinIO unsupported and both
+Acowtancy and the upstream Underlay bundle use Silo. Effigy removed the
+built-in `minio` catalog service: `effigy service list` no longer offers it and
+a manifest whose `catalog = "minio"` would fall back to it is refused with a
+message naming `silo`, never remapped. Q-005 precedence still applies: a
+project, bundle or declared source that defines its own `minio` fragment
+resolves from that source, and list and render name it. Silo keeps the `MINIO_ROOT_*` environment names
+and `minioadmin` default credentials as its own compatibility surface, not as a
+MinIO service. Existing MinIO volumes and data are not migrated, deleted or
+otherwise touched, Convergence is neither a migration target nor edited, and no
+new pack release follows. Everything below is the earlier record and remains
+historical.
 
 ### Underlay scope correction — 2026-10-13
 

@@ -520,3 +520,108 @@ run = { task = "db seed", rhai = "seed.rhai" }
     assert_eq!(step.task.as_deref(), Some("db seed"));
     assert_eq!(step.rhai.as_deref(), Some("seed.rhai"));
 }
+
+#[test]
+fn bundle_step_executor_overrides_cover_every_kind() {
+    for default_kind in ["run", "task", "draft", "rhai"] {
+        for override_kind in ["run", "task", "rhai"] {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            step_override_bundle(tmp.path());
+            let defaults = format!(
+                "[tasks.seed]\nrun = {{ {default_kind} = 'default', timeout_ms = 1200 }}\n"
+            );
+            std::fs::write(tmp.path().join("bundles/steps/effigy.toml"), defaults)
+                .expect("write defaults");
+            let consumer = format!(
+                "[bundle]\nbase = {{ type = 'path', dir = 'bundles/steps' }}\n\
+                 [tasks.seed]\nrun = {{ {override_kind} = 'consumer', id = 'chosen' }}\n"
+            );
+            std::fs::write(tmp.path().join("effigy.toml"), consumer).expect("write manifest");
+            let manifest = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+                .expect("load overridden manifest")
+                .manifest;
+            let ManifestManagedRunStep::Step(step) = first_step(&manifest) else {
+                panic!("seed step should be a step table");
+            };
+            for (kind, value) in [
+                ("run", step.run.as_deref()),
+                ("task", step.task.as_deref()),
+                ("rhai", step.rhai.as_deref()),
+            ] {
+                assert_eq!(
+                    value,
+                    (kind == override_kind).then_some("consumer"),
+                    "default {default_kind}, override {override_kind}, field {kind}"
+                );
+            }
+            assert_eq!(step.timeout_ms, Some(1200));
+            assert_eq!(step.id.as_deref(), Some("chosen"));
+        }
+    }
+}
+
+#[test]
+fn bundle_step_override_preserves_retired_draft_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    step_override_bundle(tmp.path());
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/steps" }
+[tasks.seed]
+run = { draft = 'old' }
+"#,
+    )
+    .expect("write manifest");
+    let error = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect_err("draft must remain invalid");
+    assert!(
+        error
+            .to_string()
+            .contains("`draft` step reference was removed"),
+        "{error}"
+    );
+}
+
+#[test]
+fn bundle_executor_names_in_task_and_env_maps_merge_as_defaults() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    step_override_bundle(tmp.path());
+    std::fs::write(
+        tmp.path().join("bundles/steps/effigy.toml"),
+        r#"
+[tasks]
+run = "default command"
+[tasks.seed]
+run = { rhai = "default.rhai", env = { run = "default", shared = "default" } }
+"#,
+    )
+    .expect("write defaults");
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/steps" }
+[tasks]
+draft = 'consumer command'
+[tasks.seed]
+run = { task = "consumer", env = { task = "consumer", shared = "consumer" } }
+"#,
+    )
+    .expect("write manifest");
+    let manifest = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect("load manifest")
+        .manifest;
+    assert!(manifest.tasks.contains_key("run"));
+    assert!(manifest.tasks.contains_key("draft"));
+    let ManifestManagedRunStep::Step(step) = first_step(&manifest) else {
+        panic!("seed step should be a step table");
+    };
+    let Some(effigy_manifest::ManifestRunStepEnv::Inline(env)) = &step.env else {
+        panic!("seed should have inline environment");
+    };
+    assert_eq!(env.get("run").map(String::as_str), Some("default"));
+    assert_eq!(env.get("task").map(String::as_str), Some("consumer"));
+    assert_eq!(env.get("shared").map(String::as_str), Some("consumer"));
+}

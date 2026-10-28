@@ -192,7 +192,8 @@ removed as one breaking change recorded in
 under Tom's independent-retirement ruling. Scripts that still call the removed
 `storage::*` helpers fail with an unknown-function error; no compatibility
 shim exists. Live objects, buckets, secrets, and assets were untouched;
-generic MinIO catalog services and independent consumer S3 adapters remain
+the shipped object-storage catalog service (now `silo` — v0.15 retired the
+built-in `minio`, effigy#424) and independent consumer S3 adapters remain
 outside Effigy's ownership. A future optional-provider object-store surface
 stays unplanned until its transport and minimum contract are chosen.
 

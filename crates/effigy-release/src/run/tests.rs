@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::kernel::read_release_observation;
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -250,6 +251,8 @@ struct TestEffects {
     fail_task_start: Option<String>,
     /// Fail the prepare commit, so the rollback runs.
     fail_commit: bool,
+    /// Fail the closeout commit push before it reaches the remote.
+    fail_commit_push: bool,
     /// Print this on stdout for a `task` identity.
     task_stdout: String,
     tasks: Vec<String>,
@@ -280,6 +283,7 @@ impl TestEffects {
             fail_task: None,
             fail_task_start: None,
             fail_commit: false,
+            fail_commit_push: false,
             task_stdout: "identity-from-task\n".to_owned(),
             tasks: Vec::new(),
             task_outputs: BTreeMap::new(),
@@ -355,6 +359,11 @@ impl ReleaseEffects for TestEffects {
         commit: &str,
         branch: &str,
     ) -> Result<(), ReleaseError> {
+        if self.fail_commit_push {
+            return Err(ReleaseError::TaskInvocation(
+                "simulated closeout push failure".to_owned(),
+            ));
+        }
         self.inner.push_commit(run, commit, branch)?;
         self.commit_pushes.push(commit.to_owned());
         Ok(())
@@ -626,6 +635,110 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
         receipt["candidate"]["artifacts"][0]["files"][0]["sha256"],
         sha256_bytes(b"certified artifact").as_str()
     );
+}
+
+/// Asserts the on-disk receipt equals what `release receipt --json` prints.
+/// The printed side goes through `release_receipt_for_run`, the function the
+/// CLI calls, and reads the record from disk. Returns the parsed file.
+fn assert_receipt_file_matches_command(
+    fixture: &Fixture,
+    receipt_path: &Path,
+) -> serde_json::Value {
+    let file = std::fs::read_to_string(receipt_path).expect("receipt file");
+    let file: serde_json::Value = serde_json::from_str(&file).expect("receipt json");
+    let receipt = release_receipt_for_run(&fixture.home, &fixture.root, None).expect("receipt");
+    let command: serde_json::Value =
+        serde_json::from_str(&render_release_receipt_json(&receipt)).expect("command json");
+    assert_eq!(
+        file, command,
+        "receipt.json must match `release receipt --json`"
+    );
+    file
+}
+
+#[test]
+fn the_receipt_file_matches_the_receipt_command_after_closeout() {
+    let fixture = fixture("receipt-complete");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+
+    let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        outcome.succeeded(),
+        "run failed: {:?}",
+        outcome.record.errors
+    );
+
+    let file = assert_receipt_file_matches_command(&fixture, &outcome.receipt_path);
+    assert_eq!(
+        file["release"]["status"],
+        ReleaseRunStatus::Complete.label()
+    );
+    assert_eq!(file["checkpoints"].as_array().map(Vec::len), Some(7));
+    assert_eq!(file["checkpoints"][6]["stage"], "closeout");
+}
+
+#[test]
+fn a_paused_run_keeps_a_non_complete_receipt_until_it_completes() {
+    let fixture = fixture("receipt-paused");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    assert!(paused.succeeded(), "run failed: {:?}", paused.record.errors);
+    let file = assert_receipt_file_matches_command(&fixture, &paused.receipt_path);
+    assert_eq!(file["release"]["status"], ReleaseRunStatus::Paused.label());
+    assert_eq!(file["checkpoints"].as_array().map(Vec::len), Some(2));
+
+    let completed = resume(&fixture, &mut effects);
+    assert!(
+        completed.succeeded(),
+        "resume failed: {:?}",
+        completed.record.errors
+    );
+    let file = assert_receipt_file_matches_command(&fixture, &completed.receipt_path);
+    assert_eq!(
+        file["release"]["status"],
+        ReleaseRunStatus::Complete.label()
+    );
+
+    // A completed Run's re-read is idempotent: nothing rewrites the receipt.
+    let before = std::fs::read(&completed.receipt_path).expect("receipt");
+    let again = resume(&fixture, &mut effects);
+    assert!(
+        again.succeeded(),
+        "re-read failed: {:?}",
+        again.record.errors
+    );
+    assert_eq!(std::fs::read(&again.receipt_path).expect("receipt"), before);
+}
+
+#[test]
+fn a_failed_closeout_never_writes_a_complete_receipt() {
+    let fixture = fixture("receipt-failed-closeout");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects.fail_commit_push = true;
+
+    let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(!outcome.succeeded());
+    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
+
+    let file = assert_receipt_file_matches_command(&fixture, &outcome.receipt_path);
+    assert_eq!(file["release"]["status"], ReleaseRunStatus::Failed.label());
+    assert!(file["checkpoints"]
+        .as_array()
+        .expect("checkpoints")
+        .iter()
+        .all(|checkpoint| checkpoint["stage"] != "closeout"));
 }
 
 #[test]
@@ -2360,34 +2473,90 @@ fn interrupted_release_settles_without_advancing_stages() {
     let mut record = paused.record.clone();
     record.run_id = id.to_string();
     state.write_record(&record, &mut run).unwrap();
+    state.write_receipt(&record, &mut run).unwrap();
     run.set_engine_record(&serde_json::to_value(record.checkpoint(&state.record_path)).unwrap())
         .unwrap();
-    assert_eq!(current_record(&fixture).status, record.status);
     drop(run);
-    let before = current_record(&fixture);
-    assert_eq!(before.status, ReleaseRunStatus::Failed);
-    assert!(before
+
+    // Pending settlement is a journal observation. The recorded stage outcome
+    // and both receipt surfaces stay as the Run recorded them.
+    let before = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(before.settlement, ReleaseSettlement::Interrupted);
+    assert_eq!(before.record.status, ReleaseRunStatus::Paused);
+    assert!(!before
+        .record
         .errors
         .iter()
-        .any(|e| e.contains("settlement pending")));
+        .any(|e| e.contains("settlement")));
+    assert_receipt_file_matches_command(&fixture, &paused.receipt_path);
+
     let settled = settle_release(&fixture.home, &fixture.root, &record.release_id).unwrap();
     assert_eq!(settled.run_id, id.to_string());
     assert_eq!(settled.stage, record.stage);
-    assert_eq!(settled.status, ReleaseRunStatus::Failed);
-    assert!(settled
-        .errors
-        .iter()
-        .any(|e| e.contains("stage outcome: interrupted")));
-    assert!(!settled
-        .errors
-        .iter()
-        .any(|e| e.contains("settlement pending")));
+    assert_eq!(settled.status, ReleaseRunStatus::Paused);
+    assert!(!settled.errors.iter().any(|e| e.contains("settlement")));
+    let after = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(after.settlement, ReleaseSettlement::Settled);
     assert_eq!(
         ReleaseReceipt::from_record(&settled),
-        ReleaseReceipt::from_record(&current_record(&fixture))
+        ReleaseReceipt::from_record(&after.record)
     );
+    assert_receipt_file_matches_command(&fixture, &paused.receipt_path);
     assert!(!ReleaseReceipt::from_record(&settled).published);
     assert!(effects.pushes.is_empty());
+}
+
+#[test]
+fn a_complete_run_with_pending_settlement_keeps_its_complete_receipt() {
+    let fixture = fixture("settle-after-closeout");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    let complete = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        complete.succeeded(),
+        "run failed: {:?}",
+        complete.record.errors
+    );
+    let pushes = effects.commit_pushes.clone();
+
+    // Interruption after the final durable checkpoint: the Run never settles.
+    let session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
+    let state = session.state().unwrap();
+    let id = new_run_id().unwrap();
+    let mut run = session.begin(id, &mut ReportsOnly).unwrap();
+    let mut record = complete.record.clone();
+    record.run_id = id.to_string();
+    state.write_record(&record, &mut run).unwrap();
+    state.write_receipt(&record, &mut run).unwrap();
+    run.set_engine_record(&serde_json::to_value(record.checkpoint(&state.record_path)).unwrap())
+        .unwrap();
+    drop(run);
+
+    let pending = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(pending.settlement, ReleaseSettlement::Interrupted);
+    assert_eq!(pending.record.status, ReleaseRunStatus::Complete);
+    let file = assert_receipt_file_matches_command(&fixture, &complete.receipt_path);
+    assert_eq!(
+        file["release"]["status"],
+        ReleaseRunStatus::Complete.label()
+    );
+
+    // Settling adds no stage, publication or push.
+    let settled = settle_release(&fixture.home, &fixture.root, &record.release_id).unwrap();
+    assert_eq!(settled.status, ReleaseRunStatus::Complete);
+    let after = read_release_observation(&fixture.home, &fixture.root)
+        .unwrap()
+        .expect("observation");
+    assert_eq!(after.settlement, ReleaseSettlement::Settled);
+    assert_receipt_file_matches_command(&fixture, &complete.receipt_path);
+    assert_eq!(effects.commit_pushes, pushes);
 }
 
 #[test]
@@ -2446,4 +2615,114 @@ fn deciding_a_target_that_already_has_an_outcome_reads_it_in_words() {
             "a target state label reads as prose: {label}"
         );
     }
+}
+
+#[test]
+fn a_stale_receipt_file_is_rewritten_when_the_run_is_reopened() {
+    let fixture = fixture("receipt-repair");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    let complete = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        complete.succeeded(),
+        "run failed: {:?}",
+        complete.record.errors
+    );
+    assert_receipt_file_matches_command(&fixture, &complete.receipt_path);
+
+    // A crash between the record and receipt writes: the record moved on and
+    // the receipt did not.
+    let mut record = current_record(&fixture);
+    record
+        .errors
+        .push("written after the last receipt".to_owned());
+    std::fs::write(
+        complete.receipt_path.with_file_name("record.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    let stale = std::fs::read_to_string(&complete.receipt_path).unwrap();
+    assert!(!stale.contains("written after the last receipt"));
+
+    // Reopening the completed Run rewrites the file from the record, once.
+    let resumed = resume(&fixture, &mut effects);
+    assert!(
+        resumed.succeeded(),
+        "resume failed: {:?}",
+        resumed.record.errors
+    );
+    assert_receipt_file_matches_command(&fixture, &resumed.receipt_path);
+    let repaired = std::fs::read(&resumed.receipt_path).unwrap();
+    let again = resume(&fixture, &mut effects);
+    assert_eq!(std::fs::read(&again.receipt_path).unwrap(), repaired);
+}
+
+#[test]
+fn an_unreadable_record_is_an_error_never_no_run() {
+    let fixture = fixture("unreadable-record");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    std::fs::write(
+        paused.receipt_path.with_file_name("record.json"),
+        b"{not json",
+    )
+    .unwrap();
+    assert!(read_release_observation(&fixture.home, &fixture.root).is_err());
+    assert!(release_receipt_for_run(&fixture.home, &fixture.root, None).is_err());
+}
+
+#[test]
+fn a_missing_journal_beside_release_state_is_an_error_never_no_run() {
+    let fixture = fixture("missing-journal");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    assert!(paused.succeeded(), "run failed: {:?}", paused.record.errors);
+
+    // The checkout journal goes missing while the release record and receipt
+    // remain. The loss is reported, never read as no Run.
+    let state = fixture.root.join(".effigy/state");
+    for name in ["kernel.db", "kernel.db-wal", "kernel.db-shm"] {
+        let path = state.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path).expect("remove journal file");
+        }
+    }
+    assert!(paused.receipt_path.is_file());
+
+    let error = read_release_observation(&fixture.home, &fixture.root)
+        .expect_err("a lost journal beside release state is an error");
+    let message = error.to_string();
+    assert!(message.contains("journal is missing"), "{message}");
+    assert!(
+        message.contains("release state remains"),
+        "the error names the durable state it protects: {message}"
+    );
+    assert!(release_receipt_for_run(&fixture.home, &fixture.root, None).is_err());
+}
+
+#[test]
+fn a_checkout_with_no_release_state_still_has_no_run() {
+    let fixture = fixture("missing-journal-fresh");
+    single_identity_project(&fixture);
+    // A state root with neither a journal nor release state belongs to a
+    // checkout that never ran a release: no Run, not an error.
+    ReleaseSession::open(&fixture.home, &fixture.root).expect("state root");
+    assert!(fixture.root.join(".effigy/state").is_dir());
+    assert!(!fixture.root.join(".effigy/state/kernel.db").exists());
+    assert!(read_release_observation(&fixture.home, &fixture.root)
+        .expect("a fresh checkout reads as no Run")
+        .is_none());
 }

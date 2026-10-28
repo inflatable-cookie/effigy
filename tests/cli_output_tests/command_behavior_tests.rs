@@ -3834,8 +3834,8 @@ mounts = ["./app:/workspace"]
     assert_managed_children_exited_clean(&effigy, &["api", "front", "window"]);
     // `container up` prepares workspace permission ownership as an
     // integration stage even though managed children enter via exec.
-    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
-        + &fs::read_to_string(&docker_args).unwrap_or_default();
+    let mut runtime_calls = fs::read_to_string(&colima_args).expect("read colima args");
+    runtime_calls.push_str(&fs::read_to_string(&docker_args).unwrap_or_default());
     assert!(
         runtime_calls.contains("effigy-perm-find-batch")
             || runtime_calls.contains("effigy-perm-inspect-batch")
@@ -4122,6 +4122,8 @@ detach_timeout_secs = 1
         .output()
         .expect("run dev stop");
     let stop_deadline = Instant::now() + Duration::from_secs(120);
+    let mut runtime_calls_at_stop = fs::read_to_string(&colima_args).unwrap_or_default();
+    runtime_calls_at_stop.push_str(&fs::read_to_string(&docker_args).unwrap_or_default());
     assert!(
         stop.status.success(),
         "stop failed: stdout={} stderr={}\nhold state: {:?}\nprocesses:\n{}\nrecorded pgid {pgid}\nruntime calls:\n{}",
@@ -4137,8 +4139,7 @@ detach_timeout_secs = 1
                 .collect::<Vec<_>>()
                 .join("\n"))
             .unwrap_or_default(),
-        fs::read_to_string(&colima_args).unwrap_or_default()
-            + &fs::read_to_string(&docker_args).unwrap_or_default()
+        runtime_calls_at_stop
     );
     let stop_output = String::from_utf8_lossy(&stop.stdout);
     assert!(
@@ -4171,8 +4172,8 @@ detach_timeout_secs = 1
         Some("running"),
         "the run's stop ended the remote holder, releasing its gate"
     );
-    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
-        + &fs::read_to_string(&docker_args).unwrap_or_default();
+    let mut runtime_calls = fs::read_to_string(&colima_args).expect("read colima args");
+    runtime_calls.push_str(&fs::read_to_string(&docker_args).unwrap_or_default());
     assert!(
         runtime_calls.contains(&format!("kill -TERM -- -{pgid}")),
         "the exec adapter was asked to end the recorded group: {runtime_calls}"
@@ -4578,8 +4579,8 @@ detach_timeout_secs = 1
     // stack `down` the fake observed must start before the owner process
     // exits (its whole cascade, cleanup down included); a handover-time
     // down would start after. Only the owner's settle downs `stack`.
-    let runtime_calls = fs::read_to_string(&colima_args).expect("read colima args")
-        + &fs::read_to_string(&docker_args).unwrap_or_default();
+    let mut runtime_calls = fs::read_to_string(&colima_args).expect("read colima args");
+    runtime_calls.push_str(&fs::read_to_string(&docker_args).unwrap_or_default());
     let mut stack_downs = 0;
     for line in runtime_calls.lines() {
         if !(line.contains(" down") && line.contains("fixture-stack-dev")) {

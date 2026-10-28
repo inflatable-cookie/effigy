@@ -30,8 +30,9 @@ cache and timeout behavior.
 4. `--all-catalogs` is the only implicit root-plus-members fan-out.
 5. Declared external members follow the same rules and keep workspace-owned
    cache state keyed by canonical scope identity.
-6. A selected scope's inventory, cache, findings, and `health` execution cannot
-   read or mutate a sibling scope.
+6. A selected scope's inventory, findings, and `health` execution cannot read
+   or mutate a sibling scope. Changed cache publication may inspect and evict
+   owned sibling generations under the inventory and cache contract below.
 
 ## Health precondition contract
 
@@ -124,7 +125,7 @@ cache and timeout behavior.
    file identity.
 5. Git index blob identity is valid only for a clean tracked file. All other
    files require a content digest. Mtime plus size cannot establish a hit.
-6. Cache publication under `.effigy/doctor/cache/v1/` is locked and atomic.
+6. Cache publication under `.effigy/doctor/cache/v2/` is locked and atomic.
    Compare the complete encoded generation with the current bytes before
    creating a directory, lock, or temporary file. Identical content performs
    no publication writes, including with `--refresh`. Changed content is
@@ -134,14 +135,25 @@ cache and timeout behavior.
 7. Corrupt or incompatible cache content is ignored, reported, and rebuilt.
 8. `--refresh` bypasses cached observation reuse and atomically replaces
    successful entries only when the resulting generation differs.
-9. Cache content is disposable local state and is never required in version
-   control.
+9. V2 generations embed the scope root and alias used to derive their directory
+   name. After a changed publication, doctor evicts the oldest verifiably owned
+   v2 generations by file modification time (directory name breaks ties) to
+   target 128 MiB and 32 directories. The current and locked generations stay.
+   An oversized generation is not published and produces a warning. Unknown,
+   mismatched, symlinked and unreadable entries remain untouched and are reported;
+   they or locks can prevent the limits from being met. V1 is never inferred to
+   be owned or evicted. Cache content is disposable and not version controlled.
 
 Deep inventory's changed-generation publication is an explicit derived-cache
 exception to contract 052 R2, scoped to `doctor --deep` (with or without
 `--refresh`). It does not grant writes to structural doctor, standalone scan,
 or any other Static/Observe command. An unchanged deep generation remains
 read-only; the cache remains disposable and publication failures are warnings.
+The ratchet's additional write and removal sites are part of this exception:
+publication is confined to the owner's v2 directory, while eviction locks and
+rechecks each verifiably owned generation before removing its cache file.
+Unknown, mismatched, and locked entries remain untouched, and failed cache
+effects remain warnings.
 
 ## Report contract
 
@@ -200,7 +212,9 @@ compatible unless this contract explicitly adds data.
   install are reported as `missing-local-install`. A scope whose ancestor lock
   lacks verified membership, a non-JS catalog, and a dependency-free child are
   each covered.
-- Corrupt cache input rebuilds safely with a useful warning.
+- Corrupt cache input rebuilds safely with a useful warning. V2 ownership,
+  eviction limits, tie-breaking, protected entries and oversized generations
+  have focused proofs; unchanged warm runs remain write-free.
 - Explain mode, structural `--fix`, text output, and JSON consumers retain
   their defined behavior.
 

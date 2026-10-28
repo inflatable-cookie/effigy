@@ -9,7 +9,7 @@ use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 
 mod publication;
 pub(crate) use publication::{checkout, recorded_backend, state_home};
-pub use publication::{prepare, reset, verify};
+pub use publication::{prepare, publish_shared_render, reset, verify};
 mod vm;
 pub use vm::compose_invocation_args;
 

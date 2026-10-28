@@ -1,4 +1,14 @@
 [[retired]]
+id = "colima-profile-pattern-kill"
+retired = "2026-10-28; profile repair process identity (effigy#422)"
+replacement = "Explicit repair uses the selected Lima pidfiles and checks host-agent arguments and process start identity before signalling; unprovable processes are refused."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = ["run_pkill_pattern"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
+
+[[retired]]
 id = "effigy-demo-surface"
 retired = "2026-10-21"
 replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Each `[demos.<name>]` converts to `[tasks.\"demo:<name>\"]` with the same `run`, the `title` and `summary` merged into the task `description` (effigy#271), and optional `group = \"Demos\"`. `effigy demo` refuses with this explanation. For the whole v0.15 line a `[demos]` table still loads and is ignored with one deprecation notice per manifest that carries the conversion recipe (effigy#274), and `effigy config --target demos` refuses with it. Historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
@@ -1785,4 +1795,34 @@ paths = []
 config_keys = []
 allow = [
   "CHANGELOG.md",
+]
+
+[[retired]]
+id = "effigy-minio-catalog-service"
+retired = "2026-10-28; v0.15 (Tom's ruling, effigy#424)"
+replacement = "Use the shipped `silo` catalog service. `catalog = \"silo\"` serves the same S3 API on port 9000 (console 9001) with the same `MINIO_ROOT_*` credentials (`minioadmin` defaults), persistent `/data` volume and `mc ready local` health check. A manifest whose `minio` would fall back to the removed baseline fragment is refused with a message naming `silo`; a project, bundle or declared-source `minio` fragment still resolves from its own source under Q-005 precedence, and the name is never remapped, existing volumes and data are untouched, and no data migration is performed. Rename routes and tasks that named the old service (`minio.<host>`, `minio:reconcile`) yourself."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "catalog = \"minio\"",
+  "minio:reconcile",
+  "minio.<host>",
+  "minio/minio:",
+  "bootstrap-minio.rhai",
+]
+paths = [
+  "crates/effigy-catalog/catalog/minio/",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-containers/src/tests/compose.rs",
+  "crates/effigy-catalog/tests/integration/fragments.rs",
+  "crates/effigy-manifest/tests/fixtures/retired-bootstrap/underlay-bundle.toml",
+  "docs/guides/067-catalog-services-reference.md",
+  "docs/guides/083-v0.14.0-consumer-migration.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/026-feature-placement-and-command-surface.md",
+  "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/v015-roadmap.md",
 ]
