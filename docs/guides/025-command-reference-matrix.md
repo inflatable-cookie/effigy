@@ -501,7 +501,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   to skip that phase; it fails fast on dirty existing checkouts or remote
   mismatches
 - task execution locks on `task:<name>` by default; `tasks.<name>.lock` opts
-  several tasks into a shared lock scope
+  several tasks into a shared lock scope; `test:focused` locks per invocation
+  by the arguments its command receives, so different filters run together and
+  identical ones wait for each other
 - managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>`
 - managed `concurrent` entries accept `shutdown_on_exit = true`
 - managed `start` ranks define spawn order in both TUI and headless modes; ties
@@ -517,7 +519,8 @@ environment in `session.json` so a whole-environment handover can end
   the live owner bound to the losing environment
 - `--verbose-root`, `--env-schema`, and `--lock-wait-ms` apply to manifest task
   invocations; `EFFIGY_LOCK_WAIT_MS` is the env fallback when the flag is
-  omitted. The passthrough-style built-ins `doctor` and `scan` reject
+  omitted. The default wait is `0` except for `test:focused`, which waits about
+  two minutes for an identical invocation; an explicit value wins. The passthrough-style built-ins `doctor` and `scan` reject
   `--verbose-root` and `--env-schema` on the built-in invocation itself (use
   `effigy <builtin> --help` and
   [`050-env-schema-integration.md`](050-env-schema-integration.md))

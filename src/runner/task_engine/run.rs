@@ -56,17 +56,29 @@ pub(in crate::runner) const MANAGED_RUN_PROVENANCE: &str = "managed-run-token";
 
 /// `--lock-wait-ms`, else `EFFIGY_LOCK_WAIT_MS`, else fail fast.
 pub(in crate::runner) fn resolve_lock_wait_ms(explicit: Option<u64>) -> Result<u64, RunnerError> {
+    resolve_lock_wait_ms_or(explicit, 0)
+}
+
+/// `--lock-wait-ms`, else `EFFIGY_LOCK_WAIT_MS`, else `default_ms`.
+///
+/// `default_ms` is only for a target that opts into a wait (Q-015); an
+/// explicit `0` from either source still fails at once, because the operator
+/// named a wait and the default is what applies when nobody did.
+pub(in crate::runner) fn resolve_lock_wait_ms_or(
+    explicit: Option<u64>,
+    default_ms: u64,
+) -> Result<u64, RunnerError> {
     if let Some(value) = explicit {
         return Ok(value);
     }
     match std::env::var(LOCK_WAIT_ENV) {
-        Ok(raw) if raw.trim().is_empty() => Ok(0),
+        Ok(raw) if raw.trim().is_empty() => Ok(default_ms),
         Ok(raw) => raw.trim().parse::<u64>().map_err(|_| {
             RunnerError::task_invocation(format!(
                 "`{LOCK_WAIT_ENV}` must be a non-negative integer millisecond count"
             ))
         }),
-        Err(_) => Ok(0),
+        Err(_) => Ok(default_ms),
     }
 }
 
@@ -263,6 +275,7 @@ impl TaskRun {
             surface: effigy_core::task_selection::TaskSurface::Published,
             profile: None,
             shared_lock: Some(lock),
+            argument_scope: None,
             label: scope.to_owned(),
         };
         Self::begin_with(
@@ -360,6 +373,7 @@ impl TaskRun {
             surface: effigy_core::task_selection::TaskSurface::Published,
             profile: None,
             shared_lock: Some(lock),
+            argument_scope: None,
             label: label.to_owned(),
         };
         let (scratch, custody) = match storage {
@@ -973,6 +987,7 @@ impl TaskRun {
             surface: effigy_core::task_selection::TaskSurface::Published,
             profile: None,
             shared_lock: None,
+            argument_scope: None,
             label: task.to_owned(),
         };
         Self::begin(TaskRunRequest {

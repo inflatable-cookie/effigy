@@ -46,6 +46,15 @@ Every task run holds a kernel gate for its resolved task identity
   `a-b` never do.
 - `shared:<name>` when a task opts into a shared lock name; every task
   declaring the name excludes the others.
+- `test:focused` keys its gate by its own arguments (Q-015): the resolved task
+  plus the arguments its command receives, normalized. Two different filters
+  run together; two identical invocations exclude one another. Effigy's flags
+  (including the wait) and shell quoting are not part of the key, and argument
+  order and repetition are kept, so two different filters are always two
+  keys. An invocation with no task arguments keeps the plain
+  `task:test:focused` gate. The run still records `test:focused` as its task,
+  so `effigy runs`, `effigy run status <id>` and `effigy tasks status
+  test:focused` read it as that task.
 - A managed profile is recorded on its run; the gate stays per task.
 
 Independent tasks keep independent gates. Two validation or QA selectors can
@@ -61,7 +70,10 @@ host, run id, age, and `stopped` when SIGSTOPped, plus
 `effigy.lock-wait.v2` as `error.details`.
 
 Callers may wait for a live run with `--lock-wait-ms <N>` before the task name,
-or `EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately.
+or `EFFIGY_LOCK_WAIT_MS`. `0` (the default) fails immediately. For
+`test:focused` the default is about two minutes: an identical normalized
+invocation waits that long for its peer, while an explicit flag or
+environment value, `0` included, replaces the default.
 
 ## Related Guides
 

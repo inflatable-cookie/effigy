@@ -3,9 +3,10 @@
 //! conflict, and never unlocked by hand.
 
 use crate::runner::tests::prelude::{
-    assert_output_equals, lock_test, parse_json_output_with_schema_version, run_dev,
-    run_task_status_from_repo, run_task_with_repo, start_held_dev_owner, temp_workspace,
-    wait_for_live_task_owner, write_lock_files, write_root_manifest, OwnedThread,
+    assert_output_equals, fs, lock_test, parse_json_output_with_schema_version, run_dev,
+    run_task_status_from_repo, run_task_with_repo, start_held_dev_owner, temp_workspace, thread,
+    wait_for_live_task_owner, write_lock_files, write_root_manifest, Duration, Instant,
+    OwnedThread, Path,
 };
 use crate::runner::RunnerError;
 
@@ -422,4 +423,200 @@ run = "printf ok"
         crate::runner::task_engine::root_task_state_for_tests(&root, "dev"),
         "not-recorded"
     );
+}
+
+/// Q-015: the focused-test task keys its exclusion by the arguments its
+/// command receives. Each run holds its workload until the test releases it,
+/// so "inside the workload" is a file the test can see.
+const ARGUMENT_SCOPED_MANIFEST: &str = r#"
+[tasks."test:focused"]
+durable = true
+run = 'printf "%s start\n" {args} >> runs.log; while [ ! -f release-{args} ]; do sleep 0.02; done; printf "%s end\n" {args} >> runs.log'
+
+[tasks.validate]
+durable = true
+run = 'printf "validate start\n" >> runs.log; while [ ! -f release-validate ]; do sleep 0.02; done; printf "validate end\n" >> runs.log'
+"#;
+
+fn log(root: &Path) -> String {
+    fs::read_to_string(root.join("runs.log")).unwrap_or_default()
+}
+
+fn wait_for_log(root: &Path, needle: &str) {
+    let started = Instant::now();
+    while !log(root).contains(needle) {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "`{needle}` never reached runs.log: {:?}",
+            log(root)
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn release(root: &Path, name: &str) {
+    fs::write(root.join(format!("release-{name}")), b"release").expect("release held task");
+}
+
+fn without_lock_wait_env() {
+    std::env::remove_var("EFFIGY_LOCK_WAIT_MS");
+}
+
+#[test]
+fn different_focused_filters_run_at_the_same_time() {
+    let _guard = lock_test();
+    without_lock_wait_env();
+    let root = temp_workspace("lock-argument-scope-overlap");
+    write_root_manifest(&root, ARGUMENT_SCOPED_MANIFEST);
+
+    let first_root = root.clone();
+    let first =
+        OwnedThread::spawn(move || run_task_with_repo(&first_root, "test:focused", &["api"]));
+    wait_for_log(&root, "api start");
+
+    let second_root = root.clone();
+    let second =
+        OwnedThread::spawn(move || run_task_with_repo(&second_root, "test:focused", &["web"]));
+    wait_for_log(&root, "web start");
+    assert!(
+        !log(&root).contains("api end"),
+        "the second filter waited for the first: {}",
+        log(&root)
+    );
+    assert!(
+        !second.is_finished(),
+        "the second filter finished inside its held workload"
+    );
+    assert_eq!(
+        crate::runner::task_engine::root_task_state_for_tests(&root, "test:focused"),
+        "running",
+        "two live filters are still one task's live runs"
+    );
+
+    release(&root, "api");
+    release(&root, "web");
+    first.join().expect("the first filter completes");
+    second.join().expect("the second filter completes");
+    let runs = log(&root);
+    assert!(
+        runs.contains("api start") && runs.contains("api end"),
+        "{runs}"
+    );
+    assert!(
+        runs.contains("web start") && runs.contains("web end"),
+        "{runs}"
+    );
+
+    // Status still reads the task's runs: each is recorded under its own
+    // argument key, never under a second task identity.
+    let status = run_task_status_from_repo(&root, "test:focused", true);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v3", 3);
+    assert_eq!(parsed["latest"]["state"], "succeeded", "{parsed}");
+    assert_eq!(
+        parsed["history"].as_array().map(Vec::len),
+        Some(2),
+        "{parsed}"
+    );
+}
+
+#[test]
+fn identical_focused_invocations_serialize_on_the_default_wait() {
+    let _guard = lock_test();
+    without_lock_wait_env();
+    let root = temp_workspace("lock-argument-scope-identical");
+    write_root_manifest(&root, ARGUMENT_SCOPED_MANIFEST);
+
+    let first_root = root.clone();
+    let first =
+        OwnedThread::spawn(move || run_task_with_repo(&first_root, "test:focused", &["api"]));
+    wait_for_log(&root, "api start");
+
+    let second_root = root.clone();
+    let second =
+        OwnedThread::spawn(move || run_task_with_repo(&second_root, "test:focused", &["api"]));
+    // No wait flag: the focused task's own ~120s default is what keeps the
+    // identical second invocation waiting instead of refusing at once.
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(400) {
+        assert!(
+            !second.is_finished(),
+            "the identical invocation was refused instead of waiting: {:?}",
+            second.is_finished()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !log(&root).contains("api end"),
+        "the waiting invocation ran beside its peer: {}",
+        log(&root)
+    );
+
+    release(&root, "api");
+    first.join().expect("the first invocation completes");
+    second.join().expect("the waiting invocation completes");
+    assert_eq!(
+        log(&root),
+        "api start\napi end\napi start\napi end\n",
+        "two identical invocations never overlap"
+    );
+}
+
+#[test]
+fn an_explicit_zero_wait_overrides_the_focused_default() {
+    let _guard = lock_test();
+    std::env::set_var("EFFIGY_LOCK_WAIT_MS", "0");
+    let root = temp_workspace("lock-argument-scope-explicit-zero");
+    write_root_manifest(&root, ARGUMENT_SCOPED_MANIFEST);
+
+    let first_root = root.clone();
+    let first =
+        OwnedThread::spawn(move || run_task_with_repo(&first_root, "test:focused", &["api"]));
+    wait_for_log(&root, "api start");
+
+    let started = Instant::now();
+    let err = run_task_with_repo(&root, "test:focused", &["api"])
+        .expect_err("an explicit zero wait refuses at once");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the explicit zero wait was ignored: {:?}",
+        started.elapsed()
+    );
+    std::env::remove_var("EFFIGY_LOCK_WAIT_MS");
+    let RunnerError::TaskLockConflict(details) = &err else {
+        panic!("expected a lock conflict, got {err:?}");
+    };
+    assert_eq!(details.wait_timeout_ms, None);
+    assert_eq!(details.scope, "task:test:focused");
+
+    release(&root, "api");
+    first.join().expect("the first invocation completes");
+}
+
+#[test]
+fn an_ordinary_selector_still_serializes_by_declared_task_and_fails_fast() {
+    let _guard = lock_test();
+    without_lock_wait_env();
+    let root = temp_workspace("lock-argument-scope-ordinary");
+    write_root_manifest(&root, ARGUMENT_SCOPED_MANIFEST);
+
+    let first_root = root.clone();
+    let first = OwnedThread::spawn(move || run_task_with_repo(&first_root, "validate", &[]));
+    wait_for_log(&root, "validate start");
+
+    let started = Instant::now();
+    let err = run_task_with_repo(&root, "validate", &[])
+        .expect_err("an ordinary selector keeps the declared task's gate");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "an ordinary selector waited instead of failing fast: {:?}",
+        started.elapsed()
+    );
+    let RunnerError::TaskLockConflict(details) = &err else {
+        panic!("expected a lock conflict, got {err:?}");
+    };
+    assert_eq!(details.scope, "task:validate");
+    assert_eq!(details.wait_timeout_ms, None);
+
+    release(&root, "validate");
+    first.join().expect("the ordinary selector completes");
 }

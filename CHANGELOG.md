@@ -196,6 +196,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **`test:focused` locks per invocation, not per task.** Its gate is keyed by
+  the arguments its command receives as well as the resolved task, so two
+  different test filters run at the same time and two identical invocations
+  still exclude one another. The second identical invocation waits about two
+  minutes by default; `--lock-wait-ms` or `EFFIGY_LOCK_WAIT_MS`, `0` included,
+  replaces that default. An invocation with no task arguments keeps the plain
+  `task:test:focused` gate, and every other task keeps one gate per declared
+  task (Q-015).
 - **A refusal says which of three kinds it is.** Every kernel and runner error
   reads `Refused` (ask again after a change), `Unavailable` (retry when it
   answers) or `Broken` (the record contradicts itself and names its repair), in

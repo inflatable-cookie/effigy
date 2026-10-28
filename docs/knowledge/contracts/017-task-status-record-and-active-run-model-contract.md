@@ -71,13 +71,25 @@ reclaims or unlocks a gate.
   this host refuses its task until that process exits. Dead, foreign or
   corrupt records are ignored and never deleted; `doctor` lists them.
 
-Q-015 (Tom, 2026-10-27) authorizes a pending, opt-in exception for
-`test:focused` only. Its exclusion key includes the resolved selector and
-normalized task arguments, so different filters can overlap while identical
-invocations still exclude one another. An identical second invocation waits
-about two minutes by default; an explicit wait option takes precedence. This
-does not introduce a general shared/read-only lock mode or change other task
-gates. Until implementation, the task gate above remains the running behavior.
+Q-015 (Tom, 2026-10-27) adds one opt-in exception: `test:focused` keys its
+exclusion by its resolved task plus the arguments its own command receives
+(Q-015). A filter is the resolution: Effigy's flags are already split off, so
+`--lock-wait-ms`, `EFFIGY_LOCK_WAIT_MS` and `--repo` never change the key, and
+each argument is quoted canonically, so shell quoting does not either. Order
+and repetition are kept, and no argument is dropped, so two different filters
+stay two keys. An invocation with no task arguments keeps the declared task's
+plain gate.
+
+The second identical normalized invocation waits about two minutes
+(`ARGUMENT_SCOPED_LOCK_WAIT_MS`) when neither `--lock-wait-ms` nor
+`EFFIGY_LOCK_WAIT_MS` names a wait; an explicit value, `0` included, takes
+precedence. Every other selector keeps the zero-wait default above. No
+shared/read-only mode, lease, unlock path or host-wide coordination is added.
+
+The run still records the declared `test:focused` identity, so its label, run
+rows, logs and status read as that task; only the gate and journal key carry
+the argument scope, and rerunning the same normalized invocation settles its
+own predecessor (K5).
 
 ## Run record
 

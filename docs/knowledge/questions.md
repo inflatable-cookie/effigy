@@ -534,18 +534,20 @@ built-in `effigy test` route now also owns the suite sweep described in
 
 ## Q-015: Argument-scoped task lock for focused tests
 
-Status: answered, implementation pending
+Status: answered, implemented (effigy#391)
 Asked: 2026-10-27
 Answered: 2026-10-27 by Tom
 Owner: [contract 017 §Exclusion](contracts/017-task-status-record-and-active-run-model-contract.md#exclusion-k2)
 
 Tom chose an opt-in lock key consisting of the resolved selector and normalized
-task arguments. Enable it only for `test:focused`: different test filters may
-run concurrently, while identical normalized invocations serialize. The
+task arguments. It is enabled for `test:focused` only: different test filters
+may run concurrently, while identical normalized invocations serialize. The
 second identical run waits about two minutes by default, with the existing
-explicit wait option retaining precedence. Do not add a general shared or
-read-only lock mode. Until the queued implementation lands, the current task
-gate still excludes every invocation of the same declared task.
+explicit wait option retaining precedence. A `test:focused` invocation with no
+task arguments keeps the plain task gate, and no general shared or read-only
+lock mode was added. Guide
+[020](../guides/020-dag-lock-policy-baseline.md#lock-scopes) carries the
+behaviour.
 
 ## Q-016: Colima visibility for Builds scratch
 

@@ -528,6 +528,7 @@ Lock behavior:
 - set `tasks.<name>.lock = "<shared-name>"` when multiple tasks should serialize together
 - a managed TUI run records its profile; two profiles of one task still exclude each other
 - wait for a live run with `effigy --lock-wait-ms <MS> <task>` or `EFFIGY_LOCK_WAIT_MS`; inspect it with `effigy tasks status <selector>`
+- `test:focused` is the one task that locks per invocation instead of per task: different test filters run together, identical normalized invocations wait for each other (about two minutes unless the flag or environment names a wait); see [ordered sequences and locks](020-dag-lock-policy-baseline.md)
 - a run's gate is released when it exits, crash and `kill -9` included; there is no unlock
 
 ## Public and internal tasks

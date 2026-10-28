@@ -990,3 +990,44 @@ fn a_nested_catalog_directory_opens_the_enclosing_checkouts_state_root() {
         enclosing.state_directory().path().display()
     );
 }
+
+/// Q-015: the focused task's default wait applies only when neither the flag
+/// nor the environment names a wait, and an explicit `0` still fails fast.
+#[test]
+fn only_an_unset_wait_takes_the_argument_scoped_default() {
+    let _guard = crate::contract_test_support::lock_test();
+    std::env::remove_var(super::run::LOCK_WAIT_ENV);
+    let default = super::identity::ARGUMENT_SCOPED_LOCK_WAIT_MS;
+    assert_eq!(
+        resolve_lock_wait_ms_or(None, default).expect("default"),
+        default
+    );
+    assert_eq!(
+        resolve_lock_wait_ms_or(Some(0), default).expect("explicit zero"),
+        0,
+        "an explicit `--lock-wait-ms 0` fails fast"
+    );
+    assert_eq!(
+        resolve_lock_wait_ms_or(Some(250), default).expect("explicit wait"),
+        250
+    );
+
+    std::env::set_var(super::run::LOCK_WAIT_ENV, "0");
+    assert_eq!(
+        resolve_lock_wait_ms_or(None, default).expect("environment zero"),
+        0,
+        "an explicit `EFFIGY_LOCK_WAIT_MS=0` fails fast"
+    );
+    std::env::set_var(super::run::LOCK_WAIT_ENV, "5000");
+    assert_eq!(
+        resolve_lock_wait_ms_or(None, default).expect("environment wait"),
+        5000
+    );
+    std::env::remove_var(super::run::LOCK_WAIT_ENV);
+
+    assert_eq!(
+        resolve_lock_wait_ms_or(None, 0).expect("ordinary selector"),
+        0,
+        "every other selector still fails fast by default"
+    );
+}
