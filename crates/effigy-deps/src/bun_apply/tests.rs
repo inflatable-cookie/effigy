@@ -990,3 +990,45 @@ fn an_interrupted_owner_off_the_index_lock_retires_nothing() {
         BunPathObservation::Symlink { .. }
     ));
 }
+
+#[test]
+fn an_owned_link_retires_its_registration_inside_the_apply() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+
+    let report = super::apply_bun_link_plan_owned(
+        plan(&fixture, false),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunLinkOutcome::Applied);
+    assert_eq!(report.registration_retirement.unregistered, ["underlay"]);
+    // The apply retires the registration inside its own index transaction, so
+    // nothing is left for a later step to retire and no interrupt can land
+    // after the lock is released with a registration still owned.
+    assert_eq!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Missing
+    );
+    assert!(registration_consumers(&fixture).is_empty());
+    // The link itself is the consumer symlink plus the ledger.
+    for package in &fixture.packages {
+        assert_eq!(
+            fs::canonicalize(fixture.repo.join("node_modules").join(&package.name)).unwrap(),
+            package.package_path
+        );
+    }
+    assert_eq!(
+        RepoLinkStateStore::for_repo(&fixture.repo)
+            .read()
+            .unwrap()
+            .links
+            .len(),
+        1
+    );
+}

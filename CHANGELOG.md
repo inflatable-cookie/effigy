@@ -406,7 +406,9 @@ During v0.x, MINOR bumps may include breaking changes.
   retires the registration it created once the consumer symlink and ledger
   exist, and an interrupt retires the same registrations before the signal
   stops the command. Retiral is the exact `(consumer root, library)` claim, so a
-  sibling Bun root in the same checkout keeps its own claim. An interrupted
+  sibling Bun root in the same checkout keeps its own claim. The completion
+  retiral runs inside the apply's own index transaction, so the owner never
+  holds a registration while it does not hold the Bun index lock. An interrupted
   owner stops the `bun link` it is waiting on before retiring anything, since a
   registration process still running would recreate the registration after its
   owner died. It also retires nothing unless it holds the Bun index lock for its

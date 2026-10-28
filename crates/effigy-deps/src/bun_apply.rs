@@ -78,18 +78,10 @@ fn execute_bun_link_inner(
             crate::bun_owner::link_registrations(&plan),
         )
     });
-    let mut report = apply_bun_link_plan(plan, &home, process, &observer)?;
-    if report.outcome == BunLinkOutcome::Applied {
-        // The owner retires its own registration as soon as the link exists;
-        // the consumer symlink and the ledger are the link.
-        report.registration_retirement = retire_bun_registration_claims(
-            &home,
-            &consumer_root,
-            &library_identity,
-            process,
-            &observer,
-        );
-    }
+    // The apply retires the registration it created inside its own index
+    // transaction, so there is no post-apply window in which an interrupt could
+    // leave a registration behind. The owner guard covers that transaction.
+    let report = apply_bun_link_plan_owned(plan, &home, process, &observer)?;
     drop(owner);
     Ok(report)
 }
@@ -198,13 +190,31 @@ pub fn retire_bun_registration_claims(
     if !index_store.path().exists() {
         return retirement;
     }
-    let index = match index_store.read() {
-        Ok(index) => index,
-        Err(error) => {
-            retirement.failures.push(error.to_string());
-            return retirement;
-        }
-    };
+    let outcome = index_store.update(|index| {
+        retirement =
+            retire_claims_in_index(index, home, consumer_repo, library_path, process, observer);
+        Ok(())
+    });
+    if let Err(error) = outcome {
+        retirement.failures.push(error.to_string());
+    }
+    retirement
+}
+
+/// Retire this link's claims inside an index the caller already holds.
+///
+/// The completion path runs this inside the apply's own index transaction, so
+/// the registration is gone before that lock is released and no interrupt can
+/// land in a window where the owner still has a registration to retire.
+fn retire_claims_in_index(
+    index: &mut BunRegistrationIndex,
+    home: &Path,
+    consumer_repo: &Path,
+    library_path: &Path,
+    process: &impl ReadOnlyProcess,
+    observer: &impl BunPlanObserver,
+) -> BunRegistrationRetirement {
+    let mut retirement = BunRegistrationRetirement::default();
     let claimed = index
         .registrations
         .iter()
@@ -216,69 +226,60 @@ pub fn retire_bun_registration_claims(
                 .map(move |reference| (registration.clone(), reference.clone()))
         })
         .collect::<Vec<_>>();
-    if claimed.is_empty() {
-        return retirement;
-    }
-    let outcome = index_store.update(|index| {
-        for (registration, reference) in &claimed {
-            let Some(stored) = index
-                .registrations
-                .iter()
-                .find(|candidate| {
-                    candidate.package_name == registration.package_name
-                        && same_path(&candidate.package_path, &registration.package_path)
-                })
-                .and_then(|candidate| {
-                    candidate
-                        .consumers
-                        .iter()
-                        .find(|candidate| candidate.same_claim(reference))
-                        .cloned()
-                })
-            else {
-                continue;
-            };
-            let shared = index
-                .registrations
-                .iter()
-                .find(|candidate| candidate.package_name == registration.package_name)
-                .is_some_and(|candidate| candidate.consumers.len() > 1);
-            if shared {
-                // Another consumer still holds the registration.
+    for (registration, reference) in &claimed {
+        let Some(stored) = index
+            .registrations
+            .iter()
+            .find(|candidate| {
+                candidate.package_name == registration.package_name
+                    && same_path(&candidate.package_path, &registration.package_path)
+            })
+            .and_then(|candidate| {
+                candidate
+                    .consumers
+                    .iter()
+                    .find(|candidate| candidate.same_claim(reference))
+                    .cloned()
+            })
+        else {
+            continue;
+        };
+        let shared = index
+            .registrations
+            .iter()
+            .find(|candidate| candidate.package_name == registration.package_name)
+            .is_some_and(|candidate| candidate.consumers.len() > 1);
+        if shared {
+            // Another consumer still holds the registration.
+            index.release_reference(&registration.package_name, &stored);
+            retirement
+                .released_shared
+                .push(registration.package_name.clone());
+            continue;
+        }
+        if !registration.effigy_created {
+            // A registration Effigy did not create is never removed, but this
+            // consumer's claim on it is not its own either.
+            index.release_reference(&registration.package_name, &stored);
+            retirement.retained.push(registration.package_name.clone());
+            continue;
+        }
+        let owned = OwnedRegistration {
+            name: registration.package_name.clone(),
+            package_path: registration.package_path.clone(),
+        };
+        match unregister_owned_registration(home, &owned, process, observer) {
+            ClaimRetirement::Unregistered => {
                 index.release_reference(&registration.package_name, &stored);
                 retirement
-                    .released_shared
+                    .unregistered
                     .push(registration.package_name.clone());
-                continue;
             }
-            if !registration.effigy_created {
-                // A registration Effigy did not create is never removed, but
-                // this consumer's claim on it is not its own either.
-                index.release_reference(&registration.package_name, &stored);
+            ClaimRetirement::Retained => {
                 retirement.retained.push(registration.package_name.clone());
-                continue;
             }
-            let owned = OwnedRegistration {
-                name: registration.package_name.clone(),
-                package_path: registration.package_path.clone(),
-            };
-            match unregister_owned_registration(home, &owned, process, observer) {
-                ClaimRetirement::Unregistered => {
-                    index.release_reference(&registration.package_name, &stored);
-                    retirement
-                        .unregistered
-                        .push(registration.package_name.clone());
-                }
-                ClaimRetirement::Retained => {
-                    retirement.retained.push(registration.package_name.clone());
-                }
-                ClaimRetirement::Failed(failure) => retirement.failures.push(failure),
-            }
+            ClaimRetirement::Failed(failure) => retirement.failures.push(failure),
         }
-        Ok(())
-    });
-    if let Err(error) = outcome {
-        retirement.failures.push(error.to_string());
     }
     retirement
 }
@@ -340,11 +341,47 @@ fn claim_owned_by(
         && same_path(&reference.library_path, library_path)
 }
 
+/// Whether applying a link also retires the registrations it created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetireRegistrations {
+    /// Apply the plan and leave its registrations and claims for the caller.
+    /// Fixtures use this to construct the claimed state a recovery reads.
+    Never,
+    /// Retire this link's own registrations inside the same index transaction.
+    /// The command that owns the link does this.
+    LinkOwned,
+}
+
 pub fn apply_bun_link_plan(
     plan: BunDependencyPlan,
     home: impl AsRef<Path>,
     process: &impl ReadOnlyProcess,
     observer: &impl BunPlanObserver,
+) -> Result<BunLinkOperationReport, DepsError> {
+    apply_bun_link_plan_inner(plan, home, process, observer, RetireRegistrations::Never)
+}
+
+fn apply_bun_link_plan_owned(
+    plan: BunDependencyPlan,
+    home: impl AsRef<Path>,
+    process: &impl ReadOnlyProcess,
+    observer: &impl BunPlanObserver,
+) -> Result<BunLinkOperationReport, DepsError> {
+    apply_bun_link_plan_inner(
+        plan,
+        home,
+        process,
+        observer,
+        RetireRegistrations::LinkOwned,
+    )
+}
+
+fn apply_bun_link_plan_inner(
+    plan: BunDependencyPlan,
+    home: impl AsRef<Path>,
+    process: &impl ReadOnlyProcess,
+    observer: &impl BunPlanObserver,
+    retire: RetireRegistrations,
 ) -> Result<BunLinkOperationReport, DepsError> {
     if plan.desired.is_none() {
         let errors = plan.operation.warnings.clone();
@@ -394,7 +431,8 @@ pub fn apply_bun_link_plan(
         .cloned()
         .collect::<Vec<_>>();
     let index_before = state_precondition(&plan, &index_path)?;
-    let planned_index = planned_index(index_change, &index_store)?;
+    let mut planned_index = planned_index(index_change, &index_store)?;
+    let mut registration_retirement = BunRegistrationRetirement::default();
 
     let mut applied_processes = Vec::new();
     let mut attempted_processes = Vec::new();
@@ -555,6 +593,20 @@ pub fn apply_bun_link_plan(
             }
         }
 
+        if retire == RetireRegistrations::LinkOwned {
+            // Retire inside this transaction, while the index lock is held:
+            // the registration only exists so the consumer's save-less `bun
+            // link` resolves, and an interrupt must never land between the
+            // apply and the retiral with a registration still owned.
+            registration_retirement = retire_claims_in_index(
+                &mut planned_index,
+                home,
+                &plan.operation.key.consumer_repo,
+                &plan.operation.key.library_path,
+                process,
+                observer,
+            );
+        }
         let next = index_change.map(|_| planned_index.clone());
         Ok((next, ()))
     })?;
@@ -594,6 +646,9 @@ pub fn apply_bun_link_plan(
                 process,
                 observer,
             );
+            // The rollback restored the registration the transaction retired,
+            // so nothing was retired after all.
+            registration_retirement = BunRegistrationRetirement::default();
         }
     }
 
@@ -608,7 +663,7 @@ pub fn apply_bun_link_plan(
         verification,
         peer_diagnostics,
         rollback,
-        registration_retirement: BunRegistrationRetirement::default(),
+        registration_retirement,
         errors,
     })
 }

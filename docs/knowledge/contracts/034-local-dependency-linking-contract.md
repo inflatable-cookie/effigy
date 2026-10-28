@@ -115,11 +115,14 @@ Unix.
   dead path.
 - Exact-owned registrations are retired by the owner that created them when it
   completes, and an interrupt retires the same registrations before the signal
-  takes its default course. Ownership is the recorded `(consumer root, library)`
-  pair: a checkout can hold several Bun package roots (`studio/`, `harness/`),
-  each a consumer with its own claim, so retiral never widens to a root that
-  merely shares a checkout. An interrupted owner may retire only while it holds
-  the index lock for its own apply. A link that only wants that lock planned
+  takes its default course. The completion retiral runs inside the apply's own
+  index transaction, so the owner never holds a registration while it does not
+  hold the index lock: no interrupt can land between the apply and the retiral
+  and leave the registration behind. Ownership is the recorded
+  `(consumer root, library)` pair: a checkout can hold several Bun package roots
+  (`studio/`, `harness/`), each a consumer with its own claim, so retiral never
+  widens to a root that merely shares a checkout. An interrupted owner may
+  retire only while it holds the index lock for its own apply. A link that only wants that lock planned
   before this owner created anything, so its registrations are not in the index
   yet and this owner cannot see them; an interrupted owner that does not hold
   the lock retires nothing. While it does hold it, it reads the index instead of
