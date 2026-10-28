@@ -807,6 +807,43 @@ primary_service = "app"
     }
 }
 
+/// A manifest that still names the retired built-in `minio` service is refused
+/// with an actionable message naming its replacement. It is never remapped
+/// onto `silo` (effigy#424).
+#[test]
+fn retired_minio_catalog_service_refuses_and_names_silo() {
+    let root = temp_repo("retired-minio-catalog");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "workspace"
+
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+
+[containers.stack.services.minio]
+catalog = "minio"
+"#,
+    )
+    .expect("write manifest");
+
+    let error = load_container_policy(&root, None).expect_err("minio must refuse");
+    let message = error.to_string();
+    assert!(message.contains("minio"), "{message}");
+    assert!(
+        message.contains("catalog = \"silo\""),
+        "the refusal must name the replacement: {message}"
+    );
+    assert!(
+        message.contains("does not remap"),
+        "the refusal must say nothing is remapped: {message}"
+    );
+}
+
 #[test]
 fn load_container_policy_generates_compose_from_catalog_services() {
     with_temp_effigy_home("catalog-services", |_| {
@@ -1265,8 +1302,8 @@ password = "postgres"
 [containers.stack.services.mailpit]
 catalog = "mailpit"
 
-[containers.stack.services.minio]
-catalog = "minio"
+[containers.stack.services.silo]
+catalog = "silo"
 "#;
 
     let cases: [(&str, &str, Ports, &[&str]); 3] = [

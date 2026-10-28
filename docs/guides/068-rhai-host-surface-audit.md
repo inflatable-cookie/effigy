@@ -96,7 +96,7 @@ dependency and its vendored upstream client library. Scripts that still call
 any of them fail with an unknown-function error. The retirement record and its
 boundaries live in
 [contract 043](../knowledge/contracts/043-feature-placement-and-surface-migration-contract.md);
-generic MinIO catalog services (see
+the shipped object-storage catalog service (`silo`; see
 [`067-catalog-services-reference.md`](067-catalog-services-reference.md)) and
 independent consumer S3 adapters are unrelated and unchanged.
 

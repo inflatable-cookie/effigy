@@ -1786,3 +1786,33 @@ config_keys = []
 allow = [
   "CHANGELOG.md",
 ]
+
+[[retired]]
+id = "effigy-minio-catalog-service"
+retired = "2026-10-28; v0.15 (Tom's ruling, effigy#424)"
+replacement = "Use the shipped `silo` catalog service. `catalog = \"silo\"` serves the same S3 API on port 9000 (console 9001) with the same `MINIO_ROOT_*` credentials (`minioadmin` defaults), persistent `/data` volume and `mc ready local` health check. A manifest that still names `minio` is refused with a message naming `silo`; the name is never remapped, existing volumes and data are untouched, and no data migration is performed. Rename routes and tasks that named the old service (`minio.<host>`, `minio:reconcile`) yourself."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "catalog = \"minio\"",
+  "minio:reconcile",
+  "minio.<host>",
+  "minio/minio:",
+  "bootstrap-minio.rhai",
+]
+paths = [
+  "crates/effigy-catalog/catalog/minio/",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-containers/src/tests/compose.rs",
+  "crates/effigy-catalog/tests/integration/fragments.rs",
+  "crates/effigy-manifest/tests/fixtures/retired-bootstrap/underlay-bundle.toml",
+  "docs/guides/067-catalog-services-reference.md",
+  "docs/guides/083-v0.14.0-consumer-migration.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/026-feature-placement-and-command-surface.md",
+  "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/v015-roadmap.md",
+]

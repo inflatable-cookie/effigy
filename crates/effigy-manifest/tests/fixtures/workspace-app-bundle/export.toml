@@ -60,18 +60,18 @@ connection_label = "{{ resolved_project_name }}"
 [containers.{{ inputs.container_name }}.services.mailpit]
 catalog = "mailpit"
 
-[containers.{{ inputs.container_name }}.services.minio]
-catalog = "minio"
+[containers.{{ inputs.container_name }}.services.silo]
+catalog = "silo"
 
 [containers.{{ inputs.container_name }}.dns]
 routes = [
   { domain = "{{ route_domain(inputs.host, inputs.routes.front, '') }}", tls = true, port = {{ inputs.front_port }}, service = "{{ inputs.workspace_service_name }}" },
   { domain = "{{ route_domain(inputs.host, inputs.routes.admin, 'admin') }}", tls = true, port = {{ inputs.admin_port }}, service = "{{ inputs.workspace_service_name }}" },
   { domain = "{{ route_domain(inputs.host, inputs.routes.api, 'api') }}", tls = true, port = {{ inputs.api_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "{{ route_domain(inputs.host, inputs.routes.s3, 's3') }}", tls = true, port = 9000, service = "minio" },
+  { domain = "{{ route_domain(inputs.host, inputs.routes.s3, 's3') }}", tls = true, port = 9000, service = "silo" },
   { domain = "dbgate.{{ inputs.host }}", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.{{ inputs.host }}", tls = true, port = 8025, service = "mailpit" },
-  { domain = "minio.{{ inputs.host }}", tls = true, port = 9001, service = "minio" },
+  { domain = "silo.{{ inputs.host }}", tls = true, port = 9001, service = "silo" },
 ]
 
 [secrets]
@@ -131,15 +131,15 @@ run = [
   { task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/health" },
 ]
 
-[tasks."minio:reconcile"]
+[tasks."silo:reconcile"]
 run = """
 container_id="$(docker ps \
   --filter label=com.docker.compose.project={{ resolved_project_name }} \
-  --filter label=com.docker.compose.service=minio \
+  --filter label=com.docker.compose.service=silo \
   --format '{{"{{"}}.ID{{"}}"}}' \
   | head -n 1)"
 if [ -z "$container_id" ]; then
-  printf '%s\n' 'minio container not found for project {{ resolved_project_name }}' 1>&2
+  printf '%s\n' 'silo container not found for project {{ resolved_project_name }}' 1>&2
   exit 1
 fi
 docker exec -w / "$container_id" sh -lc '
@@ -148,10 +148,10 @@ docker exec -w / "$container_id" sh -lc '
   until mc ready local >/dev/null 2>&1; do sleep 1; done
   mc mb local/{{ resolved_project_name }}-media --ignore-existing >/dev/null
   mc anonymous set download local/{{ resolved_project_name }}-media >/dev/null
-  cat > /tmp/effigy-minio-cors.json <<'"'"'EOF'"'"'
+  cat > /tmp/effigy-silo-cors.json <<'"'"'EOF'"'"'
 [{"AllowedOrigins":["https://{{ route_domain(inputs.host, inputs.routes.front, '') }}","https://{{ route_domain(inputs.host, inputs.routes.admin, 'admin') }}"],"AllowedMethods":["GET","HEAD","PUT"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","x-amz-request-id","x-amz-id-2"],"MaxAgeSeconds":3000}]
 EOF
-  mc cors set local/{{ resolved_project_name }}-media /tmp/effigy-minio-cors.json >/dev/null
+  mc cors set local/{{ resolved_project_name }}-media /tmp/effigy-silo-cors.json >/dev/null
 '
 """
 run_in = "host"

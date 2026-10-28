@@ -139,6 +139,18 @@ Implementation notes (2026-10-20, #234), for Tom to confirm:
 - Archiving the pack repository is an operator action; Effigy no longer reads
   it.
 
+### Object storage: Silo replaces MinIO (2026-10-28)
+
+Tom ruled MinIO unsupported. Acowtancy and the upstream Underlay bundle use
+Silo (PGSTY Silo), and the one live external `catalog = "minio"` consumer found
+by the root scan was Convergence, which Tom retired and shields from edits.
+Effigy's baseline catalog therefore ships `silo` only: the built-in `minio`
+fragment is removed (effigy#424), `effigy service list` no longer offers it, and
+a manifest that still declares `catalog = "minio"` is refused with a message
+naming `silo`. The name is never remapped and no data migration is invented.
+Silo keeps the `MINIO_ROOT_*` environment names and `minioadmin` defaults as its
+own compatibility surface. Existing volumes and data stay untouched.
+
 ## Q-006 — Heavy tasks
 
 Status: answered
@@ -199,7 +211,9 @@ container mode. We shouldn't need a `*:tui` selector at all."
   and output following are Effigy's job, and bundle-specific setup steps are
   Rhai.
 - **Object storage** in the Underlay bundle is Silo, not MinIO. That's a
-  bundle change, owned by the Underlay side.
+  bundle change, owned by the Underlay side. Effigy's own baseline catalog then
+  retired its built-in `minio` service in favor of `silo` (effigy#424; see
+  Q-005).
 - **Secrets before the TUI** (Tom, 2026-10-23, relayed by the Underlay owner
   after `effigy dev` in underlay-reference asked for the Vault passphrase
   inside the services tab): a locked vault prompts once, before the TUI

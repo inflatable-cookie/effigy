@@ -222,7 +222,22 @@ impl CatalogResolver {
     }
 
     /// Resolve a fragment by name, or by `source/service` from one source.
+    ///
+    /// A name this release retired is refused with its replacement instead of
+    /// the plain not-found error, and is never remapped onto that replacement.
     pub fn resolve(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
+        match self.resolve_named(name) {
+            Err(CatalogError::FragmentNotFound { .. }) => Err(retired_catalog_service(
+                split_qualified(name).1,
+            )
+            .unwrap_or(CatalogError::FragmentNotFound {
+                name: name.to_owned(),
+            })),
+            resolved => resolved,
+        }
+    }
+
+    fn resolve_named(&self, name: &str) -> Result<CatalogFragment, CatalogError> {
         let (qualifier, service) = split_qualified(name);
         if !is_fragment_segment(service) {
             return Err(CatalogError::FragmentNotFound {
@@ -656,6 +671,31 @@ pub fn split_qualified(name: &str) -> (Option<&str>, &str) {
 /// entry rather than on where it came from.
 pub fn service_name(catalog: &str) -> &str {
     split_qualified(catalog).1
+}
+
+/// Catalog service names this release retired, each with the service that
+/// replaces it and the migration a manifest describes.
+///
+/// A manifest that still names one is refused with the replacement spelled
+/// out. Effigy never remaps a retired name onto its replacement, and leaving
+/// the name in place cannot resolve the removed baseline fragment (effigy#424).
+const RETIRED_CATALOG_SERVICES: &[(&str, &str)] = &[(
+    "minio",
+    "the built-in MinIO service is gone in v0.15. Declare `catalog = \"silo\"` instead: \
+     PGSTY Silo serves the same S3 API on port 9000 (console 9001) with the same \
+     `MINIO_ROOT_*` credentials, `/data` volume and `mc ready local` health check. \
+     Effigy does not remap `minio` automatically, and existing volumes are untouched",
+)];
+
+/// The refusal for a retired catalog service name, if `service` is one.
+fn retired_catalog_service(service: &str) -> Option<CatalogError> {
+    RETIRED_CATALOG_SERVICES
+        .iter()
+        .find(|(name, _)| *name == service)
+        .map(|(name, replacement)| CatalogError::RetiredCatalogService {
+            name: (*name).to_owned(),
+            replacement: (*replacement).to_owned(),
+        })
 }
 
 /// Whether a declared source handle is usable in qualified names.

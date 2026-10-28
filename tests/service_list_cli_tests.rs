@@ -44,7 +44,6 @@ const EXPECTED_BUNDLED: &[&str] = &[
     "mailpit",
     "mariadb",
     "memcached",
-    "minio",
     "nginx",
     "node",
     "pgweb",

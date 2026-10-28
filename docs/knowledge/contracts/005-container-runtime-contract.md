@@ -2087,6 +2087,17 @@ coherent main assurance. No consumer repin or retry follows from this policy.
 
 ## Private legacy MinIO fixture distribution — 2026-10-12
 
+Retired — 2026-10-28 (v0.15, effigy#424). Tom ruled MinIO unsupported and both
+Acowtancy and the upstream Underlay bundle use Silo. Effigy removed the
+built-in `minio` catalog service: `effigy service list` no longer offers it and
+a manifest that still declares `catalog = "minio"` is refused with a message
+naming `silo`, never remapped. Silo keeps the `MINIO_ROOT_*` environment names
+and `minioadmin` default credentials as its own compatibility surface, not as a
+MinIO service. Existing MinIO volumes and data are not migrated, deleted or
+otherwise touched, Convergence is neither a migration target nor edited, and no
+new pack release follows. Everything below is the earlier record and remains
+historical.
+
 ### Underlay scope correction — 2026-10-13
 
 Tom's subsequent ruling is: "We're supposed to be dropping minio for silo -

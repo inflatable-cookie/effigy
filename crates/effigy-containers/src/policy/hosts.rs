@@ -960,10 +960,10 @@ mod tests {
     fn pre_007_hybrid_shape_infers_the_listener_apex() {
         let map = build_host_map_including_listeners(
             &[
-                http("s3.acme.test", true, Some("minio")),
+                http("s3.acme.test", true, Some("silo")),
                 http("dbgate.acme.test", true, Some("dbgate")),
                 http("mailpit.acme.test", true, Some("mailpit")),
-                http("minio.acme.test", true, Some("minio")),
+                http("silo.acme.test", true, Some("silo")),
             ],
             &[alias()],
             &[],
@@ -988,10 +988,10 @@ mod tests {
     fn pre_007_test_shape_infers_the_test_prefixed_apex() {
         let map = build_host_map_including_listeners(
             &[
-                http("s3.test.acme.test", true, Some("minio")),
+                http("s3.test.acme.test", true, Some("silo")),
                 http("dbgate.test.acme.test", true, Some("dbgate")),
                 http("mailpit.test.acme.test", true, Some("mailpit")),
-                http("minio.test.acme.test", true, Some("minio")),
+                http("silo.test.acme.test", true, Some("silo")),
             ],
             &[alias()],
             &[],
@@ -1061,7 +1061,7 @@ mod tests {
     #[test]
     fn resolved_base_domain_prefers_declaration_and_infers_otherwise() {
         let routes = [
-            http("s3.acme.test", true, Some("minio")),
+            http("s3.acme.test", true, Some("silo")),
             http("admin.acme.test", true, Some("web")),
         ];
         assert_eq!(

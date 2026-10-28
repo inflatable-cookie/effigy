@@ -642,11 +642,10 @@ fn phpmyadmin_inherits_mariadb_password() {
 /// Every entry was confirmed against the pinned image with a throwaway
 /// `nerdctl run --rm --network none --entrypoint …` on 2026-10-24, or against
 /// the image's published Dockerfile where the tag can no longer be pulled:
-/// `minio` records the `COPY --from=build /go/bin/mc* /usr/bin/` line of its
-/// `Dockerfile.release`, and `workspace-rust-bun` is built from the Dockerfile
-/// in this catalog. Only the tools a health check may name are listed, so a
-/// fragment that starts naming a new one has to add the evidence here first,
-/// instead of depending on a binary its image lacks (effigy#454, #323).
+/// `workspace-rust-bun` is built from the Dockerfile in this catalog. Only the
+/// tools a health check may name are listed, so a fragment that starts naming
+/// a new one has to add the evidence here first, instead of depending on a
+/// binary its image lacks (effigy#454, #323).
 const IMAGE_TOOLS: &[(&str, &[&str])] = &[
     // node:bookworm-slim base: no wget, no curl.
     ("dbgate", &["node"]),
@@ -655,15 +654,13 @@ const IMAGE_TOOLS: &[(&str, &[&str])] = &[
     // Alpine base with BusyBox wget.
     ("mailpit", &["wget"]),
     ("mariadb", &["healthcheck.sh"]),
-    // ubi-micro plus the MinIO server, `mc` and a static curl.
-    ("minio", &["mc"]),
     // Alpine base with BusyBox wget and grep.
     ("nginx", &["wget", "grep"]),
     // Debian base with curl; no wget.
     ("pgweb", &["curl"]),
     ("phpmyadmin", &["php"]),
     ("postgres", &["pg_isready"]),
-    // PGSTY Silo, a MinIO fork, ships the MinIO client.
+    // PGSTY Silo, a maintained S3-compatible server, ships the `mc` client.
     ("silo", &["mc"]),
     // Built from this catalog's Dockerfile: Rust toolchain and bun.
     ("workspace-rust-bun", &["cargo", "bun"]),
@@ -1202,13 +1199,13 @@ fn dbgate_fragment_emits_login_env_when_credentials_are_set() {
 }
 
 #[test]
-fn minio_fragment_assembles_with_volume() {
+fn silo_fragment_assembles_object_storage_with_volume() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
     let services = vec![ServiceDeclaration {
         name: "storage".to_string(),
-        catalog: "minio".to_string(),
+        catalog: "silo".to_string(),
         params: HashMap::new(),
         variant: None,
         config: None,
@@ -1221,13 +1218,52 @@ fn minio_fragment_assembles_with_volume() {
     let storage = validate_service(&doc, "storage");
 
     let image = storage.get("image").unwrap().as_str().unwrap();
-    assert_eq!(
-        image, "minio/minio:RELEASE.2025-09-07T16-13-09Z",
-        "minio image should be pinned to a concrete version tag"
-    );
     assert!(
-        storage.get("healthcheck").is_some(),
-        "minio should have a healthcheck"
+        image.starts_with("docker.io/pgsty/silo:RELEASE.") && image.contains("@sha256:"),
+        "silo image should stay digest-pinned: {image}"
+    );
+
+    let env = storage
+        .get("environment")
+        .expect("silo service declares environment block");
+    assert_eq!(
+        env.get("MINIO_ROOT_USER").unwrap().as_str().unwrap(),
+        "minioadmin",
+        "Silo keeps the MinIO-compatible root user name"
+    );
+    assert_eq!(
+        env.get("MINIO_ROOT_PASSWORD").unwrap().as_str().unwrap(),
+        "minioadmin",
+        "Silo keeps the MinIO-compatible root password name"
+    );
+
+    let ports: Vec<&str> = storage
+        .get("ports")
+        .unwrap()
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .filter_map(|port| port.as_str())
+        .collect();
+    assert_eq!(
+        ports,
+        vec!["9000:9000", "9001:9001"],
+        "S3 API (9000) and console (9001) keep their ports"
+    );
+
+    let healthcheck = storage.get("healthcheck").expect("silo healthcheck");
+    let health_test = healthcheck
+        .get("test")
+        .unwrap()
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        health_test,
+        vec!["CMD", "mc", "ready", "local"],
+        "silo keeps the `mc ready local` health contract"
     );
 
     // Should have a persistent volume.
@@ -1352,7 +1388,7 @@ fn full_stack_with_all_services() {
         },
         ServiceDeclaration {
             name: "storage".to_string(),
-            catalog: "minio".to_string(),
+            catalog: "silo".to_string(),
             params: HashMap::new(),
             variant: None,
             config: None,
