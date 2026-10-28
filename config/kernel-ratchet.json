@@ -23,10 +23,8 @@
       "std::fs::write": 1
     },
     "crates/effigy-containers/src/exec/colima_runtime.rs": {
-      "literal.pkill": 2,
       "std.process.Command.new": 1,
-      "std.process.Command.output": 1,
-      "std::fs::remove_file": 1
+      "std.process.Command.output": 1
     },
     "crates/effigy-containers/src/exec/exit141_tests.rs": {
       "nix::sys::signal::kill": 2,

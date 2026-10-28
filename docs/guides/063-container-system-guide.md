@@ -991,8 +991,8 @@ Use this with `effigy.local.toml` for per-machine mounts.
    profile's runtime stays unavailable (for example after the VM restarted
    outside Colima's boot provisioning and came back with containerd and
    BuildKit stopped), Effigy first starts those units inside the VM and
-   reports it; only if that fails does it repair the profile once by
-   restarting it
+   reports it; if that fails it refuses and names the explicit profile repair
+   and reset commands
 2. bring the compose environment up
 3. prove the owned binding of the primary service; readiness is every
    service Running with its own health check healthy, and the runtime restarts
@@ -1002,6 +1002,14 @@ Use this with `effigy.local.toml` for per-machine mounts.
 5. wait for each declared gateway service port to appear on the matching
    Compose project before registering its route
 6. either return immediately or attach, based on startup mode
+
+For an explicit `effigy container profile repair` or `reset-runtime`, Effigy
+tries a graceful stop and then checks the selected profile's Lima pidfiles. It
+signals only an agent whose profile arguments and start identity are proven.
+If evidence is missing or changed, it refuses and reports the PID and reason.
+Before manually using `colima stop -p <profile> --force`, verify the pidfiles
+belong to that profile: Colima's force stop can signal reused PIDs. Shell and
+SSH clients are never directly signalled by Effigy.
 
 These waits are bounded. A readiness wait polls every service's own health
 check and names it while it waits:
