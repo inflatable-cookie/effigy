@@ -380,6 +380,12 @@ During v0.x, MINOR bumps may include breaking changes.
   settle and every settling holder make theirs when they start.
   `container up` and `container down` show the gate wait and the settlement as
   steps.
+- A container workload's spawn environment drops every session vault access
+  key, exactly as a host workload's does. A `.env` or task `env` entry named
+  `EFFIGY_SECRET_PASSPHRASE`, `EFFIGY_INTERNAL_SECRET_PASSPHRASE`,
+  `EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS`, `EFFIGY_INTERNAL_SECRET_GRANT` or
+  `EFFIGY_TEST_SECRETS_PASSPHRASE` no longer reaches a container; the run's
+  declared secrets and the user's own variables still do.
 - State stack `depends_on` now requires an earlier layer. A self-reference or a
   later key fails closed instead of planning in declaration order that ignored
   the edge.
