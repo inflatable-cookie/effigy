@@ -136,6 +136,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- The kernel's workspace-session seam (contract 052 §8.7/§8.11): request ids
+  reserved before admission and replayed after a restart, terminal attachments
+  that cannot stop the session by disconnecting, bounded terminal streams with
+  resume and gap, and a down that refuses a foreign holder. Nothing user-facing
+  invokes it yet; the workspace client, transport and supervisor serving loop
+  are later tasks.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

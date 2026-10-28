@@ -1535,9 +1535,10 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 1] = [(
-    "foreground_terminals",
-    "CREATE TABLE IF NOT EXISTS foreground_terminals (
+const ADDITIVE_TABLES: [(&str, &str); 3] = [
+    (
+        "foreground_terminals",
+        "CREATE TABLE IF NOT EXISTS foreground_terminals (
   run_id TEXT PRIMARY KEY,
   checkout TEXT NOT NULL,
   boot TEXT NOT NULL,
@@ -1551,7 +1552,57 @@ const ADDITIVE_TABLES: [(&str, &str); 1] = [(
 ) STRICT;
 CREATE INDEX IF NOT EXISTS foreground_terminals_closed
   ON foreground_terminals(closed_at)",
-)];
+    ),
+    // 052 §8.11: a request id is recorded before admission, keyed by the
+    // session generation, so a retry after a disconnect returns the recorded
+    // run or outcome and never admits a second one. The row owns no run row
+    // and has no foreign key: a refused or still-pending admission must
+    // outlive any run it never created.
+    (
+        "workspace_session_admissions",
+        "CREATE TABLE IF NOT EXISTS workspace_session_admissions (
+  session_generation INTEGER NOT NULL,
+  request_id TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  method TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('reserved','admitted','completed','refused')),
+  run_id TEXT,
+  owner TEXT,
+  run_generation INTEGER,
+  placement TEXT,
+  outcome TEXT,
+  exit_code INTEGER,
+  refusal_code TEXT,
+  refusal_detail TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_generation, request_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS workspace_session_admissions_run
+  ON workspace_session_admissions(run_id)",
+    ),
+    // 052 §8.7/§8.11: one row per terminal attachment. A secondary terminal
+    // never becomes the session's owner, so its row records attachment,
+    // detach or loss and nothing here can stop a run.
+    (
+        "workspace_session_terminals",
+        "CREATE TABLE IF NOT EXISTS workspace_session_terminals (
+  terminal_id TEXT PRIMARY KEY,
+  session_generation INTEGER NOT NULL,
+  session_run TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  environment_generation INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('attached','detached','lost','stopped')),
+  cursor INTEGER,
+  capability INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS workspace_session_terminals_session
+  ON workspace_session_terminals(session_run)",
+    ),
+];
 
 /// Indexes §7.4 retention needs, as additive schema-1 changes. Retention's
 /// candidates and deletes are index-driven, so a sweep costs the same on a

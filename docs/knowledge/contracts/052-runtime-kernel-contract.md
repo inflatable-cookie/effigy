@@ -2750,6 +2750,56 @@ supervisor to expose replay-safe admission and attachment handles to the
 dispatcher; if that cannot be provided without a second authority, stop the
 integration and resolve the kernel interface before implementing a substitute.
 
+#### Implemented (effigy#438)
+
+The kernel interface this boundary needed is now implemented and proven, so the
+integration no longer has to substitute a second authority:
+
+- `crates/effigy-kernel/src/workspace_session.rs` is the session seam and owns
+  the additive schema-1 tables `workspace_session_admissions` and
+  `workspace_session_terminals` (§5.5 additive rule, no version bump).
+- Admission: `SessionAdmissions::reserve` commits the session generation,
+  request id, request digest, method and the planned run identity in one
+  `BEGIN IMMEDIATE` transaction. The planned run id is derived from the request
+  identity, not a clock, so recovery asks the journal about one exact run.
+  `Replayed` returns the recorded admission, run or outcome; a different digest
+  is `Conflict` (channel code `id_conflict`); a reservation whose run never
+  reached the journal is `Pending` while the session is provably live and
+  `Unknown` otherwise — never a fresh run. `admitted`, `completed` and
+  `refused` record the outcome idempotently.
+- Session and terminals: `SessionRef` resolves the environment's one borrowing
+  run durably, so TUI, text and headless front ends report one identity; the
+  entry is a `Detached` run (`SessionRef::admit` refuses any other placement).
+  `SessionAuthority` holds the memory-only capability, the enrolment grant and
+  the live terminals; the first terminal opened through Effigy receives the
+  capability and later ones never do. `attach`, `detach`, `reap` (a handle
+  dropped without detaching), `stopping` and `close` record each terminal's
+  state, and none of them can stop a run: a secondary client's death is a `lost`
+  row, nothing more. `ClientGrant::authorise_target` refuses a run outside the
+  session and its own children.
+- Control and streams: `SessionHandle::cancel` and a down's child stops write
+  an ordinary `run::request` against the target's current fence and wake its
+  control socket; `StreamBuffer` implements the bounded contract (32 KiB
+  frames, 16 unacknowledged data frames, 512 KiB queued, a retained resume
+  window with `gap` for a missed range, input never buffered, resize
+  latest-wins, cancel serviceable under backpressure).
+- Down: `DownCoordination::begin` refuses every holder other than the session
+  and its own child runs, live or `Unknown`; `DownChildren` stops only those
+  children and takes its permit through `Attachments::permit_exempt`, which
+  re-checks the holders with the session exempt once that run has entered its
+  settle.
+
+Still owned elsewhere by the lane split: the supervisor's serving loop over its
+control listener, the channel frames and dispatcher
+(`crates/effigy-kernel/src/workspace_channel.rs`), Prepare and context
+(`src/runner/workspace_command/provisioning.rs`, `workspace_client/context.rs`)
+and the client glue (`src/runner/workspace_client.rs`). The runner entry
+`src/runner/workspace_command/session.rs` maps each front end to its
+`TerminalKind` and builds the session handle, printing the one resolved session
+identity. Proofs are the fake-owner, fake-runtime tests under
+`workspace_session::tests::`; they exercise no engine, container, gateway or
+live supervisor.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |

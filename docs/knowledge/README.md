@@ -9,7 +9,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Detailed component design | [Architecture directory](architecture/000-overview.md) |
 | Interfaces and guarantees | [Contracts](contracts/README.md) |
 | Change-scoped QA (proposed) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
-| Runtime kernel (specified, not implemented) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md); [workspace-client interface](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1) |
+| Runtime kernel (specified; workspace-session kernel interface implemented, client and transport not) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md); [workspace-client interface](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1) |
 | Container environments | [Environment reconciler contract](contracts/053-environment-reconciler-contract.md) |
 | Releases (config, `status` and `--plan` implemented; the Run is not) | [Release platform contract](contracts/054-release-platform-contract.md) |
 | Release procedure | [Release](contracts/release.md) |
