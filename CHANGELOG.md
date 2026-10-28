@@ -348,6 +348,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.
+- Auto-discovered `effigy.local.toml` now replaces conflicting committed manifest
+  leaves, with source and override details available in inspection.
 
 - A release's `receipt.json` now matches `effigy release receipt <run> --json`
   at every checkpoint. It used to be written only once, before the final
