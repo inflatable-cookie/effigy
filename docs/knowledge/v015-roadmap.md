@@ -43,8 +43,8 @@ Colima profile or install is touched. Tom's explicit release decision is last.
 | 7. Final exact-commit gates and certified artifact | Phases 1–6 passed and source frozen; Effigy release owner | Recheck full QA/release gates on the certified commit after any candidate-changing fix; contract 054 gates certify the exact artifact and evidence. No prepare, tag or publish follows automatically. | Release CI/artifact work follows its explicit workflow and human authority. |
 | 8. Release decision | Certified identity and migration/consumer notes ready; Tom | Tom decides whether and when to publish v0.15. | Underlay minimum version rises only after publication. |
 
-Q-005 retires the installed catalog-pack runtime and directs Tom to archive
-the pack repository; archiving is still his action. Immutable pack 1.2.0
+Q-005 retires the installed catalog-pack runtime; Tom archived the pack
+repository on 2026-10-28. Immutable pack 1.2.0
 remains resolvable for older Effigy consumers. The MinIO cut belongs only to
 Effigy's baseline catalog (#424), with no new pack release in this set.
 
