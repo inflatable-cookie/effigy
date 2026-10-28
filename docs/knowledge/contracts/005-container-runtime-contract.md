@@ -404,11 +404,16 @@ shared container from another render is stopped and removed before Compose
 creates the new one, so its published host port is never held twice, and its
 named data volume is kept. An unchanged shared container is not touched. One
 machine gate per shared Compose project serialises the ensure, so two checkouts'
-`up`s never interleave a replacement. When the render directory is gone and the
-runtime still holds a container of that project, the ensure refuses before any
-stop, remove or Compose call: the container and its named data volume are left
-as they are, and the operator re-runs `up`, which re-renders the shared service.
-With no such container the normal creation path runs.
+`up`s never interleave a replacement. The render is published by that ensure,
+not by `prepare`, so a vanished directory is seen before it is restored. When
+the render file is missing and the runtime holds a container created from that
+same render, the ensure refuses before any publish, stop, remove or Compose
+call, and names the container. An unreadable inventory refuses in the same
+case, because the container cannot be ruled out. The container and its named
+data volume are left as they are; the operator removes that exact container
+with the runtime's `rm -f`, and a re-run of `up` publishes the render and
+creates the service on the preserved volume. A container from another render
+is replaced as before, and a missing render with no container is created.
 `build.dockerfile` is the one relative input Compose reads against the *build
 context* rather than the project directory, so a catalog Dockerfile is rendered
 inline as `dockerfile_inline` from the generation's own content: the stack names
