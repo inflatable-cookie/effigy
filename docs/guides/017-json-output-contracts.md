@@ -380,7 +380,9 @@ effigy contracts check-json --validate-selection --artifact ./contracts-selected
 A violation is reported as a failure row for
 `effigy.json-contract-selection.v1` in the `effigy.contracts.check-json.v1`
 envelope, so the command still fails with an actionable, structured report.
-`--print-selected=json` implies `--validate-selection`.
+`--print-selected=json` implies `--validate-selection`. A payload schema or
+selection contract that is not valid JSON Schema is refused at admission as
+`effigy.json-contract-body.v1` in that same envelope; no indexed command runs.
 
 JSON Schema cannot compare a property with an array length, so `count` is a
 producer guarantee: it is derived from `selected.length`. Everything else —
