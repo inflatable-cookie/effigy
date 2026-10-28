@@ -1007,6 +1007,9 @@ For an explicit `effigy container profile repair` or `reset-runtime`, Effigy
 tries a graceful stop and then checks the selected profile's Lima pidfiles. It
 signals only an agent whose profile arguments and start identity are proven.
 If evidence is missing or changed, it refuses and reports the PID and reason.
+When a residual host agent requires escalation, Effigy checks `ha.pid` and
+`vz.pid`. For a QEMU profile with `qemu.pid` instead, it reports the missing
+`vz.pid` without signalling the QEMU driver.
 Before manually using `colima stop -p <profile> --force`, verify the pidfiles
 belong to that profile: Colima's force stop can signal reused PIDs. Shell and
 SSH clients are never directly signalled by Effigy.

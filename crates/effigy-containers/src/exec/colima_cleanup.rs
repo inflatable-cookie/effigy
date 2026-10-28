@@ -239,6 +239,14 @@ fn cleanup<P: Processes>(
 }
 
 pub(super) fn terminate(profile: &str, graceful_ok: bool) -> Result<Vec<String>, String> {
+    terminate_with_home(profile, graceful_ok, std::env::var_os("HOME"))
+}
+
+fn terminate_with_home(
+    profile: &str,
+    graceful_ok: bool,
+    home: Option<OsString>,
+) -> Result<Vec<String>, String> {
     let safe_profile = !profile.is_empty()
         && profile
             .chars()
@@ -247,7 +255,7 @@ pub(super) fn terminate(profile: &str, graceful_ok: bool) -> Result<Vec<String>,
         if !safe_profile {
             return Err("profile name cannot identify a safe Lima instance directory".into());
         }
-        let home = std::env::var_os("HOME").ok_or("HOME is unavailable")?;
+        let home = home.ok_or("HOME is unavailable")?;
         let instance: PathBuf = Path::new(&home)
             .join(".colima/_lima")
             .join(format!("colima-{profile}"));
@@ -448,5 +456,15 @@ mod tests {
         assert_eq!(fake.signalled, [40]);
         assert!(error.contains("missing profile pidfile(s): vz.pid"));
         assert!(error.contains("stopped PID 40"));
+    }
+
+    #[test]
+    fn colima_runtime_refusal_names_manual_force_stop_and_verification() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = terminate_with_home("effigy", false, Some(dir.path().into())).unwrap_err();
+        assert!(error.contains("missing profile pidfile(s): ha.pid, vz.pid"));
+        assert!(error.contains("Verify the profile pidfile ownership"));
+        assert!(error.contains("colima stop -p effigy --force"));
+        assert!(error.contains("Effigy did not run it"));
     }
 }
