@@ -129,12 +129,19 @@ impl HostAliasResolver {
             )?;
             repo_root.get_or_insert_with(|| policy.repo_root.clone());
             for alias in HostExecutionAliases::for_scoped_checkout(&host_map).aliases() {
+                // One declared name resolves once. The environments arrive
+                // default-first, so the default environment owns a name two
+                // environments declare.
+                if aliases
+                    .iter()
+                    .any(|existing| existing.host.declared == alias.host.declared)
+                {
+                    continue;
+                }
                 environments
                     .entry(alias.host.effective.clone())
                     .or_insert_with(|| policy.name.clone());
-                if !aliases.contains(alias) {
-                    aliases.push(alias.clone());
-                }
+                aliases.push(alias.clone());
             }
         }
         if aliases.is_empty() {
@@ -331,17 +338,29 @@ pub(in crate::runner) fn host_env_aliases(
         .unwrap_or_default())
 }
 
-/// Every container environment of this scoped checkout, so a checkout that
-/// names no default environment still resolves its aliases instead of failing
-/// an ordinary host run (effigy#431 review).
+/// Every container environment of this scoped checkout, so a host task that
+/// names any environment's declared alias resolves it — not only the default
+/// environment's (effigy#431 review). The default environment comes first, so
+/// it wins a declared name two environments would otherwise both claim.
+///
+/// An unreadable registry leaves host execution as it was: that is not a
+/// backing-service refusal, and an ordinary host task must not fail for it.
 fn scoped_environment_policies(scope_root: &Path) -> Vec<EffectiveContainerPolicy> {
-    match effigy_containers::load_container_policy(scope_root, None) {
-        Ok(policy) => vec![policy],
-        // An unreadable registry leaves host execution as it was: this is not
-        // a backing-service refusal, and an ordinary host task must not fail
-        // for it.
-        Err(_) => effigy_containers::load_all_container_policies(scope_root).unwrap_or_default(),
+    let default = effigy_containers::load_container_policy(scope_root, None).ok();
+    let mut policies = default.clone().into_iter().collect::<Vec<_>>();
+    let Ok(every) = effigy_containers::load_all_container_policies(scope_root) else {
+        return policies;
+    };
+    for policy in every {
+        if default
+            .as_ref()
+            .is_some_and(|default| default.name == policy.name)
+        {
+            continue;
+        }
+        policies.push(policy);
     }
+    policies
 }
 
 /// Borrow resolved secret pairs for a spawn.

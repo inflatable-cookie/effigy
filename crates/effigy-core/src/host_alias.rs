@@ -80,9 +80,7 @@ impl HostAlias {
                 if candidate.eq_ignore_ascii_case(&self.effective)
                     && host_boundary_before(text, index)
                     && host_boundary_after(text, end)
-                    && (is_authority_host(text, index, end)
-                        || is_assignment(text, index)
-                        || carries_a_port(text, end))
+                    && is_endpoint_occurrence(text, index, end, whole_value, &self.effective)
                 {
                     return true;
                 }
@@ -141,9 +139,7 @@ fn rewrite_endpoints(value: &str, declared: &str, effective: &str) -> Option<Str
             if candidate.eq_ignore_ascii_case(declared)
                 && host_boundary_before(value, index)
                 && host_boundary_after(value, end)
-                && (whole_value.eq_ignore_ascii_case(declared)
-                    || is_authority_host(value, index, end)
-                    || carries_a_port(value, end))
+                && is_rewritten_endpoint(value, index, end, whole_value, declared)
             {
                 output.push_str(&value[copied..index]);
                 output.push_str(effective);
@@ -164,6 +160,71 @@ fn rewrite_endpoints(value: &str, declared: &str, effective: &str) -> Option<Str
     }
     output.push_str(&value[copied..]);
     Some(output)
+}
+
+/// Whether the whole-hostname match at `[index, end)` is an endpoint a value
+/// may be rewritten from: the whole value, a URL authority's host, or a host
+/// carrying its own port.
+///
+/// A URL's userinfo is never an endpoint. `postgres://user:password@host` and
+/// `postgres://user:123@host` both put a name and a number where a host and a
+/// port would otherwise sit, so a match before the authority's last `@` is
+/// credentials, whatever surrounds it.
+fn is_endpoint_occurrence(
+    value: &str,
+    index: usize,
+    end: usize,
+    whole_value: &str,
+    declared: &str,
+) -> bool {
+    is_rewritten_endpoint(value, index, end, whole_value, declared)
+        || (!is_url_userinfo(value, index, end) && is_assignment(value, index))
+}
+
+/// The rewrite's own rule: prose keeps its bytes, so an assignment-shaped
+/// `KEY=host` is only an endpoint once Effigy has rendered it into a command
+/// (see [`Self::names_endpoint`]).
+fn is_rewritten_endpoint(
+    value: &str,
+    index: usize,
+    end: usize,
+    whole_value: &str,
+    declared: &str,
+) -> bool {
+    if whole_value.eq_ignore_ascii_case(declared) {
+        return true;
+    }
+    if is_authority_host(value, index, end) {
+        return true;
+    }
+    !is_url_userinfo(value, index, end) && carries_a_port(value, end)
+}
+
+/// A match inside a URL's userinfo: the authority before it is open and another
+/// `@` follows in the same authority, so a host cannot be what this names.
+fn is_url_userinfo(value: &str, index: usize, end: usize) -> bool {
+    let before = &value[..index];
+    let Some(scheme_end) = before.rfind("://") else {
+        return false;
+    };
+    let authority = &before[scheme_end + 3..];
+    if authority
+        .chars()
+        .any(|character| matches!(character, '/' | '?' | '#') || character.is_whitespace())
+    {
+        return false;
+    }
+    has_later_authority_at(value, end)
+}
+
+/// Whether the authority's host segment after `end` still carries an `@`, which
+/// means everything before it is the userinfo.
+fn has_later_authority_at(value: &str, end: usize) -> bool {
+    value[end..]
+        .split(['/', '?', '#', '"', '\'', '`', ' ', ',', ';'])
+        .next()
+        .unwrap_or_default()
+        .contains('@')
 }
 
 /// The host part of a URL authority: the component after `scheme://`, or after
@@ -191,11 +252,7 @@ fn is_authority_host(value: &str, index: usize, end: usize) -> bool {
     }
     // A host never contains `@`, so another `@` in this authority's host
     // segment makes this match part of the userinfo instead.
-    !value[end..]
-        .split(['/', '?', '#', '"', '\'', '`', ' ', ',', ';'])
-        .next()
-        .unwrap_or_default()
-        .contains('@')
+    !has_later_authority_at(value, end)
 }
 
 /// `KEY=host` — an environment assignment, so the host is a value rather than
@@ -328,6 +385,11 @@ mod tests {
             "postgres://postgres.acme.test@database.elsewhere.test:5432/app",
             "redis://:postgres.acme.test@cache.elsewhere.test:6379",
             "postgres://user@database.elsewhere.test:5432/app",
+            // A numeric username and a numeric password read as `host:port`
+            // unless the authority is read properly.
+            "postgres://postgres.acme.test:123@other.example:5432/db",
+            "postgres://user:postgres.acme.test:123@other.example:5432/db",
+            "postgres://postgres.acme.test:5432@other.example:5432/db",
         ] {
             assert_eq!(alias.resolve(value), None, "{value}");
             assert!(!alias.names_endpoint(value), "{value}");

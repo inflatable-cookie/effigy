@@ -93,10 +93,16 @@ fn linked_worktree(primary: &Path, name: &str) -> PathBuf {
 
 /// The effective apex this checkout's aliases answer on.
 fn effective_alias(checkout: &Path, label: &str) -> String {
+    effective_alias_in(checkout, None, label)
+}
+
+/// The same, for one named container environment.
+fn effective_alias_in(checkout: &Path, environment: Option<&str>, label: &str) -> String {
     effigy_core::worktree_scope::load(checkout)
         .expect("read scope token")
         .expect("a marked checkout has a token");
-    let policy = effigy_containers::load_container_policy(checkout, None).expect("policy loads");
+    let policy =
+        effigy_containers::load_container_policy(checkout, environment).expect("policy loads");
     let base = policy
         .dns_effective_base_domain()
         .expect("declared base domain");
@@ -107,7 +113,29 @@ fn effective_alias(checkout: &Path, label: &str) -> String {
 /// Publish one alias route for a scope, the record `container up` leaves
 /// behind once the backing service has a published host port.
 fn publish_alias_route(checkout: &Path, domain: &str, host_port: u16) {
-    publish_alias_route_with_endpoint(checkout, domain, Ipv4Addr::LOCALHOST, 5432, host_port);
+    publish_alias_route_with_endpoint(checkout, domain, next_free_alias_address(), 5432, host_port);
+}
+
+/// The lowest pool address the fixture's routes do not already answer on for
+/// the declared container port: each published alias needs its own, exactly as
+/// two checkouts do in production.
+fn next_free_alias_address() -> Ipv4Addr {
+    let table_path = gateway_dir().expect("gateway dir").join("routes.json");
+    let table = EndpointStore::for_routes(&table_path)
+        .snapshot()
+        .and_then(|snapshot| snapshot.routes())
+        .expect("read the published routes");
+    for last in 1..=50u8 {
+        let address = Ipv4Addr::new(127, 1, 0, last);
+        if !table
+            .all_routes()
+            .iter()
+            .any(|route| route.dns_ip == Some(address) && route.tcp_port == Some(5432))
+        {
+            return address;
+        }
+    }
+    panic!("the fixture's alias pool is exhausted");
 }
 
 /// The route `container up` publishes: the checkout's loopback address, the
@@ -649,6 +677,105 @@ fn write_managed_session_manifest(checkout: &Path) {
     fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a managed session");
 }
 
+/// A host task resolves every environment's declared alias, not only the
+/// default environment's: this checkout declares `first` (the default) and
+/// `second`, and the task carries both declared URLs.
+#[test]
+fn a_task_resolves_a_second_environments_declared_alias() {
+    with_short_scratch("scoped-host-alias-environments", || {
+        let primary = primary_checkout("scoped-host-alias-environments");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let manifest = format!(
+            r#"{MANIFEST}
+[containers.first]
+project_name = "app-first"
+primary_service = "postgres"
+
+[containers.first.dns]
+base_domain = "first.test"
+
+[containers.first.services.postgres]
+catalog = "postgres"
+
+[containers.second]
+project_name = "app-second"
+primary_service = "postgres"
+
+[containers.second.dns]
+base_domain = "second.test"
+
+[containers.second.services.postgres]
+catalog = "postgres"
+"#
+        );
+        // `[containers] default = "web"` from the shared manifest would point
+        // at the wrong environment; name the default explicitly instead.
+        let manifest = manifest.replace(
+            "[containers]\ndefault = \"web\"",
+            "[containers]\ndefault = \"first\"",
+        );
+        let manifest = format!(
+            "{manifest}\n[tasks.check-both]\nrun_in = \"host\"\nrun = \"sh -lc 'echo $FIRST_URL > $FIRST_OUT; echo $SECOND_URL > $SECOND_OUT'\"\nenv = {{ FIRST_URL = \"postgres://app:secret@postgres.first.test:5432/app\", SECOND_URL = \"postgres://app:secret@postgres.second.test:5432/app\", FIRST_OUT = \"{first_out}\", SECOND_OUT = \"{second_out}\" }}\n",
+            first_out = checkout.join("first-url.txt").display(),
+            second_out = checkout.join("second-url.txt").display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with two environments");
+
+        let first_alias = effective_alias_in(&checkout, Some("first"), "postgres");
+        let second_alias = effective_alias_in(&checkout, Some("second"), "postgres");
+        assert_eq!(
+            first_alias.strip_prefix("postgres.").map(|_| ()),
+            Some(()),
+            "first environment apex: {first_alias}"
+        );
+        assert!(
+            first_alias.ends_with("first-w") || first_alias.contains("first-w"),
+            "the first environment keeps its own scoped apex: {first_alias}"
+        );
+        assert!(
+            second_alias.contains("second-w"),
+            "the second environment keeps its own scoped apex: {second_alias}"
+        );
+
+        // Neither environment is published yet: the default environment's
+        // alias refuses first.
+        let error = run_task(&checkout, "check-both", &[]).expect_err("the task must refuse");
+        let rendered = error.to_string();
+        assert!(rendered.contains("postgres.first.test"), "{rendered}");
+        assert!(rendered.contains(&first_alias), "{rendered}");
+        assert!(!checkout.join("first-url.txt").exists());
+        assert!(!checkout.join("second-url.txt").exists());
+
+        // With only the default environment published, the second
+        // environment's declared alias is proved exactly like the default's.
+        publish_alias_route(&checkout, &first_alias, 55432);
+        let error = run_task(&checkout, "check-both", &[]).expect_err("the task must refuse");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("postgres.second.test"),
+            "a second environment's declared alias is proved too: {rendered}"
+        );
+        assert!(rendered.contains(&second_alias), "{rendered}");
+        assert!(!checkout.join("second-url.txt").exists());
+
+        publish_alias_route(&checkout, &second_alias, 55433);
+        run_task(&checkout, "check-both", &[]).expect("the task runs");
+        assert_eq!(
+            fs::read_to_string(checkout.join("first-url.txt"))
+                .expect("the task recorded the first URL")
+                .trim(),
+            format!("postgres://app:secret@{first_alias}:5432/app")
+        );
+        assert_eq!(
+            fs::read_to_string(checkout.join("second-url.txt"))
+                .expect("the task recorded the second URL")
+                .trim(),
+            format!("postgres://app:secret@{second_alias}:5432/app"),
+            "the second environment's declared alias resolved"
+        );
+    });
+}
+
 /// A URL that only carries the declared name in its credentials, or that names
 /// an unrelated server, is neither rewritten nor proved: it keeps its bytes and
 /// reaches the server it names, with no route published at all.
@@ -662,12 +789,16 @@ fn a_task_targeting_an_unrelated_server_keeps_its_url() {
             "postgres://postgres.acme.test:secret@database.elsewhere.test:5432/app";
         let password_url = "postgres://user:postgres.acme.test@database.elsewhere.test:5432/app";
         let username_url = "postgres://postgres.acme.test@database.elsewhere.test:5432/app";
+        // A numeric username reads as `host:port` unless the authority is read
+        // properly; a numeric password does the same after the colon.
+        let numeric_username_url = "postgres://postgres.acme.test:123@other.example:5432/db";
+        let numeric_password_url = "postgres://user:postgres.acme.test:123@other.example:5432/db";
         let manifest = format!(
             r#"{MANIFEST}
 [tasks.elsewhere]
 run_in = "host"
-run = "sh -lc 'echo $CREDENTIAL_URL > {out}; echo $PASSWORD_URL >> {out}; echo $USERNAME_URL >> {out}'"
-env = {{ CREDENTIAL_URL = "{credential_url}", PASSWORD_URL = "{password_url}", USERNAME_URL = "{username_url}" }}
+run = "sh -lc 'echo $CREDENTIAL_URL > {out}; echo $PASSWORD_URL >> {out}; echo $USERNAME_URL >> {out}; echo $NUMERIC_USERNAME_URL >> {out}; echo $NUMERIC_PASSWORD_URL >> {out}'"
+env = {{ CREDENTIAL_URL = "{credential_url}", PASSWORD_URL = "{password_url}", USERNAME_URL = "{username_url}", NUMERIC_USERNAME_URL = "{numeric_username_url}", NUMERIC_PASSWORD_URL = "{numeric_password_url}" }}
 "#,
             out = out.display(),
         );
@@ -678,7 +809,9 @@ env = {{ CREDENTIAL_URL = "{credential_url}", PASSWORD_URL = "{password_url}", U
             fs::read_to_string(&out)
                 .expect("the task recorded the URLs it received")
                 .trim_end(),
-            format!("{credential_url}\n{password_url}\n{username_url}"),
+            format!(
+                "{credential_url}\n{password_url}\n{username_url}\n{numeric_username_url}\n{numeric_password_url}"
+            ),
             "a URL whose credentials contain the declared name keeps its exact bytes"
         );
     });
