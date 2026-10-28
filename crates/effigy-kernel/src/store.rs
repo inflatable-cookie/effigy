@@ -1535,9 +1535,10 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 1] = [(
-    "foreground_terminals",
-    "CREATE TABLE IF NOT EXISTS foreground_terminals (
+const ADDITIVE_TABLES: [(&str, &str); 3] = [
+    (
+        "foreground_terminals",
+        "CREATE TABLE IF NOT EXISTS foreground_terminals (
   run_id TEXT PRIMARY KEY,
   checkout TEXT NOT NULL,
   boot TEXT NOT NULL,
@@ -1551,7 +1552,46 @@ const ADDITIVE_TABLES: [(&str, &str); 1] = [(
 ) STRICT;
 CREATE INDEX IF NOT EXISTS foreground_terminals_closed
   ON foreground_terminals(closed_at)",
-)];
+    ),
+    // 052 §8.11: one keyed workspace request per session generation, holding
+    // the canonical digest, the one run it reserved and that run's recorded
+    // outcome. It has no foreign key on purpose: a pruned run must not take
+    // the recorded answer with it, because replaying the key must never admit
+    // a second run.
+    (
+        "workspace_admissions",
+        "CREATE TABLE IF NOT EXISTS workspace_admissions (
+  session_generation INTEGER NOT NULL,
+  request_id TEXT NOT NULL,
+  digest BLOB NOT NULL,
+  run_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('reserved','admitted','closed')),
+  outcome TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_generation, request_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS workspace_admissions_run
+  ON workspace_admissions(run_id)",
+    ),
+    // A client's lifetime on a run, separate from environment resource holds
+    // (`attachments`) and from remote workload custody. Rows end with the run.
+    (
+        "run_attachments",
+        "CREATE TABLE IF NOT EXISTS run_attachments (
+  attachment_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  lifetime TEXT NOT NULL CHECK (lifetime IN ('owner','secondary')),
+  state TEXT NOT NULL CHECK (state IN ('attached','released')),
+  release TEXT CHECK (release IN ('eof','detach')),
+  created_at INTEGER NOT NULL,
+  released_at INTEGER
+) STRICT;
+CREATE INDEX IF NOT EXISTS run_attachments_run
+  ON run_attachments(run_id, state)",
+    ),
+];
 
 /// Indexes §7.4 retention needs, as additive schema-1 changes. Retention's
 /// candidates and deletes are index-driven, so a sweep costs the same on a
@@ -1728,6 +1768,27 @@ CREATE TABLE foreground_terminals (
   closed_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX foreground_terminals_closed ON foreground_terminals(closed_at);
+CREATE TABLE workspace_admissions (
+  session_generation INTEGER NOT NULL,
+  request_id TEXT NOT NULL,
+  digest BLOB NOT NULL,
+  run_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('reserved','admitted','closed')),
+  outcome TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_generation, request_id)
+) STRICT;
+CREATE TABLE run_attachments (
+  attachment_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  lifetime TEXT NOT NULL CHECK (lifetime IN ('owner','secondary')),
+  state TEXT NOT NULL CHECK (state IN ('attached','released')),
+  release TEXT CHECK (release IN ('eof','detach')),
+  created_at INTEGER NOT NULL,
+  released_at INTEGER
+) STRICT;
 CREATE TABLE logs (
   run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   stream TEXT NOT NULL,
@@ -1743,6 +1804,8 @@ CREATE INDEX claims_run ON claims(run_id);
 CREATE INDEX runs_parent ON runs(parent_run);
 CREATE INDEX requests_run ON requests(run_id);
 CREATE INDEX attachments_run ON attachments(run_id);
+CREATE INDEX workspace_admissions_run ON workspace_admissions(run_id);
+CREATE INDEX run_attachments_run ON run_attachments(run_id, state);
 CREATE INDEX object_refs_resource ON object_refs(resource);
 CREATE INDEX checkouts_live_seen ON checkouts(state, last_seen);
 CREATE INDEX checkouts_tombstoned ON checkouts(state, unreferenced_since);

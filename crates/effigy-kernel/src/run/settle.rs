@@ -214,6 +214,9 @@ impl Run<'_> {
                     }
                     txn.conn().execute("UPDATE runs SET phase='closed',cleanup_outcome=?2,updated_at=?3,closed_at=coalesce(closed_at,?3) WHERE run_id=?1",
                         params![self.id.to_string(),if complete { "complete" } else { "incomplete" },txn.now()])?;
+                    // A keyed workspace request's final answer and every
+                    // client attachment end in this same commit (§8.11).
+                    workspace::closed(txn, self.id, &workload, complete)?;
                     if machine && complete {
                         if self.owner.resource.kind() == crate::id::ResourceKind::Gateway {
                             let completion = MachineCompletion { run: self.id, generation: self.owner.generation, workload: workload.clone(), stderr_tail: stderr_tail.clone() };

@@ -91,7 +91,7 @@ impl CheckoutId {
         )
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Generation(u64);
 impl Generation {
     pub fn new(value: u64) -> Self {

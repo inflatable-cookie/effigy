@@ -35,6 +35,12 @@ pub use attachments::{
 };
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
+pub use workspace::{
+    attach_secondary, lookup, reserve, resume_owner, AdmissionKey, AdmissionTicket, Attachment,
+    AttachmentId, Chunk, Client, Gap, RecordedOutcome, Recovered, Release, RequestId, Reservation,
+    UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
+};
+mod workspace;
 pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 
@@ -365,16 +371,7 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(
-            cx,
-            root,
-            inv,
-            opts,
-            || Ok(cleanup.clone()),
-            adapter,
-            None,
-            None,
-        )
+        Self::begin_under(cx, root, inv, opts, || Ok(cleanup.clone()), adapter, None, None, None)
     }
 
     /// [`Run::begin`] with the cleanup window made once the gate is held.
@@ -391,7 +388,39 @@ impl<'a> Run<'a> {
         cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None)
+        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None, None)
+    }
+
+    /// Admit a run bound to a keyed workspace request (§8.11). The reservation,
+    /// the run row and the key's `admitted` state commit in one transaction, so
+    /// no reader ever sees a reservation for a run that was not admitted or a
+    /// run that no key names.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_admitted(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        ticket: AdmissionTicket,
+    ) -> Result<Self, RunError> {
+        if ticket.run() != opts.id {
+            return Err(RunError::broken(
+                "an admission ticket names a different run than the one it admits",
+            ));
+        }
+        Self::begin_under(
+            cx,
+            root,
+            inv,
+            opts,
+            || Ok(cleanup.clone()),
+            adapter,
+            None,
+            None,
+            Some(ticket),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -404,6 +433,7 @@ impl<'a> Run<'a> {
         adapter: &mut impl SettlementAdapter,
         parent: Option<RunId>,
         planned: Option<EffectSpec>,
+        admission: Option<AdmissionTicket>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
         if root.is_machine()
@@ -513,6 +543,9 @@ impl<'a> Run<'a> {
                 VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9)", params![opts.id.to_string(),
                 inv.spec().owner.name().to_string(), generation.get() as i64,
                 if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string())])?;
+            if let Some(ticket) = &admission {
+                workspace::bind(txn, ticket)?;
+            }
             if let Some(planned) = &planned {
                 let fence = Fence { resource: inv.spec().owner.clone(), generation };
                 journal::insert_effect(txn, opts.id, &socket::intent(fence.clone()))?;
