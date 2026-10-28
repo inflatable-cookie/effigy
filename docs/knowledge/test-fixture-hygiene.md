@@ -83,11 +83,11 @@ recorded state the suite now reads from the kernel directly.
 Fixtures live in the run's temporary directory: with `[scratch]` configured
 that is the run's directory under `<root>/effigy/` on the Builds drive, so
 nothing lands in `/tmp`, `/private/tmp` or `/Users/Shared`. `short_tempdir` and
-`Fixture::short_home` keep a path short enough for a Unix control socket by
-using the temp root, or its parent (the `effigy/` namespace inside the scratch
-root) when the root is too long; `SHORT_PATH_MAX` is the budget the gateway's
-socket needs. A harness whose temp root cannot bound a socket is named as such
-instead of falling back to the internal `/tmp`.
+`Fixture::short_home` keep a path below the Unix socket budget by using the
+temp root, then its nearest fitting `effigy/` ancestor when a nested selector
+adds path components. Outside that namespace only the immediate parent is
+considered; an unusable root is named instead of falling back to `/tmp` or the
+internal SSD.
 
 Shell harnesses follow the same rule through `${TMPDIR:-/tmp}` `mktemp`
 templates; `effigy qa:docs:mktemp` fails a bare `mktemp` or a `/tmp`-shaped

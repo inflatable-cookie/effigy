@@ -59,8 +59,9 @@ pub(super) fn state_home() -> Option<PathBuf> {
     {
         static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
         // Short: a detached run's control socket lives under this home, and
-        // a Unix socket path is bounded (SUN_LEN). `[scratch]` puts the temp
-        // directory on a short volume path; otherwise `/tmp` is used.
+        // a Unix socket path is bounded (SUN_LEN). `[scratch]` keeps the temp
+        // root on its volume; a nested run path uses a shorter `effigy/`
+        // ancestor for socket-backed fixture state.
         Some(
             TEST_HOME
                 .get_or_init(|| {
