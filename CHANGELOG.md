@@ -333,6 +333,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Auto-discovered `effigy.local.toml` now replaces conflicting committed manifest
+  leaves, with source and override details available in inspection.
+
 - A release's `receipt.json` now matches `effigy release receipt <run> --json`
   at every checkpoint. It used to be written only once, before the final
   `complete` status, so a completed Run's file read as unfinished. It is now

@@ -238,17 +238,15 @@ A solid template:
 
 ### 6. `.gitignore` the local file
 
-Add `effigy.local.toml` to `.gitignore`. Effigy auto-registers the
-pattern in Git's local `info/exclude` on first auto-discovery hit, so
-even forgotten manual edits stay untracked — but committing the rule
-in `.gitignore` is still best practice. Implicit registration never
-creates or amends `.gitignore`.
+Add `effigy.local.toml` to `.gitignore`; discovery does not modify Git ignore files.
 
 ## Composition Rules — How These Pieces Fit Together
 
 `effigy.local.toml` is auto-included **last**, so it always wins over
-committed layers. This is intentional: local overrides committed,
-not the other way around.
+committed layers. Conflicting leaves are replaced by the local value;
+inspection identifies the winning file and the replaced source. Explicitly
+including this file instead uses ordinary include and override rules, and
+prevents auto-discovery from including it a second time.
 
 `[manifest].extend = [...]` in `effigy.local.toml` makes the env
 fragment **append** onto array-valued paths instead of fully
