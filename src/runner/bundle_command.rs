@@ -39,8 +39,10 @@ pub(crate) fn is_task_local_session_invocation(task: &effigy_cli::TaskInvocation
 }
 
 /// Managed TUI companions (`mode = "tui"`) with first-argument status, logs
-/// or stop. They skip missing-pin acquisition. The overlay is read as TOML
-/// so a missing bundle pin is not cloned just to classify the task.
+/// or stop. They skip missing-pin acquisition. The selected task's own
+/// overlay is read as TOML so a missing bundle pin is not cloned just to
+/// classify it; a prefixed catalog name uses that catalog's overlay, not
+/// the root leaf of the same name.
 pub(crate) fn is_managed_tui_session_invocation(
     task: &effigy_cli::TaskInvocation,
     manifest_path: &Path,
@@ -50,12 +52,26 @@ pub(crate) fn is_managed_tui_session_invocation(
 }
 
 fn declared_task_mode(manifest_path: &Path, task_name: &str) -> Option<String> {
-    let name = task_name.rsplit('/').next().unwrap_or(task_name);
-    manifest_path
-        .parent()
-        .map(|parent| parent.join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE))
-        .and_then(|overlay| task_mode_from_toml_file(&overlay, name))
-        .or_else(|| task_mode_from_toml_file(manifest_path, name))
+    let parent = manifest_path.parent()?;
+    let (catalog_root, leaf) = match task_name.split_once('/') {
+        Some((alias, leaf)) => (catalog_member_dir(parent, manifest_path, alias)?, leaf),
+        None => (parent.to_path_buf(), task_name),
+    };
+    let overlay = catalog_root.join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE);
+    task_mode_from_toml_file(&overlay, leaf)
+        .or_else(|| task_mode_from_toml_file(&catalog_root.join(TASK_MANIFEST_FILE), leaf))
+}
+
+/// Membership is the committed root `[catalog.members]` table, not an overlay.
+/// A handle that is missing or whose directory is not here fails closed.
+fn catalog_member_dir(root: &Path, manifest_path: &Path, alias: &str) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(manifest_path).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    let relative = value.get("catalog")?.get("members")?.get(alias)?.as_str()?;
+    if relative.trim().is_empty() {
+        return None;
+    }
+    Some(root.join(relative))
 }
 
 fn task_mode_from_toml_file(path: &Path, name: &str) -> Option<String> {
@@ -508,9 +524,16 @@ mod tests {
         let manifest = directory.path().join("effigy.toml");
         std::fs::write(
             &manifest,
-            "[tasks.dev]\nmode = \"tui\"\n\n[tasks.need]\nrun = \"sh -c 'cat book/README'\"\n\n[tasks.serve]\nrun = \"echo serve\"\n",
+            "[catalog.members]\napi = \"api\"\n\n[tasks.dev]\nmode = \"tui\"\n\n[tasks.need]\nrun = \"sh -c 'cat book/README'\"\n\n[tasks.serve]\nrun = \"echo serve\"\n",
         )
         .expect("write overlay");
+        let api = directory.path().join("api");
+        std::fs::create_dir(&api).expect("api catalog");
+        std::fs::write(
+            api.join("effigy.toml"),
+            "[catalog]\nalias = \"api\"\n\n[tasks.dev]\nrun = \"echo api-dev-ran\"\n",
+        )
+        .expect("write member catalog");
 
         let status = TaskInvocation {
             name: "dev".to_owned(),
@@ -546,6 +569,31 @@ mod tests {
             .join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE);
         std::fs::write(&overlay, "[tasks.serve]\nmode = \"tui\"\n").expect("write local overlay");
         assert!(is_managed_tui_session_invocation(&serve_status, &manifest));
+
+        let api_status = TaskInvocation {
+            name: "api/dev".to_owned(),
+            args: vec!["status".to_owned()],
+        };
+        assert!(is_task_local_session_invocation(&api_status));
+        assert!(
+            !is_managed_tui_session_invocation(&api_status, &manifest),
+            "a prefixed non-tui catalog task does not inherit the root leaf's tui mode"
+        );
+        let joined_api = TaskInvocation {
+            name: "api/dev".to_owned(),
+            args: effigy_core::task_args::join_task_args(Vec::new(), vec!["status".to_owned()]),
+        };
+        assert!(!is_managed_tui_session_invocation(&joined_api, &manifest));
+
+        std::fs::write(
+            api.join(effigy_core::repo_markers::LOCAL_OVERLAY_FILE),
+            "[tasks.dev]\nmode = \"tui\"\n",
+        )
+        .expect("write member overlay");
+        assert!(
+            is_managed_tui_session_invocation(&api_status, &manifest),
+            "the selected catalog's own tui overlay skips the missing pin"
+        );
     }
 
     #[test]

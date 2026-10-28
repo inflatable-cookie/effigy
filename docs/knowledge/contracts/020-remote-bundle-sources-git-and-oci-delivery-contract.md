@@ -182,8 +182,9 @@ checkout lock still selects every source.
 bundle inspection and Observe graph paths never refresh a pin, run a remote
 check, or register Git excludes. `--plan`, `--help` and `effigy tasks` still
 apply rule 1: a pin this checkout does not hold yet is acquired, so the first
-command an agent runs in a fresh worktree works. Task-local `status`, `logs`
-and `stop` never apply rule 1. When a source is behind, the read
+command an agent runs in a fresh worktree works. Managed (`mode = "tui"`)
+task-local `status`, `logs` and `stop` never apply rule 1. A task whose first
+argument happens to be those words still acquires. When a source is behind, the read
 notice names the locked and the available revision and says that the next
 `effigy dev` or `effigy container up` will update it. Static help and version
 remain available while source preparation is unavailable.

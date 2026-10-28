@@ -955,9 +955,16 @@ fn task_local_status_logs_and_stop_do_not_acquire_a_missing_pin() {
     fs::write(
         fixture.repo.join("effigy.toml"),
         format!(
-            "[sources.book]\ngit = \"file://{git}\"\nrev = \"{rev}\"\npath = \"book\"\n\n[tasks.dev]\nmode = \"tui\"\nconcurrent = [\n  {{ name = \"api\", run = \"true\", start = 1 }}\n]\n\n[tasks.need]\nrun = \"sh -c 'cat book/README'\"\n\n[tasks.hello]\nrun = \"echo hello local\"\n",
+            "[catalog.members]\napi = \"api\"\n\n[sources.book]\ngit = \"file://{git}\"\nrev = \"{rev}\"\npath = \"book\"\n\n[tasks.dev]\nmode = \"tui\"\nconcurrent = [\n  {{ name = \"api\", run = \"true\", start = 1 }}\n]\n\n[tasks.need]\nrun = \"sh -c 'cat book/README'\"\n\n[tasks.hello]\nrun = \"echo hello local\"\n",
             git = source.display(),
         ),
+    )
+    .unwrap();
+    let api = fixture.repo.join("api");
+    fs::create_dir(&api).unwrap();
+    fs::write(
+        api.join("effigy.toml"),
+        "[catalog]\nalias = \"api\"\n\n[tasks.dev]\nrun = \"echo api-dev-ran\"\n",
     )
     .unwrap();
 
@@ -1022,6 +1029,29 @@ fn task_local_status_logs_and_stop_do_not_acquire_a_missing_pin() {
         }
     }
 
+    let (ok, output) = fixture.run(
+        &["api/dev", "status"],
+        &[("PATH", path)],
+        Duration::from_secs(20),
+    );
+    assert!(
+        fixture.home.join("remote-called").exists(),
+        "a prefixed non-tui catalog task whose leaf shares a tui name still acquires: {output}"
+    );
+    assert!(
+        !ok,
+        "blocked clone must fail the prefixed non-tui run: {output}"
+    );
+    assert!(
+        !output.contains("api-dev-ran"),
+        "prefixed non-tui status must not skip the pin: {output}"
+    );
+    assert!(
+        !fixture.repo.join("book").exists(),
+        "blocked clone must not materialize the pin: {output}"
+    );
+    fs::remove_file(fixture.home.join("remote-called")).ok();
+
     let (ok, output) = fixture.run(&["need", "status"], &[], Duration::from_secs(30));
     assert!(
         ok,
@@ -1032,6 +1062,13 @@ fn task_local_status_logs_and_stop_do_not_acquire_a_missing_pin() {
         fixture.repo.join("book").is_dir(),
         "the missing pin is acquired for a real run whose first argument is status: {output}"
     );
+
+    let (ok, output) = fixture.run(&["api/dev", "status"], &[], Duration::from_secs(30));
+    assert!(
+        ok,
+        "a prefixed non-tui catalog task whose first argument is status still runs: {output}"
+    );
+    assert!(output.contains("api-dev-ran"), "{output}");
 
     let (ok, output) = fixture.run(&["hello"], &[], Duration::from_secs(30));
     assert!(ok, "a real task run still acquires: {output}");
