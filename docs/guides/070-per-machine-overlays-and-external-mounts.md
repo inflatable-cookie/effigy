@@ -92,8 +92,10 @@ domains = [
 domain_defaults = { tls = true, service = "<env-name>-tunnel" }
 
 # Concurrent process that brings the integration up alongside the
-# main dev task.
-[tasks.dev.profiles.default.concurrent.<env-name>-tunnel]
+# main dev task. `concurrent` is an array, so each entry is an array item
+# (named via `name`); a `[tasks...concurrent.<name>]` subtable does not parse.
+[[tasks.dev.profiles.default.concurrent]]
+name = "<env-name>-tunnel"
 run = """
 autossh -M 0 -N \
   -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
@@ -281,8 +283,8 @@ file-source attribution. After enabling an overlay, expect to see:
 
 - `containers.web.dns.routes` containing the env's domains, sourced
   from `envs/<env-name>/effigy.env.toml`.
-- `tasks.dev.profiles.default.concurrent.<env-name>-tunnel` sourced
-  from the same file.
+- the `<env-name>-tunnel` entry under
+  `tasks.dev.profiles.default.concurrent`, sourced from the same file.
 - A non-empty `include_graph` whose terminal edge is the local
   overlay.
 
