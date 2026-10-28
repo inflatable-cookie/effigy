@@ -743,8 +743,22 @@ fn cli_json_mode_deploy_execution_refuses_with_nonzero_exit() {
             );
             assert_eq!(parsed["error"]["details"]["reason"], "not_supported");
             assert_eq!(parsed["error"]["details"]["operation"], operation);
+            // The refusal's next step reaches `error.human` and names a command
+            // this checkout parses.
+            let next = parsed["error"]["human"]["next_action"]
+                .as_str()
+                .expect("deploy refusal names its next action");
+            assert!(next.contains("`effigy deploy model --json`"), "{next}");
+            assert_eq!(parsed["error"]["details"]["next_action"], next);
         }
     }
+    // The suggested route is real in this checkout: its help parses.
+    let help = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["deploy", "model", "--help"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run deploy model help");
+    assert!(help.status.success(), "{help:?}");
     assert!(!root.join(".effigy/reports/deploy").exists());
     assert!(!root.join(".effigy/runtime/deploy").exists());
 }

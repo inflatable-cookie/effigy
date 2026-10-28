@@ -1014,7 +1014,7 @@ fn cli_catalog_task_json_mode_renders_captured_output_payload() {
 
 #[test]
 fn cli_catalog_task_json_mode_failure_emits_json_and_non_zero_exit() {
-    let (_root, output, parsed) = run_json_cli_command_with_manifest(
+    let (root, output, parsed) = run_json_cli_command_with_manifest(
         "cli-json-task-failure",
         "[tasks.fail]\nrun = \"sh -lc 'printf fail-out; exit 7'\"\n",
         &["fail"],
@@ -1030,6 +1030,22 @@ fn cli_catalog_task_json_mode_failure_emits_json_and_non_zero_exit() {
     assert_eq!(parsed["error"]["details"]["task"], "fail");
     assert_eq!(parsed["error"]["details"]["exit_code"], 7);
     assert_eq!(parsed["error"]["details"]["stdout"], "fail-out");
+    // The same next step the text form prints. `parse_stdout_json` already
+    // proves stdout is one JSON envelope.
+    assert_eq!(
+        parsed["error"]["human"]["next_action"],
+        "read the output above, fix the cause, then run the command again"
+    );
+    assert_eq!(
+        parsed["error"]["human"]["what_failed"],
+        "task `fail` failed"
+    );
+    let text = run_cli_command(&root, &["fail"]);
+    let stderr = String::from_utf8(text.stderr).expect("utf8 stderr");
+    assert!(
+        stderr.contains("next: read the output above, fix the cause, then run the command again"),
+        "{stderr}"
+    );
 }
 
 #[test]

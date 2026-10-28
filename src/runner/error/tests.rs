@@ -525,12 +525,26 @@ fn task_run_details_name_the_task_and_the_failing_output() {
             "stdout: building widget"
         ]
     );
+    // The JSON next action is the text form's own next line, not a second wording.
+    let text_next = RunnerError::TaskCommandFailure {
+        command: "exit 3".to_owned(),
+        code: Some(3),
+        stdout: String::new(),
+        stderr: String::new(),
+    }
+    .human_error();
+    assert_eq!(human.next_action_text(), text_next.next_action_text());
+    assert!(human.next_action_text().is_some());
     let rendered = human.render_text();
     assert!(
         rendered.starts_with("[error] task `fail` failed"),
         "{rendered}"
     );
     assert!(rendered.contains("exit_code: 3"), "{rendered}");
+    assert!(
+        rendered.contains("\n  next: read the output above"),
+        "{rendered}"
+    );
     assert!(
         rendered.contains("stderr: error: widget is undefined"),
         "{rendered}"

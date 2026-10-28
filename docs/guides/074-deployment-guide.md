@@ -232,8 +232,10 @@ ran. The unsupported commands leave these files untouched:
 The existing `effigy.command.v1` envelope has `ok: false` and a nonzero process
 exit for both unsupported commands. `error.details` uses
 `effigy.deploy.apply.v1` (schema version 1) with `ok: false`, `status: "blocked"`,
-`reason: "not_supported"`, `operation` (`apply` or `redeploy`), `env`, `message`
-and `blockers`. There is no deployment id or execution receipt because no run
+`reason: "not_supported"`, `operation` (`apply` or `redeploy`), `env`, `message`,
+`blockers` and `next_action` (the runnable command to use instead). The same
+next action is `error.human.next_action` in the envelope and the `next:` line
+in text output. There is no deployment id or execution receipt because no run
 started. The reason is stable across environments, output modes and `--yes`.
 
 Other report schemas remain `deploy.model.v1`, `effigy.deploy.export.v1`,

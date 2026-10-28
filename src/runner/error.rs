@@ -375,7 +375,16 @@ impl RunnerError {
                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
                 .filter(|details| details.is_object())
             {
-                Some(details) => human_error_from_details(&self.to_string(), &details),
+                Some(details) => {
+                    let human = human_error_from_details(&self.to_string(), &details);
+                    // A failed task run's payload names no next step; its text
+                    // form does. Both carry the same one (failed task commands).
+                    if details["schema"] == "effigy.task.run.v1" {
+                        human.next_action(TASK_COMMAND_FAILURE_NEXT)
+                    } else {
+                        human
+                    }
+                }
                 None => human_error_from_display(&self.to_string()),
             },
         }
@@ -554,8 +563,13 @@ pub(in crate::runner) fn task_command_failure_human(
     if !stdout.trim().is_empty() {
         error = error.evidence_output("stdout", stdout);
     }
-    error.next_action("read the output above, fix the cause, then run the command again")
+    error.next_action(TASK_COMMAND_FAILURE_NEXT)
 }
+
+/// The next step for a failed task command. The text `next:` line and the
+/// `--json` `error.human.next_action` both take it from here.
+pub(in crate::runner) const TASK_COMMAND_FAILURE_NEXT: &str =
+    "read the output above, fix the cause, then run the command again";
 
 /// A wrapper's sentence around a child failure: what the wrapper was doing,
 /// the child's own failure as evidence, and the next action. Sections stay on
