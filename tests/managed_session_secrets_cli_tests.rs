@@ -59,8 +59,8 @@ fn a_managed_session_prompts_once_before_it_renders_and_keeps_the_access_off_the
     // secret through the session's access, so the workload received the value
     // without the session asking a second time.
     session.wait_for("workload saw");
-    let argv = fs::read_to_string(fixture.root.join("workload-argv"))
-        .expect("workload argv receipt");
+    let argv =
+        fs::read_to_string(fixture.root.join("workload-argv")).expect("workload argv receipt");
     assert!(
         !argv.contains(SECRET_VALUE),
         "the task secret reached the host workload's argv"
