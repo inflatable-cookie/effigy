@@ -562,6 +562,152 @@ fn release_run_writes_a_receipt_and_pushes_the_candidate_tag() {
     assert_eq!(receipt["result"]["candidate"]["commit"], candidate.as_str());
 }
 
+/// The parsed on-disk `receipt.json` of a Run.
+fn receipt_file(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("read receipt file"))
+        .expect("parse receipt file")
+}
+
+/// The parsed payload `effigy release receipt <run> --json` prints.
+fn release_receipt_payload(root: &Path, home: &Path, run: &str) -> Value {
+    let output = run_release_cli(root, home, &["release", "receipt", run]);
+    let parsed = parse_stdout_json(&output);
+    assert!(
+        output.status.success(),
+        "release receipt {run} failed: {parsed}"
+    );
+    parsed["result"].clone()
+}
+
+/// The parsed `release status` payload, whether it arrived as a result or as
+/// the error detail a blocked next release reports through.
+fn release_status_payload(root: &Path, home: &Path) -> Value {
+    let output = run_release_cli(root, home, &["release", "status"]);
+    let parsed = parse_stdout_json(&output);
+    if parsed["result"].is_null() {
+        parsed["error"]["details"].clone()
+    } else {
+        parsed["result"].clone()
+    }
+}
+
+/// Hand the completed record to an invocation that never reaches settlement,
+/// exactly as a process that stops after the final durable checkpoint leaves
+/// it. Returns the release's id.
+fn interrupted_after_closeout(root: &Path, home: &Path, receipt_path: &Path) -> String {
+    let record_path = receipt_path.with_file_name("record.json");
+    let mut record: effigy_release::ReleaseRecord =
+        serde_json::from_slice(&fs::read(&record_path).expect("read record file"))
+            .expect("parse record file");
+    let session = effigy_release::ReleaseSession::open(home, root).expect("release session");
+    let state = session.state().expect("release state");
+    let id = effigy_release::new_run_id().expect("release run id");
+    let mut adapter = effigy_release::ReportsOnly;
+    let mut run = session.begin(id, &mut adapter).expect("begin release run");
+    record.run_id = id.to_string();
+    state.write_record(&record, &mut run).expect("write record");
+    state
+        .write_receipt(&record, &mut run)
+        .expect("write receipt");
+    run.set_engine_record(
+        &serde_json::to_value(record.checkpoint(&state.record_path)).expect("checkpoint json"),
+    )
+    .expect("set checkpoint pointer");
+    drop(run);
+    record.release_id
+}
+
+/// The brief's required proof: the real CLI's `release receipt <run> --json`
+/// parses exactly equal to the on-disk `receipt.json`, including the final
+/// stage status and every checkpoint, and stays equal while settlement is
+/// pending because interruption is a `release status` observation, never a
+/// rewrite of the recorded stage outcome.
+#[test]
+fn release_receipt_command_matches_the_receipt_file() {
+    let root = temp_workspace("release-receipt-command");
+    writable_release_project(&root);
+    init_git_repo(&root);
+    git_commit_all(&root, "fixture");
+    attach_bare_remote(&root);
+    let home = temp_workspace("release-receipt-command-home");
+
+    let output = run_release_cli(&root, &home, &["release", "run"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(
+        output.status.success(),
+        "release run failed: {}",
+        serde_json::to_string_pretty(&parsed).expect("serialize")
+    );
+    let result = &parsed["result"];
+    let receipt_path = PathBuf::from(result["receipt_path"].as_str().expect("receipt path"));
+    let release_id = result["receipt"]["release"]["id"]
+        .as_str()
+        .expect("release id")
+        .to_owned();
+
+    // A completed closeout: the command and the file agree on the final stage
+    // status and all seven checkpoints.
+    let complete = release_receipt_payload(&root, &home, &release_id);
+    assert_eq!(
+        receipt_file(&receipt_path),
+        complete,
+        "receipt.json must equal `release receipt {release_id} --json`"
+    );
+    assert_eq!(complete["release"]["status"], "complete");
+    let stages = complete["checkpoints"]
+        .as_array()
+        .expect("checkpoints")
+        .iter()
+        .map(|checkpoint| checkpoint["stage"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stages,
+        [
+            "validate",
+            "pre-gates",
+            "prepare",
+            "certify",
+            "publish",
+            "verify",
+            "closeout"
+        ]
+    );
+
+    // Interruption after the final durable checkpoint. The record and its
+    // receipt already hold the completed stage outcome; only the journal is
+    // unsettled, so `release status` reports the settlement and the bounded
+    // action while both receipt surfaces stay complete.
+    assert_eq!(
+        interrupted_after_closeout(&root, &home, &receipt_path),
+        release_id
+    );
+    let status = release_status_payload(&root, &home);
+    assert_eq!(status["run"]["status"], "complete");
+    assert_eq!(status["run"]["settlement"], "pending", "{status}");
+    assert_eq!(status["run"]["active"], true, "{status}");
+
+    let pending = release_receipt_payload(&root, &home, &release_id);
+    assert_eq!(pending["release"]["status"], "complete");
+    assert_eq!(pending["checkpoints"].as_array().map(Vec::len), Some(7));
+    assert_eq!(
+        receipt_file(&receipt_path),
+        pending,
+        "an unsettled invocation must not rewrite either receipt surface"
+    );
+
+    // `release settle <run>` settles the journal only: the receipt file is
+    // byte-identical and the settlement observation is gone.
+    let settled = run_release_cli(&root, &home, &["release", "settle", &release_id]);
+    assert!(
+        settled.status.success(),
+        "release settle failed: {}",
+        parse_stdout_json(&settled)
+    );
+    assert_eq!(receipt_file(&receipt_path), pending);
+    let status = release_status_payload(&root, &home);
+    assert!(status["run"]["settlement"].is_null(), "{status}");
+}
+
 #[test]
 fn release_run_refuses_a_dirty_tree_and_names_the_run_for_an_unknown_id() {
     let root = temp_workspace("release-run-dirty");

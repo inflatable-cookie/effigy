@@ -135,7 +135,19 @@ Current built-in release commands:
     records who decided and when
 - `effigy release receipt [<run>] [--json]`
   - print the receipt: inputs, checkpoints, gate results, artifact digests,
-    approvals, decisions, destination IDs and verification results
+    approvals, decisions, destination IDs and verification results. This is the
+    authoritative view of the last durable release Run. The receipt shows the
+    recorded stage outcome: `complete` means every stage finished, not that
+    cleanup settled
+  - `receipt.json` in the state directory is the same receipt, kept current at
+    each checkpoint. Check `effigy release status` for settlement: a
+    `Settlement: pending` or `incomplete` line means run
+    `effigy release settle <run>`. After a crash, `receipt.json` can lag the
+    record until the next `release run`, `resume`, `approve` or `decide` reopens
+    the Run; `release receipt` always reads the record
+  - a release whose journal or record cannot be read, including a journal that
+    has gone missing while its record remains, is reported with its error. It
+    never reads as "no release Run"
 
 Retired in v0.15 (contract 054 §5 and §4.4), each refusing with the
 replacement above:

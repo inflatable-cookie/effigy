@@ -153,7 +153,8 @@ pub use input::{
 pub use kernel::{
     new_run_id, release_home, release_owner, ReleaseSession, ReleaseState, ReportsOnly,
 };
-pub use kernel::{read_release_record, read_release_record_for_root};
+pub use kernel::{read_release_observation_for_root, read_release_record, ReleaseSettlement};
+
 pub use receipt::{
     render_release_receipt_json, render_release_receipt_text, render_release_run_json,
     ReleaseReceipt,
@@ -274,6 +275,38 @@ pub fn run_release_with_observer(
     )
 }
 
+/// The receipt `effigy release receipt [<run>]` prints: the last Run of this
+/// checkout, or the named one (contract 054 §5). The CLI and the receipt file
+/// proofs both render through this function.
+pub fn release_receipt_for_run(
+    home: &Path,
+    repo_root: &Path,
+    run: Option<&str>,
+) -> Result<ReleaseReceipt, ReleaseError> {
+    let record = read_release_record(home, repo_root)?.ok_or_else(|| {
+        ReleaseError::TaskInvocation(format!(
+            "there is no release Run for {}; `effigy release run` starts one",
+            repo_root.display()
+        ))
+    })?;
+    if let Some(run) = run {
+        let run = run.trim();
+        if run != record.release_id && run != record.run_id {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "`{run}` is not this checkout's release Run; the last release Run is {} (stage `{}`, status `{}`)",
+                record.release_id,
+                if record.stage.is_empty() {
+                    "validate"
+                } else {
+                    &record.stage
+                },
+                record.status.label()
+            )));
+        }
+    }
+    Ok(ReleaseReceipt::from_record(&record))
+}
+
 fn run_release_with_budget(
     request: &ReleaseRunRequest,
     effects: &mut dyn ReleaseEffects,
@@ -293,9 +326,12 @@ fn run_release_with_budget(
     let prepared = (|| {
         let plan = plan_release_pipeline(&request.repo_root)?;
         let checkpoint = session.read_checkpoint()?;
-        let mut existing = state.read_record()?;
-        if let Some(record) = &mut existing {
-            session.project_record(record)?;
+        let existing = state.read_record()?;
+        // A crash between the record and receipt writes leaves receipt.json one
+        // checkpoint behind. Opening the Run rewrites it from the record, so the
+        // file catches up before any stage runs.
+        if let Some(record) = &existing {
+            state.write_receipt(record, &mut run)?;
         }
         let continuation = continue_record(
             request,
@@ -385,8 +421,8 @@ fn run_release_with_budget(
         Ok(()) => WorkloadOutcome::Succeeded,
         Err(_) => WorkloadOutcome::Failed { code: 1 },
     };
-    let mut record = runner.record.clone();
-    let messages = runner.messages.clone();
+    let record = runner.record.clone();
+    let mut messages = runner.messages.clone();
     drop(runner);
 
     run.finish(workload).map_err(|error| {
@@ -402,12 +438,13 @@ fn run_release_with_budget(
             match &staged { Ok(()) => "succeeded".to_owned(), Err(stage_error) => format!("failed: {stage_error}") }, record.release_id
         ))
         })?;
+    // Settlement is not a stage outcome: the receipt keeps the recorded stage
+    // status, and `release status` reports the pending cleanup (contract 054 §12).
     if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
-        record.errors.push(format!(
-            "release stage outcome: {}; settlement incomplete for Run {}; `effigy release settle {}` retries cleanup",
-            match &staged { Ok(()) => "succeeded".to_owned(), Err(error) => format!("failed: {error}") }, record.run_id, record.release_id
+        messages.push(format!(
+            "release Run {} settlement is incomplete; `effigy release settle {}` retries cleanup",
+            record.run_id, record.release_id
         ));
-        record.status = ReleaseRunStatus::Failed;
     }
 
     Ok(ReleaseRunOutcome {
@@ -757,10 +794,13 @@ impl<'a, 's> Runner<'a, 's> {
         });
     }
 
-    /// Write the record and its kernel checkpoint pointer.
+    /// Write the record, its receipt rendering and the kernel checkpoint
+    /// pointer. The receipt goes with every record write, so the file on disk
+    /// is never behind the record that `release receipt` reads.
     fn persist(&mut self) -> Result<(), ReleaseError> {
         self.record.updated_at = now();
         self.state.write_record(self.record, self.run)?;
+        self.state.write_receipt(self.record, self.run)?;
         let checkpoint = self.record.checkpoint(&self.state.record_path);
         let value = serde_json::to_value(&checkpoint).map_err(|error| {
             ReleaseError::TaskInvocation(format!(
@@ -1705,22 +1745,9 @@ impl<'a, 's> Runner<'a, 's> {
                 }
             }
         }
-        self.persist()?;
-        self.write_receipt()
-    }
-
-    fn write_receipt(&mut self) -> Result<(), ReleaseError> {
-        let receipt = ReleaseReceipt::from_record(self.record);
-        let bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| {
-            ReleaseError::TaskInvocation(format!("failed to encode the release receipt: {error}"))
-        })?;
-        let path = self.state.record_path.with_file_name(RELEASE_RECEIPT_FILE);
-        std::fs::write(&path, bytes).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to write the release receipt {}: {error}",
-                path.display()
-            ))
-        })
+        // The runner persists the closeout checkpoint and the Complete status
+        // after this returns, and that write carries the final receipt.
+        self.persist()
     }
 
     fn intend_irreversible(

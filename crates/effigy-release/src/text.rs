@@ -216,6 +216,16 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
             _ => "none".to_owned(),
         }
     ));
+    if let (Some(id), Some(settlement)) = (&status.run.id, &status.run.settlement) {
+        let action = if settlement == "pending" {
+            "settles it without advancing stages"
+        } else {
+            "retries cleanup"
+        };
+        lines.push(format!(
+            "  Settlement: {settlement}; `effigy release settle {id}` {action}"
+        ));
+    }
     append_pipeline_lines(&mut lines, &status.plan);
 
     append_blockers_and_diagnostics(&mut lines, &status.blockers, &status.changelog_diagnostics);
