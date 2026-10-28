@@ -469,18 +469,20 @@ Rules for the simplification work:
 - A task removes a mechanism and installs its simpler replacement.
 - No new state files, records or refusal variants without a stated reason.
 - Net lines go down.
-- The planner proves each merge live on real consumer stacks (Acowtancy hybrid, inventors, a basic Effigy run, plus reboot, crash and restart, an interrupted `up`, a manifest edit and a deleted worktree) before installing it.
+- The planner proves the final candidate live on real consumer stacks (Acowtancy hybrid, inventors, a basic Effigy run, plus reboot, crash and restart, an interrupted `up`, a manifest edit and a deleted worktree) before claiming release qualification. Tom approved separately cleared intermediate local installs on 2026-10-28 so he can test workflows early; those installations are exploratory evidence and do not waive the final candidate proofs.
 
 The effect journal around Compose apply stays deferred only if the exact
 candidate's live interrupted-`up` proof passes without manual repair. A failure
 reopens that mechanism before v0.15 release. Shared-service named-volume
 continuity is a separate pre-release proof on Acow's existing MariaDB during
 its authorized install window, with `shared-replace-proof.sh`; a matching
-project-name hash alone does not prove the data survived. The installed gateway
-must also run through a normal working day with stop attribution: every stop
-needs an explained cause before release gates run. A recurring unexplained
-stop gets a diagnosis task and only an evidence-scoped reopening of the parked
-private-gateway-fixture lifecycle.
+project-name hash alone does not prove the data survived. Tom amended the
+installed-gateway observation gate on 2026-10-28: run a few hours of workflow
+checks across the three Underlay bundles and consumers on the installed
+candidate, with the machine gateway up and unrestarted. Run deliberate
+reboot/crash journeys before this observation period. Every stop needs an
+explained cause before release gates run; an unexplained stop blocks release
+and gets a diagnosis task scoped to the evidence.
 ## Q-012: Second audit scope before v0.15 qualification
 
 Status: answered
