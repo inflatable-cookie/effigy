@@ -568,12 +568,15 @@ fn normalize_additional_context(context: &mut serde_yaml::Value, compose_dir: &P
 }
 
 /// Mapping-form `additional_contexts: { name: path }`: the value is the
-/// context itself, not a `name=path` string. Remote and already-absolute
-/// values stay as written, same as sequence form.
+/// context itself, not a `name=path` string. Remote, already-absolute, and
+/// `service:<name>` named-context values stay as written.
 fn normalize_mapping_additional_context(context: &mut serde_yaml::Value, compose_dir: &Path) {
     let serde_yaml::Value::String(path) = context else {
         return;
     };
+    if looks_like_named_build_context(path) {
+        return;
+    }
     if let Some(normalized) = normalize_compose_relative_path(path, compose_dir) {
         *path = normalized;
     }
@@ -677,4 +680,8 @@ fn render_compose_relative_path(path: &str, compose_dir: &Path) -> String {
 
 fn looks_like_remote_build_context(path: &str) -> bool {
     path.contains("://") || path.starts_with("git@")
+}
+
+fn looks_like_named_build_context(path: &str) -> bool {
+    path.starts_with("service:")
 }

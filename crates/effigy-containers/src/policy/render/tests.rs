@@ -564,6 +564,7 @@ fn mapping_and_sequence_additional_contexts_resolve_against_the_checkout() {
         src: ../frontend
         image: docker-image://example/base:latest
         abs: /already/absolute
+        from: service:app
   sequence:
     build:
       additional_contexts:
@@ -612,6 +613,11 @@ fn mapping_and_sequence_additional_contexts_resolve_against_the_checkout() {
             override_document["services"]["sequence"]["build"]["additional_contexts"][2],
             serde_yaml::Value::String("abs=/already/absolute".to_owned()),
             "an already-absolute sequence-form context stays as written"
+        );
+        assert_eq!(
+            override_document["services"]["mapping"]["build"]["additional_contexts"]["from"],
+            serde_yaml::Value::String("service:app".to_owned()),
+            "a mapping-form service: named context stays as written"
         );
         let _ = fixture;
     });
