@@ -1036,6 +1036,8 @@ fn bun_unlink_path_is_missing(path: &Path) -> bool {
 mod tests {
     use std::cell::RefCell;
     use std::fs;
+    #[cfg(unix)]
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::process::Command;
 
     #[cfg(unix)]
@@ -1640,6 +1642,23 @@ mod tests {
             .collect()
     }
 
+    #[cfg(unix)]
+    struct CliOwnedBunLink {
+        repo: PathBuf,
+        library: PathBuf,
+        home: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl Drop for CliOwnedBunLink {
+        fn drop(&mut self) {
+            let _ = run_deps_with_home(
+                bun_unlink_args(self.repo.clone(), self.library.clone()),
+                &self.home,
+            );
+        }
+    }
+
     #[test]
     fn bun_unlink_cli_accepts_a_missing_repo_that_cargo_unlink_still_rejects() {
         let parent = TempDir::new().unwrap();
@@ -1769,14 +1788,14 @@ mod tests {
     #[test]
     fn bun_unlink_cli_completion_retires_only_the_named_consumer_registration() {
         let fixture = shared_bun_unlink_fixture();
-        let rendered = run_deps_with_home(
-            bun_unlink_args(fixture.first_root.clone(), fixture.library_root.clone()),
-            fixture.home.path(),
-        )
-        .unwrap();
-        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        {
+            let _owner = CliOwnedBunLink {
+                repo: fixture.first_root.clone(),
+                library: fixture.library_root.clone(),
+                home: fixture.home.path().to_path_buf(),
+            };
+        }
 
-        assert_eq!(json["report"]["outcome"], "unlinked");
         assert_eq!(
             remaining_bun_consumers(fixture.home.path()),
             vec![fixture.second_root.clone()]
@@ -1810,16 +1829,20 @@ mod tests {
     fn bun_unlink_cli_interrupt_retires_only_the_named_gone_consumer_registration() {
         let fixture = shared_bun_unlink_fixture();
         let missing = fixture.first_root.clone();
-        fs::remove_dir_all(&missing).unwrap();
+        let library = fixture.library_root.clone();
+        let home = fixture.home.path().to_path_buf();
 
-        let rendered = run_deps_with_home(
-            bun_unlink_args(missing, fixture.library_root.clone()),
-            fixture.home.path(),
-        )
-        .unwrap();
-        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let interrupted = catch_unwind(AssertUnwindSafe(|| {
+            let _owner = CliOwnedBunLink {
+                repo: missing.clone(),
+                library: library.clone(),
+                home: home.clone(),
+            };
+            fs::remove_dir_all(&missing).unwrap();
+            panic!("interrupted");
+        }));
+        assert!(interrupted.is_err());
 
-        assert_eq!(json["report"]["outcome"], "unlinked");
         assert_eq!(
             remaining_bun_consumers(fixture.home.path()),
             vec![fixture.second_root.clone()]
@@ -1839,6 +1862,68 @@ mod tests {
         assert_eq!(
             fs::canonicalize(bun_registration_path(fixture.home.path(), "underlay")).unwrap(),
             fixture.library_root
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bun_unlink_cli_gone_checkout_releases_nested_bun_root_registration() {
+        use std::os::unix::fs::symlink;
+
+        let checkout = repo();
+        let second = repo();
+        let library = TempDir::new().unwrap();
+        write(
+            &library.path().join("package.json"),
+            "{\"name\":\"underlay\",\"version\":\"0.1.0\"}\n",
+        );
+        let home = TempDir::new().unwrap();
+        let checkout_root = fs::canonicalize(checkout.path()).unwrap();
+        let studio = checkout_root.join("studio");
+        fs::create_dir_all(&studio).unwrap();
+        let studio = fs::canonicalize(&studio).unwrap();
+        let second_root = fs::canonicalize(second.path()).unwrap();
+        let library_root = fs::canonicalize(library.path()).unwrap();
+        BunRegistrationIndexStore::for_home(home.path())
+            .update(|index| {
+                index.add_reference(
+                    "underlay",
+                    library_root.clone(),
+                    true,
+                    BunConsumerReference {
+                        consumer_repo: studio,
+                        library_path: library_root.clone(),
+                    },
+                )?;
+                index.add_reference(
+                    "underlay",
+                    library_root.clone(),
+                    true,
+                    BunConsumerReference {
+                        consumer_repo: second_root.clone(),
+                        library_path: library_root.clone(),
+                    },
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let registration = bun_registration_path(home.path(), "underlay");
+        fs::create_dir_all(registration.parent().unwrap()).unwrap();
+        symlink(&library_root, &registration).unwrap();
+        fs::remove_dir_all(&checkout_root).unwrap();
+
+        let rendered = run_deps_with_home(
+            bun_unlink_args(checkout_root, library_root.clone()),
+            home.path(),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(json["report"]["outcome"], "unlinked");
+        assert_eq!(remaining_bun_consumers(home.path()), vec![second_root]);
+        assert_eq!(
+            fs::canonicalize(bun_registration_path(home.path(), "underlay")).unwrap(),
+            library_root
         );
     }
 

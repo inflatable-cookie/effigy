@@ -399,8 +399,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.contracts.check-json.v1`, and stops before any indexed command.
 - Bun `deps unlink` now retires only the named consumer's registration-index
   references when that checkout is already gone, instead of no-op'ing and
-  leaving the worktree claim behind. Name the gone consumer with `--repo`;
-  completion and interrupt both go through that exact-identity unlink.
+  leaving the worktree claim behind. `--repo` names the gone checkout and also
+  covers nested Bun roots recorded under it. The owner that created a
+  registration retires only that consumer on completion or interrupt.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.

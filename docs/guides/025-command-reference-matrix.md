@@ -412,7 +412,7 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   and `deps unlink cargo` proves committed-source and lock recovery; `deps
   link bun` applies one explicit save-less full-closure link; `deps unlink bun`
   removes exact local symlinks and releases only that consumer's registration,
-  including a named gone `--repo` checkout;
+  including a named gone `--repo` checkout and nested Bun roots under it;
   `bun install` can drift a desired link, so inspect with status/doctor and
   re-run the same link command to repair it
 - `exec` runs inside the manifest default system workspace container and

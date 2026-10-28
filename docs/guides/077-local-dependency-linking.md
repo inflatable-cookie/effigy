@@ -337,7 +337,8 @@ If the consumer checkout is already gone, name it with `--repo`:
 effigy deps unlink bun ../poodle --repo /path/to/gone-consumer
 ```
 
-That retires only that consumer's registration. Shared consumers stay.
+That retires that checkout's registration, including a nested Bun root such as
+`studio/` recorded under it. Shared consumers stay.
 
 ## Status And Doctor
 

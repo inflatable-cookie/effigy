@@ -542,14 +542,20 @@ fn unlink_targets(
     index
         .registrations
         .iter()
-        .filter_map(|registration| {
-            let reference =
-                matching_index_reference(registration, requested_root, library_path)?.clone();
-            Some(UnlinkTarget {
-                name: registration.package_name.clone(),
-                local_path: registration.package_path.clone(),
-                committed_version: None,
-                reference,
+        .flat_map(|registration| {
+            registration.consumers.iter().filter_map(|reference| {
+                if consumer_identity_matches(&reference.consumer_repo, requested_root)
+                    && identity_matches(&reference.library_path, library_path)
+                {
+                    Some(UnlinkTarget {
+                        name: registration.package_name.clone(),
+                        local_path: registration.package_path.clone(),
+                        committed_version: None,
+                        reference: reference.clone(),
+                    })
+                } else {
+                    None
+                }
             })
         })
         .collect()
@@ -1093,15 +1099,8 @@ fn select_unlink_link<'a>(
     }
 }
 
-fn matching_index_reference<'a>(
-    registration: &'a BunRegistration,
-    requested_root: &Path,
-    library_path: &Path,
-) -> Option<&'a BunConsumerReference> {
-    registration.consumers.iter().find(|consumer| {
-        identity_matches(&consumer.consumer_repo, requested_root)
-            && identity_matches(&consumer.library_path, library_path)
-    })
+fn consumer_identity_matches(stored: &Path, requested: &Path) -> bool {
+    identity_matches(stored, requested) || crate::state::contained_in_checkout(requested, stored)
 }
 
 fn identity_matches(left: &Path, right: &Path) -> bool {
@@ -1900,8 +1899,9 @@ mod tests {
     #[test]
     fn unlink_of_a_missing_consumer_releases_only_that_index_reference() {
         let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let other_temp = TempDir::new().unwrap();
         let other = BunConsumerReference {
-            consumer_repo: fixture.repo.join("other-consumer"),
+            consumer_repo: fs::canonicalize(other_temp.path()).unwrap(),
             library_path: fixture.library.clone(),
         };
         seed_owned_index(
@@ -1952,7 +1952,8 @@ mod tests {
     #[test]
     fn unlink_of_one_missing_consumer_does_not_scavenge_another_dead_path() {
         let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
-        let other_root = fixture.repo.join("other-dead");
+        let other_temp = TempDir::new().unwrap();
+        let other_root = fs::canonicalize(other_temp.path()).unwrap();
         let other = BunConsumerReference {
             consumer_repo: other_root.clone(),
             library_path: fixture.library.clone(),
@@ -1964,6 +1965,57 @@ mod tests {
             [
                 BunConsumerReference {
                     consumer_repo: fixture.repo.clone(),
+                    library_path: fixture.library.clone(),
+                },
+                other.clone(),
+            ],
+        );
+        let missing = fixture.repo.clone();
+        fs::remove_dir_all(&missing).unwrap();
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                bun_registration_path(&fixture.home, "underlay"),
+                BunPathObservation::Symlink {
+                    target: fixture.packages[0].package_path.clone(),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+
+        let unlink =
+            plan_bun_unlink(&missing, &fixture.library, &fixture.home, true, &observer).unwrap();
+
+        let index_change = unlink
+            .operation
+            .changes
+            .iter()
+            .find(|change| {
+                change.target == BunRegistrationIndexStore::for_home(&fixture.home).path()
+            })
+            .unwrap();
+        let index: BunRegistrationIndex =
+            serde_json::from_str(index_change.after.as_ref().unwrap()).unwrap();
+        assert_eq!(index.registrations[0].consumers, [other]);
+    }
+
+    #[test]
+    fn unlink_of_a_missing_checkout_releases_nested_bun_root_index_reference() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let studio = fixture.repo.join("studio");
+        fs::create_dir_all(&studio).unwrap();
+        let studio = fs::canonicalize(&studio).unwrap();
+        let other_temp = TempDir::new().unwrap();
+        let other = BunConsumerReference {
+            consumer_repo: fs::canonicalize(other_temp.path()).unwrap(),
+            library_path: fixture.library.clone(),
+        };
+        seed_owned_index(
+            &fixture.home,
+            "underlay",
+            fixture.packages[0].package_path.clone(),
+            [
+                BunConsumerReference {
+                    consumer_repo: studio,
                     library_path: fixture.library.clone(),
                 },
                 other.clone(),

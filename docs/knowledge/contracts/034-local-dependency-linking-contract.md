@@ -96,12 +96,16 @@ Unix.
 - Never replace a registration that points at another path.
 - Remove a registration only when Effigy created it, its observed target still
   matches, and no desired consumer reference remains.
-- Unlink of an absent checkout still releases that exact consumer's index
-  references. Shared, foreign, and unverifiable live-consumer claims stay.
-- `effigy deps unlink bun <LIBRARY> [--repo <CONSUMER>]` is the registration
-  lifecycle owner. Ordinary completion unlinks the live named consumer.
-  Interrupt recovery uses the same command with `--repo` naming the gone
-  checkout. There is no scavenger and no automatic Drop cleanup.
+- Unlink of an absent checkout still releases that checkout's index
+  references, including nested Bun package roots recorded as
+  `<checkout>/studio`. Shared, foreign, and unverifiable live-consumer claims
+  stay. Sibling checkouts are not scavenged.
+- Exact-owned registrations are retired by the owner that created them when
+  that owner completes or is interrupted. The owner is a Drop guard around the
+  consumer identity: ordinary completion drops it, and a panic/unwind still
+  drops it, each releasing only that consumer. `effigy deps unlink bun
+  --repo <CHECKOUT>` recovers a leftover named checkout after an owner did not
+  run. There is no scavenger of unnamed dead paths.
 - Validate other repo references before removal. Retain and report stale or
   unverifiable references rather than risk breaking another consumer.
 - Status and doctor report index/registry disagreement as drift.
