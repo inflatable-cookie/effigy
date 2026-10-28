@@ -304,8 +304,7 @@ git grep <env-name>-bastion envs/   # alias name only — never a real host
   task-runtime env layer, not the mount-resolution layer. Mount
   `host` interpolation reads process env. Set the var via the shell.
 - **Committing `effigy.local.toml` without `.example` suffix.** That
-  defeats the per-machine model. Effigy auto-registers the file in
-  Git's local exclude, but reviewers should still flag a committed
+  defeats the per-machine model. Ignore the file and flag a committed
   overlay in PRs.
 - **Using `extend` and `override` on the same include path.** They
   are mutually exclusive — declare exactly one per path.
