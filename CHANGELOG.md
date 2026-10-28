@@ -158,7 +158,13 @@ During v0.x, MINOR bumps may include breaking changes.
   that cannot be reached, refuses or does not answer keeps the unit installed
   and not enabled and prints the exact `systemctl --user` commands that finish
   the enable; an `enable` that fails after writing the link is observed as
-  enabled, because the link is the fact.
+  enabled, because the link is the fact, and a repeated setup whose unit is
+  unchanged reports the link it keeps. The login activation directory is bound
+  and verified before its entry is read or unlinked, so a symlinked
+  `default.target.wants` is refused instead of deleting another directory's
+  entry, and removal refuses before the unit file is deleted. A failed unit
+  rewrite restores the previous file's activation and says the installed route
+  still works.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

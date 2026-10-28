@@ -1658,6 +1658,18 @@ Removal behaves the same way: it disables, removes and unlinks the unit Effigy
 owns, and a manager that cannot reload is reported rather than treated as a
 failed removal.
 
+The login activation directory
+(`~/.config/systemd/user/default.target.wants`) must be a real directory owned
+by you and not group- or world-writable. Effigy binds and verifies it, then
+reads and unlinks only its own entry through that binding — never by reopening
+the path — so a `default.target.wants` that is a symlink to another directory is
+refused before anything is removed, on upgrade and on `setup --remove` alike
+(removal refuses before the unit file is deleted). A repeated setup whose unit
+bytes are unchanged keeps the existing link and reports `enabled` as it is even
+when the manager request fails, with the recovery commands retained. If writing
+a changed unit file fails after the login activation was dropped, Effigy puts
+the previous file's activation back and says the installed route still works.
+
 `effigy gateway setup --remove` stops the gateway, disables and removes the unit
 it owns, removes the split-DNS unit and the file capability, and preserves
 certificates, CA trust and interface addresses. A unit or capability Effigy did

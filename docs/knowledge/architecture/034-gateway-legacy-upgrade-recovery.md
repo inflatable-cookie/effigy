@@ -369,10 +369,27 @@ failed or timed-out `daemon-reload` therefore leaves the unit installed and not
 enabled — never a new file whose surviving link still claims the old definition
 is live — and the link returns only from an `enable` setup asked for. An
 `enable` that reports a failure after writing the link is observed as enabled:
-the link is the fact and the reply is not. Rollback after such a partial
-upgrade is two supported routes: restore the image the unit names (a deleted or
-widened image is `stale`), or run `effigy gateway setup` with the rolled-back
-binary, which rewrites the owned unit and enables it again.
+the link is the fact and the reply is not. A repeated setup whose bytes are
+unchanged touches neither file nor link, so a failed manager request there
+reports the link Effigy kept together with the recovery commands. If the atomic
+write fails after the activation was dropped, the previous file is still on
+disk: its activation is restored through the same bound directory and the error
+says the installed route still works, or names the exact partial state and
+commands when the file did change. Rollback after such a partial upgrade is two
+supported routes: restore the image the unit names (a deleted or widened image
+is `stale`), or run `effigy gateway setup` with the rolled-back binary, which
+rewrites the owned unit and enables it again.
+
+The login activation directory `~<home>/.config/systemd/user/default.target.wants`
+is treated as an identity of its own. It is opened from the verified unit
+directory with `O_NOFOLLOW | O_DIRECTORY`, verified as a real operator-owned
+directory with no group/other write, and the activation entry is read, unlinked
+and recreated with `readlinkat`/`unlinkat`/`symlinkat` on that descriptor. A
+path-based `remove_file` would resolve every parent component, so a
+`default.target.wants` symlink to a foreign directory could delete that
+directory's entry; instead it is refused, on upgrade, on fresh install and in
+`setup --remove` before the unit file is deleted. An entry that is not Effigy's
+link is preserved, and status reports such a directory as not enabled.
 
 The capability is bound to one install identity: the exact binary setup ran,
 with one link, owner-private mode and the operator (or root) as owner. A
