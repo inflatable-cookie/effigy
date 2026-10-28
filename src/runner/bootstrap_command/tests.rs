@@ -1,7 +1,9 @@
 use super::{
     bootstrap_runtime_session_context, run_bootstrap_with_cwd, running_setup_label, starting_label,
+    BootstrapProgressReporter,
 };
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
+use effigy_bootstrap::BootstrapProgressEvent;
 use effigy_cli::BootstrapArgs;
 use effigy_test_support::Fixture;
 use std::path::{Path, PathBuf};
@@ -224,4 +226,65 @@ fn bootstrap_steps_name_the_setup_and_start_selectors() {
         "running setup record-one"
     );
     assert_eq!(starting_label("dev"), "starting dev");
+}
+
+fn setup_started(selector: &str) -> BootstrapProgressEvent {
+    BootstrapProgressEvent::SetupTaskStarted {
+        destination: PathBuf::from("app"),
+        selector: selector.to_owned(),
+    }
+}
+
+fn setup_finished(selector: &str) -> BootstrapProgressEvent {
+    BootstrapProgressEvent::SetupTaskFinished {
+        destination: PathBuf::from("app"),
+        selector: selector.to_owned(),
+    }
+}
+
+#[test]
+fn a_setup_step_that_never_finishes_ends_with_a_cross_naming_its_selector() {
+    // The engine returns its error instead of reporting the selector finished.
+    let (_, lines) = effigy_ui::steps::capture_lines(|| {
+        let mut reporter = BootstrapProgressReporter::new(false);
+        reporter.handle(setup_started("record-one"));
+        drop(reporter);
+    });
+    assert_eq!(lines, vec!["✗ running setup record-one failed".to_owned()]);
+}
+
+#[test]
+fn a_start_step_that_never_finishes_ends_with_a_cross_naming_its_selector() {
+    let (_, lines) = effigy_ui::steps::capture_lines(|| {
+        let mut reporter = BootstrapProgressReporter::new(false);
+        reporter.handle(BootstrapProgressEvent::StartTaskStarted {
+            destination: PathBuf::from("app"),
+            selector: "dev".to_owned(),
+        });
+        drop(reporter);
+    });
+    assert_eq!(lines, vec!["✗ starting dev failed".to_owned()]);
+}
+
+#[test]
+fn a_finished_setup_step_ends_with_one_tick_and_json_draws_nothing() {
+    let (_, lines) = effigy_ui::steps::capture_lines(|| {
+        let mut reporter = BootstrapProgressReporter::new(false);
+        reporter.handle(setup_started("record-one"));
+        reporter.handle(setup_finished("record-one"));
+        drop(reporter);
+    });
+    assert_eq!(
+        lines,
+        vec!["✓ setup complete (record-one)".to_owned()],
+        "a finished step ends once, and the drop has nothing left to fail"
+    );
+
+    let (_, json_lines) = effigy_ui::steps::capture_lines(|| {
+        let mut reporter = BootstrapProgressReporter::new(true);
+        reporter.handle(setup_started("record-one"));
+        reporter.handle(setup_finished("record-one"));
+        drop(reporter);
+    });
+    assert!(json_lines.is_empty(), "{json_lines:?}");
 }

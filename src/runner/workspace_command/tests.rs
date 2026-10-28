@@ -1899,3 +1899,14 @@ fn expected_workspace_install_identity_uses_release_identity_in_download_mode() 
         Some(workspace_effigy_release_install_identity())
     );
 }
+
+#[test]
+fn a_failed_shutdown_line_names_the_system_and_the_first_cause_line() {
+    let error = RunnerError::task_invocation(
+        "docker compose down exited with code 1\nno such service: app",
+    );
+    assert_eq!(
+        workspace_shutdown_failure_line("app", &error),
+        "workspace system app shutdown failed: docker compose down exited with code 1"
+    );
+}
