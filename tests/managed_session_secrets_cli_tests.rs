@@ -612,3 +612,80 @@ fn assert_session_stopped(session: &mut PtySession) {
         "the session fixture is still running after the test stopped it"
     );
 }
+
+#[test]
+fn invocation_and_doctor_sweep_only_non_live_managed_secret_files() {
+    use effigy_kernel::ident::{process_identity, ProcessStartIdentity};
+    use effigy_test_support::process::FixtureCommandExt;
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+
+    for args in [vec!["--version"], vec!["doctor", "--json"]] {
+        let workspace =
+            effigy_test_support::Fixture::workspace("managed-secret-sweep-cli-").unwrap();
+        let root = workspace.path().canonicalize().unwrap();
+        let home = effigy_test_support::Fixture::short_home("esw-").unwrap();
+        fs::write(root.join("effigy.toml"), "[tasks.ok]\nrun = \"true\"\n").unwrap();
+        let namespace = home.path().join(".effigy/managed-secrets");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&namespace)
+            .unwrap();
+        let identity = process_identity(std::process::id())
+            .verified()
+            .unwrap()
+            .clone();
+        for live in [true, false] {
+            let mut owner = identity.clone();
+            if !live {
+                owner.start = ProcessStartIdentity::LinuxTicks(0);
+            }
+            let directory = namespace.join(if live { "live" } else { "stale" });
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&directory)
+                .unwrap();
+            let meta = fs::metadata(&directory).unwrap();
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(directory.join("owner"))
+                .unwrap();
+            file.write_all(
+                serde_json::json!({"identity": owner, "device": meta.dev(), "inode": meta.ino()})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(directory.join("env.delivery"))
+                .unwrap();
+            file.write_all(b"CLI-sweep-private-value").unwrap();
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(&args)
+            .current_dir(&root)
+            .env("HOME", home.path())
+            .output_owned()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!namespace.join("stale").exists());
+        assert_eq!(
+            fs::read_to_string(namespace.join("live/env.delivery")).unwrap(),
+            "CLI-sweep-private-value"
+        );
+        for bytes in [&output.stdout, &output.stderr] {
+            let output = String::from_utf8_lossy(bytes);
+            assert!(!output.contains("CLI-sweep-private-value"));
+            assert!(!output.contains(&namespace.display().to_string()));
+        }
+    }
+}

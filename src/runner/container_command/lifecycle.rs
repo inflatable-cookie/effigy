@@ -1390,7 +1390,7 @@ fn run_runtime_shell_exec(
     plan: &effigy_containers::ContainerComposeInvocationPlan,
     capture: bool,
 ) -> Result<Output, effigy_runtime::EffigyRuntimeError> {
-    run_compose_exec_plan_with_options(policy, plan, capture, None)
+    crate::runner::exec_command::run_managed_compose_exec_plan(policy, plan, capture)
         .map_err(runtime_error_from_runner)
 }
 

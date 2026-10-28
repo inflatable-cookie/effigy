@@ -2,6 +2,43 @@
 
 Owner: Platform maintainers
 
+## Managed task transport
+
+Managed host workloads receive task values in their spawn environment. Managed
+inline Compose exec and named workloads forward only `-e NAME` to the runtime;
+neither host nor guest arguments, rendered wrappers, plans, logs or JSON carry
+task values. Named exec retains its runtime, exact container ownership,
+workspace identity and process-group settlement checks.
+
+When stdin is free, a private environment entry carries a shell bootstrap which
+shell builtins write to stdin of the guest `sh -s` (or a local `sh -s` for Docker).
+The bootstrap exports values before exec; no script contents enter argv or logs.
+Colima uses `colima ssh --profile … -- sh -s` and name-only sudo environment
+preservation before nerdctl. Multiline values and trailing newlines survive. Capture also redacts the CRLF
+display representation of multiline values produced by a PTY.
+
+Interactive exec keeps stdin for terminal input. Before launch the supervisor
+journals an exact-owned cleanup obligation, then writes a 0600 `env.delivery`
+inside a 0700 per-launch directory under the owner's HOME
+(`~/.effigy/managed-secrets/`). The VM reads the host HOME mount, sources and
+unlinks the file before sudo or the runtime starts. That removal acknowledges
+the first read; the supervisor refuses a launch that has not acknowledged in
+60 seconds. A launch that exits before the read fails and immediately settles
+its unread file; only the guest read can acknowledge delivery. The kernel settles
+the owned directory after success, stop, kill or supervisor loss. Cleanup checks the
+recorded directory device/inode, process identity, file type, owner and modes;
+it never follows symlinks or recursively removes a tree. The next invocation,
+including doctor, sweeps only directories whose recorded process identity is
+proven non-live; unknown liveness retains them, and a live run is untouched.
+
+Effigy Supervisor ruling, 2026-10-28 (brief approved by Tom): the threat model
+excludes secret values in host and guest argv and routine output. Residual
+same-user-readable process environments and the bounded 0600 file window are
+accepted at the trust level of repository `.env` files. HOME must be visible to
+the Colima guest for interactive delivery; failure to read it refuses the
+launch without weakening process custody. This does not add an OwnedRemote
+interface or a separate runtime registry.
+
 ## Purpose
 
 Define Effigy's next-generation secret and local configuration contract.

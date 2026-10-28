@@ -323,6 +323,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Keep managed task secret values out of host and container process arguments,
+  using stdin bootstrap or a private, acknowledged environment file for
+  interactive container exec.
+
 - A container runtime that stops answering an inventory read can no longer
   hold one `container up` open for minutes. Every runtime read Effigy makes is
   bounded, and a bring-up's read after Compose returns and its readiness wait
