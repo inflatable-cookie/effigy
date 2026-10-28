@@ -204,6 +204,24 @@ fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
     }
 }
 
+// Path contract: the Colima preflight refuses OS temp roots, so the shared
+// builder fixture must sit outside them on Linux. A `/tmp` root fails here by
+// name instead of as a preflight refusal inside the recovery cases.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn builder_fixture_root_stays_outside_the_linux_temp_root() {
+    let _lock = crate::contract_test_support::lock_test();
+    let shared = builder_fixture();
+    for temp in [std::env::temp_dir(), PathBuf::from("/tmp")] {
+        assert!(
+            !shared.path().starts_with(&temp),
+            "builder fixture {} landed under temp root {}; the Colima preflight refuses it",
+            shared.path().display(),
+            temp.display()
+        );
+    }
+}
+
 impl Fixture {
     fn new(retained: bool, changed: bool, backend: &str) -> Self {
         Self::with_declaration(retained, changed, backend, true)
