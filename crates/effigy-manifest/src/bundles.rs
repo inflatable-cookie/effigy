@@ -776,7 +776,9 @@ fn toml_type_name(value: &Value) -> &'static str {
 /// task definition (`[secrets.vault].generate`), a deploy hook
 /// (`[deploy.model.services.build]`), a bootstrap entry, or the single-object
 /// shorthand for `run`. Cargo-style tool tables use none of these keys.
-const STEP_EXECUTOR_KEYS: [&str; 3] = ["run", "task", "rhai"];
+// Keep the retired `draft` spelling in the group so an override replaces it,
+// while an explicitly declared `draft` still reaches the retirement error.
+const STEP_EXECUTOR_KEYS: [&str; 4] = ["run", "task", "draft", "rhai"];
 
 fn names_step_executor(table: &toml::map::Map<String, Value>) -> bool {
     STEP_EXECUTOR_KEYS
@@ -793,10 +795,14 @@ fn names_step_executor(table: &toml::map::Map<String, Value>) -> bool {
 /// the manifest leaves unset (for example `run_in`, `env`, `timeout_ms`) still
 /// defaults from the bundle, and the manifest's own keys are never rewritten.
 pub(super) fn merge_missing_values(current: &mut Value, defaults: &Value) {
+    merge_missing_table(current, defaults, 0, true);
+}
+
+fn merge_missing_table(current: &mut Value, defaults: &Value, depth: usize, step_candidate: bool) {
     if let (Some(current_table), Some(defaults_table)) =
         (current.as_table_mut(), defaults.as_table())
     {
-        let replace_executor_group = names_step_executor(current_table);
+        let replace_executor_group = step_candidate && names_step_executor(current_table);
         for (key, default_value) in defaults_table {
             // Only a default executor the manifest does not mention is dropped.
             // The same key still merges, which is how a task's `run` table
@@ -808,7 +814,11 @@ pub(super) fn merge_missing_values(current: &mut Value, defaults: &Value) {
                 continue;
             }
             match current_table.get_mut(key) {
-                Some(current_value) => merge_missing_values(current_value, default_value),
+                Some(current_value) => {
+                    // Task names and environment variable names are arbitrary, not executors.
+                    let child_is_step = key != "env" && !(depth == 0 && key == "tasks");
+                    merge_missing_table(current_value, default_value, depth + 1, child_is_step);
+                }
                 None => {
                     current_table.insert(key.clone(), default_value.clone());
                 }

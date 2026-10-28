@@ -323,6 +323,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Bundle step overrides replace the execution kind, including retired `draft` defaults, while retaining other step metadata.
+
 - A container runtime that stops answering an inventory read can no longer
   hold one `container up` open for minutes. Every runtime read Effigy makes is
   bounded, and a bring-up's read after Compose returns and its readiness wait
