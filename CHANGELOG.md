@@ -345,6 +345,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- `effigy contracts check-json` reports a payload schema or selection contract
+  that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
+  `effigy.contracts.check-json.v1`, and stops before any indexed command.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.

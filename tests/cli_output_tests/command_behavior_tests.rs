@@ -628,6 +628,52 @@ fn cli_contracts_check_json_rejects_an_unconfigured_project() {
 }
 
 #[test]
+fn cli_contracts_check_json_rejects_malformed_payload_schema_with_stable_identity() {
+    let root = temp_workspace("contracts-malformed-body");
+    fs::create_dir_all(root.join("docs/knowledge/contracts")).expect("mkdir contracts");
+    fs::write(
+        root.join("effigy.toml"),
+        "[contracts]\nschema_index = \"docs/knowledge/contracts/json-schema-index.json\"\n",
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("docs/knowledge/contracts/broken.json"),
+        "{\n  \"type\": \"object\",\n  \"required\": 7\n}\n",
+    )
+    .expect("write payload schema");
+    fs::write(
+        root.join("docs/knowledge/contracts/json-schema-index.json"),
+        "{\n  \"version\": 1,\n  \"payload_schemas\": {\n    \"effigy.command.v1\": \"broken.json\"\n  },\n  \"schemas\": [\n    {\n      \"schema\": \"effigy.command.v1\",\n      \"schema_version\": 1,\n      \"command\": \"effigy --json doctor --repo <fixture_task_success>\",\n      \"status\": \"active\"\n    }\n  ]\n}\n",
+    )
+    .expect("write index");
+
+    let output = run_json_cli_command(&root, &["contracts", "check-json"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let details: Value = serde_json::from_str(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("json error payload"),
+    )
+    .expect("parse check-json identity");
+    assert_eq!(details["schema"], "effigy.contracts.check-json.v1");
+    assert_eq!(details["ok"], false);
+    assert_eq!(
+        details["failures"][0]["schema"],
+        "effigy.json-contract-body.v1"
+    );
+    assert!(
+        details["failures"][0]["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("not valid Draft 2020-12 JSON Schema"),
+        "{}",
+        details["failures"][0]["reason"]
+    );
+    assert!(!root.join(".effigy/tmp/contract-fixtures").exists());
+}
+
+#[test]
 fn cli_contracts_validate_selection_names_its_replacement() {
     let root = temp_workspace("contracts-retired-selection");
     let output = run_cli_command(&root, &["contracts", "validate-selection"]);
