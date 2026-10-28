@@ -268,9 +268,7 @@ impl ReleaseState {
         match effigy_kernel::record::read_record::<ReleaseRecord>(&observe, &directory, &name) {
             Observed::Verified(record, _) => Ok(Some(record)),
             Observed::Absent(_) => Ok(None),
-            Observed::Unknown(reason) => {
-                Err(storage_error(format!("record is unreadable: {reason:?}")))
-            }
+            Observed::Unknown(reason) => Err(storage_error(format!("release record: {reason}"))),
         }
     }
 }
@@ -339,9 +337,7 @@ impl ReleaseSession {
             Observed::Verified(reader, _) => local_owner(&reader, checkout)?,
             Observed::Absent(_) => release_owner(checkout),
             Observed::Unknown(reason) => {
-                return Err(storage_error(format!(
-                    "release owner is unreadable: {reason:?}"
-                )))
+                return Err(storage_error(format!("release owner: {reason}")))
             }
         };
         Ok(Self {
@@ -394,7 +390,7 @@ impl ReleaseSession {
             Observed::Absent(_) => return Ok(None),
             Observed::Unknown(reason) => {
                 return Err(ReleaseError::TaskInvocation(format!(
-                    "release state is unreadable: {reason:?}"
+                    "release state: {reason}"
                 )))
             }
         };
@@ -403,7 +399,7 @@ impl ReleaseSession {
             Observed::Absent(_) => return Ok(None),
             Observed::Unknown(reason) => {
                 return Err(ReleaseError::TaskInvocation(format!(
-                    "release state store is unreadable: {reason:?}"
+                    "release state store: {reason}"
                 )))
             }
         };
@@ -419,9 +415,7 @@ impl ReleaseSession {
         match Store::read(&observe, &self.root) {
             Observed::Verified(reader, _) => project_cleanup(&observe, &self.root, &reader, record),
             Observed::Absent(_) => Ok(()),
-            Observed::Unknown(reason) => {
-                Err(storage_error(format!("journal is unreadable: {reason:?}")))
-            }
+            Observed::Unknown(reason) => Err(storage_error(format!("release journal: {reason}"))),
         }
     }
 
@@ -484,8 +478,17 @@ fn begin_error(repo_root: &Path, error: effigy_kernel::run::RunError) -> Release
             repo_root.display()
         ),
         RunError::PredecessorUnsettled { run, effects } => format!(
-            "release Run {run} left {} unresolved effect(s) and cannot be settled automatically; inspect it with `effigy release receipt {run}` before resuming: {effects:?}",
-            effects.len()
+            "release Run {run} left {} unresolved effect(s) and cannot be settled automatically; inspect it with `effigy release receipt {run}` before resuming: {}",
+            effects.len(),
+            effects
+                .iter()
+                .map(|effect| format!(
+                    "`{}` is {}",
+                    effect.spec.kind,
+                    effect.state.label()
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         _ => format!("the kernel refused the release Run: {error}"),
     };
@@ -506,9 +509,19 @@ fn local_owner(reader: &StoreReader, checkout: CheckoutId) -> Result<ResourceId,
             Ok(owner)
         }
         Observed::Absent(_) => Ok(release_owner(checkout)),
-        other => Err(storage_error(format!(
-            "invalid imported release owner: {other:?}"
-        ))),
+        Observed::Unknown(reason) => {
+            Err(storage_error(format!("imported release owner: {reason}")))
+        }
+        Observed::Verified(owner, _) => {
+            let key = owner
+                .key()
+                .first()
+                .and_then(Option::as_deref)
+                .unwrap_or("a record with no key");
+            Err(storage_error(format!(
+                "imported release owner `{key}` is not a release owner: a release Run adopts only a machine-scoped store record keyed `release <id>`"
+            )))
+        }
     }
 }
 
@@ -538,7 +551,7 @@ fn checkpoint_from_reader(
         Observed::Absent(AbsenceProof::NoRow { .. }) => Ok(None),
         Observed::Absent(_) => Ok(None),
         Observed::Unknown(reason) => Err(ReleaseError::TaskInvocation(format!(
-            "release state is unknown: {reason:?}"
+            "release state: {reason}"
         ))),
     }
 }
@@ -566,7 +579,7 @@ pub fn read_release_record(
         Observed::Absent(_) => return Ok(None),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
-                "release state is unreadable: {reason:?}"
+                "release state: {reason}"
             )))
         }
     };
@@ -575,7 +588,7 @@ pub fn read_release_record(
         Observed::Absent(_) => return Ok(None),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
-                "release state store is unreadable: {reason:?}"
+                "release state store: {reason}"
             )))
         }
     };
@@ -638,9 +651,7 @@ fn project_cleanup(
             }
         }
         Observed::Unknown(reason) => {
-            return Err(storage_error(format!(
-                "release Run status is unknown: {reason:?}"
-            )))
+            return Err(storage_error(format!("release Run status: {reason}")))
         }
         Observed::Absent(_) => {
             return Err(storage_error("release Run is missing from the journal"))
@@ -662,4 +673,63 @@ pub fn read_release_record_for_root(
 /// A record path is under this release's state directory, never anywhere else.
 pub fn record_path_is_owned(state: &ReleaseState, path: &Path) -> bool {
     path == state.record_path
+}
+
+#[cfg(test)]
+mod tests {
+    use effigy_kernel::id::Generation;
+    use effigy_kernel::run::{
+        Effect, EffectSpec, EffectState, RunError, Settlement as EffectSettlement,
+    };
+
+    use super::*;
+
+    fn effect(kind: &str, state: EffectState) -> Effect {
+        Effect {
+            sequence: 1,
+            spec: EffectSpec {
+                target: Fence {
+                    resource: ResourceId::store(Scope::Machine, "release core")
+                        .expect("valid release owner"),
+                    generation: Generation::new(1),
+                },
+                kind: kind.to_owned(),
+                payload: serde_json::json!({}),
+                settlement: EffectSettlement::Retain,
+                required: true,
+            },
+            state,
+            receipt: None,
+            reason: None,
+        }
+    }
+
+    /// A predecessor's unresolved effects are named in words: the reader gets
+    /// what is unsettled and what to run, never an `Effect { … }` Debug tree
+    /// (effigy#402, Q-017).
+    #[test]
+    fn an_unsettled_predecessor_names_its_effects_in_words() {
+        let error = begin_error(
+            Path::new("/repo"),
+            RunError::PredecessorUnsettled {
+                run: RunId::new(1_700_000_000_000, [7; 10]).expect("valid run id"),
+                effects: vec![
+                    effect("publish tag", EffectState::Unknown),
+                    effect("push branch", EffectState::Residue),
+                ],
+            },
+        )
+        .to_string();
+        assert!(
+            error.contains("`publish tag` is unknown"),
+            "the effect and its state are words: {error}"
+        );
+        assert!(
+            error.contains("`push branch` is left as residue"),
+            "{error}"
+        );
+        assert!(error.contains("`effigy release receipt"), "{error}");
+        assert!(!error.contains("Effect {"), "{error}");
+        assert!(!error.contains("Unknown"), "{error}");
+    }
 }

@@ -55,9 +55,9 @@ pub(super) fn execute_pull_production_hook(
         Ok(())
     } else {
         Err(RunnerError::task_invocation(format!(
-            "pull_production hook for container `{}` failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+            "pull_production hook for container `{}` failed ({})\nstdout:\n{}\nstderr:\n{}",
             policy.name,
-            output.status.code(),
+            effigy_ui::human::exit_code(output.status.code()),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )))

@@ -236,7 +236,7 @@ mod library_mount_tests {
 
         let message = match err {
             ContainerPolicyError::TaskInvocation(msg) => msg,
-            other => panic!("unexpected error variant: {other:?}"),
+            other => panic!("unexpected error variant: {other}"),
         };
         assert!(
             message.contains("/workspace-libraries/php-app"),

@@ -59,7 +59,7 @@ pub fn hold(
             Observed::Absent(_) => return Err(HoldError::NotActive),
             Observed::Unknown(reason) => {
                 return Err(HoldError::Env(EnvError::Invalid(format!(
-                    "environment record unreadable: {reason:?}"
+                    "the environment record cannot be read: {reason}"
                 ))))
             }
         };

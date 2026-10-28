@@ -1717,3 +1717,31 @@ fn run_terminal_record_round_trips_and_an_older_journal_reads_absent() {
         other => panic!("records: {other:?}"),
     }
 }
+
+/// A settlement refusal names an effect's state in words. The variant name a
+/// `Debug` rendering shows (`Unknown`, `Residue`) never reaches a person
+/// (effigy#402, Q-017).
+#[test]
+fn effect_states_read_as_words_in_a_refusal() {
+    assert_eq!(EffectState::Unknown.label(), "unknown");
+    assert_eq!(EffectState::Residue.label(), "left as residue");
+    assert_eq!(EffectState::Failed.label(), "failed");
+    let labels = [
+        EffectState::Intended,
+        EffectState::Applied,
+        EffectState::Failed,
+        EffectState::Unknown,
+        EffectState::Released,
+        EffectState::Retained,
+        EffectState::Irreversible,
+        EffectState::Residue,
+    ]
+    .map(EffectState::label);
+    for label in labels {
+        assert!(!label.is_empty(), "every state names itself");
+        assert!(
+            label.chars().next().is_some_and(|c| c.is_ascii_lowercase()),
+            "a label reads as prose, not as a variant: {label}"
+        );
+    }
+}

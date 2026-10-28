@@ -80,8 +80,8 @@ impl std::fmt::Display for ContainerExecError {
             } => {
                 write!(
                     f,
-                    "{command} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
-                    code, stdout, stderr
+                    "{command} failed ({})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                    effigy_ui::human::exit_code(*code)
                 )
             }
         }
@@ -1838,8 +1838,8 @@ pub fn capture_running_container_stats_for_profile(
             stdout
         } else {
             format!(
-                "runtime stats command exited with status {:?}",
-                output.status.code()
+                "runtime stats command failed ({})",
+                effigy_ui::human::exit_code(output.status.code())
             )
         };
         return RunningContainerStatsCapture {
@@ -1931,8 +1931,8 @@ fn capture_running_container_stats_for_backend(
             stdout
         } else {
             format!(
-                "runtime stats command exited with status {:?}",
-                output.status.code()
+                "runtime stats command failed ({})",
+                effigy_ui::human::exit_code(output.status.code())
             )
         };
         return RunningContainerStatsCapture {

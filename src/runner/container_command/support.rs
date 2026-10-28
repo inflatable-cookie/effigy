@@ -724,8 +724,8 @@ fn run_shared_compose_capture(
                 Ok(output)
             } else {
                 Err(RunnerError::task_invocation(format!(
-                    "{label} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
-                    output.status.code(),
+                    "{label} failed ({})\nstdout:\n{}\nstderr:\n{}",
+                    effigy_ui::human::exit_code(output.status.code()),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 )))
@@ -766,9 +766,9 @@ pub(super) fn run_runtime_volume_capture(
                 Ok(output)
             } else {
                 Err(RunnerError::task_invocation(format!(
-                    "{} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    "{} failed ({})\nstdout:\n{}\nstderr:\n{}",
                     command.description,
-                    output.status.code(),
+                    effigy_ui::human::exit_code(output.status.code()),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 )))
@@ -854,9 +854,9 @@ fn run_runtime_volume_usage_capture(
                 Ok(output)
             } else {
                 Err(RunnerError::task_invocation(format!(
-                    "{} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    "{} failed ({})\nstdout:\n{}\nstderr:\n{}",
                     command.description,
-                    output.status.code(),
+                    effigy_ui::human::exit_code(output.status.code()),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 )))
@@ -915,9 +915,9 @@ fn run_runtime_volume_usage_batch_capture(
                 Ok(output)
             } else {
                 Err(RunnerError::task_invocation(format!(
-                    "{} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    "{} failed ({})\nstdout:\n{}\nstderr:\n{}",
                     command.description,
-                    output.status.code(),
+                    effigy_ui::human::exit_code(output.status.code()),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 )))
@@ -977,9 +977,9 @@ fn run_runtime_volume_cache_kind_batch_capture(
                 Ok(output)
             } else {
                 Err(RunnerError::task_invocation(format!(
-                    "{} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    "{} failed ({})\nstdout:\n{}\nstderr:\n{}",
                     command.description,
-                    output.status.code(),
+                    effigy_ui::human::exit_code(output.status.code()),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 )))

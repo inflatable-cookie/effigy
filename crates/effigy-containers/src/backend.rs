@@ -91,7 +91,7 @@ pub fn exact_backend(
                 ));
             }
             Observed::Verified(None, _) | Observed::Absent(_) => {}
-            Observed::Unknown(reason) => unknown = Some(format!("{reason:?}")),
+            Observed::Unknown(reason) => unknown = Some(format!("{reason}")),
         }
     }
     if chosen.is_none() && unknown.is_none() {

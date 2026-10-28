@@ -278,16 +278,14 @@ fn read_lock(manifest: &Path) -> Result<Option<SourceLock>, ManifestError> {
     let op = observe_context();
     let cx = op
         .observe()
-        .map_err(|err| error(manifest, format!("{err:?}")))?;
+        .map_err(|err| error(manifest, err.to_string()))?;
     let file = FileName::new(LOCK_FILE).map_err(|err| error(manifest, err.to_string()))?;
     match read_record(&cx, &dir, &file) {
         Observed::Verified(lock, _) => Ok(Some(lock)),
         Observed::Absent(_) => Ok(None),
         Observed::Unknown(reason) => Err(error(
             manifest,
-            format!(
-                "source lock unavailable: {reason:?}; restore the lock or run `effigy bundle sync`"
-            ),
+            format!("source lock unavailable: {reason}"),
         )),
     }
 }

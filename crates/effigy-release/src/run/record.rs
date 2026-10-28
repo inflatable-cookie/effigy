@@ -235,6 +235,19 @@ pub enum RecordTargetState {
     Failed,
 }
 
+impl RecordTargetState {
+    /// The state in the words a refusal reads out; a person never reads the
+    /// variant name a `Debug` rendering would show (effigy#402).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Unknown => "unknown",
+            Self::Published => "published",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordDestination {
     /// The identity whose tag this destination is. A `task` target reports

@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use effigy_kernel::ctx::CleanupContext;
+use effigy_kernel::ctx::{CleanupContext, Interrupt};
 use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use effigy_kernel::run::{Effect, Fence, Reconciled};
 use serde::{Deserialize, Serialize};
@@ -90,9 +90,12 @@ pub(in crate::runner) fn release(effect: &Effect, cx: &CleanupContext) -> Observ
             "managed effect `{other}` has no release"
         ))),
     };
-    if let Err(reason) = cx.operation().check("managed release") {
-        return Observed::Unknown(UnknownReason::TimedOut {
-            phase: format!("managed release: {reason:?}"),
+    if let Err(interrupt) = cx.operation().check("managed release") {
+        // The interrupt's own sentence is the cause: `Display` names the wait,
+        // how long it ran and the phase, so no `Debug` tree reaches a person.
+        return Observed::Unknown(match interrupt {
+            Interrupt::TimedOut { phase, .. } => UnknownReason::TimedOut { phase },
+            other => UnknownReason::Inconsistent(format!("the managed release was {other}")),
         });
     }
     match result {

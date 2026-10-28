@@ -201,7 +201,8 @@ fn detached_failure(
     retention_error: Option<std::io::Error>,
 ) -> String {
     let mut message = format!(
-        "[effigy] detached backend failed (code {code:?}); its output was isolated from service writers and retained at {}",
+        "[effigy] detached backend failed ({}); its output was isolated from service writers and retained at {}",
+        effigy_ui::human::exit_code(code),
         record.path.display()
     );
     if let Some(error) = retention_error {
@@ -249,7 +250,7 @@ impl DetachedOutputRecord {
         );
         let cx = op
             .effects()
-            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+            .map_err(|e| std::io::Error::other(format!("detached output authority: {e}")))?;
         let location = crate::environment::location(repo_root);
         let root =
             StateRoot::foreground_effects(&cx, &location).map_err(|e| error(e.to_string()))?;
@@ -258,7 +259,7 @@ impl DetachedOutputRecord {
         let resource = ResourceId::store(
             Scope::Checkout(
                 StateRoot::filesystem_checkout(
-                    &op.observe().map_err(|e| error(format!("{e:?}")))?,
+                    &op.observe().map_err(|e| error(e.to_string()))?,
                     &location,
                 )
                 .map_err(|e| error(e.to_string()))?,
@@ -320,11 +321,11 @@ impl DetachedOutputRecord {
             .cx
             .operation()
             .cleanup(Duration::from_secs(30))
-            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+            .map_err(|e| std::io::Error::other(format!("detached output authority: {e}")))?;
         let effects = cleanup
             .operation()
             .effects()
-            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+            .map_err(|e| std::io::Error::other(format!("detached output authority: {e}")))?;
         effigy_kernel::record::atomic_replace(
             &effects,
             &self.gate,
@@ -1100,6 +1101,33 @@ mod tests {
             "{:?}",
             diagnostic
         );
+    }
+
+    #[test]
+    fn a_failed_command_names_its_exit_status_in_words() {
+        let failure = ContainerExecError::Failure {
+            command: "docker compose up".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "boom".to_owned(),
+        };
+        let message = failure.to_string();
+        assert!(message.contains("(exit code 1)"), "{message}");
+        assert!(!message.contains("Some("), "{message}");
+        // A child that ended on a signal has no exit code, and it says so
+        // instead of printing a `None` (effigy#402).
+        let signalled = ContainerExecError::Failure {
+            command: "docker compose up".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: "boom".to_owned(),
+        };
+        let message = signalled.to_string();
+        assert!(
+            message.contains("(no exit code: the command ended on a signal)"),
+            "{message}"
+        );
+        assert!(!message.contains("None"), "{message}");
     }
 
     #[test]

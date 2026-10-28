@@ -383,8 +383,9 @@ impl GeneratedComposeService {
                 );
                 Ok(())
             }
-            other => Err(ContainerPolicyError::TaskInvocation(format!(
-                "shared-service host alias cannot extend `extra_hosts` {other:?}; the generated service needs a sequence or mapping"
+            scalar_or_tag => Err(ContainerPolicyError::TaskInvocation(format!(
+                "shared-service host alias cannot extend `extra_hosts` with {}, which is neither a sequence nor a mapping; the generated service needs one of those",
+                yaml_kind(scalar_or_tag)
             ))),
         }
     }
@@ -401,6 +402,20 @@ impl GeneratedComposeService {
             }
             volumes.push(GeneratedComposeVolume::String(mount.clone()));
         }
+    }
+}
+
+/// What a YAML value is, in words: a refusal names the kind it found instead
+/// of printing the value's `Debug` structure.
+fn yaml_kind(value: &YamlValue) -> &'static str {
+    match value {
+        YamlValue::Null => "a null value",
+        YamlValue::Bool(_) => "a boolean",
+        YamlValue::Number(_) => "a number",
+        YamlValue::String(_) => "a string",
+        YamlValue::Sequence(_) => "a sequence",
+        YamlValue::Mapping(_) => "a mapping",
+        YamlValue::Tagged(_) => "a tagged value",
     }
 }
 

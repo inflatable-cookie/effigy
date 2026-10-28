@@ -611,7 +611,7 @@ fn an_admission_refusal_keeps_the_hook_reason_and_the_next_step() {
 #[test]
 fn a_long_backend_failure_keeps_the_fatal_line_it_ended_with() {
     let mut stderr = String::from(
-        "[effigy] detached backend failed (code Some(1))\n[effigy] backend output tail:\n",
+        "[effigy] detached backend failed (exit code 1)\n[effigy] backend output tail:\n",
     );
     for index in 0..58 {
         stderr.push_str(&format!("step {index}: building image\n"));

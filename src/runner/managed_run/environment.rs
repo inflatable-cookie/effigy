@@ -370,7 +370,7 @@ fn probe_route(curl: &Path, url: &str) -> Result<(), String> {
             }
         }
         Observed::Absent(_) => Err("probe produced no observation".to_owned()),
-        Observed::Unknown(reason) => Err(format!("unobservable: {reason:?}")),
+        Observed::Unknown(reason) => Err(format!("unobservable: {reason}")),
     }
 }
 

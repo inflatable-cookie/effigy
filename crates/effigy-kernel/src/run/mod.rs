@@ -85,6 +85,20 @@ pub enum EffectState {
     Residue,
 }
 impl EffectState {
+    /// The state in the words a person reads in a refusal. A settlement report
+    /// says what an effect is, not which variant it carries (effigy#402).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Intended => "intended and not applied yet",
+            Self::Applied => "applied",
+            Self::Failed => "failed",
+            Self::Unknown => "unknown",
+            Self::Released => "released",
+            Self::Retained => "retained",
+            Self::Irreversible => "irreversible",
+            Self::Residue => "left as residue",
+        }
+    }
     pub(crate) fn terminal(self) -> bool {
         matches!(
             self,

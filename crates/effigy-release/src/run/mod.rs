@@ -577,8 +577,8 @@ fn continue_record(
             };
             if target.state != RecordTargetState::Unknown {
                 return Err(ReleaseError::TaskInvocation(format!(
-                    "release target `{target_name}` records outcome `{:?}` rather than unknown; there is no unknown publish for an operator to decide",
-                    target.state
+                    "release target `{target_name}` records outcome `{}` rather than `unknown`; there is no unknown publish for an operator to decide",
+                    target.state.label()
                 )));
             }
             target.state = match decision {
