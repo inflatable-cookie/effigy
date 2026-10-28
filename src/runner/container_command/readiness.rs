@@ -59,16 +59,18 @@ pub(super) enum ReadinessEnd {
 
 /// Wait until every service of `policy`'s environment reports ready.
 ///
-/// The wait is bounded by the environment's own `health` timeout, and one
-/// step per service says what is happening: `waiting for web to report healthy
-/// (attempt 4, last: HTTP 404)`.
+/// The wait is bounded by `deadline`, the one budget the bring-up shares with
+/// the runtime reads it made before this wait; without one it starts the
+/// environment's own `health` timeout now. One step per service says what is
+/// happening: `waiting for web to report healthy (attempt 4, last: HTTP 404)`.
 pub(super) fn await_services_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&AtomicBool>,
+    deadline: Option<Instant>,
 ) -> Result<ReadinessEnd, RunnerError> {
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(policy.health_timeout_secs.max(1));
+    let deadline = deadline.unwrap_or_else(|| observation_deadline(policy));
     let parent = TimedStep::new("waiting for services to report healthy");
     let mut steps = BTreeMap::<String, TimedStep>::new();
     let mut attempts = BTreeMap::<String, u32>::new();
@@ -165,6 +167,15 @@ fn probe_budget_deadline(now: Instant, deadline: Instant) -> Instant {
     deadline
         .min(now + PROBE_BUDGET)
         .max(now + PROBE_BUDGET_MINIMUM)
+}
+
+/// The one deadline a bring-up's runtime observations share, measured from the
+/// moment Compose returned: the environment's own health budget bounds its
+/// inventory reads and its readiness wait together, so a runtime that stops
+/// answering spends that budget once and then answers with the refusal
+/// (effigy#411).
+pub(super) fn observation_deadline(policy: &EffectiveContainerPolicy) -> Instant {
+    Instant::now() + Duration::from_secs(policy.health_timeout_secs.max(1))
 }
 
 /// Build the failure for a wait that ran out of time.

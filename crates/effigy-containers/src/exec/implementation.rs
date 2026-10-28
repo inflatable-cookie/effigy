@@ -8,7 +8,7 @@ use std::process::Output;
 use std::time::{Duration, Instant};
 
 use super::colima_runtime::{
-    default_runtime_profile, detect_container_backend, run_runtime_command_capture_for_policy,
+    default_runtime_profile, detect_container_backend,
     run_runtime_command_capture_for_policy_with_absolute_deadline,
     run_runtime_command_capture_for_policy_with_timeout, running_colima_profiles,
 };
@@ -1405,6 +1405,10 @@ pub fn container_last_log_line_for_policy(
 
 /// One runtime capture. A failure is reported as it stands: Effigy never
 /// stops or restarts the shared Colima profile to "repair" it (effigy#371).
+///
+/// Every capture is bounded: a read that names no deadline and no timeout is
+/// still the standard runtime read, so a runtime that stops answering reports
+/// that read as unavailable instead of holding the command open (effigy#411).
 fn capture_runtime_command(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -1419,12 +1423,13 @@ fn capture_runtime_command(
             repo_root, policy, args, label, deadline, remaining,
         );
     }
-    match timeout {
-        Some(timeout) => run_runtime_command_capture_for_policy_with_timeout(
-            repo_root, policy, args, label, timeout,
-        ),
-        None => run_runtime_command_capture_for_policy(repo_root, policy, args, label),
-    }
+    run_runtime_command_capture_for_policy_with_timeout(
+        repo_root,
+        policy,
+        args,
+        label,
+        timeout.unwrap_or(COMPOSE_PS_TIMEOUT),
+    )
 }
 
 /// Runs one invocation an environment backend adapter resolved for its exact

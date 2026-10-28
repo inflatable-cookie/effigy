@@ -12,6 +12,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::EffectiveContainerPolicy;
 
@@ -22,11 +23,16 @@ pub const RESTART_POLICY: &str = "unless-stopped";
 /// declare. A file or container list that cannot be read, and an update the
 /// runtime refuses, are each named and the activation proceeds: the stack is
 /// running either way, and the next `up` applies the policy again.
+///
+/// `deadline` bounds the inventory read that names those containers. A
+/// bring-up passes the one deadline it shares with its readiness wait, so a
+/// runtime that stops answering spends that budget once (effigy#411).
 pub fn apply_after_start(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     project_name: &str,
     compose_files: &[PathBuf],
+    deadline: Option<Instant>,
 ) {
     let services = match undeclared_services(compose_files) {
         Ok(services) => services,
@@ -42,7 +48,7 @@ pub fn apply_after_start(
         repo_root,
         policy,
         project_name,
-        None,
+        deadline,
     ) {
         Ok(rows) => rows
             .into_iter()

@@ -214,6 +214,32 @@ version = "16"
     fn gateway_root(&self) -> PathBuf {
         self.root.path().join("home/.effigy/gateway")
     }
+    /// Give stack `i` an environment health budget of `secs`. The budget an
+    /// environment declares is the bound its activation's runtime inventory
+    /// reads share, so a proof can inject seconds instead of the default
+    /// minute.
+    fn set_health_budget(&self, i: usize, secs: u64) {
+        let root = &self.stacks[i].root;
+        let manifest = fs::read_to_string(root.join("effigy.toml")).expect("manifest");
+        fs::write(
+            root.join("effigy.toml"),
+            format!("{manifest}\n[containers.web.health]\ntimeout_secs = {secs}\n"),
+        )
+        .expect("declared health budget");
+    }
+    /// The PIDs of inventory probes that reported themselves hung, in order.
+    fn hung_probes(&self, i: usize) -> Vec<u32> {
+        fs::read_to_string(self.stacks[i].root.join("hung-probes.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                serde_json::from_str::<Value>(line)
+                    .ok()
+                    .and_then(|row| row["pid"].as_u64())
+                    .and_then(|pid| u32::try_from(pid).ok())
+            })
+            .collect()
+    }
     fn command(&self, i: usize, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_effigy"));
         c.args(args)
@@ -847,6 +873,65 @@ fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
     );
 }
 
+/// A runtime whose inventory hangs must not spend minutes in one detached
+/// `container up`, and must not answer it with another Compose activation. The
+/// environment's own health budget is the bring-up's one observation budget, so
+/// the command reaches one truthful refusal, the hung probe child stops with
+/// that budget, and a healthy sibling stack still starts.
+#[test]
+fn private_hung_runtime_inventory_is_one_bounded_refusal() {
+    let mut fixture = Fixture::new();
+    // An injected budget keeps the proof seconds long instead of the default
+    // minute; production reads the same declared budget.
+    fixture.set_health_budget(0, 4);
+    fixture.set(0, "mode", json!("hang-after-up"));
+    let started = Instant::now();
+    let output = fixture
+        .command(0, &["container", "up", "--detach", "--json"])
+        .output()
+        .expect("one bounded detached activation");
+    let elapsed = started.elapsed();
+    let rendered = String::from_utf8_lossy(&output.stdout).into_owned();
+    let activations = up_count(&fixture, 0);
+    let hung = fixture.hung_probes(0);
+    println!(
+        "hung-inventory activation: {elapsed:?}, {activations} Compose up, probes {hung:?}\n{rendered}"
+    );
+    assert!(!output.status.success(), "{output:?}");
+    let failed: Value = serde_json::from_slice(&output.stdout).expect("one JSON failure envelope");
+    assert_eq!(failed["error"]["details"]["state"], "unavailable", "{failed}");
+    assert_eq!(
+        failed["error"]["details"]["readiness"],
+        "unverified",
+        "{failed}"
+    );
+    // The declared 4s budget bounds the activation, not one probe of it: the
+    // tail is the wait's own last diagnostic probe, never the runtime's answer.
+    assert!(
+        elapsed < Duration::from_secs(20),
+        "a declared 4s budget took {elapsed:?} over {activations} Compose up: {failed}"
+    );
+    // A hung inventory is one refusal, never a reason to activate again.
+    assert_eq!(
+        activations, 1,
+        "the hung probe repeated activation: {rendered}"
+    );
+    // The probes that hung stopped with the budget: no child outlived it.
+    assert!(!hung.is_empty(), "the fixture never hung an inventory probe");
+    for pid in hung {
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("probe liveness")
+            .success();
+        assert!(!alive, "hung probe {pid} outlived the activation");
+    }
+    // A sibling whose runtime answers still starts.
+    let healthy = fixture.run(1, &["container", "up", "--detach"]);
+    assert!(healthy.status.success(), "healthy sibling: {healthy:?}");
+    fixture.probe(1);
+}
+
 #[test]
 fn private_startup_failure_and_interruption_withhold_ready_and_cleanup() {
     let mut fixture = Fixture::new();
@@ -1078,7 +1163,9 @@ if args and args[0]=='compose':
  elif sub in ['restart','down']: sys.exit(91)
  sys.exit(0)
 if args and args[0]=='ps':
- if state['active'] and mode=='hang-after-up' and '--format' in args: time.sleep(120)
+ if state['active'] and mode=='hang-after-up' and '--format' in args:
+  with open(cwd/'hung-probes.jsonl','a') as f: f.write(json.dumps({'pid':os.getpid(),'args':args})+'\n')
+  time.sleep(120)
  for p in root.glob('stack*/state.json'):
   s=json.load(open(p))
   if not s['active'] or not selected(s): continue

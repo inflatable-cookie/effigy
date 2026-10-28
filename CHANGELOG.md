@@ -323,6 +323,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A container runtime that stops answering an inventory read can no longer
+  hold one `container up` open for minutes. Every runtime read Effigy makes is
+  bounded, and a bring-up's read after Compose returns and its readiness wait
+  share one deadline: the environment's declared
+  `[containers.<NAME>.health].timeout_secs` (60s by default), measured from the
+  moment Compose returned. A hung read therefore spends that budget once, its
+  probe child is stopped and reaped at the deadline, and the activation ends
+  with one refusal carrying the usual `state: unavailable`,
+  `readiness: unverified` evidence instead of a second Compose activation.
 - Managed-task `status`, `logs` and `stop` (`mode = "tui"`) inspect or stop an
   existing session without acquiring a missing pinned source. The skip follows
   the selected task's own `mode`, including a prefixed catalog name and a task

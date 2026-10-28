@@ -269,10 +269,14 @@ fn run_container_up_inner(
     operation.stage = Some("compose_activation");
     let attached_end = std::cell::RefCell::new(None);
     let detached_failure = std::cell::RefCell::new(None);
+    // The one budget this bring-up's runtime observations share, started when
+    // Compose returned: the restart-policy read and the readiness wait spend it
+    // together instead of each waiting out a hung runtime (effigy#411).
+    let observation = std::cell::Cell::new(None);
     let compose_steps =
         std::cell::RefCell::new(ComposeSteps::new(plan.policy.project_name.clone()));
     let reconciled = environment::reconcile(repo_root, &plan.policy, retention, || {
-        match run_container_up_compose(&plan, &mut compose_steps.borrow_mut()) {
+        match run_container_up_compose(&plan, &mut compose_steps.borrow_mut(), &observation) {
             Ok(None) => {}
             Ok(Some(end)) => {
                 let message = match &end {
@@ -326,7 +330,11 @@ fn run_container_up_inner(
     }
 
     operation.stage = Some("readiness");
-    let health = wait_for_container_ready(&plan.policy, Some(&plan.stop_flag))?;
+    let health = wait_for_container_ready(
+        &plan.policy,
+        Some(&plan.stop_flag),
+        observation.get(),
+    )?;
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
     }
@@ -335,7 +343,15 @@ fn run_container_up_inner(
     let integrations = steps::during(
         "registering routes",
         "routes and host listeners registered",
-        || complete_container_up_runtime_integrations(repo_root, &plan),
+        || {
+            complete_container_up_runtime_integrations(
+                repo_root,
+                &plan,
+                observation
+                    .get()
+                    .unwrap_or_else(|| super::readiness::observation_deadline(&plan.policy)),
+            )
+        },
     )?;
 
     // Activation promotes the generation and attaches any requesting runs.
@@ -472,6 +488,7 @@ fn prepare_container_up(
 fn run_container_up_compose(
     plan: &ContainerUpPlan,
     compose_steps: &mut ComposeSteps,
+    observation: &std::cell::Cell<Option<std::time::Instant>>,
 ) -> Result<Option<AttachedComposeEnd>, RunnerError> {
     // A runtime whose progress this parser does not recognise still gets one
     // honest step instead of a silent wait.
@@ -494,12 +511,17 @@ fn run_container_up_compose(
     match output {
         Ok(_) => {
             // The stack is started, so the runtime can be told to keep it up
-            // without racing Compose's create/start (effigy#383).
+            // without racing Compose's create/start (effigy#383). This read is
+            // the first of the bring-up's observations, so it starts the one
+            // budget they all share (effigy#411).
+            let deadline = super::readiness::observation_deadline(&plan.policy);
+            observation.set(Some(deadline));
             effigy_containers::policy::restart::apply_after_start(
                 &plan.policy.repo_root,
                 &plan.policy,
                 &plan.policy.project_name,
                 &plan.policy.compose_files,
+                Some(deadline),
             );
             if compose_steps.touched() == 0 {
                 whole_stack.succeed("the stack is up");
@@ -544,12 +566,17 @@ fn render_container_up_interrupted(
 fn complete_container_up_runtime_integrations(
     repo_root: &Path,
     plan: &ContainerUpPlan,
+    deadline: std::time::Instant,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
     let policy = &plan.policy;
     // Readiness is Running plus the service's own health check, decided by the
-    // bring-up wait. This only proves the binding the later stages target.
+    // bring-up wait. This only proves the binding the later stages target, and
+    // it shares the bring-up's one observation budget: a runtime that already
+    // did not answer is refused here rather than asked a fresh question.
     let binding = match crate::runner::container_runtime_prep::ensure_primary_service_binding(
-        repo_root, policy,
+        repo_root,
+        policy,
+        Some(deadline),
     ) {
         Ok(binding) => binding,
         Err(error) => {
@@ -589,7 +616,9 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
-    if let Err(error) = super::support::ensure_pinned_host_ports_available(repo_root, policy) {
+    if let Err(error) =
+        super::support::ensure_pinned_host_ports_available(repo_root, policy, Some(deadline))
+    {
         if plan.attach_mode == EffectiveAttachMode::Detached {
             return Err(detached_activation_error(policy, error));
         }
@@ -622,7 +651,8 @@ fn complete_container_up_runtime_integrations(
             }
         };
     let tcp_alias_host_notes =
-        match reconcile_primary_service_tcp_alias_hosts(repo_root, policy, &binding) {
+        match reconcile_primary_service_tcp_alias_hosts(repo_root, policy, &binding, Some(deadline))
+        {
             Ok(notes) => notes,
             Err(error) => {
                 if plan.attach_mode == EffectiveAttachMode::Detached {
@@ -2727,6 +2757,7 @@ exit 0
         let binding = crate::runner::container_runtime_prep::ensure_primary_service_binding(
             &fixture.repo_root,
             &policy,
+            None,
         )
         .expect("a missing image working_dir does not fail up");
 

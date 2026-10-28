@@ -63,12 +63,19 @@ pub(super) fn repo_root_has_effigy_manifest(repo_root: &Path) -> bool {
 /// is what tells a person which service is wrong. The environment's declared
 /// `[containers.<name>.health]` check is still the final gate when it declares
 /// one; an environment whose services the runtime cannot see keeps exactly
-/// the old behaviour.
+/// the old behaviour. `deadline` is the bring-up's one observation budget; a
+/// caller without one starts the environment's own health timeout now.
 pub(super) fn wait_for_container_ready(
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
+    deadline: Option<std::time::Instant>,
 ) -> Result<Option<&'static str>, RunnerError> {
-    match super::readiness::await_services_ready(&policy.repo_root, policy, stop_requested)? {
+    match super::readiness::await_services_ready(
+        &policy.repo_root,
+        policy,
+        stop_requested,
+        deadline,
+    )? {
         super::readiness::ReadinessEnd::Interrupted => return Ok(Some("interrupted")),
         super::readiness::ReadinessEnd::Ready | super::readiness::ReadinessEnd::NothingToAwait => {}
     }
@@ -254,8 +261,9 @@ pub(in crate::runner) fn reconcile_primary_service_tcp_alias_hosts(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
+    deadline: Option<std::time::Instant>,
 ) -> Result<Vec<String>, RunnerError> {
-    let routes = resolve_gateway_tcp_alias_routes_for_container(repo_root, policy)?;
+    let routes = resolve_gateway_tcp_alias_routes_for_container(repo_root, policy, deadline)?;
     install_primary_service_tcp_alias_hosts(repo_root, policy, &routes, binding)
 }
 
@@ -329,13 +337,16 @@ patch_alias() {
 pub(super) fn ensure_pinned_host_ports_available(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
 ) -> Result<(), RunnerError> {
     if policy.declared_ports.is_empty() {
         return Ok(());
     }
     let owned =
-        effigy_containers::exec::list_running_compose_containers_for_policy(repo_root, policy)
-            .map(|rows| {
+        effigy_containers::exec::list_running_compose_containers_for_policy_with_deadline(
+            repo_root, policy, deadline,
+        )
+        .map(|rows| {
                 rows.iter()
                     .flat_map(|row| row.ports.iter())
                     .filter_map(|published| published.split_once("->").map(|(host, _)| host))
@@ -399,6 +410,7 @@ pub(in crate::runner) fn ensure_shared_services_running(
             policy,
             &service.project_name,
             std::slice::from_ref(&service.compose_file),
+            None,
         );
         notes.push(match replaced {
             true => format!("replaced shared {} (render changed)", service.service_name),

@@ -661,11 +661,14 @@ pub(in crate::runner) fn verify_service_binding(
 
 /// The owned binding of the environment's primary service, for the stages that
 /// need an inspected full id (mount verification, alias reconciliation).
+/// `deadline` is the bring-up's observation budget when the caller shares one;
+/// the standard inventory budget applies when it does not.
 pub(in crate::runner) fn ensure_primary_service_binding(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
 ) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
-    verify_service_binding(repo_root, policy, &policy.primary_service, None)
+    verify_service_binding(repo_root, policy, &policy.primary_service, deadline)
 }
 
 fn run_runtime_prep_steps<T>(
