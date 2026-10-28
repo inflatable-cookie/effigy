@@ -149,6 +149,11 @@ exception to contract 052 R2, scoped to `doctor --deep` (with or without
 `--refresh`). It does not grant writes to structural doctor, standalone scan,
 or any other Static/Observe command. An unchanged deep generation remains
 read-only; the cache remains disposable and publication failures are warnings.
+The ratchet's additional write and removal sites are part of this exception:
+publication is confined to the owner's v2 directory, while eviction locks and
+rechecks each verifiably owned generation before removing its cache file.
+Unknown, mismatched, and locked entries remain untouched, and failed cache
+effects remain warnings.
 
 ## Report contract
 
