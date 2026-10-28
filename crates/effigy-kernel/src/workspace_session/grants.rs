@@ -771,7 +771,7 @@ fn write_terminal(
             )?;
             Ok::<_, RunError>(())
         })
-        .map_err(|error| unavailable(RunError::from(error)))
+        .map_err(unavailable)
 }
 
 fn unavailable(error: RunError) -> Refusal {

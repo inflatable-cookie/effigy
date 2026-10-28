@@ -8,57 +8,67 @@ use crate::runner::runtime_session_context::{
     RuntimeSessionContext,
 };
 
-use effigy_kernel::workspace_session::{SessionHandle, SessionRef, TerminalKind};
+/// The workspace entry's front ends (contract 052 §8.11). The TUI, a plain text
+/// client and a headless one are front ends of one managed session: they differ
+/// only in how they render it, never in which run they talk to. The
+/// workspace-client glue task drives them; until it lands they are proven by
+/// `effigy_kernel::workspace_session::tests` and this file's own tests.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the workspace-client glue task drives these front ends"
+    )
+)]
+pub(super) mod front_end {
+    use effigy_kernel::workspace_session::{SessionHandle, SessionRef, TerminalKind};
 
-use super::RunnerError;
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum WorkspaceFrontEnd {
+        Tui,
+        Text,
+        Headless,
+    }
 
-/// Which front end is entering the workspace session (contract 052 §8.11). The
-/// TUI, a plain text client and a headless one are front ends of one managed
-/// session: they differ only in how they render it, never in which run they
-/// talk to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum WorkspaceFrontEnd {
-    Tui,
-    Text,
-    Headless,
-}
+    impl WorkspaceFrontEnd {
+        pub(super) fn terminal_kind(self) -> TerminalKind {
+            match self {
+                Self::Tui => TerminalKind::Tui,
+                Self::Text => TerminalKind::Text,
+                Self::Headless => TerminalKind::Headless,
+            }
+        }
 
-impl WorkspaceFrontEnd {
-    pub(super) fn terminal_kind(self) -> TerminalKind {
-        match self {
-            Self::Tui => TerminalKind::Tui,
-            Self::Text => TerminalKind::Text,
-            Self::Headless => TerminalKind::Headless,
+        /// The one line a front end prints for the session it entered. Every
+        /// kind prints the same session identity, so a UI and a text log agree.
+        pub(super) fn session_line(self, session: &SessionRef) -> String {
+            format!("{}: {}", self.terminal_kind().as_str(), session.label())
         }
     }
 
-    /// The one line a front end prints for the session it entered. Every kind
-    /// prints the same session identity, so a UI and a text log agree.
-    pub(super) fn session_line(self, session: &SessionRef) -> String {
-        format!("{}: {}", self.terminal_kind().as_str(), session.label())
+    /// An interactive terminal with no initial command is the TUI; an
+    /// interactive terminal running a command is a text client; a workspace
+    /// entry with no terminal at all is headless.
+    pub(super) fn workspace_front_end(
+        interactive: bool,
+        initial_command: Option<&str>,
+    ) -> WorkspaceFrontEnd {
+        match (interactive, initial_command) {
+            (false, _) => WorkspaceFrontEnd::Headless,
+            (true, Some(_)) => WorkspaceFrontEnd::Text,
+            (true, None) => WorkspaceFrontEnd::Tui,
+        }
+    }
+
+    /// The handle a front end drives: durable session identity and journalled
+    /// requests only, never the supervisor's owning pipe. A front end can close
+    /// at any time without settling the session.
+    pub(super) fn workspace_session_handle(session: SessionRef) -> SessionHandle {
+        SessionHandle::new(session)
     }
 }
 
-/// An interactive terminal with no initial command is the TUI; an interactive
-/// terminal running a command is a text client; a workspace entry with no
-/// terminal at all is headless.
-pub(super) fn workspace_front_end(
-    interactive: bool,
-    initial_command: Option<&str>,
-) -> WorkspaceFrontEnd {
-    match (interactive, initial_command) {
-        (false, _) => WorkspaceFrontEnd::Headless,
-        (true, Some(_)) => WorkspaceFrontEnd::Text,
-        (true, None) => WorkspaceFrontEnd::Tui,
-    }
-}
-
-/// The handle a front end drives: durable session identity and journalled
-/// requests only, never the supervisor's owning pipe. A front end can close at
-/// any time without settling the session.
-pub(super) fn workspace_session_handle(session: SessionRef) -> SessionHandle {
-    SessionHandle::new(session)
-}
+use super::RunnerError;
 
 pub(super) fn run_workspace_container_session(
     repo_root: &Path,
@@ -173,10 +183,8 @@ fn combine_workspace_session_results(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        combine_workspace_session_results, workspace_front_end, workspace_session_handle,
-        WorkspaceFrontEnd,
-    };
+    use super::combine_workspace_session_results;
+    use super::front_end::{workspace_front_end, workspace_session_handle, WorkspaceFrontEnd};
     use crate::runner::error::RunnerError;
     use effigy_kernel::id::{CheckoutId, CheckoutKind, Generation, ResourceId, RunId};
     use effigy_kernel::run::Fence;

@@ -566,10 +566,9 @@ impl SessionAdmissions {
                         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
                     )
                     .optional()?;
-                let current = match &run {
-                    Some((generation, _)) => Some(Generation::new(*generation as u64)),
-                    None => None,
-                };
+                let current = run
+                    .as_ref()
+                    .map(|(generation, _)| Generation::new(*generation as u64));
                 let fresh = matches!(&run, Some((generation, phase))
                 if *generation as u64 == session.generation().get() && phase != "closed");
                 if !fresh {
@@ -968,10 +967,7 @@ fn read_conn(
         (Some(_), None) => return Err(RunError::broken("a stored refusal without a diagnostic")),
         (None, _) => None,
     };
-    let outcome = match outcome {
-        Some(label) => Some(StoredOutcome { label, exit_code }),
-        None => None,
-    };
+    let outcome = outcome.map(|label| StoredOutcome { label, exit_code });
     Ok(Some(AdmissionRecord {
         key: key.clone(),
         digest: Digest(digest),
