@@ -28,6 +28,7 @@ mod host_process;
 mod interactive_session;
 mod managed_listener_readiness;
 mod managed_run;
+mod managed_secrets;
 mod managed_shell;
 mod manifest;
 mod owned_children;
@@ -103,3 +104,8 @@ mod json_contract_tests;
 #[cfg(test)]
 #[path = "../tests/task_ref_parser_tests.rs"]
 mod task_ref_parser_tests;
+
+/// Dispose only provably stale managed secret deliveries at CLI startup.
+pub(crate) fn cleanup_managed_secrets() -> std::io::Result<()> {
+    managed_secrets::sweep()
+}

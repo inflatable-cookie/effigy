@@ -1241,3 +1241,20 @@ fn exit_of(pid: u32) -> i32 {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+
+#[test]
+fn redaction_covers_multiline_pty_newlines_without_exposing_split_prefixes() {
+    let secret = b"pty-private-first\npty-private-last\n".to_vec();
+    for input in [
+        secret.clone(),
+        b"pty-private-first\r\npty-private-last\r\n".to_vec(),
+    ] {
+        let mut redactor = Redactor::new(vec![secret.clone()]);
+        let mut captured = Vec::new();
+        for byte in input {
+            captured.extend(redactor.push(&[byte], false));
+        }
+        captured.extend(redactor.push(&[], true));
+        assert_eq!(captured, b"[REDACTED]");
+    }
+}
