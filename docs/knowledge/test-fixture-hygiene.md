@@ -31,6 +31,21 @@ TERM and HUP and then panics, and a runner killed mid-test. Both require the
 failure report to name the child and the child to be gone afterwards.
 `test:fixtures:hygiene:guards` runs them.
 
+### The built-in test route
+
+`effigy test` starts its own suite instead of a selector, so it owns the same
+sweep in `crates/effigy-builtin/src/test/sweep.rs`: one fresh token per
+invocation, the `EFFIGY_TEST_SUITE` environment for Linux, and a marker file
+whose descriptor a host suite's own shell opens (`exec 9>>…`) before running.
+That prologue matters because the route runs suites through kernel custody,
+whose descriptor plan would otherwise drop an inherited marker. After the last
+suite, the sweep names, TERMs and then KILLs whatever still carries the suite
+and fails the route with the same one-hard-boundary rule. Container suites run
+on another host and are not swept. `test:fixtures:hygiene:builtin-sweep` runs
+the `run_manifest_task_builtin_test_sweeps_a_leaked_suite_process` proof: a
+suite that leaves a process in its own process group, which the route must name
+and reap.
+
 ### The kernel-custody boundary
 
 Kernel custody is an explicit boundary, not a sweep target. A helper started
@@ -42,6 +57,8 @@ does not prove group closure, so nothing here self-exits on those grounds and
 the sweep never signals a custody anchor, supervisor, sentinel or payload.
 Contract 052 settlement owns them: it stops workload members only on that
 evidence, stops the anchor last, and then releases the shared checkout lease.
+An anchor ends on SIGTERM (Q-014), which retires evidence a harness stopped
+rather than leaving it to survive indefinitely.
 `custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closure`
 proves the anchor and lease survive deletion until closure; the same test proves
 the anchor is gone once settlement completes.

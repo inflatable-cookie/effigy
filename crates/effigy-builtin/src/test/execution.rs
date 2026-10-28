@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
@@ -18,6 +18,7 @@ use effigy_tui::multiprocess::{
 };
 
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
+use super::sweep::Sweep;
 use super::{BuiltinError, BuiltinTestExecResult};
 use crate::ports::BuiltinTestChildEvidence;
 use crate::{BuiltinRuntimePorts, HostSuiteCustody};
@@ -51,24 +52,30 @@ pub(super) fn run_builtin_test_targets_tui(
         .iter()
         .map(|suite| suite.name.clone())
         .collect::<Vec<String>>();
-    let host_env = suite_host_env(ports);
+    let mut host_env = suite_host_env(ports);
+    let sweep = begin_sweep(&mut host_env, runnable.iter().any(runs_on_host));
     let specs = runnable
         .iter()
         .map(|suite| {
             let execution_command = render_routed_suite_command(ports, suite)?;
+            let script = lifecycle_execution_command_from_parts(
+                &execution_command,
+                suite.setup_command.as_deref(),
+                suite.teardown_command.as_deref(),
+                suite.teardown_policy,
+            );
+            let host = runs_on_host(suite);
             Ok(ProcessSpec {
                 name: suite.name.clone(),
-                run: lifecycle_execution_command_from_parts(
-                    &execution_command,
-                    suite.setup_command.as_deref(),
-                    suite.teardown_command.as_deref(),
-                    suite.teardown_policy,
-                ),
+                run: match &sweep {
+                    Some(sweep) if host => sweep.command(&script),
+                    _ => script,
+                },
                 cwd: suite.root.clone(),
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 pty: true,
-                env: if runs_on_host(suite) {
+                env: if host {
                     host_env.clone()
                 } else {
                     std::collections::BTreeMap::new()
@@ -112,7 +119,7 @@ pub(super) fn run_builtin_test_targets_tui(
         .into_iter()
         .collect::<HashMap<String, String>>();
 
-    Ok(runnable
+    let results = runnable
         .into_iter()
         .map(|suite| {
             let diagnostic = failures.get(&suite.name);
@@ -128,7 +135,9 @@ pub(super) fn run_builtin_test_targets_tui(
                 code,
             }
         })
-        .collect::<Vec<BuiltinTestExecResult>>())
+        .collect::<Vec<BuiltinTestExecResult>>();
+    finish_sweep(sweep)?;
+    Ok(results)
 }
 
 pub(super) fn run_builtin_test_targets_parallel(
@@ -148,7 +157,8 @@ pub(super) fn run_builtin_test_targets_parallel(
     };
     // The suites run on worker threads, which cannot see the caller's thread
     // scope: read the run's host environment here and carry it across.
-    let host_env = suite_host_env(ports);
+    let mut host_env = suite_host_env(ports);
+    let sweep = begin_sweep(&mut host_env, runnable.iter().any(runs_on_host));
     let jobs = runnable
         .into_iter()
         .map(|job| {
@@ -169,13 +179,17 @@ pub(super) fn run_builtin_test_targets_parallel(
                 &job.root,
                 &env_wrapped_command,
             )?;
-            let execution_command = lifecycle_execution_command_from_parts(
+            let script = lifecycle_execution_command_from_parts(
                 &routed_command,
                 job.setup_command.as_deref(),
                 job.teardown_command.as_deref(),
                 job.teardown_policy,
             );
             let host = runs_on_host(&job);
+            let execution_command = match &sweep {
+                Some(sweep) if host => sweep.command(&script),
+                _ => script,
+            };
             // A suite the caller's run owns runs under that run's custody: one
             // child run per suite, moved to the worker that runs it, so the run
             // settles the suite's whole process group. Child evidence is the
@@ -212,7 +226,7 @@ pub(super) fn run_builtin_test_targets_parallel(
     let worker_count = max_parallel.min(jobs.len()).max(1);
     let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
 
-    std::thread::scope(
+    let results = std::thread::scope(
         |scope| -> Result<Vec<BuiltinTestExecResult>, BuiltinError> {
             let (child_evidence_sender, child_evidence_receiver) = if capture_child_evidence {
                 let (sender, receiver) = std::sync::mpsc::channel::<BuiltinTestChildEvidence>();
@@ -412,7 +426,9 @@ pub(super) fn run_builtin_test_targets_parallel(
             }
             Ok(combined)
         },
-    )
+    )?;
+    finish_sweep(sweep)?;
+    Ok(results)
 }
 
 /// Route one rendered suite command to its owning catalog's declared
@@ -445,6 +461,33 @@ fn host_scratch_env(ports: &dyn BuiltinRuntimePorts) -> std::collections::BTreeM
         .into_iter()
         .map(|(key, value)| (key, value.to_string_lossy().into_owned()))
         .collect()
+}
+
+/// Begin the one suite sweep a host run owns, or none when every suite runs
+/// elsewhere. The token joins the suite environment so a descendant that keeps
+/// its environment still names the suite.
+fn begin_sweep(host_env: &mut BTreeMap<String, String>, host_suites: bool) -> Option<Sweep> {
+    if !host_suites {
+        return None;
+    }
+    let scratch = host_env.get("TMPDIR").map(PathBuf::from);
+    let sweep = Sweep::begin(scratch.as_deref())?;
+    let (key, value) = sweep.token_env();
+    host_env.insert(key.to_owned(), value);
+    Some(sweep)
+}
+
+/// Fail the route with every process that outlived its suites.
+fn finish_sweep(sweep: Option<Sweep>) -> Result<(), BuiltinError> {
+    let leaked = sweep.map(Sweep::end).unwrap_or_default();
+    if leaked.is_empty() {
+        return Ok(());
+    }
+    Err(BuiltinError::task_invocation(format!(
+        "{} process(es) outlived the test suite: {}",
+        leaked.len(),
+        leaked.join("; ")
+    )))
 }
 
 /// A host suite's environment: its scratch variables plus the invoking Effigy.

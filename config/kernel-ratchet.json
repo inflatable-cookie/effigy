@@ -12,6 +12,11 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },
+    "crates/effigy-builtin/src/test/sweep.rs": {
+      "libc::kill": 2,
+      "std.process.Command.new": 2,
+      "std.process.Command.output": 2
+    },
     "crates/effigy-containers/src/colima.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1,
