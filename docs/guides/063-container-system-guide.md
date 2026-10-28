@@ -1586,8 +1586,11 @@ it does not lower the host-wide unprivileged-port threshold. Replacing that
 binary removes its file capability, so run setup again after an executable
 upgrade; `effigy gateway status --json` reports `launcher.low_port` as `missing`
 until then. Foreign unit files and foreign executable capabilities are preserved
-with an error. This adapter requires systemd-resolved, the documented `ip` and
-`resolvectl` tools, and systemd's user manager for the login launch below.
+with an error. The installation path must be one real file: a symbolic or hard
+link at the installed path is refused for both the unit and the capability,
+because a link's target can be retargeted after setup. This adapter requires
+systemd-resolved, the documented `ip` and `resolvectl` tools, and systemd's user
+manager for the login launch below.
 
 Linux setup also installs one launch-only systemd **user** unit,
 `~/.config/systemd/user/effigy-gateway.service`, and enables it for the login
@@ -1633,11 +1636,19 @@ An executable upgrade replaces the file, so its capability does not carry over:
 run `effigy gateway setup` again, which reports `launcher.low_port: "missing"`
 until it does. Setup then rewrites the owned unit to name the image it ran, and
 the next login runs that command. A rollback that removes the image the unit
-names, or leaves it linked, group- or world-writable, is reported as
+names, or leaves it a link, group- or world-writable, is reported as
 `launcher.unit: "stale"` — never as ready — with the restore path,
 `effigy gateway setup` and a `systemctl --user restart` reconcile request in
 `recovery`. A stale unit is still Effigy's own file, so
 `effigy gateway setup --remove` disables and removes it.
+
+A changed unit definition disables the login activation before it writes the
+new file, because the user manager may keep the definition it already loaded.
+A failed or timed-out `daemon-reload` therefore leaves the unit `installed` and
+not enabled with the recovery commands, rather than a new file whose link still
+claims the old definition is live. The link comes back only from an `enable`
+that setup asked for; an `enable` that reports a failure after writing the link
+is observed as enabled, because the link is the fact and the reply is not.
 
 If the systemd user manager cannot be reached, refuses, or does not answer
 within 20 seconds, setup does not fail after writing the unit: it prints the
@@ -1762,15 +1773,20 @@ effigy install:local
 bin=$(readlink -f "$(command -v effigy)")
 effigy gateway status --json | jq '.result.launcher.low_port' # expect "missing"
 effigy gateway setup                                          # restores it
-# A rollback that leaves the unit naming an image that moved away:
-mv "$bin" "$HOME/effigy-upgraded"
-effigy gateway status --json | jq '.result.launcher.unit'       # expect "stale"
-mv "$HOME/effigy-upgraded" "$bin"
+systemctl --user is-enabled effigy-gateway.service            # expect enabled
+# A rollback that leaves the unit naming an image that moved away. Status runs
+# from the moved binary itself, and the owned unit is restored afterwards:
+mv "$bin" "$HOME/effigy-moved"
+"$HOME/effigy-moved" gateway status --json | jq '.result.launcher.unit'  # expect "stale"
+mv "$HOME/effigy-moved" "$bin"
 effigy gateway setup                                          # unit names this image again
+# A foreign unit is preserved with an error and its bytes unchanged:
+cp ~/.config/systemd/user/effigy-gateway.service "$HOME/effigy-unit.owned"
 printf '[Unit]\nDescription=foreign\n' > ~/.config/systemd/user/effigy-gateway.service
-effigy gateway setup; echo $?                                 # expect non-zero, file unchanged
-# A user manager that is not running must not fail a written unit:
-effigy gateway setup; echo $?                                 # expect the exact systemctl steps
+effigy gateway setup; echo $?                                 # expect non-zero
+cat ~/.config/systemd/user/effigy-gateway.service             # expect the foreign bytes
+mv "$HOME/effigy-unit.owned" ~/.config/systemd/user/effigy-gateway.service
+systemctl --user is-enabled effigy-gateway.service            # expect enabled again
 
 # 6. Exact cleanup of everything this proof installed.
 effigy gateway setup --remove

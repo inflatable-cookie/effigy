@@ -330,13 +330,17 @@ quoted installed image plus `gateway up`/`gateway down`, and
 `WorkingDirectory=` is the operator home written bare: that value takes one
 literal path and has no quoting rule, so a quoted value would name a directory
 whose name includes the quotes. `Environment=` keeps its `HOME=` assignment
-quoting. The source regression layer (`linux_operator` fake systemd manager and
-fault fakes) proves clean install, repeated setup, an upgrade that rewrites the
-owned unit, login and reboot starts from the installed unit's own `ExecStart`,
-`stop`/`restart` as ordinary requests, `RemainAfterExit` no-ops, a failed
-`gateway up` leaving nothing running, foreign unit and capability refusal, a
-replaced image and exact cleanup, without a live user manager. A reversible
-break probe on those tests is part of the change's proof, not a live claim.
+quoting. The image is one real file: setup and status open the installed path
+with `O_NOFOLLOW`, so a symbolic or hard link is refused for the unit and the
+capability even when its target is a safe image, because a link's target can be
+retargeted after setup. The source regression layer (`linux_operator` fake
+systemd manager and fault fakes) proves clean install, repeated setup, an
+upgrade that rewrites the owned unit, login and reboot starts from the installed
+unit's own `ExecStart`, `stop`/`restart` as ordinary requests,
+`RemainAfterExit` no-ops, a failed `gateway up` leaving nothing running, foreign
+unit and capability refusal, a linked image, a replaced image and exact cleanup,
+without a live user manager. A reversible break probe on those tests is part of
+the change's proof, not a live claim.
 
 Status reports `unit` as `missing`, `installed`, `foreign`, `unsafe` or
 `stale`. `stale` is Effigy's own marker-carrying unit whose declared
@@ -358,6 +362,17 @@ not enabled, prints the manager's own sentence, and names the exact
 shape: it disables, removes and unlinks the owned unit, and a manager that
 cannot reload afterwards is not treated as a failed removal. A refused disable
 does preserve the unit and names `effigy gateway down` plus the two commands.
+
+A changed definition disables the login activation before the new unit file is
+written, because the user manager may keep the definition it already loaded. A
+failed or timed-out `daemon-reload` therefore leaves the unit installed and not
+enabled — never a new file whose surviving link still claims the old definition
+is live — and the link returns only from an `enable` setup asked for. An
+`enable` that reports a failure after writing the link is observed as enabled:
+the link is the fact and the reply is not. Rollback after such a partial
+upgrade is two supported routes: restore the image the unit names (a deleted or
+widened image is `stale`), or run `effigy gateway setup` with the rolled-back
+binary, which rewrites the owned unit and enables it again.
 
 The capability is bound to one install identity: the exact binary setup ran,
 with one link, owner-private mode and the operator (or root) as owner. A

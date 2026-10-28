@@ -317,6 +317,11 @@ pub struct LaunchInstall {
 /// The unit file is written by the operator so systemd accepts it as the
 /// operator's own. Nothing here needs administrator rights; the low-port
 /// capability is the only privileged part of setup.
+///
+/// A changed definition disables the login activation before it touches the
+/// unit file. The manager may keep the definition it loaded, so a failed or
+/// timed-out reload must not leave a new file that still looks enabled: the
+/// link comes back only from an `enable` this run asked for.
 pub fn install(
     run: &mut Run<'_>,
     cx: &EffectContext,
@@ -335,8 +340,12 @@ pub fn install(
         keep_previous: false,
     };
     match read_record::<Bytes>(&cx.operation().observe().map_err(error)?, &dir, &name) {
-        Observed::Verified(existing, _) if existing.0 == bytes => {}
+        Observed::Verified(existing, _) if existing.0 == bytes => {
+            // Nothing on disk changes, so the login definition and its link
+            // stay exactly as the manager already knows them.
+        }
         Observed::Verified(existing, _) if owned_unit(&existing.0) => {
+            drop_activation_link(paths)?;
             run.replace_file(&dir, &name, &bytes, replace).map_err(error)?;
         }
         Observed::Verified(_, _) | Observed::Unknown(_) => {
@@ -346,6 +355,7 @@ pub fn install(
             )))
         }
         Observed::Absent(_) => {
+            drop_activation_link(paths)?;
             run.replace_file(&dir, &name, &bytes, replace).map_err(error)?;
         }
     }
@@ -361,21 +371,22 @@ pub fn install(
             )),
         ));
     }
-    if let Some(reason) = manager_refusal(systemd.run(&["enable", UNIT_NAME])) {
-        return Ok(unenabled(
-            paths,
-            Some(format!(
-                "the systemd user manager refused `enable {UNIT_NAME}`: {reason}"
-            )),
-        ));
-    }
+    let enable_refusal = manager_refusal(systemd.run(&["enable", UNIT_NAME]));
+    // The link is the fact, not the reply: an `enable` that failed after
+    // writing it has done the work, and calling that unenabled would be a
+    // false refusal. Without the link the login activation is genuinely absent.
     if !activation_linked(paths) {
         return Ok(unenabled(
             paths,
-            Some(format!(
-                "`systemctl --user enable {UNIT_NAME}` left no login activation link at {}",
-                paths.wants.display()
-            )),
+            Some(match enable_refusal {
+                Some(reason) => {
+                    format!("the systemd user manager refused `enable {UNIT_NAME}`: {reason}")
+                }
+                None => format!(
+                    "`systemctl --user enable {UNIT_NAME}` left no login activation link at {}",
+                    paths.wants.display()
+                ),
+            }),
         ));
     }
     Ok(LaunchInstall {
@@ -445,18 +456,25 @@ pub fn remove(
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     crate::setup::remove_managed_with(cx, &dir, UNIT_NAME, |path| std::fs::remove_file(path))?;
     // A leftover link must never point at a path Effigy no longer owns.
-    if activation_linked(paths) {
-        std::fs::remove_file(&paths.wants).map_err(|failure| {
-            error(format!(
-                "removing the login activation link {} failed: {failure}",
-                paths.wants.display()
-            ))
-        })?;
-    }
+    drop_activation_link(paths)?;
     // The unit file and its link are gone, so a manager that cannot reload is
     // not a removal failure: it only keeps a definition systemd already knows.
     let _ = systemd.run(&["daemon-reload"]);
     Ok(())
+}
+
+/// Remove the login activation link Effigy wrote, and only that one: the link
+/// is Effigy's when it is a symlink naming Effigy's own unit path.
+fn drop_activation_link(paths: &LaunchPaths) -> io::Result<()> {
+    if !activation_linked(paths) {
+        return Ok(());
+    }
+    std::fs::remove_file(&paths.wants).map_err(|failure| {
+        error(format!(
+            "removing the login activation link {} failed: {failure}; run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again",
+            paths.wants.display()
+        ))
+    })
 }
 
 /// Exact commands that finish an enable the user manager could not do, and the
@@ -600,21 +618,30 @@ pub fn validate_executable(facts: &ExecutableFacts, operator_uid: u32) -> io::Re
     Ok(())
 }
 
-/// The installed binary a unit may name. A changed, linked or writable image is
-/// refused before a unit or a capability is bound to it.
+/// The installed binary a unit may name. A changed, linked, missing or writable
+/// image is refused before a unit or a capability is bound to it.
 pub fn verify_executable(executable: &Path, operator_uid: u32) -> io::Result<()> {
-    let metadata = std::fs::metadata(executable).map_err(|failure| {
+    let refused = || {
         error(format!(
-            "the installed gateway binary {} is unavailable: {failure}",
+            "the installed gateway binary {} is not usable for the Linux operator route: it must be one real, owner-only executable file (not a symbolic or hard link) owned by the operator (uid {operator_uid}) or root, and not group- or world-writable. Install it as a real file, then run `effigy gateway setup` again",
             executable.display()
         ))
-    })?;
-    validate_executable(&ExecutableFacts::of(&metadata), operator_uid).map_err(|_| {
-        error(format!(
-            "the installed gateway binary {} is unsafe for the Linux operator route: it must be one owner-only executable file, owned by the operator (uid {operator_uid}) or root, and not group- or world-writable. Install it owner-only, then run `effigy gateway setup` again",
-            executable.display()
-        ))
-    })
+    };
+    let facts = image_facts(executable).map_err(|_| refused())?;
+    validate_executable(&facts, operator_uid).map_err(|_| refused())
+}
+
+/// Open exactly the file at `path`, without following a link, and report its
+/// facts. A linked image is never trusted through what it points at: the unit
+/// and the capability must both name one real file whose identity cannot be
+/// retargeted underneath them.
+fn image_facts(path: &Path) -> io::Result<ExecutableFacts> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    Ok(ExecutableFacts::of(&file.metadata()?))
 }
 
 /// The exact install that a unit file and a capability are both bound to.
@@ -1104,12 +1131,13 @@ fn declared_unit_executable(paths: &LaunchPaths) -> Option<PathBuf> {
 }
 
 /// Whether this account can still run the image the unit names, by the same
-/// rules the install applies: one owner-only executable file owned by the
-/// operator (or root). A rollback that leaves the unit naming a moved, linked,
-/// writable or deleted image is reported instead of trusted.
+/// rules the install applies: one real owner-only executable file, owned by the
+/// operator (or root), with the path itself not a link. A rollback that leaves
+/// the unit naming a moved, linked, writable or deleted image is reported
+/// instead of trusted.
 fn usable_executable(executable: &Path, operator_uid: u32) -> bool {
-    std::fs::metadata(executable)
-        .map(|metadata| validate_executable(&ExecutableFacts::of(&metadata), operator_uid).is_ok())
+    image_facts(executable)
+        .map(|facts| validate_executable(&facts, operator_uid).is_ok())
         .unwrap_or(false)
 }
 
@@ -2643,6 +2671,183 @@ mod tests {
                 .calls
                 .iter()
                 .any(|call| call.first().map(String::as_str) == Some("disable")));
+        });
+    }
+
+    /// A manager whose `enable` writes the login link and then reports a
+    /// failure, as a timed-out `systemctl` that had already done the work does.
+    struct EnableThenFail {
+        paths: LaunchPaths,
+    }
+
+    impl SystemdUser for EnableThenFail {
+        fn run(&mut self, args: &[&str]) -> io::Result<SystemdOutcome> {
+            if args == ["enable", UNIT_NAME] {
+                std::fs::create_dir_all(self.paths.wants.parent().unwrap()).unwrap();
+                let _ = std::fs::remove_file(&self.paths.wants);
+                std::os::unix::fs::symlink(&self.paths.unit, &self.paths.wants).unwrap();
+                return Ok(SystemdOutcome {
+                    code: 1,
+                    stderr: b"Connection timed out\n".to_vec(),
+                });
+            }
+            Ok(SystemdOutcome {
+                code: 0,
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    /// The image behind a link can be retargeted, so the path itself is the
+    /// identity: a link is refused even when its target is a safe image.
+    #[test]
+    fn a_linked_image_is_refused_and_a_unit_that_names_one_is_stale() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let real = installed_binary_named(home.path(), "effigy-real");
+            let link = home.path().join("effigy");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert!(verify_executable(&link, uid).is_err());
+
+            // Setup refuses before a unit or a capability names the link.
+            let mut manager = FakeManager::for_paths(&paths);
+            let error = install(run, cx, &paths, uid, &link, &mut manager).unwrap_err();
+            assert!(
+                error.to_string().contains("symbolic or hard link"),
+                "{error}"
+            );
+            assert!(manager.calls.is_empty());
+            assert!(!paths.unit.exists());
+
+            // A unit that already names a link is stale, not installed.
+            std::fs::create_dir_all(&paths.user_dir).unwrap();
+            std::fs::write(&paths.unit, unit_definition(&link, home.path()).unwrap()).unwrap();
+            enable_link(&paths);
+            assert_eq!(observe_unit(&paths, uid), UnitState::Stale);
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Stale);
+            assert!(status
+                .recovery
+                .first()
+                .is_some_and(|line| line.contains(&link.display().to_string())));
+        });
+    }
+
+    /// An already enabled installation keeps its activation link across a plain
+    /// repeated setup. A changed definition disables first, so a manager that
+    /// keeps the old definition cannot leave the new file looking enabled.
+    #[test]
+    fn an_already_enabled_upgrade_that_cannot_reload_claims_no_readiness() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let previous = installed_binary_named(home.path(), "effigy-previous");
+            let upgrade = installed_binary_named(home.path(), "effigy-upgrade");
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &previous, &mut manager).unwrap();
+            assert!(manager.enabled());
+
+            let mut wedged = FakeSystemd::with_fault("daemon-reload", Fault::Wedged);
+            let partial = install(run, cx, &paths, uid, &upgrade, &mut wedged).unwrap();
+            assert!(!partial.enabled);
+            assert_eq!(partial.recovery, recovery_steps(&paths));
+            assert!(
+                !paths.wants.exists(),
+                "the previous activation link is dropped before the rewrite"
+            );
+            // Disk and manager cannot disagree about being enabled: the new
+            // unit is installed, and the login activation is reported absent.
+            assert_eq!(
+                declared_executable(&std::fs::read(&paths.unit).unwrap()),
+                Some(upgrade.clone())
+            );
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Installed);
+            assert!(!status.enabled);
+            assert!(status
+                .recovery
+                .iter()
+                .any(|line| line == "systemctl --user enable effigy-gateway.service"));
+        });
+    }
+
+    /// An `enable` that reports a failure after writing the link has done the
+    /// work: the link is the observation, so setup claims no false refusal.
+    #[test]
+    fn an_enable_that_fails_after_writing_the_link_is_observed_as_enabled() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let mut systemd = EnableThenFail {
+                paths: paths.clone(),
+            };
+            let installed = install(run, cx, &paths, uid, &binary, &mut systemd).unwrap();
+            assert!(installed.enabled);
+            assert!(installed.reason.is_none());
+            assert!(installed.recovery.is_empty());
+            assert!(activation_linked(&paths));
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert!(status.enabled);
+            assert!(status.recovery.is_empty(), "{status:?}");
+        });
+    }
+
+    /// The brief's rollback case: an upgrade fails part-way (enable), the
+    /// operator rolls the image back, and the status/recovery routes a truth
+    /// back to a working launch route.
+    #[test]
+    fn a_rollback_after_a_partial_upgrade_restores_a_truthful_route() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let previous = installed_binary_named(home.path(), "effigy-previous");
+            let upgrade = installed_binary_named(home.path(), "effigy-upgrade");
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &previous, &mut manager).unwrap();
+            assert!(manager.enabled());
+
+            // The upgrade writes its unit and the enable fails part-way.
+            let mut refusing = FakeSystemd::failing("enable");
+            let partial = install(run, cx, &paths, uid, &upgrade, &mut refusing).unwrap();
+            assert!(!partial.enabled);
+            assert!(!paths.wants.exists());
+            let after_failure = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(after_failure.unit, UnitState::Installed);
+            assert!(!after_failure.enabled);
+            assert!(!after_failure.recovery.is_empty());
+
+            // The rollback removes the upgraded image and runs the previous one.
+            std::fs::remove_file(&upgrade).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Stale);
+            let stale = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(stale.unit, UnitState::Stale);
+            assert!(
+                stale
+                    .recovery
+                    .first()
+                    .is_some_and(|line| line.contains(&upgrade.display().to_string())),
+                "{stale:?}"
+            );
+
+            // The supported recovery route: setup with the rolled-back image.
+            let mut recovered_manager = FakeManager::for_paths(&paths);
+            let recovered =
+                install(run, cx, &paths, uid, &previous, &mut recovered_manager).unwrap();
+            assert!(recovered.enabled);
+            assert_eq!(
+                declared_executable(&std::fs::read(&paths.unit).unwrap()),
+                Some(previous.clone())
+            );
+            let healthy = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(healthy.unit, UnitState::Installed);
+            assert!(healthy.enabled);
+            assert!(healthy.recovery.is_empty(), "{healthy:?}");
         });
     }
 

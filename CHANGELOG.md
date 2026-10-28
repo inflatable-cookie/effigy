@@ -149,12 +149,16 @@ During v0.x, MINOR bumps may include breaking changes.
   group/world-writable binary. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes
   only unit and capability records Effigy wrote. A replaced binary is reported
-  as a missing capability instead of being trusted, an upgrade rewrites the
-  owned unit to name the image setup ran, and a rollback that leaves the unit
-  naming a deleted or no-longer-owner-only image is reported as
+  as a missing capability instead of being trusted, a link at the installed path
+  is refused for the unit and the capability, an upgrade rewrites the owned unit
+  to name the image setup ran, and a rollback that leaves the unit naming a
+  deleted, linked or no-longer-owner-only image is reported as
   `launcher.unit: "stale"` with the restore and `effigy gateway setup` routes.
-  A user manager that cannot be reached or does not answer keeps the installed
-  unit and prints the exact `systemctl --user` commands that finish the enable.
+  A changed definition disables the login activation first, so a user manager
+  that cannot be reached, refuses or does not answer keeps the unit installed
+  and not enabled and prints the exact `systemctl --user` commands that finish
+  the enable; an `enable` that fails after writing the link is observed as
+  enabled, because the link is the fact.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
