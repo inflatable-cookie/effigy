@@ -195,106 +195,38 @@ fn run_state_apply(
     if execute {
         validate_sql_layers(repo_root, &report.layers)?;
         for layer in &mut report.layers {
-            match layer.status {
-                StateStackApplyLayerStatus::PlannedTask => {
-                    match crate::runner::execute::api::run_manifest_task_with_surface(
-                        &TaskInvocation {
-                            name: layer.source.clone(),
-                            args: Vec::new(),
-                        },
-                        repo_root.to_path_buf(),
-                        ExecutionSurface::DirectCli,
-                    ) {
-                        Ok(output) => {
-                            layer.status = StateStackApplyLayerStatus::Executed;
-                            layer.output = Some(output);
-                            if let Err(error) = execute_state_apply_hook(
-                                &report.stack_name,
-                                report.environment,
-                                &report.lineage_id,
-                                layer,
-                                repo_root,
-                                resolved.hooks.get(&layer.key),
-                            ) {
-                                layer.hook_status = Some(StateStackApplyHookStatus::Failed);
-                                layer.hook_error = Some(error.to_string());
-                                report.ok = false;
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            layer.status = StateStackApplyLayerStatus::Failed;
-                            layer.error = Some(error.to_string());
-                            report.ok = false;
-                            break;
-                        }
+            let Some(action) = ApplyAction::from_status(layer.status) else {
+                continue;
+            };
+            let step = effigy_ui::steps::step(&action.label(&layer.key));
+            match execute_layer_action(action, layer, repo_root) {
+                Ok(()) => {
+                    if layer.hook.is_some() {
+                        step.set_label(&apply_hook_label(&layer.key));
                     }
-                }
-                StateStackApplyLayerStatus::PlannedArtifactStage => {
-                    match crate::runner::state_command_artifact::stage_artifact_report(
-                        &layer.source,
+                    if let Err(error) = execute_state_apply_hook(
+                        &report.stack_name,
+                        report.environment,
+                        &report.lineage_id,
+                        layer,
                         repo_root,
-                        repo_root,
-                        false,
-                        &effigy_state::artifact::OrasCliArtifactAdapter::default(),
+                        resolved.hooks.get(&layer.key),
                     ) {
-                        Ok(artifact_report) => {
-                            layer.status = StateStackApplyLayerStatus::Staged;
-                            layer.artifact_report = Some(artifact_report);
-                            if let Err(error) = execute_state_apply_hook(
-                                &report.stack_name,
-                                report.environment,
-                                &report.lineage_id,
-                                layer,
-                                repo_root,
-                                resolved.hooks.get(&layer.key),
-                            ) {
-                                layer.hook_status = Some(StateStackApplyHookStatus::Failed);
-                                layer.hook_error = Some(error.to_string());
-                                report.ok = false;
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            layer.status = StateStackApplyLayerStatus::Failed;
-                            layer.error = Some(error.to_string());
-                            report.ok = false;
-                            break;
-                        }
+                        layer.hook_status = Some(StateStackApplyHookStatus::Failed);
+                        layer.hook_error = Some(error.to_string());
+                        step.fail(&failed_hook_summary(&layer.key, &error));
+                        report.ok = false;
+                        break;
                     }
+                    step.succeed(&applied_layer_summary(&layer.key));
                 }
-                StateStackApplyLayerStatus::PlannedSqlImport => {
-                    match crate::runner::db_seed::run_db_seed_import_report(
-                        repo_root,
-                        PathBuf::from(&layer.source),
-                        layer.target.clone(),
-                    ) {
-                        Ok(sql_report) => {
-                            layer.status = StateStackApplyLayerStatus::Imported;
-                            layer.sql_report = Some(sql_report);
-                            if let Err(error) = execute_state_apply_hook(
-                                &report.stack_name,
-                                report.environment,
-                                &report.lineage_id,
-                                layer,
-                                repo_root,
-                                resolved.hooks.get(&layer.key),
-                            ) {
-                                layer.hook_status = Some(StateStackApplyHookStatus::Failed);
-                                layer.hook_error = Some(error.to_string());
-                                report.ok = false;
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            layer.status = StateStackApplyLayerStatus::Failed;
-                            layer.error = Some(error.to_string());
-                            report.ok = false;
-                            break;
-                        }
-                    }
+                Err(error) => {
+                    layer.status = StateStackApplyLayerStatus::Failed;
+                    layer.error = Some(error.to_string());
+                    step.fail(&action.fail_summary(&layer.key, &error));
+                    report.ok = false;
+                    break;
                 }
-                _ => {}
             }
         }
     }
@@ -404,6 +336,115 @@ fn validate_sql_layers(
         return Ok(());
     }
     crate::runner::db_seed::validate_db_seed_import_inputs(repo_root, &db_seeds)
+}
+
+#[derive(Clone, Copy)]
+enum ApplyAction {
+    Task,
+    Artifact,
+    Sql,
+}
+
+impl ApplyAction {
+    fn from_status(status: StateStackApplyLayerStatus) -> Option<Self> {
+        match status {
+            StateStackApplyLayerStatus::PlannedTask => Some(Self::Task),
+            StateStackApplyLayerStatus::PlannedArtifactStage => Some(Self::Artifact),
+            StateStackApplyLayerStatus::PlannedSqlImport => Some(Self::Sql),
+            _ => None,
+        }
+    }
+
+    fn label(self, key: &str) -> String {
+        match self {
+            Self::Task => format!("running task layer `{key}`"),
+            Self::Artifact => format!("staging artifact layer `{key}`"),
+            Self::Sql => format!("importing SQL layer `{key}`"),
+        }
+    }
+
+    fn fail_summary(self, key: &str, error: &RunnerError) -> String {
+        let why = human_failure(error);
+        match self {
+            Self::Task => format!("task layer `{key}` failed: {why}"),
+            Self::Artifact => format!("artifact layer `{key}` failed: {why}"),
+            Self::Sql => format!("SQL layer `{key}` failed: {why}"),
+        }
+    }
+}
+
+fn apply_hook_label(key: &str) -> String {
+    format!("running apply hook `{key}`")
+}
+
+fn applied_layer_summary(key: &str) -> String {
+    format!("applied layer `{key}`")
+}
+
+fn failed_hook_summary(key: &str, error: &RunnerError) -> String {
+    format!("apply hook `{key}` failed: {}", human_failure(error))
+}
+
+fn human_failure(error: &RunnerError) -> String {
+    error.human_error().what_failed().to_owned()
+}
+
+fn capture_task_label(name: &str) -> String {
+    format!("running capture task `{name}`")
+}
+
+fn capture_artifact_label(key: &str, push: bool) -> String {
+    if push {
+        format!("pushing capture artifact `{key}`")
+    } else {
+        format!("staging capture artifact `{key}`")
+    }
+}
+
+fn captured_layer_summary(key: &str) -> String {
+    format!("captured layer `{key}`")
+}
+
+fn execute_layer_action(
+    action: ApplyAction,
+    layer: &mut StateStackApplyLayerReport,
+    repo_root: &Path,
+) -> Result<(), RunnerError> {
+    match action {
+        ApplyAction::Task => {
+            let output = crate::runner::execute::api::run_manifest_task_with_surface(
+                &TaskInvocation {
+                    name: layer.source.clone(),
+                    args: Vec::new(),
+                },
+                repo_root.to_path_buf(),
+                ExecutionSurface::DirectCli,
+            )?;
+            layer.status = StateStackApplyLayerStatus::Executed;
+            layer.output = Some(output);
+        }
+        ApplyAction::Artifact => {
+            let artifact_report = crate::runner::state_command_artifact::stage_artifact_report(
+                &layer.source,
+                repo_root,
+                repo_root,
+                false,
+                &effigy_state::artifact::OrasCliArtifactAdapter::default(),
+            )?;
+            layer.status = StateStackApplyLayerStatus::Staged;
+            layer.artifact_report = Some(artifact_report);
+        }
+        ApplyAction::Sql => {
+            let sql_report = crate::runner::db_seed::run_db_seed_import_report(
+                repo_root,
+                PathBuf::from(&layer.source),
+                layer.target.clone(),
+            )?;
+            layer.status = StateStackApplyLayerStatus::Imported;
+            layer.sql_report = Some(sql_report);
+        }
+    }
+    Ok(())
 }
 
 fn run_state_capture(
@@ -792,17 +833,35 @@ fn build_state_stack_capture_report(
         })
         .into_iter()
         .collect::<Vec<_>>();
+    let step = request.yes.then(|| {
+        let label = match tasks.first() {
+            Some(task) => capture_task_label(&task.name),
+            None => capture_artifact_label(&key, request.push),
+        };
+        effigy_ui::steps::step(&label)
+    });
     if request.yes {
         let context_path = if tasks.is_empty() {
             None
         } else {
-            Some(write_state_capture_task_context(
+            match write_state_capture_task_context(
                 repo_root,
                 lineage,
                 &request,
                 capture_role,
                 capture_mode,
-            )?)
+            ) {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    if let Some(step) = step.as_ref() {
+                        step.fail(&format!(
+                            "capture task context failed: {}",
+                            human_failure(&error)
+                        ));
+                    }
+                    return Err(error);
+                }
+            }
         };
         for task in &mut tasks {
             task.context_path.clone_from(&context_path);
@@ -850,6 +909,13 @@ fn build_state_stack_capture_report(
                 Err(error) => {
                     task.status = StateStackCaptureTaskStatus::Failed;
                     task.error = Some(error.to_string());
+                    if let Some(step) = step.as_ref() {
+                        step.fail(&format!(
+                            "capture task `{}` failed: {}",
+                            task.name,
+                            human_failure(&error)
+                        ));
+                    }
                     return Ok(StateStackCaptureReport {
                         schema: "effigy.state-stack.capture.v1".to_owned(),
                         schema_version: 1,
@@ -877,14 +943,19 @@ fn build_state_stack_capture_report(
                 }
             }
         }
+        if !tasks.is_empty() {
+            if let Some(step) = step.as_ref() {
+                step.set_label(&capture_artifact_label(&key, request.push));
+            }
+        }
     }
     let artifact_report = match (
         request.yes,
         request.source.as_deref(),
         request.destination_ref.as_deref(),
     ) {
-        (true, Some(source), Some(destination)) => Some(
-            crate::runner::state_command_artifact::capture_artifact_report_with_adapter(
+        (true, Some(source), Some(destination)) => {
+            match crate::runner::state_command_artifact::capture_artifact_report_with_adapter(
                 crate::runner::state_command_artifact::ArtifactCaptureRequest {
                     source,
                     destination,
@@ -896,8 +967,19 @@ fn build_state_stack_capture_report(
                     push: request.push,
                 },
                 adapter,
-            )?,
-        ),
+            ) {
+                Ok(report) => Some(report),
+                Err(error) => {
+                    if let Some(step) = step.as_ref() {
+                        step.fail(&format!(
+                            "capture artifact `{key}` failed: {}",
+                            human_failure(&error)
+                        ));
+                    }
+                    return Err(error);
+                }
+            }
+        }
         _ => None,
     };
     let digest = artifact_report
@@ -912,6 +994,10 @@ fn build_state_stack_capture_report(
     } else {
         StateCaptureArtifactOperation::PlannedCapture
     };
+
+    if let Some(step) = step {
+        step.succeed(&captured_layer_summary(&key));
+    }
 
     Ok(StateStackCaptureReport {
         schema: "effigy.state-stack.capture.v1".to_owned(),
@@ -1672,6 +1758,291 @@ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_CAPTURE_CONTEXT\" > capture-context
             .expect("context JSON");
             assert_eq!(context["schema"], "effigy.state-stack.capture-context.v1");
         }
+    }
+
+    fn assert_no_progress_marks(text: &str) {
+        assert!(
+            !text.contains('✓') && !text.contains('✗') && !text.contains('\u{1b}'),
+            "progress marks leaked into machine output: {text}"
+        );
+    }
+
+    #[test]
+    fn state_apply_plan_only_emits_no_layer_steps() {
+        let repo = temp_workspace("apply-plan-no-steps");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.schema]
+run = "sh -lc 'echo schema > schema-ran.txt'"
+
+[state]
+
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "structure"
+role = "structure"
+source = "schema"
+apply_mode = "task"
+environment_policy = "all"
+"#,
+        )
+        .expect("write effigy manifest");
+
+        let (rendered, lines) = effigy_ui::steps::capture_lines(|| {
+            run_state_apply(None, Some("uat"), &repo, &repo, false, &[], true)
+        });
+        let rendered = rendered.expect("plan-only apply");
+        assert_no_progress_marks(&rendered);
+        assert!(
+            lines.is_empty(),
+            "plan-only apply must not emit layer steps: {lines:?}"
+        );
+        assert!(!repo.join("schema-ran.txt").exists());
+    }
+
+    #[test]
+    fn state_apply_reports_live_layer_steps_for_task_and_failing_hook() {
+        let repo = temp_workspace("apply-live-layers");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.schema]
+run = "sh -lc 'echo schema > schema-ran.txt'"
+
+[tasks.apply-hook]
+run = "sh -lc 'echo reached > failed-hook-ran.txt; exit 12'"
+"#,
+        )
+        .expect("write effigy manifest");
+        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
+        fs::write(
+            repo.join("state.toml"),
+            r#"
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "schema"
+apply_mode = "task"
+environment_policy = "all"
+
+[[layers]]
+key = "legacy-media"
+role = "media-library"
+source = "./payload.txt"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+target = "media"
+hook = "apply-hook"
+"#,
+        )
+        .expect("write state manifest");
+
+        let (result, lines) = effigy_ui::steps::capture_lines(|| {
+            run_state_apply(
+                Some(Path::new("state.toml")),
+                None,
+                &repo,
+                &repo,
+                true,
+                &[],
+                true,
+            )
+        });
+        let error = result.expect_err("failing hook should fail state apply");
+        assert!(error.to_string().contains("state apply failed"));
+        assert_eq!(
+            lines.len(),
+            2,
+            "one terminal line per executed layer: {lines:?}"
+        );
+        assert_eq!(lines[0], "✓ applied layer `structure`");
+        assert!(
+            lines[1].starts_with("✗ apply hook `legacy-media` failed:"),
+            "failing hook must name the layer and the hook: {lines:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.join("schema-ran.txt")).expect("schema marker"),
+            "schema\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.join("failed-hook-ran.txt")).expect("hook marker"),
+            "reached\n"
+        );
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(repo.join(".effigy/reports/state/acowtancy-uat/latest-apply.json"))
+                .expect("read failed apply report"),
+        )
+        .expect("parse apply report");
+        assert_no_progress_marks(&report.to_string());
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["layers"][0]["status"], "executed");
+        assert_eq!(report["layers"][1]["status"], "staged");
+        assert_eq!(report["layers"][1]["hook_status"], "failed");
+    }
+
+    #[test]
+    fn state_apply_json_report_contains_no_progress_marks() {
+        let repo = temp_workspace("apply-json-no-progress");
+        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.apply-hook]
+run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > hook-path.txt'"
+"#,
+        )
+        .expect("write effigy manifest");
+        fs::write(
+            repo.join("state.toml"),
+            r#"
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[layers]]
+key = "legacy-media"
+role = "media-library"
+source = "./payload.txt"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+target = "media"
+hook = "apply-hook"
+"#,
+        )
+        .expect("write state manifest");
+
+        let (rendered, lines) = effigy_ui::steps::capture_lines(|| {
+            run_state_apply(
+                Some(Path::new("state.toml")),
+                None,
+                &repo,
+                &repo,
+                true,
+                &[],
+                true,
+            )
+        });
+        let rendered = rendered.expect("apply json");
+        assert_no_progress_marks(&rendered);
+        let report: Value = serde_json::from_str(&rendered).expect("parse apply json");
+        assert_eq!(report["schema"], "effigy.state-stack.apply.v1");
+        assert_eq!(report["ok"], true);
+        assert_eq!(lines, vec!["✓ applied layer `legacy-media`".to_owned()]);
+    }
+
+    #[test]
+    fn state_capture_reports_live_layer_steps_for_task_and_artifact() {
+        let repo = temp_workspace("capture-live-layers");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.capture-task]
+run = "sh -lc 'printf captured > capture-ran.txt'"
+"#,
+        )
+        .expect("write capture task manifest");
+        fs::create_dir(repo.join("captures")).expect("capture directory");
+        fs::write(repo.join("captures/uat.json"), "{}\n").expect("capture payload");
+
+        let (report, lines) = effigy_ui::steps::capture_lines(|| {
+            build_state_stack_capture_report(
+                &lineage(),
+                StateCaptureRequest {
+                    profile: None,
+                    role: Some("uat-capture".to_owned()),
+                    source_env: Some("uat".to_owned()),
+                    key: Some("uat-capture-2026-05-08".to_owned()),
+                    source: Some("captures/uat.json".to_owned()),
+                    destination_ref: Some(
+                        "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08".to_owned(),
+                    ),
+                    hook: None,
+                    task: Some(ManifestTaskOrReferenceDefinition::Reference(
+                        "capture-task".to_owned(),
+                    )),
+                    yes: true,
+                    push: false,
+                },
+                &repo,
+                &FakeOciArtifactAdapter,
+            )
+        });
+        let report = report.expect("capture report");
+        assert!(report.ok);
+        assert_eq!(
+            report.tasks[0].status,
+            StateStackCaptureTaskStatus::Executed
+        );
+        assert_eq!(
+            lines,
+            vec!["✓ captured layer `uat-capture-2026-05-08`".to_owned()]
+        );
+        assert_eq!(
+            fs::read_to_string(repo.join("capture-ran.txt")).expect("capture marker"),
+            "captured"
+        );
+    }
+
+    #[test]
+    fn state_capture_failing_task_ends_its_layer_step() {
+        let repo = temp_workspace("capture-live-fail");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.capture-fail]
+run = "sh -lc 'exit 42'"
+"#,
+        )
+        .expect("write capture task manifest");
+        fs::create_dir(repo.join("captures")).expect("capture directory");
+        fs::write(repo.join("captures/uat.json"), "{}\n").expect("capture payload");
+
+        let (report, lines) = effigy_ui::steps::capture_lines(|| {
+            build_state_stack_capture_report(
+                &lineage(),
+                StateCaptureRequest {
+                    profile: None,
+                    role: Some("uat-capture".to_owned()),
+                    source_env: Some("uat".to_owned()),
+                    key: Some("uat-capture-2026-05-08".to_owned()),
+                    source: Some("captures/uat.json".to_owned()),
+                    destination_ref: Some(
+                        "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08".to_owned(),
+                    ),
+                    hook: None,
+                    task: Some(ManifestTaskOrReferenceDefinition::Reference(
+                        "capture-fail".to_owned(),
+                    )),
+                    yes: true,
+                    push: false,
+                },
+                &repo,
+                &FakeOciArtifactAdapter,
+            )
+        });
+        let report = report.expect("failed capture still returns a report");
+        assert!(!report.ok);
+        assert_eq!(report.tasks[0].status, StateStackCaptureTaskStatus::Failed);
+        assert_eq!(
+            lines.len(),
+            1,
+            "one terminal line for the capture layer: {lines:?}"
+        );
+        assert!(
+            lines[0].starts_with("✗ capture task `capture-fail` failed:"),
+            "failing capture task must name the task: {lines:?}"
+        );
     }
 
     struct FakeOciArtifactAdapter;

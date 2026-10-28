@@ -259,6 +259,9 @@ Current shipped boundary:
 
 - `effigy state apply` emits `effigy.state-stack.apply.v1`
 - `effigy state apply` is plan-only unless `--yes` is supplied
+- live per-layer steps are command-plane output only; they reuse the existing
+  planned-task / planned-sql-import / planned-artifact-stage statuses and hook
+  execution, are not a second journal, and do not appear in `--json`
 - task, artifact, and SQL apply modes have first-slice adapters
 - capture, manual, checkpoint, and app-specific payload semantics remain
   unsupported in apply

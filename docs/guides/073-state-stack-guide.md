@@ -152,6 +152,13 @@ Apply runs layers in order. Failures stop later layers. Reports are written to
 report with `status = "skipped"` so wrapper workflows can avoid duplicate work
 without hiding stack lineage.
 
+On a terminal, each executed layer is a live step that names the layer and the
+action now running (`running task layer`, `importing SQL layer`, `staging
+artifact layer`, then `running apply hook` if the layer declares a hook). The
+step ends with one ✓ or ✗ for that layer. `--json` and piped output draw
+nothing. Real SQL-layer spinner timing still needs an exact-candidate proof;
+the SQL label is the same step path as task and artifact layers.
+
 ### Capture
 
 ```sh
@@ -166,7 +173,9 @@ effigy state capture uat new-content --yes --push
 ```
 
 Capture produces replayable layers from a running environment. It is two-phase:
-local staging first, then explicit `--push` to publish.
+local staging first, then explicit `--push` to publish. On a terminal the
+running capture task and the artifact stage share one live step that names the
+produced layer, then one ✓ or ✗. `--json` and piped output draw nothing.
 
 ### History
 

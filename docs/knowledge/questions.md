@@ -586,7 +586,10 @@ plane must show the live, subject-named terminal steps and actionable errors
 defined in the product guardrails. Existing feedback work (#312 and #315) is a
 starting point, not automatic qualification of every plane. The planner
 checks the exact candidate and briefs any observed gaps before release gates;
-the full spinner rollout is not deferred to a later version.
+the full spinner rollout is not deferred to a later version. State apply and
+capture now emit per-layer live steps from those existing layer statuses; real
+SQL-layer spinner timing still needs an exact-candidate proof and is not
+qualified by the source labels alone.
 
 ## Q-018: Primary Linux proof environment for v0.15
 
