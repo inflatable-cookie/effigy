@@ -126,10 +126,7 @@ pub fn plan_bun_link(
             )?,
         });
     }
-    let reference = BunConsumerReference {
-        consumer_repo: consumer_root.clone(),
-        library_path: library_root.clone(),
-    };
+    let reference = BunConsumerReference::claim(consumer_root.clone(), library_root.clone());
     let state_store = RepoLinkStateStore::for_repo(&repo_root);
     let state = state_store.read()?;
     let index_store = BunRegistrationIndexStore::for_home(home);
@@ -337,14 +334,28 @@ pub fn plan_bun_unlink(
         .unwrap_or_else(|| key.consumer_repo.clone());
     let index_store = BunRegistrationIndexStore::for_home(home);
     let index = index_store.read()?;
-    let targets = unlink_targets(
+    let (targets, retained_nested) = unlink_targets(
         desired.as_ref(),
         &key,
         &index,
         &requested_root,
         &library_path,
+        consumer_present,
     );
     if targets.is_empty() {
+        let mut warnings = Vec::new();
+        if !retained_nested.is_empty() {
+            warnings.push(format!(
+                "the claims recorded under this checkout cannot be told from an independently nested checkout's without the root that wrote them; nothing was released. Re-run naming one of: {}",
+                retained_nested
+                    .iter()
+                    .map(|root| root.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        } else {
+            warnings.push("Bun dependency link is already absent; nothing to remove".to_owned());
+        }
         return Ok(BunDependencyPlan {
             repo_root: repo_root.clone(),
             desired: None,
@@ -353,9 +364,7 @@ pub fn plan_bun_unlink(
                 dry_run,
                 key: absent_key,
                 changes: Vec::new(),
-                warnings: vec![
-                    "Bun dependency link is already absent; nothing to remove".to_owned()
-                ],
+                warnings,
             },
             packages: Vec::new(),
             process_intents: Vec::new(),
@@ -381,6 +390,12 @@ pub fn plan_bun_unlink(
             "Bun dependency ledger is absent; releasing this consumer's remaining registration references"
                 .to_owned(),
         );
+        for root in &retained_nested {
+            warnings.push(format!(
+                "`{}` is recorded under this checkout but its ownership evidence cannot be read back; name that root to release it",
+                root.display()
+            ));
+        }
     }
 
     for target in &targets {
@@ -512,19 +527,26 @@ struct UnlinkTarget {
     reference: BunConsumerReference,
 }
 
+/// The claims an unlink request names, plus the nested roots it has to leave
+/// alone.
+///
+/// A gone checkout no longer carries the `.git` boundaries that separate a
+/// nested Bun package root (`<checkout>/studio`) from an independently nested
+/// checkout, so recovery only releases a nested claim when the claim itself
+/// recorded the checkout that owned it. Roots that were only contained by the
+/// named checkout are returned so the caller can name them exactly.
 fn unlink_targets(
     desired: Option<&DesiredDependencyLink>,
     key: &DependencyLinkKey,
     index: &BunRegistrationIndex,
     requested_root: &Path,
     library_path: &Path,
-) -> Vec<UnlinkTarget> {
+    consumer_present: bool,
+) -> (Vec<UnlinkTarget>, Vec<PathBuf>) {
     if let Some(desired) = desired {
-        let reference = BunConsumerReference {
-            consumer_repo: key.consumer_repo.clone(),
-            library_path: key.library_path.clone(),
-        };
-        return desired
+        let reference =
+            BunConsumerReference::claim(key.consumer_repo.clone(), key.library_path.clone());
+        let targets = desired
             .packages
             .iter()
             .map(|package| UnlinkTarget {
@@ -538,27 +560,51 @@ fn unlink_targets(
                 reference: reference.clone(),
             })
             .collect();
+        return (targets, Vec::new());
     }
-    index
-        .registrations
-        .iter()
-        .flat_map(|registration| {
-            registration.consumers.iter().filter_map(|reference| {
-                if consumer_identity_matches(&reference.consumer_repo, requested_root)
-                    && identity_matches(&reference.library_path, library_path)
-                {
-                    Some(UnlinkTarget {
-                        name: registration.package_name.clone(),
-                        local_path: registration.package_path.clone(),
-                        committed_version: None,
-                        reference: reference.clone(),
-                    })
-                } else {
-                    None
-                }
-            })
-        })
-        .collect()
+    let mut targets = Vec::new();
+    let mut retained = Vec::new();
+    for registration in &index.registrations {
+        for reference in &registration.consumers {
+            if !identity_matches(&reference.library_path, library_path) {
+                continue;
+            }
+            let owned = claim_recorded_by_checkout(reference, requested_root, consumer_present);
+            if owned {
+                targets.push(UnlinkTarget {
+                    name: registration.package_name.clone(),
+                    local_path: registration.package_path.clone(),
+                    committed_version: None,
+                    reference: reference.clone(),
+                });
+            } else if reference.consumer_repo.starts_with(requested_root) {
+                retained.push(reference.consumer_repo.clone());
+            }
+        }
+    }
+    retained.sort();
+    retained.dedup();
+    (targets, retained)
+}
+
+/// Whether a recorded claim belongs to the checkout an unlink request names.
+fn claim_recorded_by_checkout(
+    reference: &BunConsumerReference,
+    requested_root: &Path,
+    consumer_present: bool,
+) -> bool {
+    if identity_matches(&reference.consumer_repo, requested_root) {
+        return true;
+    }
+    // A live checkout still proves its own boundary; a gone one has to rely on
+    // the checkout the claim recorded when Effigy wrote it.
+    if consumer_present {
+        return crate::state::contained_in_checkout(requested_root, &reference.consumer_repo);
+    }
+    reference
+        .checkout_root
+        .as_deref()
+        .is_some_and(|checkout| identity_matches(checkout, requested_root))
 }
 
 #[derive(Debug, Clone)]
@@ -728,7 +774,7 @@ fn classify_registration(
                 if indexed
                     .consumers
                     .iter()
-                    .any(|consumer| consumer != reference) =>
+                    .any(|consumer| !consumer.same_claim(reference)) =>
             {
                 Ok(BunRegistrationDisposition::MatchingOwnedShared)
             }
@@ -1097,10 +1143,6 @@ fn select_unlink_link<'a>(
             ),
         )),
     }
-}
-
-fn consumer_identity_matches(stored: &Path, requested: &Path) -> bool {
-    identity_matches(stored, requested) || crate::state::contained_in_checkout(requested, stored)
 }
 
 fn identity_matches(left: &Path, right: &Path) -> bool {
@@ -1717,10 +1759,10 @@ mod tests {
                     "underlay",
                     fixture.packages[0].package_path.clone(),
                     false,
-                    BunConsumerReference {
-                        consumer_repo: fixture.repo.join("other-consumer"),
-                        library_path: fixture.library.clone(),
-                    },
+                    BunConsumerReference::claim(
+                        fixture.repo.join("other-consumer"),
+                        fixture.library.clone(),
+                    ),
                 )
             })
             .unwrap();
@@ -1756,10 +1798,10 @@ mod tests {
         )
         .unwrap();
         apply_state_changes(&link);
-        let other = BunConsumerReference {
-            consumer_repo: fixture.repo.join("other-consumer"),
-            library_path: fixture.library.clone(),
-        };
+        let other = BunConsumerReference::claim(
+            fixture.repo.join("other-consumer"),
+            fixture.library.clone(),
+        );
         let index_store = BunRegistrationIndexStore::for_home(&fixture.home);
         index_store
             .update(|index| {
@@ -1900,19 +1942,16 @@ mod tests {
     fn unlink_of_a_missing_consumer_releases_only_that_index_reference() {
         let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
         let other_temp = TempDir::new().unwrap();
-        let other = BunConsumerReference {
-            consumer_repo: fs::canonicalize(other_temp.path()).unwrap(),
-            library_path: fixture.library.clone(),
-        };
+        let other = BunConsumerReference::claim(
+            fs::canonicalize(other_temp.path()).unwrap(),
+            fixture.library.clone(),
+        );
         seed_owned_index(
             &fixture.home,
             "underlay",
             fixture.packages[0].package_path.clone(),
             [
-                BunConsumerReference {
-                    consumer_repo: fixture.repo.clone(),
-                    library_path: fixture.library.clone(),
-                },
+                BunConsumerReference::claim(fixture.repo.clone(), fixture.library.clone()),
                 other.clone(),
             ],
         );
@@ -1954,19 +1993,13 @@ mod tests {
         let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
         let other_temp = TempDir::new().unwrap();
         let other_root = fs::canonicalize(other_temp.path()).unwrap();
-        let other = BunConsumerReference {
-            consumer_repo: other_root.clone(),
-            library_path: fixture.library.clone(),
-        };
+        let other = BunConsumerReference::claim(other_root.clone(), fixture.library.clone());
         seed_owned_index(
             &fixture.home,
             "underlay",
             fixture.packages[0].package_path.clone(),
             [
-                BunConsumerReference {
-                    consumer_repo: fixture.repo.clone(),
-                    library_path: fixture.library.clone(),
-                },
+                BunConsumerReference::claim(fixture.repo.clone(), fixture.library.clone()),
                 other.clone(),
             ],
         );
@@ -2001,23 +2034,24 @@ mod tests {
     #[test]
     fn unlink_of_a_missing_checkout_releases_nested_bun_root_index_reference() {
         let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        // A checkout boundary is recorded when the claim is written, so the
+        // deleted tree can still tell its own nested Bun root from a nested
+        // checkout of its own.
+        fs::create_dir_all(fixture.repo.join(".git")).unwrap();
         let studio = fixture.repo.join("studio");
         fs::create_dir_all(&studio).unwrap();
         let studio = fs::canonicalize(&studio).unwrap();
         let other_temp = TempDir::new().unwrap();
-        let other = BunConsumerReference {
-            consumer_repo: fs::canonicalize(other_temp.path()).unwrap(),
-            library_path: fixture.library.clone(),
-        };
+        let other = BunConsumerReference::claim(
+            fs::canonicalize(other_temp.path()).unwrap(),
+            fixture.library.clone(),
+        );
         seed_owned_index(
             &fixture.home,
             "underlay",
             fixture.packages[0].package_path.clone(),
             [
-                BunConsumerReference {
-                    consumer_repo: studio,
-                    library_path: fixture.library.clone(),
-                },
+                BunConsumerReference::claim(studio, fixture.library.clone()),
                 other.clone(),
             ],
         );
@@ -2050,16 +2084,124 @@ mod tests {
     }
 
     #[test]
+    fn unlink_of_a_deleted_parent_keeps_an_independently_nested_checkouts_claim() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        fs::create_dir_all(fixture.repo.join(".git")).unwrap();
+        let nested = fixture.repo.join("vendor/poodle");
+        fs::create_dir_all(nested.join(".git")).unwrap();
+        let nested = fs::canonicalize(&nested).unwrap();
+        let reference = BunConsumerReference::claim(nested.clone(), fixture.library.clone());
+        assert_eq!(reference.checkout_root.as_deref(), Some(nested.as_path()));
+        seed_owned_index(
+            &fixture.home,
+            "underlay",
+            fixture.packages[0].package_path.clone(),
+            [reference],
+        );
+        let missing = fixture.repo.clone();
+        fs::remove_dir_all(&missing).unwrap();
+
+        let unlink = plan_bun_unlink(
+            &missing,
+            &fixture.library,
+            &fixture.home,
+            true,
+            &FixtureObserver::default(),
+        )
+        .unwrap();
+
+        assert!(unlink.operation.changes.is_empty());
+        assert!(unlink.packages.is_empty());
+        assert!(
+            unlink
+                .operation
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(&nested.display().to_string())),
+            "{:?}",
+            unlink.operation.warnings
+        );
+    }
+
+    #[test]
+    fn unlink_of_a_deleted_parent_retains_a_claim_without_boundary_evidence() {
+        let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+        let studio = fixture.repo.join("studio");
+        fs::create_dir_all(&studio).unwrap();
+        let studio = fs::canonicalize(&studio).unwrap();
+        let mut reference = BunConsumerReference::claim(studio.clone(), fixture.library.clone());
+        // A claim recorded before rows carried boundary evidence.
+        reference.checkout_root = None;
+        seed_owned_index(
+            &fixture.home,
+            "underlay",
+            fixture.packages[0].package_path.clone(),
+            [reference],
+        );
+        let missing = fixture.repo.clone();
+        fs::remove_dir_all(&missing).unwrap();
+
+        let retained = plan_bun_unlink(
+            &missing,
+            &fixture.library,
+            &fixture.home,
+            true,
+            &FixtureObserver::default(),
+        )
+        .unwrap();
+        assert!(retained.operation.changes.is_empty());
+        assert!(
+            retained
+                .operation
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(&studio.display().to_string())),
+            "{:?}",
+            retained.operation.warnings
+        );
+
+        // Naming the recorded root is the evidence the deleted tree no longer
+        // carries, and it releases only that claim.
+        let observer = FixtureObserver {
+            paths: BTreeMap::from([(
+                bun_registration_path(&fixture.home, "underlay"),
+                BunPathObservation::Symlink {
+                    target: fixture.packages[0].package_path.clone(),
+                },
+            )]),
+            ..FixtureObserver::default()
+        };
+        let named =
+            plan_bun_unlink(&studio, &fixture.library, &fixture.home, true, &observer).unwrap();
+
+        assert_eq!(
+            named.packages[0].reference_release,
+            Some(crate::BunReferenceRelease::RemoveOwned)
+        );
+        let index_change = named
+            .operation
+            .changes
+            .iter()
+            .find(|change| {
+                change.target == BunRegistrationIndexStore::for_home(&fixture.home).path()
+            })
+            .unwrap();
+        let index: BunRegistrationIndex =
+            serde_json::from_str(index_change.after.as_ref().unwrap()).unwrap();
+        assert!(index.registrations.is_empty());
+    }
+
+    #[test]
     fn unlink_of_a_missing_last_owned_consumer_unregisters_when_the_target_matches() {
         let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
         seed_owned_index(
             &fixture.home,
             "underlay",
             fixture.packages[0].package_path.clone(),
-            [BunConsumerReference {
-                consumer_repo: fixture.repo.clone(),
-                library_path: fixture.library.clone(),
-            }],
+            [BunConsumerReference::claim(
+                fixture.repo.clone(),
+                fixture.library.clone(),
+            )],
         );
         let missing = fixture.repo.clone();
         fs::remove_dir_all(&missing).unwrap();
@@ -2104,10 +2246,10 @@ mod tests {
             &fixture.home,
             "underlay",
             fixture.packages[0].package_path.clone(),
-            [BunConsumerReference {
-                consumer_repo: fixture.repo.clone(),
-                library_path: fixture.library.clone(),
-            }],
+            [BunConsumerReference::claim(
+                fixture.repo.clone(),
+                fixture.library.clone(),
+            )],
         );
         let missing = fixture.repo.clone();
         fs::remove_dir_all(&missing).unwrap();

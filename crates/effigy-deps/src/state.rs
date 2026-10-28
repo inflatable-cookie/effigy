@@ -264,10 +264,20 @@ pub fn plan_repo_local_state_ignore(
 /// and `--repo <nested-root>` resolve to the same state location. A path
 /// outside any checkout owns its own state.
 pub fn repo_state_root(path: &Path) -> PathBuf {
+    checkout_boundary(path)
+        .unwrap_or_else(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+/// The nearest ancestor that actually carries a `.git` entry, if any.
+///
+/// `repo_state_root` answers "where does state live" and falls back to the path
+/// itself. Ownership evidence needs to know whether a checkout boundary was
+/// observed at all: a claim recorded without one cannot be told from an
+/// independently nested checkout once the tree is deleted.
+pub fn checkout_boundary(path: &Path) -> Option<PathBuf> {
     path.ancestors()
         .find(|ancestor| ancestor.join(".git").exists())
         .map(|ancestor| fs::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf()))
-        .unwrap_or_else(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
 /// Whether `path` lies inside `repo_root` without crossing a nested checkout.
@@ -645,10 +655,7 @@ mod tests {
     }
 
     fn consumer(repo: &Path, library: &Path) -> BunConsumerReference {
-        BunConsumerReference {
-            consumer_repo: absolute(repo),
-            library_path: absolute(library),
-        }
+        BunConsumerReference::claim(absolute(repo), absolute(library))
     }
 
     fn desired_link(

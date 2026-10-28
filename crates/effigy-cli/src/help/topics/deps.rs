@@ -24,7 +24,7 @@ const DEPS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ("status [cargo|bun]", "Show desired and observed local-link state"),
         ("link cargo <PATH>", "Apply or preview a verified local Cargo patch closure"),
         ("unlink cargo <PATH>", "Remove a local Cargo patch and verify committed-source recovery"),
-        ("link bun <PATH>", "Apply or preview one verified save-less Bun package closure"),
+        ("link bun <PATH>", "Apply or preview one verified save-less Bun package closure; its registration is retired when the command finishes or is interrupted"),
         ("unlink bun <PATH>", "Remove exact Bun links and release that consumer's registrations, including a gone --repo checkout"),
         ("pin bun <PATH>", "Add one committed full-closure Bun override plan"),
         ("unpin bun <PATH>", "Remove only exact committed Bun override matches"),

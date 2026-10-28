@@ -402,6 +402,19 @@ During v0.x, MINOR bumps may include breaking changes.
   leaving the worktree claim behind. `--repo` names the gone checkout and also
   covers nested Bun roots recorded under it. The owner that created a
   registration retires only that consumer on completion or interrupt.
+- Bun links no longer leave a machine-wide registration behind. `deps link bun`
+  retires the registration it created once the consumer symlink and ledger
+  exist, an interrupt retires the same registrations before the signal stops
+  the command, and a shared or foreign registration is never removed. This is
+  what stopped registrations pointing at deleted worktrees accumulating.
+- Bun `deps unlink` now retires only the named consumer's claims when that
+  checkout is already gone, instead of no-op'ing and leaving the worktree claim
+  behind. Each claim records the checkout that wrote it, so `--repo` recovers a
+  nested Bun root without reaching into an independently nested checkout, and a
+  claim without that evidence is reported with the root to name.
+- Bun `deps status` and `doctor` now verify the consumer's `node_modules`
+  symlink, which is the link. An absent machine-wide registration is expected;
+  one pointing at another path is still reported as a conflict.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.

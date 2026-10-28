@@ -3,7 +3,6 @@
 use std::cell::{Cell, RefCell};
 use std::fs;
 use std::os::unix::fs::symlink;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
@@ -94,19 +93,6 @@ impl ReadOnlyProcess for FixtureProcess {
             stdout: String::new(),
             stderr: String::new(),
         })
-    }
-}
-
-struct OwnedBunLink {
-    repo: PathBuf,
-    library: PathBuf,
-    home: PathBuf,
-}
-
-impl Drop for OwnedBunLink {
-    fn drop(&mut self) {
-        let process = FixtureProcess::new(&self.home);
-        let _ = execute_bun_unlink(&self.repo, &self.library, &self.home, false, &process);
     }
 }
 
@@ -349,10 +335,10 @@ fn shared_and_foreign_registrations_are_retained() {
                 "underlay",
                 shared.packages[0].package_path.clone(),
                 false,
-                BunConsumerReference {
-                    consumer_repo: fs::canonicalize(&other_repo).unwrap(),
-                    library_path: shared.library.clone(),
-                },
+                BunConsumerReference::claim(
+                    fs::canonicalize(&other_repo).unwrap(),
+                    shared.library.clone(),
+                ),
             )
         })
         .unwrap();
@@ -499,10 +485,7 @@ fn unlink_of_a_deleted_consumer_retires_only_its_own_registration() {
                 "underlay",
                 first.packages[0].package_path.clone(),
                 true,
-                BunConsumerReference {
-                    consumer_repo: other.clone(),
-                    library_path: first.library.clone(),
-                },
+                BunConsumerReference::claim(other.clone(), first.library.clone()),
             )
         })
         .unwrap();
@@ -653,10 +636,7 @@ fn share_with_sibling(fixture: &Fixture) -> (TempDir, PathBuf) {
                 "underlay",
                 fixture.packages[0].package_path.clone(),
                 true,
-                BunConsumerReference {
-                    consumer_repo: other.clone(),
-                    library_path: fixture.library.clone(),
-                },
+                BunConsumerReference::claim(other.clone(), fixture.library.clone()),
             )
         })
         .unwrap();
@@ -664,71 +644,12 @@ fn share_with_sibling(fixture: &Fixture) -> (TempDir, PathBuf) {
 }
 
 #[test]
-fn owner_drop_on_completion_retires_only_its_own_registration() {
-    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
-    let process = FixtureProcess::new(&first.home);
-    link(&first, &process);
-    let (_other_temp, other) = share_with_sibling(&first);
-
-    {
-        let _owner = OwnedBunLink {
-            repo: first.repo.clone(),
-            library: first.library.clone(),
-            home: first.home.clone(),
-        };
-    }
-
-    assert_eq!(remaining_consumers(&first.home), vec![other.clone()]);
-    assert_eq!(
-        fs::canonicalize(other.join("node_modules").join("underlay")).unwrap(),
-        first.packages[0].package_path
-    );
-    assert!(matches!(
-        FsBunPlanObserver
-            .observe_path(&bun_registration_path(&first.home, "underlay"))
-            .unwrap(),
-        BunPathObservation::Symlink { .. }
-    ));
-}
-
-#[test]
-fn owner_drop_on_interrupt_retires_only_its_own_registration() {
-    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
-    let process = FixtureProcess::new(&first.home);
-    link(&first, &process);
-    let (_other_temp, other) = share_with_sibling(&first);
-    let repo = first.repo.clone();
-    let library = first.library.clone();
-    let home = first.home.clone();
-
-    let interrupted = catch_unwind(AssertUnwindSafe(|| {
-        let _owner = OwnedBunLink {
-            repo: repo.clone(),
-            library: library.clone(),
-            home: home.clone(),
-        };
-        fs::remove_dir_all(&repo).unwrap();
-        panic!("interrupted");
-    }));
-    assert!(interrupted.is_err());
-
-    assert_eq!(remaining_consumers(&first.home), vec![other.clone()]);
-    assert_eq!(
-        fs::canonicalize(other.join("node_modules").join("underlay")).unwrap(),
-        first.packages[0].package_path
-    );
-    assert!(matches!(
-        FsBunPlanObserver
-            .observe_path(&bun_registration_path(&first.home, "underlay"))
-            .unwrap(),
-        BunPathObservation::Symlink { .. }
-    ));
-}
-
-#[test]
 fn unlink_of_a_deleted_checkout_retires_nested_bun_root_registration() {
     let first = fixture(&[("underlay", DependencyDepth::Direct)]);
     let process = FixtureProcess::new(&first.home);
+    // The claim records the checkout boundary it was written under, which is
+    // what a deleted tree can no longer show by itself.
+    fs::create_dir_all(first.repo.join(".git")).unwrap();
     let studio = first.repo.join("studio");
     fs::create_dir_all(&studio).unwrap();
     let studio = fs::canonicalize(&studio).unwrap();
@@ -739,10 +660,7 @@ fn unlink_of_a_deleted_checkout_retires_nested_bun_root_registration() {
                 "underlay",
                 first.packages[0].package_path.clone(),
                 true,
-                BunConsumerReference {
-                    consumer_repo: studio,
-                    library_path: first.library.clone(),
-                },
+                BunConsumerReference::claim(studio, first.library.clone()),
             )
         })
         .unwrap();

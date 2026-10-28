@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 use crate::cargo_apply::{apply_exact_change, not_run_verification, read_optional_string};
 use crate::{
     bun_registration_path, inspect_bun_peer_resolutions, inventory_bun_consumer,
-    inventory_bun_library, plan_bun_link, BunConsumerLinkDisposition, BunDependencyPlan,
-    BunImmutableFileEvidence, BunLinkOperationReport, BunLinkOutcome, BunLinkRollback,
-    BunPackagePlan, BunPathObservation, BunPeerDiagnostic, BunPeerResolutionStatus,
-    BunPlanObserver, BunProcessAction, BunProcessIntent, BunRegistrationIndex,
-    BunRegistrationIndexStore, DependencyVerification, DepsError, FsBunPlanObserver, PlannedChange,
-    ProcessRequest, ReadOnlyProcess, RepoLinkStateStore, VerificationEvidence, VerificationStatus,
+    inventory_bun_library, plan_bun_link, BunConsumerLinkDisposition, BunConsumerReference,
+    BunDependencyPlan, BunImmutableFileEvidence, BunLinkOperationReport, BunLinkOutcome,
+    BunLinkRollback, BunPackagePlan, BunPathObservation, BunPeerDiagnostic,
+    BunPeerResolutionStatus, BunPlanObserver, BunProcessAction, BunProcessIntent,
+    BunRegistrationIndex, BunRegistrationIndexStore, BunRegistrationRetirement,
+    DependencyVerification, DepsError, FsBunPlanObserver, PlannedChange, ProcessRequest,
+    ReadOnlyProcess, RepoLinkStateStore, VerificationEvidence, VerificationStatus,
 };
 
 pub fn execute_bun_link(
@@ -19,6 +20,32 @@ pub fn execute_bun_link(
     home: impl AsRef<Path>,
     dry_run: bool,
     process: &impl ReadOnlyProcess,
+) -> Result<BunLinkOperationReport, DepsError> {
+    execute_bun_link_inner(repo_root, library_path, home, dry_run, process, false)
+}
+
+/// Run a link as the owner whose completion or interrupt retires it.
+///
+/// This is the CLI surface: the process that creates the registration retires
+/// it when the command finishes, and a SIGINT/SIGTERM retires it before the
+/// signal takes its default course.
+pub fn execute_owned_bun_link(
+    repo_root: impl AsRef<Path>,
+    library_path: impl AsRef<Path>,
+    home: impl AsRef<Path>,
+    dry_run: bool,
+    process: &impl ReadOnlyProcess,
+) -> Result<BunLinkOperationReport, DepsError> {
+    execute_bun_link_inner(repo_root, library_path, home, dry_run, process, true)
+}
+
+fn execute_bun_link_inner(
+    repo_root: impl AsRef<Path>,
+    library_path: impl AsRef<Path>,
+    home: impl AsRef<Path>,
+    dry_run: bool,
+    process: &impl ReadOnlyProcess,
+    owned: bool,
 ) -> Result<BunLinkOperationReport, DepsError> {
     let library_path = library_path.as_ref();
     let packages = inventory_bun_library(library_path)?;
@@ -33,7 +60,229 @@ pub fn execute_bun_link(
         dry_run,
         &observer,
     )?;
-    apply_bun_link_plan(plan, home, process, &observer)
+    let (consumer_root, library_identity) = plan
+        .desired
+        .as_ref()
+        .map(|desired| {
+            (
+                desired.key.consumer_repo.clone(),
+                desired.key.library_path.clone(),
+            )
+        })
+        .unwrap_or_else(|| (plan.repo_root.clone(), library_path.to_path_buf()));
+    let owner = (owned && !dry_run).then(|| {
+        crate::bun_owner::BunLinkOwner::arm(
+            home.as_ref(),
+            crate::bun_owner::link_registrations(&plan),
+        )
+    });
+    let mut report = apply_bun_link_plan(plan, &home, process, &observer)?;
+    if report.outcome == BunLinkOutcome::Applied {
+        // The owner retires its own registration as soon as the link exists;
+        // the consumer symlink and the ledger are the link.
+        report.registration_retirement = retire_bun_registration_claims(
+            &home,
+            &consumer_root,
+            &library_identity,
+            process,
+            &observer,
+        );
+    }
+    drop(owner);
+    Ok(report)
+}
+
+/// Retire registrations this owner created, without reading the claim index.
+///
+/// An owner interrupted mid-link still holds the machine index lock for its
+/// whole apply, so it cannot rewrite the index it is about to die under without
+/// deadlocking against its own blocked thread. It retires the registrations the
+/// plan recorded for it — the machine-wide residue — and leaves the claim for
+/// `deps status` to report and `deps unlink bun` or the next link to retire.
+pub fn retire_owned_bun_registrations(
+    home: impl AsRef<Path>,
+    registrations: &[(String, PathBuf)],
+    process: &impl ReadOnlyProcess,
+    observer: &impl BunPlanObserver,
+) -> BunRegistrationRetirement {
+    let home = home.as_ref();
+    let mut retirement = BunRegistrationRetirement::default();
+    for (name, package_path) in registrations {
+        let owned = OwnedRegistration {
+            name: name.clone(),
+            package_path: package_path.clone(),
+        };
+        match unregister_owned_registration(home, &owned, process, observer) {
+            ClaimRetirement::Unregistered => retirement.unregistered.push(name.clone()),
+            ClaimRetirement::Retained => retirement.retained.push(name.clone()),
+            ClaimRetirement::Failed(failure) => retirement.failures.push(failure),
+        }
+    }
+    retirement
+}
+
+/// Retire the machine-wide registrations this consumer's link created.
+///
+/// `bun link` registers each package in the machine-wide Bun install so the
+/// consumer's save-less `bun link` can resolve it. Nothing needs that
+/// registration once the consumer's `node_modules` symlink exists, so the owner
+/// that created it retires its own claim when it completes. The claim is
+/// released while another consumer still holds one, and stays recorded when the
+/// registration is foreign or unverifiable, so `deps unlink bun` can finish the
+/// job instead of guessing.
+///
+/// Retirement is idempotent: an owner that already retired its claims has
+/// nothing left to do, which lets an interrupted run call it again.
+pub fn retire_bun_registration_claims(
+    home: impl AsRef<Path>,
+    consumer_repo: impl AsRef<Path>,
+    library_path: impl AsRef<Path>,
+    process: &impl ReadOnlyProcess,
+    observer: &impl BunPlanObserver,
+) -> BunRegistrationRetirement {
+    let home = home.as_ref();
+    let consumer_repo = consumer_repo.as_ref();
+    let library_path = library_path.as_ref();
+    let index_store = BunRegistrationIndexStore::for_home(home);
+    let mut retirement = BunRegistrationRetirement::default();
+    if !index_store.path().exists() {
+        return retirement;
+    }
+    let index = match index_store.read() {
+        Ok(index) => index,
+        Err(error) => {
+            retirement.failures.push(error.to_string());
+            return retirement;
+        }
+    };
+    let claimed = index
+        .registrations
+        .iter()
+        .flat_map(|registration| {
+            registration
+                .consumers
+                .iter()
+                .filter(|reference| claim_owned_by(reference, consumer_repo, library_path))
+                .map(move |reference| (registration.clone(), reference.clone()))
+        })
+        .collect::<Vec<_>>();
+    if claimed.is_empty() {
+        return retirement;
+    }
+    let outcome = index_store.update(|index| {
+        for (registration, reference) in &claimed {
+            let Some(stored) = index
+                .registrations
+                .iter()
+                .find(|candidate| {
+                    candidate.package_name == registration.package_name
+                        && same_path(&candidate.package_path, &registration.package_path)
+                })
+                .and_then(|candidate| {
+                    candidate
+                        .consumers
+                        .iter()
+                        .find(|candidate| candidate.same_claim(reference))
+                        .cloned()
+                })
+            else {
+                continue;
+            };
+            let shared = index
+                .registrations
+                .iter()
+                .find(|candidate| candidate.package_name == registration.package_name)
+                .is_some_and(|candidate| candidate.consumers.len() > 1);
+            if shared {
+                // Another consumer still holds the registration.
+                index.release_reference(&registration.package_name, &stored);
+                retirement
+                    .released_shared
+                    .push(registration.package_name.clone());
+                continue;
+            }
+            if !registration.effigy_created {
+                // A registration Effigy did not create is never removed, but
+                // this consumer's claim on it is not its own either.
+                index.release_reference(&registration.package_name, &stored);
+                retirement.retained.push(registration.package_name.clone());
+                continue;
+            }
+            let owned = OwnedRegistration {
+                name: registration.package_name.clone(),
+                package_path: registration.package_path.clone(),
+            };
+            match unregister_owned_registration(home, &owned, process, observer) {
+                ClaimRetirement::Unregistered => {
+                    index.release_reference(&registration.package_name, &stored);
+                    retirement
+                        .unregistered
+                        .push(registration.package_name.clone());
+                }
+                ClaimRetirement::Retained => {
+                    retirement.retained.push(registration.package_name.clone());
+                }
+                ClaimRetirement::Failed(failure) => retirement.failures.push(failure),
+            }
+        }
+        Ok(())
+    });
+    if let Err(error) = outcome {
+        retirement.failures.push(error.to_string());
+    }
+    retirement
+}
+
+struct OwnedRegistration {
+    name: String,
+    package_path: PathBuf,
+}
+
+enum ClaimRetirement {
+    Unregistered,
+    Retained,
+    Failed(String),
+}
+
+fn unregister_owned_registration(
+    home: &Path,
+    owned: &OwnedRegistration,
+    process: &impl ReadOnlyProcess,
+    observer: &impl BunPlanObserver,
+) -> ClaimRetirement {
+    let registration_path = bun_registration_path(home, &owned.name);
+    match observer.observe_path(&registration_path) {
+        Ok(BunPathObservation::Missing) => ClaimRetirement::Unregistered,
+        Ok(BunPathObservation::Symlink { target }) if same_path(&target, &owned.package_path) => {
+            let request = ProcessRequest {
+                program: "bun".to_owned(),
+                args: vec!["unlink".to_owned(), "--no-save".to_owned()],
+                cwd: owned.package_path.clone(),
+            };
+            match process.run(&request) {
+                Ok(_) => ClaimRetirement::Unregistered,
+                Err(error) => ClaimRetirement::Failed(format!(
+                    "retire Bun registration `{}`: {error}",
+                    owned.name
+                )),
+            }
+        }
+        Ok(_) => ClaimRetirement::Retained,
+        Err(error) => ClaimRetirement::Failed(format!(
+            "inspect Bun registration `{}`: {error}",
+            owned.name
+        )),
+    }
+}
+
+fn claim_owned_by(
+    reference: &BunConsumerReference,
+    consumer_repo: &Path,
+    library_path: &Path,
+) -> bool {
+    same_path(&reference.library_path, library_path)
+        && (same_path(&reference.consumer_repo, consumer_repo)
+            || crate::state::shares_checkout(&reference.consumer_repo, consumer_repo))
 }
 
 pub fn apply_bun_link_plan(
@@ -52,6 +301,7 @@ pub fn apply_bun_link_plan(
             verification: not_run_verification(),
             peer_diagnostics: Vec::new(),
             rollback: BunLinkRollback::not_required(),
+            registration_retirement: BunRegistrationRetirement::default(),
             errors,
         });
     }
@@ -65,6 +315,7 @@ pub fn apply_bun_link_plan(
             verification: not_run_verification(),
             peer_diagnostics,
             rollback: BunLinkRollback::not_required(),
+            registration_retirement: BunRegistrationRetirement::default(),
             errors: Vec::new(),
         });
     }
@@ -262,6 +513,7 @@ pub fn apply_bun_link_plan(
             verification,
             peer_diagnostics,
             rollback,
+            registration_retirement: BunRegistrationRetirement::default(),
             errors,
         });
     }
@@ -301,6 +553,7 @@ pub fn apply_bun_link_plan(
         verification,
         peer_diagnostics,
         rollback,
+        registration_retirement: BunRegistrationRetirement::default(),
         errors,
     })
 }
