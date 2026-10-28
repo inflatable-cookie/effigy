@@ -1386,6 +1386,50 @@ pub(crate) fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
 mod tests {
     use super::*;
 
+    /// Adding a shared service's host alias refuses a non-list, non-mapping
+    /// `extra_hosts` by naming the kind it found. The YAML value's `Debug`
+    /// structure never reaches the reader (effigy#402, Q-017).
+    #[test]
+    fn a_refused_extra_hosts_extension_names_the_kind_it_found() {
+        let mut service = GeneratedComposeService {
+            environment: None,
+            ports: None,
+            volumes: None,
+            extra: std::collections::BTreeMap::from([(
+                "extra_hosts".to_owned(),
+                YamlValue::String("no-such-host".to_owned()),
+            )]),
+        };
+        let error = service
+            .add_extra_host("host.docker.internal", "192.0.2.1")
+            .expect_err("a scalar `extra_hosts` cannot be extended");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("cannot extend `extra_hosts` with a string"),
+            "the kind it found is named: {rendered}"
+        );
+        assert!(
+            !rendered.contains("String("),
+            "no `Debug` structure reaches a person: {rendered}"
+        );
+
+        // The two accepted shapes still extend in place.
+        let mut listed = GeneratedComposeService {
+            extra: std::collections::BTreeMap::from([(
+                "extra_hosts".to_owned(),
+                YamlValue::Sequence(vec![YamlValue::String("other:192.0.2.2".to_owned())]),
+            )]),
+            ..service
+        };
+        listed
+            .add_extra_host("host.docker.internal", "192.0.2.1")
+            .expect("a sequence accepts the alias");
+        let YamlValue::Sequence(entries) = &listed.extra["extra_hosts"] else {
+            panic!("the sequence stays a sequence");
+        };
+        assert_eq!(entries.len(), 2);
+    }
+
     #[test]
     fn crate_tests_default_to_an_isolated_effigy_home() {
         let _lock = crate::test_env_lock();

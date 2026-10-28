@@ -904,6 +904,37 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
         (home, manifest)
     }
 
+    /// A lock that cannot be read reports the kernel's own sentence — the
+    /// evidence and the next action — instead of an `Unparsable(…)` `Debug`
+    /// structure (effigy#402, Q-017).
+    #[test]
+    fn an_unreadable_source_lock_names_its_cause_in_words() {
+        let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");
+        std::fs::write(
+            home.path().join(".effigy").join(LOCK_FILE),
+            b"{\"version\": 1, \"sources\":",
+        )
+        .unwrap();
+        let error = read_lock(&manifest).expect_err("a corrupt lock is a failure");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("source lock unavailable"),
+            "the failure names the lock: {rendered}"
+        );
+        assert!(
+            rendered.contains("could not tell: a recorded value could not be parsed"),
+            "the cause is the kernel's sentence: {rendered}"
+        );
+        assert!(
+            rendered.contains("run `effigy doctor`"),
+            "the next action survives: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Unparsable"),
+            "no variant name reaches a person: {rendered}"
+        );
+    }
+
     #[test]
     fn a_step_path_follows_the_generation_the_lock_selects() {
         let (home, manifest) = pinned_checkout("cache/sources/generation-b/bundle-object");

@@ -110,6 +110,50 @@ fn an_unparsable_legacy_record_is_unknown_and_refuses_volume_actions() {
     assert!(named.require("web").is_ok());
 }
 
+/// An unreadable recorded backend refuses with the kernel's own sentence: the
+/// store is named, the evidence is its detail and the next action is
+/// `effigy doctor`. A `Debug` rendering of the reason never reaches a person
+/// (effigy#402, Q-017).
+#[test]
+fn an_unreadable_backend_record_refuses_in_words() {
+    let _lock = crate::test_env_lock();
+    let fixture = fixture();
+    // Prepare records the backend in the checkout store, then the store is
+    // corrupted so the record cannot be read.
+    isolated(&fixture, || {
+        prepare_container_policy(&fixture.checkout, None).unwrap();
+    });
+    let database = fixture.checkout.join(".effigy/state/kernel.db");
+    assert!(
+        database.is_file(),
+        "prepare writes the checkout store at {}",
+        database.display()
+    );
+    std::fs::write(&database, b"not a database").unwrap();
+
+    let observed = exact(&fixture);
+    let reason = observed.unknown.clone().expect("the record is unreadable");
+    assert!(
+        reason.contains("could not tell"),
+        "the cause is the kernel's sentence: {reason}"
+    );
+    let error = observed.require("web").unwrap_err().to_string();
+    assert!(error.contains("unknown recorded backend"), "{error}");
+    assert!(
+        error.contains("could not tell"),
+        "the refusal carries the cause: {error}"
+    );
+    assert!(
+        !error.contains("StoreUnreadable"),
+        "no variant name reaches a person: {error}"
+    );
+    assert!(
+        !error.contains("Unknown("),
+        "no `Debug` structure reaches a person: {error}"
+    );
+    assert!(error.contains("EFFIGY_COMPOSE_BACKEND"), "{error}");
+}
+
 #[test]
 fn an_explicit_backend_wins_and_is_recorded_by_prepare() {
     let _lock = crate::test_env_lock();

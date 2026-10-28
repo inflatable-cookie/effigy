@@ -512,17 +512,22 @@ fn local_owner(reader: &StoreReader, checkout: CheckoutId) -> Result<ResourceId,
         Observed::Unknown(reason) => {
             Err(storage_error(format!("imported release owner: {reason}")))
         }
-        Observed::Verified(owner, _) => {
-            let key = owner
-                .key()
-                .first()
-                .and_then(Option::as_deref)
-                .unwrap_or("a record with no key");
-            Err(storage_error(format!(
-                "imported release owner `{key}` is not a release owner: a release Run adopts only a machine-scoped store record keyed `release <id>`"
-            )))
-        }
+        Observed::Verified(owner, _) => Err(not_a_release_owner(&owner)),
     }
+}
+
+/// The refusal for an imported owner a release Run cannot adopt: it names the
+/// key it found and the shape it needs, so no `Debug` of the observed value
+/// reaches a person (effigy#402, Q-017).
+fn not_a_release_owner(owner: &ResourceId) -> ReleaseError {
+    let key = owner
+        .key()
+        .first()
+        .and_then(Option::as_deref)
+        .unwrap_or("a record with no key");
+    storage_error(format!(
+        "imported release owner `{key}` is not a release owner: a release Run adopts only a machine-scoped store record keyed `release <id>`"
+    ))
 }
 
 fn checkpoint_from_reader(
@@ -702,6 +707,32 @@ mod tests {
             receipt: None,
             reason: None,
         }
+    }
+
+    /// An imported owner a release Run cannot adopt names its key and the
+    /// shape a release owner has. The observed `ResourceId` Debug tree never
+    /// reaches the reader (effigy#402, Q-017).
+    #[test]
+    fn a_foreign_imported_owner_refusal_names_the_key_in_words() {
+        let owner = ResourceId::store(Scope::Machine, "gateway-endpoints")
+            .expect("a valid non-release owner");
+        let rendered = not_a_release_owner(&owner).to_string();
+        assert!(
+            rendered.contains("imported release owner `gateway-endpoints`"),
+            "the key it found is named: {rendered}"
+        );
+        assert!(
+            rendered.contains("keyed `release <id>`"),
+            "the shape it needs is named: {rendered}"
+        );
+        assert!(
+            !rendered.contains("ResourceId"),
+            "no `Debug` structure reaches a person: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Scope::"),
+            "no variant name reaches a person: {rendered}"
+        );
     }
 
     /// A predecessor's unresolved effects are named in words: the reader gets

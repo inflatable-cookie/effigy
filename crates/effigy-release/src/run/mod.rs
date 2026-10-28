@@ -447,6 +447,15 @@ pub fn settle_release(
     Ok(settled)
 }
 
+/// The refusal for a `release decide` whose target records a real outcome: the
+/// state reads in words, never as a `Debug` variant name (effigy#402, Q-017).
+fn not_an_unknown_publish(target: &str, state: RecordTargetState) -> ReleaseError {
+    ReleaseError::TaskInvocation(format!(
+        "release target `{target}` records outcome `{}` rather than `unknown`; there is no unknown publish for an operator to decide",
+        state.label()
+    ))
+}
+
 enum Continuation {
     RunFrom(ReleaseRecord, ReleaseStage),
     Nothing(ReleaseRecord),
@@ -576,10 +585,7 @@ fn continue_record(
                 )));
             };
             if target.state != RecordTargetState::Unknown {
-                return Err(ReleaseError::TaskInvocation(format!(
-                    "release target `{target_name}` records outcome `{}` rather than `unknown`; there is no unknown publish for an operator to decide",
-                    target.state.label()
-                )));
+                return Err(not_an_unknown_publish(&target_name, target.state));
             }
             target.state = match decision {
                 TargetDecision::Published => RecordTargetState::Published,
