@@ -140,7 +140,27 @@ impl ProgressSource {
         }
     }
 
-    fn frame_at(&self, elapsed: Duration) -> String {
+    /// Name the exact object or probe the operation is waiting on now.
+    pub fn set_awaiting(&self, awaiting: impl Into<String>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .awaiting = awaiting.into();
+    }
+
+    /// What the step ends with when it succeeds: the sub-step last set, or
+    /// the awaited object if the operation never named a sub-step.
+    pub fn summary(&self) -> String {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .sub_step
+            .clone()
+            .unwrap_or_else(|| state.awaiting.clone())
+    }
+
+    /// The frame an operator sees `elapsed` after the step started. A clock
+    /// argument keeps frames testable without sleeping.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
             .sub_step
@@ -149,10 +169,11 @@ impl ProgressSource {
         if let Some((done, total)) = state.count {
             label.push_str(&format!(" ({done}/{total})"));
         }
+        if state.sub_step.is_some() {
+            label.push_str(&format!("; waiting for {}", state.awaiting));
+        }
         if let Some(event) = &state.event {
             label.push_str(&format!("; last: {event}"));
-        } else if state.sub_step.is_some() {
-            label.push_str(&format!("; waiting for {}", state.awaiting));
         }
         label.push_str(&format!("; {}s elapsed", elapsed.as_secs()));
         label
@@ -707,7 +728,7 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(5)));
         assert_eq!(
             step.label(),
-            "checking web (2/3); last: HTTP 404; 5s elapsed"
+            "checking web (2/3); waiting for web health probe on port 8080; last: HTTP 404; 5s elapsed"
         );
         source.update(
             "checking database",
@@ -717,7 +738,7 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(7)));
         assert_eq!(
             step.label(),
-            "checking database (3/3); last: connection refused; 7s elapsed"
+            "checking database (3/3); waiting for web health probe on port 8080; last: connection refused; 7s elapsed"
         );
         step.finish_clear();
         assert!(!step.inner.render_live(&source, Duration::from_secs(8)));

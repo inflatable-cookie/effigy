@@ -24,12 +24,13 @@ use std::cell::Cell;
 use std::io::IsTerminal;
 
 use super::error::RunnerError;
-use super::feedback::live;
+use super::feedback::live_progress;
 use daemon::normalize_gateway_daemon_output;
 use daemon::{
     spawn_gateway_daemon, stop_gateway_process, stop_gateway_process_for_replacement,
     stop_private_gateway_process, wait_for_private_gateway_ready,
 };
+use effigy_ui::steps::{live_step, ProgressSource};
 use elevation::{gateway_invocation_is_escalated, prepare_gateway_state_for_elevated_run};
 
 mod daemon;
@@ -545,11 +546,14 @@ fn run_gateway_up_with_config(
     refuse_a_fixtures_operator_gateway_mutation(config)?;
     record_gateway_up_command(config);
     if !config.is_private() {
-        let result = live("starting the gateway", |step| {
-            step.set_label("starting the gateway process and waiting for it to answer");
-            effigy_gateway::operator::up(config)
-                .map_err(|e| RunnerError::task_invocation(e.to_string()))
-        })?;
+        let result = live_progress(
+            "starting the gateway process",
+            &format!("the gateway to answer on {}", config.proxy.bind_addr),
+            |_| {
+                effigy_gateway::operator::up(config)
+                    .map_err(|e| RunnerError::task_invocation(e.to_string()))
+            },
+        )?;
         return Ok(if output_json {
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
@@ -571,36 +575,50 @@ fn run_private_gateway_up(
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let existing = live("reading gateway state", |step| {
-        prepare_gateway_state_for_elevated_run(config)?;
-        let probe = verified_gateway_status_for_up(config);
-        if probe.identity_permission_denied {
-            return Err(RunnerError::task_invocation(format!(
-                "private gateway identity is unknown; current diagnosis: {}; refusing startup or replacement",
-                gateway_diagnosis_hint(config)
-            )));
-        }
-        step.set_label("checking whether a gateway is already running");
-        inspect_existing_gateway(config, probe.status, output_json)
-    })?;
+    let existing = live_progress(
+        "reading the gateway record and process",
+        &format!(
+            "the gateway identity record at {}",
+            config.pid_file_path.display()
+        ),
+        |progress| {
+            prepare_gateway_state_for_elevated_run(config)?;
+            let probe = verified_gateway_status_for_up(config);
+            if probe.identity_permission_denied {
+                return Err(RunnerError::task_invocation(format!(
+                    "private gateway identity is unknown; current diagnosis: {}; refusing startup or replacement",
+                    gateway_diagnosis_hint(config)
+                )));
+            }
+            progress.update("checking whether a gateway is already running", None, None);
+            inspect_existing_gateway(config, probe.status, output_json)
+        },
+    )?;
     match existing {
         ExistingGateway::Rendered(rendered) => return Ok(rendered),
         ExistingGateway::Running(status) => {
-            live("replacing the running gateway", |step| {
-                step.set_label(&format!("stopping the gateway on pid {}", status.pid));
-                stop_existing_gateway(status.as_ref())?;
-                server::remove_private_gateway_addresses_if_unchanged(config, &status.snapshot)
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
-            })?;
+            live_progress(
+                &format!("stopping the gateway on pid {}", status.pid),
+                &format!("gateway process {} to exit", status.pid),
+                |progress| {
+                    stop_existing_gateway(status.as_ref())?;
+                    progress.set_awaiting("the private gateway addresses to be released");
+                    progress.update("removing the private gateway addresses", None, None);
+                    server::remove_private_gateway_addresses_if_unchanged(config, &status.snapshot)
+                        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+                },
+            )?;
         }
         ExistingGateway::Absent => {}
     }
-    live("starting the gateway", |step| {
-        step.set_label("starting the gateway daemon");
-        spawn_gateway_daemon(config)?;
-        step.set_label("waiting for the gateway to answer");
-        wait_for_private_gateway_ready(config)
-    })?;
+    live_progress(
+        "starting the gateway daemon",
+        "the gateway daemon process to start",
+        |progress| {
+            spawn_gateway_daemon(config)?;
+            wait_for_private_gateway_ready(config, progress)
+        },
+    )?;
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let route_table = RouteTable::load(&config.route_table_path)
@@ -622,11 +640,17 @@ fn run_gateway_down_with_config(
     refuse_a_fixtures_operator_gateway_mutation(config)?;
     record_gateway_down_command(config);
     if !config.is_private() {
-        let result = live("stopping the gateway", |step| {
-            step.set_label("stopping the gateway process and removing its record");
-            effigy_gateway::operator::down(config)
-                .map_err(|e| RunnerError::task_invocation(e.to_string()))
-        })?;
+        let result = live_progress(
+            "stopping the gateway process",
+            &format!(
+                "the gateway process to exit and its record at {} to clear",
+                config.pid_file_path.display()
+            ),
+            |_| {
+                effigy_gateway::operator::down(config)
+                    .map_err(|e| RunnerError::task_invocation(e.to_string()))
+            },
+        )?;
         return Ok(if output_json {
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
@@ -641,35 +665,46 @@ fn run_gateway_down_with_config(
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let status = live("reading gateway state", |step| {
-        let probe = verified_gateway_status_for_up(config);
-        if probe.identity_permission_denied {
-            return Err(RunnerError::task_invocation(format!(
-                "gateway process identity became unreadable while the transition lock was held; current diagnosis: {}; no signal was sent and gateway records are preserved. Rerun `effigy gateway down` from an interactive admin-capable terminal",
-                gateway_diagnosis_hint(config)
-            )));
-        }
-        let status = resolve_gateway_status_for_config(config, probe.status)?;
-        step.set_label(&match &status {
-            Some(running) => format!("gateway is running on pid {}", running.pid),
-            None => "the gateway is already stopped".to_owned(),
-        });
-        Ok(status)
-    })?;
+    let status = live_progress(
+        "reading the gateway record and process",
+        &format!(
+            "the gateway identity record at {}",
+            config.pid_file_path.display()
+        ),
+        |progress| {
+            let probe = verified_gateway_status_for_up(config);
+            if probe.identity_permission_denied {
+                return Err(RunnerError::task_invocation(format!(
+                    "gateway process identity became unreadable while the transition lock was held; current diagnosis: {}; no signal was sent and gateway records are preserved. Rerun `effigy gateway down` from an interactive admin-capable terminal",
+                    gateway_diagnosis_hint(config)
+                )));
+            }
+            let status = resolve_gateway_status_for_config(config, probe.status)?;
+            progress.update(
+                match &status {
+                    Some(running) => format!("gateway is running on pid {}", running.pid),
+                    None => "the gateway is already stopped".to_owned(),
+                },
+                None,
+                None,
+            );
+            Ok(status)
+        },
+    )?;
     let warnings: Vec<String> = Vec::new();
 
     if let Some(ref running) = status {
-        live("stopping the gateway", |step| {
-            step.set_label(&format!(
-                "stopping the gateway process on pid {}",
-                running.pid
-            ));
-            if config.is_private() {
-                stop_private_gateway_process(&running.snapshot)
-            } else {
-                stop_gateway_process(&running.snapshot)
-            }
-        })?;
+        live_progress(
+            &format!("stopping the gateway process on pid {}", running.pid),
+            &format!("gateway process {} to exit", running.pid),
+            |_| {
+                if config.is_private() {
+                    stop_private_gateway_process(&running.snapshot)
+                } else {
+                    stop_gateway_process(&running.snapshot)
+                }
+            },
+        )?;
     }
     if let Some(ref running) = status {
         match server::probe_gateway_process(running.pid) {
@@ -689,25 +724,38 @@ fn run_gateway_down_with_config(
         }
     }
     if let Some(running) = status.as_ref() {
-        live("removing the gateway record", |step| {
-            step.set_label("removing the gateway identity record");
-            if !identity::remove_if_unchanged(&running.snapshot)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-            {
-                return Err(RunnerError::task_invocation(
-                    "gateway record changed during stop; refusing to report it stopped",
-                ));
-            }
-            if config.is_private()
-                && !server::remove_private_gateway_addresses_if_unchanged(config, &running.snapshot)
+        live_progress(
+            "removing the gateway identity record",
+            &format!(
+                "the gateway identity record at {} to be removed",
+                config.pid_file_path.display()
+            ),
+            |progress| {
+                if !identity::remove_if_unchanged(&running.snapshot)
                     .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-            {
-                return Err(RunnerError::task_invocation(
-                    "private gateway endpoint receipt changed during shutdown; refusing to remove it",
-                ));
-            }
-            Ok(())
-        })?;
+                {
+                    return Err(RunnerError::task_invocation(
+                        "gateway record changed during stop; refusing to report it stopped",
+                    ));
+                }
+                if config.is_private() {
+                    progress.set_awaiting("the private gateway endpoint receipt to be removed");
+                    progress.update("removing the private gateway endpoint receipt", None, None);
+                }
+                if config.is_private()
+                    && !server::remove_private_gateway_addresses_if_unchanged(
+                        config,
+                        &running.snapshot,
+                    )
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+                {
+                    return Err(RunnerError::task_invocation(
+                        "private gateway endpoint receipt changed during shutdown; refusing to remove it",
+                    ));
+                }
+                Ok(())
+            },
+        )?;
     }
 
     if output_json {
@@ -847,10 +895,17 @@ fn run_gateway_status_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     if !config.is_private() {
-        let result = live("reading gateway state", |_| {
-            effigy_gateway::operator::status(config)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))
-        });
+        let result = live_progress(
+            "reading the gateway state",
+            &format!(
+                "the gateway process and its record at {}",
+                config.pid_file_path.display()
+            ),
+            |_| {
+                effigy_gateway::operator::status(config)
+                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+            },
+        );
         let result = match result {
             Ok(result) => result,
             Err(error) if output_json => {
@@ -874,10 +929,14 @@ fn run_gateway_status_with_config(
             )
         });
     }
-    let probed = live("reading gateway state", |step| {
-        step.set_label("checking the gateway process and its identity record");
-        Ok(verified_gateway_status(config))
-    })?;
+    let probed = live_progress(
+        "checking the gateway process and its identity record",
+        &format!(
+            "the gateway identity record at {}",
+            config.pid_file_path.display()
+        ),
+        |_| Ok(verified_gateway_status(config)),
+    )?;
     let status = resolve_status_for_status_command(config, probed, output_json)?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
@@ -1783,12 +1842,8 @@ fn mkcert_install_argv() -> std::io::Result<Vec<OsString>> {
 /// serves, from a fresh exec of the installed binary. The setup process began
 /// before the capability existed, so only a new exec can observe it.
 #[cfg(target_os = "linux")]
-fn probe_low_ports(
-    run: &mut effigy_kernel::run::Run<'_>,
-    cx: &effigy_kernel::ctx::EffectContext,
-    config: &GatewayConfig,
-) -> std::io::Result<()> {
-    let addresses: Vec<String> = [
+fn low_port_addresses(config: &GatewayConfig) -> Vec<String> {
+    [
         Some(config.dns.bind_addr),
         Some(config.proxy.bind_addr),
         config.proxy.tls_bind_addr,
@@ -1798,7 +1853,16 @@ fn probe_low_ports(
     // A port at or above 1024 is not what the capability is for.
     .filter(|address| address.port() < 1024)
     .map(|address| address.to_string())
-    .collect();
+    .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn probe_low_ports(
+    run: &mut effigy_kernel::run::Run<'_>,
+    cx: &effigy_kernel::ctx::EffectContext,
+    config: &GatewayConfig,
+) -> std::io::Result<()> {
+    let addresses = low_port_addresses(config);
     if addresses.is_empty() {
         return Ok(());
     }
@@ -1815,20 +1879,20 @@ fn probe_low_ports(
     }
 }
 
-/// Run one setup stage. The label names the step while it runs, and the stage
-/// ends with one line: what now holds, or the failure's own sentence.
-#[cfg_attr(
-    effigy_feedback_lint,
-    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
-)]
+/// Run one setup stage. `action` names what the stage is doing and `awaiting`
+/// the exact object or probe it waits on. The stage ends with one line: what
+/// now holds, or the failure's own sentence.
 fn setup_step<T>(
-    label: &str,
-    work: impl FnOnce(&effigy_ui::Step) -> std::io::Result<T>,
+    action: &str,
+    awaiting: &str,
+    work: impl FnOnce(&ProgressSource) -> std::io::Result<T>,
 ) -> std::io::Result<T> {
-    let step = effigy_ui::steps::step(label);
-    match work(&step) {
+    let progress = ProgressSource::waiting_for(awaiting);
+    progress.update(action, None, None);
+    let step = live_step(progress.clone());
+    match work(&progress) {
         Ok(value) => {
-            step.succeed("");
+            step.succeed(&progress.summary());
             Ok(value)
         }
         Err(error) => {
@@ -1854,9 +1918,11 @@ fn run_gateway_setup(
     }
     let execute = || -> std::io::Result<String> {
         if nix::unistd::Uid::effective().is_root() {
-            let (uid, home) = setup_step("verifying the operator account", |_| {
-                setup::authenticated_operator()
-            })?;
+            let (uid, home) = setup_step(
+                "verifying the operator account",
+                "the operator account to authenticate",
+                |_| setup::authenticated_operator(),
+            )?;
             let config = GatewayConfig::standard(home.join(".effigy/gateway"));
             let root_home = nix::unistd::User::from_uid(nix::unistd::Uid::effective())
                 .map_err(std::io::Error::other)?
@@ -1865,18 +1931,34 @@ fn run_gateway_setup(
             setup::session(&root_home, true, |run, cx| {
                 let suffixes = setup::platform_suffixes(cx, uid, &home, extra)?;
                 if remove {
-                    return setup_step("removing the platform setup (DNS, trust, broker)", |_| {
-                        setup::remove_platform(run, cx, uid, &suffixes)
-                    });
+                    return setup_step(
+                        "removing the platform setup",
+                        &format!(
+                            "the DNS, trust and broker setup for {}",
+                            suffixes.join(", ")
+                        ),
+                        |_| setup::remove_platform(run, cx, uid, &suffixes),
+                    );
                 }
-                setup_step("migrating root-owned gateway state", |_| {
-                    setup::migrate_root(&config, uid, |snapshot| {
-                        stop_gateway_process_for_replacement(snapshot)
-                            .map_err(|e| std::io::Error::other(e.to_string()))
-                    })
-                })?;
+                setup_step(
+                    "migrating root-owned gateway state",
+                    &format!(
+                        "root-owned gateway state at {}",
+                        config.pid_file_path.display()
+                    ),
+                    |_| {
+                        setup::migrate_root(&config, uid, |snapshot| {
+                            stop_gateway_process_for_replacement(snapshot)
+                                .map_err(|e| std::io::Error::other(e.to_string()))
+                        })
+                    },
+                )?;
                 setup_step(
                     "applying platform setup (DNS, certificate trust, broker)",
+                    &format!(
+                        "the DNS, certificate trust and broker setup for {}",
+                        suffixes.join(", ")
+                    ),
                     |_| setup::apply_platform(run, cx, &config, &suffixes, uid),
                 )
             })?;
@@ -1908,15 +1990,26 @@ fn run_gateway_setup(
                 // The login launch unit goes first: nothing may start the
                 // gateway at the next login once its capability is gone.
                 #[cfg(target_os = "linux")]
-                setup_step("removing the systemd user launch unit", |_| {
-                    effigy_gateway::linux_operator::remove(
-                        cx,
-                        &effigy_gateway::linux_operator::LaunchPaths::standard(&home),
-                        operator_uid.as_raw(),
-                        &mut effigy_gateway::linux_operator::Systemctl::default(),
-                    )
-                })?;
-                setup_step("stopping the gateway", |_| operator::down(&config))?;
+                setup_step(
+                    "removing the systemd user launch unit",
+                    &format!(
+                        "the systemd user launch unit for uid {}",
+                        operator_uid.as_raw()
+                    ),
+                    |_| {
+                        effigy_gateway::linux_operator::remove(
+                            cx,
+                            &effigy_gateway::linux_operator::LaunchPaths::standard(&home),
+                            operator_uid.as_raw(),
+                            &mut effigy_gateway::linux_operator::Systemctl::default(),
+                        )
+                    },
+                )?;
+                setup_step(
+                    "stopping the gateway",
+                    "the gateway process to exit",
+                    |_| operator::down(&config),
+                )?;
             }
             // mkcert uses this operator's preserved CA. It is never run by the daemon.
             if !remove && !TlsConfig::mkcert_available() {
@@ -1927,6 +2020,7 @@ fn run_gateway_setup(
             if !remove {
                 setup_step(
                     "trusting mkcert's local CA (approve any keychain prompt)",
+                    "mkcert's local CA in this user's trust store",
                     |_| setup::command(run, cx, mkcert_install_argv()?, true),
                 )?;
             }
@@ -1943,18 +2037,26 @@ fn run_gateway_setup(
                 } else {
                     "applying platform setup (approve the administrator prompt if it appears)"
                 },
+                &format!(
+                    "the administrator's approval for platform setup for {}",
+                    suffixes.join(", ")
+                ),
                 |_| setup::command(run, cx, argv, true),
             )?;
             if remove {
-                return setup_step("removing the setup receipt", |_| {
-                    setup::remove_receipt(run, cx, &home)
-                });
+                return setup_step(
+                    "removing the setup receipt",
+                    &format!("the setup receipt in {}", home.display()),
+                    |_| setup::remove_receipt(run, cx, &home),
+                );
             }
             suffixes.sort();
             suffixes.dedup();
-            setup_step("recording the setup receipt", |_| {
-                setup::save_receipt(run, cx, &home, suffixes)
-            })?;
+            setup_step(
+                "recording the setup receipt",
+                &format!("the setup receipt in {}", home.display()),
+                |_| setup::save_receipt(run, cx, &home, suffixes),
+            )?;
             #[cfg(target_os = "linux")]
             {
                 // The unit is written by the operator so systemd owns it as
@@ -1962,6 +2064,10 @@ fn run_gateway_setup(
                 // administrator step above.
                 launcher = Some(setup_step(
                     "installing the systemd user launch unit",
+                    &format!(
+                        "the systemd user launch unit for uid {}",
+                        operator_uid.as_raw()
+                    ),
                     |_| {
                         effigy_gateway::linux_operator::install(
                             run,
@@ -1976,9 +2082,14 @@ fn run_gateway_setup(
                 // A fresh exec of the installed binary proves the capability
                 // on the exact endpoints the daemon serves. The setup process
                 // itself started before the capability existed.
-                setup_step("probing the low-port capability as the operator", |_| {
-                    probe_low_ports(run, cx, &config)
-                })?;
+                setup_step(
+                    "probing the low-port capability as the operator",
+                    &format!(
+                        "the bind probe for {}",
+                        low_port_addresses(&config).join(", ")
+                    ),
+                    |_| probe_low_ports(run, cx, &config),
+                )?;
             }
             Ok(())
         })?;
@@ -1999,10 +2110,11 @@ fn run_gateway_setup(
                 eprintln!("[gateway] {prefix}: run `{line}`");
             }
         }
-        let result = setup_step("starting the gateway", |step| {
-            step.set_label("starting the gateway as the operator");
-            operator::up(&config)
-        })?;
+        let result = setup_step(
+            "starting the gateway as the operator",
+            &format!("the gateway to answer on {}", config.proxy.bind_addr),
+            |_| operator::up(&config),
+        )?;
         Ok(if output_json {
             serde_json::to_string(&result).map_err(std::io::Error::other)?
         } else {

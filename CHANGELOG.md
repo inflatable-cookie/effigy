@@ -362,6 +362,12 @@ During v0.x, MINOR bumps may include breaking changes.
   with ✓ or ✗ naming the failure. On a terminal, a warning or note from source
   acquisition prints above the spinner, and `--json` writes nothing to stderr
   for it.
+- **Gateway setup, bind and readiness steps name the object they wait on.**
+  `gateway up|down|status|setup` show the exact port, record or suffix list
+  being awaited, the probe that refused last (`the gateway is not answering
+  yet`, `the gateway record is not published yet`) and elapsed time, instead of
+  one fixed label for the whole wait. Each step still ends with one line; `--json`
+  and piped output are unchanged.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations

@@ -9,6 +9,7 @@ use std::os::unix::process::CommandExt;
 
 use effigy_gateway::identity;
 use effigy_gateway::server::{self, GatewayConfig};
+use effigy_ui::steps::ProgressSource;
 
 use crate::runner::error::RunnerError;
 
@@ -114,20 +115,31 @@ fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
     }
 }
 
-pub(super) fn wait_for_private_gateway_ready(config: &GatewayConfig) -> Result<(), RunnerError> {
+pub(super) fn wait_for_private_gateway_ready(
+    config: &GatewayConfig,
+    progress: &ProgressSource,
+) -> Result<(), RunnerError> {
     let operation = effigy_gateway::operator::context(
         Duration::from_secs(15),
         effigy_kernel::ctx::EffectClass::Observe,
     );
-    wait_for_private_gateway_ready_with_probe(&operation, || {
+    progress.set_awaiting(format!(
+        "the gateway to answer on {}",
+        config.proxy.bind_addr
+    ));
+    wait_for_private_gateway_ready_with_probe(&operation, progress, || {
         server::get_verified_gateway_status(config).map(|_| ())
     })
 }
 
+/// Poll the verified listener until it answers or the budget ends. Each
+/// refused probe names its blocker as the step's last event.
 pub(super) fn wait_for_private_gateway_ready_with_probe(
     operation: &effigy_kernel::ctx::OperationContext,
+    progress: &ProgressSource,
     mut probe: impl FnMut() -> Result<(), effigy_gateway::GatewayError>,
 ) -> Result<(), RunnerError> {
+    progress.update("checking the verified listener", None, None);
     loop {
         operation
             .check("private gateway verified listener publication")
@@ -136,13 +148,17 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
                     "private gateway startup interrupted: {error}; the daemon was not confirmed ready"
                 ))
             })?;
-        match probe() {
+        let blocker = match probe() {
             Ok(()) => return Ok(()),
-            Err(effigy_gateway::GatewayError::NotRunning) => {}
+            Err(effigy_gateway::GatewayError::NotRunning) => "the gateway is not answering yet",
             Err(effigy_gateway::GatewayError::Io(error))
-                if error.kind() == std::io::ErrorKind::NotFound => {}
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                "the gateway record is not published yet"
+            }
             Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
-        }
+        };
+        progress.update("checking the verified listener", None, Some(blocker.into()));
         let remaining = operation.remaining().ok_or_else(|| {
             RunnerError::task_invocation("private gateway startup requires a finite budget")
         })?;

@@ -23,7 +23,7 @@ fn private_gateway_publication_can_finish_after_the_old_one_second_window() {
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let started = std::time::Instant::now();
-    daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
+    daemon::wait_for_private_gateway_ready_with_probe(&operation, &readiness_progress(), || {
         if started.elapsed() < std::time::Duration::from_millis(1100) {
             Err(effigy_gateway::GatewayError::NotRunning)
         } else {
@@ -39,9 +39,11 @@ fn private_gateway_publication_obeys_its_finite_kernel_budget() {
         std::time::Duration::from_millis(20),
         effigy_kernel::ctx::EffectClass::Observe,
     );
-    let error = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
-        Err(effigy_gateway::GatewayError::NotRunning)
-    })
+    let error = daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &readiness_progress(),
+        || Err(effigy_gateway::GatewayError::NotRunning),
+    )
     .unwrap_err();
     // Before: `private gateway startup interrupted: TimedOut { phase:
     // "private gateway verified listener publication", elapsed: 22ms }`.
@@ -68,12 +70,16 @@ fn private_gateway_publication_never_retries_an_unverified_permission_refusal() 
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let mut probes = 0;
-    let result = daemon::wait_for_private_gateway_ready_with_probe(&operation, || {
-        probes += 1;
-        Err(effigy_gateway::GatewayError::Io(
-            std::io::ErrorKind::PermissionDenied.into(),
-        ))
-    });
+    let result = daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &readiness_progress(),
+        || {
+            probes += 1;
+            Err(effigy_gateway::GatewayError::Io(
+                std::io::ErrorKind::PermissionDenied.into(),
+            ))
+        },
+    );
     assert!(result.is_err());
     assert_eq!(probes, 1);
 }
@@ -1741,24 +1747,91 @@ fn gateway_down_records_its_caller_before_it_reads_any_state() {
 #[test]
 fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
     let (done, lines) = effigy_ui::steps::capture_lines(|| {
-        setup_step("trusting mkcert's local CA", |step| {
-            step.set_label("the mkcert CA is trusted for this user");
-            Ok(())
-        })
+        setup_step(
+            "trusting mkcert's local CA",
+            "mkcert's local CA in this user's trust store",
+            |progress| {
+                progress.update("the mkcert CA is trusted for this user", None, None);
+                Ok(())
+            },
+        )
     });
     done.expect("a finished stage");
     assert_eq!(lines, vec!["✓ the mkcert CA is trusted for this user"]);
 
     let (failed, lines) = effigy_ui::steps::capture_lines(|| {
-        setup_step::<()>("applying platform setup", |_| {
-            Err(std::io::Error::other(
-                "the administrator declined the elevation prompt",
-            ))
-        })
+        setup_step::<()>(
+            "applying platform setup",
+            "the DNS, certificate trust and broker setup for test",
+            |_| {
+                Err(std::io::Error::other(
+                    "the administrator declined the elevation prompt",
+                ))
+            },
+        )
     });
     assert!(failed.is_err());
     assert_eq!(
         lines,
         vec!["✗ the administrator declined the elevation prompt"]
+    );
+}
+
+/// The progress the readiness probes in these tests report into.
+fn readiness_progress() -> ProgressSource {
+    ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:8080")
+}
+
+/// Fake-clock frames while the listener is not yet answering: each refusal
+/// becomes the last event, the awaited address stays named, and the elapsed
+/// count follows the probe number.
+#[test]
+fn listener_readiness_frames_name_each_blocker_as_it_happens() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let progress = readiness_progress();
+    let mut frames = Vec::new();
+    let mut probes = 0;
+    daemon::wait_for_private_gateway_ready_with_probe(&operation, &progress, || {
+        probes += 1;
+        frames.push(progress.frame_at(std::time::Duration::from_secs(probes)));
+        match probes {
+            1 => Err(effigy_gateway::GatewayError::NotRunning),
+            2 => Err(effigy_gateway::GatewayError::Io(
+                std::io::ErrorKind::NotFound.into(),
+            )),
+            _ => Ok(()),
+        }
+    })
+    .expect("the listener answers on the third probe");
+    assert_eq!(
+        frames,
+        vec![
+            "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; 1s elapsed",
+            "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; last: the gateway is not answering yet; 2s elapsed",
+            "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; last: the gateway record is not published yet; 3s elapsed",
+        ]
+    );
+}
+
+/// A probe that refuses for good names what is wrong and stops the wait.
+#[test]
+fn listener_readiness_failure_keeps_the_probe_it_refused_on() {
+    let operation = effigy_gateway::operator::context(
+        std::time::Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    let progress = readiness_progress();
+    let result = daemon::wait_for_private_gateway_ready_with_probe(&operation, &progress, || {
+        Err(effigy_gateway::GatewayError::Io(
+            std::io::ErrorKind::PermissionDenied.into(),
+        ))
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(5)),
+        "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; 5s elapsed"
     );
 }
