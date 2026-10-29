@@ -358,6 +358,18 @@ v0.14 is refused with its own stop command and never adopted.
 Headless runs never allocate an interactive TTY and never start shell-role
 tabs: shells belong to a terminal.
 
+Every tab says what its own entry waits for, from the resolved ordering graph
+rather than the tab bar: `front [waiting: api starting]` while the start order
+or a host process's `depends_on` blocks it, `waiting for environment
+(containers 3/4 healthy)` while the environment phase runs, `waiting for GET /
+-> 200 (12s)` for a listener's declared readiness request, and `scheduled
+delay: 1.2s remaining` for the accepted legacy `start_after_ms`, which orders
+nothing and therefore names no dependency. A prerequisite failure is terminal
+and attributed — `front [not started: api failed]`, and the pane reads
+`not started — api failed (status 500)` — and no dependent starts. The same
+state reaches `--headless` (`[managed] front: waiting for api (starting) (4s)`,
+`[api] [host] waiting for GET / -> 200 (12s)`) and `status`.
+
 The environment phase runs before any workload: `container up` as a child of
 the run, then the service's own readiness, polled with backoff until the
 workspace service answers or the readiness budget runs out
@@ -407,8 +419,12 @@ effigy dev stop admin
 ```
 
 `status` reports the run, its environment and each started process with PID,
-state and exit code. `--json` prints `effigy.managed.status.v1`. `logs <name>`
-reads a workload's log; `logs lifecycle` reads the run's own output (setup,
+state and exit code, then every entry that has not started with the prerequisite
+or probe it waits for. `--json` prints `effigy.managed.status.v1`: each process
+carries `waiting_on` when it is starting against a named wait, and the additive
+`waits` list carries `phase`, `waiting_on` (`kind`, and `name`/`phase`,
+`healthy`/`total`, `probe` or `remaining_ms`) and `not_started_because` for an
+entry that never started. `logs <name>` reads a workload's log; `logs lifecycle` reads the run's own output (setup,
 environment, readiness, starts and exits). A failed run names the failing
 process, its log command and the log's tail in the task error. `stop` is
 idempotent: on a closed run it reports the run's outcome. If the supervisor

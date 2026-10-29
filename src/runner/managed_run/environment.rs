@@ -476,6 +476,63 @@ fn find_program(name: &str) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// The wait names the request being observed, not the whole URL: the
+    /// readiness line a person reads (effigy#458).
+    #[test]
+    fn the_readiness_probe_names_its_request() {
+        let route = health(
+            "http://app.test/api/health".to_owned(),
+            Duration::from_secs(1),
+        );
+        assert_eq!(route.probe_label().as_deref(), Some("GET /api/health"));
+        let route = health("http://app.test".to_owned(), Duration::from_secs(1));
+        assert_eq!(route.probe_label().as_deref(), Some("GET /"));
+        assert_eq!(
+            RouteHealth::new(&plan(std::env::temp_dir())).probe_label(),
+            None
+        );
+    }
+
+    /// The environment phase reads the containers its own `up` reported
+    /// healthy from the record that `up` publishes.
+    #[test]
+    fn the_environment_phase_reads_the_published_container_counts() {
+        let repo = tempfile::tempdir().expect("repo");
+        let plan = plan(repo.path().to_path_buf());
+        assert_eq!(environment_counts(&plan), None, "nothing is published yet");
+        crate::runner::managed_wait::WaitLedger::environment(repo.path(), &plan.name).publish(
+            &effigy_tui::waits::EntryState {
+                entry: "environment".to_owned(),
+                phase: effigy_tui::waits::EntryPhase::Waiting,
+                waiting_on: Some(WaitOn::Environment {
+                    healthy: Some(3),
+                    total: Some(4),
+                }),
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 12_000,
+            },
+        );
+        assert_eq!(environment_counts(&plan), Some((3, 4)));
+    }
+
+    fn plan(repo: std::path::PathBuf) -> EnvironmentPlan {
+        EnvironmentPlan {
+            name: "app".to_owned(),
+            repo,
+            binding: Binding::Inline {
+                task: "dev".to_owned(),
+            },
+            up: "true".to_owned(),
+            up_env: Vec::new(),
+            borrowed: false,
+            exec_probe: None,
+            route_urls: Vec::new(),
+            readiness_budget: Duration::from_secs(60),
+            ready_lines: Vec::new(),
+        }
+    }
+
     #[test]
     fn first_line_keeps_only_the_headline() {
         assert_eq!(first_line("not ready\nmore"), "not ready");

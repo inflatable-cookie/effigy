@@ -617,7 +617,13 @@ current sub-step or object, known counts, elapsed time, and the last meaningful
 event or exact dependency/probe being awaited. When no further event is
 observable, show elapsed time and the exact thing awaited rather than a generic
 "working" label. This applies across command planes, including managed TUI
-tabs and their text/JSON equivalents, and is a v0.15 gate. The source-wide
+tabs and their text/JSON equivalents, and is a v0.15 gate. Managed entries now
+derive each wait from the resolved ordering graph (`start` order, `after =
+["environment"]`, host `depends_on`, accepted legacy `start_after_ms`), publish
+it as `effigy.managed.entry-wait.v1` under `.effigy/runtime/waits/`, and project
+the same state to the tab, the headless text and `status --json` `waiting_on`
+(effigy#458; [product guardrails](architecture/product-guardrails.md#human-facing-feedback)).
+The source-wide
 audit is recorded at
 `/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`;
 the gate requires reviewed per-plane fixes and an enforcing feedback lint/API.

@@ -248,6 +248,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **A managed session names what each entry waits for.** Every tab, the
+  `--headless` text and `status` show the entry's own dependency-derived state
+  instead of a generic waiting spinner: `front [waiting: api starting]` while
+  the resolved start order or a host process's `depends_on` blocks it,
+  `waiting for environment (containers 3/4 healthy)` during the environment
+  phase, `waiting for GET / -> 200 (12s)` for a listener's declared readiness
+  request, and `scheduled delay: 1.2s remaining` for the accepted legacy
+  `start_after_ms` — which names no dependency. A prerequisite failure is
+  terminal and attributed (`front: not started — api failed (status 500)`), and
+  no dependent starts. `effigy <task> status --json` keeps every existing field
+  and adds `waiting_on` to a waiting process plus a `waits` list of entries
+  that have not started.
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as

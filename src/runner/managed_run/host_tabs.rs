@@ -435,6 +435,84 @@ mod tests {
         assert_eq!(ready_url(&tab), None, "a torn state file is no observation");
     }
 
+    /// A host process that has not started is held by the bring-up, and the
+    /// tab says exactly what it waits for; a prerequisite failure is terminal
+    /// and attributed (effigy#458).
+    #[test]
+    fn a_published_wait_names_the_dependency_and_a_failure_is_attributed() {
+        use effigy_tui::waits::{Attribution, EntryPhase, EntryState, WaitOn};
+
+        let dir = tempfile::tempdir().expect("wait dir");
+        let record = dir.path().join("front.json");
+        let mut tab = tab(HostProcessRestart::Never, None);
+        tab.name = "front".to_owned();
+        tab.wait_record = record.clone();
+
+        std::fs::write(
+            &record,
+            serde_json::to_vec(&EntryState {
+                entry: "front".to_owned(),
+                phase: EntryPhase::Waiting,
+                waiting_on: Some(WaitOn::Entry {
+                    name: "api".to_owned(),
+                    phase: EntryPhase::Starting,
+                }),
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 4_000,
+            })
+            .expect("record json"),
+        )
+        .expect("published wait");
+        let mut follower = HostFollower::new(tab.clone());
+        assert_eq!(
+            follower.poll().statuses,
+            vec![HostStatus::Waiting(
+                "waiting for api (starting) (4s)".to_owned()
+            )]
+        );
+        assert_eq!(
+            follower
+                .wait_state()
+                .and_then(|state| state.waiting_on.clone()),
+            Some(WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            })
+        );
+
+        std::fs::write(
+            &record,
+            serde_json::to_vec(&EntryState {
+                entry: "front".to_owned(),
+                phase: EntryPhase::NotStarted,
+                waiting_on: None,
+                not_started_because: Some(Attribution::new("api", "failed (status 500)")),
+                detail: None,
+                elapsed_ms: 0,
+            })
+            .expect("record json"),
+        )
+        .expect("published failure");
+        // The poll interval must pass before the record is re-read.
+        std::thread::sleep(ListenerPollWait::value());
+        assert_eq!(
+            follower.poll().statuses,
+            vec![HostStatus::NotStarted(
+                "not started — api failed (status 500)".to_owned()
+            )]
+        );
+    }
+
+    /// The poll interval, as a duration a test may wait.
+    struct ListenerPollWait;
+
+    impl ListenerPollWait {
+        fn value() -> std::time::Duration {
+            LISTENER_POLL + std::time::Duration::from_millis(20)
+        }
+    }
+
     #[test]
     fn a_log_tail_returns_whole_lines_and_survives_a_truncation() {
         let dir = tempfile::tempdir().expect("log dir");
