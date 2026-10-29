@@ -8,21 +8,22 @@
 //! keeps exactly the checkout-local route it had.
 //!
 //! A data command never publishes, starts or replaces a shared service. Before
-//! the first statement it proves the declared shared container is running in the
-//! expected project, from the declared render and for the declared service, and
-//! refuses with an actionable error otherwise.
+//! the first statement it proves the declared shared render's files and the
+//! declared shared container: running in the expected project, from the
+//! declared render digest and for the declared service. It refuses with an
+//! actionable error otherwise.
+//!
+//! A database client's credential travels by variable name only: the exec
+//! adapter places the value in a private file the Compose client sources, on
+//! the host or inside the Colima VM, so the value never reaches a command line,
+//! a Compose invocation or a report.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
-use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
 use effigy_containers::exec::SharedProjectContainer;
-use effigy_containers::{
-    ContainerAction, ContainerBackendDetection, ContainerInterruptPolicy, ContainerManager,
-    ContainerManagerRequest, EffectiveContainerPolicy, SharedServiceBinding,
-};
+use effigy_containers::{EffectiveContainerPolicy, SharedRender, SharedServiceBinding};
 use effigy_manifest::{ManifestContainerServiceConfig, TaskManifest};
 
 use super::RunnerError;
@@ -127,39 +128,16 @@ fn same_shared_identity(
 
 /// One shared data command, resolved but not yet run.
 ///
-/// The in-container command never carries a credential value: `env NAME=value`
-/// entries become `compose exec -e NAME`, with the value only in the child
-/// process environment (effigy#477 acceptance).
+/// `command` is the in-container argv. A credential assignment in the plan's
+/// `env` prefix becomes a named `compose exec -e NAME`, with the value carried
+/// separately by the private credential transport, so the value never appears
+/// in this plan's Composes command line or in a report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct SharedDataExecPlan {
-    pub compose_file: PathBuf,
-    pub project_name: String,
     pub service: String,
-    pub argv: Vec<String>,
+    pub command: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub stdin_file: Option<PathBuf>,
-}
-
-impl SharedDataExecPlan {
-    /// The Compose arguments for this exec. Credentials appear by name only.
-    fn compose_args(&self) -> Vec<OsString> {
-        let mut args = vec![
-            OsString::from("compose"),
-            OsString::from("-f"),
-            self.compose_file.as_os_str().to_os_string(),
-            OsString::from("-p"),
-            OsString::from(self.project_name.as_str()),
-            OsString::from("exec"),
-            OsString::from("-T"),
-        ];
-        for name in self.env.keys() {
-            args.push(OsString::from("-e"));
-            args.push(OsString::from(name));
-        }
-        args.push(OsString::from(self.service.as_str()));
-        args.extend(self.argv.iter().map(OsString::from));
-        args
-    }
 }
 
 /// Resolve the command one data step runs in the shared project.
@@ -175,12 +153,10 @@ pub(in crate::runner) fn plan_shared_data_exec(
             binding.service_name
         )));
     }
-    let (env, argv) = split_command_env(command)?;
+    let (env, command) = split_command_env(command)?;
     Ok(SharedDataExecPlan {
-        compose_file: binding.compose_file.clone(),
-        project_name: binding.project_name.clone(),
         service: binding.service_name.clone(),
-        argv,
+        command,
         env,
         stdin_file: stdin_file.map(Path::to_path_buf),
     })
@@ -230,7 +206,20 @@ pub(in crate::runner) fn run_shared_data_command(
 ) -> Result<Output, RunnerError> {
     let plan = plan_shared_data_exec(binding, &binding.service_name, command, stdin_file)?;
     verify_shared_data_target(policy, binding)?;
-    let output = run_shared_compose_exec(policy, &plan)?;
+    let mut tail = vec!["exec".to_owned(), "-T".to_owned()];
+    for name in plan.env.keys() {
+        tail.push("-e".to_owned());
+        tail.push(name.clone());
+    }
+    tail.push(plan.service.clone());
+    tail.extend(plan.command.clone());
+    let output = super::support::run_shared_service_exec_capture(
+        policy,
+        binding,
+        tail.iter().map(String::as_str),
+        &plan.env,
+        plan.stdin_file.as_deref(),
+    )?;
     if !output.status.success() {
         return Err(RunnerError::task_invocation(format!(
             "shared {service} data command failed ({code})\nproject: {project}\nstdout:\n{stdout}\nstderr:\n{stderr}",
@@ -244,27 +233,16 @@ pub(in crate::runner) fn run_shared_data_command(
     Ok(output)
 }
 
-/// Prove the declared shared container can receive the command before running
-/// anything against it: the render exists, the runtime reports exactly one
-/// running container of the declared service in the declared project, and that
-/// container was created from the declared render digest.
+/// Prove the declared shared service can receive the command before running
+/// anything against it: the expected render's every file is present, readable
+/// and unchanged, and the runtime reports exactly one running container of the
+/// declared service in the declared project, created from the declared digest.
 pub(in crate::runner) fn verify_shared_data_target(
     policy: &EffectiveContainerPolicy,
     binding: &SharedServiceBinding,
 ) -> Result<(), RunnerError> {
-    if !binding.compose_file.is_file() {
-        let render = binding
-            .compose_file
-            .parent()
-            .unwrap_or(&binding.compose_file)
-            .display();
-        return Err(RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) has no published render at `{render}`, so a data command cannot exec in it. Nothing was started, replaced or published. Run `effigy container up {env}` to publish the shared service, then re-run.",
-            service = binding.service_name,
-            project = binding.project_name,
-            env = policy.name,
-        )));
-    }
+    let render = expected_shared_render(policy, binding)?;
+    verify_shared_render_files(binding, &policy.name, render)?;
     let containers = effigy_containers::exec::shared_project_containers(
         &policy.repo_root,
         policy,
@@ -278,6 +256,75 @@ pub(in crate::runner) fn verify_shared_data_target(
         ))
     })?;
     verify_shared_data_containers(binding, &policy.name, &containers)
+}
+
+/// The render this policy expects beside the binding's own Compose file.
+fn expected_shared_render<'a>(
+    policy: &'a EffectiveContainerPolicy,
+    binding: &SharedServiceBinding,
+) -> Result<&'a SharedRender, RunnerError> {
+    let expected = binding.compose_file.parent();
+    let render = policy.render.as_ref().and_then(|rendered| {
+        rendered
+            .shared
+            .iter()
+            .find(|render| Some(render.directory.as_path()) == expected)
+    });
+    render.ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "shared {service} (project `{project}`) has no rendered service under `{render}`, so a data command cannot prove its files. Nothing was executed. Run `effigy container up {env}` to render and start the shared service, then re-run.",
+            service = binding.service_name,
+            project = binding.project_name,
+            render = expected
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| binding.compose_file.display().to_string()),
+            env = policy.name,
+        ))
+    })
+}
+
+/// Every file the expected render binds must be the file on disk. A missing,
+/// unreadable or altered file means the render the container claims is not the
+/// render this declaration resolves, so nothing runs against it.
+fn verify_shared_render_files(
+    binding: &SharedServiceBinding,
+    env: &str,
+    render: &SharedRender,
+) -> Result<(), RunnerError> {
+    for (relative, expected) in &render.files {
+        let path = render.directory.join(relative);
+        match std::fs::read(&path) {
+            Ok(bytes) if bytes == *expected => {}
+            Ok(_) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "shared {service} (project `{project}`) render file `{path}` was altered on disk, so it no longer matches the render this data target resolved. Nothing was executed, published or replaced. Run `effigy container up {env}` to publish the declared render, then re-run.",
+                    service = binding.service_name,
+                    project = binding.project_name,
+                    path = path.display(),
+                    env = env,
+                )))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(RunnerError::task_invocation(format!(
+                    "shared {service} (project `{project}`) render file `{path}` is missing, so the declared shared service cannot be proved. Nothing was started, replaced or published. Run `effigy container up {env}` to publish the shared render, then re-run.",
+                    service = binding.service_name,
+                    project = binding.project_name,
+                    path = path.display(),
+                    env = env,
+                )))
+            }
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "shared {service} (project `{project}`) render file `{path}` cannot be read: {error}. Nothing was executed or replaced. Make the file readable, or run `effigy container up {env}` to republish the render, then re-run.",
+                    service = binding.service_name,
+                    project = binding.project_name,
+                    path = path.display(),
+                    env = env,
+                )))
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The container-identity refusal, separate from the runtime read so the
@@ -340,97 +387,16 @@ fn verify_shared_data_containers(
     Ok(())
 }
 
-/// Run `compose exec` against the shared render's own machine-wide directory on
-/// the environment's exact backend.
-fn run_shared_compose_exec(
-    policy: &EffectiveContainerPolicy,
-    plan: &SharedDataExecPlan,
-) -> Result<Output, RunnerError> {
-    let label = format!("docker compose exec (shared {})", plan.service);
-    let backend =
-        effigy_containers::backend::exact_backend(&policy.repo_root, &policy.name, policy.driver)
-            .id;
-    let request = ContainerManagerRequest::new(&policy.repo_root)
-        .backend_override(backend.clone())
-        .interrupt_policy(ContainerInterruptPolicy::Forward);
-    let mut detection = ContainerBackendDetection::from_env_and_path();
-    detection.backend_override = Some(backend);
-    let mut invocation = ContainerManager::defaults()
-        .compose_invocation_plan(
-            &request,
-            &detection,
-            policy.profile.as_str(),
-            &plan.compose_args(),
-            ContainerAction::Exec,
-            label.clone(),
-        )
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    // A VM-hosted backend cannot inherit the host environment, so the shared
-    // transform names the Compose interpolation file its VM can read.
-    invocation.args = effigy_containers::policy::render::compose_invocation_args(
-        invocation.program.as_ref(),
-        &invocation.args,
-        &[],
-    )
-    .map_err(|error| RunnerError::TaskCommandLaunch {
-        command: format!(
-            "{label} ({} {})",
-            invocation.program.to_string_lossy(),
-            format_args(&invocation.args)
-        ),
-        error,
-    })?;
-    let module = plan.compose_file.parent().ok_or_else(|| {
-        RunnerError::task_invocation("shared service compose file has no parent directory")
-    })?;
-    let mut command = Command::new(&invocation.program);
-    command
-        .current_dir(module)
-        .args(&invocation.args)
-        .envs(&plan.env);
-    match plan.stdin_file.as_deref() {
-        Some(path) => {
-            let file = File::open(path).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "failed to open staged shared data input {}: {error}",
-                    path.display()
-                ))
-            })?;
-            command.stdin(Stdio::from(file));
-        }
-        None => {
-            command.stdin(Stdio::null());
-        }
-    }
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: format!(
-                "{label} ({} {})",
-                invocation.program.to_string_lossy(),
-                format_args(&invocation.args)
-            ),
-            error,
-        })
-}
-
-fn format_args(args: &[OsString]) -> String {
-    args.iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         plan_shared_data_exec, resolve_shared_data_binding, run_shared_data_command,
-        verify_shared_data_containers,
+        verify_shared_data_containers, verify_shared_data_target,
     };
     use crate::contract_test_support::{lock_test, EnvGuard};
-    use crate::runner::container_command::data::run_container_data_dump_with_hooks;
+    use crate::runner::container_command::data::{
+        run_container_data_dump_with_hooks, run_container_data_seed,
+    };
     use crate::runner::db_seed::{run_builtin_db_seed_task_with, DB_SEEDS_JSON_ENV};
     use effigy_containers::exec::SharedProjectContainer;
     use effigy_containers::{
@@ -485,6 +451,42 @@ password = "secret"
 shared = true
 "#;
 
+    /// The default environment declares no `mysql`; only `hybrid` shares it, so
+    /// a seed that reloads the default environment cannot resolve the target.
+    const HYBRID_ONLY_MANIFEST: &str = r#"
+[data.targets.acowtancy]
+service = "mysql"
+database = "acowtancy"
+
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "app"
+
+[containers.stack.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+database = "acowtancy"
+
+[containers.hybrid]
+primary_service = "app"
+
+[containers.hybrid.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.hybrid.services.mysql]
+catalog = "mariadb"
+version = "10.11"
+database = "acowtancy"
+password = "secret"
+shared = true
+"#;
+
     struct FixtureRepo {
         _fixture: Fixture,
         root: PathBuf,
@@ -511,35 +513,37 @@ shared = true
             }
         }
 
+        /// The fake runtime serves the shared project inventory and records
+        /// every invocation, including a compose exec's stdin, so the test
+        /// reads exactly what the adapter ran.
         fn install_fake_runtime(&self) {
-            // The fake runtime serves the shared project inventory and records
-            // every invocation, including a compose exec's stdin, so the test
-            // reads exactly what the adapter ran.
             let script = format!(
-                "#!/bin/sh\nprintf 'call %s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  *'ps --all'*) printf '%s\\n' \"$EFFIGY_TEST_PS_ROW\" ;;\n  *' exec '*) while IFS= read -r line || [ -n \"$line\" ]; do printf 'stdin %s\\n' \"$line\" >> {log}; done; printf 'dump-body\\n' ;;\nesac\nexit 0\n",
+                "#!/bin/sh\nprintf 'call %s\\n' \"$*\" >> {log}\nprintf 'credential-env=%s\\n' \"${{MYSQL_PWD:+present}}\" >> {log}\ncase \"$*\" in\n  *'--version'*) printf 'fake 1.0\\n' ;;\n  *'ps --all'*) printf '%s\\n' \"$EFFIGY_TEST_PS_ROW\" ;;\n  *'ssh --profile'*) for last; do :; done; if grep -q '^export MYSQL_PWD=' \"$last\" 2>/dev/null; then printf 'credential-file=present\\n' >> {log}; else printf 'credential-file=absent\\n' >> {log}; fi ;;\n  *' exec '*) while IFS= read -r line || [ -n \"$line\" ]; do printf 'stdin %s\\n' \"$line\" >> {log}; done; printf 'dump-body\\n' ;;\nesac\nexit 0\n",
                 log = self.log.display()
             );
+            self.write_runtime(script.as_str());
+        }
+
+        /// A runtime whose inventory read fails, without reaching the host.
+        fn install_unreadable_runtime(&self) {
+            self.write_runtime("#!/bin/sh\nprintf 'runtime unavailable\\n' >&2\nexit 1\n");
+        }
+
+        fn write_runtime(&self, script: &str) {
             for name in ["docker", "colima"] {
                 let executable = self.bin.join(name);
-                fs::write(&executable, &script).expect("write fake runtime");
+                fs::write(&executable, script).expect("write fake runtime");
                 fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
                     .expect("chmod fake runtime");
             }
         }
 
-        /// A runtime whose inventory read fails, without reaching the host.
-        fn install_unreadable_runtime(&self) {
-            let script = "#!/bin/sh\nprintf 'runtime unavailable\\n' >&2\nexit 1\n";
-            for name in ["docker", "colima"] {
-                let executable = self.bin.join(name);
-                fs::write(&executable, script).expect("write failing fake runtime");
-                fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
-                    .expect("chmod failing fake runtime");
-            }
-        }
-
         /// The process environment every policy load and runtime call needs.
         fn env(&self) -> EnvGuard {
+            self.env_with_backend("docker")
+        }
+
+        fn env_with_backend(&self, backend: &str) -> EnvGuard {
             let path = format!(
                 "{}:{}",
                 self.bin.display(),
@@ -548,7 +552,7 @@ shared = true
             EnvGuard::set_many(&[
                 ("HOME", Some(self.home.display().to_string())),
                 ("PATH", Some(path)),
-                ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+                ("EFFIGY_COMPOSE_BACKEND", Some(backend.to_owned())),
                 ("EFFIGY_TEST_PS_ROW", None),
             ])
         }
@@ -577,16 +581,9 @@ shared = true
             let _ = fs::remove_file(&self.log);
         }
 
-        fn set_inventory_row(
-            &self,
-            project: &str,
-            service: &str,
-            digest: &str,
-            status: &str,
-        ) -> String {
+        fn set_inventory_row(&self, project: &str, service: &str, digest: &str, status: &str) {
             let row = format!("fake-{service}-1\t{status}\t{digest}\t{project}\t{service}");
             std::env::set_var("EFFIGY_TEST_PS_ROW", &row);
-            row
         }
 
         /// Stage one seed file the way the public data-seed command does, and
@@ -604,6 +601,12 @@ shared = true
             env.insert(DB_SEEDS_JSON_ENV.to_owned(), metadata.to_string());
             (staged, env)
         }
+
+        fn seed_source(&self) -> PathBuf {
+            let source = self.root.join("seed-source.sql");
+            fs::write(&source, "select 1;\n").expect("write seed source");
+            source
+        }
     }
 
     fn shared_binding(
@@ -613,6 +616,22 @@ shared = true
         resolve_shared_data_binding(policy, manifest, "mysql")
             .expect("resolve shared target")
             .expect("declared shared target")
+    }
+
+    fn binding_fixture() -> SharedServiceBinding {
+        SharedServiceBinding {
+            service_name: "mysql".to_owned(),
+            catalog: "mariadb".to_owned(),
+            domain_label: "mysql".to_owned(),
+            project_name: "effigy-shared-mariadb-0721de3e".to_owned(),
+            compose_file: PathBuf::from("/shared/mariadb/abc/compose.yml"),
+            host: "127.0.0.1".to_owned(),
+            host_port: 33_066,
+            container_port: 3306,
+            host_env_vars: vec![],
+            port_env_vars: vec![],
+            render_digest: "abc".to_owned(),
+        }
     }
 
     #[test]
@@ -797,20 +816,8 @@ shared = true
     }
 
     #[test]
-    fn plan_keeps_credentials_out_of_the_command_and_argv() {
-        let binding = SharedServiceBinding {
-            service_name: "mysql".to_owned(),
-            catalog: "mariadb".to_owned(),
-            domain_label: "mysql".to_owned(),
-            project_name: "effigy-shared-mariadb-0721de3e".to_owned(),
-            compose_file: PathBuf::from("/shared/mariadb/abc/compose.yml"),
-            host: "127.0.0.1".to_owned(),
-            host_port: 33_066,
-            container_port: 3306,
-            host_env_vars: vec![],
-            port_env_vars: vec![],
-            render_digest: "abc".to_owned(),
-        };
+    fn plan_forwards_the_credential_by_name_only() {
+        let binding = binding_fixture();
         let command = vec![
             "env".to_owned(),
             "MYSQL_PWD=secret".to_owned(),
@@ -821,15 +828,15 @@ shared = true
         let plan = plan_shared_data_exec(&binding, "mysql", &command, Some(Path::new("/seed.sql")))
             .expect("plan");
 
-        assert_eq!(plan.argv, vec!["mysql", "-uroot", "acowtancy"]);
         assert_eq!(
             plan.env.get("MYSQL_PWD").map(String::as_str),
             Some("secret")
         );
+        assert_eq!(plan.command, vec!["mysql", "-uroot", "acowtancy"]);
         assert!(
-            !plan.argv.iter().any(|arg| arg.contains("secret")),
-            "credential leaked into the in-container command: {:?}",
-            plan.argv
+            !plan.command.iter().any(|word| word.contains("secret")),
+            "credential value leaked into the in-container command: {:?}",
+            plan.command
         );
         assert_eq!(plan.stdin_file.as_deref(), Some(Path::new("/seed.sql")));
     }
@@ -856,19 +863,7 @@ shared = true
 
     #[test]
     fn refusal_names_missing_stopped_stale_and_ambiguous_containers() {
-        let binding = SharedServiceBinding {
-            service_name: "mysql".to_owned(),
-            catalog: "mariadb".to_owned(),
-            domain_label: "mysql".to_owned(),
-            project_name: "effigy-shared-mariadb-0721de3e".to_owned(),
-            compose_file: PathBuf::from("/shared/mariadb/abc/compose.yml"),
-            host: "127.0.0.1".to_owned(),
-            host_port: 33_066,
-            container_port: 3306,
-            host_env_vars: vec![],
-            port_env_vars: vec![],
-            render_digest: "abc".to_owned(),
-        };
+        let binding = binding_fixture();
 
         assert!(verify_shared_data_containers(
             &binding,
@@ -922,6 +917,65 @@ shared = true
         );
     }
 
+    /// The complete shared render must be the bytes this declaration resolves:
+    /// a missing, unreadable or altered bound file refuses before any exec.
+    #[test]
+    fn altered_missing_and_unreadable_render_files_are_refused() {
+        let _lock = lock_test();
+        for (case, expected) in [
+            ("altered", "was altered on disk"),
+            ("missing", "is missing"),
+            ("unreadable", "cannot be read"),
+        ] {
+            let repo = FixtureRepo::new(
+                &format!("effigy-shared-data-render-{case}-"),
+                STACK_HYBRID_MANIFEST,
+            );
+            repo.install_fake_runtime();
+            let _env = repo.env();
+            let manifest = repo.manifest();
+            let stack = repo.policy("stack");
+            repo.publish_shared_render(&stack);
+            let binding = shared_binding(&stack, &manifest);
+            repo.set_inventory_row(
+                &binding.project_name,
+                &binding.service_name,
+                &binding.render_digest,
+                "Up 2 minutes",
+            );
+            let render = stack
+                .render
+                .as_ref()
+                .expect("rendered")
+                .shared
+                .iter()
+                .find(|render| Some(render.directory.as_path()) == binding.compose_file.parent())
+                .expect("expected shared render");
+            let (relative, bytes) = render.files.iter().next().expect("bound file");
+            let path = render.directory.join(relative);
+            match case {
+                "altered" => fs::write(&path, b"altered bytes").expect("alter render file"),
+                "missing" => fs::remove_file(&path).expect("remove render file"),
+                "unreadable" => {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o000))
+                        .expect("chmod render file");
+                }
+                other => panic!("unknown case {other}"),
+            }
+            repo.clear_calls();
+            let error = verify_shared_data_target(&stack, &binding).expect_err("refusal");
+            assert!(error.to_string().contains(expected), "{case}: {error}");
+            assert_eq!(
+                repo.calls(),
+                "",
+                "{case}: no runtime call before the refusal"
+            );
+            // Leave the fixture readable for the fixture's own cleanup.
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+            let _ = fs::write(&path, bytes);
+        }
+    }
+
     /// The whole seed and dump path against a fake runtime: reset, stdin import
     /// and logical dump all exec in the declared shared project's own render,
     /// for both `stack` and `hybrid`.
@@ -947,7 +1001,6 @@ shared = true
 
         for (policy, dump_name) in [(&stack, "stack"), (&hybrid, "hybrid")] {
             repo.clear_calls();
-
             let (staged, seed_env) = repo.stage_seed();
             run_builtin_db_seed_task_with(
                 &repo.root,
@@ -976,15 +1029,16 @@ shared = true
                     "shared render missing from {line}"
                 );
                 assert!(!line.contains("secret"), "credential in argv: {line}");
+                assert!(
+                    line.contains("exec -T -e MYSQL_PWD mysql"),
+                    "the credential must travel by name: {line}"
+                );
             }
             assert!(
-                calls.contains("exec -T -e MYSQL_PWD mysql mysql -uroot -e DROP DATABASE"),
-                "{calls}"
+                calls.contains("credential-env=present"),
+                "the private transport must put the value in the Compose client's environment: {calls}"
             );
-            assert!(
-                calls.contains("exec -T -e MYSQL_PWD mysql mysql -uroot acowtancy"),
-                "{calls}"
-            );
+            assert!(calls.contains("DROP DATABASE IF EXISTS"), "{calls}");
             assert!(calls.contains("stdin select 1;"), "{calls}");
             let reset = calls.find("DROP DATABASE IF EXISTS").expect("reset call");
             let import = calls.find("stdin select 1;").expect("import call");
@@ -1029,8 +1083,66 @@ shared = true
                 "shared render missing from {calls}"
             );
             assert!(calls.contains("mysqldump"), "{calls}");
+            assert!(calls.contains("credential-env=present"), "{calls}");
             assert!(!calls.contains("secret"), "credential in argv: {calls}");
         }
+    }
+
+    /// The Colima adapter runs the shared exec through the VM tool, and the
+    /// credential still crosses only as the container's own variable name.
+    #[test]
+    fn shared_exec_uses_the_colima_vm_adapter_without_a_credential_value() {
+        let _lock = lock_test();
+        let repo = FixtureRepo::new("effigy-shared-data-colima-", STACK_HYBRID_MANIFEST);
+        repo.install_fake_runtime();
+        let _env = repo.env_with_backend("colima");
+        let manifest = repo.manifest();
+        let stack = repo.policy("stack");
+        repo.publish_shared_render(&stack);
+        let binding = shared_binding(&stack, &manifest);
+        repo.set_inventory_row(
+            &binding.project_name,
+            &binding.service_name,
+            &binding.render_digest,
+            "Up 2 minutes",
+        );
+
+        let (staged, seed_env) = repo.stage_seed();
+        run_builtin_db_seed_task_with(
+            &repo.root,
+            &manifest,
+            &stack,
+            &seed_env,
+            |policy, binding, command, stdin_file| {
+                run_shared_data_command(policy, binding, command, stdin_file)
+            },
+        )
+        .expect("seed through the shared project on colima");
+        assert!(!staged.exists());
+        let calls = repo.calls();
+        assert!(
+            calls.contains(&format!("call ssh --profile {} -- sh -c", stack.profile)),
+            "colima VM transport missing: {calls}"
+        );
+        assert!(
+            calls.contains("exec sudo --preserve-env=MYSQL_PWD nerdctl"),
+            "the VM must preserve the credential name into nerdctl: {calls}"
+        );
+        assert!(
+            calls.contains(&format!("'-f' '{}'", binding.compose_file.display())),
+            "the VM must run the shared render: {calls}"
+        );
+        assert!(
+            calls.contains(&format!("'-p' '{}'", binding.project_name))
+                && calls.contains("'exec' '-T' '-e' 'MYSQL_PWD' 'mysql'"),
+            "the VM must exec the declared service with the credential name: {calls}"
+        );
+        assert!(calls.contains("credential-file=present"), "{calls}");
+        assert!(!calls.contains("secret"), "credential in argv: {calls}");
+        assert!(
+            !calls.contains("MYSQL_ROOT_PASSWORD"),
+            "the credential is not read from the container env: {calls}"
+        );
     }
 
     #[test]
@@ -1062,8 +1174,9 @@ shared = true
             },
         )
         .expect_err("unpublished render must refuse");
+        assert!(error.to_string().contains("is missing"), "{error}");
         assert!(
-            error.to_string().contains("has no published render"),
+            error.to_string().contains("to publish the shared render"),
             "{error}"
         );
         assert_eq!(repo.calls(), "", "no runtime call before the refusal");
@@ -1114,6 +1227,111 @@ shared = true
             "{error}"
         );
         assert!(!repo.calls().contains(" exec "), "{}", repo.calls());
+    }
+
+    /// The public `container data seed` path proves the shared target before
+    /// any environment activation, so a stopped shared service refuses instead
+    /// of being started or replaced by the seed.
+    #[test]
+    fn public_seed_proves_a_shared_target_before_activation() {
+        let _lock = lock_test();
+        let repo = FixtureRepo::new("effigy-shared-data-public-refusal-", STACK_HYBRID_MANIFEST);
+        repo.install_fake_runtime();
+        let _env = repo.env();
+        let manifest = repo.manifest();
+        let stack = repo.policy("stack");
+        repo.publish_shared_render(&stack);
+        let binding = shared_binding(&stack, &manifest);
+        repo.set_inventory_row(
+            &binding.project_name,
+            &binding.service_name,
+            &binding.render_digest,
+            "Exited (0) 2 minutes ago",
+        );
+        let source = repo.seed_source();
+
+        let error = run_container_data_seed(
+            &repo.root,
+            None,
+            &[effigy_cli::BootstrapDbSeedInput {
+                target: Some("acowtancy".to_owned()),
+                path: source,
+            }],
+            true,
+            false,
+            true,
+        )
+        .expect_err("a stopped shared service must refuse the public seed");
+        assert!(error.to_string().contains("is stopped"), "{error}");
+        let calls = repo.calls();
+        assert!(
+            !calls.contains(" up ") && !calls.contains(" start "),
+            "the seed must not activate or reconcile the shared service: {calls}"
+        );
+        assert!(
+            !calls.contains(" exec "),
+            "no statement may run before the proof: {calls}"
+        );
+    }
+
+    /// The public seed runs the environment `--name` selected, not the
+    /// manifest default: only `hybrid` declares the shared mysql.
+    #[test]
+    fn public_seed_routes_the_selected_hybrid_environment() {
+        let _lock = lock_test();
+        let repo = FixtureRepo::new("effigy-shared-data-public-hybrid-", HYBRID_ONLY_MANIFEST);
+        repo.install_fake_runtime();
+        let _env = repo.env();
+        let manifest = repo.manifest();
+        let hybrid = repo.policy("hybrid");
+        repo.publish_shared_render(&hybrid);
+        let binding = shared_binding(&hybrid, &manifest);
+        repo.set_inventory_row(
+            &binding.project_name,
+            &binding.service_name,
+            &binding.render_digest,
+            "Up 2 minutes",
+        );
+        let source = repo.seed_source();
+
+        let rendered = run_container_data_seed(
+            &repo.root,
+            Some("hybrid"),
+            &[effigy_cli::BootstrapDbSeedInput {
+                target: Some("acowtancy".to_owned()),
+                path: source,
+            }],
+            true,
+            false,
+            true,
+        )
+        .expect("public seed through hybrid's shared mysql");
+        let report: serde_json::Value = serde_json::from_str(&rendered).expect("json report");
+        assert_eq!(report["container"], "hybrid");
+        assert_eq!(report["ok"], true);
+
+        let calls = repo.calls();
+        let exec_calls = calls
+            .lines()
+            .filter(|line| line.contains(" exec "))
+            .collect::<Vec<_>>();
+        assert_eq!(exec_calls.len(), 2, "{calls}");
+        for line in exec_calls {
+            assert!(
+                line.contains(&binding.project_name),
+                "hybrid's shared project missing from {line}"
+            );
+            assert!(!line.contains("secret"), "credential in argv: {line}");
+            assert!(
+                line.contains("exec -T -e MYSQL_PWD mysql"),
+                "the credential must travel by name: {line}"
+            );
+        }
+        assert!(calls.contains("credential-env=present"), "{calls}");
+        assert!(
+            !calls.contains(" up ") && !calls.contains(" start "),
+            "a shared seed activates nothing: {calls}"
+        );
     }
 
     #[test]

@@ -1382,8 +1382,8 @@ Push rules:
 ### Data Seed
 
 `effigy container data seed` stages local or OCI artifacts and invokes the
-standard `data:seed` task. It currently targets the repo default
-container only.
+standard `data:seed` task in the selected container environment (`--name`),
+which defaults to the manifest's default environment.
 
 ```sh
 # Local file
@@ -1413,17 +1413,30 @@ shared service identity therefore seed and dump one machine-wide database and
 volume, exactly as `container up` starts one shared service. `data_from` stays a
 checkout-local volume feature and never redirects a shared target.
 
-Before the first statement Effigy proves the declared shared container is
-running in the expected project, from the declared render digest and for the
-declared service. A missing render, a stopped or absent container, a container
+Before the first statement Effigy proves the declared shared service: every
+file of the expected render (the Compose input and the configuration it binds,
+such as the database init SQL) must be present, readable and unchanged, and the
+runtime must report exactly one running container of the declared service in
+the declared project, created from the declared render digest. A missing,
+unreadable or altered render file, a stopped or absent container, a container
 created from another render, more than one running container for the service,
 or environments that declare the same service with different shared identities
-all refuse with the exact project and the recovery command. The data step
-itself never publishes a render, starts or replaces a shared service, or falls
-back to a local service of the same name; `data seed` does activate its
-environment first, and that activation runs the same apply as any task start.
-`data dump` stays read-only and starts nothing. Credentials reach the container
-by variable name, never in the command line.
+all refuse with the exact project and the recovery command.
+
+A data step never publishes a render, starts or replaces a shared service, or
+falls back to a local service of the same name. `data seed` therefore does not
+activate its environment when any selected target is shared: the shared service
+must already be running, and a local target in a mixed selection needs its
+environment already up. `data dump` stays read-only and starts nothing.
+
+Credentials travel by variable name only. The exec forwards the database
+client's variable (`MYSQL_PWD` or `PGPASSWORD`) with `compose exec -e NAME`, and
+the value lives in a private file under the Effigy home that the Compose client
+sources before it runs: on the host for Docker, or inside the Colima VM through
+the same `colima ssh` transport that carries managed task secrets. The file is
+0600 inside a 0700 directory, named by the render digest and service, and never
+pruned, exactly like the render's own private Compose inputs. No credential
+value appears in a command line or a report.
 
 ## Cache Lifecycle
 

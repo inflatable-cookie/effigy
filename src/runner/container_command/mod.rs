@@ -34,7 +34,9 @@ pub(in crate::runner) use liveness::{
     is_primary_service_running, is_primary_service_running_with_deadline,
 };
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
-pub(in crate::runner) use shared_data::{resolve_shared_data_binding, run_shared_data_command};
+pub(in crate::runner) use shared_data::{
+    resolve_shared_data_binding, run_shared_data_command, verify_shared_data_target,
+};
 
 mod bounded_exec;
 mod cache;
@@ -54,6 +56,7 @@ mod restart;
 mod retire;
 mod scope;
 pub(in crate::runner) mod secret_env;
+mod shared_credentials;
 mod shared_data;
 mod shell_prep;
 mod steps;

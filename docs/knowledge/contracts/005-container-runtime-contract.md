@@ -1095,20 +1095,30 @@ name. `stack` and `hybrid` declarations of one shared identity therefore seed
 and dump the same project and named volume, and `data_from` does not redirect
 them, because `data_from` is a checkout-local volume feature (see below).
 
-Before the first statement Effigy proves the selected shared container is
-running, in the expected project and service, from the declared render digest,
-with the shared render present. A missing render, a stopped or absent
-container, a container created from another render, more than one running
-container for the service, an unreadable inventory, or environments that
-declare the same service name with different shared identities all refuse and
-name the project and recovery command. The data step never publishes a render,
-starts or replaces a shared service, and never falls back to a checkout-local
-service of the same name; the seed command's environment activation still runs
-the ordinary apply before that proof, and `data dump` starts nothing. Credential
-values stay out of the Compose command:
-a plan's `env NAME=value` prefix becomes `compose exec -e NAME` with the value
-only in the child environment, so neither argv nor the JSON/text report carries
-it. An unshared target keeps the checkout-local route unchanged.
+Before the first statement Effigy proves the declared shared service: every
+file of the expected render (its Compose input and every configuration it
+binds) must be present, readable and unchanged, and the runtime must report
+exactly one running container of the declared service in the declared project,
+created from the declared render digest. A missing, unreadable or altered
+render file, a stopped or absent container, a container created from another
+render, more than one running container for the service, an unreadable
+inventory, or environments that declare the same service name with different
+shared identities all refuse and name the project and recovery command. The
+data step never publishes a render, starts or replaces a shared service, and
+never falls back to a checkout-local service of the same name. A seed that
+selects a shared target therefore skips its environment activation (the
+ordinary apply would reconcile the shared service); a local target in a mixed
+selection needs its environment already running. `data dump` starts nothing.
+
+A credential travels by name only. The exec forwards the client variable
+(`MYSQL_PWD`, `PGPASSWORD`) with `compose exec -e NAME`; its value lives in a
+private file under the Effigy home that the Compose client sources before it
+runs — on the host for a host backend, and through `colima ssh` inside the VM
+for the VM-hosted backend, the same transport managed task secrets use. The
+file is 0600 inside a 0700 directory, named by the render digest and service,
+and never pruned, like the render's own private Compose inputs. No value reaches
+a command line, the Compose invocation, or a report. An unshared target keeps
+the checkout-local route unchanged.
 
 ## Shared service data volumes (`data_from`)
 

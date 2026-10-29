@@ -493,15 +493,22 @@ During v0.x, MINOR bumps may include breaking changes.
   dumps in that service's own machine-wide Compose project and render, so
   `stack` and `hybrid` declarations of one shared identity feed one database and
   volume instead of failing against the checkout-local Compose that removed the
-  service. Before the first statement Effigy proves the shared container is
-  running in the declared project, from the declared render digest and for the
-  declared service; a missing render, stopped or absent container, stale
-  render, several running containers, an unreadable runtime or environments
-  that declare the same service with different shared identities refuse and
-  name the project and recovery command. The data step never publishes a
-  render, starts or replaces a shared service, or falls back to a local service
-  of the same name (seed still activates its environment first, and dump starts
-  nothing), and credential values no longer reach the host command line.
+  service. The selected environment's declarations are used, so `--name hybrid`
+  seeds hybrid's target rather than the manifest default. Before the first
+  statement Effigy proves the expected render's every file (Compose input and
+  bound configuration) is present, readable and unchanged, and that the runtime
+  reports exactly one running container of the declared service in the declared
+  project from the declared render digest; a missing, unreadable or altered
+  render file, stopped or absent container, stale render, several running
+  containers, an unreadable runtime or environments that declare the same
+  service with different shared identities refuse and name the project and
+  recovery command. A data step never publishes a render, starts or replaces a
+  shared service, or falls back to a local service of the same name; a seed that
+  selects a shared target therefore skips its environment activation, and a
+  mixed selection needs the local environment already running. The exec forwards
+  the client credential by name only: its value lives in a private 0600 file that
+  the Compose client sources before it runs, on the host or through the Colima
+  VM transport, so no credential value reaches a command line or a report.
   Unshared targets keep the checkout-local route.
 
 - `effigy gateway setup` works on a machine where the operator home has never
