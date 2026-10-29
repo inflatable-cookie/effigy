@@ -96,6 +96,13 @@
 # filter, for example `effigy test:focused -p effigy-deps --lib -E 'test(x)'`.
 "test:focused" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --locked --config-file tests/config/gateway-nextest.toml --user-config-file none {args} --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
 "test:deps:lockfile-workflows" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-deps --lib --test cargo_link --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
+# Strict Clippy plus a compile for the whole `effigy-deps` crate (lib, tests and
+# integration targets). A full-workspace sweep also covers crates whose findings
+# are owned elsewhere, so a deps-only change proves itself here.
+"check:deps:all-targets" = { visibility = "internal", group = "Maintenance", run = [
+  { id = "deps-compile", run = "sh scripts/oxide-selector.sh check -p effigy-deps --all-targets", timeout_ms = 600000 },
+  { id = "deps-clippy", run = "sh scripts/oxide-selector.sh clippy -p effigy-deps --all-targets -- -D warnings", timeout_ms = 900000 },
+] }
 "test:bundles:pins" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --test local_bundle -E 'test(bundles::) | test(composition::) | binary(local_bundle)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:bundles:cli" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test bundle_pins --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 
