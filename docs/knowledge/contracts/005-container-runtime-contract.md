@@ -2032,12 +2032,19 @@ published port refuses the run with the declared alias, the backing service and
 checkout keeps its declared name and resolves nothing, and a container-bound
 run is untouched: its target's own network already answers both names.
 
+A worktree's first host run is scoped: Effigy records the checkout's scope
+token before resolving, exactly as the container path does, so a fresh worktree
+never falls back to the declared names. A checkout that names no default
+container environment still resolves its aliases from all of its environments.
+A container registry this scoped checkout declares but Effigy cannot read is
+refused — without it there is no way to know which names belong to this scope,
+so host execution could quietly deliver the canonical alias and reach another
+checkout's service. A sensitive value the task's own environment overrides is
+never delivered, so it is neither resolved nor proved.
+
 A plan (`--plan`) runs nothing, so it refuses nothing: a task plan renders the
 aliases it would deliver, and the built-in `test` plan keeps the declared
-names. A checkout that names no default container environment still resolves
-its aliases from all of its environments, and a container registry Effigy
-cannot read leaves host execution exactly as it was rather than failing an
-ordinary host task.
+names.
 
 ## Fallback ownership
 

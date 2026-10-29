@@ -76,6 +76,14 @@ fn primary_checkout(name: &str) -> PathBuf {
 /// A marked linked worktree of the primary, with its own scope token, exactly
 /// as `git worktree add` plus a first Effigy run leaves it.
 fn linked_worktree(primary: &Path, name: &str) -> PathBuf {
+    let checkout = linked_worktree_checkout(primary, name);
+    effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("scope token");
+    checkout
+}
+
+/// The same worktree before its first Effigy run: the checkout exists but no
+/// scope token has been recorded yet.
+fn linked_worktree_checkout(primary: &Path, name: &str) -> PathBuf {
     let checkout = primary.parent().expect("fixture root").join(name);
     let private = primary.join(".git/worktrees").join(name);
     fs::create_dir_all(&checkout).expect("worktree checkout");
@@ -87,7 +95,6 @@ fn linked_worktree(primary: &Path, name: &str) -> PathBuf {
     .expect("worktree git link");
     fs::write(private.join("commondir"), "../..\n").expect("worktree commondir");
     fs::write(checkout.join("effigy.toml"), MANIFEST).expect("worktree manifest");
-    effigy_core::worktree_scope::prepare_checkout_token(&checkout).expect("scope token");
     checkout
 }
 
@@ -295,15 +302,10 @@ fn database_url(checkout: &Path) -> String {
         .to_owned()
 }
 
-/// A private gateway route table and a short scratch root: a detached run's
-/// control socket is bounded, and a reviewer's plain selector run has no say
-/// over `TMPDIR`, so this suite pins a short one for its own fixtures.
-fn with_short_scratch<T>(name: &str, run: impl FnOnce() -> T) -> T {
-    let short = tempfile::Builder::new()
-        .prefix("ef431-")
-        .tempdir_in("/tmp")
-        .expect("short fixture root");
-    let _env = EnvGuard::set_many(&[("TMPDIR", Some(short.path().display().to_string()))]);
+/// A private gateway route table for one fixture. Fixtures themselves live in
+/// the harness's configured root (`EFFIGY_TEST_FIXTURE_ROOT`, which a selector
+/// provisions), so this suite creates nothing outside it.
+fn with_private_gateway<T>(name: &str, run: impl FnOnce() -> T) -> T {
     let home = temp_workspace(&format!("gateway-home-{name}"));
     let guard = set_test_gateway_home(&home);
     let result = run();
@@ -313,7 +315,7 @@ fn with_short_scratch<T>(name: &str, run: impl FnOnce() -> T) -> T {
 
 #[test]
 fn each_scoped_host_task_reaches_only_its_own_declared_database_alias() {
-    with_short_scratch("scoped-host-alias", || {
+    with_private_gateway("scoped-host-alias", || {
         let primary = primary_checkout("scoped-host-alias");
         let one = linked_worktree(&primary, "worktree-one");
         let two = linked_worktree(&primary, "worktree-two");
@@ -399,6 +401,122 @@ fn reached(checkout: &Path) -> (String, String, String, String) {
     )
 }
 
+/// A worktree's first host run has no scope token yet. Effigy records it before
+/// resolving, so that run is scoped: the declared alias resolves to this
+/// worktree's own service and refuses when nothing is published, instead of
+/// quietly reaching the primary database (effigy#431 review).
+#[test]
+fn a_worktrees_first_host_run_is_scoped() {
+    with_private_gateway("scoped-host-alias-first-run", || {
+        let primary = primary_checkout("scoped-host-alias-first-run");
+        let checkout = linked_worktree_checkout(&primary, "worktree-one");
+        assert_eq!(
+            effigy_core::worktree_scope::load(&checkout).expect("read scope token"),
+            None,
+            "the fixture starts before any Effigy run"
+        );
+
+        let error = run_task(&checkout, "check", &[]).expect_err("the first run must refuse");
+        let token = effigy_core::worktree_scope::load(&checkout)
+            .expect("read scope token")
+            .expect("the first run recorded this worktree's scope");
+        let alias = effective_alias(&checkout, "postgres");
+        assert!(
+            error.to_string().contains(&alias),
+            "the first run already resolved its own scope ({alias}): {error}"
+        );
+        assert!(!checkout.join("database-url.txt").exists());
+
+        publish_alias_route(&checkout, &alias, 55432);
+        run_task(&checkout, "check", &[]).expect("the first run reaches its own service");
+        assert_eq!(
+            database_url(&checkout),
+            format!("postgres://app:secret@{alias}:5432/app")
+        );
+        assert_eq!(
+            effigy_core::worktree_scope::load(&checkout)
+                .expect("read scope token")
+                .as_deref(),
+            Some(token.as_str()),
+            "the recorded token stays the checkout's generation"
+        );
+    });
+}
+
+/// A scoped checkout whose container policy cannot load refuses rather than
+/// delivering the canonical alias from a scope Effigy cannot identify
+/// (effigy#431 review).
+#[test]
+fn a_scoped_checkout_with_an_unreadable_policy_refuses() {
+    with_private_gateway("scoped-host-alias-policy-error", || {
+        let primary = primary_checkout("scoped-host-alias-policy-error");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let broken = format!(
+            "{MANIFEST}\n[containers.broken]\nprimary_service = \"postgres\"\n\n\
+             [containers.broken.services.postgres]\ncatalog = \"no-such-catalog-service\"\n"
+        );
+        fs::write(checkout.join("effigy.toml"), broken).expect("manifest with a broken policy");
+
+        let error = run_task(&checkout, "check", &[]).expect_err("the run must refuse");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("no-such-catalog-service"),
+            "the refusal names the policy error: {rendered}"
+        );
+        assert!(
+            rendered.contains("container policy did not load"),
+            "the refusal says what could not be resolved: {rendered}"
+        );
+        assert!(
+            !checkout.join("database-url.txt").exists(),
+            "nothing ran, so no canonical alias was delivered"
+        );
+    });
+}
+
+/// A sensitive value the task's own environment overrides is never delivered,
+/// so proving its alias would refuse a run that never uses it
+/// (effigy#431 review).
+#[test]
+fn an_overridden_sensitive_value_is_not_proved() {
+    with_private_gateway("scoped-host-alias-overridden-secret", || {
+        let primary = primary_checkout("scoped-host-alias-overridden-secret");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let out = checkout.join("overridden-url.txt");
+        fs::write(
+            checkout.join(".env.schema"),
+            "# The declared backing service @type=url @sensitive\nDATABASE_URL=\n",
+        )
+        .expect("env schema");
+        // The `@sensitive` environment carries the declared alias, but the
+        // task's own `env` wins and points somewhere else entirely.
+        fs::write(
+            checkout.join(".env"),
+            "DATABASE_URL=postgres://app@postgres.acme.test:5432/from-dotenv\n",
+        )
+        .expect("dotenv");
+        let manifest = format!(
+            "{MANIFEST}\n[env_schema]\nschema = \".env.schema\"\n\n\
+             [tasks.override]\nrun_in = \"host\"\n\
+             run = \"sh -lc 'printf %s $DATABASE_URL > {out}'\"\n\
+             env = {{ DATABASE_URL = \"postgres://app@elsewhere.example:5432/app\" }}\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with an override");
+
+        // No route is published: the secret's declared alias must not refuse a
+        // run whose own environment overrides it.
+        run_task(&checkout, "override", &[]).expect("the overriding run proceeds");
+        assert_eq!(
+            fs::read_to_string(&out)
+                .expect("the task recorded its URL")
+                .trim(),
+            "postgres://app@elsewhere.example:5432/app",
+            "the task's own env value reached the child"
+        );
+    });
+}
+
 /// Each scope's host task connects with the URL Effigy delivered it — the same
 /// host, and the declared port 5432 — and reaches only its own backing
 /// service. The primary checkout keeps the declared name; the two linked
@@ -407,7 +525,7 @@ fn reached(checkout: &Path) -> (String, String, String, String) {
 /// container runtime is a fixture.
 #[test]
 fn each_scoped_host_task_connects_to_only_its_own_test_database() {
-    with_short_scratch("scoped-host-database-reach", || {
+    with_private_gateway("scoped-host-database-reach", || {
         let primary = primary_checkout("scoped-host-database-reach");
         let one = linked_worktree(&primary, "worktree-one");
         let two = linked_worktree(&primary, "worktree-two");
@@ -484,7 +602,7 @@ fn each_scoped_host_task_connects_to_only_its_own_test_database() {
 
 #[test]
 fn a_scoped_host_task_refuses_before_it_runs_without_a_published_backing_service() {
-    with_short_scratch("scoped-host-alias-absent", || {
+    with_private_gateway("scoped-host-alias-absent", || {
         let primary = primary_checkout("scoped-host-alias-absent");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -509,7 +627,7 @@ fn a_scoped_host_task_refuses_before_it_runs_without_a_published_backing_service
 
 #[test]
 fn a_scoped_host_task_refuses_an_alias_route_another_checkout_owns() {
-    with_short_scratch("scoped-host-alias-sibling", || {
+    with_private_gateway("scoped-host-alias-sibling", || {
         let primary = primary_checkout("scoped-host-alias-sibling");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -528,7 +646,7 @@ fn a_scoped_host_task_refuses_an_alias_route_another_checkout_owns() {
 
 #[test]
 fn a_scoped_host_task_refuses_an_alias_route_with_no_published_port() {
-    with_short_scratch("scoped-host-alias-unpublished", || {
+    with_private_gateway("scoped-host-alias-unpublished", || {
         let primary = primary_checkout("scoped-host-alias-unpublished");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -554,7 +672,7 @@ fn a_scoped_host_task_refuses_an_alias_route_with_no_published_port() {
 
 #[test]
 fn a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_precedence() {
-    with_short_scratch("scoped-host-alias-schema", || {
+    with_private_gateway("scoped-host-alias-schema", || {
         let primary = primary_checkout("scoped-host-alias-schema");
         let checkout = linked_worktree(&primary, "worktree-one");
         fs::write(
@@ -596,7 +714,7 @@ fn a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_prece
 
 #[test]
 fn a_sequence_step_environment_resolves_the_same_declared_alias() {
-    with_short_scratch("scoped-host-alias-sequence", || {
+    with_private_gateway("scoped-host-alias-sequence", || {
         let primary = primary_checkout("scoped-host-alias-sequence");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -616,7 +734,7 @@ fn a_sequence_step_environment_resolves_the_same_declared_alias() {
 /// effective alias.
 #[test]
 fn a_managed_session_resolves_the_scoped_database_alias() {
-    with_short_scratch("scoped-host-alias-managed", || {
+    with_private_gateway("scoped-host-alias-managed", || {
         let primary = primary_checkout("scoped-host-alias-managed");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -638,7 +756,7 @@ fn a_managed_session_resolves_the_scoped_database_alias() {
 /// no published backing service for the alias it would deliver.
 #[test]
 fn a_managed_session_refuses_without_a_published_backing_service() {
-    with_short_scratch("scoped-host-alias-managed-absent", || {
+    with_private_gateway("scoped-host-alias-managed-absent", || {
         let primary = primary_checkout("scoped-host-alias-managed-absent");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -682,7 +800,7 @@ fn write_managed_session_manifest(checkout: &Path) {
 /// `second`, and the task carries both declared URLs.
 #[test]
 fn a_task_resolves_a_second_environments_declared_alias() {
-    with_short_scratch("scoped-host-alias-environments", || {
+    with_private_gateway("scoped-host-alias-environments", || {
         let primary = primary_checkout("scoped-host-alias-environments");
         let checkout = linked_worktree(&primary, "worktree-one");
         let manifest = format!(
@@ -781,7 +899,7 @@ catalog = "postgres"
 /// reaches the server it names, with no route published at all.
 #[test]
 fn a_task_targeting_an_unrelated_server_keeps_its_url() {
-    with_short_scratch("scoped-host-alias-credentials", || {
+    with_private_gateway("scoped-host-alias-credentials", || {
         let primary = primary_checkout("scoped-host-alias-credentials");
         let checkout = linked_worktree(&primary, "worktree-one");
         let out = checkout.join("credentials.txt");
@@ -823,7 +941,7 @@ env = {{ CREDENTIAL_URL = "{credential_url}", PASSWORD_URL = "{password_url}", U
 /// A suite this run does not select is neither proved nor run.
 #[test]
 fn a_configured_test_suite_resolves_and_proves_its_scoped_alias() {
-    with_short_scratch("scoped-host-alias-suite", || {
+    with_private_gateway("scoped-host-alias-suite", || {
         let primary = primary_checkout("scoped-host-alias-suite");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -900,7 +1018,7 @@ env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }}
 /// published route, and a suite this run did not select is never proved.
 #[test]
 fn a_suite_alias_in_prose_or_in_unselected_suite_is_not_proved() {
-    with_short_scratch("scoped-host-alias-suite-prose", || {
+    with_private_gateway("scoped-host-alias-suite-prose", || {
         let primary = primary_checkout("scoped-host-alias-suite-prose");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
@@ -956,7 +1074,7 @@ fn rendered_command(root: &Path, selector: &str) -> crate::runner::execute::Task
 
 #[test]
 fn a_container_task_keeps_the_canonical_alias_the_scope_network_answers() {
-    with_short_scratch("scoped-host-alias-container", || {
+    with_private_gateway("scoped-host-alias-container", || {
         let primary = primary_checkout("scoped-host-alias-container");
         let checkout = linked_worktree(&primary, "worktree-one");
         // A container-bound task needs a system and workspace binding; the

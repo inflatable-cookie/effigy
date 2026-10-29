@@ -131,6 +131,7 @@ pub(in crate::runner) fn run_standard_task(
             )?
         };
         let built = command::build_task_command(preflight, selection, &env_schema_resolved)?;
+        let plain_env_keys = built.plain_env_keys.clone();
         let context = ExecutionTaskContext::new(preflight, selection, built.command);
         run_standard_task_inner(
             preflight,
@@ -139,7 +140,10 @@ pub(in crate::runner) fn run_standard_task(
             &context,
             &env_schema_resolved,
             Some(&task_secret_pairs),
-            built.host_aliases,
+            RunHostAliases {
+                resolver: built.host_aliases,
+                plain_env_keys: &plain_env_keys,
+            },
             &mut run,
             &mut workload,
         )
@@ -260,7 +264,7 @@ fn run_standard_task_inner(
     context: &ExecutionTaskContext<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
     resolved_task_secrets: Option<&[(String, SecretString)]>,
-    mut host_aliases: Option<HostAliasResolver>,
+    host_aliases: RunHostAliases<'_>,
     run: &mut TaskRun,
     workload: &mut Option<WorkloadOutcome>,
 ) -> Result<String, RunnerError> {
@@ -421,8 +425,11 @@ fn run_standard_task_inner(
     // backing-service alias in the secret values it delivers too, and refuses
     // before the child starts when this checkout has no published backing
     // service for them (contract 005).
-    let resolved_secret_env = match (host_aliases.as_mut(), secret_ref) {
-        (Some(resolver), Some(pairs)) => Some(resolver.resolved_secret_env(pairs)?),
+    let mut host_aliases = host_aliases;
+    let resolved_secret_env = match (host_aliases.resolver.as_mut(), secret_ref) {
+        (Some(resolver), Some(pairs)) => {
+            Some(resolver.resolved_secret_env(pairs, host_aliases.plain_env_keys)?)
+        }
         _ => None,
     };
     let resolved_secret_refs = resolved_secret_env
@@ -1106,6 +1113,14 @@ fn activate_inline_workspace_container_runtime_with(
     )
 }
 
+/// The scoped alias resolution a host run owes, and the env keys its rendered
+/// command already delivers, so a same-named secret is neither delivered twice
+/// nor proved.
+pub(in crate::runner) struct RunHostAliases<'a> {
+    pub(in crate::runner) resolver: Option<HostAliasResolver>,
+    pub(in crate::runner) plain_env_keys: &'a BTreeSet<String>,
+}
+
 pub(in crate::runner) fn resolve_env_schema_if_present(
     catalog_root: &Path,
     runtime_override: Option<&Path>,
@@ -1156,6 +1171,7 @@ pub(in crate::runner) fn run_sequence_container_command(
         surface: selection.surface,
     };
     let built = command::build_task_command(preflight, &selected, &None)?;
+    let plain_env_keys = built.plain_env_keys.clone();
     let context = ExecutionTaskContext::new(preflight, &selected, built.command);
     // The canonical selection plan is rebuilt without effects by the resolver.
     let invocation = effigy_cli::TaskInvocation {
@@ -1176,7 +1192,10 @@ pub(in crate::runner) fn run_sequence_container_command(
         &context,
         &None,
         None,
-        built.host_aliases,
+        RunHostAliases {
+            resolver: built.host_aliases,
+            plain_env_keys: &plain_env_keys,
+        },
         run,
         &mut None,
     )

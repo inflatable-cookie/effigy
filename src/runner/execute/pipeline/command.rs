@@ -17,6 +17,9 @@ use std::path::PathBuf;
 /// resolution a host run still owes the secret values it delivers beside it.
 pub(in crate::runner) struct TaskCommand {
     pub(in crate::runner) command: String,
+    /// Every env key the rendered command delivers itself, so a secret of the
+    /// same name is never delivered — or proved — beside it.
+    pub(in crate::runner) plain_env_keys: std::collections::BTreeSet<String>,
     pub(in crate::runner) host_aliases: Option<HostAliasResolver>,
 }
 
@@ -47,6 +50,7 @@ pub(in crate::runner) fn build_task_command(
     if let ManifestManagedRun::Sequence(steps) = run_spec {
         return Ok(TaskCommand {
             host_aliases: None,
+            plain_env_keys: std::collections::BTreeSet::new(),
             command: format!(
                 "sequence ({} ordered steps): {}",
                 steps.len(),
@@ -108,6 +112,7 @@ pub(in crate::runner) fn build_task_command(
     .map_err(RunnerError::from)?;
     Ok(TaskCommand {
         host_aliases,
+        plain_env_keys: merged_env.keys().cloned().collect(),
         command: render_skill_placeholder(
             command,
             preflight

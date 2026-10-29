@@ -113,15 +113,23 @@ impl HostAliasResolver {
         if super::workspace_seeded::inside_container_handoff() {
             return Ok(None);
         }
-        let Some(token) = effigy_core::worktree_scope::load(scope_root)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        // A worktree that has never run here has no scope token yet. Record it
+        // before reading it, exactly as the container path does, so a first
+        // host run is scoped instead of falling back to the declared names
+        // (effigy#431 review).
+        let Some(token) =
+            effigy_core::worktree_scope::load_or_create(scope_root).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot record this checkout's runtime scope: {error}"
+                ))
+            })?
         else {
             return Ok(None);
         };
         let mut aliases: Vec<DeclaredAlias> = Vec::new();
         let mut environments = BTreeMap::new();
         let mut repo_root = None;
-        for policy in scoped_environment_policies(scope_root) {
+        for policy in scoped_environment_policies(scope_root)? {
             let host_map = crate::runner::container_command::scoped_host_map(
                 scope_root,
                 &policy,
@@ -175,9 +183,14 @@ impl HostAliasResolver {
 
     /// An owned, resolved copy of the secret values a host run delivers. The
     /// caller keeps the originals: only this copy reaches the child.
+    ///
+    /// A key the plain environment already delivers is skipped: the child sees
+    /// the plain value, so proving the secret's alias would refuse a run that
+    /// never uses it (effigy#431 review).
     pub(in crate::runner) fn resolved_secret_env(
         &mut self,
         pairs: &[(&str, &SecretString)],
+        overridden: &BTreeSet<String>,
     ) -> Result<Vec<(String, SecretString)>, RunnerError> {
         let mut owned = pairs
             .iter()
@@ -188,21 +201,16 @@ impl HostAliasResolver {
                 )
             })
             .collect::<Vec<_>>();
-        self.resolve_secret_env(&mut owned)?;
-        Ok(owned)
-    }
-
-    fn resolve_secret_env(
-        &mut self,
-        env: &mut [(String, SecretString)],
-    ) -> Result<(), RunnerError> {
-        for (key, value) in env.iter_mut() {
+        for (key, value) in owned.iter_mut() {
+            if overridden.contains(key) {
+                continue;
+            }
             let Some(resolved) = self.resolve_value(key, value.expose())? else {
                 continue;
             };
             *value = SecretString::new(resolved);
         }
-        Ok(())
+        Ok(owned)
     }
 
     /// Prove every alias a rendered session command names before the session
@@ -343,14 +351,21 @@ pub(in crate::runner) fn host_env_aliases(
 /// environment's (effigy#431 review). The default environment comes first, so
 /// it wins a declared name two environments would otherwise both claim.
 ///
-/// An unreadable registry leaves host execution as it was: that is not a
-/// backing-service refusal, and an ordinary host task must not fail for it.
-fn scoped_environment_policies(scope_root: &Path) -> Vec<EffectiveContainerPolicy> {
+/// A registry this checkout declares but Effigy cannot read is refused: without
+/// it there is no way to know which names belong to this scope, so host
+/// execution could quietly deliver the canonical alias and reach another
+/// checkout's service.
+fn scoped_environment_policies(
+    scope_root: &Path,
+) -> Result<Vec<EffectiveContainerPolicy>, RunnerError> {
     let default = effigy_containers::load_container_policy(scope_root, None).ok();
+    let every = effigy_containers::load_all_container_policies(scope_root).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "this checkout is a runtime scope, so a declared backing-service alias has to resolve \
+             inside it, but its container policy did not load: {error}"
+        ))
+    })?;
     let mut policies = default.clone().into_iter().collect::<Vec<_>>();
-    let Ok(every) = effigy_containers::load_all_container_policies(scope_root) else {
-        return policies;
-    };
     for policy in every {
         if default
             .as_ref()
@@ -360,7 +375,7 @@ fn scoped_environment_policies(scope_root: &Path) -> Vec<EffectiveContainerPolic
         }
         policies.push(policy);
     }
-    policies
+    Ok(policies)
 }
 
 /// Borrow resolved secret pairs for a spawn.

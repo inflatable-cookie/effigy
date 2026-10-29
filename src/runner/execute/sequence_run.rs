@@ -14,6 +14,7 @@ use effigy_managed::{render_step_command_template, StepEnvAccumulator};
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
 use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task};
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub(super) fn maybe_run_in_process_sequence(
@@ -365,8 +366,14 @@ fn run_steps(
     // including the values a step inherits from the task and chains from its
     // predecessors (contract 005).
     let mut host_aliases = host_alias_resolver(preflight, selection)?;
+    // A step whose own environment delivers a key wins over a secret of the
+    // same name, so that secret is neither delivered again nor proved.
+    let mut delivered_keys: BTreeSet<String> = task_env.keys().cloned().collect();
+    delivered_keys.extend(env.chained_env().keys().cloned());
     let resolved_secrets = match (host_aliases.as_mut(), secrets) {
-        (Some(resolver), Some(pairs)) => Some(resolver.resolved_secret_env(pairs)?),
+        (Some(resolver), Some(pairs)) => {
+            Some(resolver.resolved_secret_env(pairs, &delivered_keys)?)
+        }
         _ => None,
     };
     let resolved_secret_refs = resolved_secrets

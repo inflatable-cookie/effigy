@@ -713,24 +713,35 @@ fn own_managed_run(
     // Anything that fails before admission is the supervisor's refusal: the
     // client reports it, and nothing ran.
     let inputs = (|| -> Result<_, RunnerError> {
-        let mut secrets = context.task_secrets()?;
-        // A host session in a runtime-scoped checkout resolves the canonical
-        // declared backing-service alias in the secret values it delivers, and
-        // refuses before the supervisor starts when this checkout has no
-        // published backing service for them (effigy#431, contract 005).
-        if let Some(resolver) = context.host_aliases.as_mut() {
-            let pairs = secrets
-                .iter()
-                .map(|(key, value)| (key.as_str(), value))
-                .collect::<Vec<_>>();
-            secrets = resolver.resolved_secret_env(&pairs)?;
-        }
         let env_schema_resolved = super::standard::resolve_env_schema_if_present(
             &selection.catalog.catalog_root,
             preflight.runtime_args_raw.env_schema_override.as_deref(),
             selection.catalog.manifest.env_schema.as_ref(),
             None,
         )?;
+        let mut secrets = context.task_secrets()?;
+        // A host session in a runtime-scoped checkout resolves the canonical
+        // declared backing-service alias in the secret values it delivers, and
+        // refuses before the supervisor starts when this checkout has no
+        // published backing service for them (effigy#431, contract 005). A key
+        // the session's own rendered environment delivers wins over a secret of
+        // the same name, so that secret is neither delivered again nor proved.
+        if let Some(resolver) = context.host_aliases.as_mut() {
+            let mut delivered: std::collections::BTreeSet<String> = selection
+                .task
+                .env
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            if let Some(resolved) = env_schema_resolved.as_ref() {
+                delivered.extend(resolved.plain_env().keys().cloned());
+            }
+            let pairs = secrets
+                .iter()
+                .map(|(key, value)| (key.as_str(), value))
+                .collect::<Vec<_>>();
+            secrets = resolver.resolved_secret_env(&pairs, &delivered)?;
+        }
         let role_schema_env = managed_role_schema_env(
             &preflight.catalogs,
             &selection.catalog.catalog_root,

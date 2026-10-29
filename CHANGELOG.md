@@ -504,10 +504,14 @@ During v0.x, MINOR bumps may include breaking changes.
   alias, the service and `effigy container up <NAME>`, and the command never
   runs. The proof reads the endpoints Effigy delivered, so text that merely
   mentions the alias proves nothing, and a suite this run does not select is
-  never proved. A container-bound
-  run is untouched: its target's own network already answers both names. A
-  checkout that names no default container environment still resolves, and a
-  container registry Effigy cannot read leaves host execution as it was. See
+  never proved. A worktree's first host run records the checkout's scope token
+  before resolving, so a fresh worktree is scoped rather than canonical; a
+  container registry this scoped checkout declares but Effigy cannot read is
+  refused instead of falling back to the canonical names; and a sensitive value
+  the task's own environment overrides is neither resolved nor proved. A
+  container-bound run is untouched: its target's own network already answers
+  both names. A checkout that names no default container environment still
+  resolves. See
   [contract 005](docs/knowledge/contracts/005-container-runtime-contract.md).
 - **Host processes get resolved facts instead of a wrapper script:**
   `${service.<name>.host}`, `${route.<domain>.public_url}`,
