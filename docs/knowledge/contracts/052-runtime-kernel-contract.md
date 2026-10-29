@@ -2777,72 +2777,38 @@ supervisor to expose replay-safe admission and attachment handles to the
 dispatcher; if that cannot be provided without a second authority, stop the
 integration and resolve the kernel interface before implementing a substitute.
 
-#### Implemented (effigy#438)
+#### Implemented: the session layer (effigy#438)
 
-The kernel interface this boundary needed is now implemented and proven, so the
-integration no longer has to substitute a second authority:
+The kernel records this boundary needs are implemented and proven (the kernel
+seam below, and lane A's channel). `crates/effigy-kernel/src/workspace_session.rs`
+is the lane B session layer on top of them and owns no second authority:
 
-- `crates/effigy-kernel/src/workspace_session.rs` is the session seam and owns
-  the additive schema-1 tables `workspace_session_admissions` and
-  `workspace_session_terminals` (§5.5 additive rule, no version bump).
-- Admission: `SessionAdmissions::reserve` commits the session generation,
-  request id, request digest, method and the planned run identity in one
-  `BEGIN IMMEDIATE` transaction. The planned run id is derived from the request
-  identity, not a clock, so recovery asks the journal about one exact run.
-  `Replayed` returns the recorded admission, run or outcome; a different digest
-  is `Conflict` (channel code `id_conflict`); a reservation whose run never
-  reached the journal is `Pending` while the session is provably live and
-  `Unknown` otherwise — never a fresh run. `admitted`, `completed` and
-  `refused` record the outcome idempotently.
-- Session and terminals: `SessionRef` resolves the environment's one borrowing
-  run durably, so TUI, text and headless front ends report one identity; the
-  entry is a `Detached` run (`SessionRef::admit` refuses any other placement).
-  `SessionAuthority` holds the memory-only capability, the enrolment grant and
-  the live terminals; the first terminal opened through Effigy receives the
-  capability and later ones never do. `attach`, `detach`, `reap` (a handle
-  dropped without detaching), `stopping` and `close` record each terminal's
-  state, and none of them can stop a run: a secondary client's death is a `lost`
-  row, nothing more. `ClientGrant::authorise_target` refuses a run outside the
-  session and its own children.
-- Control and streams: `SessionHandle::cancel` and a down's child stops write
-  an ordinary `run::request` against the target's current fence and wake its
-  control socket; `StreamBuffer` implements the bounded contract (32 KiB
-  frames, 16 unacknowledged data frames, 512 KiB queued, a retained resume
-  window with `gap` for a missed range, input never buffered, resize
-  latest-wins, cancel serviceable under backpressure).
-- Owner loss: `SessionAuthority::owner_lost` takes the terminal and the
-  `OwnerLoss` the supervisor observed — EOF without an acknowledged detach, a
-  disconnect, or TERM/HUP with its signal — records the terminal `lost` and
-  returns a `TerminalEnd` naming exactly the runs that terminal admitted and
-  that have not settled, with the loss as the stop cause. `reap` does the same
-  for a handle dropped without detaching. `SessionHandle::stop_owned` then
-  writes one ordinary journalled stop per named run, refuses the session run,
-  and answers a retried request id with the request it already committed, so a
-  repeated owner loss stops once. Ownership is durable
-  (`workspace_session_owned_runs`), so a supervisor restart reads who owned
-  what instead of guessing.
-- Non-run replay: only `invoke` plans a run. `attach`, `cancel` and `detach`
-  reserve no run identity, and their receipt is recorded with
-  `SessionAdmissions::applied`, so a retry reads `Applied` with the same
-  terminal or stopped run rather than `pending` or `unknown`, and a repeated
-  cancel carrying the same request id is one journalled request, not a second
-  one or an error.
-- Down: `DownCoordination::begin` refuses every holder other than the session
-  and its own child runs, live or `Unknown`; `DownChildren` stops only those
-  children and takes its permit through `Attachments::permit_exempt`, which
-  re-checks the holders with the session exempt once that run has entered its
-  settle.
+- `SessionRef` resolves the environment's one borrowing run durably, so a TUI, a
+  text client and a headless entry report one managed identity; `SessionRef::admit`
+  refuses any placement other than `Detached` and holds the environment `Borrow`
+  attachment for the run's life. The entry itself is guarded by the workspace
+  entry's owner gate, and request ids inside the session are the kernel seam's
+  `run::reserve` records — one admission authority, not two.
+- `SessionHandle` hands the kernel seam's `run::Session` to reservation, attach
+  and bounded control, and exposes the down coordination. `OwnerLoss` maps EOF,
+  a disconnect and TERM/HUP to the kernel's owner release (`Release::Eof`) and to
+  the stop cause the supervisor settles with (`StopCause::OwnerLost` or
+  `Signal(n)`); an acknowledged detach is `Release::Detach` and stops nothing.
+- Down: `DownCoordination::begin` refuses every holder other than the session and
+  its own child runs, live or `Unknown`; `DownChildren` stops only those children
+  with an ordinary journalled `run::request` (idempotent by request id) and takes
+  its permit through `Attachments::permit_exempt` once the session has entered
+  its settle.
+- The runner entry `src/runner/workspace_command/session.rs` maps each front end
+  to its `TerminalKind` and prints the one resolved identity.
 
 Still owned elsewhere by the lane split: the supervisor's serving loop over its
-control listener, the channel frames and dispatcher
-(`crates/effigy-kernel/src/workspace_channel.rs`), Prepare and context
-(`src/runner/workspace_command/provisioning.rs`, `workspace_client/context.rs`)
-and the client glue (`src/runner/workspace_client.rs`). The runner entry
-`src/runner/workspace_command/session.rs` maps each front end to its
-`TerminalKind` and builds the session handle, printing the one resolved session
-identity. Proofs are the fake-owner, fake-runtime tests under
-`workspace_session::tests::`; they exercise no engine, container, gateway or
-live supervisor.
+control listener, the channel frames and dispatcher (lane A), Prepare and context
+(lane C) and the client glue (`src/runner/workspace_client.rs`). Proofs are the
+fake-owner, fake-runtime cases under `workspace_session::tests::`; the admission,
+attachment and stream records they consume are proven by lane A's
+`test:kernel:workspace-channel`. Neither exercises an engine, container, gateway
+or live supervisor.
 
 **Kernel seam.** `crates/effigy-kernel/src/run/workspace.rs` implements that half.
 A session is its run and its generation, so two sessions at one generation stay

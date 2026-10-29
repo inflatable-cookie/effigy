@@ -168,13 +168,15 @@ During v0.x, MINOR bumps may include breaking changes.
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
   No transport, guest client or command surface is wired to it yet.
-- The kernel's workspace-session seam (contract 052 §8.7/§8.11): request ids
-  reserved before admission and replayed after a restart, terminal attachments
-  that cannot stop the session by disconnecting, EOF/TERM/HUP/owner death
-  stopping exactly the runs that terminal admitted, replayable attach, cancel
-  and detach receipts, bounded terminal streams with resume and gap, and a down
-  that refuses a foreign holder. Nothing user-facing invokes it yet; the
-  workspace client, transport and supervisor serving loop are later tasks.
+- The workspace session layer (contract 052 §8.7): one environment-owned
+  `Detached` session run resolved durably for TUI, text and headless front ends,
+  `OwnerLoss` mapping EOF/disconnect/TERM/HUP onto the kernel's owner release and
+  stop cause, and a down that refuses every foreign live or unknown holder,
+  stops only the session's own children and re-checks the gate with just the
+  settling session exempt. It consumes the kernel workspace seam's admission and
+  attachment records rather than keeping a second set. Nothing user-facing
+  invokes it yet; the client, transport and supervisor serving loop are later
+  tasks.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

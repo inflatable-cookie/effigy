@@ -50,7 +50,7 @@ impl DownChildren {
         cx: &EffectContext,
         root: &StateRoot,
         reader: &StoreReader,
-        request: &RequestId,
+        request: &run::RequestId,
         child: RunId,
     ) -> Result<RunId, RunError> {
         if child != self.session && !self.children.contains(&child) {
@@ -85,7 +85,7 @@ impl DownChildren {
         cx: &EffectContext,
         root: &StateRoot,
         reader: &StoreReader,
-        request: &RequestId,
+        request: &run::RequestId,
     ) -> Result<(), RunError> {
         request_stop(cx, root, reader, request, self.session)?;
         Ok(())

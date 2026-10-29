@@ -1,60 +1,42 @@
-//! The environment-owned workspace session (052 §8.7) and its client seam
-//! (§8.11).
+//! The environment-owned workspace session (052 §8.7) on top of the kernel
+//! workspace seam (§8.11).
 //!
 //! An environment that declares an operator workspace has exactly one
-//! `Detached` workspace session run. Its supervisor owns that session: it holds
-//! the environment `Borrow` attachment, keeps the memory-only capabilities,
-//! serves bounded terminal streams and coordinates a down requested from
-//! inside. This module is the kernel half of that ownership — durable
-//! request-keyed admission that survives a disconnect and a supervisor restart,
-//! durable terminal attachment records, the bounded stream ring and the down
-//! coordination — so a dispatcher can drive a session without inventing a
-//! second authority. `crate::remote::{session, stream}` remains remote
-//! *workload* custody: it proves and controls a workload the host already
-//! admitted, and it is never host session authority.
+//! `Detached` workspace session run. This module owns that session's identity:
+//! which run is the environment's one session, what a front end prints for it,
+//! and the down a session requested from inside. The replay-safe admission
+//! record, the durable client attachments, the bounded stream cursor and the
+//! bounded control path all belong to the kernel workspace seam in
+//! `crate::run::workspace` (lane A's channel builds on the same records), so a
+//! session consumes them instead of keeping a second copy. `crate::remote::{
+//! session, stream}` remains remote *workload* custody and is never host
+//! session authority.
 //!
 //! Nothing here spawns a process, binds a socket, signals a group or settles
-//! another run. A child is admitted through `Run::begin_child`, control travels
-//! as an ordinary journalled `run::request`, and a down takes its permit through
-//! `run::Attachments`, so the session keeps exactly the authority it already
-//! had.
+//! another run: the session run is admitted through `Run::begin`, a child
+//! through `Run::begin_child`, control travels as a journalled `run::request`,
+//! and a down takes its permit through `run::Attachments`.
 
-mod admissions;
 mod down;
-mod grants;
-mod streams;
 
 #[cfg(test)]
 mod tests;
 
-pub use admissions::{
-    Admission, AdmissionRecord, AdmissionRequest, AdmissionState, AdmissionTicket, Digest, Method,
-    Refusal, RefusalCode, RequestId, ReserveDecision, SessionAdmissions, SessionKey, StoredOutcome,
-    REQUEST_ID_BYTES,
-};
 pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
-pub use grants::{
-    host_entropy, owned, record_owned, refusal_category, terminals, AttachedTerminal, ClientGrant,
-    Enrolment, OwnerLoss, SessionAuthority, SessionBinding, TerminalEnd, TerminalId, TerminalKind,
-    TerminalState, SECRET_BYTES, TERMINAL_ID_BYTES,
-};
-pub use streams::{
-    Frame, PushOutcome, ReadOutcome, StreamBuffer, StreamCursor, StreamError, StreamFrame,
-    StreamId, StreamKind, MAX_FRAME_BYTES, MAX_QUEUED_BYTES, MAX_UNACKNOWLEDGED_FRAMES,
-};
 
-use crate::ctx::{CleanupContext, EffectContext, ObserveContext};
+use crate::ctx::{CleanupContext, EffectContext, ObserveContext, StopCause};
 use crate::gate::Wait;
 use crate::id::{Generation, ResolvedInvocation, ResourceId, RunId};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use crate::root::StateRoot;
 use crate::run::{
-    self, AttachMode, Attachments, BeginOpts, Fence, Phase, RequestAction, Run, RunError,
+    self, AttachMode, Attachments, BeginOpts, Fence, Phase, Release, Run, RunError,
     SettlementAdapter,
 };
 use crate::store::StoreReader;
 use crate::supervise::Placement;
 use rusqlite::{params, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
 /// The stored attachment mode of the one run that borrows the environment.
 /// `AttachMode::Borrow` is its JSON encoding, so a session is the run that
@@ -72,6 +54,55 @@ fn decode_owner(bytes: &[u8]) -> Result<ResourceId, RunError> {
         return Err(RunError::broken("a stored session owner is not canonical"));
     }
     Ok(id)
+}
+
+/// Which front end opened a terminal (§8.7). All three report one managed
+/// session identity; they differ only in how they render it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalKind {
+    Tui,
+    Text,
+    Headless,
+}
+impl TerminalKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tui => "tui",
+            Self::Text => "text",
+            Self::Headless => "headless",
+        }
+    }
+}
+
+/// How one client's ownership of its work ended (§8.11): EOF without an
+/// acknowledged detach, the client going away, or a signal the terminal
+/// received. Each is the same kernel release, and the cause the supervisor
+/// stops the owned work with differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerLoss {
+    /// End of input on the terminal, with no detach acknowledged.
+    EndOfInput,
+    /// The terminal or its client disappeared without closing cleanly.
+    Disconnected,
+    /// The terminal received this signal: TERM, HUP, or an operator's own.
+    Signal(i32),
+}
+impl OwnerLoss {
+    /// The release this loss records on the owner's attachment. An EOF, a
+    /// disconnect and a signal are all the client going without a detach; an
+    /// acknowledged detach is not a loss and uses `Release::Detach`.
+    pub fn release(self) -> Release {
+        Release::Eof
+    }
+    /// The cause the owned work is stopped with. A signal names itself; an EOF
+    /// or a disconnect is owner loss.
+    pub fn cause(self) -> StopCause {
+        match self {
+            Self::EndOfInput | Self::Disconnected => StopCause::OwnerLost,
+            Self::Signal(signal) => StopCause::Signal(signal),
+        }
+    }
 }
 
 /// The durable identity of one environment's workspace session: the `Detached`
@@ -124,6 +155,14 @@ impl SessionRef {
     pub fn generation(&self) -> Generation {
         self.fence.generation
     }
+    /// The kernel workspace seam's session identity, for reservation, attach
+    /// and control.
+    pub fn session(&self) -> run::Session {
+        run::Session {
+            run: self.run,
+            generation: self.generation(),
+        }
+    }
     /// What every front end prints for this session. One session, one label.
     pub fn label(&self) -> String {
         format!(
@@ -172,8 +211,8 @@ impl SessionRef {
     }
 
     /// The session identity recorded for `run`, whatever attached it. A retry
-    /// that found a recorded admission resolves its run this way, so the
-    /// replayed answer names the same session the first attempt admitted.
+    /// that recovered an admission resolves its run this way, so the recovered
+    /// answer names the same session the first attempt admitted.
     pub fn of_run(reader: &StoreReader, run: RunId) -> Observed<Option<SessionRef>> {
         let result = (|| -> Result<Option<SessionRef>, RunError> {
             let owner = reader
@@ -237,9 +276,10 @@ impl SessionRef {
     /// The session is a `Detached` run, so a terminal can leave without ending
     /// it; a caller that plans any other placement is refused before anything
     /// is written. The run borrows the environment for its whole life, which is
-    /// what a second entry finds and attaches to instead of duplicating, and
-    /// the entry itself is guarded by the workspace entry's owner gate rather
-    /// than by a request id: request ids only exist inside a session.
+    /// what a second entry finds and attaches to instead of duplicating, and the
+    /// entry itself is guarded by the workspace entry's owner gate: request ids
+    /// only exist inside a session and are reserved through the kernel workspace
+    /// seam (`run::reserve`).
     #[allow(clippy::too_many_arguments)]
     pub fn admit<'a>(
         cx: &EffectContext,
@@ -256,6 +296,8 @@ impl SessionRef {
                 "a workspace session is a Detached run, not an owning terminal",
             ));
         }
+        // A `Detached` session is its own supervisor, so it plans that lifecycle
+        // rather than promising one and running another.
         if let Some(plan) = &opts.custody {
             if plan.placement != placement {
                 return Err(RunError::broken(
@@ -275,9 +317,10 @@ impl SessionRef {
     }
 }
 
-/// A dispatcher-facing handle on one resolved session. It carries durable
-/// identity and operations only: a second terminal holds this and never the
-/// supervisor's owning pipe, so its lifetime is independent.
+/// A handle on one resolved session: durable identity, the kernel seam's
+/// session value, and the down coordination a session requested from inside.
+/// It carries no owning pipe, so a front end can hold it without owning the
+/// session's lifetime.
 #[derive(Debug, Clone)]
 pub struct SessionHandle {
     session: SessionRef,
@@ -290,96 +333,10 @@ impl SessionHandle {
     pub fn identity(&self) -> &SessionRef {
         &self.session
     }
-
-    /// Reserves a session request id before admission (§8.11). The reservation
-    /// and the request digest commit together, so a concurrent or later retry
-    /// reads one outcome instead of admitting a second run.
-    pub fn reserve(
-        &self,
-        cx: &EffectContext,
-        root: &StateRoot,
-        request: &RequestId,
-        admission: &AdmissionRequest,
-    ) -> Result<ReserveDecision, RunError> {
-        SessionAdmissions::reserve(cx, root, &self.session, request, admission)
-    }
-
-    /// Admits `opts` as a child of the session run: the session stays, the
-    /// child settles its own workloads and attachment, and its parent link is
-    /// the journal's record that it belonged to this session.
-    ///
-    /// The admission record names the child, so a replayed request returns that
-    /// child instead of admitting another.
-    #[allow(clippy::too_many_arguments)]
-    pub fn admit_child<'a>(
-        &self,
-        cx: &EffectContext,
-        root: &'a StateRoot,
-        session_run: &mut Run<'a>,
-        invocation: &ResolvedInvocation,
-        opts: BeginOpts,
-        cleanup: &CleanupContext,
-        adapter: &mut impl SettlementAdapter,
-        ticket: &AdmissionTicket,
-    ) -> Result<Run<'a>, RunError> {
-        if session_run.id() != self.session.run
-            || session_run.fence() != &self.session.fence
-            || ticket.run() != Some(opts.id)
-        {
-            return Err(RunError::broken(
-                "a child admission names a different session or ticket",
-            ));
-        }
-        let child = session_run.begin_child(invocation, opts, cleanup, adapter)?;
-        if let Err(error) =
-            SessionAdmissions::admitted(cx, root, ticket, &child, Placement::Detached)
-        {
-            child.settle(cleanup, adapter)?;
-            return Err(error);
-        }
-        Ok(child)
-    }
-
-    /// Requests an ordinary stop of `target`, which must be this session or one
-    /// of its child runs. The request is journalled against the target's current
-    /// fence and the control socket wakes its owner; naming another client's run
-    /// is refused before anything is written.
-    ///
-    /// Repeated with the same request id it is the same durable request, not a
-    /// second one: a retried `cancel` answers with the run it already asked to
-    /// stop, and the target still settles once.
-    pub fn cancel(
-        &self,
-        cx: &EffectContext,
-        root: &StateRoot,
-        reader: &StoreReader,
-        grant: &ClientGrant,
-        request: &RequestId,
-        target: RunId,
-    ) -> Result<RunId, RunError> {
-        grant.authorise_target(reader, &self.session, target)?;
-        request_stop(cx, root, reader, request, target)
-    }
-
-    /// Stops one run that a terminal owned, after that terminal's EOF,
-    /// disconnect or signal. The caller passes the request id it journalled and
-    /// the [`OwnerLoss`] it observed; the stop is an ordinary journalled
-    /// request, so a retried owner loss asks once and the run settles once. Only
-    /// the runs [`SessionAuthority::owner_lost`] returned may be named here.
-    pub fn stop_owned(
-        &self,
-        cx: &EffectContext,
-        root: &StateRoot,
-        reader: &StoreReader,
-        request: &RequestId,
-        run: RunId,
-    ) -> Result<RunId, RunError> {
-        if run == self.session.run {
-            return Err(RunError::refused(
-                "a terminal loss never stops the workspace session itself",
-            ));
-        }
-        request_stop(cx, root, reader, request, run)
+    /// The kernel workspace seam's identity for reservation, attach and
+    /// control (`run::reserve`, `run::attach_secondary`, `Attachment::control`).
+    pub fn session(&self) -> run::Session {
+        self.session.session()
     }
 
     /// The down coordination for this session (§8.7): a foreign live or
@@ -395,22 +352,23 @@ impl SessionHandle {
 }
 
 /// Sends one journalled stop request to `target` and rings its doorbell. Shared
-/// by a client's cancel and a session's down so both write the same primitive.
+/// by a down's child stops and the session's own settle request; the request is
+/// the kernel's own control path, not a second one.
 pub(crate) fn request_stop(
     cx: &EffectContext,
     root: &StateRoot,
     reader: &StoreReader,
-    request: &RequestId,
+    request: &run::RequestId,
     target: RunId,
 ) -> Result<RunId, RunError> {
     let fence = target_fence(reader, target)?;
-    let stop = request.run_id()?;
+    let stop = request_run_id(request)?;
     // A committed request is the durable fact: the same id naming the same stop
     // is that request, not a duplicate one. The journal refuses a second row, so
-    // a retried cancel or owner loss answers instead of erroring.
+    // a retried stop answers instead of erroring.
     match recorded_request(reader, stop)? {
         Some(recorded) if recorded.run == target && recorded.expected == fence => {
-            if !matches!(recorded.action, RequestAction::Stop) {
+            if !matches!(recorded.action, run::RequestAction::Stop) {
                 return Err(RunError::refused(
                     "this request id already names another action",
                 ));
@@ -428,7 +386,7 @@ pub(crate) fn request_stop(
                 id: stop,
                 run: target,
                 expected: fence.clone(),
-                action: RequestAction::Stop,
+                action: run::RequestAction::Stop,
             },
         )?,
     }
@@ -440,6 +398,18 @@ pub(crate) fn request_stop(
         let _ = run::connect_control_socket(&observe, root, &fence.resource, target);
     }
     Ok(target)
+}
+
+/// A kernel request identity as the `RunId` a journalled control request names.
+/// The bits are the request id's own; nothing about them grants authority.
+fn request_run_id(request: &run::RequestId) -> Result<RunId, RunError> {
+    let bytes = request.bytes();
+    let mut millis = [0u8; 8];
+    millis[2..].copy_from_slice(&bytes[..6]);
+    let mut random = [0u8; 10];
+    random.copy_from_slice(&bytes[6..]);
+    RunId::new(u64::from_be_bytes(millis), random)
+        .map_err(|error| RunError::broken(format!("a control request id ({error})")))
 }
 
 /// The fence a run row was admitted under, read without acquiring its gate.
@@ -474,4 +444,13 @@ fn recorded_request(reader: &StoreReader, id: RunId) -> Result<Option<run::Reque
     action
         .map(|action| serde_json::from_str(&action).map_err(RunError::from))
         .transpose()
+}
+
+/// The phase a run is in, for a caller that names a session in a diagnostic.
+pub fn phase(reader: &StoreReader, run: RunId) -> Observed<Phase> {
+    match run::summary(reader, run) {
+        Observed::Verified(summary, evidence) => Observed::Verified(summary.phase, evidence),
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
 }
