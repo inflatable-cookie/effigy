@@ -742,7 +742,7 @@ fn linux_artifact_refusal_reports_versions_identities_and_rebuild_command() {
         "{detail}"
     );
     assert!(
-        detail.contains("rehearsal receipt matches target"),
+        detail.contains("artifact receipt matches target"),
         "{detail}"
     );
     assert!(
@@ -1159,6 +1159,15 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
     std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
         .expect("mkdir cache parent");
     std::fs::write(&cache_path, "downloaded-artifact").expect("write cache artifact");
+    let digest = crate::runner::workspace_client::context::sha256_text(b"downloaded-artifact");
+    std::fs::write(
+        workspace_artifact_receipt_path(&cache_path),
+        format!(
+            "release_triple=x86_64-unknown-linux-gnu\nsha256={}\n",
+            digest.trim_start_matches("sha256:")
+        ),
+    )
+    .expect("write the cached producer receipt; this fixture must never fetch a release");
     std::fs::write(
         workspace_effigy_install_identity_file(&cache_path),
         format!("{}\n", workspace_effigy_release_install_identity()),
