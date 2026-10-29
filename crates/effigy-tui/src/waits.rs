@@ -123,10 +123,12 @@ impl WaitOn {
                 format!("waiting for {name} ({})", phase.as_str())
             }
             Self::Probe { probe } => format!("waiting for {probe} ({})", seconds(elapsed)),
-            Self::Delay { remaining_ms } => format!(
-                "scheduled delay: {} remaining",
-                decimal_seconds(Duration::from_millis(*remaining_ms))
-            ),
+            Self::Delay { remaining_ms } => {
+                format!(
+                    "scheduled delay: {}s remaining",
+                    whole_seconds(*remaining_ms)
+                )
+            }
         }
     }
 
@@ -136,12 +138,7 @@ impl WaitOn {
             Self::Environment { .. } => "environment".to_owned(),
             Self::Entry { name, phase } => format!("{name} {}", phase.as_str()),
             Self::Probe { probe } => probe.clone(),
-            Self::Delay { remaining_ms } => {
-                format!(
-                    "{} delay",
-                    decimal_seconds(Duration::from_millis(*remaining_ms))
-                )
-            }
+            Self::Delay { remaining_ms } => format!("{}s delay", whole_seconds(*remaining_ms)),
         }
     }
 }
@@ -274,9 +271,10 @@ pub struct OrderEntry {
 pub struct WorkloadOrder<'a> {
     pub name: &'a str,
     /// The entry's declared `after`; the one accepted value is `environment`.
+    /// It states the environment relationship rather than changing the order,
+    /// and the accepted legacy `start_after_ms` delay is fed while the run
+    /// holds the entry (`EntryWaits::delaying`), never resolved into the graph.
     pub after: &'a [String],
-    /// The accepted legacy delay. It delays this entry and orders nothing.
-    pub start_after_ms: u64,
 }
 
 /// One environment host process's ordering inputs.
@@ -531,13 +529,18 @@ impl EntryWaits {
     /// The accepted legacy delay: how long this entry's start is still held.
     pub fn delaying(&mut self, entry: &str, remaining: Duration, now: Instant) {
         let remaining_ms = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
-        self.set_explicit(
-            entry,
-            WaitOn::Delay {
-                remaining_ms: remaining_ms.max(1),
-            },
-            now,
-        );
+        let Some(record) = self.records.get_mut(entry) else {
+            return;
+        };
+        if record.phase != EntryPhase::Waiting {
+            return;
+        }
+        if !matches!(record.explicit, Some(WaitOn::Delay { .. })) {
+            record.wait_since = now;
+        }
+        record.explicit = Some(WaitOn::Delay {
+            remaining_ms: remaining_ms.max(1),
+        });
     }
 
     /// A delay that no longer holds the entry.
@@ -762,8 +765,10 @@ fn seconds(elapsed: Duration) -> String {
     format!("{}s", elapsed.as_secs())
 }
 
-fn decimal_seconds(duration: Duration) -> String {
-    format!("{:.1}s", duration.as_secs_f64())
+/// The whole seconds a delay still holds, never rounded down to zero while it
+/// still holds the entry.
+fn whole_seconds(remaining_ms: u64) -> u64 {
+    remaining_ms.div_ceil(1000)
 }
 
 #[cfg(test)]

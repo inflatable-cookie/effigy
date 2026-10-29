@@ -210,12 +210,10 @@ fn an_exit_before_readiness_is_a_prerequisite_failure() {
         WorkloadOrder {
             name: "api",
             after: &[],
-            start_after_ms: 0,
         },
         WorkloadOrder {
             name: "front",
             after: &[],
-            start_after_ms: 0,
         },
     ]);
     let mut waits = EntryWaits::new(workloads, None, clock.at(0.0));
@@ -236,12 +234,10 @@ fn a_legacy_delay_names_itself_not_another_entry() {
         WorkloadOrder {
             name: "api",
             after: &[],
-            start_after_ms: 0,
         },
         WorkloadOrder {
             name: "jobs",
             after: &[],
-            start_after_ms: 1_200,
         },
     ]);
     let mut waits = EntryWaits::new(order, None, clock.at(0.0));
@@ -255,8 +251,8 @@ fn a_legacy_delay_names_itself_not_another_entry() {
             remaining_ms: 1_200
         })
     );
-    assert_eq!(jobs.status_line(), "scheduled delay: 1.2s remaining");
-    assert_eq!(jobs.tab_label(), "jobs [waiting: 1.2s delay]");
+    assert_eq!(jobs.status_line(), "scheduled delay: 2s remaining");
+    assert_eq!(jobs.tab_label(), "jobs [waiting: 2s delay]");
     assert!(!jobs.status_line().contains("api"));
     assert!(!waits.may_start("jobs"), "the delay still holds it");
 
@@ -304,12 +300,10 @@ fn host_depends_on_and_workload_order_map_to_their_own_waits() {
         WorkloadOrder {
             name: "api",
             after: &declared,
-            start_after_ms: 0,
         },
         WorkloadOrder {
             name: "front",
             after: &declared,
-            start_after_ms: 0,
         },
     ]);
     let front = workloads.get("front").expect("front's order");

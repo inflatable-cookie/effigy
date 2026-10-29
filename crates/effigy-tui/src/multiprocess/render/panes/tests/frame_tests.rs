@@ -330,7 +330,7 @@ fn a_legacy_delay_tab_names_the_delay() {
         }
         text.push('\n');
     }
-    assert!(text.contains("jobs [waiting: 1.2s delay]"), "{text}");
-    assert!(text.contains("scheduled delay: 1.2s remaining"), "{text}");
+    assert!(text.contains("jobs [waiting: 2s delay]"), "{text}");
+    assert!(text.contains("scheduled delay: 2s remaining"), "{text}");
     assert_no_spinner_or_generic_wait(&text);
 }

@@ -544,9 +544,8 @@ impl Owner {
             let now = Instant::now();
             if next < self.workloads.len() && now < next_at {
                 let name = self.workloads[next].spec.name.clone();
-                if self.waits.may_start(&name) {
-                    self.waits.delaying(&name, next_at - now, now);
-                }
+                // Restated every turn: the wait says what remains of it.
+                self.waits.delaying(&name, next_at - now, now);
             }
             self.waits.refresh(now);
             self.publish_waits(now);
@@ -885,7 +884,16 @@ impl Owner {
     }
 
     fn publish_state(&mut self, state: &EntryState, now: Instant) {
-        let changed = self.published.get(&state.entry) != Some(state);
+        let changed = match (self.published.get(&state.entry), &state.waiting_on) {
+            // A delay's remaining time moves every turn; its own refresh keeps
+            // the record live without a write per turn.
+            (Some(previous), Some(WaitOn::Delay { .. }))
+                if matches!(previous.waiting_on, Some(WaitOn::Delay { .. })) =>
+            {
+                false
+            }
+            _ => self.published.get(&state.entry) != Some(state),
+        };
         let due = self
             .published_at
             .get(&state.entry)
@@ -901,11 +909,11 @@ impl Owner {
         } else {
             self.wait_ledger.retire(&state.entry);
         }
-        if terminal || state.waiting_on.is_some() {
-            self.event(&EngineEvent::Entry {
-                state: state.clone(),
-            });
-        }
+        // Every change reaches the clients, so their view never keeps a wait
+        // the entry has left behind.
+        self.event(&EngineEvent::Entry {
+            state: state.clone(),
+        });
         self.published.insert(state.entry.clone(), state.clone());
         self.published_at.insert(state.entry.clone(), now);
     }

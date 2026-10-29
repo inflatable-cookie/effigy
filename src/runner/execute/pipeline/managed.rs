@@ -630,7 +630,6 @@ fn initial_waits(plan: &effigy_managed::ManagedTaskPlan) -> Vec<effigy_tui::wait
             .map(|process| effigy_tui::waits::WorkloadOrder {
                 name: &process.name,
                 after: &process.after,
-                start_after_ms: process.start_after_ms,
             })
             .collect::<Vec<_>>(),
     );
@@ -730,7 +729,6 @@ fn own_managed_run(
                 .map(|process| effigy_tui::waits::WorkloadOrder {
                     name: &process.name,
                     after: &process.after,
-                    start_after_ms: process.start_after_ms,
                 })
                 .collect::<Vec<_>>(),
         );
