@@ -141,6 +141,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Added
 
+- Add a live-state progress source and a feedback lint ratchet for migrating legacy spinner construction.
+
 - **Linux runs the operator gateway from a launch-only systemd user unit.**
   `effigy gateway setup` installs and enables
   `~/.config/systemd/user/effigy-gateway.service`, whose only actions are

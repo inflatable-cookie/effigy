@@ -288,6 +288,10 @@ impl Step {
     }
 
     /// A nested step: a distinct line for the part of the work now running.
+    #[cfg_attr(
+        effigy_feedback_lint,
+        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    )]
     pub fn step(&self, label: &str) -> Step {
         Step::new(Arc::clone(&self.inner.sink), Some(self), label)
     }
@@ -443,6 +447,10 @@ impl Sink {
         crate::style_text(self.color, self.styles.muted, label)
     }
 
+    #[cfg_attr(
+        effigy_feedback_lint,
+        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    )]
     fn start_bar(&self, label: &str) -> ProgressBar {
         let bar = self.multi().add(ProgressBar::new_spinner());
         if let Ok(style) = ProgressStyle::with_template(SPINNER_TEMPLATE) {
@@ -579,6 +587,10 @@ fn print_line_to(sink: &Sink, json: bool, line: &str) {
 
 /// Start a top-level step. The label is short, present tense and names its
 /// subject: `starting web`.
+#[cfg_attr(
+    effigy_feedback_lint,
+    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+)]
 pub fn step(label: &str) -> Step {
     Step::new(Arc::clone(global_sink()), None, label)
 }

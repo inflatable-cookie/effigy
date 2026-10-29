@@ -51,5 +51,9 @@ pub trait Renderer {
     fn summary(&mut self, counts: SummaryCounts) -> UiResult<()>;
 
     fn table(&mut self, spec: &TableSpec) -> UiResult<()>;
+    #[cfg_attr(
+        effigy_feedback_lint,
+        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    )]
     fn spinner(&mut self, label: &str) -> UiResult<Box<dyn SpinnerHandle>>;
 }
