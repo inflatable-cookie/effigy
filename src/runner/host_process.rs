@@ -74,6 +74,11 @@ const RESTART_BACKOFF_CAP: Duration = Duration::from_secs(30);
 pub(super) const SUPERVISOR_ACTIVATION_PUBLICATION_BOUND: Duration = Duration::from_secs(10);
 #[cfg(debug_assertions)]
 const START_PUBLICATION_DELAY_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_START_PUBLICATION_DELAY_MS";
+/// Fixture override for the closed-port progress interval. Debug builds only,
+/// and inert unless the suite asks for it: a proof about the progress evidence
+/// cannot wait thirty seconds for the first line.
+#[cfg(debug_assertions)]
+const START_PROGRESS_INTERVAL_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_PROGRESS_INTERVAL_MS";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -612,6 +617,42 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
     ))
 }
 
+/// How often a listener whose port is still closed reports progress. The
+/// production interval is thirty seconds; a fixture may shorten it so a proof
+/// can observe the emitted line without waiting one out.
+fn listener_progress_interval() -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(millis) = std::env::var(START_PROGRESS_INTERVAL_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    {
+        return Duration::from_millis(millis.clamp(50, 30_000));
+    }
+    LISTENER_START_PROGRESS_INTERVAL
+}
+
+/// The one place a listener wait publishes a progress line: the console keeps
+/// it, and a test in this process can assert the line the actual wait emitted.
+fn emit_listener_progress(line: &str) {
+    #[cfg(test)]
+    LISTENER_PROGRESS.with(|lines| lines.borrow_mut().push(line.to_owned()));
+    eprintln!("{line}");
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Progress lines emitted in this process. The listener wait runs on the
+    /// caller's thread, so a fixture asserts exactly what it printed.
+    static LISTENER_PROGRESS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The progress lines this process emitted, drained for one assertion.
+#[cfg(test)]
+pub(in crate::runner) fn take_listener_progress() -> Vec<String> {
+    LISTENER_PROGRESS.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
+}
+
 /// The console progress line for a listener that is alive and has not opened
 /// its port yet: the phase has no deadline, and the line says what ends it.
 /// It carries the child's own output tail, so a wait that repeats no longer
@@ -661,7 +702,7 @@ fn wait_for_listener_state(
 ) -> Result<ListenerWait, RunnerError> {
     let mut next_liveness_check = Instant::now();
     let started = Instant::now();
-    let mut next_progress = started;
+    let mut next_progress = started + listener_progress_interval();
     loop {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -727,15 +768,12 @@ fn wait_for_listener_state(
                     // log; this one goes to the console of whoever is waiting,
                     // so a slow start is never a silent prompt (effigy#370).
                     if Instant::now() >= next_progress {
-                        next_progress = Instant::now() + LISTENER_START_PROGRESS_INTERVAL;
-                        eprintln!(
-                            "{}",
-                            listener_start_progress(
-                                process_name,
-                                started.elapsed(),
-                                &path.with_file_name(format!("{}.log", sanitize(process_name))),
-                            )
-                        );
+                        next_progress = Instant::now() + listener_progress_interval();
+                        emit_listener_progress(&listener_start_progress(
+                            process_name,
+                            started.elapsed(),
+                            &path.with_file_name(format!("{}.log", sanitize(process_name))),
+                        ));
                     }
                     if Instant::now() >= next_liveness_check {
                         next_liveness_check = Instant::now() + Duration::from_secs(1);
@@ -2079,7 +2117,7 @@ fn wait_for_ready_listener(
     let timeout = Duration::from_secs(config.readiness_timeout_secs);
     let started = Instant::now();
     let mut answered_at = None;
-    let mut next_progress = started + LISTENER_START_PROGRESS_INTERVAL;
+    let mut next_progress = started + listener_progress_interval();
     loop {
         if stop() {
             return Err(ListenerStartupFailure::Stopped);
@@ -2118,7 +2156,7 @@ fn wait_for_ready_listener(
         let now = Instant::now();
         if probe.outcome == HttpReadinessOutcome::ConnectFailed {
             if now >= next_progress {
-                next_progress = now + LISTENER_START_PROGRESS_INTERVAL;
+                next_progress = now + listener_progress_interval();
                 append_log_line(
                     log_path,
                     &format!(

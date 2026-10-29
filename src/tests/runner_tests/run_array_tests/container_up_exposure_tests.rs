@@ -9,12 +9,14 @@
 //!
 //! The proof covers the brief's acceptance for a hybrid environment: one ready
 //! container service plus a listener that answers 500 keeps only the container
-//! route, the withheld listener's status and bounded child-output tail appear
-//! in text and JSON, the definite status is refused without spending the
-//! declared readiness budget, a closed port is bounded by the activation's
-//! observation budget, an uncertain container identity publishes no route, and
-//! a retry after the listener recovers publishes its own route without
-//! duplicating the container route.
+//! route, the withheld listener's status and bounded redacted child-output tail
+//! appear in both detached failure formats, the definite status is refused
+//! without spending the declared readiness budget, a closed port is bounded by
+//! the activation's observation budget and its actual progress emits the same
+//! bounded redacted evidence, a second activation reconciles a healthy listener
+//! the previous activation published, an uncertain container identity publishes
+//! no route, and a retry after the listener recovers publishes its own route
+//! without duplicating the container route.
 
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::PathBuf;
@@ -25,12 +27,16 @@ use effigy_gateway::routes::RouteTable;
 
 use crate::contract_test_support::EnvGuard;
 use crate::runner::container_command::run_container_command;
+use crate::runner::host_process::take_listener_progress;
 
-/// A listener child that answers every request with 500 after printing the
-/// line an operator needs to see.
+/// A listener child that answers every request with 500. Its output also
+/// carries a secret-shaped value and far more text than a report may keep, so
+/// the failure has to bound and redact the child's own words.
 const REFUSING_CHILD: &str = r#"
 import http.server, os
+print("noise " * 300, flush=True)
 print("vite: internal server error", flush=True)
+print("DB_PASSWORD=hunter2", flush=True)
 bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
 host, port = bind.rsplit(":", 1)
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -60,18 +66,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 "#;
 
-/// A listener child that never binds its port: the activation's observation
-/// budget must end the command's wait.
-const CLOSED_PORT_CHILD: &str = "import time\ntime.sleep(120)";
+/// A listener child that never binds its port, and whose output carries a
+/// secret-shaped value behind far more text than a report may keep: the
+/// activation's observation budget must end the command's wait and its progress
+/// must carry the bounded, redacted tail.
+const CLOSED_PORT_CHILD: &str = r#"
+import time
+print("noise " * 300, flush=True)
+print("vite: still booting", flush=True)
+print("EFFIGY_TOKEN=abcd1234", flush=True)
+time.sleep(120)
+"#;
 
 const CONTAINER_DOMAIN: &str = "app.exposure.test";
-const LISTENER_DOMAIN: &str = "front.exposure.test";
+const FRONT_DOMAIN: &str = "front.exposure.test";
+const API_DOMAIN: &str = "api.exposure.test";
+
+/// The most a report keeps of a child-output tail (`bound_text` keeps the head
+/// and the tail of at most 320 bytes).
+const TAIL_BOUND_BYTES: usize = 400;
+
+/// One declared managed host listener in the fixture environment.
+struct FixtureListener {
+    name: &'static str,
+    domain: &'static str,
+    child: &'static str,
+}
 
 /// Fake container runtime. `up` records the labels Compose would apply, `ps`
 /// reports the running service publishing the declared port, and `inspect`
 /// reports that container's exact identity and fresh published binding.
 ///
-/// `EFFIGY_TEST_EXPOSURE_MODE=uncertain` reports a foreign checkout label on
+/// `docker-state/mode=uncertain` reports a foreign working-directory label on
 /// inspect, which is an identity the registration must never route.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 set -eu
@@ -93,19 +119,6 @@ case "$subcmd" in
     ;;
   info|update|kill|logs|start|stop|create) exit 0 ;;
   up)
-    compose=""
-    for arg in "$@"; do
-      case "$arg" in
-        *.yml|*.yaml) compose="$arg" ;;
-      esac
-    done
-    checkout=""
-    scope=""
-    if [ -n "$compose" ] && [ -f "$compose" ]; then
-      checkout=$(sed -n 's/^ *com.effigy.checkout: //p' "$compose" | head -1)
-      scope=$(sed -n 's/^ *com.effigy.scope: //p' "$compose" | head -1)
-    fi
-    printf 'checkout=%s\nscope=%s\n' "$checkout" "$scope" > "$state/labels"
     : > "$state/running"
     printf 'compose-up\n'
     ;;
@@ -136,20 +149,19 @@ esac
 "#;
 
 /// One private fixture checkout with a hybrid environment: one routed container
-/// service and one managed host listener.
+/// service and the given managed host listeners.
 struct ExposureFixture {
     _temp: effigy_test_support::Fixture,
     root: PathBuf,
-    listener_port: u16,
     container_host_port: u16,
     state: PathBuf,
     _env: EnvGuard,
 }
 
 impl ExposureFixture {
-    /// `child` is the listener's Python source; `health_timeout_secs` is the
+    /// `listeners` are declared in order; `health_timeout_secs` is the
     /// bring-up's observation budget.
-    fn new(label: &str, child: &str, health_timeout_secs: u64) -> Self {
+    fn new(label: &str, listeners: &[FixtureListener], health_timeout_secs: u64) -> Self {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = effigy_test_support::Fixture::workspace(&format!("effigy-exposure-{label}-"))
@@ -174,9 +186,40 @@ impl ExposureFixture {
             ),
         )
         .expect("write compose");
+
         std::fs::create_dir_all(repo.join("scripts")).expect("mkdir scripts");
-        std::fs::write(repo.join("scripts/front.py"), child.trim()).expect("write listener child");
-        let listener_port = free_loopback_port();
+        let mut host_processes = String::new();
+        for listener in listeners {
+            std::fs::write(
+                repo.join(format!("scripts/{}.py", listener.name)),
+                listener.child.trim(),
+            )
+            .expect("write listener child");
+            let bind = free_loopback_port();
+            host_processes.push_str(&format!(
+                r#"
+[[containers.e2e.host_processes]]
+name = "{name}"
+run = "exec python3 scripts/{name}.py"
+restart = "never"
+shutdown_grace_secs = 1
+
+[containers.e2e.host_processes.listener]
+bind = "127.0.0.1:{bind}"
+
+[containers.e2e.host_processes.listener.readiness]
+path = "/health"
+status = 200
+timeout_secs = 300
+
+[containers.e2e.host_processes.listener.route]
+domain = "{domain}"
+tls = false
+"#,
+                name = listener.name,
+                domain = listener.domain,
+            ));
+        }
         std::fs::write(
             repo.join("effigy.toml"),
             format!(
@@ -194,30 +237,12 @@ working_dir = "/workspace"
 mounts = ["./:/workspace"]
 
 [containers.e2e.health]
-timeout_secs = {health_timeout_secs}
+timeout_secs = {health_timeout_secs} # activation-budget
 
 [containers.e2e.dns]
 domains = ["{CONTAINER_DOMAIN}"]
 domain_defaults = {{ tls = false }}
-
-[[containers.e2e.host_processes]]
-name = "front"
-run = "exec python3 scripts/front.py"
-restart = "never"
-shutdown_grace_secs = 1
-
-[containers.e2e.host_processes.listener]
-bind = "127.0.0.1:{listener_port}"
-
-[containers.e2e.host_processes.listener.readiness]
-path = "/health"
-status = 200
-timeout_secs = 300
-
-[containers.e2e.host_processes.listener.route]
-domain = "{LISTENER_DOMAIN}"
-tls = false
-"#,
+{host_processes}"#,
             ),
         )
         .expect("write manifest");
@@ -271,9 +296,11 @@ tls = false
                 Some(gateway_root.display().to_string()),
             ),
             ("EFFIGY_EXECUTABLE", Some(effigy.display().to_string())),
+            // A proof cannot wait out the production thirty-second progress
+            // interval; the interval is the only thing this shortens.
             (
-                "EFFIGY_TEST_DOCKER_STATE_DIR",
-                Some(state.display().to_string()),
+                "EFFIGY_TEST_HOST_PROCESS_PROGRESS_INTERVAL_MS",
+                Some("150".to_owned()),
             ),
             (
                 "EFFIGY_TEST_CONTAINER",
@@ -290,7 +317,6 @@ tls = false
         ExposureFixture {
             _temp: temp,
             root,
-            listener_port,
             container_host_port,
             state,
             _env: env,
@@ -326,6 +352,30 @@ tls = false
         std::fs::write(self.state.join("mode"), mode).expect("write the fake runtime mode");
     }
 
+    /// Replace a listener's own program, as an edited checkout would.
+    fn set_listener_child(&self, name: &str, child: &str) {
+        std::fs::write(self.repo().join(format!("scripts/{name}.py")), child.trim())
+            .expect("write the listener child");
+    }
+
+    /// Shorten the bring-up's observation budget for the next activation.
+    fn set_health_budget(&self, secs: u64) {
+        let manifest_path = self.repo().join("effigy.toml");
+        let manifest = std::fs::read_to_string(&manifest_path).expect("read manifest");
+        let updated = manifest
+            .lines()
+            .map(|line| {
+                if line.trim_end().ends_with("# activation-budget") {
+                    format!("timeout_secs = {secs} # activation-budget")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(manifest_path, format!("{updated}\n")).expect("write manifest");
+    }
+
     /// Stop everything this fixture started: host processes first, so no
     /// supervisor or child outlives the test.
     fn down(&self) {
@@ -342,7 +392,6 @@ tls = false
             stopped.is_ok(),
             "the fixture's own down must settle: {stopped:?}"
         );
-        let _ = std::fs::remove_file(self.state.join("running"));
     }
 }
 
@@ -369,13 +418,43 @@ fn free_loopback_port() -> u16 {
         .port()
 }
 
+fn one_listener(child: &'static str) -> [FixtureListener; 1] {
+    [FixtureListener {
+        name: "front",
+        domain: FRONT_DOMAIN,
+        child,
+    }]
+}
+
+/// The child-output tail a failure text or progress line carries, bounded and
+/// with the secret-shaped value replaced.
+fn assert_bounded_redacted_tail(where_: &str, text: &str) {
+    let tail = text
+        .split("last child output: ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("{where_} names the child's output tail: {text}"));
+    assert!(
+        tail.len() <= TAIL_BOUND_BYTES,
+        "{where_} bounds the tail to {TAIL_BOUND_BYTES} bytes, got {}: {tail}",
+        tail.len()
+    );
+    assert!(
+        tail.contains("DB_PASSWORD=<redacted>") || tail.contains("EFFIGY_TOKEN=<redacted>"),
+        "{where_} keeps the secret-shaped key and redacts its value: {tail}"
+    );
+    assert!(
+        !tail.contains("hunter2") && !tail.contains("abcd1234"),
+        "{where_} never prints the secret value: {tail}"
+    );
+}
+
 /// The brief's core case, through the real command: one ready container
 /// service and one listener answering 500. Only the container route survives,
 /// and the failure text names the withheld route, its status and the child's
-/// own output.
+/// own bounded, redacted output.
 #[test]
 fn detached_up_keeps_the_container_route_and_reports_the_withheld_listener() {
-    let fixture = ExposureFixture::new("text", REFUSING_CHILD, 30);
+    let fixture = ExposureFixture::new("text", &one_listener(REFUSING_CHILD), 30);
     let started = Instant::now();
     let error = fixture
         .up(false)
@@ -395,16 +474,18 @@ fn detached_up_keeps_the_container_route_and_reports_the_withheld_listener() {
         "the container's published route is named: {text}"
     );
     assert!(
-        text.contains(&format!("`front` kept route {LISTENER_DOMAIN} withheld")),
+        text.contains(&format!("`front` kept route {FRONT_DOMAIN} withheld")),
         "the withheld listener route is named: {text}"
     );
     assert!(
         text.contains("status_mismatch") && text.contains("500"),
         "the observed status is named: {text}"
     );
+    assert_bounded_redacted_tail("the detached failure text", &text);
     assert!(
-        text.contains("vite: internal server error"),
-        "the child's own output tail is named: {text}"
+        text.len() <= 2_500,
+        "the whole refusal stays bounded, got {} bytes: {text}",
+        text.len()
     );
     assert!(
         !text.contains("readiness and exposure are unverified"),
@@ -420,7 +501,7 @@ fn detached_up_keeps_the_container_route_and_reports_the_withheld_listener() {
         Some(format!("127.0.0.1:{}", fixture.container_host_port).as_str())
     );
     assert!(
-        table.lookup(LISTENER_DOMAIN).is_none(),
+        table.lookup(FRONT_DOMAIN).is_none(),
         "the withheld listener has no route: {table:?}"
     );
     fixture.down();
@@ -431,10 +512,11 @@ fn detached_up_keeps_the_container_route_and_reports_the_withheld_listener() {
 }
 
 /// The same failure in JSON: a partial exposure envelope, not an unavailable
-/// activation, carrying both sides of the route decision.
+/// activation, carrying both sides of the route decision and the same bounded,
+/// redacted tail.
 #[test]
 fn detached_up_json_names_partial_exposure_and_the_withheld_listener() {
-    let fixture = ExposureFixture::new("json", REFUSING_CHILD, 30);
+    let fixture = ExposureFixture::new("json", &one_listener(REFUSING_CHILD), 30);
     let error = fixture
         .up(true)
         .expect_err("a withheld listener route fails the detached invocation");
@@ -461,28 +543,44 @@ fn detached_up_json_names_partial_exposure_and_the_withheld_listener() {
         .expect("withheld routes");
     assert_eq!(withheld.len(), 1, "{document}");
     assert_eq!(withheld[0]["listener"], "front");
-    assert_eq!(withheld[0]["route_domain"], LISTENER_DOMAIN);
+    assert_eq!(withheld[0]["route_domain"], FRONT_DOMAIN);
     assert_eq!(withheld[0]["observed_status"], 500);
+    let tail = withheld[0]["output_tail"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the JSON withheld route carries the tail: {document}"));
     assert!(
-        withheld[0]["output_tail"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("vite: internal server error"),
-        "{document}"
+        tail.len() <= TAIL_BOUND_BYTES,
+        "the JSON tail is bounded, got {} bytes: {tail}",
+        tail.len()
     );
     assert!(
-        fixture.routes().lookup(LISTENER_DOMAIN).is_none(),
+        tail.contains("DB_PASSWORD=<redacted>") && !tail.contains("hunter2"),
+        "the JSON tail keeps the key and redacts the value: {tail}"
+    );
+    let detail = withheld[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        !detail.contains("hunter2") && !detail.contains("abcd1234"),
+        "the JSON detail is redacted too: {detail}"
+    );
+    assert!(
+        detail.len() <= 1_000,
+        "the JSON detail is bounded, got {} bytes",
+        detail.len()
+    );
+    assert!(
+        fixture.routes().lookup(FRONT_DOMAIN).is_none(),
         "the listener route stays absent"
     );
     fixture.down();
 }
 
 /// A closed port does not hold the activation open: the command returns at the
-/// bring-up's observation budget, naming that budget, and the listener's route
-/// stays withheld.
+/// bring-up's observation budget, its actual progress carries the child's own
+/// bounded, redacted output, and the listener's route stays withheld.
 #[test]
-fn detached_up_bounds_a_closed_port_by_the_observation_budget() {
-    let fixture = ExposureFixture::new("closed-port", CLOSED_PORT_CHILD, 3);
+fn detached_up_bounds_a_closed_port_and_reports_redacted_progress() {
+    let fixture = ExposureFixture::new("closed-port", &one_listener(CLOSED_PORT_CHILD), 3);
+    let _ = take_listener_progress();
     let started = Instant::now();
     let error = fixture
         .up(false)
@@ -497,14 +595,122 @@ fn detached_up_bounds_a_closed_port_by_the_observation_budget() {
         text.contains("observation budget expired"),
         "the failure names the bounded wait it ended on: {text}"
     );
+
+    // The wait itself printed the child's evidence, not just a formatter.
+    let progress = take_listener_progress();
+    assert!(
+        !progress.is_empty(),
+        "the closed-port wait reports progress while it waits"
+    );
+    assert!(
+        progress
+            .iter()
+            .any(|line| line.contains("still starting") && line.contains("last child output:")),
+        "the progress names the waiting listener and its child's output: {progress:?}"
+    );
+    // The first tick can precede the child's first write; every line that
+    // carries the tail must carry the bounded, redacted one.
+    for line in progress
+        .iter()
+        .filter(|line| line.contains("last child output:"))
+    {
+        assert_bounded_redacted_tail("the closed-port progress line", line);
+    }
+    assert!(
+        progress
+            .iter()
+            .filter(|line| line.contains("last child output:"))
+            .count()
+            >= 2,
+        "the wait keeps reporting the child's evidence while it waits: {progress:?}"
+    );
+
     let table = fixture.routes();
     assert!(
         table.lookup(CONTAINER_DOMAIN).is_some(),
         "the container's verified route stays published: {table:?}"
     );
     assert!(
-        table.lookup(LISTENER_DOMAIN).is_none(),
+        table.lookup(FRONT_DOMAIN).is_none(),
         "the still-closed listener has no route: {table:?}"
+    );
+    fixture.down();
+}
+
+/// A spent observation budget reconciles what the previous activation
+/// published: an untouched later listener whose own generation still serves
+/// keeps its route and stays exposed, and only the listener that never opened
+/// its port is withheld (effigy#455).
+#[test]
+fn detached_up_second_activation_keeps_a_healthy_listener_past_the_budget() {
+    let fixture = ExposureFixture::new(
+        "reconcile",
+        &[
+            FixtureListener {
+                name: "front",
+                domain: FRONT_DOMAIN,
+                child: READY_CHILD,
+            },
+            FixtureListener {
+                name: "api",
+                domain: API_DOMAIN,
+                child: READY_CHILD,
+            },
+        ],
+        30,
+    );
+    let first = fixture
+        .up(false)
+        .expect("the first activation exposes both listeners");
+    assert!(first.contains("front"), "{first}");
+    let published = fixture
+        .routes()
+        .lookup(API_DOMAIN)
+        .expect("the first activation publishes the api route")
+        .managed_listener
+        .clone();
+    assert!(published.is_some(), "the api route names its generation");
+
+    // The next activation: the first listener never opens its port under a
+    // short budget, and the second is never restarted.
+    fixture.set_listener_child("front", CLOSED_PORT_CHILD);
+    fixture.set_health_budget(3);
+    let error = fixture
+        .up(false)
+        .expect_err("the listener that never binds withholds only its own route");
+    let text = error.to_string();
+    assert!(
+        text.contains("partial exposure"),
+        "the second activation reports partial exposure: {text}"
+    );
+    assert!(
+        text.contains(&format!("`front` kept route {FRONT_DOMAIN} withheld")),
+        "the listener that never opened is withheld: {text}"
+    );
+    assert!(
+        !text.contains("`api` kept route"),
+        "a listener the previous activation published is never called withheld: {text}"
+    );
+    assert!(
+        text.contains(&format!("{API_DOMAIN} ->")),
+        "the healthy listener stays in the exposed routes: {text}"
+    );
+
+    let table = fixture.routes();
+    assert!(
+        table.lookup(CONTAINER_DOMAIN).is_some(),
+        "the container's verified route stays published: {table:?}"
+    );
+    let api = table
+        .lookup(API_DOMAIN)
+        .unwrap_or_else(|| panic!("the healthy listener keeps its route: {table:?}"));
+    assert_eq!(
+        api.managed_listener, published,
+        "the reconciled route is the generation the previous activation published"
+    );
+    assert!(
+        table.lookup(FRONT_DOMAIN).is_none(),
+        "the listener that never opened has no route: {table:?}"
     );
     fixture.down();
 }
@@ -513,7 +719,7 @@ fn detached_up_bounds_a_closed_port_by_the_observation_budget() {
 /// before any route write.
 #[test]
 fn detached_up_with_an_uncertain_identity_publishes_no_route() {
-    let fixture = ExposureFixture::new("uncertain", READY_CHILD, 30);
+    let fixture = ExposureFixture::new("uncertain", &one_listener(READY_CHILD), 30);
     fixture.set_mode("uncertain");
     let error = fixture
         .up(false)
@@ -529,7 +735,7 @@ fn detached_up_with_an_uncertain_identity_publishes_no_route() {
         "an uncertain identity publishes no container route: {table:?}"
     );
     assert!(
-        table.lookup(LISTENER_DOMAIN).is_none(),
+        table.lookup(FRONT_DOMAIN).is_none(),
         "no listener route is published either: {table:?}"
     );
     fixture.down();
@@ -540,15 +746,14 @@ fn detached_up_with_an_uncertain_identity_publishes_no_route() {
 /// own owner, never duplicated.
 #[test]
 fn detached_up_retry_after_listener_recovery_publishes_its_own_route() {
-    let fixture = ExposureFixture::new("retry", REFUSING_CHILD, 30);
+    let fixture = ExposureFixture::new("retry", &one_listener(REFUSING_CHILD), 30);
     let _ = fixture
         .up(false)
         .expect_err("the first attempt withholds the listener route");
-    assert!(fixture.routes().lookup(LISTENER_DOMAIN).is_none());
+    assert!(fixture.routes().lookup(FRONT_DOMAIN).is_none());
 
     // The listener's own child now answers the declared status.
-    std::fs::write(fixture.repo().join("scripts/front.py"), READY_CHILD.trim())
-        .expect("write the recovered listener child");
+    fixture.set_listener_child("front", READY_CHILD);
 
     let rendered = fixture
         .up(false)
@@ -559,7 +764,7 @@ fn detached_up_retry_after_listener_recovery_publishes_its_own_route() {
     );
     let table = fixture.routes();
     assert!(
-        table.lookup(LISTENER_DOMAIN).is_some(),
+        table.lookup(FRONT_DOMAIN).is_some(),
         "the recovered listener registers its own route: {table:?}"
     );
     let container = table

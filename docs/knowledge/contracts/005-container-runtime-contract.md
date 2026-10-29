@@ -327,9 +327,13 @@ The wait itself is bounded by the activation, not by the child's build. Host
 listener startup shares the bring-up's one runtime-observation budget
 (effigy#411). A listener still starting when that budget is spent withholds its
 own route and the command stops waiting for the remaining declared listeners,
-reporting each of them withheld, so `up` cannot hang on a listener that never
-binds. The listener keeps its own readiness semantics: its supervisor is left
-running, a child that eventually answers publishes its own verified route, and
+so `up` cannot hang on a listener that never binds. A listener that later
+activation does not start is never taken on trust either: it is reconciled
+against its own published generation and route first, so a healthy generation
+this activation never touched stays exposed and is named in `exposed_routes`,
+and only a listener with nothing verified now is reported withheld. The listener
+keeps its own readiness semantics: its supervisor is left running, a child that
+eventually answers publishes its own verified route, and
 `readiness.timeout_secs` still starts only when its port first opens.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and

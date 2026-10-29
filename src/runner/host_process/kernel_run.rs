@@ -639,18 +639,51 @@ fn start_host_processes_inner(
             let listener = resolved_host_process_listener(hp, &listener_binds);
             let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
             // The activation's observation budget is spent: nothing further is
-            // started, and each remaining listener is reported withheld rather
-            // than waited for past the command's own budget.
+            // started. A listener the previous activation already published is
+            // still this environment's exposure, so it is reconciled against
+            // its own published generation and route before any verdict; only a
+            // listener with nothing verified is reported withheld (effigy#455).
             if activation_budget_spent {
-                if let Some(listener) = listener.as_ref() {
-                    listener_failures.push(listener_failure(
-                        hp,
-                        listener,
-                        &log_file,
-                        "not started: the activation's observation budget expired before this listener was reached"
-                            .to_owned(),
-                        None,
-                    ));
+                let Some(listener) = listener.as_ref() else {
+                    continue;
+                };
+                let state_path = host_process_state_path(&dir, &hp.name);
+                let owner = managed_host_process_owner(&project_path, policy, hp)?;
+                match reconcile_published_listener(
+                    &state_path,
+                    &hp.name,
+                    &owner,
+                    route_table.as_deref(),
+                ) {
+                    super::ListenerWait::Ready(state) => {
+                        listener_results.push(listener_result(
+                            &hp.name,
+                            listener,
+                            &state,
+                            &state_path,
+                        ));
+                    }
+                    super::ListenerWait::Withheld {
+                        diagnostic,
+                        observed_status,
+                        budget_expired,
+                    } => {
+                        let detail = if budget_expired {
+                            "not started: the activation's observation budget expired before this listener was reached, and no generation from a previous activation is published".to_owned()
+                        } else {
+                            format!(
+                                "not started: the activation's observation budget expired before this listener was reached, and its published generation is not verified now ({diagnostic})"
+                            )
+                        };
+                        withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
+                        listener_failures.push(listener_failure(
+                            hp,
+                            listener,
+                            &log_file,
+                            detail,
+                            observed_status,
+                        ));
+                    }
                 }
                 continue;
             }
@@ -830,21 +863,8 @@ fn start_host_processes_inner(
                     )
                 })();
                 match waited {
-                    Ok(super::ListenerWait::Ready(state)) => {
-                        listener_results.push(ManagedHostListenerResult {
-                            name: hp.name.clone(),
-                            status: state.status,
-                            runtime_generation: state.runtime_generation,
-                            generation: state.generation,
-                            address: state.address.unwrap_or_default(),
-                            internal_url: state.internal_url.unwrap_or_default(),
-                            public_url: state.public_url.unwrap_or_default(),
-                            declared_route_domain: listener.declared_route_domain.clone(),
-                            route_domain: state.route_domain.unwrap_or_default(),
-                            route_tls: listener.route_tls,
-                            state_file: state_path.display().to_string(),
-                        })
-                    }
+                    Ok(super::ListenerWait::Ready(state)) => listener_results
+                        .push(listener_result(&hp.name, listener, &state, &state_path)),
                     // This listener never published its own route, so only its
                     // own route is withheld. Its supervisor keeps its own
                     // readiness semantics: a child that is still building may
@@ -989,6 +1009,57 @@ fn resolved_host_process_listener(
         listener.bind = bind.clone();
     }
     Some(listener)
+}
+
+/// What one verified listener publishes, as the report names it.
+fn listener_result(
+    name: &str,
+    listener: &EffectiveManagedHostListener,
+    state: &super::HostListenerState,
+    state_path: &Path,
+) -> ManagedHostListenerResult {
+    ManagedHostListenerResult {
+        name: name.to_owned(),
+        status: state.status.clone(),
+        runtime_generation: state.runtime_generation.clone(),
+        generation: state.generation.clone(),
+        address: state.address.clone().unwrap_or_default(),
+        internal_url: state.internal_url.clone().unwrap_or_default(),
+        public_url: state.public_url.clone().unwrap_or_default(),
+        declared_route_domain: listener.declared_route_domain.clone(),
+        route_domain: state.route_domain.clone().unwrap_or_default(),
+        route_tls: listener.route_tls,
+        state_file: state_path.display().to_string(),
+    }
+}
+
+/// One observation of whatever generation a previous activation published for
+/// this listener, without starting a replacement. `Ready` only when that exact
+/// generation is ready and its route is published now; anything else is
+/// withheld with the reason, because the spent budget cannot be spent again on
+/// a start.
+fn reconcile_published_listener(
+    state_path: &Path,
+    name: &str,
+    owner: &str,
+    route_table: Option<&Path>,
+) -> super::ListenerWait {
+    let Some(route_table) = route_table else {
+        return super::ListenerWait::Withheld {
+            diagnostic: "the environment has no gateway route table".to_owned(),
+            observed_status: None,
+            budget_expired: false,
+        };
+    };
+    match super::wait_for_listener_state(state_path, name, owner, route_table, Some(Instant::now()))
+    {
+        Ok(wait) => wait,
+        Err(error) => super::ListenerWait::Withheld {
+            diagnostic: format!("no verified generation is published: {error}"),
+            observed_status: None,
+            budget_expired: false,
+        },
+    }
 }
 
 /// What one listener's failure contributes to the caller's per-route report:

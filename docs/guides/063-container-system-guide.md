@@ -1085,10 +1085,12 @@ A listener that answers the wrong status is refused as soon as that answer is
 seen, and a still-closed port's progress line carries the child's own bounded,
 redacted output tail. A port that never opens cannot hold the activation open:
 listener startup shares the bring-up's observation budget, so `up` returns with
-that listener's route withheld (and every remaining listener reported withheld)
-when the budget is spent. A dependent of a withheld listener withholds its own
-route too, through a whole `depends_on` chain, instead of waiting for a record
-that process never wrote.
+that listener's route withheld when the budget is spent. A listener the
+activation did not start is reconciled against its own published generation
+first: a healthy generation the previous activation published stays exposed,
+and only a listener with nothing verified is reported withheld. A dependent of
+a withheld listener withholds its own route too, through a whole `depends_on`
+chain, instead of waiting for a record that process never wrote.
 Fresh full-ID inspect must match project, service, non-oneoff running state and
 checkout ownership; bindings come from current inspect published ports. An
 owned replacement updates its TCP target in the same locked route transaction,
