@@ -990,21 +990,81 @@ pub struct ExecutableFacts {
     pub nlink: u64,
     pub mode: u32,
     pub uid: u32,
+    pub gid: u32,
     pub len: u64,
+}
+
+/// The group memberships that decide a non-owner's access to an image: the
+/// operator process's primary and supplementary groups, which are the
+/// operator's own when Effigy runs as the operator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GroupSet {
+    groups: Vec<u32>,
+    /// False when the memberships could not be read; the access check is then
+    /// conservative instead of guessing.
+    resolved: bool,
+}
+
+impl GroupSet {
+    fn current() -> Self {
+        // `getgroups` is not portable through the wrapper crate on Apple
+        // platforms, so the libc call is used directly on both.
+        // SAFETY: asking for the count with a null buffer is always valid.
+        let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        if count < 0 {
+            // SAFETY: `getegid` takes no arguments and cannot fail.
+            return Self {
+                groups: vec![unsafe { libc::getegid() } as u32],
+                resolved: false,
+            };
+        }
+        let mut buffer = vec![0 as libc::gid_t; count as usize];
+        // SAFETY: the buffer holds exactly `count` gid_t values.
+        let filled = unsafe { libc::getgroups(count, buffer.as_mut_ptr()) };
+        if filled < 0 {
+            // SAFETY: `getegid` takes no arguments and cannot fail.
+            return Self {
+                groups: vec![unsafe { libc::getegid() } as u32],
+                resolved: false,
+            };
+        }
+        let mut groups: Vec<u32> = buffer[..filled as usize]
+            .iter()
+            .map(|gid| *gid as u32)
+            .collect();
+        // SAFETY: `getegid` takes no arguments and cannot fail.
+        groups.push(unsafe { libc::getegid() } as u32);
+        groups.sort_unstable();
+        groups.dedup();
+        Self {
+            groups,
+            resolved: true,
+        }
+    }
+
+    fn contains(&self, gid: u32) -> bool {
+        self.groups.binary_search(&gid).is_ok()
+    }
 }
 
 /// Whether the *operator* identity can execute this image.
 ///
 /// Any execute bit is not enough: an operator-owned image with mode `0410` has
-/// an execute bit but its owner cannot run it, and status must not call such a
-/// unit healthy when the login would fail with `EACCES`. The owner bit applies
-/// when the operator owns the file. For a root-owned image the operator is not
-/// the owner and its group membership is not resolved here, so the image must be
-/// executable by other users; a root-owned image that is only group-executable
-/// is uncertain and refused.
-fn executable_as_operator(facts: &ExecutableFacts, operator_uid: u32) -> bool {
-    let bit = if facts.uid == operator_uid {
-        0o100
+/// an execute bit but its owner cannot run it. For an image the operator does
+/// not own, POSIX applies the group class when one of the operator's groups is
+/// the image's group, and the other class only otherwise — a root-owned `0745`
+/// the operator's group owns is readable but not executable, whatever its other
+/// bits say. An unreadable membership list is refused conservatively (both the
+/// group and other bits must allow execution) rather than trusted.
+fn executable_as_operator(facts: &ExecutableFacts, operator_uid: u32, groups: &GroupSet) -> bool {
+    if facts.uid == operator_uid {
+        return facts.executable && facts.mode & 0o100 != 0;
+    }
+    if !groups.resolved {
+        return facts.executable && facts.mode & 0o011 == 0o011;
+    }
+    let bit = if groups.contains(facts.gid) {
+        0o010
     } else {
         0o001
     };
@@ -1019,6 +1079,7 @@ impl ExecutableFacts {
             nlink: metadata.nlink(),
             mode: metadata.mode(),
             uid: metadata.uid(),
+            gid: metadata.gid(),
             len: metadata.len(),
         }
     }
@@ -1026,8 +1087,18 @@ impl ExecutableFacts {
 
 /// One file, one executable, owner-private, owned by the operator (or root).
 pub fn validate_executable(facts: &ExecutableFacts, operator_uid: u32) -> io::Result<()> {
+    validate_executable_in(facts, operator_uid, &GroupSet::current())
+}
+
+/// The same rule with an explicit group set, so the group precedence is
+/// provable without changing the test process's own memberships.
+fn validate_executable_in(
+    facts: &ExecutableFacts,
+    operator_uid: u32,
+    groups: &GroupSet,
+) -> io::Result<()> {
     if !facts.regular
-        || !executable_as_operator(facts, operator_uid)
+        || !executable_as_operator(facts, operator_uid, groups)
         || facts.len == 0
         || facts.nlink != 1
         || facts.mode & 0o022 != 0
@@ -1072,6 +1143,7 @@ pub struct ExecutableIdentity {
     pub mode: u32,
     pub nlink: u64,
     pub uid: u32,
+    pub gid: u32,
     pub len: u64,
 }
 
@@ -1083,6 +1155,7 @@ impl ExecutableIdentity {
             nlink: self.nlink,
             mode: self.mode,
             uid: self.uid,
+            gid: self.gid,
             len: self.len,
         }
     }
@@ -1096,6 +1169,7 @@ impl ExecutableIdentity {
             mode: metadata.mode(),
             nlink: metadata.nlink(),
             uid: metadata.uid(),
+            gid: metadata.gid(),
             len: metadata.len(),
         }
     }
@@ -1805,6 +1879,7 @@ mod tests {
                     mode: 0o100755,
                     nlink: 1,
                     uid: 501,
+                    gid: 20,
                     len: 4096,
                 },
                 state,
@@ -2187,6 +2262,7 @@ mod tests {
             nlink: 1,
             mode: 0o100755,
             uid: 501,
+            gid: 20,
             len: 4096,
         };
         assert!(validate_executable(&facts, 501).is_ok());
@@ -2221,12 +2297,15 @@ mod tests {
                 &ExecutableFacts {
                     uid: 0,
                     mode: 0o100750,
+                    // A group the operator is not in: the other class applies
+                    // and allows nothing.
+                    gid: 65534,
                     ..facts
                 },
                 501
             )
             .is_err(),
-            "a root-owned image that only its group can execute is uncertain"
+            "a root-owned image that only a foreign group can execute is refused"
         );
 
         // Any execute bit is not enough: the operator identity must be able to
@@ -2476,6 +2555,7 @@ mod tests {
             nlink: 1,
             mode: 0o100755,
             uid: 501,
+            gid: 20,
             len: 4096,
         };
         for refused in [
@@ -3578,6 +3658,94 @@ mod tests {
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
             assert!(paths.unit.exists());
         });
+    }
+
+    /// POSIX applies the group class before the other class, so a root-owned
+    /// image the operator's group owns is judged by its group bits even when
+    /// its other bits allow execution.
+    #[test]
+    fn a_root_owned_image_is_judged_by_the_group_the_operator_matches() {
+        let facts = ExecutableFacts {
+            regular: true,
+            executable: true,
+            nlink: 1,
+            mode: 0o100745,
+            uid: 0,
+            gid: 77,
+            len: 4096,
+        };
+        let member = GroupSet {
+            groups: vec![20, 77],
+            resolved: true,
+        };
+        let stranger = GroupSet {
+            groups: vec![20],
+            resolved: true,
+        };
+
+        // 0745 with the operator's group matching: group is r--, so the other
+        // r-x does not apply and the operator cannot execute it.
+        assert!(
+            validate_executable_in(&facts, 501, &member).is_err(),
+            "the matched, non-executable group must win over the other bits"
+        );
+        // The same image with a group the operator is not in is judged by its
+        // other bits, which do allow execution.
+        assert!(validate_executable_in(&facts, 501, &stranger).is_ok());
+
+        // 0750 with a matching group is executable through the group class.
+        let group_only = ExecutableFacts {
+            mode: 0o100750,
+            ..facts
+        };
+        assert!(validate_executable_in(&group_only, 501, &member).is_ok());
+        // …and refused when the operator is not in that group.
+        assert!(validate_executable_in(&group_only, 501, &stranger).is_err());
+
+        // Unknown memberships are refused conservatively unless both classes
+        // allow execution.
+        let unknown = GroupSet {
+            groups: vec![20],
+            resolved: false,
+        };
+        assert!(validate_executable_in(&facts, 501, &unknown).is_err());
+        let both = ExecutableFacts {
+            mode: 0o100755,
+            ..facts
+        };
+        assert!(validate_executable_in(&both, 501, &unknown).is_ok());
+    }
+
+    /// The real access path uses this process's own memberships: a file whose
+    /// group is one of them is judged by its group bits.
+    #[test]
+    fn the_operator_access_check_uses_the_processes_own_groups() {
+        let groups = GroupSet::current();
+        assert!(groups.resolved, "the test process can read its own groups");
+        let egid = unsafe { libc::getegid() } as u32;
+        assert!(groups.contains(egid), "the primary group is in the set");
+
+        let facts = ExecutableFacts {
+            regular: true,
+            executable: true,
+            nlink: 1,
+            // Owner is root, the group is this process's group and may only
+            // read; other may execute, which must not rescue it.
+            mode: 0o100745,
+            uid: 0,
+            gid: egid,
+            len: 4096,
+        };
+        assert!(validate_executable(&facts, 501).is_err());
+        // With the group's execute bit set it is fine.
+        assert!(validate_executable(
+            &ExecutableFacts {
+                mode: 0o100750,
+                ..facts
+            },
+            501
+        )
+        .is_ok());
     }
 
     /// An owner-owned image whose owner execute bit is clear is not runnable by

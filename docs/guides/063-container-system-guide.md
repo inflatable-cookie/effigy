@@ -1605,9 +1605,12 @@ touching the unit, so the next login starts it again; remove the unit with
 
 Beyond trusting mkcert's local CA, the administrator prompt is for the split-DNS
 unit and the file capability. The installed image must also be executable by
-your account — the owner execute bit when you own it, other-execute when root
-owns it — or the launch unit that names it is reported `stale` rather than
-healthy. Everything else, including the user unit, runs as
+your account, resolved the way your account's access actually resolves: your
+owner execute bit when you own it, and for a root-owned image the group bits
+when one of your groups is the image's group, otherwise the other bits. A
+root-owned image whose group you are in but which your group cannot execute is
+refused, and the launch unit that names an image you cannot run is reported
+`stale` rather than healthy. Everything else, including the user unit, runs as
 your account. Immediately after applying the capability, setup re-execs the
 installed binary as you, checks that the fresh exec carries
 `CAP_NET_BIND_SERVICE`, and binds the configured low ports; a refusal fails

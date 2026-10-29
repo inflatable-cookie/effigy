@@ -148,7 +148,8 @@ During v0.x, MINOR bumps may include breaking changes.
   prove the `CAP_NET_BIND_SERVICE` capability, refusing a changed, linked or
   group/world-writable binary, and refusing an image this account cannot
   execute (`launcher.unit: "stale"`), because an execute bit alone does not
-  mean the operator can run it. `gateway status --json` reports the observed
+  mean the operator can run it: the check follows the account's real access,
+  including POSIX group precedence for a root-owned image. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes
   only unit and capability records Effigy wrote. A replaced binary is reported
   as a missing capability instead of being trusted, a link at the installed path
