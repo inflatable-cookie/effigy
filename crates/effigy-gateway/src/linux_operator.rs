@@ -968,9 +968,7 @@ fn cstring(text: &str) -> io::Result<std::ffi::CString> {
 fn chmod_advice(mode: &str, path: &Path) -> String {
     match shell_word(path) {
         Some(word) => format!("Run `chmod {mode} {word}`"),
-        None => format!(
-            "This path is not valid UTF-8, so no shell command can print it; set its mode from a shell that can address it"
-        ),
+        None => "This path is not valid UTF-8, so no shell command can print it; set its mode from a shell that can address it".to_string(),
     }
 }
 
@@ -1288,10 +1286,7 @@ impl GroupSet {
                 resolved: false,
             };
         }
-        let mut groups: Vec<u32> = buffer[..filled as usize]
-            .iter()
-            .map(|gid| *gid as u32)
-            .collect();
+        let mut groups: Vec<u32> = buffer[..filled as usize].to_vec();
         // SAFETY: `getegid` takes no arguments and cannot fail.
         groups.push(unsafe { libc::getegid() } as u32);
         groups.sort_unstable();
