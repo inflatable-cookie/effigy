@@ -222,7 +222,8 @@ During v0.x, MINOR bumps may include breaking changes.
   controlling terminal, its parent chain up to the session leader with each
   pid's start identity and redacted command, and only allowlisted `PASEO_*`,
   `NS_*` and `EFFIGY_RUN_*` identity markers whose value is a UUID, a decimal
-  id or Effigy's own base32 run id. Command text is published by role, not by
+  id or Effigy's own base32 run id, recorded as that form plus a SHA-256
+  fingerprint rather than the value. Command text is published by role, not by
   spelling: an event records only the program's file name and one of Effigy's own
   flag names, so a positional argument (whatever its spelling), a path, an
   unknown flag, a URL, a `KEY=value` pair and the value of any flag in
@@ -233,8 +234,8 @@ During v0.x, MINOR bumps may include breaking changes.
   inside itself. The walk stays inside the invoking process's session, so a
   reparented child ends the chain with an unknown reason instead of naming
   another session's leader, and the controlling terminal is the session's real
-  device (`/dev/ttysNNN`, never the generic `/dev/tty` alias) so a redirected
-  stdin still names it. The `unknown` list is capped and says how
+  device (`/dev/ttysNNN` on macOS, `/dev/pts/N` on Linux), resolved by device
+  rather than from a standard descriptor and never the generic `/dev/tty` alias. The `unknown` list is capped and says how
   many reasons it omitted, so invalid markers never hide a broken chain. The
   event is written at the command boundary only: `gateway setup` emits its one
   setup event and no extra up or down event, and a task run that starts the

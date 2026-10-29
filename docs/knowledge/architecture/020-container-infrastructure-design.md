@@ -802,8 +802,9 @@ could not be confirmed by a second read, or a parent in another session —
 a reparented child ends the walk instead of naming another session's leader —
 becomes a bounded unknown reason instead of a guess, and no environment value is
 read unless its name is on that allowlist. The controlling terminal is the
-session's terminal, named by its device and never by the generic `/dev/tty`
-alias, so a command with stdin redirected still names the real device. The reason list keeps chain failures ahead of marker failures and
+session's terminal, resolved by its device on each platform and never taken from
+a standard descriptor or named by the generic `/dev/tty` alias, so a redirected
+descriptor or one attached to another terminal never misattributes the action. The reason list keeps chain failures ahead of marker failures and
 ends with how many reasons it omitted, so a full list never hides a missing or
 unconfirmed part of the chain.
 
@@ -816,9 +817,11 @@ down` records `--suffix <redacted>`. An ancestor's command is another program's
 text, so only its program is published — the executable the operating system
 reports, never its caller-chosen `argv[0]` — and no option token of it is, even
 one that spells an Effigy flag; a shell command string is foreign text too and
-publishes nothing inside itself. A marker value is recorded only when it is a UUID, a decimal
-id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
-marker variable is refused by name only. A stop signalled by replacement or
+publishes nothing inside itself. A marker is read only when its value is a UUID, a decimal
+id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, and it is recorded as that
+form plus a SHA-256 fingerprint, never as the value: an ID-shaped value can still
+be a credential, and a password pasted into a marker variable is refused by name
+only. A stop signalled by replacement or
 migration is attributable through the `up` or `setup` action that requested it;
 no lower-level helper writes a second record for one action. The event is written
 at the command boundary only, so a `setup` step that starts or stops the gateway

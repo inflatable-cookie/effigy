@@ -376,10 +376,12 @@ record:
 - the invoking process's start identity (the platform's own process-start
 evidence, so two processes that held one pid stay distinguishable), its
 session and its controlling terminal when it has one. The terminal is the
-session's controlling terminal, named by its device rather than by the generic
-`/dev/tty` alias — macOS reads it from the kernel's record of the session's
-terminal device, Linux resolves `/dev/tty` through `/proc` — so a command with
-stdin redirected or in a pipeline still names the real device (`/dev/ttysNNN`);
+session's controlling terminal, resolved by its device: macOS reads the kernel's
+record of the session's terminal device and names the pty slave
+(`/dev/ttysNNN`), and Linux opens `/dev/tty` and names the device it refers to
+(`/dev/pts/N`, `/dev/ttyN`). A standard descriptor is never taken as the
+terminal, so a redirected descriptor or one attached to another terminal cannot
+misattribute the action, and the generic `/dev/tty` alias is never recorded;
 - the parent chain from the invoking process's parent up to and including its
 session leader, capped at eight entries, each with pid, start identity, session
 and redacted argument boundaries. The walk stays inside the invoking process's
@@ -389,8 +391,11 @@ another session's leader;
 - only allowlisted agent/task/run identity markers, read by name from
 `PASEO_*`, `NS_*` and `EFFIGY_RUN_*`, and only when the value is one of the
 supported identity forms: a `8-4-4-4-12` hexadecimal UUID, a decimal id, or —
-for `EFFIGY_RUN_*` — Effigy's own 26-character base32 run id. Every other
-environment value is never read;
+for `EFFIGY_RUN_*` — Effigy's own 26-character base32 run id. A marker is
+recorded as its recognised form and a SHA-256 fingerprint, never its value,
+because an ID-shaped value can still be a credential: two events from the same
+agent, task or run correlate through the fingerprint and no raw marker value is
+written. Every other environment value is never read;
 - a bounded `unknown` list naming what could not be read: an unreadable or
 vanished parent, unreadable arguments, a pid whose start identity changed or
 could not be confirmed by a second read, a truncated chain, or a marker whose

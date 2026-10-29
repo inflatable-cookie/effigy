@@ -232,17 +232,11 @@ pub fn process_lineage(pid: u32) -> std::io::Result<ProcessLineage> {
 }
 
 /// The invoking process's controlling terminal, when it has one. The terminal is
-/// a property of the process, not of its stdin: a command run as
-/// `effigy … < /dev/null`, from a pipeline or with a redirected descriptor still
-/// has one. A standard descriptor that is itself a terminal names it directly;
-/// otherwise the platform reports this session's controlling terminal, which is
-/// named by its device rather than by the generic `/dev/tty` alias.
+/// a property of the session, not of a descriptor: a standard descriptor can
+/// belong to another terminal, and a process can hold a terminal descriptor
+/// without a controlling terminal at all, so the session's own terminal is
+/// resolved by its device rather than from whatever file descriptor is a tty.
 pub fn controlling_terminal() -> Option<String> {
-    for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
-        if let Some(name) = tty_name(fd) {
-            return Some(name);
-        }
-    }
     platform::controlling_terminal()
 }
 
@@ -250,8 +244,7 @@ pub fn controlling_terminal() -> Option<String> {
 /// no terminal identity of its own.
 const GENERIC_TERMINAL: &str = "/dev/tty";
 
-/// The name of the terminal behind a descriptor, when its tty name is a real
-/// device: an alias is not an identity, and the caller resolves it instead.
+/// A tty name that identifies a device, never the generic alias.
 fn tty_name(fd: libc::c_int) -> Option<String> {
     let mut buffer = [0 as libc::c_char; 128];
     // SAFETY: fd is live, and ttyname_r writes at most buffer.len() bytes into
@@ -267,6 +260,18 @@ fn tty_name(fd: libc::c_int) -> Option<String> {
     real.then_some(path)
 }
 
+/// The device number a character-device descriptor refers to.
+fn device_of(fd: libc::c_int) -> Option<u64> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: fd is live and stat points to aligned writable full storage.
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: a successful fstat initialized the full output structure.
+    let stat = unsafe { stat.assume_init() };
+    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then(|| stat.st_rdev as u64)
+}
+
 /// Darwin names a pty slave `/dev/ttysNNN` from device major 16 and the minor
 /// number. Another kind of terminal cannot be named from its device.
 #[cfg(target_os = "macos")]
@@ -275,6 +280,20 @@ fn pty_device_path(device: u32) -> Option<String> {
     let major = (device >> 24) & 0xff;
     let minor = device & 0x00ff_ffff;
     (major == 16 && minor <= 999).then(|| format!("/dev/ttys{minor:03}"))
+}
+
+/// Linux names a terminal from its device number: pty slaves are major 136-143
+/// and live under `/dev/pts`, and virtual or serial consoles are major 4.
+#[cfg(any(target_os = "linux", test))]
+fn linux_device_path(device: u64) -> Option<String> {
+    let major = ((device >> 8) & 0xfff) | ((device >> 32) & !0xfff);
+    let minor = (device & 0xff) | ((device >> 12) & !0xff);
+    match major {
+        136..=143 => Some(format!("/dev/pts/{}", (major - 136) * 256 + minor)),
+        4 if minor < 64 => Some(format!("/dev/tty{minor}")),
+        4 => Some(format!("/dev/ttyS{}", minor - 64)),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,6 +544,32 @@ mod platform {
         parse_linux_lineage(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
     }
     pub fn controlling_terminal() -> Option<String> {
+        // `/dev/tty` opens only when the session has a controlling terminal, and
+        // the descriptor's device is that terminal. `ttyname` on it can answer
+        // the `/dev/tty` alias, so the device number names it instead.
+        // SAFETY: a constant NUL-terminated path, read-only flags, no creation
+        // and no control terminal is taken over.
+        let fd = unsafe {
+            libc::open(
+                c"/dev/tty".as_ptr(),
+                libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return None;
+        }
+        let name = super::device_of(fd)
+            .and_then(super::linux_device_path)
+            .or_else(|| super::tty_name(fd));
+        // SAFETY: fd was opened above and is owned here; it is closed once.
+        unsafe { libc::close(fd) };
+        name
+    }
+    pub fn lineage(pid: u32) -> io::Result<ProcessLineage> {
+        let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
+        parse_linux_lineage(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
+    }
+    pub fn controlling_terminal() -> Option<String> {
         // `/dev/tty` is the calling session's terminal whatever was redirected,
         // and /proc names the real device behind it.
         // SAFETY: a constant NUL-terminated path, read-only flags, no creation
@@ -732,6 +777,36 @@ mod tests {
         assert!(process_lineage(i32::MAX as u32 + 1).is_err());
     }
     #[test]
+    fn linux_device_numbers_name_their_terminal() {
+        // glibc's encoding: major from bits 8-19 and 32+, minor from bits 0-7
+        // and 12-31.
+        let device = |major: u64, minor: u64| (major << 8) | (minor & 0xff);
+        assert_eq!(
+            linux_device_path(device(136, 0)),
+            Some("/dev/pts/0".to_owned())
+        );
+        assert_eq!(
+            linux_device_path(device(136, 3)),
+            Some("/dev/pts/3".to_owned())
+        );
+        // A pty beyond the first 256 minors moves to the next major.
+        assert_eq!(
+            linux_device_path(device(137, 0)),
+            Some("/dev/pts/256".to_owned())
+        );
+        assert_eq!(
+            linux_device_path(device(4, 1)),
+            Some("/dev/tty1".to_owned())
+        );
+        assert_eq!(
+            linux_device_path(device(4, 64)),
+            Some("/dev/ttyS0".to_owned())
+        );
+        // The `/dev/tty` alias device names no terminal identity.
+        assert_eq!(linux_device_path(device(2, 0)), None);
+    }
+
+    #[test]
     fn terminal_name_reads_a_pty_and_refuses_a_pipe() {
         let mut master: libc::c_int = -1;
         let mut slave: libc::c_int = -1;
@@ -747,22 +822,28 @@ mod tests {
         };
         assert_eq!(opened, 0, "a pty is available to the test");
         let name = tty_name(slave).expect("a pty slave has a terminal name");
-        assert!(name.starts_with("/dev/"), "{name}");
+        // Each platform names its pty slaves in its own directory.
+        let prefix = if cfg!(target_os = "macos") {
+            "/dev/ttys"
+        } else {
+            "/dev/pts/"
+        };
+        assert!(name.starts_with(prefix), "{name}");
+        let device = device_of(slave).expect("the slave is a character device");
         // The slave's device names the same terminal, which is how the generic
-        // /dev/tty alias is resolved on macOS.
+        // /dev/tty alias is resolved on each platform.
         #[cfg(target_os = "macos")]
-        {
-            let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-            // SAFETY: the slave fd is live and stat is aligned writable storage.
-            assert_eq!(unsafe { libc::fstat(slave, stat.as_mut_ptr()) }, 0);
-            // SAFETY: a successful fstat initialized the full structure.
-            let stat = unsafe { stat.assume_init() };
-            assert_eq!(
-                pty_device_path(stat.st_rdev as u32),
-                Some(name.clone()),
-                "the device resolves to the same slave identity"
-            );
-        }
+        assert_eq!(
+            pty_device_path(device as u32),
+            Some(name.clone()),
+            "the device resolves to the same slave identity"
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            linux_device_path(device),
+            Some(name.clone()),
+            "the device resolves to the same slave identity"
+        );
         // SAFETY: both descriptors were opened above and are closed once each.
         unsafe {
             libc::close(slave);
@@ -838,22 +919,43 @@ mod tests {
                     }
                 }
                 libc::close(null);
-                for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
-                    if libc::isatty(fd) != 0 {
-                        libc::_exit(3);
-                    }
+                // Another terminal on stdout must not be mistaken for the
+                // controlling terminal: only stdin and stderr leave the session's
+                // terminal here.
+                let mut other_master: libc::c_int = -1;
+                let mut other_slave: libc::c_int = -1;
+                let other = libc::openpty(
+                    &mut other_master,
+                    &mut other_slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                );
+                if other != 0 {
+                    libc::_exit(3);
+                }
+                if libc::dup2(other_slave, libc::STDOUT_FILENO) < 0 {
+                    libc::_exit(4);
+                }
+                libc::close(other_slave);
+                libc::close(other_master);
+                if libc::isatty(libc::STDIN_FILENO) != 0
+                    || libc::isatty(libc::STDERR_FILENO) != 0
+                    || libc::isatty(libc::STDOUT_FILENO) != 1
+                {
+                    libc::_exit(5);
                 }
                 let resolved = super::controlling_terminal();
                 libc::close(kept);
                 let Some(resolved) = resolved else {
-                    libc::_exit(4);
+                    libc::_exit(6);
                 };
                 let bytes = resolved.as_bytes();
                 let written = libc::write(pipe[1], bytes.as_ptr().cast(), bytes.len());
                 libc::_exit(if written == bytes.len() as isize {
                     0
                 } else {
-                    5
+                    7
                 });
             }
         }

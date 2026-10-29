@@ -123,8 +123,8 @@ pub fn caller(
             continue;
         };
         match identity(name, &value) {
-            Ok(value) => {
-                markers.insert((*name).to_owned(), value);
+            Ok(form) => {
+                markers.insert((*name).to_owned(), fingerprint(form, &value));
             }
             Err(reason) => marker_failures.push(bounded(&format!("{name}: {reason}"), TEXT_LIMIT)),
         }
@@ -466,7 +466,7 @@ fn shell_flag(argument: &str) -> bool {
 /// actually use, so arbitrary text — a password pasted into a marker variable —
 /// is never recorded as an identity (effigy#450 review). The reason never quotes
 /// the rejected value.
-fn identity(name: &str, value: &OsString) -> Result<String, &'static str> {
+fn identity(name: &str, value: &OsString) -> Result<IdentityForm, &'static str> {
     let Some(value) = value.to_str() else {
         return Err("value is not UTF-8");
     };
@@ -476,14 +476,50 @@ fn identity(name: &str, value: &OsString) -> Result<String, &'static str> {
     if value.len() > MARKER_VALUE_LIMIT {
         return Err("value is too long for an identity");
     }
-    let accepted = uuid(value)
-        || decimal(value)
-        // Effigy's own run id is a 26-character base32 encoding of 16 bytes.
-        || (name.starts_with("EFFIGY_RUN_") && effigy_run_id(value));
-    if !accepted {
-        return Err("value is not a supported identity form");
+    if uuid(value) {
+        return Ok(IdentityForm::Uuid);
     }
-    Ok(value.to_owned())
+    if decimal(value) {
+        return Ok(IdentityForm::Decimal);
+    }
+    // Effigy's own run id is a 26-character base32 encoding of 16 bytes.
+    if name.starts_with("EFFIGY_RUN_") && effigy_run_id(value) {
+        return Ok(IdentityForm::Run);
+    }
+    Err("value is not a supported identity form")
+}
+
+/// The recognised shapes a marker value can have. Only the shape is recorded;
+/// the value itself never is, because an ID-shaped value can still be a secret
+/// (effigy#450 review).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentityForm {
+    Uuid,
+    Decimal,
+    Run,
+}
+impl IdentityForm {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Uuid => "uuid",
+            Self::Decimal => "decimal",
+            Self::Run => "run",
+        }
+    }
+}
+
+/// A marker is recorded as its recognised form and a one-way fingerprint. Two
+/// events from the same agent, task or run carry the same fingerprint, which is
+/// the attribution an operator needs, and no raw marker value is ever written.
+fn fingerprint(form: IdentityForm, value: &OsString) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(value.to_string_lossy().as_bytes());
+    let hex = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{}:{hex}", form.name())
 }
 
 /// `8-4-4-4-12` hexadecimal, the form Paseo and Queue identity values use.
@@ -898,16 +934,19 @@ mod tests {
         );
     }
 
-    /// Only allowlisted markers are read, and only a value in one of the
-    /// supported identity forms is kept: a password pasted into a marker
-    /// variable is refused with a bounded reason that never quotes it.
+    /// Only allowlisted markers are read, and a marker is recorded as its
+    /// recognised form and a fingerprint, never as its value: an ID-shaped value
+    /// can still be a secret (effigy#450 review).
     #[test]
-    fn gateway_caller_markers_are_allowlisted_and_validated() {
+    fn gateway_caller_markers_are_allowlisted_validated_and_fingerprinted() {
         let fake = Fake::default().facts(50, 1, 50, "macos:1.000050", &[]);
+        let agent = "3f2b8c1a-9d4e-4f6a-8b2c-7e5d1a9c0b34";
+        let run = "1b3dafc2-a108-48af-8807-ec552d605e8f";
+        let effigy_run = "abcdefghijklmnopqrstuvwxyz";
         let values = [
-            ("PASEO_AGENT_ID", "3f2b8c1a-9d4e-4f6a-8b2c-7e5d1a9c0b34"),
-            ("NS_RUN_ID", "1b3dafc2-a108-48af-8807-ec552d605e8f"),
-            ("EFFIGY_RUN_ID", "abcdefghijklmnopqrstuvwxyz"),
+            ("PASEO_AGENT_ID", agent),
+            ("NS_RUN_ID", run),
+            ("EFFIGY_RUN_ID", effigy_run),
             ("NS_HOST_ID", "42"),
             // Presence is read by name, so an unlisted name is never consulted.
             ("PASEO_HOME", "/Users/someone/.paseo"),
@@ -920,16 +959,55 @@ mod tests {
                 .find(|(candidate, _)| *candidate == name)
                 .map(|(_, value)| OsString::from(*value))
         });
+        assert_eq!(record.markers.len(), 4, "{:?}", record.markers);
         assert_eq!(
-            record.markers,
-            markers(&[
-                ("PASEO_AGENT_ID", "3f2b8c1a-9d4e-4f6a-8b2c-7e5d1a9c0b34"),
-                ("NS_RUN_ID", "1b3dafc2-a108-48af-8807-ec552d605e8f"),
-                ("EFFIGY_RUN_ID", "abcdefghijklmnopqrstuvwxyz"),
-                ("NS_HOST_ID", "42"),
-            ])
+            record.markers.keys().collect::<Vec<_>>(),
+            ["EFFIGY_RUN_ID", "NS_HOST_ID", "NS_RUN_ID", "PASEO_AGENT_ID"]
         );
+        assert_eq!(
+            record.markers["PASEO_AGENT_ID"].split(':').next(),
+            Some("uuid")
+        );
+        assert_eq!(
+            record.markers["NS_HOST_ID"].split(':').next(),
+            Some("decimal")
+        );
+        assert_eq!(
+            record.markers["EFFIGY_RUN_ID"].split(':').next(),
+            Some("run")
+        );
+        let rendered = serde_json::to_string(&record).unwrap();
+        for raw in [agent, run, effigy_run, "42"] {
+            assert!(!rendered.contains(&format!("\"{raw}\"")), "{rendered}");
+        }
         assert!(record.unknown.is_empty(), "{:?}", record.unknown);
+
+        // The same value carries the same fingerprint, and a different one does
+        // not: correlation survives, the value does not.
+        let fingerprint = |value: &str| {
+            caller(&fake, 50, None, |name| {
+                (name == "PASEO_AGENT_ID").then(|| OsString::from(value))
+            })
+            .markers["PASEO_AGENT_ID"]
+                .clone()
+        };
+        assert_eq!(fingerprint(agent), fingerprint(agent));
+        assert_ne!(fingerprint(agent), fingerprint(run));
+
+        // An ID-shaped secret is recorded as a fingerprint too, not as text.
+        let id_shaped = caller(&fake, 50, None, |name| match name {
+            "NS_RUN_ID" => Some(OsString::from("123456")),
+            "PASEO_AGENT_ID" => Some(OsString::from(agent)),
+            _ => None,
+        });
+        let rendered = serde_json::to_string(&id_shaped).unwrap();
+        for raw in ["123456", agent] {
+            assert!(!rendered.contains(&format!("\"{raw}\"")), "{rendered}");
+        }
+        assert_eq!(
+            id_shaped.markers["NS_RUN_ID"].split(':').next(),
+            Some("decimal")
+        );
 
         // A syntactically plain password, a value that is too long and a
         // secret-shaped value are all refused without being quoted.
