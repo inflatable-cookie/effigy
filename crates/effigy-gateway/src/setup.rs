@@ -36,6 +36,17 @@ fn staged_executable_fits(len: u64) -> bool {
     len <= MAX_STAGED_EXECUTABLE
 }
 
+/// The refusal for an image past the staging bound. It names the bound and the
+/// remedy: a debug build is past it, and nothing about that is the operator's
+/// fault or a reason to loosen the bound (#473).
+fn staged_executable_refusal(len: u64) -> String {
+    format!(
+        "setup stages at most {} MiB of the running executable, and this one is {} MiB; build and install a release binary with `effigy install:local`, then run `effigy gateway setup` again",
+        MAX_STAGED_EXECUTABLE >> 20,
+        len.div_ceil(1 << 20)
+    )
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
@@ -241,14 +252,20 @@ pub fn session<T>(
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(source)?;
-        if !file.metadata()?.is_file() || !staged_executable_fits(file.metadata()?.len()) {
-            return Err(error("setup executable is not a bounded regular file"));
+        if !file.metadata()?.is_file() {
+            return Err(error("setup executable is not a regular file"));
+        }
+        if !staged_executable_fits(file.metadata()?.len()) {
+            return Err(error(staged_executable_refusal(file.metadata()?.len())));
         }
         let mut bytes = Vec::new();
         file.take(MAX_STAGED_EXECUTABLE + 1)
             .read_to_end(&mut bytes)?;
         if !staged_executable_fits(bytes.len() as u64) {
-            return Err(error("setup executable changed while staging"));
+            return Err(error(format!(
+                "setup executable changed while staging: {}",
+                staged_executable_refusal(bytes.len() as u64)
+            )));
         }
         let dir = DirFd::open(temp.path()).map_err(error)?;
         run.replace_file(
@@ -399,6 +416,172 @@ pub fn linux_boot_job(suffixes: &[String]) -> Vec<u8> {
         .join(" ");
     format!("# {MARKER}\n[Unit]\nDescription=Effigy gateway split DNS\nAfter=systemd-resolved.service\nRequires=systemd-resolved.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/sbin/ip link add effigy-gw type dummy\nExecStart=/usr/sbin/ip link set effigy-gw up\nExecStart=/usr/bin/resolvectl dns effigy-gw 127.0.0.1:15353\nExecStart=/usr/bin/resolvectl domain effigy-gw {domains}\nExecStart=/usr/bin/resolvectl default-route effigy-gw no\nExecStop=/usr/bin/resolvectl revert effigy-gw\nExecStop=/usr/sbin/ip link delete effigy-gw\n[Install]\nWantedBy=multi-user.target\n").into_bytes()
 }
+/// Run one platform command through the injected adapter, refusing a non-zero
+/// exit with the adapter's own output, exactly as [`command`] does.
+fn platform_command(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
+    argv: Vec<OsString>,
+) -> io::Result<Vec<u8>> {
+    let (code, output) = command(run, cx, argv)?;
+    if code != 0 {
+        return Err(error(format!(
+            "gateway setup adapter failed (exit {code}): {}",
+            String::from_utf8_lossy(&output)
+        )));
+    }
+    Ok(output)
+}
+
+/// The macOS platform action's root-owned directories, operator identity and
+/// helper image. Production names `/private/etc`, `/Library/LaunchDaemons`,
+/// `/Library` and the running executable; a fixture substitutes its own, so
+/// nothing here can reach the machine's resolver, launchd or interfaces.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) struct MacosPlatform<'a> {
+    pub identity: (u32, u32),
+    pub helper: &'a Path,
+    pub etc: &'a DirFd,
+    pub jobs: &'a DirFd,
+    pub library: &'a DirFd,
+}
+
+/// The macOS platform action: local resolver files, the loopback boot job and
+/// the privileged bind broker.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn apply_macos(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    suffixes: &[String],
+    platform: &MacosPlatform<'_>,
+    command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
+) -> io::Result<()> {
+    let (uid, gid) = platform.identity;
+    let (helper, etc, jobs, library) = (
+        platform.helper,
+        platform.etc,
+        platform.jobs,
+        platform.library,
+    );
+    let resolvers = etc
+        .prepare_setup_child(cx, &FileName::new("resolver").map_err(error)?, 0o755)
+        .map_err(error)?;
+    for suffix in suffixes {
+        let contents = format!("# {MARKER}\nnameserver 127.0.0.1\nport 15353\n");
+        managed_file(run, cx, &resolvers, suffix, contents.as_bytes(), true)?;
+    }
+    managed_file(
+        run,
+        cx,
+        jobs,
+        "dev.effigy.gateway.loopback.plist",
+        &macos_boot_job(),
+        false,
+    )?;
+    let helpers = library
+        .prepare_setup_child(
+            cx,
+            &FileName::new("PrivilegedHelperTools").map_err(error)?,
+            0o755,
+        )
+        .map_err(error)?;
+    broker::install(run, cx, jobs, &helpers, (uid, gid), helper, &mut *command)?;
+    // Observe the real interface before adding missing aliases. Repeated setup
+    // never treats a failed or unavailable observation as absence.
+    let interfaces = platform_command(
+        run,
+        cx,
+        &mut *command,
+        vec!["/sbin/ifconfig".into(), "lo0".into()],
+    )?;
+    let interfaces = String::from_utf8(interfaces).map_err(error)?;
+    for n in 1..=50 {
+        let address = format!("127.1.0.{n}");
+        if interfaces.lines().any(|line| {
+            line.split_whitespace().collect::<Vec<_>>().get(..2)
+                == Some(&["inet", address.as_str()])
+        }) {
+            continue;
+        }
+        platform_command(
+            run,
+            cx,
+            &mut *command,
+            vec![
+                "/sbin/ifconfig".into(),
+                "lo0".into(),
+                "alias".into(),
+                address.into(),
+                "up".into(),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// The Linux platform action: the split-DNS unit and the binary-local low-port
+/// capability. The unit directory, the command adapter and the capability
+/// install are parameters, so a fixture substitutes its own root and a fake
+/// capability and touches no unit, interface or binary attribute.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn apply_linux(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    suffixes: &[String],
+    uid: u32,
+    systemd: &DirFd,
+    command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
+    install_capability: &mut impl FnMut(u32) -> io::Result<()>,
+) -> io::Result<()> {
+    let name = FileName::new("effigy-gateway-dns.service").map_err(error)?;
+    match read_record::<Bytes>(&cx.operation().observe().map_err(error)?, systemd, &name) {
+        Observed::Verified(bytes, _) if String::from_utf8_lossy(&bytes.0).contains(MARKER) => {
+            platform_command(
+                run,
+                cx,
+                &mut *command,
+                vec![
+                    "/usr/bin/systemctl".into(),
+                    "stop".into(),
+                    name.as_str().into(),
+                ],
+            )?;
+        }
+        Observed::Absent(_) => {}
+        other => return Err(error(format!("preserving unknown DNS unit: {other:?}"))),
+    }
+    managed_file(
+        run,
+        cx,
+        systemd,
+        name.as_str(),
+        &linux_boot_job(suffixes),
+        false,
+    )?;
+    platform_command(
+        run,
+        cx,
+        &mut *command,
+        vec!["/usr/bin/systemctl".into(), "daemon-reload".into()],
+    )?;
+    platform_command(
+        run,
+        cx,
+        &mut *command,
+        vec![
+            "/usr/bin/systemctl".into(),
+            "enable".into(),
+            "--now".into(),
+            name.as_str().into(),
+        ],
+    )?;
+    // A binary-local capability avoids lowering a host-wide port threshold.
+    // It is bound to exactly the binary setup ran, and a foreign record is
+    // preserved rather than replaced.
+    install_capability(uid)
+}
+
 pub fn apply_platform(
     run: &mut Run<'_>,
     cx: &EffectContext,
@@ -406,123 +589,46 @@ pub fn apply_platform(
     suffixes: &[String],
     uid: u32,
 ) -> io::Result<()> {
+    let mut command = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
+        command_outcome(run, cx, argv, false)
+    };
     #[cfg(target_os = "macos")]
     {
-        let etc = DirFd::open(Path::new("/private/etc")).map_err(error)?;
-        let resolvers = etc
-            .prepare_setup_child(cx, &FileName::new("resolver").map_err(error)?, 0o755)
-            .map_err(error)?;
-        for suffix in suffixes {
-            let contents = format!("# {MARKER}\nnameserver 127.0.0.1\nport 15353\n");
-            managed_file(run, cx, &resolvers, suffix, contents.as_bytes(), true)?;
-        }
-        let jobs = DirFd::open(Path::new("/Library/LaunchDaemons")).map_err(error)?;
-        managed_file(
-            run,
-            cx,
-            &jobs,
-            "dev.effigy.gateway.loopback.plist",
-            &macos_boot_job(),
-            false,
-        )?;
-        let (uid, _) = authenticated_operator()?;
-        let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))
+        // The operator identity is read before anything is written, so an
+        // untrusted or unauthenticated operator refusal changes nothing.
+        let (operator, _) = authenticated_operator()?;
+        let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(operator))
             .map_err(error)?
             .ok_or_else(|| error("operator account missing"))?;
+        let etc = DirFd::open(Path::new("/private/etc")).map_err(error)?;
+        let jobs = DirFd::open(Path::new("/Library/LaunchDaemons")).map_err(error)?;
         let library = DirFd::open(Path::new("/Library")).map_err(error)?;
-        let helpers = library
-            .prepare_setup_child(
-                cx,
-                &FileName::new("PrivilegedHelperTools").map_err(error)?,
-                0o755,
-            )
-            .map_err(error)?;
-        broker::install(
+        apply_macos(
             run,
             cx,
-            &jobs,
-            &helpers,
-            (uid, user.gid.as_raw()),
-            &std::env::current_exe()?,
-            |run, cx, argv| command_outcome(run, cx, argv, false),
+            suffixes,
+            &MacosPlatform {
+                identity: (operator, user.gid.as_raw()),
+                helper: &std::env::current_exe()?,
+                etc: &etc,
+                jobs: &jobs,
+                library: &library,
+            },
+            &mut command,
         )?;
-        // Observe the real interface before adding missing aliases. Repeated
-        // setup never treats a failed or unavailable observation as absence.
-        let interfaces = command(run, cx, vec!["/sbin/ifconfig".into(), "lo0".into()], false)?;
-        let interfaces = String::from_utf8(interfaces).map_err(error)?;
-        for n in 1..=50 {
-            let address = format!("127.1.0.{n}");
-            if interfaces.lines().any(|line| {
-                line.split_whitespace().collect::<Vec<_>>().get(..2)
-                    == Some(&["inet", address.as_str()])
-            }) {
-                continue;
-            }
-            command(
-                run,
-                cx,
-                vec![
-                    "/sbin/ifconfig".into(),
-                    "lo0".into(),
-                    "alias".into(),
-                    format!("127.1.0.{n}").into(),
-                    "up".into(),
-                ],
-                false,
-            )?;
-        }
     }
     #[cfg(target_os = "linux")]
     {
         let systemd = DirFd::open(Path::new("/etc/systemd/system")).map_err(error)?;
-        let name = FileName::new("effigy-gateway-dns.service").map_err(error)?;
-        match read_record::<Bytes>(&cx.operation().observe().map_err(error)?, &systemd, &name) {
-            Observed::Verified(bytes, _) if String::from_utf8_lossy(&bytes.0).contains(MARKER) => {
-                command(
-                    run,
-                    cx,
-                    vec![
-                        "/usr/bin/systemctl".into(),
-                        "stop".into(),
-                        name.as_str().into(),
-                    ],
-                    false,
-                )?;
-            }
-            Observed::Absent(_) => {}
-            other => return Err(error(format!("preserving unknown DNS unit: {other:?}"))),
-        }
-        managed_file(
-            run,
-            cx,
-            &systemd,
-            name.as_str(),
-            &linux_boot_job(suffixes),
-            false,
-        )?;
-        command(
-            run,
-            cx,
-            vec!["/usr/bin/systemctl".into(), "daemon-reload".into()],
-            false,
-        )?;
-        command(
-            run,
-            cx,
-            vec![
-                "/usr/bin/systemctl".into(),
-                "enable".into(),
-                "--now".into(),
-                name.as_str().into(),
-            ],
-            false,
-        )?;
-        // A binary-local capability avoids lowering a host-wide port threshold.
-        // It is bound to exactly the binary setup ran, and a foreign record is
-        // preserved rather than replaced.
-        crate::linux_operator::install_current_capability(uid)?;
+        apply_linux(run, cx, suffixes, uid, &systemd, &mut command, &mut |uid| {
+            crate::linux_operator::install_current_capability(uid).map(|_| ())
+        })?;
     }
-    let _ = (config, uid);
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        return Err(error("gateway setup has no native platform adapter"));
+    }
+    let _ = (config, uid, command);
     Ok(())
 }
 pub fn save_receipt(
@@ -808,7 +914,7 @@ fn migrate_root_with(
     inspect: impl FnOnce(&crate::identity::GatewayRecordSnapshot) -> io::Result<Option<u32>>,
     stop: impl FnOnce(&crate::identity::GatewayRecordSnapshot) -> io::Result<()>,
 ) -> io::Result<()> {
-    if let Some(snapshot) = crate::identity::read_snapshot(&config.pid_file_path).map_err(error)? {
+    if let Some(snapshot) = read_migration_record(config)? {
         match inspect(&snapshot)? {
             Some(0) => {
                 if !recorded_v0141(config)? {
@@ -841,6 +947,38 @@ fn migrate_root_with(
             .ok_or_else(|| error("invalid gateway home"))?,
         uid,
     )
+}
+
+/// The operator's persisted record, or none.
+///
+/// A gateway directory verified absent is a first-ever setup: there is no
+/// legacy state to classify, so setup continues to the platform action. A
+/// state directory this caller cannot read is not absence. It refuses with the
+/// path and the repair, because the operator is the one who can act on it.
+fn read_migration_record(
+    config: &GatewayConfig,
+) -> io::Result<Option<crate::identity::GatewayRecordSnapshot>> {
+    match crate::identity::read_snapshot(&config.pid_file_path) {
+        Ok(record) => Ok(record),
+        Err(cause) => {
+            let unreadable = matches!(
+                &cause,
+                crate::GatewayError::Io(io_error) if io_error.kind() == io::ErrorKind::PermissionDenied
+            );
+            if !unreadable {
+                return Err(error(cause.to_string()));
+            }
+            Err(error(format!(
+                "gateway setup cannot read the gateway state at {}: {cause}; make the operator the owner of that directory and grant it owner read, write and search access, then run `effigy gateway setup` again",
+                config
+                    .pid_file_path
+                    .parent()
+                    .map_or_else(|| config.pid_file_path.display().to_string(), |dir| dir
+                        .display()
+                        .to_string())
+            )))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1368,5 +1506,284 @@ pub(crate) mod tests {
         assert!(staged_executable_fits(300 << 20));
         assert!(staged_executable_fits(MAX_STAGED_EXECUTABLE));
         assert!(!staged_executable_fits(MAX_STAGED_EXECUTABLE + 1));
+        // A refusal past the bound names the bound and the remedy, because the
+        // operator can only act on a release build (#473).
+        let refusal = staged_executable_refusal(MAX_STAGED_EXECUTABLE + 1);
+        assert!(refusal.contains("512 MiB"), "{refusal}");
+        assert!(refusal.contains("release"), "{refusal}");
+        assert!(refusal.contains("effigy install:local"), "{refusal}");
+        assert!(
+            refusal.contains("`effigy gateway setup` again"),
+            "{refusal}"
+        );
+    }
+
+    /// A completely empty operator account home: the account exists and Effigy
+    /// has never run there. Nothing below it exists, not even `.effigy`.
+    fn empty_operator_home(parent: &Path) -> (PathBuf, GatewayConfig) {
+        let home = parent.join("operator-home");
+        std::fs::create_dir(&home).unwrap();
+        let config = GatewayConfig::standard(home.join(".effigy/gateway"));
+        (home, config)
+    }
+
+    /// The platform roots and the closed command adapter a fixture substitutes
+    /// for the machine's own. Every file the platform action writes lands in
+    /// this temporary tree and every command it would run is recorded.
+    struct FakePlatform {
+        root: tempfile::TempDir,
+        calls: std::cell::RefCell<Vec<Vec<String>>>,
+    }
+
+    impl FakePlatform {
+        fn new(parent: &Path) -> Self {
+            Self {
+                root: tempfile::Builder::new()
+                    .prefix("platform-")
+                    .tempdir_in(parent)
+                    .unwrap(),
+                calls: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+        fn dir(&self, name: &str) -> DirFd {
+            let path = self.root.path().join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            DirFd::open(&path).unwrap()
+        }
+        fn path(&self, name: &str) -> PathBuf {
+            self.root.path().join(name)
+        }
+        fn run(
+            &self,
+            _run: &mut Run<'_>,
+            _cx: &EffectContext,
+            argv: Vec<OsString>,
+        ) -> io::Result<(i32, Vec<u8>)> {
+            self.calls.borrow_mut().push(
+                argv.iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+            );
+            // `ifconfig lo0` observes an interface with no aliases yet.
+            Ok((
+                0,
+                b"lo0: flags=8049<UP,LOOPBACK,RUNNING>\n\tinet 127.0.0.1 netmask 0xff000000\n"
+                    .to_vec(),
+            ))
+        }
+        fn requested(&self, program: &str) -> Vec<Vec<String>> {
+            self.calls
+                .borrow()
+                .iter()
+                .filter(|argv| argv.first().map(String::as_str) == Some(program))
+                .cloned()
+                .collect()
+        }
+    }
+
+    /// A first-ever setup on macOS: the operator home has never held Effigy
+    /// state, so migration classifies no legacy state and the platform action
+    /// runs on the substituted roots (#473).
+    #[test]
+    fn an_empty_operator_home_reaches_the_macos_platform_action() {
+        let root = tempfile::tempdir().unwrap();
+        let (operator_home, config) = empty_operator_home(root.path());
+        let uid = nix::unistd::Uid::effective().as_raw();
+        migrate_root(&config, uid, |_| {
+            panic!("a first-ever home records no gateway process")
+        })
+        .expect("an empty operator home is no legacy state to migrate");
+        assert!(
+            !operator_home.join(".effigy").exists(),
+            "classifying no legacy state creates no gateway state"
+        );
+
+        let platform = FakePlatform::new(root.path());
+        let etc = platform.dir("private/etc");
+        let jobs = platform.dir("LaunchDaemons");
+        let library = platform.dir("Library");
+        let helper = root.path().join("helper");
+        std::fs::write(&helper, b"fixture helper image").unwrap();
+        with_run(|run, cx, _| {
+            let mut command = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
+                platform.run(run, cx, argv)
+            };
+            apply_macos(
+                run,
+                cx,
+                &["test".to_owned()],
+                &MacosPlatform {
+                    identity: (uid, 20),
+                    helper: &helper,
+                    etc: &etc,
+                    jobs: &jobs,
+                    library: &library,
+                },
+                &mut command,
+            )
+            .expect("the macOS platform action runs after an empty-home migration");
+        });
+
+        let resolver = std::fs::read_to_string(platform.path("private/etc/resolver/test")).unwrap();
+        assert!(resolver.contains("nameserver 127.0.0.1"), "{resolver}");
+        assert!(platform
+            .path("LaunchDaemons/dev.effigy.gateway.loopback.plist")
+            .exists());
+        assert!(platform
+            .path(&format!(
+                "LaunchDaemons/{}.plist",
+                crate::bind_broker::label(uid)
+            ))
+            .exists());
+        // One observation of lo0 and one alias per address in the pool.
+        assert_eq!(platform.requested("/sbin/ifconfig").len(), 51);
+        assert_eq!(platform.requested("/bin/launchctl").len(), 1);
+    }
+
+    /// The same first-ever setup on Linux: no unit, no capability and no
+    /// gateway state beforehand, and the platform action still runs (#473).
+    #[test]
+    fn an_empty_operator_home_reaches_the_linux_platform_action() {
+        let root = tempfile::tempdir().unwrap();
+        let (operator_home, config) = empty_operator_home(root.path());
+        let uid = nix::unistd::Uid::effective().as_raw();
+        migrate_root(&config, uid, |_| {
+            panic!("a first-ever home records no gateway process")
+        })
+        .expect("an empty operator home is no legacy state to migrate");
+        assert!(!operator_home.join(".effigy").exists());
+
+        let platform = FakePlatform::new(root.path());
+        let systemd = platform.dir("etc/systemd/system");
+        let capabilities = std::cell::Cell::new(0);
+        with_run(|run, cx, _| {
+            let mut command = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
+                platform.run(run, cx, argv)
+            };
+            apply_linux(
+                run,
+                cx,
+                &["test".to_owned()],
+                uid,
+                &systemd,
+                &mut command,
+                &mut |_: u32| -> io::Result<()> {
+                    capabilities.set(capabilities.get() + 1);
+                    Ok(())
+                },
+            )
+            .expect("the Linux platform action runs after an empty-home migration");
+        });
+
+        let unit =
+            std::fs::read_to_string(platform.path("etc/systemd/system/effigy-gateway-dns.service"))
+                .unwrap();
+        assert!(unit.contains("domain effigy-gw ~test"), "{unit}");
+        let requested: Vec<String> = platform
+            .requested("/usr/bin/systemctl")
+            .into_iter()
+            .map(|argv| argv[1].clone())
+            .collect();
+        assert_eq!(requested, vec!["daemon-reload", "enable"]);
+        assert_eq!(capabilities.get(), 1);
+    }
+
+    #[test]
+    fn a_symlinked_gateway_directory_is_refused_from_an_empty_home() {
+        // Absence is proven by a no-follow stat of the gateway directory. A
+        // symlink there is not absence: it is refused and its target is left
+        // exactly as it was.
+        let root = tempfile::tempdir().unwrap();
+        let (home, config) = empty_operator_home(root.path());
+        let foreign = root.path().join("foreign");
+        std::fs::create_dir(&foreign).unwrap();
+        let foreign_pid = foreign.join("gateway.pid");
+        std::fs::write(&foreign_pid, b"4242\n").unwrap();
+        std::fs::create_dir(home.join(".effigy")).unwrap();
+        std::os::unix::fs::symlink(&foreign, home.join(".effigy/gateway")).unwrap();
+        let uid = nix::unistd::Uid::effective().as_raw();
+        let error = migrate_root(&config, uid, |_| {
+            panic!("a symlinked gateway directory is never classified")
+        })
+        .expect_err("a symlinked gateway directory fails closed");
+        assert!(error.to_string().contains("unsafe"), "{error}");
+        assert_eq!(std::fs::read(&foreign_pid).unwrap(), b"4242\n");
+        assert!(std::fs::symlink_metadata(home.join(".effigy/gateway"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn an_unsafe_gateway_directory_is_refused_before_the_platform_action() {
+        let root = tempfile::tempdir().unwrap();
+        let (_home, config) = empty_operator_home(root.path());
+        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+        std::fs::set_permissions(
+            config.pid_file_path.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o777),
+        )
+        .unwrap();
+        let uid = nix::unistd::Uid::effective().as_raw();
+        let error = migrate_root(&config, uid, |_| {
+            panic!("an unsafe gateway directory is never classified")
+        })
+        .expect_err("a group- and other-writable gateway directory fails closed");
+        assert!(error.to_string().contains("unsafe"), "{error}");
+    }
+
+    #[test]
+    fn an_unreadable_gateway_home_refuses_with_the_path_and_the_repair() {
+        // A root reader would read the fixture anyway and prove nothing.
+        if nix::unistd::Uid::effective().is_root() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let (home, config) = empty_operator_home(root.path());
+        let state = home.join(".effigy");
+        std::fs::create_dir(&state).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let uid = nix::unistd::Uid::effective().as_raw();
+        let error = migrate_root(&config, uid, |_| {
+            panic!("an unreadable home has no verified process")
+        })
+        .expect_err("an unreadable home is never read as an empty one");
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let message = error.to_string();
+        assert!(
+            message.contains("cannot read the gateway state at"),
+            "{message}"
+        );
+        assert!(message.contains("operator"), "{message}");
+        assert!(
+            message.contains("`effigy gateway setup` again"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_partial_identity_is_never_classified_as_absent_legacy_state() {
+        // A version-only record is an interrupted or partial existing identity.
+        // Setup preserves it and refuses instead of starting over as if the
+        // home were new.
+        let root = tempfile::tempdir().unwrap();
+        let (_home, config) = empty_operator_home(root.path());
+        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+        let version = config.pid_file_path.with_extension("version");
+        std::fs::write(&version, b"v0.14.1\n").unwrap();
+        std::fs::set_permissions(&version, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let uid = nix::unistd::Uid::effective().as_raw();
+        let error = migrate_root(&config, uid, |_| {
+            panic!("a version-only record authenticates no process")
+        })
+        .expect_err("a partial existing identity fails closed");
+        assert!(
+            error
+                .to_string()
+                .contains("gateway version exists without its PID"),
+            "{error}"
+        );
+        assert_eq!(std::fs::read(&version).unwrap(), b"v0.14.1\n");
+        assert!(!config.pid_file_path.exists());
     }
 }

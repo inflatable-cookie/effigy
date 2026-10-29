@@ -19,6 +19,15 @@ writers retain their current locks until endpoint-store adoption. Socket
 inspection belongs to `socket_ownership`. No migration replays or mutates
 historical transition receipts.
 
+A gateway directory that is verified absent is no legacy state: first-ever
+setup has nothing to migrate and proceeds to the platform action (effigy#473,
+2026-10-29). Absence is proven by a no-follow stat of
+`~/.effigy/gateway` alone; it is never inferred from an error. A symlinked or
+permissive `.effigy` ancestor, a symlinked or unsafe gateway directory, a
+partial identity (a version or identity sidecar without its PID) and a home
+the caller cannot search all keep their earlier refusal, and an unreadable
+state directory reports its path and the repair.
+
 ## Unprovable status and the headless precondition
 
 `gateway status` never upgrades unproven state. When this caller cannot read

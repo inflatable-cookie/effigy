@@ -233,10 +233,55 @@ pub fn probe_live_identity(record: &GatewayIdentityRecord) -> GatewayIdentityPro
 /// symlinks. A missing sidecar is retained as an unauthenticated legacy
 /// snapshot; it never authenticates a live process. A version-only,
 /// malformed, or symlink `gateway.version` is unknown and is not treated as
-/// an empty gateway.
+/// an empty gateway. Only a gateway directory verified absent reads as no
+/// record: a first-ever home is normal no-state, while a symlink, an unsafe or
+/// unreadable path stays a refusal.
 pub fn read_snapshot(pid_path: &Path) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
+    // A gateway directory that is verified absent holds no record at all: a
+    // first-ever home is no legacy state, not an I/O error (effigy#473). Every
+    // other failure keeps its rule, so nothing is inferred from an error.
+    if gateway_directory_absent(pid_path)? {
+        return Ok(None);
+    }
     let owner_uid = trusted_directory_owner(pid_path)?;
     read_snapshot_coordinated(pid_path, owner_uid)
+}
+
+/// Whether the canonical gateway directory is verified absent.
+///
+/// Only a successful no-follow stat proves the directory present; anything
+/// other than `NotFound` is an error, never absence. The `.effigy` ancestors
+/// still have to pass their trust rules, because setup's later create path
+/// writes under them: a symlinked or permissive `.effigy` is refused exactly
+/// as it is when the gateway directory exists. A home the caller cannot search
+/// stays an error, so an unreadable home is never read as an empty one.
+#[cfg(unix)]
+fn gateway_directory_absent(pid_path: &Path) -> Result<bool, GatewayError> {
+    if !pid_path.is_absolute() {
+        return Err(invalid_record("gateway PID path must be absolute"));
+    }
+    let parent = pid_path
+        .parent()
+        .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
+    match fs::symlink_metadata(parent) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(GatewayError::Io(error)),
+    }
+    check_effigy_ancestors(parent, expected_effigy_owner())?;
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn gateway_directory_absent(pid_path: &Path) -> Result<bool, GatewayError> {
+    let parent = pid_path
+        .parent()
+        .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
+    match fs::symlink_metadata(parent) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(GatewayError::Io(error)),
+    }
 }
 
 /// Read the trusted pair while no publication is in flight.
@@ -555,6 +600,18 @@ pub(crate) fn trusted_directory_owner(pid_path: &Path) -> Result<u32, GatewayErr
     trusted_directory_owner_with(pid_path, effective_uid, authenticated_operator)
 }
 
+/// The owner a `.effigy` state directory must have for this process: the
+/// authenticated operator behind an elevated caller, otherwise this account.
+#[cfg(unix)]
+fn expected_effigy_owner() -> u32 {
+    let effective = nix::unistd::Uid::effective();
+    if effective.is_root() {
+        authenticated_elevated_operator().unwrap_or_else(|| effective.as_raw())
+    } else {
+        effective.as_raw()
+    }
+}
+
 /// Core directory trust check with an explicit caller context. The filesystem
 /// rules (absolute path, no symlink, directory, no group/other write, parent
 /// safety) always execute; only the accepted-owner set varies. An
@@ -601,14 +658,7 @@ fn ensure_gateway_parent_creatable(pid_path: &Path) -> Result<(), GatewayError> 
     let parent = pid_path
         .parent()
         .ok_or_else(|| invalid_record("gateway PID path has no parent"))?;
-    let effective_uid = nix::unistd::Uid::effective().as_raw();
-    let authenticated_operator = if nix::unistd::Uid::effective().is_root() {
-        authenticated_elevated_operator()
-    } else {
-        None
-    };
-    let expected_owner = authenticated_operator.unwrap_or(effective_uid);
-    check_effigy_ancestors(parent, expected_owner)
+    check_effigy_ancestors(parent, expected_effigy_owner())
 }
 
 #[cfg(unix)]
@@ -1210,6 +1260,34 @@ mod tests {
         let owner_uid = 0;
         let snapshot = publish_current_gateway(&pid_path, owner_uid).expect("publish identity");
         (pid_path, snapshot)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_absent_directory_is_no_record_and_absence_is_never_inferred() {
+        // A home Effigy has never run in has no gateway directory at all. That
+        // is an absent record, not an I/O error (effigy#473).
+        let dir = private_fixture_dir();
+        let pid_path = dir.path().join("gateway/gateway.pid");
+        assert!(
+            read_snapshot(&pid_path)
+                .expect("a verified absent gateway directory is readable")
+                .is_none(),
+            "a verified absent gateway directory holds no record"
+        );
+        assert!(!dir.path().join("gateway").exists());
+
+        let state = dir.path().join(".effigy");
+        let foreign = dir.path().join("foreign");
+        fs::create_dir(&foreign).unwrap();
+        fs::write(foreign.join("gateway.pid"), b"4242\n").unwrap();
+        std::os::unix::fs::symlink(&foreign, &state).unwrap();
+        // A symlinked `.effigy` above a missing gateway directory is not
+        // absence: setup's create path would write under whatever it names.
+        let error = read_snapshot(&state.join("gateway/gateway.pid"))
+            .expect_err("a symlinked state parent is unsafe, never absent");
+        assert!(error.to_string().contains("unsafe"), "{error}");
+        assert_eq!(fs::read(foreign.join("gateway.pid")).unwrap(), b"4242\n");
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
