@@ -1999,7 +1999,10 @@ working_dir = "/workspace"
             listener_state: None,
             restart: HostProcessRestart::Never,
             restart_delay_ms: 0,
-            wait_record: std::path::PathBuf::from(format!("/repo/.effigy/{name}.wait.json")),
+            wait_ledger: crate::runner::managed_wait::WaitLedger::environment(
+                std::path::Path::new("/repo"),
+                "web",
+            ),
         }
     }
 

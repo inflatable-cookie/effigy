@@ -89,7 +89,7 @@ impl HostWaitGraph {
     ) -> Self {
         let ledger = WaitLedger::environment(repo_root, &policy.name);
         ledger.clear();
-        ledger.claim_owner(WaitOwner::Run);
+        let ledger = ledger.claim(WaitOwner::Run);
         let started = policy
             .host_processes
             .iter()
@@ -120,8 +120,7 @@ impl HostWaitGraph {
         // The planner runs after the environment reported ready, and it takes
         // the scope over here: from this point the run's owner publishes
         // nothing for these entries (effigy#458).
-        let ledger = WaitLedger::environment(repo_root, &policy.name);
-        ledger.claim_owner(WaitOwner::Planner);
+        let ledger = WaitLedger::environment(repo_root, &policy.name).claim(WaitOwner::Planner);
         Self::build(&ledger, WaitOwner::Planner, policy, started, None, now)
     }
 
@@ -810,7 +809,7 @@ mod environment_tests {
             listener_state: None,
             restart: effigy_containers::HostProcessRestart::Never,
             restart_delay_ms: 0,
-            wait_record: ledger.path(entry),
+            wait_ledger: ledger,
         })
     }
 

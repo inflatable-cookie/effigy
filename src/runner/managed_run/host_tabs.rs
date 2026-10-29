@@ -37,9 +37,10 @@ pub(in crate::runner) struct HostProcessTab {
     pub(in crate::runner) listener_state: Option<PathBuf>,
     pub(in crate::runner) restart: HostProcessRestart,
     pub(in crate::runner) restart_delay_ms: u64,
-    /// Where the bring-up publishes what this process waits for, and what
-    /// stopped it from starting (effigy#458).
-    pub(in crate::runner) wait_record: PathBuf,
+    /// The scope this process's wait is published in. A read resolves the
+    /// owner that currently publishes it, so a tab never reads a publisher
+    /// that lost the scope (effigy#458).
+    pub(in crate::runner) wait_ledger: crate::runner::managed_wait::WaitLedger,
 }
 
 impl HostProcessTab {
@@ -67,11 +68,10 @@ impl HostProcessTab {
                 }),
                 restart: process.restart,
                 restart_delay_ms: process.restart_delay_ms,
-                wait_record: crate::runner::managed_wait::WaitLedger::environment(
+                wait_ledger: crate::runner::managed_wait::WaitLedger::environment(
                     repo_root,
                     &policy.name,
-                )
-                .path(&process.name),
+                ),
             })
             .collect()
     }
@@ -230,11 +230,7 @@ impl HostFollower {
     /// Reads the published wait. A record that is not this entry's own is no
     /// observation, and an entry that started no longer waits.
     fn read_wait(&mut self) {
-        let state = std::fs::read(&self.tab.wait_record)
-            .ok()
-            .and_then(|raw| serde_json::from_slice::<EntryState>(&raw).ok())
-            .filter(|state| state.entry == self.tab.name);
-        self.wait = state;
+        self.wait = self.tab.wait_ledger.read(&self.tab.name);
     }
 
     /// This follower's status line, and whether it changed since the last
@@ -378,7 +374,10 @@ mod tests {
             listener_state,
             restart,
             restart_delay_ms: 100,
-            wait_record: PathBuf::from("/nonexistent/api.wait.json"),
+            wait_ledger: crate::runner::managed_wait::WaitLedger::environment(
+                Path::new("/nonexistent"),
+                "app",
+            ),
         }
     }
 
@@ -450,27 +449,23 @@ mod tests {
         use effigy_tui::waits::{Attribution, EntryPhase, EntryState, WaitOn};
 
         let dir = tempfile::tempdir().expect("wait dir");
-        let record = dir.path().join("front.json");
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
+        ledger.clear();
         let mut tab = tab(HostProcessRestart::Never, None);
         tab.name = "front".to_owned();
-        tab.wait_record = record.clone();
+        tab.wait_ledger = ledger.clone();
 
-        std::fs::write(
-            &record,
-            serde_json::to_vec(&EntryState {
-                entry: "front".to_owned(),
-                phase: EntryPhase::Waiting,
-                waiting_on: Some(WaitOn::Entry {
-                    name: "api".to_owned(),
-                    phase: EntryPhase::Starting,
-                }),
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 4_000,
-            })
-            .expect("record json"),
-        )
-        .expect("published wait");
+        ledger.publish(&EntryState {
+            entry: "front".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 4_000,
+        });
         let mut follower = HostFollower::new(tab.clone());
         assert_eq!(
             follower.poll().statuses,
@@ -488,19 +483,14 @@ mod tests {
             })
         );
 
-        std::fs::write(
-            &record,
-            serde_json::to_vec(&EntryState {
-                entry: "front".to_owned(),
-                phase: EntryPhase::NotStarted,
-                waiting_on: None,
-                not_started_because: Some(Attribution::new("api", "failed (status 500)")),
-                detail: None,
-                elapsed_ms: 0,
-            })
-            .expect("record json"),
-        )
-        .expect("published failure");
+        ledger.publish(&EntryState {
+            entry: "front".to_owned(),
+            phase: EntryPhase::NotStarted,
+            waiting_on: None,
+            not_started_because: Some(Attribution::new("api", "failed (status 500)")),
+            detail: None,
+            elapsed_ms: 0,
+        });
         // The poll interval must pass before the record is re-read.
         std::thread::sleep(ListenerPollWait::value());
         assert_eq!(
@@ -529,7 +519,7 @@ mod tests {
         let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
         ledger.clear();
         let mut tab = tab(HostProcessRestart::Never, None);
-        tab.wait_record = ledger.path("api");
+        tab.wait_ledger = ledger.clone();
         ledger.publish(&effigy_tui::waits::EntryState {
             entry: "api".to_owned(),
             phase: effigy_tui::waits::EntryPhase::Starting,
@@ -571,7 +561,7 @@ mod tests {
         ledger.clear();
         let mut tab = tab(HostProcessRestart::Never, None);
         tab.name = "front".to_owned();
-        tab.wait_record = ledger.path("front");
+        tab.wait_ledger = ledger.clone();
 
         ledger.publish(&EntryState {
             entry: "front".to_owned(),

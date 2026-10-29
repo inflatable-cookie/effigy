@@ -30,6 +30,9 @@ const SESSION_RECORD: &str = "session.json";
 /// planner takes the same scope over when it starts the plan, so the two never
 /// write the same entries at once (effigy#458).
 const OWNER_RECORD: &str = "owner.json";
+/// The environment phase's own record. It belongs to the phase, not to either
+/// publisher, so it is read whichever one currently owns the entries.
+const ENVIRONMENT_ENTRY: &str = "environment";
 
 /// The environment identity a scope publishes before its phase blocks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +50,19 @@ pub(in crate::runner) enum WaitOwner {
     Run,
     /// The environment's host planner: the one process that starts hosts.
     Planner,
+}
+
+impl WaitOwner {
+    /// The directory this publisher writes its entries in, and the one readers
+    /// resolve while it owns the scope. Because every publisher writes only to
+    /// its own directory, a write that races a handoff can never land on the
+    /// entry the current owner published (effigy#458).
+    fn directory(self) -> &'static str {
+        match self {
+            Self::Run => "run",
+            Self::Planner => "planner",
+        }
+    }
 }
 
 /// The one record naming the current publisher of a scope.
@@ -68,10 +84,18 @@ struct WaitRecord {
 }
 
 /// Where the entries of one scope publish their waits.
-#[derive(Debug, Clone)]
+///
+/// Records live per publisher: `<scope>/run/<entry>.json` and
+/// `<scope>/planner/<entry>.json`. Readers resolve the directory the current
+/// owner claimed, so a publisher that has lost the scope can keep writing and
+/// never change what a front end reads (effigy#458).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct WaitLedger {
     dir: PathBuf,
     scope: String,
+    /// The namespace this writer publishes in. `None` reads the current
+    /// owner's entries and writes the environment phase's own record.
+    owner: Option<WaitOwner>,
 }
 
 impl WaitLedger {
@@ -90,12 +114,17 @@ impl WaitLedger {
         Self {
             dir: repo_root.join(WAITS_DIR).join(&scope),
             scope,
+            owner: None,
         }
     }
 
-    /// The path an entry's record is published at.
-    pub(in crate::runner) fn path(&self, entry: &str) -> PathBuf {
-        self.dir.join(format!("{}.json", component(entry)))
+    /// This ledger's records, as one publisher writes them.
+    fn owned(&self, owner: WaitOwner) -> Self {
+        Self {
+            dir: self.dir.clone(),
+            scope: self.scope.clone(),
+            owner: Some(owner),
+        }
     }
 
     /// Forgets every record of this scope: a new session never reads the
@@ -135,12 +164,14 @@ impl WaitLedger {
         self.write(entry, &record);
     }
 
-    /// Claims this scope for one publisher. The last claim wins: the host
-    /// planner claims it when it starts the plan, and the run's owner stops
-    /// publishing from then on (effigy#458).
-    pub(in crate::runner) fn claim_owner(&self, owner: WaitOwner) {
+    /// Claims this scope for one publisher and returns the ledger that
+    /// publishes in its namespace. The claim is one atomic record replace: the
+    /// host planner claims it when it starts the plan, and from that moment
+    /// readers resolve the planner's entries, while the run's owner keeps
+    /// writing only its own (effigy#458).
+    pub(in crate::runner) fn claim(&self, owner: WaitOwner) -> Self {
         if std::fs::create_dir_all(&self.dir).is_err() {
-            return;
+            return self.owned(owner);
         }
         let record = OwnerRecord {
             schema: ENTRY_WAIT_SCHEMA.to_owned(),
@@ -148,6 +179,7 @@ impl WaitLedger {
             owner,
         };
         let _ = write_private_json(&self.dir.join(OWNER_RECORD), &record);
+        self.owned(owner)
     }
 
     /// Who publishes this scope's entries now, when it recorded a claim.
@@ -180,38 +212,71 @@ impl WaitLedger {
             .then_some(record.environment)
     }
 
+    /// The directory this ledger's entries are written in: its own namespace
+    /// when it is a publisher, else the one the current owner claimed.
+    fn namespace(&self) -> PathBuf {
+        let owner = self
+            .owner
+            .or_else(|| self.current_owner())
+            .unwrap_or(WaitOwner::Run);
+        self.dir.join(owner.directory())
+    }
+
     fn write(&self, entry: &str, record: &WaitRecord) {
-        if std::fs::create_dir_all(&self.dir).is_err() {
+        if entry == ENVIRONMENT_ENTRY {
+            // The phase's record belongs to the phase, not to a publisher.
+            if std::fs::create_dir_all(&self.dir).is_err() {
+                return;
+            }
+            let _ = write_private_json(&self.dir.join(format!("{ENVIRONMENT_ENTRY}.json")), record);
+            return;
+        }
+        let namespace = self.namespace();
+        if std::fs::create_dir_all(&namespace).is_err() {
             return;
         }
         // One accepted private-record writer: temp file, 0600, rename.
-        let _ = write_private_json(&self.path(entry), record);
+        let _ = write_private_json(
+            &namespace.join(format!("{}.json", component(entry))),
+            record,
+        );
     }
 
-    /// The entry's record, when it publishes one for this scope.
+    /// The entry's record, when it publishes one for this scope. The
+    /// environment phase's record is read whichever publisher owns the
+    /// entries; every other entry resolves the current owner's namespace.
     pub(in crate::runner) fn read(&self, entry: &str) -> Option<EntryState> {
-        let raw = std::fs::read(self.path(entry)).ok()?;
+        let path = if entry == ENVIRONMENT_ENTRY {
+            self.dir.join(format!("{ENVIRONMENT_ENTRY}.json"))
+        } else {
+            self.namespace().join(format!("{}.json", component(entry)))
+        };
+        let raw = std::fs::read(path).ok()?;
         let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
         (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope).then_some(record.state)
     }
 
-    /// Every published record of this scope, in entry-name order.
+    /// Every published record of this scope, in entry-name order: the
+    /// environment phase's own record, then the current owner's entries.
     pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return Vec::new();
+        let mut states = Vec::new();
+        if let Some(phase) = self.read(ENVIRONMENT_ENTRY) {
+            states.push(phase);
+        }
+        let Ok(entries) = std::fs::read_dir(self.namespace()) else {
+            return states;
         };
-        let mut states = entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name() != SESSION_RECORD)
-            .filter(|entry| entry.file_name() != OWNER_RECORD)
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-            .filter_map(|entry| {
-                let raw = std::fs::read(entry.path()).ok()?;
-                let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
-                (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
-                    .then_some(record.state)
-            })
-            .collect::<Vec<_>>();
+        states.extend(
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+                .filter_map(|entry| {
+                    let raw = std::fs::read(entry.path()).ok()?;
+                    let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
+                    (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
+                        .then_some(record.state)
+                }),
+        );
         states.sort_by(|left, right| left.entry.cmp(&right.entry));
         states
     }
@@ -268,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_published_record_round_trips_with_its_waiting_on() {
-        let (home, ledger) = fixture();
+        let (_home, ledger) = fixture();
         ledger.clear();
         ledger.publish(&EntryState {
             entry: "front".to_owned(),
@@ -281,9 +346,10 @@ mod tests {
             detail: None,
             elapsed_ms: 4_200,
         });
-        assert!(ledger
-            .path("front")
-            .starts_with(home.path().join(WAITS_DIR)));
+        assert!(
+            ledger.read("front").is_some(),
+            "the record is published in the current owner's namespace"
+        );
         let state = ledger.read("front").expect("the record reads back");
         assert_eq!(state.entry, "front");
         assert_eq!(state.elapsed_ms, 4_200);
@@ -298,6 +364,103 @@ mod tests {
         assert!(ledger.read("admin").is_none());
         ledger.clear();
         assert!(ledger.read("front").is_none());
+    }
+
+    /// The handoff is atomic because each publisher writes only its own
+    /// directory and readers resolve the directory the current claim names: a
+    /// publisher that lost the scope can keep writing and never changes what
+    /// a front end reads (effigy#458).
+    #[test]
+    fn a_publisher_that_lost_the_scope_cannot_change_what_readers_see() {
+        let (_home, ledger) = fixture();
+        ledger.clear();
+        let run = ledger.claim(WaitOwner::Run);
+        run.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(
+            ledger.read("api").and_then(|state| state.waiting_on),
+            Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4)
+            })
+        );
+
+        // The planner takes the scope over before it starts any listener.
+        let planner = ledger.claim(WaitOwner::Planner);
+        planner.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(ledger.current_owner(), Some(WaitOwner::Planner));
+
+        // The run's owner keeps publishing, as its progress ticks do: its
+        // writes land in its own namespace and are not what a reader resolves.
+        run.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        run.settle("api");
+        assert_eq!(
+            ledger.read("api").and_then(|state| state.waiting_on),
+            Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned()
+            }),
+            "the planner's record is the one read"
+        );
+
+        // The same holds for a terminal failure: the run's generic attribution
+        // never replaces the planner's.
+        planner.publish(&EntryState {
+            entry: "front".to_owned(),
+            phase: EntryPhase::NotStarted,
+            waiting_on: None,
+            not_started_because: Some(effigy_tui::waits::Attribution::new(
+                "api",
+                "failed: readiness probe GET / returned 500",
+            )),
+            detail: None,
+            elapsed_ms: 0,
+        });
+        run.publish(&EntryState {
+            entry: "front".to_owned(),
+            phase: EntryPhase::NotStarted,
+            waiting_on: None,
+            not_started_because: Some(effigy_tui::waits::Attribution::new(
+                "environment",
+                "failed: `up` exited 1",
+            )),
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(
+            ledger
+                .read("front")
+                .and_then(|state| state.not_started_because)
+                .map(|cause| cause.name),
+            Some("api".to_owned())
+        );
     }
 
     #[test]

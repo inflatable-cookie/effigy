@@ -264,11 +264,12 @@ During v0.x, MINOR bumps may include breaking changes.
   host processes appear in one projection. The run publishes its host graph and
   environment identity before its phase can block, so a host tab says it waits
   for the environment (and its healthy container count) during bring-up and is
-  announced as started only once it actually is. Exactly one publisher owns the
-  environment's entries at a time (the run before readiness, the host planner
-  after), so the two never overwrite each other, and a host failure the planner
-  published survives the run's generic `up` exit — the run's error names the
-  failing entry and its observed status. A wait is recorded as settled when it
+  announced as started only once it actually is. Each publisher of the
+  environment's entries — the run before readiness, the host planner after —
+  writes only its own record set and readers follow the current claim, so a
+  write that races the handoff never replaces the other's state, and a host
+  failure the planner published survives the run's generic `up` exit: the run's
+  error names the failing entry and its observed status. A wait is recorded as settled when it
   ends, and only a changed meaning or a live wait's refresh writes a record, so a
   settled entry is never rewritten on an owner-loop tick and a tab or a status
   never keeps a wait the entry has left behind.
