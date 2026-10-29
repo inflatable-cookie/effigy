@@ -1816,7 +1816,7 @@ fn reload_route_table_and_maybe_schedule_shutdown(
     if private {
         validate_private_routes(&new_table)?;
     }
-    let action = apply_reloaded_route_table(table, new_table, dns_cache);
+    let action = apply_reloaded_route_table(table, new_table, dns_cache, private);
     debug!("route table reloaded, DNS cache cleared");
     match action {
         IdleShutdownAction::Arm => {
@@ -1827,6 +1827,7 @@ fn reload_route_table_and_maybe_schedule_shutdown(
                 shutdown_tx.clone(),
                 generation,
                 IDLE_SHUTDOWN_DELAY,
+                path.parent().unwrap_or(path).to_path_buf(),
             );
         }
         IdleShutdownAction::Cancel => {
@@ -1851,10 +1852,14 @@ fn validate_private_routes(table: &RouteTable) -> Result<(), GatewayError> {
     Ok(())
 }
 
+/// Only a private gateway stops itself when its route table stays empty. The
+/// machine gateway outlives its last route, so a later `container up` or
+/// `up` finds it still running (effigy#480).
 fn apply_reloaded_route_table(
     table: &Arc<RwLock<RouteTable>>,
     new_table: RouteTable,
     dns_cache: &Arc<DnsCache>,
+    idle_shutdown: bool,
 ) -> IdleShutdownAction {
     let action = {
         let mut guard = crate::locks::write_tolerant(table);
@@ -1862,8 +1867,8 @@ fn apply_reloaded_route_table(
         let is_empty = new_table.is_empty();
         *guard = new_table;
         match (was_empty, is_empty) {
-            (false, true) => IdleShutdownAction::Arm,
-            (true, false) => IdleShutdownAction::Cancel,
+            (false, true) if idle_shutdown => IdleShutdownAction::Arm,
+            (true, false) if idle_shutdown => IdleShutdownAction::Cancel,
             _ => IdleShutdownAction::None,
         }
     };
@@ -1871,12 +1876,16 @@ fn apply_reloaded_route_table(
     action
 }
 
+/// Stops the gateway when its route table is still empty after `delay`. The
+/// stop is recorded in the gateway's operator log before the shutdown signal,
+/// so the cause survives the clean exit.
 fn schedule_idle_shutdown(
     table: Arc<RwLock<RouteTable>>,
     idle_shutdown_generation: Arc<AtomicU64>,
     shutdown_tx: watch::Sender<bool>,
     generation: u64,
     delay: Duration,
+    state_dir: PathBuf,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         std::thread::sleep(delay);
@@ -1884,7 +1893,13 @@ fn schedule_idle_shutdown(
             return;
         }
         if crate::locks::read_tolerant(&table).is_empty() {
-            info!("route table stayed empty through idle timeout; stopping gateway");
+            let cause = format!("route table empty for {} s", delay.as_secs());
+            effigy_kernel::run::record_gateway_operator(
+                &state_dir,
+                effigy_kernel::run::OperatorAction::Down,
+                &cause,
+            );
+            info!(cause = %cause, "route table stayed empty through idle timeout; stopping gateway");
             let _ = shutdown_tx.send(true);
         }
     })

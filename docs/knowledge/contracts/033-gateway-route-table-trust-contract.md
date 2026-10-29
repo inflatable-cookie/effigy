@@ -43,6 +43,19 @@ State what a route claim is and why there is no separate trust verdict.
    answering. This data never authorizes the daemon to launch or signal a
    process, and a static `target_host` route stays external route intent.
 
+## Gateway lifetime
+
+1. **The machine gateway outlives its routes.** Withdrawing the last route
+   (`container down`, retire, handover) does not stop the machine gateway. It
+   stays up until `effigy gateway down` or a host restart stops it, so the next
+   `container up` finds a running gateway. Its route reload arms no idle stop.
+2. **A private gateway idles out.** A private state root's gateway stops once
+   its route table has stayed empty for five minutes. A route that returns in
+   that window cancels the pending stop.
+3. **Every idle stop is recorded.** The stop writes one `gateway_stop` event to
+   the gateway's operator log before the clean exit, with the cause
+   `route table empty for 300 s`.
+
 ## What changed from v0.14
 
 The file provenance marker, the owner/group permission check and the legacy

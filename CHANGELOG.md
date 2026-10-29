@@ -866,6 +866,10 @@ During v0.x, MINOR bumps may include breaking changes.
   unmounted volume or a permission refusal never prunes routes.
 - A repository task named `fmt` runs again for `effigy fmt`, and `effigy
   changelog` accepts a CommonMark lazy continuation line instead of refusing it.
+- The machine gateway stays running after its last route is withdrawn; it no
+  longer stops five minutes after `container down`. A private gateway still
+  stops once its route table stays empty for five minutes, and its operator log
+  records the cause as `route table empty for 300 s`.
 
 ## [0.14.1] - 2026-10-08
 

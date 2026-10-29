@@ -845,7 +845,7 @@ fn apply_reloaded_route_table_noops_when_already_empty() {
     let table = Arc::new(RwLock::new(RouteTable::new()));
     let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
 
-    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache);
+    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true);
 
     assert_eq!(action, IdleShutdownAction::None);
     assert!(table.read().unwrap().is_empty());
@@ -856,9 +856,22 @@ fn apply_reloaded_route_table_arms_idle_shutdown_when_last_route_removed() {
     let table = Arc::new(RwLock::new(demo_route_table()));
     let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
 
-    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache);
+    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true);
 
     assert_eq!(action, IdleShutdownAction::Arm);
+    assert!(table.read().unwrap().is_empty());
+}
+
+/// The machine gateway keeps running after its last route is withdrawn: no
+/// idle stop is armed, so a later `container up` finds it up (effigy#480).
+#[test]
+fn machine_gateway_never_arms_idle_shutdown_when_last_route_removed() {
+    let table = Arc::new(RwLock::new(demo_route_table()));
+    let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+
+    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, false);
+
+    assert_eq!(action, IdleShutdownAction::None);
     assert!(table.read().unwrap().is_empty());
 }
 
@@ -867,7 +880,7 @@ fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
     let table = Arc::new(RwLock::new(RouteTable::new()));
     let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
 
-    let action = apply_reloaded_route_table(&table, demo_route_table(), &dns_cache);
+    let action = apply_reloaded_route_table(&table, demo_route_table(), &dns_cache, true);
 
     assert_eq!(action, IdleShutdownAction::Cancel);
     assert_eq!(table.read().unwrap().len(), 1);
@@ -947,6 +960,7 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
 
 #[test]
 fn scheduled_idle_shutdown_stops_gateway_when_table_stays_empty() {
+    let state = gateway_dir();
     let table = Arc::new(RwLock::new(RouteTable::new()));
     let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -957,14 +971,43 @@ fn scheduled_idle_shutdown_stops_gateway_when_table_stays_empty() {
         shutdown_tx,
         1,
         std::time::Duration::from_millis(10),
+        state.path().to_path_buf(),
     );
     shutdown.join().expect("idle shutdown completed");
 
     assert!(*shutdown_rx.borrow());
 }
 
+/// The stop names its cause in the gateway's operator log before the shutdown
+/// signal, so the record outlives the clean exit (effigy#480).
+#[test]
+fn scheduled_idle_shutdown_records_the_route_table_cause_before_stopping() {
+    let state = gateway_dir();
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let shutdown = schedule_idle_shutdown(
+        Arc::clone(&table),
+        generation,
+        shutdown_tx,
+        1,
+        std::time::Duration::from_secs(1),
+        state.path().to_path_buf(),
+    );
+    shutdown.join().expect("idle shutdown completed");
+
+    assert!(*shutdown_rx.borrow());
+    let log = std::fs::read_to_string(state.path().join("gateway.stderr.log"))
+        .expect("the idle stop is recorded beside the gateway log");
+    let record: serde_json::Value = serde_json::from_str(log.trim()).expect("one stop record");
+    assert_eq!(record["event"], "gateway_stop");
+    assert_eq!(record["cause"], "route table empty for 1 s");
+}
+
 #[test]
 fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
+    let state = gateway_dir();
     let table = Arc::new(RwLock::new(RouteTable::new()));
     let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -975,6 +1018,7 @@ fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
         shutdown_tx,
         1,
         std::time::Duration::from_millis(20),
+        state.path().to_path_buf(),
     );
     generation.store(2, std::sync::atomic::Ordering::SeqCst);
     shutdown.join().expect("cancelled idle shutdown completed");

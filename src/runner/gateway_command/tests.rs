@@ -1447,6 +1447,24 @@ fn permission_reuse_managed_unavailable_observations_warn_and_proceed_without_la
     }
 }
 
+/// A positively stopped gateway is started through the managed command. The
+/// container `up` path runs this before it registers any route, so a gateway
+/// that a route withdrawal or reboot left down comes back first (effigy#480).
+#[test]
+fn managed_start_launches_the_gateway_when_it_is_positively_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let marker = root.path().join("started");
+    gateway_up_for_managed_task_with(&format!("touch '{}'", marker.display()), |_| {
+        GatewayUpStatusProbe {
+            status: Err(effigy_gateway::GatewayError::NotRunning),
+            identity_permission_denied: false,
+        }
+    })
+    .unwrap();
+    assert!(marker.exists(), "a stopped gateway must be started");
+}
+
 /// Papercut 0694ef12: a headless caller cannot read a root-owned gateway's
 /// identity. Status must keep that truth (`ok: false`, exit non-zero, status
 /// unknown) and additionally expose the supported observation labels, so a
