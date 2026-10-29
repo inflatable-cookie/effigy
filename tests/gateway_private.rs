@@ -1300,7 +1300,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
                 .path()
                 .join(format!("listener-control-{index}/readiness-refused"))
                 .is_file(),
-            "fixture listener should refuse readiness briefly before becoming healthy"
+            "fixture listener should not answer readiness until it is ready"
         );
         let listener = &report["managed_host_listeners"][0];
         assert_eq!(listener["status"], "ready");
@@ -3082,7 +3082,12 @@ fn managed_listener_fixture_child() {
         .expect("Effigy supplies the listener bind preference")
         .parse::<SocketAddr>()
         .expect("valid listener bind preference");
-    let readiness_delay = if std::env::var("FIXTURE_NEVER_READY").is_ok() {
+    // A never-ready listener answers a definite wrong status, which the
+    // listener contract now refuses at once. A merely slow listener has not
+    // opened its readiness answer yet, so it answers nothing and the declared
+    // readiness budget continues.
+    let never_ready = std::env::var("FIXTURE_NEVER_READY").is_ok();
+    let readiness_delay = if never_ready {
         Duration::from_secs(60 * 60)
     } else {
         Duration::from_millis(1500)
@@ -3128,6 +3133,7 @@ fn managed_listener_fixture_child() {
                         stream,
                         &body,
                         ready_at,
+                        never_ready,
                         &readiness_refused_file,
                         &requests_log_file,
                     )
@@ -4695,6 +4701,7 @@ fn respond_managed_listener_fixture(
     mut stream: TcpStream,
     body: &str,
     readiness_ready_at: Instant,
+    readiness_refuses: bool,
     readiness_refused_file: &Path,
     requests_log_file: &Path,
 ) {
@@ -4741,11 +4748,16 @@ fn respond_managed_listener_fixture(
         let _ = writeln!(log, "{request:?}");
     }
     if request.starts_with("get /health ") && Instant::now() < readiness_ready_at {
-        let _ = fs::write(readiness_refused_file, b"readiness initially refused\n");
-        let response =
-            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        let _ = stream.write_all(response);
-        let _ = stream.flush();
+        let _ = fs::write(readiness_refused_file, b"readiness not answered yet\n");
+        if readiness_refuses {
+            // A definite wrong status is a terminal refusal under the listener
+            // contract, which is exactly what the never-ready proof needs.
+            let response = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(response);
+            let _ = stream.flush();
+        }
+        // A slow listener answers nothing: the probe reads no status line and
+        // the declared readiness budget keeps waiting for it.
         let _ = stream.shutdown(Shutdown::Both);
     } else if request.contains("upgrade: websocket") {
         let _ = stream.write_all(

@@ -78,6 +78,23 @@ print("EFFIGY_TOKEN=abcd1234", flush=True)
 time.sleep(120)
 "#;
 
+/// A listener child that answers the declared `/health` with 200 and any other
+/// readiness path with 503, so a changed declaration's live probe refuses it.
+const PATH_SENSITIVE_CHILD: &str = r#"
+import http.server, os
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        status = 200 if self.path == "/health" else 503
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+
 /// A listener child that binds only after a delay, so it can answer a moment
 /// after an activation has already reported its route withheld.
 const LATE_BIND_CHILD: &str = r#"
@@ -205,16 +222,19 @@ struct ExposureFixture {
     /// The declared declaration in order: name, route domain, bind port, and
     /// the observation budget. A rewrite re-renders the manifest from it, so a
     /// changed declaration keeps every other field exactly as it was.
-    declared: Vec<(String, String, u16)>,
+    declared: Vec<(String, String, u16, String)>,
     health_timeout_secs: u64,
     _env: EnvGuard,
 }
 
 /// The manifest for one fixture checkout: a routed container service and the
 /// given host listeners, declared in order.
-fn render_manifest(listeners: &[(String, String, u16)], health_timeout_secs: u64) -> String {
+fn render_manifest(
+    listeners: &[(String, String, u16, String)],
+    health_timeout_secs: u64,
+) -> String {
     let mut host_processes = String::new();
-    for (name, domain, bind) in listeners {
+    for (name, domain, bind, readiness_path) in listeners {
         host_processes.push_str(&format!(
             r#"
 [[containers.e2e.host_processes]]
@@ -227,7 +247,7 @@ shutdown_grace_secs = 1
 bind = "127.0.0.1:{bind}"
 
 [containers.e2e.host_processes.listener.readiness]
-path = "/health"
+path = "{readiness_path}"
 status = 200
 timeout_secs = 300
 
@@ -302,6 +322,7 @@ impl ExposureFixture {
                 listener.name.to_owned(),
                 listener.domain.to_owned(),
                 free_loopback_port(),
+                "/health".to_owned(),
             ));
         }
         std::fs::write(
@@ -435,9 +456,20 @@ impl ExposureFixture {
         let listener = self
             .declared
             .iter_mut()
-            .find(|(listener, _, _)| listener == name)
+            .find(|(listener, _, _, _)| listener == name)
             .unwrap_or_else(|| panic!("the fixture declares `{name}`"));
         listener.1 = domain.to_owned();
+        self.rewrite_manifest();
+    }
+
+    /// Change one listener's declared readiness path.
+    fn set_listener_readiness_path(&mut self, name: &str, path: &str) {
+        let listener = self
+            .declared
+            .iter_mut()
+            .find(|(listener, _, _, _)| listener == name)
+            .unwrap_or_else(|| panic!("the fixture declares `{name}`"));
+        listener.3 = path.to_owned();
         self.rewrite_manifest();
     }
 
@@ -876,14 +908,84 @@ fn detached_up_reconciles_only_the_current_declaration() {
         text.contains("not the current declaration"),
         "the refusal names the mismatch: {text}"
     );
+    assert!(
+        text.contains("settled so it no longer serves"),
+        "the stale generation is settled rather than left serving: {text}"
+    );
+
     let table = fixture.routes();
     assert!(
         table.lookup(CHANGED_API_DOMAIN).is_none(),
         "the newly declared domain has no route: {table:?}"
     );
     assert!(
-        table.lookup(API_DOMAIN).is_some(),
-        "the previous generation keeps the route it published: {table:?}"
+        table.lookup(API_DOMAIN).is_none(),
+        "the settled generation no longer serves the route it published: {table:?}"
+    );
+    fixture.down();
+}
+
+/// An untouched listener whose published generation no longer answers the
+/// **current** declared readiness request is withheld and settled, so its
+/// route is withdrawn instead of staying published behind an untruthful
+/// report; the observed status is named (effigy#455).
+#[test]
+fn detached_up_withholds_a_listener_that_fails_its_current_readiness() {
+    let mut fixture = ExposureFixture::new(
+        "changed-readiness",
+        &[
+            FixtureListener {
+                name: "front",
+                domain: FRONT_DOMAIN,
+                child: READY_CHILD,
+            },
+            FixtureListener {
+                name: "api",
+                domain: API_DOMAIN,
+                child: PATH_SENSITIVE_CHILD,
+            },
+        ],
+        30,
+    );
+    fixture
+        .up(false)
+        .expect("the first activation exposes both listeners");
+    assert!(fixture.routes().lookup(API_DOMAIN).is_some());
+
+    // The second listener still runs, but its declared readiness path now
+    // answers 503; the first listener never binds, so the budget expires.
+    fixture.set_listener_readiness_path("api", "/health-broken");
+    fixture.set_listener_child("front", CLOSED_PORT_CHILD);
+    fixture.set_health_budget(3);
+    let error = fixture
+        .up(false)
+        .expect_err("a listener that fails its current readiness has no route");
+    let text = error.to_string();
+    assert!(
+        text.contains(&format!("`api` kept route {API_DOMAIN} withheld")),
+        "the current declaration's route is withheld: {text}"
+    );
+    assert!(
+        text.contains("/health-broken") && text.contains("status_mismatch"),
+        "the refusal names the current readiness request: {text}"
+    );
+    assert!(
+        text.contains("HTTP 503"),
+        "the refusal carries the status it observed: {text}"
+    );
+    assert!(
+        text.contains("settled so it no longer serves"),
+        "the generation that failed the current readiness is settled: {text}"
+    );
+
+    let table = fixture.routes();
+    assert!(
+        table.lookup(API_DOMAIN).is_none(),
+        "the withheld listener's route is withdrawn from the store: {table:?}"
+    );
+    assert!(
+        table.lookup(CONTAINER_DOMAIN).is_some(),
+        "the container's verified route stays published: {table:?}"
     );
     fixture.down();
 }

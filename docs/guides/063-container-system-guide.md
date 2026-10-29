@@ -1091,7 +1091,8 @@ A listener the activation did not start is reconciled against its own published
 generation first: a healthy generation the previous activation published stays
 exposed when it still matches the current declaration (route domain, TLS, bind
 and the live declared readiness request), and a generation that serves an older
-declaration is reported withheld for the newly declared route. A dependent of
+declaration, or no longer answers the declared readiness request, is settled so
+its route is withdrawn before the report withholds the declared one. A dependent of
 a withheld listener withholds its own route too, through a whole `depends_on`
 chain, instead of waiting for a record that process never wrote.
 Fresh full-ID inspect must match project, service, non-oneoff running state and

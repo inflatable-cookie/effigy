@@ -209,16 +209,21 @@ pub struct ManagedHostListenerFailure {
 }
 
 impl ManagedHostListenerFailure {
-    /// One line a person reads: the listener, its route, and why it failed.
+    /// One line a person reads: the listener, its route, why it failed, and
+    /// the status it was observed answering when there was one.
     pub fn summary(&self) -> String {
         let route = self
             .route_domain
             .as_deref()
             .unwrap_or(self.declared_route_domain.as_str());
-        format!(
+        let mut line = format!(
             "host listener `{}` kept route {route} withheld: {}",
             self.name, self.detail
-        )
+        );
+        if let Some(status) = self.observed_status {
+            line.push_str(&format!(" (observed HTTP {status})"));
+        }
+        line
     }
 }
 
@@ -696,7 +701,7 @@ fn listener_start_progress(process_name: &str, elapsed: Duration, log_path: &Pat
 }
 
 /// What a caller's wait for one listener's published state concluded.
-pub(super) enum ListenerWait {
+enum ListenerWait {
     /// The listener published this generation's verified state.
     Ready(HostListenerState),
     /// Nothing verified was published, so only this listener's own route is

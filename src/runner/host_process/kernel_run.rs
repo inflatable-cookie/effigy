@@ -669,12 +669,31 @@ fn start_host_processes_inner(
                         observed_status,
                         budget_expired,
                     } => {
+                        // Nothing verified is exposed for this listener, so a
+                        // generation that still owns a route for it must not
+                        // keep serving it: settle the exact owned generation
+                        // under the same fenced stop a withheld start uses, so
+                        // the reported route and the store agree (effigy#455).
+                        let stale_generation = !budget_expired;
                         let detail = if budget_expired {
                             "not started: the activation's observation budget expired before this listener was reached, and no generation from a previous activation is published".to_owned()
                         } else {
                             format!(
                                 "not started: the activation's observation budget expired before this listener was reached, and its published generation is not verified now ({diagnostic})"
                             )
+                        };
+                        let detail = if stale_generation {
+                            settle_listener_generation(
+                                repo_root,
+                                policy,
+                                &hp.name,
+                                "reconciliation",
+                            )?;
+                            format!(
+                                "{detail}; that generation was settled so it no longer serves a route this activation does not expose"
+                            )
+                        } else {
+                            detail
                         };
                         withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
                         listener_failures.push(listener_failure(
@@ -880,7 +899,12 @@ fn start_host_processes_inner(
                             // activation reports it withheld: settle it now,
                             // under the same fenced kernel stop `down` uses,
                             // and release its owning pipe (effigy#455).
-                            settle_budget_expired_listener(repo_root, policy, &hp.name)?;
+                            settle_listener_generation(
+                                repo_root,
+                                policy,
+                                &hp.name,
+                                "activation budget",
+                            )?;
                             debug_assert_eq!(
                                 started.last().map(|(name, _)| name.as_str()),
                                 Some(hp.name.as_str()),
@@ -1063,13 +1087,17 @@ fn reconcile_published_listener(
     route_table: Option<&Path>,
     listener: &EffectiveManagedHostListener,
 ) -> super::ListenerWait {
-    let withheld = |diagnostic: String| super::ListenerWait::Withheld {
-        diagnostic,
-        observed_status: None,
-        budget_expired: false,
-    };
+    let withheld =
+        |diagnostic: String, observed_status: Option<u16>| super::ListenerWait::Withheld {
+            diagnostic,
+            observed_status,
+            budget_expired: false,
+        };
     let Some(route_table) = route_table else {
-        return withheld("the environment has no gateway route table".to_owned());
+        return withheld(
+            "the environment has no gateway route table".to_owned(),
+            None,
+        );
     };
     let state = match super::wait_for_listener_state(
         state_path,
@@ -1079,8 +1107,17 @@ fn reconcile_published_listener(
         Some(Instant::now()),
     ) {
         Ok(super::ListenerWait::Ready(state)) => state,
-        Ok(super::ListenerWait::Withheld { diagnostic, .. }) => return withheld(diagnostic),
-        Err(error) => return withheld(format!("no verified generation is published: {error}")),
+        Ok(super::ListenerWait::Withheld {
+            diagnostic,
+            observed_status,
+            ..
+        }) => return withheld(diagnostic, observed_status),
+        Err(error) => {
+            return withheld(
+                format!("no verified generation is published: {error}"),
+                None,
+            )
+        }
     };
     // The published generation must serve *this* declaration: a route domain,
     // TLS mode or bind that changed since that generation started is a
@@ -1093,43 +1130,54 @@ fn reconcile_published_listener(
             .as_ref()
             .is_some_and(|route| route.route_tls == listener.route_tls);
     if !declared_target {
-        return withheld(format!(
-            "its published generation serves {}, {}, which is not the current declaration ({}); the current route stays withheld",
-            state.route_domain.as_deref().unwrap_or("<no route>"),
-            state.address.as_deref().unwrap_or("<no address>"),
-            listener.route_domain
-        ));
+        return withheld(
+            format!(
+                "its published generation serves {}, {}, which is not the current declaration ({}); the current route stays withheld",
+                state.route_domain.as_deref().unwrap_or("<no route>"),
+                state.address.as_deref().unwrap_or("<no address>"),
+                listener.route_domain
+            ),
+            None,
+        );
     }
     // Readiness is a live fact: the published generation counts as exposed only
     // while it still answers the current declared readiness request.
     let Ok(address) = listener.bind.parse::<std::net::SocketAddr>() else {
-        return withheld(format!(
-            "its declared bind `{}` is not an address to probe",
-            listener.bind
-        ));
+        return withheld(
+            format!(
+                "its declared bind `{}` is not an address to probe",
+                listener.bind
+            ),
+            None,
+        );
     };
     let probe = super::probe_http_readiness(address, &listener.route_domain, listener);
     if probe.outcome != super::HttpReadinessOutcome::Ready {
-        return withheld(format!(
-            "its published generation no longer answers {} with {} ({})",
-            listener.readiness_path,
-            listener.readiness_status,
-            probe.outcome.as_str()
-        ));
+        return withheld(
+            format!(
+                "its published generation no longer answers {} with {} ({})",
+                listener.readiness_path,
+                listener.readiness_status,
+                probe.outcome.as_str()
+            ),
+            probe.status,
+        );
     }
     super::ListenerWait::Ready(state)
 }
 
-/// Settle a listener generation whose activation budget expired, before the
-/// command reports its route withheld: it must not publish that route after the
-/// activation returned (effigy#455).
-fn settle_budget_expired_listener(
+/// Settle one listener's generation under the fenced kernel stop, before the
+/// activation reports that listener's route withheld: a generation the command
+/// no longer waits for must not publish (or keep serving) a route the report
+/// does not expose (effigy#455).
+fn settle_listener_generation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     name: &str,
+    purpose: &str,
 ) -> Result<(), RunnerError> {
     let resource = host_process_resource(policy, name)?;
-    stop_resource_run(repo_root, policy, &resource, name, "activation budget").map(|_| ())
+    stop_resource_run(repo_root, policy, &resource, name, purpose).map(|_| ())
 }
 
 /// What one listener's failure contributes to the caller's per-route report:

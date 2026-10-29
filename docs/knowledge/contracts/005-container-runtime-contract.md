@@ -345,8 +345,12 @@ named in `exposed_routes`. Reconciliation compares that generation with the
 **current declaration** — route domain, TLS mode, bind and the declared
 readiness request, which is probed live — and withholds the current route when
 they differ, because the declared target is not the one that generation serves.
-Only a listener with nothing verified against its current declaration is
-reported withheld.
+A generation that fails those checks is settled under the same fenced stop
+before the report, so a route the report withholds is withdrawn from the
+endpoint store instead of being left served by the generation that failed it;
+a definite status the live probe observed is named in the refusal. Only a
+listener with nothing verified against its current declaration is reported
+withheld.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
