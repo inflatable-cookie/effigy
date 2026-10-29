@@ -2777,6 +2777,46 @@ supervisor to expose replay-safe admission and attachment handles to the
 dispatcher; if that cannot be provided without a second authority, stop the
 integration and resolve the kernel interface before implementing a substitute.
 
+#### Implemented: the session layer (effigy#438)
+
+The kernel records this boundary needs are implemented and proven (the kernel
+seam below, and lane A's channel). `crates/effigy-kernel/src/workspace_session.rs`
+is the lane B session layer on top of them and owns no second authority:
+
+- `SessionRef` resolves the environment's one session through its own additive
+  record (`workspace_sessions`), not by guessing from an attachment: a child run
+  or a host `dev` hold on a persistent environment can borrow the same
+  environment, so a `Borrow` row names a holder, never the session. Every read
+  validates the record against the journal — the run is at the recorded
+  generation and not closed, it still borrows the environment at the recorded
+  generation, and the environment has not advanced — and an invalid record
+  resolves as absent, so a stale session is never mistaken for a live one and a
+  successor can be admitted. `SessionRef::admit` refuses any placement other than
+  `Detached`, holds the environment `Borrow` attachment for the run's life and
+  records the mapping, refusing to replace a live one. The entry itself is guarded
+  by the workspace entry's owner gate, and request ids inside the session are the
+  kernel seam's `run::reserve` records — one admission authority, not two.
+- `SessionHandle` hands the kernel seam's `run::Session` to reservation, attach
+  and bounded control, and exposes the down coordination. `OwnerLoss` maps EOF,
+  a disconnect and TERM/HUP to the kernel's owner release (`Release::Eof`) and to
+  the stop cause the supervisor settles with (`StopCause::OwnerLost` or
+  `Signal(n)`); an acknowledged detach is `Release::Detach` and stops nothing.
+- Down: `DownCoordination::begin` refuses every holder other than the session and
+  its own child runs, live or `Unknown`; `DownChildren` stops only those children
+  with an ordinary journalled `run::request` (idempotent by request id) and takes
+  its permit through `Attachments::permit_exempt` once the session has entered
+  its settle.
+- The runner entry `src/runner/workspace_command/session.rs` maps each front end
+  to its `TerminalKind` and prints the one resolved identity.
+
+Still owned elsewhere by the lane split: the supervisor's serving loop over its
+control listener, the channel frames and dispatcher (lane A), Prepare and context
+(lane C) and the client glue (`src/runner/workspace_client.rs`). Proofs are the
+fake-owner, fake-runtime cases under `workspace_session::tests::`; the admission,
+attachment and stream records they consume are proven by lane A's
+`test:kernel:workspace-channel`. Neither exercises an engine, container, gateway
+or live supervisor.
+
 **Kernel seam.** `crates/effigy-kernel/src/run/workspace.rs` implements that half.
 A session is its run and its generation, so two sessions at one generation stay
 distinct. `reserve` records `(session, request ID, canonical request digest)`

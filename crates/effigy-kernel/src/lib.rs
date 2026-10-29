@@ -33,6 +33,7 @@ pub mod store;
 pub mod strict_fake;
 pub mod supervise;
 pub mod workspace_channel;
+pub mod workspace_session;
 
 #[cfg(all(test, feature = "fault-injection"))]
 mod fault;

@@ -1552,7 +1552,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 3] = [
+const ADDITIVE_TABLES: [(&str, &str); 4] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1610,6 +1610,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS workspace_admissions_run_identity
 ) STRICT;
 CREATE INDEX IF NOT EXISTS run_attachments_run
   ON run_attachments(run_id, state)",
+    ),
+    // 052 §8.7: which run is an environment's workspace session. A Borrow
+    // attachment alone cannot say it — a child run or a host `dev` hold can
+    // borrow the same environment — so the session's own journal records the
+    // mapping, and every read validates it against the run row and the
+    // generation before it is used.
+    (
+        "workspace_sessions",
+        "CREATE TABLE IF NOT EXISTS workspace_sessions (
+  environment TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  environment_generation INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+) STRICT;",
     ),
 ];
 
