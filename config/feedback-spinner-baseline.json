@@ -7,7 +7,7 @@
   ],
   [
     "crates/effigy-containers/src/environment/reconcile.rs",
-    797,
+    828,
     "let settling = effigy_ui::steps::step(&format!(\"settling environment `{env}`\"));",
     42
   ],
@@ -97,49 +97,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    217,
+    229,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    815,
+    836,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    989,
+    1010,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    992,
+    1013,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    994,
+    1015,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    996,
+    1017,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1013,
+    1034,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1015,
+    1036,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -247,13 +247,13 @@
   ],
   [
     "src/runner/execute/pipeline/standard.rs",
-    827,
+    867,
     "let step = effigy_ui::steps::step(\"unlocking vault\");",
     34
   ],
   [
     "src/runner/execute/sequence_run.rs",
-    436,
+    471,
     "let step = effigy_ui::steps::step(&progress);",
     38
   ],
@@ -445,7 +445,7 @@
   ],
   [
     "src/runner/workspace_command/mod.rs",
-    544,
+    565,
     "let spinner = renderer.spinner(label).ok();",
     32
   ]
