@@ -843,6 +843,8 @@ fn release_decide_records_an_unknown_publish_outcome_and_continues() {
 ///
 /// - `scripts/check-release-ci.sh` exits 0 instead of asking `gh` for a hosted
 ///   run on this exact commit;
+/// - `scripts/release/secret-audit.sh` records the pinned arguments instead of
+///   scanning the real release lineage, which a synthetic repository lacks;
 /// - the fixture's `build:release`, which the real `release:artifact` task
 ///   composes, builds the fixture's own tiny `effigy` binary, so certify really
 ///   produces the `target/release/effigy` artifact the config declares;
@@ -923,6 +925,11 @@ include = ["config/release.toml"]
         "#!/bin/sh\n# fixture: the hosted CI probe needs gh and a real dispatch\necho 'CI is green for candidate commit fixture'\n",
     )
     .expect("fixture CI gate");
+    fs::write(
+        root.join("scripts/release/secret-audit.sh"),
+        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$HOME/secret-audit-invoked\"\n",
+    )
+    .expect("fixture secret audit gate");
     fs::write(
         root.join("fake-dispatch.sh"),
         r#"#!/bin/sh
@@ -1014,6 +1021,11 @@ fn effigy_release_plan_reports_the_contract_054_declaration() {
                 "pre-gates".to_owned(),
                 String::new()
             ),
+            (
+                "secret-audit".to_owned(),
+                "certify".to_owned(),
+                String::new()
+            ),
             ("ci".to_owned(), "certify".to_owned(), String::new()),
             ("format".to_owned(), "certify".to_owned(), String::new()),
             ("test".to_owned(), "certify".to_owned(), String::new()),
@@ -1034,6 +1046,10 @@ fn effigy_release_plan_reports_the_contract_054_declaration() {
     assert_eq!(
         preflight["command"],
         "sh scripts/release/checks.sh preflight --skip-smoke"
+    );
+    assert_eq!(
+        gates[1]["command"],
+        "sh scripts/release/secret-audit.sh --base v0.14.1 --base-sha 20465f1ff690340ee9ef461915ca769da1c76fca"
     );
 
     let artifacts = plan["artifacts"].as_array().expect("artifacts");
@@ -1093,6 +1109,10 @@ fn effigy_release_run_certifies_and_then_publishes_through_the_fake_dispatch() {
     );
     let receipt = &certified["result"]["receipt"];
     assert_eq!(receipt["published"], false);
+    assert_eq!(
+        fs::read_to_string(home.join("secret-audit-invoked")).expect("secret audit ran"),
+        "--base\nv0.14.1\n--base-sha\n20465f1ff690340ee9ef461915ca769da1c76fca\n"
+    );
     let artifact = &receipt["candidate"]["artifacts"][0];
     assert_eq!(artifact["name"], "binary");
     assert_eq!(artifact["pattern"], "target/release/effigy");

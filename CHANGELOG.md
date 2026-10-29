@@ -6,6 +6,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Security
+
+- Require the release secret audit to scan the committed candidate tree and
+  history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
+
 ### Breaking
 
 - **Read [guide 085](docs/guides/085-v0.15.0-consumer-migration.md) before
@@ -431,7 +436,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
-- Managed TUI panes now show nested Effigy progress as plain start and finish lines instead of repeated spinner redraws and banners. Shutdown takes over the progress display cleanly, and sequence labels name useful work instead of generated step numbers.
+- Managed TUI panes now show nested Effigy progress as plain start and finish
+  lines instead of repeated spinner redraws and banners. Shutdown takes over
+  the progress display cleanly, and sequence labels name useful work instead of
+  generated step numbers.
+- Show Colima workspace sizing recommendations only for a selected workspace
+  service, avoiding misleading advice for hybrid and database-only environments.
 
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a

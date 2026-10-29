@@ -511,6 +511,10 @@ pub fn colima_profile_warnings(policy: &EffectiveContainerPolicy, repo_root: &Pa
         );
     }
 
+    if !policy.has_selected_workspace_service() {
+        return warnings;
+    }
+
     let Some(resources) = managed_colima_profile_resources(&policy.profile) else {
         return warnings;
     };
@@ -1340,7 +1344,8 @@ case "$1" in
   list)
     if [ -f "$root/listed" ]; then
       if [ -f "$root/running" ]; then state=Running; else state=Stopped; fi
-      printf '{"name":"effigy","status":"%s","cpus":2,"memory":34359738368,"disk":322122547200}\n' "$state"
+      if [ -f "$root/small" ]; then memory=8589934592; disk=1073741824; else memory=34359738368; disk=322122547200; fi
+      printf '{"name":"effigy","status":"%s","cpus":2,"memory":%s,"disk":%s}\n' "$state" "$memory" "$disk"
     fi
     ;;
   start) : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
@@ -1459,6 +1464,74 @@ esac
                 .map(str::to_owned)
                 .collect()
         }
+    }
+
+    #[test]
+    fn colima_sizing_warnings_require_a_selected_workspace_service() {
+        use crate::policy::render::{Draft, Request};
+
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.state("small");
+        let mut policy = fixture.policy();
+        let compose = fixture.root.join("compose.yml");
+        policy.compose_files = vec![compose.clone()];
+        let mut draft = Draft::default();
+        draft.insert(
+            compose,
+            b"services:\n  app:\n    image: example\n  db:\n    image: postgres\n".to_vec(),
+        );
+        draft.finish(&mut policy, "fixture").expect("render");
+
+        // A catalog service or default identity alone does not prove a workspace.
+        policy.workspace_user = Some("dev".into());
+        policy.workspace_home = Some("/home/dev".into());
+        assert!(colima_profile_warnings(&policy, &fixture.root).is_empty());
+        policy.host_processes.push(crate::EffectiveHostProcess {
+            name: "listener".into(),
+            run: "serve".into(),
+            cwd: fixture.root.clone(),
+            env: vec![],
+            depends_on: vec![],
+            listener: Some(crate::EffectiveManagedHostListener {
+                bind: "127.0.0.1:3000".into(),
+                readiness_path: "/".into(),
+                readiness_status: 200,
+                readiness_timeout_secs: 1,
+                declared_route_domain: "app.test".into(),
+                route_domain: "app.test".into(),
+                route_tls: false,
+            }),
+            restart: Default::default(),
+            restart_delay_ms: 0,
+            shutdown_signal: Default::default(),
+            shutdown_grace_secs: 1,
+        });
+        assert!(colima_profile_warnings(&policy, &fixture.root).is_empty());
+        policy.primary_service = "db".into();
+        assert!(colima_profile_warnings(&policy, &fixture.root).is_empty());
+
+        policy.primary_service = "app".into();
+        policy.render.as_mut().unwrap().request = Request::Named(Some(Default::default()));
+        let warnings = colima_profile_warnings(&policy, &fixture.root);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("memory and")));
+        assert!(warnings.iter().any(|warning| warning.contains("disk for")));
+        policy.primary_service = "missing".into();
+        assert!(colima_profile_warnings(&policy, &fixture.root).is_empty());
+
+        // An unrendered direct Compose policy is unknown, even with an identity.
+        policy.render = None;
+        policy.compose_source = EffectiveComposeSource::Direct;
+        assert!(colima_profile_warnings(&policy, &fixture.root).is_empty());
+        policy.profile = "default".into();
+        let warnings = colima_profile_warnings(&policy, &fixture.root);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("shared with unrelated"));
     }
 
     #[test]

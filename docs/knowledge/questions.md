@@ -611,6 +611,17 @@ capture now emit per-layer live steps from those existing layer statuses; real
 SQL-layer spinner timing still needs an exact-candidate proof and is not
 qualified by the source labels alone.
 
+Tom clarified on 2026-10-29 that a fixed spinner label is UI noise, not
+progress. Every spinner must show live state as the operation advances: its
+current sub-step or object, known counts, elapsed time, and the last meaningful
+event or exact dependency/probe being awaited. When no further event is
+observable, show elapsed time and the exact thing awaited rather than a generic
+"working" label. This applies across command planes, including managed TUI
+tabs and their text/JSON equivalents, and is a v0.15 gate. The source-wide
+audit is recorded at
+`/Volumes/Builds/scratch/effigy/feedback-spinner-source-audit-20261029.md`;
+the gate requires reviewed per-plane fixes and an enforcing feedback lint/API.
+
 ## Q-018: Primary Linux proof environment for v0.15
 
 Status: answered

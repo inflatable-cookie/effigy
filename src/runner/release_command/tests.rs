@@ -224,6 +224,7 @@ fn current_repo_release_config_matches_the_contract_054_shape() {
         names,
         vec![
             "preflight",
+            "secret-audit",
             "ci",
             "format",
             "test",
@@ -244,6 +245,16 @@ fn current_repo_release_config_matches_the_contract_054_shape() {
         "sh scripts/release/checks.sh preflight --skip-smoke"
     );
     assert_eq!(preflight.task, None);
+    let audit = pipeline
+        .gates
+        .iter()
+        .find(|gate| gate.name == "secret-audit")
+        .expect("secret audit gate");
+    assert_eq!(audit.stage, GateStage::Certify);
+    assert_eq!(
+        audit.command,
+        "sh scripts/release/secret-audit.sh --base v0.14.1 --base-sha 20465f1ff690340ee9ef461915ca769da1c76fca"
+    );
     let metadata = pipeline
         .gates
         .iter()

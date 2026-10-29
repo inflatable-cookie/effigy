@@ -32,6 +32,7 @@ stage = "pre"
 description = "Effigy release metadata and docs hold on the source tree"
 
 [release.gates]
+secret-audit = "sh scripts/release/secret-audit.sh --base v0.14.1 --base-sha 20465f1ff690340ee9ef461915ca769da1c76fca"
 ci = "sh scripts/check-release-ci.sh"
 format = "cargo fmt --all -- --check"
 test = "cargo test --workspace"
