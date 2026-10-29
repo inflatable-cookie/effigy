@@ -50,6 +50,14 @@ when the real cause was two named services failing their health checks.
   `fetching bundle decodelabs`. The label changes as the work moves on, and
   each step ends with a one-line success or failure. Spinners write to stderr
   and never appear in `--json`, piped or non-terminal output.
+- **A spinner must carry live state.** Tom confirmed on 2026-10-29 that a
+  canned label fixed for the whole wait is noise. Show the current sub-step or
+  object (service, image, dependency, layer or gate), known counts or ratios,
+  elapsed time, and the last meaningful event or exact blocker. If no further
+  event can be observed, name the precise wait and probe alongside elapsed
+  time. A changing glyph alone is not progress. Managed TUI entries have their
+  own dependency-derived state; a waiting entry never borrows another entry's
+  label. This rule applies to every command plane for the v0.15 gate (Q-017).
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
   - the evidence (exit code, the last relevant output, the health check's
