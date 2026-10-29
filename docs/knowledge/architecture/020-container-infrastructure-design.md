@@ -796,22 +796,26 @@ with nothing to do is attributable as well: the start identity, session and
 controlling terminal of the invoking process, its parent chain up to and
 including the session leader (at most eight entries, each with pid, start
 identity, session and redacted command), and only allowlisted `PASEO_*`, `NS_*`
-and `EFFIGY_RUN_*` identity markers whose value passes length and identity
-validation. An unreadable parent, argument or marker, or a pid whose start
-identity changed while it was read, becomes a bounded unknown reason instead of
-a guess, and no environment value is read unless its name is on that allowlist.
+and `EFFIGY_RUN_*` identity markers whose value is a supported identity form. An
+unreadable parent, argument or marker, or a pid whose start identity changed
+while it was read, becomes a bounded unknown reason instead of a guess, and no
+environment value is read unless its name is on that allowlist.
 
 Redaction treats the two command lines differently. The invoking process's own
 `argv` is Effigy's grammar, so a credential-named flag keeps its name and loses
-only its value. An ancestor's command is arbitrary third-party text, so only
-recognised flag names and plain word or path shapes are kept: a value after a
-flag, an attached short-flag value, a shell string's flag values (read token by
-token), URL userinfo, a `KEY=value`, a JSON body and a long unseparated token
-are recorded as `<redacted>`. A stop signalled by replacement or migration is
-attributable through the `up` or `setup` action that requested it; no
-lower-level signal helper writes a second record for one action. Logging stays
-best effort and never authorizes, refuses or delays an action; the elevated
-child of `gateway setup` writes nothing, because the file would become
+only its value. An ancestor's command is arbitrary third-party text, so no
+positional token in it is treated as safe: only the program the kernel executed,
+recognised flag names and path-shaped arguments are kept. A positional value in
+a direct command line, the same value inside a shell string (read token by
+token), a value after a flag, an attached short-flag value, URL userinfo, a
+`KEY=value`, a JSON body and a long unseparated token are recorded as
+`<redacted>`. A marker value is recorded only when it is a UUID, a decimal id,
+or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
+marker variable is refused by name only. A stop signalled by replacement or
+migration is attributable through the `up` or `setup` action that requested it;
+no lower-level signal helper writes a second record for one action. Logging
+stays best effort and never authorizes, refuses or delays an action; the
+elevated child of `gateway setup` writes nothing, because the file would become
 root-owned in the operator's directory.
 
 ### Gateway process identity ruling

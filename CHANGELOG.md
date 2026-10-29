@@ -221,13 +221,15 @@ During v0.x, MINOR bumps may include breaking changes.
   `caller` record adds the invoking process's start identity, session and
   controlling terminal, its parent chain up to the session leader with each
   pid's start identity and redacted command, and only allowlisted `PASEO_*`,
-  `NS_*` and `EFFIGY_RUN_*` identity markers. Values that look like credentials
-  are redacted: a credential-named flag keeps its name in Effigy's own argv,
-  while an ancestor's command keeps only recognised flags and plain words, so a
-  flag's value, an attached short-flag value, a shell string's flag values, URL
-  userinfo and `KEY=value` pairs are `<redacted>`. Anything unreadable or
-  invalid becomes a bounded `unknown` reason, no other environment value is
-  read, and logging still never authorizes, refuses or delays the action. The
+  `NS_*` and `EFFIGY_RUN_*` identity markers whose value is a UUID, a decimal
+  id or Effigy's own base32 run id. Values that look like credentials are
+  redacted: a credential-named flag keeps its name in Effigy's own argv, while
+  an ancestor's command keeps only the program it was started as, recognised
+  flag names and paths, so a positional value, a shell string's positional
+  values, a flag's value, an attached short-flag value, URL userinfo and
+  `KEY=value` pairs are `<redacted>`. Anything unreadable or invalid becomes a
+  bounded `unknown` reason, no other environment value is read, and logging
+  still never authorizes, refuses or delays the action. The
   2026-10-28 15:26:25Z Mac gateway stop could not have been traced to a
   terminal, session, agent or task from the old record.
 - **Manual `[manifest].include` `optional`/`override` and kebab-case aliases

@@ -116,7 +116,7 @@ pub fn caller(
         let Some(value) = marker(name) else {
             continue;
         };
-        match identity(&value) {
+        match identity(name, &value) {
             Ok(value) => {
                 markers.insert((*name).to_owned(), value);
             }
@@ -300,12 +300,14 @@ fn redact(argument: &str, previous: Option<&str>) -> String {
 fn ancestor_command(argv: &[String]) -> Vec<String> {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
-    for argument in argv.iter().take(ARGV_LIMIT) {
+    for (index, argument) in argv.iter().take(ARGV_LIMIT).enumerate() {
         let recorded = match previous {
             // A shell string is a command line of its own: read it token by
-            // token so `sh -c 'psql --password …'` loses that value too.
+            // token so `sh -c 'psql --password ...'` loses that value too.
             Some(flag) if shell_flag(flag) => shell_command(argument),
             Some(flag) if flag_shaped(flag) => REDACTED.into(),
+            // Only the program the kernel executed is positional text at all.
+            _ if index == 0 => ancestor_program(argument),
             _ => ancestor_token(argument),
         };
         rendered.push(recorded);
@@ -314,7 +316,9 @@ fn ancestor_command(argv: &[String]) -> Vec<String> {
     rendered
 }
 
-/// Token-wise redaction of one shell command string.
+/// Token-wise redaction of one shell command string. The string is arbitrary
+/// text, so no token in it is taken as a program: only paths and flag names are
+/// recorded, and every other positional token is a value that may be secret.
 fn shell_command(script: &str) -> String {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
@@ -329,9 +333,19 @@ fn shell_command(script: &str) -> String {
     bounded(&rendered.join(" "), TEXT_LIMIT)
 }
 
-/// One ancestor argument kept only when it is a recognised flag name or a
-/// plain word/path. A flag token that is not a recognised name may carry an
-/// attached value (`-pHunter2`), so the whole token is redacted.
+/// The program this process was started as. It is an identity, not a value, and
+/// it is the only positional text an ancestor's own `argv` contributes.
+fn ancestor_program(argument: &str) -> String {
+    let argument = argument.trim();
+    if word(argument) && !secret(argument) {
+        return bounded(argument, TEXT_LIMIT);
+    }
+    REDACTED.into()
+}
+
+/// Any other ancestor argument: a recognised flag name or a path, and nothing
+/// else. Arbitrary positional text is where a positional password lives, so it
+/// is never recorded (effigy#450 review).
 fn ancestor_token(argument: &str) -> String {
     let argument = argument.trim();
     if flag_shaped(argument) {
@@ -341,10 +355,15 @@ fn ancestor_token(argument: &str) -> String {
             REDACTED.into()
         };
     }
-    if word(argument) && !secret(argument) {
+    if path(argument) && !secret(argument) {
         return bounded(argument, TEXT_LIMIT);
     }
     REDACTED.into()
+}
+
+/// A path names a program or a file; a bare word can be a value.
+fn path(argument: &str) -> bool {
+    word(argument) && argument.contains('/')
 }
 
 /// A recognised flag name: `--words` or one of the short flags above. A token
@@ -496,8 +515,11 @@ fn secret_value(value: &str) -> bool {
         .any(|prefix| value.starts_with(prefix))
 }
 
-/// A marker value is one bounded identity, never a path, a URL or a blob.
-fn identity(value: &OsString) -> Result<String, &'static str> {
+/// A marker value must be one of the identity forms Effigy and its agents
+/// actually use, so arbitrary text — a password pasted into a marker variable —
+/// is never recorded as an identity (effigy#450 review). The reason never quotes
+/// the rejected value.
+fn identity(name: &str, value: &OsString) -> Result<String, &'static str> {
     let Some(value) = value.to_str() else {
         return Err("value is not UTF-8");
     };
@@ -507,17 +529,41 @@ fn identity(value: &OsString) -> Result<String, &'static str> {
     if value.len() > MARKER_VALUE_LIMIT {
         return Err("value is too long for an identity");
     }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
-        || !value.chars().any(|c| c.is_ascii_alphanumeric())
-    {
-        return Err("value is not an identity");
-    }
-    if secret_value(value) {
-        return Err("value is secret-shaped");
+    let accepted = uuid(value)
+        || decimal(value)
+        // Effigy's own run id is a 26-character base32 encoding of 16 bytes.
+        || (name.starts_with("EFFIGY_RUN_") && effigy_run_id(value));
+    if !accepted {
+        return Err("value is not a supported identity form");
     }
     Ok(value.to_owned())
+}
+
+/// `8-4-4-4-12` hexadecimal, the form Paseo and Queue identity values use.
+fn uuid(value: &str) -> bool {
+    let groups = [8, 4, 4, 4, 12];
+    if value.len() != 36 {
+        return false;
+    }
+    let mut parts = value.split('-');
+    groups.iter().all(|length| {
+        parts.next().is_some_and(|group| {
+            group.len() == *length && group.chars().all(|c| c.is_ascii_hexdigit())
+        })
+    }) && parts.next().is_none()
+}
+
+/// A small decimal identifier such as a process or port ordinal.
+fn decimal(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 20 && value.chars().all(|c| c.is_ascii_digit())
+}
+
+/// The kernel's run identity encoding: 26 characters of `a-z2-7`.
+fn effigy_run_id(value: &str) -> bool {
+    value.len() == 26
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || matches!(c, '2'..='7'))
 }
 
 /// Keep one diagnostic text field inside its bound at a character boundary.
@@ -794,14 +840,17 @@ mod tests {
         );
     }
 
-    /// Only allowlisted markers are read, and only a valid identity is kept.
+    /// Only allowlisted markers are read, and only a value in one of the
+    /// supported identity forms is kept: a password pasted into a marker
+    /// variable is refused with a bounded reason that never quotes it.
     #[test]
     fn gateway_caller_markers_are_allowlisted_and_validated() {
         let fake = Fake::default().facts(50, 1, 50, "macos:1.000050", &[]);
         let values = [
-            ("PASEO_AGENT_ID", "agent-7"),
-            ("NS_RUN_ID", "run:2026-10-28"),
-            ("EFFIGY_RUN_TASK_ID", "effigy_450"),
+            ("PASEO_AGENT_ID", "3f2b8c1a-9d4e-4f6a-8b2c-7e5d1a9c0b34"),
+            ("NS_RUN_ID", "1b3dafc2-a108-48af-8807-ec552d605e8f"),
+            ("EFFIGY_RUN_ID", "abcdefghijklmnopqrstuvwxyz"),
+            ("NS_HOST_ID", "42"),
             // Presence is read by name, so an unlisted name is never consulted.
             ("PASEO_HOME", "/Users/someone/.paseo"),
             ("OPENAI_API_KEY", "sk-not-a-marker"),
@@ -816,15 +865,18 @@ mod tests {
         assert_eq!(
             record.markers,
             markers(&[
-                ("PASEO_AGENT_ID", "agent-7"),
-                ("NS_RUN_ID", "run:2026-10-28"),
-                ("EFFIGY_RUN_TASK_ID", "effigy_450"),
+                ("PASEO_AGENT_ID", "3f2b8c1a-9d4e-4f6a-8b2c-7e5d1a9c0b34"),
+                ("NS_RUN_ID", "1b3dafc2-a108-48af-8807-ec552d605e8f"),
+                ("EFFIGY_RUN_ID", "abcdefghijklmnopqrstuvwxyz"),
+                ("NS_HOST_ID", "42"),
             ])
         );
         assert!(record.unknown.is_empty(), "{:?}", record.unknown);
 
+        // A syntactically plain password, a value that is too long and a
+        // secret-shaped value are all refused without being quoted.
         let malformed = caller(&fake, 50, None, |name| match name {
-            "NS_RUN_ID" => Some(OsString::from("run id with spaces")),
+            "PASEO_RUN_ID" => Some(OsString::from("hunter2")),
             "PASEO_TASK_ID" => Some(OsString::from("x".repeat(MARKER_VALUE_LIMIT + 1))),
             "EFFIGY_RUN_ID" => Some(OsString::from("sk_live_0123456789")),
             _ => None,
@@ -832,10 +884,9 @@ mod tests {
         assert!(malformed.markers.is_empty(), "{:?}", malformed.markers);
         assert_eq!(malformed.unknown.len(), 3);
         assert!(
-            malformed
-                .unknown
-                .iter()
-                .any(|reason| reason == "NS_RUN_ID: value is not an identity"),
+            malformed.unknown.iter().all(|reason| reason
+                .contains("value is not a supported identity form")
+                || reason.contains("value is too long")),
             "{:?}",
             malformed.unknown
         );
@@ -843,7 +894,7 @@ mod tests {
             malformed
                 .unknown
                 .iter()
-                .all(|reason| !reason.contains("spaces")),
+                .all(|reason| !reason.contains("hunter2") && !reason.contains("sk_live")),
             "{:?}",
             malformed.unknown
         );
@@ -910,10 +961,10 @@ mod tests {
             assert!(!rendered.contains(exposed), "{rendered}");
         }
         assert!(!unknown.contains("hunter2"), "{unknown}");
-        // Attribution survives redaction: the command, flag and plain arguments stay.
+        // Attribution survives redaction: the program and the flag names stay.
+        assert!(parents.contains("effigy"), "{parents}");
         assert!(parents.contains("--token"), "{parents}");
         assert!(parents.contains("--author"), "{parents}");
-        assert!(parents.contains("build"), "{parents}");
         assert!(parents.contains("<redacted>"), "{parents}");
         assert!(rendered.contains("<redacted>"), "{rendered}");
         // A plain marker and the terminal are still recorded.
@@ -923,34 +974,61 @@ mod tests {
         );
     }
 
-    /// An ancestor's command is arbitrary third-party text, so only a
-    /// recognised flag name and a plain word/path are recorded. A shell string
-    /// is a command line of its own and loses its flag values the same way.
+    /// An ancestor's command is arbitrary third-party text. Only the program it
+    /// was started as, recognised flag names and paths are recorded; every other
+    /// positional token is a value and is redacted, in a direct command line and
+    /// inside a shell string alike.
     #[test]
-    fn gateway_ancestor_commands_lose_every_credential_shaped_value() {
-        let script = Fake::default()
+    fn gateway_ancestor_commands_keep_only_programs_flags_and_paths() {
+        // A positional password is not a word we may trust.
+        let direct = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
                 40,
                 30,
                 40,
                 "macos:1.000040",
-                &["/bin/zsh", "-lc", "psql --password hunter2 --host db"],
+                &[
+                    "helper",
+                    "/opt/helper/bin/x",
+                    "login",
+                    "hunter2",
+                    "--verbose",
+                ],
             );
-        let parent = caller_of(&script, 50).parents[0].command.clone().unwrap();
+        let parent = caller_of(&direct, 50).parents[0].command.clone().unwrap();
+        assert_eq!(
+            parent,
+            vec![
+                "helper".to_owned(),
+                "/opt/helper/bin/x".to_owned(),
+                "<redacted>".to_owned(),
+                "<redacted>".to_owned(),
+                "--verbose".to_owned(),
+            ]
+        );
+
+        // The same positional secret inside a shell string.
+        let shell = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["/bin/sh", "-c", "helper login hunter2 --verbose"],
+            );
+        let parent = caller_of(&shell, 50).parents[0].command.clone().unwrap();
         let rendered = parent.join(" ");
-        for exposed in ["hunter2", " db"] {
+        assert_eq!(parent[0], "/bin/sh", "{rendered}");
+        assert_eq!(parent[1], "-c", "{rendered}");
+        for exposed in ["helper", "hunter2", "login"] {
             assert!(!rendered.contains(exposed), "{rendered}");
         }
-        assert_eq!(parent[0], "/bin/zsh", "{rendered}");
-        assert_eq!(parent[1], "-lc", "{rendered}");
-        for kept in ["psql", "--password", "--host"] {
-            assert!(rendered.contains(kept), "{kept} missing from {rendered}");
-        }
-        assert!(rendered.contains("<redacted>"), "{rendered}");
+        assert!(rendered.contains("--verbose"), "{rendered}");
 
-        // A short flag with an attached value, URL userinfo and a value after a
-        // flag are all redacted; the flag names and the program stay.
+        // A flag whose value is a credential, an attached short-flag value, URL
+        // userinfo and a JSON body all lose their value.
         let plain = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -979,8 +1057,8 @@ mod tests {
         }
     }
 
-    /// A path and a separated identity stay attributable; a long unseparated
-    /// token does not.
+    /// A path and a program name stay attributable; a positional identity and a
+    /// long opaque token do not, because neither can be told from a credential.
     #[test]
     fn gateway_ancestor_tokens_keep_only_a_plain_command_shape() {
         let token = "a8f5f167f44f4964e6c998dee827110cf2d4c1f7";
@@ -1002,19 +1080,18 @@ mod tests {
                 ],
             );
         let parent = caller_of(&fake, 50).parents[0].command.clone().unwrap();
-        let rendered = parent.join(" ");
-        for exposed in [token, "wip"] {
-            assert!(!rendered.contains(exposed), "{rendered}");
-        }
-        for kept in [
-            "node",
-            "/opt/paseo/bin/paseo",
-            "run",
-            "f593c9f2-075b-4243-9e1b-176d303ec799",
-            "-m",
-        ] {
-            assert!(rendered.contains(kept), "{kept} missing from {rendered}");
-        }
+        assert_eq!(
+            parent,
+            vec![
+                "node".to_owned(),
+                "/opt/paseo/bin/paseo".to_owned(),
+                "<redacted>".to_owned(),
+                "<redacted>".to_owned(),
+                "<redacted>".to_owned(),
+                "-m".to_owned(),
+                "<redacted>".to_owned(),
+            ]
+        );
     }
 
     /// Long values are bounded, and the bound itself is visible.

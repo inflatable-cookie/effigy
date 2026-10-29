@@ -376,25 +376,28 @@ session and its controlling terminal when it has one;
 session leader, capped at eight entries, each with pid, start identity, session
 and redacted argument boundaries;
 - only allowlisted agent/task/run identity markers, read by name from
-`PASEO_*`, `NS_*` and `EFFIGY_RUN_*`, and only when the value is a short,
-identity-shaped value; every other environment value is never read;
+`PASEO_*`, `NS_*` and `EFFIGY_RUN_*`, and only when the value is one of the
+supported identity forms: a `8-4-4-4-12` hexadecimal UUID, a decimal id, or —
+for `EFFIGY_RUN_*` — Effigy's own 26-character base32 run id. Every other
+environment value is never read;
 - a bounded `unknown` list naming what could not be read: an unreadable or
 vanished parent, unreadable arguments, a pid whose start identity changed while
-it was read, a truncated chain, or a marker whose value failed validation. No
-reason ever quotes the value it rejected.
+it was read, a truncated chain, or a marker whose value is not a supported
+identity form. No reason ever quotes the value it rejected, so a password
+pasted into a marker variable is refused by name only.
 
 Redaction has two policies, because the two command lines are different kinds
 of text. The invoking process's own `argv` is Effigy's own command grammar, so a
 credential-named flag (`--token`, `--api-key`, `--password`, `Authorization:`…)
 keeps its name and loses only the value beside it, as does a URL's userinfo and
 a known token prefix. An ancestor's command line is arbitrary third-party text,
-so nothing there is trusted to describe its values: only recognised flag names
-and plain word or path shapes are recorded, a shell string is read token by
-token so `sh -c 'psql --password …'` loses that value, and a value after a flag,
-an attached short-flag value (`-pHunter2`), URL userinfo, a `KEY=value`, a JSON
-body and a long unseparated token are all recorded as `<redacted>`. An
-ancestor's program, flags and plain command words stay, which is what the chain
-is for.
+so no positional token in it is treated as safe: only the program the kernel
+executed, recognised flag names and path-shaped arguments are recorded. The rest
+— a positional value in a direct command line, the same value inside a shell
+string (which is read token by token), a value after a flag, an attached
+short-flag value such as `-pHunter2`, URL userinfo, a `KEY=value`, a JSON body
+and a long unseparated token — is `<redacted>`, because a positional password
+cannot be told from a word.
 
 This record is diagnostic evidence only. It never authorizes, refuses or
 delays an operator action, and an unavailable log never fails one. The
