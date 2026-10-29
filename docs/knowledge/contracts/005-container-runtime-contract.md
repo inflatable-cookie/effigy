@@ -389,23 +389,20 @@ Chain failures keep their place in that list, which is capped at eight entries
 and ends with how many reasons it omitted, so a flood of invalid markers can
 never hide a missing or unconfirmed part of the chain.
 
-Command text is published from a closed vocabulary, and only from a command
-position within it. An event records a token only when it is a word Effigy
-defines itself, a launcher, runtime or task name the record knows, or one of
-Effigy's own flag names, *and* the token is not in a value position: the argument
-after a flag, and the value half of `--flag=value`, are never published whatever
-their spelling. `gateway setup --suffix down` records `--suffix <redacted>`, and
-an ancestor's `helper --password gateway` records neither word. Every other token
-— a value, a path, an unknown flag name such as `--hunter2`, a program name, a
-URL, a `KEY=value` pair, a JSON body — is `<redacted>`, because all of it is
-caller-controlled text. The same rule applies to the invoking process's own
-`argv`, to an ancestor's `argv`, and token by token inside a shell string; a flag
-the record does not know is treated as taking a value. An ancestor's program slot names the file
-name of the executable the operating system reports — never its caller-chosen
-`argv[0]`, which `exec -a` can set to anything — and only when that name is in
-the same vocabulary. Attribution therefore rests on the pid, start identity,
-session, controlling terminal, markers, `cause` and Effigy's own command words,
-not on arbitrary text from a command line.
+Command text is published by role, not by spelling. An event records only the
+file name of the program and one of Effigy's own flag names. Every other token is
+`<redacted>`: a positional argument (whatever its spelling, because a positional
+password cannot be told from a command word), a path, an unknown flag name such
+as `--hunter2` or `--token`, a URL, a `KEY=value` pair, a JSON body, and the value
+of any flag — in `--flag value` and `--flag=value` form alike, so
+`gateway setup --suffix down` records `--suffix <redacted>`. The rule applies to
+the invoking process's own `argv`, to an ancestor's `argv`, and token by token
+inside a shell string; a flag this record does not define is treated as taking a
+value, and an ancestor's program slot names the file name of the executable the
+operating system reports, never its caller-chosen `argv[0]`, and only when that
+name is in the published program vocabulary. Attribution therefore rests on the
+pid, start identity, session, controlling terminal, markers, `cause` and the
+`action`, not on arbitrary text from a command line.
 
 This record is diagnostic evidence only. It never authorizes, refuses or
 delays an operator action, and an unavailable log never fails one. The

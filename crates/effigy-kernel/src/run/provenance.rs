@@ -262,36 +262,13 @@ impl Tree for Platform {
     }
 }
 
-/// The only command text an event publishes: words Effigy defines itself and the
-/// launchers, runtimes and task names an operator or agent wraps them in. Every
-/// other token in a command line — a flag name, an argument value, a path or a
-/// program name — is caller-controlled text, so it is recorded as a placeholder
-/// instead of being risked in the gateway log (effigy#450 review).
-const WORDS: &[&str] = &[
-    // Effigy's own command surface.
+/// The program names an event may publish: Effigy itself and the launchers,
+/// runtimes and tools an operator or agent wraps it in. Nothing else about a
+/// command line is a command word — a positional token in an arbitrary program
+/// or shell script can be a value, so a known spelling never establishes its
+/// role (effigy#450 review). Only the program slot uses this list.
+const PROGRAM_NAMES: &[&str] = &[
     "effigy",
-    "gateway",
-    "up",
-    "down",
-    "setup",
-    "status",
-    "setup-tls",
-    "install",
-    "internal",
-    "private",
-    "remove",
-    "json",
-    "help",
-    "version",
-    "run",
-    "test",
-    "build",
-    "check",
-    "release",
-    "deploy",
-    "container",
-    "dev",
-    // The launchers and runtimes an operator or agent wraps it in.
     "sh",
     "bash",
     "zsh",
@@ -374,10 +351,11 @@ const BOOLEAN_FLAGS: &[&str] = &[
 /// token so the words inside it are judged the same way.
 const SHELL_FLAGS: &[&str] = &["-c", "-lc", "-ec", "-ic", "--command"];
 
-/// One bounded command line, published by role and by vocabulary. A token in a
-/// value position — the argument after a flag, or the value half of
-/// `--flag=value` — is never published, even when its spelling is a word this
-/// record knows: `gateway setup --suffix down` must not write `down`.
+/// One bounded command line, published by role: the program's file name and one
+/// of Effigy's own flag names. No positional token is ever published — an
+/// arbitrary program or shell script can put a password in any position, and a
+/// known spelling proves nothing about a token's role — and neither is a flag's
+/// value, in `--flag value` or `--flag=value` form.
 fn command_text(argv: &[String], program: Option<&str>) -> Vec<String> {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
@@ -404,14 +382,15 @@ fn ancestor_command(argv: &[String], executable: Option<&str>) -> Vec<String> {
 /// may publish. A program name is caller-controlled text like any other.
 fn program_text(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path).trim();
-    if WORDS.contains(&name) {
+    if PROGRAM_NAMES.contains(&name) {
         return bounded(name, TEXT_LIMIT);
     }
     REDACTED.into()
 }
 
 /// A shell command string is a command line of its own: the same role rules
-/// apply token by token, and no program slot is claimed for it.
+/// apply token by token, no program slot is claimed for it, and no positional
+/// token in it is published.
 fn shell_text(script: &str) -> String {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
@@ -426,9 +405,11 @@ fn shell_text(script: &str) -> String {
     bounded(&rendered.join(" "), TEXT_LIMIT)
 }
 
-/// The published form of one token that is not itself in a value position: a
-/// flag name this record knows, a known word, or the name half of a
-/// `--flag=value` pair whose value is then suppressed.
+/// The published form of one token that is not itself in a value position: one
+/// of Effigy's own flag names, or the name half of a `--flag=value` pair whose
+/// value is then suppressed. Everything else — including a positional token
+/// whose spelling is a command word — is a placeholder, because in an arbitrary
+/// program or shell script only the flag position is ours to trust.
 fn positional(argument: &str) -> String {
     let argument = argument.trim();
     if let Some((name, _)) = argument.split_once('=') {
@@ -438,7 +419,7 @@ fn positional(argument: &str) -> String {
             REDACTED.into()
         };
     }
-    if published_flag(argument) || WORDS.contains(&argument) {
+    if published_flag(argument) {
         return bounded(argument, TEXT_LIMIT);
     }
     REDACTED.into()
@@ -705,7 +686,9 @@ mod tests {
             assert_eq!(event["cause"], "gateway command");
             assert_eq!(event["pid"], 50);
             assert_eq!(event["cwd"], "/src/effigy");
-            assert_eq!(event["argv"][1], "gateway");
+            // The program is published; positional arguments are not.
+            assert_eq!(event["argv"][0], "effigy");
+            assert_eq!(event["argv"][1], REDACTED);
             assert_eq!(event["caller"]["pid"], 50);
             assert!(event["caller"]["parents"].is_array(), "{event}");
         }
@@ -1033,12 +1016,13 @@ mod tests {
             format!("--suffix={REDACTED}"),
             "{assigned}"
         );
-        // Attribution survives: Effigy's own words and flags stay, and so does
-        // the action the invoking command named.
+        // Attribution survives: the program and Effigy's own flag names stay,
+        // while the action itself is named by the event's `cause` and `action`.
         assert!(parents.contains("effigy"), "{parents}");
-        assert!(parents.contains("gateway"), "{parents}");
-        assert!(parents.contains("setup"), "{parents}");
-        assert!(rendered.contains("gateway"), "{rendered}");
+        assert!(parents.contains("--suffix"), "{parents}");
+        // A flag name this record does not define is not published either.
+        assert!(!parents.contains("--token"), "{parents}");
+        assert!(rendered.contains("--suffix"), "{rendered}");
         assert!(parents.contains("<redacted>"), "{parents}");
         // A plain marker and the terminal are still recorded.
         assert!(
@@ -1082,8 +1066,8 @@ mod tests {
             ]
         );
 
-        // A wrapper around Effigy stays attributable: its shell, the Effigy
-        // words and the flags are all published.
+        // A wrapper around Effigy keeps its shell and the flags; the words
+        // inside a script are positional, so they are placeholders.
         let wrapper = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -1099,7 +1083,52 @@ mod tests {
             vec![
                 "zsh".to_owned(),
                 "-lc".to_owned(),
-                "effigy gateway down --json".to_owned(),
+                format!("{REDACTED} {REDACTED} {REDACTED} --json"),
+            ]
+        );
+
+        // A command word in a positional slot is a value, not a word: a known
+        // spelling never establishes a token's role in another program.
+        let word_positional = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["helper", "login", "gateway"],
+            );
+        let parent = caller_of(&word_positional, 50).parents[0]
+            .command
+            .clone()
+            .unwrap();
+        assert_eq!(
+            parent,
+            vec![
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned()
+            ]
+        );
+        let shell_word_positional = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["/bin/sh", "-c", "helper login gateway"],
+            );
+        let parent = caller_of(&shell_word_positional, 50).parents[0]
+            .command
+            .clone()
+            .unwrap();
+        assert_eq!(
+            parent,
+            vec![
+                "sh".to_owned(),
+                "-c".to_owned(),
+                format!("{REDACTED} {REDACTED} {REDACTED}"),
             ]
         );
 
@@ -1143,7 +1172,7 @@ mod tests {
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),
-                "gateway".to_owned(),
+                REDACTED.to_owned(),
             ]
         );
 
@@ -1298,7 +1327,7 @@ mod tests {
             parent,
             vec![
                 "paseo".to_owned(),
-                "run".to_owned(),
+                REDACTED.to_owned(),
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),

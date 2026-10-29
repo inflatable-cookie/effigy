@@ -804,19 +804,16 @@ allowlist. The reason list keeps chain failures ahead of marker failures and
 ends with how many reasons it omitted, so a full list never hides a missing or
 unconfirmed part of the chain.
 
-Command text is published from a closed vocabulary and only in command position.
-A token is recorded only when it is a word Effigy defines, a known launcher,
-runtime or task name, or one of Effigy's own flag names, and it is not a value:
-the argument after a flag and the value half of `--flag=value` are never
-published, whatever their spelling — `gateway setup --suffix down` records
-`--suffix <redacted>`. Every other token — a value, a path, an unknown flag such
-as `--hunter2`, a program name, a URL, a `KEY=value` pair or a JSON body — is
-`<redacted>`, because all of it is caller-controlled text. The rule covers the
-invoking process's own `argv`, an ancestor's `argv`, and the tokens of a shell
-string, and an unknown flag is treated as taking a value. An
-ancestor's program slot names the file name of the executable the operating
-system reports, never the caller-chosen `argv[0]`, and only when that name is in
-the same vocabulary. A marker value is recorded only when it is a UUID, a decimal
+Command text is published by role, not by spelling: an event records only the
+file name of the program and one of Effigy's own flag names. Every other token is
+`<redacted>` — a positional argument whatever its spelling, a path, an unknown
+flag such as `--hunter2`, a URL, a `KEY=value` pair, a JSON body, and the value
+of any flag in `--flag value` or `--flag=value` form, so
+`gateway setup --suffix down` records `--suffix <redacted>`. The rule covers the
+invoking process's own `argv`, an ancestor's `argv` and the tokens of a shell
+string; an unknown flag is treated as taking a value, and an ancestor's program
+slot names the executable the operating system reports, never the caller-chosen
+`argv[0]`. A marker value is recorded only when it is a UUID, a decimal
 id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
 marker variable is refused by name only. A stop signalled by replacement or
 migration is attributable through the `up` or `setup` action that requested it;

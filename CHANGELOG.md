@@ -222,21 +222,21 @@ During v0.x, MINOR bumps may include breaking changes.
   controlling terminal, its parent chain up to the session leader with each
   pid's start identity and redacted command, and only allowlisted `PASEO_*`,
   `NS_*` and `EFFIGY_RUN_*` identity markers whose value is a UUID, a decimal
-  id or Effigy's own base32 run id. Command text is published from a closed
-  vocabulary and only in command position: a token is recorded only when it is a
-  word Effigy defines, a known launcher, runtime or task name, or one of Effigy's
-  own flag names, and it is not a value — the argument after a flag and the value
-  half of `--flag=value` are never published, so `gateway setup --suffix down`
-  records `--suffix <redacted>`. A path, an unknown flag, a program name, a URL
-  and a `KEY=value` pair are `<redacted>` too, in the invoking command, an
-  ancestor's command and inside a shell string alike. An ancestor's program slot names the executable the
-  operating system reports (never its caller-chosen `argv[0]`) when that name is
-  in the vocabulary. The `unknown` list is capped and says how many reasons it
-  omitted, so invalid markers never hide a broken chain. Anything unreadable or invalid becomes a
+  id or Effigy's own base32 run id. Command text is published by role, not by
+  spelling: an event records only the program's file name and one of Effigy's own
+  flag names, so a positional argument (whatever its spelling), a path, an
+  unknown flag, a URL, a `KEY=value` pair and the value of any flag in
+  `--flag value` or `--flag=value` form are `<redacted>` — `gateway setup
+  --suffix down` records `--suffix <redacted>`. The rule covers the invoking
+  command, an ancestor's command and inside a shell string alike. An ancestor's
+  program slot names the executable the operating system reports (never its
+  caller-chosen `argv[0]`) when that name is in the program vocabulary. The
+  `unknown` list is capped and says how many reasons it omitted, so invalid
+  markers never hide a broken chain. Anything unreadable or invalid becomes a
   bounded `unknown` reason, no other environment value is read, and logging
-  still never authorizes, refuses or delays the action. The
-  2026-10-28 15:26:25Z Mac gateway stop could not have been traced to a
-  terminal, session, agent or task from the old record.
+  still never authorizes, refuses or delays the action. The 2026-10-28
+  15:26:25Z Mac gateway stop could not have been traced to a terminal, session,
+  agent or task from the old record.
 - **Manual `[manifest].include` `optional`/`override` and kebab-case aliases
   still load through v0.15, with one deprecation notice.** `optional` is
   replaced by omitting a missing include or auto-discovered
