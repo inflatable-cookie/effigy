@@ -229,15 +229,29 @@ pub(in crate::runner) struct HostProcessListenerReport {
 
 impl HostProcessListenerReport {
     /// The refusal a caller that must not continue with a withheld route
-    /// reports; the first failure names the exact listener.
+    /// reports. One withheld listener is the typed readiness refusal, which
+    /// keeps the observed status and the child's own output; several are one
+    /// message naming each route.
     pub(in crate::runner) fn refusal(&self) -> Option<RunnerError> {
-        let first = self.failures.first()?;
-        let mut message = first.summary();
-        for failure in self.failures.iter().skip(1) {
-            message.push('\n');
-            message.push_str(&failure.summary());
+        match self.failures.as_slice() {
+            [] => None,
+            [failure] => Some(RunnerError::ManagedHostReadiness {
+                process: failure.name.clone(),
+                diagnostic: match failure.output_tail.as_deref() {
+                    Some(tail) => format!("{}; last child output: {tail}", failure.detail),
+                    None => failure.detail.clone(),
+                },
+                observed_status: failure.observed_status,
+            }),
+            failures => {
+                let mut message = failures[0].summary();
+                for failure in failures.iter().skip(1) {
+                    message.push('\n');
+                    message.push_str(&failure.summary());
+                }
+                Some(RunnerError::task_invocation(message))
+            }
         }
-        Some(RunnerError::task_invocation(message))
     }
 }
 
@@ -613,18 +627,38 @@ fn listener_start_progress(process_name: &str, elapsed: Duration, log_path: &Pat
     line
 }
 
+/// What a caller's wait for one listener's published state concluded.
+pub(super) enum ListenerWait {
+    /// The listener published this generation's verified state.
+    Ready(HostListenerState),
+    /// Nothing verified was published, so only this listener's own route is
+    /// withheld. `budget_expired` says the enclosing activation's observation
+    /// budget ended the wait rather than the listener's own readiness.
+    Withheld {
+        diagnostic: String,
+        observed_status: Option<u16>,
+        budget_expired: bool,
+    },
+}
+
 /// Wait until the listener's supervisor publishes this generation's declared
-/// state: `ready`, or the failure it observed. There is no deadline of the
-/// caller's: a child that is still building has not opened its port, and the
-/// supervisor's own readiness budget starts when it does. The supervisor is
-/// what ends the wait, so a supervisor that exited without publishing is the
-/// failure this wait names.
+/// state: `ready`, or the failure it observed.
+///
+/// The listener's own readiness is never the caller's deadline: a child that is
+/// still building has not opened its port, and the supervisor's readiness
+/// budget starts when it does. The caller's `deadline` is the enclosing
+/// activation's observation budget, the same one the bring-up's other runtime
+/// observations share (effigy#411). A listener still starting when that budget
+/// is spent withholds only its own route: the caller gets `Withheld` instead of
+/// waiting for a build that outlasts the activation (effigy#455). A supervisor
+/// that exited without publishing is still the failure this wait names.
 fn wait_for_listener_state(
     path: &Path,
     process_name: &str,
     owner: &str,
     route_table_path: &Path,
-) -> Result<HostListenerState, RunnerError> {
+    deadline: Option<Instant>,
+) -> Result<ListenerWait, RunnerError> {
     let mut next_liveness_check = Instant::now();
     let started = Instant::now();
     let mut next_progress = started;
@@ -678,14 +712,14 @@ fn wait_for_listener_state(
                         )));
                     }
                     if managed_route_matches(route_table_path, &state, owner)? {
-                        return Ok(state);
+                        return Ok(ListenerWait::Ready(state));
                     }
                 }
                 "failed" => {
-                    return Err(RunnerError::ManagedHostReadiness {
-                        process: process_name.to_owned(),
+                    return Ok(ListenerWait::Withheld {
                         diagnostic: state.diagnostic.clone().unwrap_or_default(),
                         observed_status: state.observed_status,
+                        budget_expired: false,
                     });
                 }
                 _ => {
@@ -721,6 +755,16 @@ fn wait_for_listener_state(
                     }
                 }
             }
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Ok(ListenerWait::Withheld {
+                diagnostic: format!(
+                    "managed host listener `{process_name}` still had not opened its port after {}s, when the activation's observation budget expired",
+                    started.elapsed().as_secs()
+                ),
+                observed_status: None,
+                budget_expired: true,
+            });
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -2542,7 +2586,7 @@ mod tests {
                 HostProcessRestart::Never,
             )],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         let dir = host_process_dir_for_policy(&fixture.checkout, &policy);
         let log = dir.join("app.log");
@@ -2598,7 +2642,7 @@ mod tests {
         nested.shutdown_grace_secs = 1;
         let grace = Duration::from_secs(nested.shutdown_grace_secs);
         let policy = policy(&fixture.checkout, vec![nested]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("api.log");
         wait_until("the nested task's server to start", || {
@@ -2648,7 +2692,7 @@ mod tests {
         let mut crashing = host_process("crash", "exit 3", HostProcessRestart::Always);
         crashing.restart_delay_ms = 60_000;
         let policy = policy(&fixture.checkout, vec![crashing]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the crash-looping host process starts");
         let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("crash.log");
         wait_until("the first generation to exit into its backoff", || {
@@ -2689,7 +2733,7 @@ mod tests {
                 HostProcessRestart::Never,
             )],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         wait_until("the host process run to close", || {
             super::kernel_run::host_process_status(&fixture.checkout, &policy)
@@ -2978,7 +3022,7 @@ while True:
         let (_gateway_home, policy) =
             listener_policy_running(&fixture.checkout, domain, "slow-build", &slow_build, 1);
         let started = Instant::now();
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("a child that opens its port after its readiness budget still becomes ready");
         assert!(
             started.elapsed() >= Duration::from_secs(8),
@@ -3009,7 +3053,7 @@ while True:
         );
         let started = Instant::now();
         let report =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
                 .expect("a listener that never answers leaves one withheld route");
         let elapsed = started.elapsed();
         assert_eq!(report.failures.len(), 1, "{report:?}");
@@ -3046,7 +3090,7 @@ while True:
             listener_policy_running(&fixture.checkout, domain, "status-mismatch", &child, 300);
         let started = Instant::now();
         let report =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
                 .expect("one failing listener still reports a start");
         let elapsed = started.elapsed();
         assert!(
@@ -3137,7 +3181,7 @@ while True:
         publish_container_route("web.test", "127.0.0.1:18080");
 
         let report =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
                 .expect("a failed listener is reported, not raised as the whole start");
         assert_eq!(report.ready.len(), 1, "{report:?}");
         assert_eq!(report.ready[0].name, "api");
@@ -3197,7 +3241,7 @@ while True:
         publish_container_route("web.test", "127.0.0.1:18080");
 
         let failed =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
                 .expect("the failing listener is reported");
         assert_eq!(failed.failures.len(), 1, "{failed:?}");
         assert!(RouteTable::load(&route_table_path())
@@ -3209,7 +3253,7 @@ while True:
         let healthy = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         policy.host_processes = vec![healthy];
         let retried =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
                 .expect("the recovered listener publishes its own route");
         assert_eq!(retried.failures.len(), 0, "{retried:?}");
         assert_eq!(retried.ready.len(), 1);
@@ -3238,6 +3282,136 @@ while True:
         assert!(stopped.complete(), "{stopped:?}");
     }
 
+    /// The enclosing activation's observation budget ends a wait on a port
+    /// that never opens: the listener keeps its own route withheld, the command
+    /// returns at the budget rather than at the build's end, and the supervisor
+    /// keeps its own readiness semantics so a slow child is not killed
+    /// (effigy#455).
+    #[test]
+    fn host_process_listener_activation_budget_bounds_a_closed_port_wait() {
+        let fixture = fixture();
+        let domain = "closed-port-budget.host.test";
+        let (_gateway_home, policy) = listener_policy_running(
+            &fixture.checkout,
+            domain,
+            "closed-port-budget",
+            "import time\ntime.sleep(120)",
+            60,
+        );
+        let started = Instant::now();
+        let report = super::kernel_run::start_host_processes_for_container(
+            &fixture.checkout,
+            &policy,
+            Some(Instant::now() + Duration::from_secs(2)),
+        )
+        .expect("a listener still starting at the budget is reported, not hung on");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(20),
+            "the command's wait is the activation budget, not the child's build: {elapsed:?}"
+        );
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        assert!(
+            report.failures[0]
+                .detail
+                .contains("observation budget expired"),
+            "{:?}",
+            report.failures[0]
+        );
+        assert!(
+            RouteTable::load(&route_table_path())
+                .expect("route table")
+                .lookup(domain)
+                .is_none(),
+            "a listener that never opened its port has no route"
+        );
+        // The generation is still starting: its own readiness has not been
+        // overridden by the enclosing budget.
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "starting", "{state}");
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
+        assert_eq!(read_json(&listener_state(&policy))["status"], "stopped");
+    }
+
+    /// A withheld listener propagates through a multi-level chain: B depends on
+    /// A, C depends on B, and a non-listener worker depends on C. Every route is
+    /// withheld, nothing waits on a record a skipped process never wrote, and
+    /// the start settles (effigy#455).
+    #[test]
+    fn host_process_withheld_dependency_chain_settles_every_route() {
+        let fixture = fixture();
+        let _gateway_home = listener_gateway_home(&fixture.checkout, "withheld-chain");
+        let mut processes = Vec::new();
+        for (name, domain, child) in [
+            ("a", "chain-a.host.test", STATUS_500_LISTENER_CHILD),
+            ("b", "chain-b.host.test", LISTENER_CHILD),
+            ("c", "chain-c.host.test", LISTENER_CHILD),
+        ] {
+            let bind =
+                fixture_listener_bind(&format!("{}|{domain}|{name}", fixture.checkout.display()));
+            let mut process = listener_host_process_running(name, domain, &bind, child, 30);
+            if name == "b" {
+                process.depends_on = vec!["a".to_owned()];
+            }
+            if name == "c" {
+                process.depends_on = vec!["b".to_owned()];
+            }
+            processes.push(process);
+        }
+        let mut worker = host_process(
+            "worker",
+            "printf started > worker-started.txt",
+            HostProcessRestart::Never,
+        );
+        worker.depends_on = vec!["c".to_owned()];
+        processes.push(worker);
+        let mut policy = policy(&fixture.checkout, processes);
+        policy.project_name = "withheld-chain".to_owned();
+
+        let started = Instant::now();
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
+                .expect("a withheld chain settles instead of waiting on itself");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the chain settles rather than hanging on a missing state record: {:?}",
+            started.elapsed()
+        );
+        let withheld = report
+            .failures
+            .iter()
+            .map(|failure| failure.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(withheld, vec!["a", "b", "c"], "{report:?}");
+        assert!(
+            report.failures[1]
+                .detail
+                .contains("its dependency was withheld by this activation"),
+            "{:?}",
+            report.failures[1]
+        );
+        let table = RouteTable::load(&route_table_path()).expect("route table");
+        for domain in [
+            "chain-a.host.test",
+            "chain-b.host.test",
+            "chain-c.host.test",
+        ] {
+            assert!(
+                table.lookup(domain).is_none(),
+                "{domain} must stay withheld: {table:?}"
+            );
+        }
+        assert!(
+            !fixture.checkout.join("worker-started.txt").exists(),
+            "a non-listener whose dependency was withheld does not start"
+        );
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
+    }
+
     /// The child exiting is the failure signal of phase (a): a child that dies
     /// before it ever binds fails the start at once, naming its exit code, and
     /// the declared readiness budget never comes into it.
@@ -3254,7 +3428,7 @@ while True:
         );
         let started = Instant::now();
         let report =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
                 .expect("a listener child that exits still reports its own withheld route");
         assert_eq!(report.failures.len(), 1, "{report:?}");
         assert!(
@@ -3295,7 +3469,7 @@ while True:
         );
         let started = Instant::now();
         let report =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
                 .expect("a child that exits its leader reports its own withheld route");
         assert_eq!(report.failures.len(), 1, "{report:?}");
         assert!(
@@ -3394,7 +3568,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let checkout = fixture.checkout.clone();
         let up_policy = policy.clone();
         let up = std::thread::spawn(move || {
-            super::kernel_run::start_host_processes_for_container(&checkout, &up_policy)
+            super::kernel_run::start_host_processes_for_container(&checkout, &up_policy, None)
         });
         wait_until("the listener to publish its starting generation", || {
             fs::read(&state_path)
@@ -3447,7 +3621,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let state_path = listener_state(&policy);
         let url_path = fixture.checkout.join("consumer-url.txt");
 
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and its dependent start");
         let address = read_json(&state_path)["address"]
             .as_str()
@@ -3509,7 +3683,11 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         );
         let started = Instant::now();
         let report = super::super::environment::holding_environment(&policy, Operation::Up, || {
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)?;
+            super::kernel_run::start_host_processes_for_container(
+                &fixture.checkout,
+                &policy,
+                None,
+            )?;
             super::kernel_run::restart_host_processes_for_container(
                 &fixture.checkout,
                 &policy,
@@ -3566,7 +3744,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let fixture = fixture();
         let domain = "reclaim-down.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "down");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         assert!(published_owner(domain).address.starts_with("127.0.0.1:"));
         let leader = super::kernel_run::host_process_status(&fixture.checkout, &policy)
@@ -3611,7 +3789,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let fixture = fixture();
         let domain = "reclaim-live-down.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "live-down");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let owner = published_owner(domain);
         assert_eq!(
@@ -3639,7 +3817,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let fixture = fixture();
         let domain = "reclaim-successor.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "successor");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let first = published_owner(domain);
         let first_generation = first.generation.clone();
@@ -3658,7 +3836,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
 
         // No `down`: the same checkout path replaces its own route on the next
         // start, whatever the previous generation did.
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("a successor run replaces the route its predecessor left");
         let successor = published_owner(domain);
         assert_ne!(
@@ -3687,7 +3865,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let fixture = fixture();
         let domain = "reclaim-live.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "live");
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let live = published_owner(domain);
         let route = RouteTable::load(&route_table_path())
@@ -3780,7 +3958,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             target_host: None,
         }];
         configured.dns_base_domain = Some("acme.test".to_owned());
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &configured)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &configured, None)
             .expect("the host process starts with its resolved environment");
         wait_until("the child to write its resolved environment", || {
             out.exists()
@@ -3797,9 +3975,12 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             "${service.postgres.prot}".to_owned(),
         )];
         let typo_policy = policy(&fixture.checkout, vec![typo]);
-        let error =
-            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &typo_policy)
-                .expect_err("a typo'd reference refuses to start");
+        let error = super::kernel_run::start_host_processes_for_container(
+            &fixture.checkout,
+            &typo_policy,
+            None,
+        )
+        .expect_err("a typo'd reference refuses to start");
         let message = error.to_string();
         assert!(message.contains("DATABASE_URL"), "{message}");
         assert!(message.contains("service.postgres.prot"), "{message}");
@@ -4245,7 +4426,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
                 HostProcessRestart::Never,
             )],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("host process starts");
         wait_until("the host process leader to be recorded", || {
             super::kernel_run::host_process_status(&fixture.checkout, &policy)
@@ -4354,7 +4535,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "named", vec![app, named_worker()]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (app_run, app_pid) = running_process(&before, "app");
@@ -4421,7 +4602,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "stopped", vec![app, named_worker()]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (app_run, app_pid) = running_process(&before, "app");
@@ -4469,7 +4650,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let bind = fixture_listener_bind("restart-listener|app");
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) = restart_policy(&fixture.checkout, "listener", vec![app]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts and publishes its route");
         let before = read_json(&listener_state(&policy));
         assert_eq!(before["status"], "ready", "{before}");
@@ -4544,7 +4725,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let worker = named_worker();
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "dependent", vec![app, consumer, worker]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener, its dependent and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (_app_run, app_pid) = running_process(&before, "app");
@@ -4605,7 +4786,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let api = host_process("api", "exec /bin/sleep 120", HostProcessRestart::Never);
         let (_guard, policy) =
             restart_policy(&fixture.checkout, "detach-failure", vec![front, api]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (front_run, front_pid) = running_process(&before, "front");
@@ -4671,7 +4852,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             "restart-failure",
             vec![app, named_worker()],
         );
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &up_policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &up_policy, None)
             .expect("the listener and the worker start");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &up_policy);
         let (app_run, app_pid) = running_process(&before, "app");
@@ -4732,7 +4913,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
         let bind = fixture_listener_bind("restart-unknown|app");
         let app = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
         let (_guard, policy) = restart_policy(&fixture.checkout, "unknown", vec![app]);
-        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy, None)
             .expect("the managed listener starts");
         let before = super::kernel_run::host_process_status(&fixture.checkout, &policy);
         let (app_run, app_pid) = running_process(&before, "app");

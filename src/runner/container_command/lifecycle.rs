@@ -735,8 +735,11 @@ fn complete_container_up_runtime_integrations(
     };
 
     let mut warnings = plan.warnings.clone();
+    // Listener startup shares this bring-up's one observation budget: a
+    // listener that has not opened its port when it is spent withholds its own
+    // route instead of holding the activation open (effigy#455, effigy#411).
     let (managed_host_listeners, managed_host_listener_failures) =
-        match start_host_processes_for_container(repo_root, policy) {
+        match start_host_processes_for_container(repo_root, policy, Some(deadline)) {
             Ok(report) => (report.ready, report.failures),
             Err(error)
                 if policy

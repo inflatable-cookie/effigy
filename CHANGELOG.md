@@ -660,7 +660,10 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of the whole activation's readiness and exposure as unverified. A
   definite status mismatch is refused as soon as it is observed rather than
   spending `readiness.timeout_secs`, and a still-closed port's progress line
-  carries the child's own bounded output tail (effigy#455).
+  carries the child's own bounded output tail. A port that never opens is
+  bounded by the bring-up's observation budget instead of holding `up` open,
+  and a withheld listener's `depends_on` chain withholds every dependent route
+  (effigy#455).
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already

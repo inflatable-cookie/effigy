@@ -259,7 +259,11 @@ order, stopped by `down`, `reset` and session settle with a
 `HostProcessStopReport`. A sidecar listener's readiness is its own route claim:
 when it fails, its own route stays withheld while the environment's published
 routes and the other sidecars' routes remain, and a `depends_on` sidecar of a
-withheld listener withholds its route too (effigy#455).
+withheld listener withholds its route too, through the whole chain (effigy#455).
+Sidecar startup shares the bring-up's one runtime-observation budget: a listener
+still starting when it is spent withholds its route and ends the command's wait
+rather than holding the activation open, while the supervisor keeps its own
+readiness semantics.
 
 ## 9. Not yet
 

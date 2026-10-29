@@ -281,9 +281,12 @@ tls = true
 ```
 
 `readiness.timeout_secs` bounds only the wait after the listener's port first
-answers; a child still building has not opened its port, so the supervisor and
-the `up` that waits on it carry no deadline and the child's own exit is the
-failure that ends the wait. The wait still reports what it observed: while the
+answers; a child still building has not opened its port, and the supervisor's
+own readiness budget starts when it does. The `up` that waits on it is bounded
+by that bring-up's runtime-observation budget instead (see
+[Per-route exposure](#per-route-exposure)): a port that never opens withholds
+that listener's route and never holds the activation open. The wait still
+reports what it observed: while the
 port is closed it prints progress at a fixed interval and carries the child's
 own output tail, bounded and with secret-shaped values redacted, so a long
 start is never a silent count. A listener that answers the declared readiness
@@ -310,11 +313,24 @@ where there was one, and the bounded, redacted child-output tail. The failure
 is never phrased as an activation whose readiness and exposure are unverified,
 because the activation settled. A process whose `depends_on` listener was
 withheld does not start and withholds its own route too, naming the dependency
-that never became ready. A retry after the listener recovers publishes that
-listener's own route and leaves the container's routes exactly as they were: a
-route is replaced only by its own owner, so a retry never duplicates another
-target's route. An uncertain container identity still publishes no route at
-all, because the readiness wait refuses before any route write.
+that never became ready. That decision is this activation's own: a dependent
+reads it before any listener state file, so a chain `A -> B -> C` settles with
+every route withheld instead of waiting for a record a skipped process never
+wrote, and a non-listener at the end of the chain is not started either. A retry
+after the listener recovers publishes that listener's own route and leaves the
+container's routes exactly as they were: a route is replaced only by its own
+owner, so a retry never duplicates another target's route. An uncertain
+container identity still publishes no route at all, because the readiness wait
+refuses before any route write.
+
+The wait itself is bounded by the activation, not by the child's build. Host
+listener startup shares the bring-up's one runtime-observation budget
+(effigy#411). A listener still starting when that budget is spent withholds its
+own route and the command stops waiting for the remaining declared listeners,
+reporting each of them withheld, so `up` cannot hang on a listener that never
+binds. The listener keeps its own readiness semantics: its supervisor is left
+running, a child that eventually answers publishes its own verified route, and
+`readiness.timeout_secs` still starts only when its port first opens.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and

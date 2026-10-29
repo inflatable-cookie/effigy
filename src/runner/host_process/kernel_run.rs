@@ -332,15 +332,20 @@ pub(super) fn invocation(
 /// caller can report exposure per declared route target (effigy#455). A
 /// failure that is not the listener's own - a start, a state record or a stop
 /// request - still ends the whole start.
+///
+/// `deadline` is the enclosing activation's observation budget. A listener
+/// still starting when it is spent withholds its own route; a caller with no
+/// enclosing budget passes `None` (a restart waits on its own readiness).
 pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
 ) -> Result<HostProcessListenerReport, RunnerError> {
     let HostProcessStart {
         started,
         listeners,
         failures,
-    } = start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
+    } = start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, deadline)?;
     detach_started(repo_root, policy, started, None)?;
     Ok(HostProcessListenerReport {
         ready: listeners,
@@ -380,6 +385,7 @@ pub(in crate::runner) fn restart_host_processes_for_container(
         policy,
         Some(&selected),
         ReplaceGate::HeldForReplace,
+        None,
     )?;
     // A restart names the processes it replaces, so a listener that did not
     // publish is this restart's failure, not a partial environment: the
@@ -540,7 +546,7 @@ pub(super) fn start_host_processes_owning(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
     let HostProcessStart { started, .. } =
-        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
+        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, None)?;
     Ok(started)
 }
 
@@ -570,6 +576,7 @@ fn start_host_processes_inner(
     policy: &EffectiveContainerPolicy,
     selection: Option<&BTreeSet<String>>,
     gate: ReplaceGate,
+    deadline: Option<Instant>,
 ) -> Result<HostProcessStart, RunnerError> {
     if policy.host_processes.is_empty() {
         return Ok(HostProcessStart {
@@ -614,6 +621,12 @@ fn start_host_processes_inner(
     let mut started: Vec<(String, effigy_kernel::supervise::SupervisorClient)> = Vec::new();
     let mut listener_results = Vec::new();
     let mut listener_failures: Vec<ManagedHostListenerFailure> = Vec::new();
+    // This activation's own decisions about processes it withheld (a listener
+    // that failed, or a process whose dependency was withheld). Dependents read
+    // them before any state file, so a chain A -> B -> C settles instead of
+    // waiting on a record that a skipped process never publishes (effigy#455).
+    let mut withheld: BTreeMap<String, (String, Option<u16>)> = BTreeMap::new();
+    let mut activation_budget_spent = false;
     let start_result = (|| -> Result<(), RunnerError> {
         for hp in ordered {
             // `up` starts every declared process; a restart names the ones it
@@ -625,6 +638,22 @@ fn start_host_processes_inner(
             let env = resolved_host_process_environment(hp, &facts)?;
             let listener = resolved_host_process_listener(hp, &listener_binds);
             let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
+            // The activation's observation budget is spent: nothing further is
+            // started, and each remaining listener is reported withheld rather
+            // than waited for past the command's own budget.
+            if activation_budget_spent {
+                if let Some(listener) = listener.as_ref() {
+                    listener_failures.push(listener_failure(
+                        hp,
+                        listener,
+                        &log_file,
+                        "not started: the activation's observation budget expired before this listener was reached"
+                            .to_owned(),
+                        None,
+                    ));
+                }
+                continue;
+            }
             let mut dependencies = Vec::new();
             let mut dependency_refusal = None;
             for dependency in &hp.depends_on {
@@ -634,6 +663,17 @@ fn start_host_processes_inner(
                         hp.name
                     ))
                 })?;
+                // A dependency this activation already withheld (whether it has
+                // a listener or not) withholds this process's route too, without
+                // reading a state file the skipped process never wrote.
+                if let Some((diagnostic, observed_status)) = withheld.get(dependency.as_str()) {
+                    dependency_refusal = Some((
+                        dependency.clone(),
+                        format!("its dependency was withheld by this activation: {diagnostic}"),
+                        *observed_status,
+                    ));
+                    break;
+                }
                 let state_path = host_process_state_path(&dir, &dependency_process.name);
                 let state = match super::wait_for_listener_state(
                     &state_path,
@@ -644,16 +684,18 @@ fn start_host_processes_inner(
                             "managed host listener dependency has no gateway route table",
                         )
                     })?,
+                    deadline,
                 ) {
-                    Ok(state) => state,
+                    Ok(super::ListenerWait::Ready(state)) => state,
                     // A dependency that failed its own readiness withholds this
                     // process's route too, and nothing else: the rest of the
                     // environment is still started (effigy#455).
-                    Err(RunnerError::ManagedHostReadiness {
+                    Ok(super::ListenerWait::Withheld {
                         diagnostic,
                         observed_status,
-                        ..
+                        budget_expired,
                     }) => {
+                        activation_budget_spent = budget_expired;
                         dependency_refusal =
                             Some((dependency.clone(), diagnostic, observed_status));
                         break;
@@ -674,6 +716,7 @@ fn start_host_processes_inner(
             if let Some((dependency, diagnostic, observed_status)) = dependency_refusal {
                 let detail =
                     format!("its dependency `{dependency}` did not become ready: {diagnostic}");
+                withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
                 match listener.as_ref() {
                     Some(listener) => listener_failures.push(listener_failure(
                         hp,
@@ -684,7 +727,8 @@ fn start_host_processes_inner(
                     )),
                     // A process without a listener serves no route, so there is
                     // no exposure to withhold; it stays unstarted and the
-                    // console says why instead of waiting on it.
+                    // console says why instead of waiting on it. Its own
+                    // dependents still learn about it from `withheld`.
                     None => eprintln!("[host process] `{}` was not started: {detail}", hp.name),
                 }
                 continue;
@@ -766,7 +810,7 @@ fn start_host_processes_inner(
             if let Some(listener) = &hp.listener {
                 let owner = managed_host_process_owner(&project_path, policy, hp)?;
                 let state_path = host_process_state_path(&dir, &hp.name);
-                let waited = (|| -> Result<super::HostListenerState, RunnerError> {
+                let waited = (|| -> Result<super::ListenerWait, RunnerError> {
                     super::wait_for_listener_activation(
                         &state_path,
                         &hp.name,
@@ -782,37 +826,45 @@ fn start_host_processes_inner(
                                 "managed host listener has no gateway route table",
                             )
                         })?,
+                        deadline,
                     )
                 })();
                 match waited {
-                    Ok(state) => listener_results.push(ManagedHostListenerResult {
-                        name: hp.name.clone(),
-                        status: state.status,
-                        runtime_generation: state.runtime_generation,
-                        generation: state.generation,
-                        address: state.address.unwrap_or_default(),
-                        internal_url: state.internal_url.unwrap_or_default(),
-                        public_url: state.public_url.unwrap_or_default(),
-                        declared_route_domain: listener.declared_route_domain.clone(),
-                        route_domain: state.route_domain.unwrap_or_default(),
-                        route_tls: listener.route_tls,
-                        state_file: state_path.display().to_string(),
-                    }),
+                    Ok(super::ListenerWait::Ready(state)) => {
+                        listener_results.push(ManagedHostListenerResult {
+                            name: hp.name.clone(),
+                            status: state.status,
+                            runtime_generation: state.runtime_generation,
+                            generation: state.generation,
+                            address: state.address.unwrap_or_default(),
+                            internal_url: state.internal_url.unwrap_or_default(),
+                            public_url: state.public_url.unwrap_or_default(),
+                            declared_route_domain: listener.declared_route_domain.clone(),
+                            route_domain: state.route_domain.unwrap_or_default(),
+                            route_tls: listener.route_tls,
+                            state_file: state_path.display().to_string(),
+                        })
+                    }
                     // This listener never published its own route, so only its
-                    // own route is withheld. Its supervisor is left to settle
-                    // itself; every other started process keeps running and
-                    // the caller reports the partial exposure exactly.
-                    Err(RunnerError::ManagedHostReadiness {
+                    // own route is withheld. Its supervisor keeps its own
+                    // readiness semantics: a child that is still building may
+                    // publish its own verified route later, and every other
+                    // started process keeps running.
+                    Ok(super::ListenerWait::Withheld {
                         diagnostic,
                         observed_status,
-                        ..
-                    }) => listener_failures.push(listener_failure(
-                        hp,
-                        listener,
-                        &log_file,
-                        diagnostic,
-                        observed_status,
-                    )),
+                        budget_expired,
+                    }) => {
+                        activation_budget_spent = budget_expired;
+                        withheld.insert(hp.name.clone(), (diagnostic.clone(), observed_status));
+                        listener_failures.push(listener_failure(
+                            hp,
+                            listener,
+                            &log_file,
+                            diagnostic,
+                            observed_status,
+                        ));
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -842,9 +894,10 @@ fn start_host_processes_inner(
             residue.join("\n")
         )));
     }
-    // Every declared process is ready. The caller releases the owning pipes
-    // after a successful detach; a dropped client is the kernel's owner-loss
-    // stop.
+    // Every declared process started and every listener that was waited for
+    // published its own verified route (or was reported withheld). The caller
+    // releases the owning pipes after a successful detach; a dropped client is
+    // the kernel's owner-loss stop.
     Ok(HostProcessStart {
         started,
         listeners: listener_results,
