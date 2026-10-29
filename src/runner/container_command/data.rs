@@ -22,6 +22,7 @@ use effigy_manifest::TASK_MANIFEST_FILE;
 
 use super::gateway_registration::register_gateway_routes_for_container;
 use super::lifecycle::run_container_exec_capture;
+use super::shared_data::{resolve_shared_data_binding, run_shared_data_command};
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
 use super::{runtime_error_from_runner, runtime_volume_capture};
@@ -346,6 +347,9 @@ pub(super) fn run_container_data_dump(
         |repo_root, container_name, service, argv| {
             run_container_exec_capture(repo_root, container_name, service, argv)
         },
+        |policy, binding, argv, stdin_file| {
+            run_shared_data_command(policy, binding, argv, stdin_file)
+        },
         |source, destination, repo_root, push| {
             capture_artifact_report(
                 crate::runner::state_command_artifact::ArtifactCaptureRequest {
@@ -363,13 +367,18 @@ pub(super) fn run_container_data_dump(
     )
 }
 
-fn run_container_data_dump_with_hooks<ExecFn, CaptureFn>(
+// Three injected seams (local exec, shared exec, artifact capture) keep both
+// routes provable without a live runtime; grouping them into a struct would
+// only move the same arguments.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_container_data_dump_with_hooks<ExecFn, SharedExecFn, CaptureFn>(
     repo_root: &Path,
     name: Option<&str>,
     db_dumps: &[ContainerDbDumpInput],
     push: bool,
     output_json: bool,
     exec_capture: ExecFn,
+    shared_exec_capture: SharedExecFn,
     capture_artifact: CaptureFn,
 ) -> Result<String, RunnerError>
 where
@@ -378,6 +387,12 @@ where
         Option<&str>,
         Option<&str>,
         &[String],
+    ) -> Result<std::process::Output, RunnerError>,
+    SharedExecFn: Fn(
+        &effigy_containers::EffectiveContainerPolicy,
+        &effigy_containers::SharedServiceBinding,
+        &[String],
+        Option<&Path>,
     ) -> Result<std::process::Output, RunnerError>,
     CaptureFn: Fn(&str, &str, &Path, bool) -> Result<serde_json::Value, RunnerError>,
 {
@@ -420,12 +435,26 @@ where
             })?;
         }
 
-        let output = exec_capture(
-            repo_root,
-            Some(&policy.name),
-            Some(&plan.command.service),
-            &plan.command.argv,
-        )?;
+        // A declared `shared = true` service is removed from the
+        // environment's own generated Compose, so the logical dump runs in the
+        // shared project's render. An unshared service keeps the
+        // checkout-local route and read-only behaviour it had.
+        let shared_binding =
+            resolve_shared_data_binding(&policy, &manifest, &plan.command.service)?;
+        let output = match shared_binding.as_ref() {
+            Some(binding) => shared_exec_capture(
+                &policy,
+                binding,
+                &plan.command.argv,
+                plan.command.stdin.as_deref(),
+            )?,
+            None => exec_capture(
+                repo_root,
+                Some(&policy.name),
+                Some(&plan.command.service),
+                &plan.command.argv,
+            )?,
+        };
         fs::write(&write_path, &output.stdout).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "failed to write SQL dump {}: {error}",
@@ -906,6 +935,7 @@ databases = ["app"]
                     stderr: Vec::new(),
                 })
             },
+            |_, _, _, _| unreachable!("this environment declares no shared service"),
             |source, destination, _, push| {
                 Ok(serde_json::json!({
                     "schema": "effigy.artifact.capture.v1",
@@ -967,6 +997,7 @@ databases = ["app"]
                     stderr: Vec::new(),
                 })
             },
+            |_, _, _, _| unreachable!("this environment declares no shared service"),
             |source, destination, _, push| {
                 Ok(serde_json::json!({
                     "schema": "effigy.artifact.capture.v1",

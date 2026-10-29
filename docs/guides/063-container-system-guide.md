@@ -1399,6 +1399,30 @@ effigy container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mort
 OCI refs must use the explicit `oci://` prefix. `data seed` stages the artifact
 under `.effigy/local/db-seeds/` before the app-specific seed logic runs.
 
+The staged file is cleaned up when the seed succeeds. A refusal or an aborted
+import leaves it in place, so a corrected re-run does not need the source
+artifact again.
+
+### Shared database targets
+
+A data target whose declared service is `shared = true` is removed from the
+environment's own generated Compose, so `data seed` and `data dump` exec in the
+shared service's own machine-wide project and render instead of the
+checkout-local stack. `stack` and `hybrid` environments that declare the same
+shared service identity therefore seed and dump one machine-wide database and
+volume, exactly as `container up` starts one shared service. `data_from` stays a
+checkout-local volume feature and never redirects a shared target.
+
+Before the first statement Effigy proves the declared shared container is
+running in the expected project, from the declared render digest and for the
+declared service. A missing render, a stopped or absent container, a container
+created from another render, more than one running container for the service,
+or environments that declare the same service with different shared identities
+all refuse with the exact project and the recovery command. A data command
+never publishes a render, starts or replaces a shared service, or falls back to
+a local service of the same name. Credentials reach the container by variable
+name, never in the command line.
+
 ## Cache Lifecycle
 
 `effigy container cache list` and `cache prune` manage purge-safe isolated

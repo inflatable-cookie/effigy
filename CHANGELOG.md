@@ -489,6 +489,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- A declared database data target whose service is `shared = true` now seeds and
+  dumps in that service's own machine-wide Compose project and render, so
+  `stack` and `hybrid` declarations of one shared identity feed one database and
+  volume instead of failing against the checkout-local Compose that removed the
+  service. Before the first statement Effigy proves the shared container is
+  running in the declared project, from the declared render digest and for the
+  declared service; a missing render, stopped or absent container, stale
+  render, several running containers, an unreadable runtime or environments
+  that declare the same service with different shared identities refuse and
+  name the project and recovery command. A data command never publishes a
+  render, starts or replaces a shared service, or falls back to a local service
+  of the same name, and credential values no longer reach the host command
+  line. Unshared targets keep the checkout-local route.
+
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy
   state to migrate, so first-ever setup reaches the platform step instead of

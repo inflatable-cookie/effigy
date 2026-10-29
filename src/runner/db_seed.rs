@@ -21,7 +21,9 @@ use effigy_state::artifact::{
 };
 use serde_json::json;
 
-use crate::runner::container_command::run_container_exec_capture_with_options;
+use crate::runner::container_command::{
+    resolve_shared_data_binding, run_container_exec_capture_with_options, run_shared_data_command,
+};
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
@@ -599,8 +601,8 @@ pub(in crate::runner) fn run_db_seed_task(
             })
         });
     }
-    prepare_builtin_db_seed_runtime(repo_root)?;
-    run_builtin_db_seed_task(repo_root, &manifest, env_overrides)
+    let policy = prepare_builtin_db_seed_runtime(repo_root)?;
+    run_builtin_db_seed_task(repo_root, &manifest, &policy, env_overrides)
 }
 
 fn prepare_db_seed_runtime(
@@ -647,7 +649,9 @@ fn prepare_db_seed_runtime(
     Ok(())
 }
 
-fn prepare_builtin_db_seed_runtime(repo_root: &Path) -> Result<(), RunnerError> {
+fn prepare_builtin_db_seed_runtime(
+    repo_root: &Path,
+) -> Result<effigy_containers::EffectiveContainerPolicy, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, None)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let session_context = data_seed_runtime_session_context();
@@ -661,7 +665,7 @@ fn prepare_builtin_db_seed_runtime(repo_root: &Path) -> Result<(), RunnerError> 
             session_context,
         },
     )?;
-    Ok(())
+    Ok(policy)
 }
 
 fn db_seed_runtime_activation_plan(
@@ -834,8 +838,38 @@ pub(in crate::runner) fn logical_database_targets(
 fn run_builtin_db_seed_task(
     repo_root: &Path,
     manifest: &effigy_manifest::TaskManifest,
+    policy: &effigy_containers::EffectiveContainerPolicy,
     env_overrides: &BTreeMap<String, String>,
 ) -> Result<(), RunnerError> {
+    run_builtin_db_seed_task_with(
+        repo_root,
+        manifest,
+        policy,
+        env_overrides,
+        |policy, binding, command, stdin_file| {
+            run_shared_data_command(policy, binding, command, stdin_file)
+        },
+    )
+}
+
+/// The built-in seed with its shared-project exec injected, so the declared
+/// shared route and the unshared checkout-local route are both provable
+/// without a live runtime (effigy#477).
+pub(in crate::runner) fn run_builtin_db_seed_task_with<SharedExec>(
+    repo_root: &Path,
+    manifest: &effigy_manifest::TaskManifest,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    env_overrides: &BTreeMap<String, String>,
+    shared_exec: SharedExec,
+) -> Result<(), RunnerError>
+where
+    SharedExec: Fn(
+        &effigy_containers::EffectiveContainerPolicy,
+        &effigy_containers::SharedServiceBinding,
+        &[String],
+        Option<&Path>,
+    ) -> Result<std::process::Output, RunnerError>,
+{
     let metadata_json = env_overrides
         .get(DB_SEEDS_JSON_ENV)
         .or_else(|| env_overrides.get(LEGACY_BOOTSTRAP_DB_SEEDS_JSON_ENV))
@@ -885,6 +919,10 @@ fn run_builtin_db_seed_task(
                 ))
         })?;
         let (service_name, catalog, password) = resolve_builtin_seed_service(container, declared)?;
+        // A declared `shared = true` service belongs to its own machine-wide
+        // Compose project, so the reset and import run there. An unshared
+        // service keeps the checkout-local route byte for byte.
+        let shared_binding = resolve_shared_data_binding(policy, manifest, &service_name)?;
         let stdin_file = repo_root.join(&seed.staged_path);
         let kind = DatabaseServiceKind::from_catalog(catalog)
             .expect("unsupported seed catalog should be filtered before rendering");
@@ -906,13 +944,16 @@ fn run_builtin_db_seed_task(
             .reset_command
             .as_ref()
             .expect("builtin seed plan should include reset command");
-        let reset_output = run_container_exec_capture_with_options(
-            repo_root,
-            Some(container_name),
-            Some(&reset_command.service),
-            &reset_command.argv,
-            None,
-        )?;
+        let reset_output = match shared_binding.as_ref() {
+            Some(binding) => shared_exec(policy, binding, &reset_command.argv, None)?,
+            None => run_container_exec_capture_with_options(
+                repo_root,
+                Some(container_name),
+                Some(&reset_command.service),
+                &reset_command.argv,
+                None,
+            )?,
+        };
         if !reset_output.status.success() {
             let stderr = String::from_utf8_lossy(&reset_output.stderr)
                 .trim()
@@ -928,13 +969,16 @@ fn run_builtin_db_seed_task(
             .command
             .as_ref()
             .expect("builtin seed plan should include import command");
-        let output = run_container_exec_capture_with_options(
-            repo_root,
-            Some(container_name),
-            Some(&command.service),
-            &command.argv,
-            command.stdin.as_deref(),
-        )?;
+        let output = match shared_binding.as_ref() {
+            Some(binding) => shared_exec(policy, binding, &command.argv, command.stdin.as_deref())?,
+            None => run_container_exec_capture_with_options(
+                repo_root,
+                Some(container_name),
+                Some(&command.service),
+                &command.argv,
+                command.stdin.as_deref(),
+            )?,
+        };
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();

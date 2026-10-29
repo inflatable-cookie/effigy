@@ -1084,6 +1084,30 @@ alias. A Docker engine backend supplies `host-gateway` for the same name, which
 Docker Desktop and Linux Docker both resolve. A service that receives no shared
 environment gets no entry.
 
+## Shared data targets (`data seed`, `data dump`)
+
+A declared data target whose manifest service is `shared = true` runs in that
+shared service's own machine-wide Compose project and render. The environment's
+generated Compose removes the service, so the checkout-local route could only
+ever reach a local service of the same name; the seed reset, staged-file import
+and logical dump instead use the shared render's Compose input and project
+name. `stack` and `hybrid` declarations of one shared identity therefore seed
+and dump the same project and named volume, and `data_from` does not redirect
+them, because `data_from` is a checkout-local volume feature (see below).
+
+Before the first statement Effigy proves the selected shared container is
+running, in the expected project and service, from the declared render digest,
+with the shared render present. A missing render, a stopped or absent
+container, a container created from another render, more than one running
+container for the service, an unreadable inventory, or environments that
+declare the same service name with different shared identities all refuse and
+name the project and recovery command. A data command never publishes a render,
+starts or replaces a shared service, and never falls back to a checkout-local
+service of the same name. Credential values stay out of the Compose command:
+a plan's `env NAME=value` prefix becomes `compose exec -e NAME` with the value
+only in the child environment, so neither argv nor the JSON/text report carries
+it. An unshared target keeps the checkout-local route unchanged.
+
 ## Shared service data volumes (`data_from`)
 
 A container environment may declare `data_from = "<other-env>"`. Every service
