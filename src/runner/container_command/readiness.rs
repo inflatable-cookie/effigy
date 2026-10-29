@@ -17,8 +17,10 @@ use effigy_containers::health::readiness::{
     ServiceHealth, SharedFailureTracker,
 };
 use effigy_containers::EffectiveContainerPolicy;
+use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
 
 use crate::runner::error::RunnerError;
+use crate::runner::managed_wait::WaitLedger;
 
 use super::steps::TimedStep;
 
@@ -76,6 +78,10 @@ pub(super) fn await_services_ready(
     let mut attempts = BTreeMap::<String, u32>::new();
     let mut tracker = SharedFailureTracker::default();
     let mut last_services: Vec<ServiceHealth> = Vec::new();
+    // What every entry waiting for this environment names: the containers that
+    // are healthy now, published where the session's front ends read it
+    // (effigy#458).
+    let waits = WaitLedger::environment(&policy.repo_root, &policy.name);
     let mut last_probe_error: Option<String> = None;
     let mut observed = false;
 
@@ -105,6 +111,7 @@ pub(super) fn await_services_ready(
                 last_probe_error = None;
                 last_services = services.clone();
                 let ready = report_services(&services, &mut steps, &mut attempts);
+                publish_environment_wait(&waits, &services, &ready, started.elapsed());
                 if ready.is_empty() {
                     for step in steps.values() {
                         step.finish_clear();
@@ -114,6 +121,7 @@ pub(super) fn await_services_ready(
                         services.len(),
                         if services.len() == 1 { "" } else { "s" }
                     ));
+                    waits.retire("environment");
                     return Ok(ReadinessEnd::Ready);
                 }
                 // A stack whose unready services all fail the same way will
@@ -157,6 +165,29 @@ pub(super) fn await_services_ready(
         return Ok(ReadinessEnd::NothingToAwait);
     }
     readiness_failure(policy, &last_services, last_probe_error, &steps)
+}
+
+/// Publishes the containers that are healthy now, as the wait every entry
+/// that waits for this environment renders.
+fn publish_environment_wait(
+    waits: &WaitLedger,
+    services: &[ServiceHealth],
+    unready: &[String],
+    elapsed: Duration,
+) {
+    let total = u32::try_from(services.len()).unwrap_or(u32::MAX);
+    let healthy = u32::try_from(services.len().saturating_sub(unready.len())).unwrap_or(u32::MAX);
+    waits.publish(&EntryState {
+        entry: "environment".to_owned(),
+        phase: EntryPhase::Waiting,
+        waiting_on: Some(WaitOn::Environment {
+            healthy: Some(healthy),
+            total: Some(total),
+        }),
+        not_started_because: None,
+        detail: None,
+        elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+    });
 }
 
 /// When one probe must give up: at most [`PROBE_BUDGET`] away, but never less

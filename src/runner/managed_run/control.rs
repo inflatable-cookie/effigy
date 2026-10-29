@@ -10,6 +10,7 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::{Effect, EffectState};
 use effigy_kernel::supervise::OUTPUT_SEQUENCE;
+use effigy_tui::waits::EntryState;
 use serde::Serialize;
 
 use super::engine::SETTLE_BUDGET;
@@ -36,6 +37,10 @@ pub(in crate::runner) struct ProcessView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) exit: Option<i32>,
     pub(in crate::runner) starts: usize,
+    /// What this process waits for, when it is starting against a named wait
+    /// (effigy#458). A started process usually has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::runner) waiting_on: Option<effigy_tui::waits::WaitOn>,
     #[serde(skip)]
     pub(in crate::runner) sequence: i64,
 }
@@ -72,6 +77,11 @@ pub(in crate::runner) struct ManagedStatus {
     pub(in crate::runner) residue: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(in crate::runner) warnings: Vec<String>,
+    /// Every entry that has not started or is waiting, with the exact
+    /// dependency, probe or delay it waits for, and the prerequisite that
+    /// stopped it (effigy#458). Started processes carry `waiting_on` instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::runner) waits: Vec<EntryState>,
 }
 
 /// One managed task and profile, addressed as the user typed it.
@@ -128,6 +138,7 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
         notes: effigy_manifest::bundle_update_notes(),
         residue: Vec::new(),
         warnings: view.warnings.clone(),
+        waits: Vec::new(),
     };
     if let Some(run) = &status.run {
         match run.run_id.parse::<RunId>() {
@@ -162,6 +173,17 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
             Err(_) => status.warnings.push("run id is unreadable".to_owned()),
         }
     }
+    // The waits the run published: a started process's own wait, and every
+    // entry that never started with the prerequisite that stopped it.
+    let waits = super::super::managed_wait::WaitLedger::task(
+        &addressed.target.root,
+        addressed.task,
+        addressed.profile,
+    );
+    for process in &mut status.processes {
+        process.waiting_on = waits.read(&process.name).and_then(|state| state.waiting_on);
+    }
+    status.waits = waits.read_all();
     status.next = match status.state.as_str() {
         "running" | "stopping" => vec![addressed.command("logs"), addressed.command("stop")],
         "interrupted" => vec![addressed.command("stop")],
@@ -217,6 +239,7 @@ pub(in crate::runner) fn processes(effects: &[Effect], live: bool) -> Vec<Proces
                 .flatten(),
             exit,
             starts: 1,
+            waiting_on: None,
             sequence: effect.sequence,
         };
         match views.iter_mut().find(|known| known.name == label) {
@@ -300,6 +323,9 @@ pub(in crate::runner) fn render(status: &ManagedStatus) -> String {
             line.push_str(&format!("  starts {}", process.starts));
         }
         lines.push(line);
+    }
+    for wait in &status.waits {
+        lines.push(format!("  {:<12} {}", wait.entry, wait.status_line()));
     }
     for residue in &status.residue {
         lines.push(format!("  residue: {residue}"));

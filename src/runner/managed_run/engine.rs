@@ -24,11 +24,13 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
 use effigy_kernel::supervise::{EngineSession, OwnerWatch};
+use effigy_tui::waits::{EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn};
 
 use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
+use crate::runner::managed_wait::WaitLedger;
 use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, TaskTarget};
 
 /// TERM to KILL for a workload's group.
@@ -38,6 +40,8 @@ const GRACE: Duration = Duration::from_secs(3);
 const SETUP_BUDGET: Duration = Duration::from_secs(1800);
 /// Owner loop interval.
 const TURN: Duration = Duration::from_millis(20);
+/// How often a waiting entry's published elapsed time is refreshed.
+const WAIT_REFRESH: Duration = Duration::from_millis(500);
 /// Settle budget: workload groups, remote groups and the environment down.
 pub(in crate::runner) const SETTLE_BUDGET: Duration = Duration::from_secs(240);
 /// Placeholder an exec workload's command carries for its group nonce.
@@ -194,6 +198,9 @@ pub(in crate::runner) struct OwnedRun {
     pub(in crate::runner) scratch: bool,
     /// Secret values this run's output must never show (K12).
     pub(in crate::runner) secrets: Vec<String>,
+    /// The resolved ordering graph of the run's workloads: each entry's own
+    /// wait is derived from it, never from the tab bar (effigy#458).
+    pub(in crate::runner) workload_order: SessionOrder,
 }
 
 struct Workload {
@@ -294,9 +301,26 @@ pub(in crate::runner) fn own<T>(
         run.id(),
         std::process::id()
     );
+    let repo_root = plan.target.root.clone();
+    let wait_ledger = WaitLedger::task(&repo_root, &plan.task, &plan.profile);
+    wait_ledger.clear();
+    let environment_name = plan
+        .environment
+        .as_ref()
+        .map(|environment| environment.name.clone());
+    let now = Instant::now();
     let mut owner = Owner {
         session,
         workloads: Vec::new(),
+        waits: EntryWaits::new(
+            plan.workload_order.clone(),
+            environment_name.as_deref(),
+            now,
+        ),
+        wait_ledger,
+        published: BTreeMap::new(),
+        published_at: BTreeMap::new(),
+        probe_since: None,
         holds_environment: plan.environment.is_some(),
         source_manifest: plan.source_manifest.clone(),
         container_repo_root: plan.container_repo_root.clone(),
@@ -332,6 +356,16 @@ struct Owner {
     lost_while_blocked: bool,
     /// `health_wait` routes still to answer once every workload has started.
     health: Option<RouteHealth>,
+    /// Every workload's own wait, and the record it is published in.
+    waits: EntryWaits,
+    wait_ledger: WaitLedger,
+    /// The last state published per entry, and when, so the wire and the
+    /// record carry transitions and live elapsed time without repeating
+    /// themselves every turn.
+    published: BTreeMap<String, EntryState>,
+    published_at: BTreeMap<String, Instant>,
+    /// When the run's own readiness probe wait started.
+    probe_since: Option<Instant>,
 }
 
 impl Owner {
@@ -382,12 +416,40 @@ impl Owner {
         if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
             return Err(End::Stopped(self.cause(cause)));
         }
+        // Every workload's wait is named before anything starts, so a front
+        // end never has to guess from the tab order (effigy#458).
+        self.publish_waits(Instant::now());
         if let Some(environment) = &plan.environment {
-            let mut stop = |run: &mut TaskRun| pending_stop(run, self.watch.as_ref());
-            match environment::bring_up(run, environment, &plan.token, &mut stop) {
-                Ok(()) => self.health = Some(RouteHealth::new(environment)),
+            // The watch is held locally while the phase runs: the stop probe
+            // and the phase's own progress both borrow this owner.
+            let watch = self.watch.take();
+            let mut stop = |run: &mut TaskRun| pending_stop(run, watch.as_ref());
+            let mut progress = |counts: Option<(u32, u32)>| {
+                if let Some((healthy, total)) = counts {
+                    self.waits.environment_progress(healthy, total);
+                }
+                let now = Instant::now();
+                self.waits.refresh(now);
+                self.publish_waits(now);
+            };
+            let brought_up =
+                environment::bring_up(run, environment, &plan.token, &mut stop, &mut progress);
+            self.watch = watch;
+            match brought_up {
+                Ok(()) => {
+                    let now = Instant::now();
+                    self.waits.environment_ready(now);
+                    self.waits.refresh(now);
+                    self.publish_waits(now);
+                    self.health = Some(RouteHealth::new(environment));
+                }
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
-                Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason, None)),
+                Err(NotReady::Failed(reason)) => {
+                    let now = Instant::now();
+                    self.waits.environment_failed(&reason, now);
+                    self.publish_waits(now);
+                    return Err(End::StartFailed(reason, None));
+                }
             }
         }
         self.lost_while_blocked |= self.watch.as_ref().is_some_and(OwnerWatch::lost);
@@ -440,11 +502,35 @@ impl Owner {
                 return End::StartFailed(error.to_string(), None);
             }
             while next < self.workloads.len() && Instant::now() >= next_at {
+                let name = self.workloads[next].spec.name.clone();
+                // The delay this entry declared has elapsed: it was the only
+                // thing this entry itself still waited for.
+                self.waits.delay_elapsed(&name, Instant::now());
+                // A dependent never starts while the graph says it waits: its
+                // prerequisite failed or has not started (effigy#458).
+                if !self.waits.may_start(&name) {
+                    if let Some(state) = self.waits.state(&name, Instant::now()) {
+                        if matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed) {
+                            // Nothing else can start this entry: the run ends
+                            // with the attribution rather than waiting for a
+                            // process that will never exist.
+                            return End::StartFailed(state.status_line(), None);
+                        }
+                    }
+                    break;
+                }
                 if let Err(error) = self.spawn(run, next) {
                     // A setup is a blocking phase too: a stop during it is a
                     // stop, not a failed start.
+                    let now = Instant::now();
+                    self.waits.failed(&name, error.to_string(), now);
+                    self.publish_waits(now);
                     return start_failure_end(error, self.lost_while_blocked);
                 }
+                let now = Instant::now();
+                self.waits.started(&name, now);
+                self.waits.refresh(now);
+                self.publish_waits(now);
                 next += 1;
                 next_at = Instant::now()
                     + Duration::from_millis(
@@ -453,6 +539,17 @@ impl Owner {
                             .map_or(0, |workload| workload.spec.start_after_ms),
                     );
             }
+            // The accepted legacy delay names what remains of itself, never
+            // another entry's label.
+            let now = Instant::now();
+            if next < self.workloads.len() && now < next_at {
+                let name = self.workloads[next].spec.name.clone();
+                if self.waits.may_start(&name) {
+                    self.waits.delaying(&name, next_at - now, now);
+                }
+            }
+            self.waits.refresh(now);
+            self.publish_waits(now);
             if !active && next == self.workloads.len() {
                 if let Err(error) = run.run_mut().and_then(|mut run| {
                     run.advance(effigy_kernel::run::Phase::Active)
@@ -469,10 +566,18 @@ impl Owner {
                 active = true;
             }
             if active {
-                match self.health.as_mut().map(RouteHealth::poll) {
-                    Some(Health::Ready) => self.health = None,
+                let health = self.health.as_mut().map(RouteHealth::poll);
+                match health {
+                    Some(Health::Ready) => {
+                        self.health = None;
+                        self.publish_probe_wait(None, Instant::now());
+                    }
                     Some(Health::Failed(reason)) => return End::StartFailed(reason, None),
-                    Some(Health::Pending) | None => {}
+                    Some(Health::Pending) => {
+                        let probe = self.health.as_ref().and_then(RouteHealth::probe_label);
+                        self.publish_probe_wait(probe, Instant::now());
+                    }
+                    None => {}
                 }
             }
             let routed = task_engine::routed_signals();
@@ -726,7 +831,83 @@ impl Owner {
             process: name.clone(),
             code: exit.code,
         });
+        let now = Instant::now();
+        self.waits.exited(&name, exit.code, now);
+        self.publish_waits(now);
         shutdown.then_some(End::ShutdownOnExit(name))
+    }
+
+    /// Publishes every entry's wait that changed, or whose elapsed time is
+    /// due for a refresh, to the run's clients and its status record.
+    fn publish_waits(&mut self, now: Instant) {
+        let states = self.waits.states(now);
+        for state in states {
+            self.publish_state(&state, now);
+        }
+    }
+
+    /// The run's own readiness probe, attributed to its own tab: it names the
+    /// request being awaited and the elapsed wait, and nothing else.
+    fn publish_probe_wait(&mut self, probe: Option<String>, now: Instant) {
+        let entry = super::OUTPUT_LOG;
+        match probe {
+            Some(probe) => {
+                let since = *self.probe_since.get_or_insert(now);
+                let state = EntryState {
+                    entry: entry.to_owned(),
+                    phase: EntryPhase::Starting,
+                    waiting_on: Some(WaitOn::Probe { probe }),
+                    not_started_because: None,
+                    detail: None,
+                    elapsed_ms: u64::try_from(now.duration_since(since).as_millis())
+                        .unwrap_or(u64::MAX),
+                };
+                self.publish_state(&state, now);
+            }
+            None => {
+                self.probe_since = None;
+                if self.published.remove(entry).is_some() {
+                    self.wait_ledger.retire(entry);
+                    self.published_at.remove(entry);
+                    self.event(&EngineEvent::Entry {
+                        state: EntryState {
+                            entry: entry.to_owned(),
+                            phase: EntryPhase::Ready,
+                            waiting_on: None,
+                            not_started_because: None,
+                            detail: None,
+                            elapsed_ms: 0,
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    fn publish_state(&mut self, state: &EntryState, now: Instant) {
+        let changed = self.published.get(&state.entry) != Some(state);
+        let due = self
+            .published_at
+            .get(&state.entry)
+            .is_some_and(|at| now.duration_since(*at) >= WAIT_REFRESH);
+        let live = state.waiting_on.is_some()
+            && matches!(state.phase, EntryPhase::Waiting | EntryPhase::Starting);
+        if !changed && !(live && due) {
+            return;
+        }
+        let terminal = matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed);
+        if terminal || state.waiting_on.is_some() {
+            self.wait_ledger.publish(state);
+        } else {
+            self.wait_ledger.retire(&state.entry);
+        }
+        if terminal || state.waiting_on.is_some() {
+            self.event(&EngineEvent::Entry {
+                state: state.clone(),
+            });
+        }
+        self.published.insert(state.entry.clone(), state.clone());
+        self.published_at.insert(state.entry.clone(), now);
     }
 
     fn frame(&mut self, run: &mut TaskRun, frame: ClientFrame) {

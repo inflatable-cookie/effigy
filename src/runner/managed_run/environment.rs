@@ -16,6 +16,7 @@ use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::probe::ProbeCommand;
 use effigy_kernel::run::{EffectSpec, Settlement};
+use effigy_tui::waits::WaitOn;
 
 use super::settlement::{self, Binding, EnvironmentEffect};
 use crate::runner::task_engine::{self, TaskRun};
@@ -28,6 +29,9 @@ const START_PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// One route probe's own bound.
 const ROUTE_PROBE: Duration = Duration::from_secs(3);
+/// How often the environment phase re-reads the container counts its own `up`
+/// publishes, so every entry that waits for it names them (effigy#458).
+const ENVIRONMENT_PROGRESS_READ: Duration = Duration::from_millis(250);
 
 /// The environment one managed run brings up, or borrows.
 #[derive(Debug, Clone)]
@@ -60,11 +64,16 @@ pub(in crate::runner) enum NotReady {
 /// Brings the environment up, records the run's obligation to stop it (or
 /// leave a borrowed one running) and observes its readiness. `stop` is
 /// polled at every wait boundary.
+///
+/// `progress` receives the containers the environment's own `up` reports
+/// healthy while the phase runs, so the wait names them rather than a generic
+/// spinner.
 pub(in crate::runner) fn bring_up(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
     token: &str,
     stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    progress: &mut dyn FnMut(Option<(u32, u32)>),
 ) -> Result<(), NotReady> {
     let effect = EnvironmentEffect {
         repo: plan.repo.clone(),
@@ -90,7 +99,7 @@ pub(in crate::runner) fn bring_up(
     // after the activation's attachment, so the reverse-order settle (K4)
     // stops the environment before it releases the attachment, which the
     // kernel releases only once nothing else of the run is open.
-    let up = run_up(run, plan, stop);
+    let up = run_up(run, plan, stop, progress);
     let ticket = {
         let mut kernel = run
             .run_mut()
@@ -160,6 +169,15 @@ impl RouteHealth {
         }
     }
 
+    /// The request the wait is currently observing, named the way a person
+    /// reads it: `GET /api/health`.
+    pub(in crate::runner) fn probe_label(&self) -> Option<String> {
+        let url = self.urls.first()?;
+        let path = url.splitn(2, "://").nth(1).unwrap_or(url);
+        let path = path.find('/').map_or("/", |slash| &path[slash..]);
+        Some(format!("GET {path}"))
+    }
+
     /// Probes the next unready route when its backoff is due. The deadline
     /// starts at the first poll, once every workload has started.
     pub(in crate::runner) fn poll(&mut self) -> Health {
@@ -219,6 +237,7 @@ fn run_up(
     run: &mut TaskRun,
     plan: &EnvironmentPlan,
     stop: &mut dyn FnMut(&mut TaskRun) -> Option<StopCause>,
+    progress: &mut dyn FnMut(Option<(u32, u32)>),
 ) -> Result<i32, NotReady> {
     let mut env = task_engine::spawn_environment(&plan.repo)
         .map_err(|error| NotReady::Failed(error.to_string()))?;
@@ -260,11 +279,16 @@ fn run_up(
         .spawn_with_handoff(spec, false, grant.map(|grant| grant.into_reader()))
         .map_err(|error| NotReady::Failed(format!("environment up did not start: {error}")))?;
     let mut next_progress = started + START_PROGRESS_INTERVAL;
+    let mut next_progress_read = started;
     loop {
         run.verify_admission()
             .map_err(|error| NotReady::Failed(error.to_string()))?;
         if let Some(cause) = stop(run) {
             return Err(NotReady::Stopped(cause));
+        }
+        if Instant::now() >= next_progress_read {
+            next_progress_read = Instant::now() + ENVIRONMENT_PROGRESS_READ;
+            progress(environment_counts(plan));
         }
         if Instant::now() >= next_progress {
             next_progress = Instant::now() + START_PROGRESS_INTERVAL;
@@ -297,6 +321,19 @@ fn run_up(
             return Ok(exit.code);
         }
         std::thread::sleep(POLL);
+    }
+}
+
+/// The containers the environment's own `up` reported healthy so far, from
+/// the record it publishes while it waits for readiness.
+fn environment_counts(plan: &EnvironmentPlan) -> Option<(u32, u32)> {
+    let ledger = crate::runner::managed_wait::WaitLedger::environment(&plan.repo, &plan.name);
+    match ledger.read("environment")?.waiting_on? {
+        WaitOn::Environment {
+            healthy: Some(healthy),
+            total: Some(total),
+        } => Some((healthy, total)),
+        _ => None,
     }
 }
 

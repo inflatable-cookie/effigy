@@ -29,6 +29,7 @@ use effigy_kernel::run::{
     RunSummary, SettlementAdapter,
 };
 use effigy_kernel::store::Store;
+use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -38,6 +39,7 @@ use super::{
     RestartedHostProcess, HOST_LISTENER_STATE_SCHEMA,
 };
 use crate::runner::error::RunnerError;
+use crate::runner::managed_wait::{self, WaitLedger};
 
 /// How long a stop request waits for the live supervisor to act before the
 /// requester settles the run as its gate holder.
@@ -578,15 +580,28 @@ fn start_host_processes_inner(
         .iter()
         .map(|process| (process.name.as_str(), process))
         .collect::<std::collections::HashMap<_, _>>();
+    // Every dependency wait this bring-up runs is published, so the session's
+    // tabs, its headless text and `status --json` name what each entry waits
+    // for instead of guessing (effigy#458).
+    let waits = WaitLedger::environment(&checkout_root, &policy.name);
     let mut started: Vec<(String, effigy_kernel::supervise::SupervisorClient)> = Vec::new();
     let mut listener_results = Vec::new();
+    // The processes this call finished with, and the entry whose failure would
+    // stop the bring-up: every process after it never starts.
+    let mut started_upto = 0usize;
+    let mut failing: Option<String> = None;
     let start_result = (|| -> Result<(), RunnerError> {
-        for hp in ordered {
+        for (index, hp) in ordered.iter().enumerate() {
             // `up` starts every declared process; a restart names the ones it
             // replaces and leaves the rest running.
             if selection.is_some_and(|selection| !selection.contains(&hp.name)) {
+                started_upto = index + 1;
                 continue;
             }
+            failing = Some(hp.name.clone());
+            // A record left by an earlier failed bring-up is not this
+            // generation's wait.
+            waits.retire(&hp.name);
             let resource = host_process_resource(policy, &hp.name)?;
             let env = resolved_host_process_environment(hp, &facts)?;
             let listener = resolved_host_process_listener(hp, &listener_binds);
@@ -599,6 +614,16 @@ fn start_host_processes_inner(
                     ))
                 })?;
                 let state_path = host_process_state_path(&dir, &dependency_process.name);
+                failing = Some(dependency.clone());
+                let publication = HostWaitPublication::new(
+                    &waits,
+                    &hp.name,
+                    WaitOn::Entry {
+                        name: dependency.clone(),
+                        phase: published_phase(&waits, &dir, dependency),
+                    },
+                );
+                publication.publish(Instant::now());
                 let state = super::wait_for_listener_state(
                     &state_path,
                     dependency,
@@ -608,7 +633,10 @@ fn start_host_processes_inner(
                             "managed host listener dependency has no gateway route table",
                         )
                     })?,
+                    |now| publication.publish(now),
                 )?;
+                failing = Some(hp.name.clone());
+                publication.retire();
                 if state.internal_url.is_none() || state.public_url.is_none() {
                     return Err(RunnerError::task_invocation(format!(
                         "managed host listener `{dependency}` is ready without current endpoint URLs"
@@ -698,6 +726,19 @@ fn start_host_processes_inner(
             if let Some(listener) = &hp.listener {
                 let owner = managed_host_process_owner(&project_path, policy, hp)?;
                 let state_path = host_process_state_path(&dir, &hp.name);
+                // The entry's own wait is its declared readiness request, with
+                // the elapsed time of the wait.
+                let publication = HostWaitPublication::new(
+                    &waits,
+                    &hp.name,
+                    WaitOn::Probe {
+                        probe: managed_wait::listener_probe_label(
+                            &listener.readiness_path,
+                            listener.readiness_status,
+                        ),
+                    },
+                );
+                publication.publish(Instant::now());
                 super::wait_for_listener_activation(
                     &state_path,
                     &hp.name,
@@ -713,7 +754,9 @@ fn start_host_processes_inner(
                             "managed host listener has no gateway route table",
                         )
                     })?,
+                    |now| publication.publish(now),
                 )?;
+                publication.retire();
                 listener_results.push(ManagedHostListenerResult {
                     name: hp.name.clone(),
                     status: state.status,
@@ -728,10 +771,33 @@ fn start_host_processes_inner(
                     state_file: state_path.display().to_string(),
                 });
             }
+            started_upto = index + 1;
         }
         Ok(())
     })();
     if let Err(error) = start_result {
+        // Every process that never started is terminal and attributed to the
+        // entry whose failure stopped the bring-up, so no dependent claims it
+        // ran (effigy#458).
+        if let Some(failed) = failing.as_deref() {
+            let attribution = managed_wait::failure_attribution(failed, &error);
+            for unstarted in ordered.iter().skip(started_upto) {
+                if selection.is_some_and(|selection| !selection.contains(&unstarted.name)) {
+                    continue;
+                }
+                if unstarted.name == failed {
+                    continue;
+                }
+                waits.publish(&EntryState {
+                    entry: unstarted.name.clone(),
+                    phase: EntryPhase::NotStarted,
+                    waiting_on: None,
+                    not_started_because: Some(attribution.clone()),
+                    detail: None,
+                    elapsed_ms: 0,
+                });
+            }
+        }
         // Dropping the owning pipes without a detach is the kernel's
         // owner-loss stop; settle explicitly so the refusal is complete before
         // it returns. Only the processes this start replaced are settled: a
@@ -761,6 +827,68 @@ fn start_host_processes_inner(
         started,
         listeners: listener_results,
     })
+}
+
+/// One entry's published wait while this bring-up holds it: the dependency it
+/// waits for, or its own declared readiness probe, with elapsed time.
+struct HostWaitPublication<'a> {
+    ledger: &'a WaitLedger,
+    entry: String,
+    since: Instant,
+    wait: WaitOn,
+}
+
+impl<'a> HostWaitPublication<'a> {
+    fn new(ledger: &'a WaitLedger, entry: &str, wait: WaitOn) -> Self {
+        Self {
+            ledger,
+            entry: entry.to_owned(),
+            since: Instant::now(),
+            wait,
+        }
+    }
+
+    fn publish(&self, now: Instant) {
+        let elapsed_ms =
+            u64::try_from(now.duration_since(self.since).as_millis()).unwrap_or(u64::MAX);
+        self.ledger.publish(&EntryState {
+            entry: self.entry.clone(),
+            phase: EntryPhase::Starting,
+            waiting_on: Some(self.wait.clone()),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms,
+        });
+    }
+
+    /// The entry started: it no longer waits for anything this record names.
+    fn retire(&self) {
+        self.ledger.retire(&self.entry);
+    }
+}
+
+/// The phase a dependent names for its dependency: the dependency's own
+/// published wait when it has one, else its supervisor's listener state.
+fn published_phase(waits: &WaitLedger, dir: &Path, dependency: &str) -> EntryPhase {
+    if let Some(state) = waits.read(dependency) {
+        return match state.phase {
+            EntryPhase::NotStarted | EntryPhase::Failed => EntryPhase::Failed,
+            EntryPhase::Ready => EntryPhase::Ready,
+            EntryPhase::Waiting => EntryPhase::Starting,
+            other => other,
+        };
+    }
+    if let Ok(raw) = fs::read(host_process_state_path(dir, dependency)) {
+        if let Ok(state) = serde_json::from_slice::<HostListenerState>(&raw) {
+            if state.status == "ready" {
+                return EntryPhase::Ready;
+            }
+            if state.status == "failed" {
+                return EntryPhase::Failed;
+            }
+        }
+    }
+    EntryPhase::Starting
 }
 
 /// The neutral CA variable every host process receives (effigy#321).

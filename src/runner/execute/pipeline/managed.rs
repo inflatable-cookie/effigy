@@ -698,6 +698,20 @@ fn own_managed_run(
         // displays.
         let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
         let target = context.target(&plan.profile);
+        // The run's own ordering graph, resolved once: the supervisor derives
+        // every entry's wait from it (effigy#458).
+        let workload_order = effigy_tui::waits::SessionOrder::workloads(
+            &plan
+                .processes
+                .iter()
+                .filter(|process| process.role == ManagedProcessRole::Standard)
+                .map(|process| effigy_tui::waits::WorkloadOrder {
+                    name: &process.name,
+                    after: &process.after,
+                    start_after_ms: process.start_after_ms,
+                })
+                .collect::<Vec<_>>(),
+        );
         let owned = OwnedRun {
             target,
             lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
@@ -715,6 +729,7 @@ fn own_managed_run(
             environment,
             fail_on_non_zero: plan.fail_on_non_zero,
             scratch: managed_task_scratch(selection.task),
+            workload_order,
             secrets: secrets
                 .iter()
                 .map(|(_, value)| value.expose().to_owned())
@@ -1964,6 +1979,7 @@ working_dir = "/workspace"
             listener_state: None,
             restart: HostProcessRestart::Never,
             restart_delay_ms: 0,
+            wait_record: std::path::PathBuf::from(format!("/repo/.effigy/{name}.wait.json")),
         }
     }
 

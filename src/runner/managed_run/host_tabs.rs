@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use effigy_containers::{EffectiveContainerPolicy, HostProcessRestart};
+use effigy_tui::waits::{EntryPhase, EntryState};
 use serde::Deserialize;
 
 /// The most one log tail read returns, so a chatty process cannot stall a
@@ -36,6 +37,9 @@ pub(in crate::runner) struct HostProcessTab {
     pub(in crate::runner) listener_state: Option<PathBuf>,
     pub(in crate::runner) restart: HostProcessRestart,
     pub(in crate::runner) restart_delay_ms: u64,
+    /// Where the bring-up publishes what this process waits for, and what
+    /// stopped it from starting (effigy#458).
+    pub(in crate::runner) wait_record: PathBuf,
 }
 
 impl HostProcessTab {
@@ -63,6 +67,11 @@ impl HostProcessTab {
                 }),
                 restart: process.restart,
                 restart_delay_ms: process.restart_delay_ms,
+                wait_record: crate::runner::managed_wait::WaitLedger::environment(
+                    repo_root,
+                    &policy.name,
+                )
+                .path(&process.name),
             })
             .collect()
     }
@@ -91,6 +100,11 @@ pub(in crate::runner) enum HostStatus {
     Restarting,
     /// The last generation exited and nothing replaces it.
     Exited(i32),
+    /// The bring-up has not started this process yet, and names what it waits
+    /// for.
+    Waiting(String),
+    /// A prerequisite failed, so this process never started.
+    NotStarted(String),
 }
 
 impl HostStatus {
@@ -102,6 +116,8 @@ impl HostStatus {
             Self::Ready(url) => format!("ready on {url}"),
             Self::Restarting => "restarting".to_owned(),
             Self::Exited(code) => format!("exited {code}"),
+            Self::Waiting(what) => what.clone(),
+            Self::NotStarted(what) => what.clone(),
         }
     }
 }
@@ -166,6 +182,8 @@ pub(in crate::runner) struct HostFollower {
     /// projection stops waiting for it.
     started: bool,
     next_poll: std::time::Instant,
+    /// The bring-up's published wait, while it holds this process.
+    wait: Option<EntryState>,
 }
 
 impl HostFollower {
@@ -177,6 +195,7 @@ impl HostFollower {
             announced: false,
             started: false,
             next_poll: std::time::Instant::now(),
+            wait: None,
         }
     }
 
@@ -186,12 +205,64 @@ impl HostFollower {
         std::mem::replace(&mut self.started, true)
     }
 
+    /// The wait the bring-up published for this process, if it still holds
+    /// it: the dependency and its phase, the listener's own probe, or the
+    /// prerequisite that failed.
+    pub(in crate::runner) fn wait_state(&self) -> Option<&EntryState> {
+        self.wait.as_ref().filter(|state| {
+            matches!(
+                state.phase,
+                EntryPhase::Waiting
+                    | EntryPhase::Starting
+                    | EntryPhase::NotStarted
+                    | EntryPhase::Failed
+            )
+        })
+    }
+
+    /// Reads the published wait. A record that is not this entry's own is no
+    /// observation, and an entry that started no longer waits.
+    fn read_wait(&mut self) {
+        let state = std::fs::read(&self.tab.wait_record)
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<EntryState>(&raw).ok())
+            .filter(|state| state.entry == self.tab.name);
+        self.wait = state;
+    }
+
     /// This follower's status line, and whether it changed since the last
     /// call. The first call always reports, so a tab opens with its state.
     fn take_status_change(&mut self, now: std::time::Instant) -> Option<HostStatus> {
         let mut changed = None;
         if now >= self.next_poll {
             self.next_poll = now + LISTENER_POLL;
+            self.read_wait();
+            if let Some(state) = &self.wait {
+                let reported = match state.phase {
+                    EntryPhase::NotStarted | EntryPhase::Failed => {
+                        Some(HostStatus::NotStarted(state.status_line()))
+                    }
+                    _ if state.waiting_on.is_some() => {
+                        Some(HostStatus::Waiting(state.status_line()))
+                    }
+                    _ => None,
+                };
+                if let Some(status) = reported {
+                    if status != self.status {
+                        self.status = status.clone();
+                        // A published wait keeps reporting as its elapsed time
+                        // advances: the line is live, not a canned label.
+                        self.announced = false;
+                        return Some(status);
+                    }
+                    // The wait is unchanged and already announced: no repeat.
+                    if self.announced {
+                        return None;
+                    }
+                    self.announced = true;
+                    return Some(status);
+                }
+            }
             if let Some(url) = ready_url(&self.tab) {
                 let ready = HostStatus::Ready(url);
                 if ready != self.status {
@@ -300,6 +371,7 @@ mod tests {
             listener_state,
             restart,
             restart_delay_ms: 100,
+            wait_record: PathBuf::from("/nonexistent/api.wait.json"),
         }
     }
 

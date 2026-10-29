@@ -36,6 +36,12 @@ pub(in crate::runner) enum EngineEvent {
     Started { process: String, sequence: i64 },
     /// A workload's process ended with `code`.
     Exited { process: String, code: i32 },
+    /// One entry's own wait, as the run derived it from the ordering graph.
+    /// `waiting_on` names the exact dependency, phase, probe or delay, so a
+    /// front end never renders a generic wait (effigy#458).
+    Entry {
+        state: effigy_tui::waits::EntryState,
+    },
     /// Every workload has started.
     StartupFinished,
     /// The run is stopping: workloads, then the environment, are settling.
@@ -82,6 +88,19 @@ mod tests {
                 code: 7,
             },
             EngineEvent::StartupFinished,
+            EngineEvent::Entry {
+                state: effigy_tui::waits::EntryState {
+                    entry: "front".into(),
+                    phase: effigy_tui::waits::EntryPhase::Waiting,
+                    waiting_on: Some(effigy_tui::waits::WaitOn::Entry {
+                        name: "api".into(),
+                        phase: effigy_tui::waits::EntryPhase::Starting,
+                    }),
+                    not_started_because: None,
+                    detail: None,
+                    elapsed_ms: 4_200,
+                },
+            },
         ] {
             assert_eq!(decode::<EngineEvent>(&encode(&event)), Some(event));
         }

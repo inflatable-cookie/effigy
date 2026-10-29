@@ -137,7 +137,10 @@ impl WaitOn {
             Self::Entry { name, phase } => format!("{name} {}", phase.as_str()),
             Self::Probe { probe } => probe.clone(),
             Self::Delay { remaining_ms } => {
-                format!("{} delay", decimal_seconds(Duration::from_millis(*remaining_ms)))
+                format!(
+                    "{} delay",
+                    decimal_seconds(Duration::from_millis(*remaining_ms))
+                )
             }
         }
     }
@@ -516,7 +519,13 @@ impl EntryWaits {
 
     /// This entry is waiting on its own readiness probe.
     pub fn probing(&mut self, entry: &str, probe: impl Into<String>, now: Instant) {
-        self.set_explicit(entry, WaitOn::Probe { probe: probe.into() }, now);
+        self.set_explicit(
+            entry,
+            WaitOn::Probe {
+                probe: probe.into(),
+            },
+            now,
+        );
     }
 
     /// The accepted legacy delay: how long this entry's start is still held.

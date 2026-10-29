@@ -7,6 +7,7 @@ use ratatui::Frame;
 
 use super::state::ProcessStartupState;
 use super::OptionsAction;
+use crate::waits::EntryState;
 
 mod footer;
 mod header;
@@ -39,6 +40,10 @@ pub(super) struct RenderUiState<'a> {
     pub(super) shell_capture_mode: bool,
     pub(super) exit_states: &'a HashMap<String, ProcessExitState>,
     pub(super) startup_states: &'a HashMap<String, ProcessStartupState>,
+    /// Each entry's own wait from the session that supervises it, when it
+    /// publishes one.
+    pub(super) entry_waits: &'a HashMap<String, EntryState>,
+    pub(super) active_entry_wait: Option<&'a EntryState>,
     pub(super) show_help: bool,
     pub(super) show_options: bool,
     pub(super) options_index: usize,
@@ -68,6 +73,8 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         shell_capture_mode,
         exit_states,
         startup_states,
+        entry_waits,
+        active_entry_wait,
         show_help,
         show_options,
         options_index,
@@ -104,6 +111,7 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
         shell_capture_mode,
         exit_states,
         startup_states,
+        entry_waits,
     );
 
     if show_help {
@@ -129,6 +137,7 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
                 active_restart_count,
                 exit_states,
                 shell_cursor,
+                active_entry_wait,
             },
         );
     }

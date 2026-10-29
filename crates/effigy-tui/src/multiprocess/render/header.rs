@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::super::state::ProcessStartupState;
 use crate::core::{effigy_panel_block, ProcessExitState, EFFIGY_ACCENT, EFFIGY_MUTED};
+use crate::waits::EntryState;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Tabs};
@@ -15,20 +16,26 @@ pub(super) fn render_tabs(
     shell_capture_mode: bool,
     exit_states: &HashMap<String, ProcessExitState>,
     startup_states: &HashMap<String, ProcessStartupState>,
+    entry_waits: &HashMap<String, EntryState>,
 ) {
     let titles = process_names
         .iter()
         .enumerate()
         .map(|(idx, name)| {
-            let state_label = match startup_states.get(name) {
-                Some(ProcessStartupState::Waiting) => format!("{name} [waiting]"),
-                Some(ProcessStartupState::Starting) => format!("{name} [starting]"),
-                Some(ProcessStartupState::Failed) => format!("{name} [failed]"),
-                Some(ProcessStartupState::Running) if !exit_states.contains_key(name) => {
-                    format!("{name} [running]")
-                }
-                Some(ProcessStartupState::Running) => name.clone(),
-                None => name.clone(),
+            // The session's own entry state is authoritative: a waiting entry
+            // names what it waits for, and never shows a generic wait.
+            let state_label = match entry_waits.get(name) {
+                Some(entry) => entry.tab_label(),
+                None => match startup_states.get(name) {
+                    Some(ProcessStartupState::Waiting) => format!("{name} [waiting]"),
+                    Some(ProcessStartupState::Starting) => format!("{name} [starting]"),
+                    Some(ProcessStartupState::Failed) => format!("{name} [failed]"),
+                    Some(ProcessStartupState::Running) if !exit_states.contains_key(name) => {
+                        format!("{name} [running]")
+                    }
+                    Some(ProcessStartupState::Running) => name.clone(),
+                    None => name.clone(),
+                },
             };
             let label = if name == "shell" {
                 if shell_capture_mode {

@@ -499,16 +499,22 @@ fn listener_start_progress(process_name: &str, elapsed: Duration) -> String {
 /// supervisor's own readiness budget starts when it does. The supervisor is
 /// what ends the wait, so a supervisor that exited without publishing is the
 /// failure this wait names.
+///
+/// `on_wait` runs about once a second while the wait continues, so the caller
+/// can publish what it waits for: the entry's own tab names the probe and its
+/// elapsed time instead of a generic spinner (effigy#458).
 fn wait_for_listener_state(
     path: &Path,
     process_name: &str,
     owner: &str,
     route_table_path: &Path,
+    mut on_wait: impl FnMut(Instant),
 ) -> Result<HostListenerState, RunnerError> {
     let mut next_liveness_check = Instant::now();
     let started = Instant::now();
     let mut next_progress = started;
     loop {
+        on_wait(Instant::now());
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
                 return Err(RunnerError::task_invocation(format!(

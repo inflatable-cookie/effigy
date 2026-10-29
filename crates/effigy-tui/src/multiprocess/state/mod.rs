@@ -5,6 +5,7 @@ use std::time::Instant;
 use vt100::Parser as VtParser;
 
 use crate::core::{InputMode, LogEntry, ProcessExitState};
+use crate::waits::EntryState;
 
 mod accessors;
 mod init;
@@ -50,6 +51,9 @@ pub struct SessionState {
     pub observed_non_zero: HashMap<String, String>,
     pub exit_states: HashMap<String, ProcessExitState>,
     pub startup_states: HashMap<String, ProcessStartupState>,
+    /// Each entry's own wait, from the session that supervises it (effigy#458).
+    /// A managed run fills this in; a local session leaves it empty.
+    pub entry_waits: HashMap<String, EntryState>,
     pub startup_failed: bool,
     pub pending_startup: usize,
     pub shutdown_on_exit_processes: HashSet<String>,

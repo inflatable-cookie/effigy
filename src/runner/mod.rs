@@ -30,6 +30,7 @@ mod managed_listener_readiness;
 mod managed_run;
 mod managed_secrets;
 mod managed_shell;
+mod managed_wait;
 mod manifest;
 mod owned_children;
 mod program_fallback;

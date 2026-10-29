@@ -34,6 +34,11 @@ pub(super) fn run_event_loop_with_control(
             MAX_EVENTS_PER_TICK,
             runtime.vt_emulator_enabled,
         );
+        // The session's own entry state is authoritative: it names what each
+        // entry waits for, so the tab never borrows another entry's label.
+        for entry in runtime.supervisor.entry_waits() {
+            runtime.state.entry_waits.insert(entry.entry.clone(), entry);
+        }
         if runtime.state.shutdown_requested
             && !runtime.state.startup_failed
             && runtime.supervisor.startup_finished()
@@ -78,6 +83,8 @@ pub(super) fn run_event_loop_with_control(
                     shell_capture_mode: runtime.state.shell_capture_mode,
                     exit_states: &runtime.state.exit_states,
                     startup_states: &runtime.state.startup_states,
+                    entry_waits: &runtime.state.entry_waits,
+                    active_entry_wait: runtime.state.entry_waits.get(&active_view.active_process),
                     show_help: runtime.state.show_help,
                     show_options: runtime.state.show_options,
                     options_index: runtime.state.options_index,

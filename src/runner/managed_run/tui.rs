@@ -25,6 +25,7 @@ use effigy_tui::multiprocess::{
     run_multiprocess_tui_with_source, MultiProcessTuiControl, MultiProcessTuiOptions,
     SessionProcesses, SessionTab,
 };
+use effigy_tui::waits::EntryState;
 
 use super::client::{Closed, Started, StopSender};
 use super::control::Addressed;
@@ -72,6 +73,8 @@ struct Shared {
     hosts: BTreeMap<String, HostFollower>,
     queue: VecDeque<ProcessEvent>,
     exits: BTreeMap<String, String>,
+    /// Every entry's own wait, as the run publishes it (effigy#458).
+    entries: BTreeMap<String, EntryState>,
     startup_finished: bool,
     closed: Option<Closed>,
     stop: StopSender,
@@ -84,6 +87,10 @@ struct RunSource {
     shell_names: Vec<String>,
     /// Set once the TUI's quit path (the run's stop) has begun.
     ending: Arc<AtomicBool>,
+    /// Where the run's workloads publish their waits, and which tabs they
+    /// are, so a front end that attached late still names every wait.
+    wait_ledger: crate::runner::managed_wait::WaitLedger,
+    workload_tabs: Vec<String>,
 }
 
 impl RunSource {
@@ -95,6 +102,39 @@ impl RunSource {
 
     fn is_shell(&self, process: &str) -> bool {
         self.shell_names.iter().any(|name| name == process)
+    }
+
+    /// Every entry's own wait: the run's published state, the environment's
+    /// host-process records, and the run's own record for a tab that attached
+    /// after its event.
+    fn wait_states(&self) -> Vec<EntryState> {
+        let shared = self.shared();
+        let mut states = shared.entries.values().cloned().collect::<Vec<_>>();
+        let mut named = states
+            .iter()
+            .map(|state| state.entry.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for (tab_name, host) in &shared.hosts {
+            let Some(state) = host.wait_state() else {
+                continue;
+            };
+            let mut state = state.clone();
+            // The tab may be renamed beside a workload of the same name.
+            state.entry = tab_name.clone();
+            named.insert(tab_name.clone());
+            states.push(state);
+        }
+        for tab in &self.workload_tabs {
+            if named.contains(tab) {
+                continue;
+            }
+            let Some(mut state) = self.wait_ledger.read(tab) else {
+                continue;
+            };
+            state.entry = tab.clone();
+            states.push(state);
+        }
+        states
     }
 
     fn frame(&self, frame: &ClientFrame) -> Result<(), ProcessManagerError> {
@@ -138,6 +178,9 @@ impl Shared {
                         self.exits.insert(process.clone(), payload.clone());
                         self.queue
                             .push_back(event(&process, ProcessEventKind::Exit, &payload));
+                    }
+                    Some(EngineEvent::Entry { state }) => {
+                        self.entries.insert(state.entry.clone(), state);
                     }
                     Some(EngineEvent::StartupFinished) => self.startup_finished = true,
                     Some(EngineEvent::Outcome { error, code }) => {
@@ -270,6 +313,10 @@ fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {
 }
 
 impl SessionProcesses for RunSource {
+    fn entry_waits(&self) -> Vec<EntryState> {
+        self.wait_states()
+    }
+
     fn next_event_timeout(&self, timeout: Duration) -> Option<ProcessEvent> {
         if let Some(shells) = &self.shells {
             if let Some(event) = shells.next_event_timeout(Duration::ZERO) {
@@ -489,18 +536,32 @@ pub(in crate::runner) fn attach_tui(
         hosts,
         queue,
         exits: BTreeMap::new(),
+        entries: BTreeMap::new(),
         startup_finished: false,
         closed: None,
         stop: StopSender::new(),
     }));
     let shell_names = shells.iter().map(|shell| shell.name.clone()).collect();
     let ending = Arc::new(AtomicBool::new(false));
+    let workload_tabs = tabs
+        .iter()
+        .filter(|tab| matches!(tab.source, TabSource::Workload))
+        .map(|tab| tab.name.clone())
+        .collect();
     let source = RunSource {
         shared: shared.clone(),
         shells: (!shells.is_empty())
             .then(|| ProcessSupervisor::spawn_progressively(repo_root.clone(), shells)),
         shell_names,
         ending: ending.clone(),
+        // The supervisor publishes its workload waits under the task and
+        // profile it runs, in this checkout.
+        wait_ledger: crate::runner::managed_wait::WaitLedger::task(
+            &addressed.target.root,
+            addressed.task,
+            addressed.profile,
+        ),
+        workload_tabs,
     };
     hangup_watchdog(ending.clone());
     let session_tabs = tabs

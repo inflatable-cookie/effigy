@@ -120,10 +120,7 @@ fn the_four_entry_graph_names_each_entry_s_own_wait_frame_by_frame() {
             probe: "GET / -> 200".to_owned()
         })
     );
-    assert_eq!(
-        api.status_line(),
-        "waiting for GET / -> 200 (12s)"
-    );
+    assert_eq!(api.status_line(), "waiting for GET / -> 200 (12s)");
     assert_eq!(api.tab_label(), "api [starting: GET / -> 200 (12s)]");
     assert_eq!(
         waits
@@ -174,10 +171,7 @@ fn a_failed_prerequisite_stops_every_dependent_with_attribution() {
             Some(Attribution::new("api", "failed (status 500)")),
             "{name} names the prerequisite and its report"
         );
-        assert_eq!(
-            state.status_line(),
-            "not started — api failed (status 500)"
-        );
+        assert_eq!(state.status_line(), "not started — api failed (status 500)");
         assert!(
             state.tab_label().contains("not started: api failed"),
             "{}",
@@ -257,7 +251,9 @@ fn a_legacy_delay_names_itself_not_another_entry() {
     assert_eq!(jobs.phase, EntryPhase::Waiting);
     assert_eq!(
         jobs.waiting_on,
-        Some(WaitOn::Delay { remaining_ms: 1_200 })
+        Some(WaitOn::Delay {
+            remaining_ms: 1_200
+        })
     );
     assert_eq!(jobs.status_line(), "scheduled delay: 1.2s remaining");
     assert_eq!(jobs.tab_label(), "jobs [waiting: 1.2s delay]");
@@ -267,7 +263,10 @@ fn a_legacy_delay_names_itself_not_another_entry() {
     waits.delay_elapsed("jobs", clock.at(1.2));
     assert!(waits.may_start("jobs"), "the delay elapsed");
     assert_eq!(
-        waits.state("jobs", clock.at(1.3)).expect("jobs' state").waiting_on,
+        waits
+            .state("jobs", clock.at(1.3))
+            .expect("jobs' state")
+            .waiting_on,
         None
     );
 }
@@ -291,8 +290,10 @@ fn host_depends_on_and_workload_order_map_to_their_own_waits() {
     assert_eq!(front.waits_for, vec!["api".to_owned()]);
     assert!(front.waits_for_readiness, "host readers wait for readiness");
     assert!(!front.after_environment, "hosts start inside the bring-up");
-    assert!(!hosts.get("api").expect("api's order").waits_for_readiness
-        || hosts.get("api").expect("api's order").waits_for.is_empty());
+    assert!(
+        !hosts.get("api").expect("api's order").waits_for_readiness
+            || hosts.get("api").expect("api's order").waits_for.is_empty()
+    );
     assert!(
         hosts.get("api").expect("api's order").waits_for.is_empty(),
         "api declares no dependency"
@@ -313,9 +314,16 @@ fn host_depends_on_and_workload_order_map_to_their_own_waits() {
     ]);
     let front = workloads.get("front").expect("front's order");
     assert_eq!(front.waits_for, vec!["api".to_owned()]);
-    assert!(!front.waits_for_readiness, "a workload starts, then the next");
+    assert!(
+        !front.waits_for_readiness,
+        "a workload starts, then the next"
+    );
     assert!(front.after_environment);
-    assert!(workloads.get("api").expect("api's order").waits_for.is_empty());
+    assert!(workloads
+        .get("api")
+        .expect("api's order")
+        .waits_for
+        .is_empty());
 }
 
 /// The environment's own failure is attributed the same way, and the JSON
