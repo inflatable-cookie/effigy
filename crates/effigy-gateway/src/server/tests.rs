@@ -1028,7 +1028,9 @@ fn publish_route(routes: &Path, domain: &str) {
                 tcp_target: None,
                 tls: false,
                 source: RouteSource::Container,
-                project: "/checkout".to_owned(),
+                // A checkout path that no longer exists is pruned on every
+                // write, so the owner is the fixture's own existing directory.
+                project: routes.parent().unwrap().display().to_string(),
                 managed_listener: None,
                 registered: chrono::Utc::now(),
             });
