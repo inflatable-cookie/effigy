@@ -2302,12 +2302,12 @@ struct RecordingTerminal {
     chunks: VecDeque<StreamChunk>,
 }
 impl Terminal for RecordingTerminal {
-    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
-        self.attachment_ids.push(attachment);
+    fn input(&mut self, attachment: &Attachment, bytes: &[u8]) -> Result<(), Refusal> {
+        self.attachment_ids.push(attachment.id());
         self.input.push(bytes.to_vec());
         Ok(())
     }
-    fn resize(&mut self, _attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
+    fn resize(&mut self, _attachment: &Attachment, size: TerminalSize) -> Result<(), Refusal> {
         self.resizes += 1;
         self.size = Some(size);
         Ok(())
@@ -2317,10 +2317,10 @@ impl Streams for RecordingTerminal {
     fn next_chunk(&mut self, _attachment: Option<&Attachment>) -> Option<StreamChunk> {
         self.chunks.pop_front()
     }
-    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
+    fn input(&mut self, attachment: &Attachment, bytes: &[u8]) -> Result<(), Refusal> {
         Terminal::input(self, attachment, bytes)
     }
-    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
+    fn resize(&mut self, attachment: &Attachment, size: TerminalSize) -> Result<(), Refusal> {
         Terminal::resize(self, attachment, size)
     }
 }
@@ -2758,6 +2758,18 @@ fn acked_frames(count: usize, acks: Vec<StreamFrame>) -> (RefusalCode, usize) {
     )
 }
 
+fn ack_frame_for(attach: u8, stream_id: u32, seq: u64) -> StreamFrame {
+    StreamFrame {
+        id: RequestId::new([attach; 16]),
+        stream_id,
+        seq,
+        kind: StreamKind::Ack,
+        payload: None,
+        rows: None,
+        columns: None,
+    }
+}
+
 fn ack_frame(stream_id: u32, seq: u64) -> StreamFrame {
     StreamFrame {
         id: RequestId::new([9; 16]),
@@ -2807,6 +2819,146 @@ fn an_acknowledgement_needs_its_own_open_frame_and_no_payload() {
         "a resumed position is not a frame this connection published"
     );
     assert_eq!(outbound.window().unacked(), 0);
+}
+
+#[test]
+fn an_acknowledgement_releases_its_own_streams_frames_between_other_streams() {
+    let mut outbound = Outbound::new();
+    let id = RequestId::new([4; 16]);
+    // Two streams interleave on one connection: the acknowledgement window is
+    // shared, but each stream's frames stay its own.
+    for _ in 0..8 {
+        assert!(outbound
+            .push_chunk(id, 0, StreamKind::Stdout, b"a")
+            .is_empty());
+        assert!(outbound
+            .push_chunk(id, 1, StreamKind::Stderr, b"b")
+            .is_empty());
+    }
+    let _ = outbound.take();
+    assert_eq!(outbound.window().unacked(), 16);
+    assert!(outbound.acknowledge(1, 7));
+    assert_eq!(
+        outbound.window().unacked(),
+        8,
+        "stream 1's frames are released behind stream 0's, not blocked by them"
+    );
+    assert_eq!(outbound.window().queued(), 8);
+    assert!(
+        !outbound.acknowledge(1, 7),
+        "the duplicate frees nothing and reports it"
+    );
+    assert_eq!(outbound.window().unacked(), 8);
+    // The freed room is usable again, so a full window cannot stay full while
+    // a stream's consumption goes unacknowledged by another stream's order.
+    for index in 0..8 {
+        assert!(outbound
+            .push_chunk(id, 1, StreamKind::Stderr, b"c")
+            .is_empty());
+        assert!(outbound.window().unacked() <= 16, "frame {index}");
+    }
+    assert_eq!(outbound.window().unacked(), 16);
+}
+
+#[test]
+fn a_released_attachment_cannot_deliver_input_or_resize() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-stale-input");
+    let (_run, live) = admitted_run(&cx, &root, session, 80, &[149]);
+    let mut host = server(session, &[150]);
+    let attachment = run::attach_secondary(&cx, &root, session, live, AttachmentId::new([77; 16]))
+        .expect("secondary");
+    host.attach = Some(RequestId::new([1; 16]));
+    let mut terminal = RecordingTerminal::default();
+    // The row ends out of band — a liveness watch releasing a killed client, or
+    // the run closing — while this connection still holds its handle.
+    let mut released =
+        run::resume_secondary(&cx, &root, session, live, AttachmentId::new([77; 16]))
+            .expect("reopen the same row");
+    released
+        .release(&cx, &root, Release::Eof)
+        .expect("release the row");
+    let refusal = host
+        .accept_stream(
+            &cx,
+            &root,
+            &input_frame(1, 0, b"typed"),
+            Some(&attachment),
+            &mut terminal,
+        )
+        .expect_err("a released attachment cannot deliver input");
+    assert_eq!(refusal.code, RefusalCode::InvalidRequest);
+    let refusal = host
+        .accept_stream(
+            &cx,
+            &root,
+            &resize_frame(1, 1, 24, 80),
+            Some(&attachment),
+            &mut terminal,
+        )
+        .expect_err("a released attachment cannot resize");
+    assert_eq!(refusal.code, RefusalCode::InvalidRequest);
+    assert!(
+        terminal.input.is_empty(),
+        "no input reached the terminal after the row ended"
+    );
+    assert_eq!(terminal.resizes, 0, "no size was recorded");
+    assert_eq!(stops(&root, live), 0, "the refusal had no host effect");
+}
+
+#[test]
+fn replacing_an_attachment_rebinds_its_cursor_and_window() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-replace-window");
+    let (_run, live) = admitted_run(&cx, &root, session, 81, &[151]);
+    // The log holds offsets 0..80; the first attachment reads all of it, and the
+    // replacement asks to resume at 40.
+    let bytes: Vec<u8> = (0..80u32).map(|n| b'a' + (n % 26) as u8).collect();
+    write_segment(&root, live, 1, Stream::Stdout, 0, &bytes);
+    let mut host = server(session, &[152, 153]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], None),
+            // Same connection, same run: a replacement with its own cursor.
+            attach_frame(session, live, 2, vec![StreamKind::Stdout], Some(40)),
+            // An acknowledgement for the replaced attachment's request must not
+            // free anything under the new attachment.
+            Frame::Stream(ack_frame_for(1, TERMINAL_STREAM, 0)),
+        ]),
+        peer(),
+    );
+    let refusal = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect_err("the replaced attachment's acknowledgement refuses");
+    assert_eq!(refusal.code, RefusalCode::InvalidRequest);
+    let frames = written_frames(&pipe);
+    let published = |attach: u8| -> Vec<u64> {
+        stream_frames(&frames)
+            .into_iter()
+            .filter(|stream| stream.id == RequestId::new([attach; 16]) && stream.kind.is_data())
+            .map(|stream| stream.seq)
+            .collect()
+    };
+    assert_eq!(published(1), vec![0], "the first attachment read from 0");
+    assert_eq!(
+        published(2),
+        vec![40],
+        "the replacement resumes at its own cursor instead of the previous numbering"
+    );
+    let opened = frames
+        .iter()
+        .filter(|frame| {
+            matches!(
+                frame,
+                Frame::Response(Response {
+                    outcome: ResponseOutcome::Observed(_),
+                    ..
+                })
+            )
+        })
+        .count();
+    assert_eq!(opened, 2, "both attachments opened: {frames:?}");
 }
 
 #[test]

@@ -289,15 +289,22 @@ During v0.x, MINOR bumps may include breaking changes.
   every frame on a stream keeps a strictly increasing sequence. The endpoint
   re-checks the connection's attachment on every read. `Terminal::input`
   receives one validated terminal input frame exactly once and
-  `Terminal::resize` the newest size with no queue behind it; a host with no
-  terminal owner refuses both instead of reporting a delivery it did not make.
-  An inbound frame is accepted only for the connection's own attach request,
-  its own terminal stream and the stream's next sequence, and an
-  acknowledgement must be shape-only and name a data frame this connection
-  published and has not freed, so an unknown stream, a foreign request, a
-  repeated or out-of-order frame, a duplicate or stale acknowledgement or a
-  malformed payload refuses and closes with no host effect. The retained reader,
-  the terminal owner, front end and transport remain separate tasks.
+  `Terminal::resize` the newest size with no queue behind it, fenced on the
+  attachment's own lifetime twice: the channel re-reads the row before the call
+  and the owner receives the live attachment so its last check can be
+  `Attachment::attached_observed`; a host with no terminal owner refuses both
+  instead of reporting a delivery it did not make. An inbound frame is accepted
+  only for the connection's own attach request, its own terminal stream and the
+  stream's next sequence, and an acknowledgement must be shape-only and name a
+  data frame this connection published and has not freed, so an unknown stream,
+  a foreign request, a repeated or out-of-order frame, a duplicate or stale
+  acknowledgement or a malformed payload refuses and closes with no host
+  effect. A replacement attachment drops the previous window, held chunk,
+  numbering and inbound sequence before its own cursor positions the stream,
+  so it resumes at its own cursor and cannot free the previous attachment's
+  frames; an acknowledgement releases its own stream's frames between other
+  streams' frames. The retained reader, the terminal owner and its host front
+  end, and the transport remain separate tasks.
 
 - The workspace session layer (contract 052 §8.7): one environment-owned
   `Detached` session run, resolved through its own validated

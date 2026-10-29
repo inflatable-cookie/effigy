@@ -3037,18 +3037,32 @@ complete output. The endpoint re-checks the connection's attachment with
 `Attachment::attached_observed` on every read, so a released or replaced row
 stops publication. `input` delivers one validated terminal input frame exactly
 once to the terminal owner — `Terminal::input` — and `resize` hands over the
-newest size with no queue behind it. An inbound frame is accepted only for the
-connection's own attach request id, its own terminal stream and the stream's
-next sequence, and only as `terminal_input`, `resize` or `ack`; an
-acknowledgement must also be shape-only and name a data frame this connection
-published and has not freed. An unknown stream, a foreign request, a repeated,
-out-of-order, duplicate, stale or resumed-unsent sequence, a malformed payload
-or an outbound kind refuses and closes with no host effect — no input reaches a
-terminal, no size is recorded and no frame is freed. A host with no terminal
-owner refuses input and resize (`NoTerminal`) instead of reporting a delivery it
-did not make; the kernel currently has no per-run terminal input/resize writer,
-which is the bounded follow-up on the runner glue task. The transport, the guest
-client and the runner integration remain separate tasks.
+newest size with no queue behind it. Delivery is fenced on the attachment's own
+lifetime twice: the channel re-reads the row immediately before the call, and
+`Terminal` receives the live `Attachment` rather than its identifier, so the
+owner's final check before writing is `Attachment::attached_observed` and a row
+released, replaced or ended by its run's closure in between writes nothing. An
+inbound frame is accepted only for the connection's own attach request id, its
+own terminal stream and the stream's next sequence, and only as
+`terminal_input`, `resize` or `ack`; an acknowledgement must also be shape-only
+and name a data frame this connection published and has not freed. An unknown
+stream, a foreign request, a repeated, out-of-order, duplicate, stale or
+resumed-unsent sequence, a malformed payload or an outbound kind refuses and
+closes with no host effect — no input reaches a terminal, no size is recorded
+and no frame is freed. A replacement attachment is rebound in one step: the
+previous attachment's window, held chunk, numbering and inbound sequence are
+dropped before the requested cursor positions its own stream, so a replacement
+resumes at its own cursor and its acknowledgements cannot free the previous
+attachment's frames. The acknowledgement window is shared by every stream on a
+connection while each frame stays its own stream's: an acknowledgement releases
+that stream's frames that sit between other streams' frames, so an interleaved
+stream's consumption is never blocked by another stream's order. A host with no
+terminal owner refuses input and resize (`NoTerminal`) instead of reporting a
+delivery it did not make. The kernel has no per-run terminal input/resize
+writer, and no host front end that owns a session terminal exists yet (the
+transport, the guest client and the runner integration are separate tasks), so
+production input/resize delivery is a bounded follow-up on the runner glue task;
+the channel's own delivery contract and fence are complete and proved.
 `test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map

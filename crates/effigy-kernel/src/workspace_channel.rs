@@ -1160,8 +1160,17 @@ pub fn decode_stream_payload(payload: &str) -> Result<Vec<u8>, Refusal> {
 pub struct StreamWindow {
     unacked: usize,
     queued: usize,
-    sizes: VecDeque<usize>,
-    open: VecDeque<(u32, u64)>,
+    /// Every published frame this connection has not been acknowledged for, in
+    /// publication order, with its stream and size. Streams interleave on one
+    /// connection, so a frame is released by its own stream's acknowledgement
+    /// and never waits for another stream's frames to be consumed first.
+    open: VecDeque<OpenFrame>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenFrame {
+    stream_id: u32,
+    seq: u64,
+    size: usize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Queue {
@@ -1172,51 +1181,55 @@ impl StreamWindow {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Offer one data frame of `decoded` bytes.
-    pub fn offer(&mut self, decoded: usize) -> Queue {
+    /// Whether one more data frame of `decoded` bytes fits. A frame becomes
+    /// open only when [`StreamWindow::track`] records it.
+    pub fn offer(&self, decoded: usize) -> Queue {
         if decoded > MAX_STREAM_PAYLOAD
             || self.unacked + 1 > MAX_UNACKED_STREAM_FRAMES
-            || self.queued + decoded > MAX_QUEUED_STREAM_BYTES
+            || self.queued.saturating_add(decoded) > MAX_QUEUED_STREAM_BYTES
         {
             return Queue::Backpressure;
         }
-        self.unacked += 1;
-        self.queued += decoded;
-        self.sizes.push_back(decoded);
         Queue::Admitted
     }
     /// The receiver consumed up to `seq` on `stream_id`, which names an open
-    /// data frame this connection published. Frames are freed in order, and a
-    /// sequence that is not open — a duplicate, a stale one, a control frame or
-    /// a frame another connection published — frees nothing and reports
+    /// data frame this connection published. Every frame of that stream at or
+    /// below `seq` is released wherever it sits between other streams' frames.
+    /// A sequence that is not open — a duplicate, a stale one, a control frame
+    /// or a frame another connection published — frees nothing and reports
     /// `false`, so an invalid acknowledgement has no effect on the window.
     pub fn acknowledge(&mut self, stream_id: u32, seq: u64) -> bool {
         if !self
             .open
             .iter()
-            .any(|(open_stream, open_seq)| *open_stream == stream_id && *open_seq == seq)
+            .any(|frame| frame.stream_id == stream_id && frame.seq == seq)
         {
             return false;
         }
-        let mut count = 0;
-        for (open_stream, open_seq) in &self.open {
-            if *open_stream != stream_id || *open_seq > seq {
-                break;
+        let mut frames = 0usize;
+        let mut bytes = 0usize;
+        self.open.retain(|frame| {
+            if frame.stream_id == stream_id && frame.seq <= seq {
+                frames += 1;
+                bytes = bytes.saturating_add(frame.size);
+                false
+            } else {
+                true
             }
-            count += 1;
-        }
-        for _ in 0..count {
-            let _ = self.open.pop_front();
-            let Some(freed) = self.sizes.pop_front() else {
-                break;
-            };
-            self.unacked = self.unacked.saturating_sub(1);
-            self.queued = self.queued.saturating_sub(freed);
-        }
+        });
+        self.unacked = self.unacked.saturating_sub(frames);
+        self.queued = self.queued.saturating_sub(bytes);
         true
     }
-    fn track(&mut self, stream_id: u32, seq: u64) {
-        self.open.push_back((stream_id, seq));
+    /// Record one published data frame against the window.
+    fn track(&mut self, stream_id: u32, seq: u64, size: usize) {
+        self.open.push_back(OpenFrame {
+            stream_id,
+            seq,
+            size,
+        });
+        self.unacked += 1;
+        self.queued = self.queued.saturating_add(size);
     }
     pub fn unacked(&self) -> usize {
         self.unacked
@@ -1309,7 +1322,7 @@ impl Outbound {
                 break;
             }
             let seq = *self.next_seq.entry(stream_id).or_insert(0);
-            self.window.track(stream_id, seq);
+            self.window.track(stream_id, seq, end - offset);
             self.data.push(StreamFrame {
                 id,
                 stream_id,
@@ -1384,28 +1397,39 @@ pub enum StreamResume {
 /// The attached run's terminal owner, as lane B implements it: the front end
 /// that holds the terminal and hands validated bytes and sizes to it.
 ///
+/// Delivery is fenced twice. The channel re-reads the attachment row
+/// immediately before it calls here, and the live [`Attachment`] is handed over
+/// rather than its identifier — so the owner's own last check before writing is
+/// `Attachment::attached_observed`, and a row released, replaced or ended by its
+/// run's closure in between reports `false` and the write is skipped. An owner
+/// that ignores the handle is not a terminal this channel can promise anything
+/// to.
+///
 /// The kernel has no per-run terminal writer — `run::Attachment` carries
-/// retained logs and stop/escalate control, not a terminal input channel — so
-/// no kernel type implements this yet. A host with no terminal uses
-/// [`NoTerminal`], which refuses rather than silently dropping input.
+/// retained logs and stop/escalate control, not a terminal input channel, and
+/// the supervisor's `ChildStdin` is its own sentinel control pipe — so no kernel
+/// type implements this. A host with no terminal owner uses [`NoTerminal`],
+/// which refuses rather than silently dropping input.
 pub trait Terminal {
     /// Deliver one validated terminal input frame, exactly once and in
-    /// sequence order.
-    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal>;
+    /// sequence order. The live attachment is handed over so the owner can
+    /// fence delivery on its own lifetime (`Attachment::attached_observed`)
+    /// instead of trusting an identifier.
+    fn input(&mut self, attachment: &Attachment, bytes: &[u8]) -> Result<(), Refusal>;
     /// Record the newest terminal size. The owner keeps the latest size; the
     /// connection holds no queue, so a burst cannot grow into a backlog.
-    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal>;
+    fn resize(&mut self, attachment: &Attachment, size: TerminalSize) -> Result<(), Refusal>;
 }
 /// A terminal owner for a host that has no terminal on this connection.
 #[derive(Debug, Default)]
 pub struct NoTerminal;
 impl Terminal for NoTerminal {
-    fn input(&mut self, _attachment: AttachmentId, _bytes: &[u8]) -> Result<(), Refusal> {
+    fn input(&mut self, _attachment: &Attachment, _bytes: &[u8]) -> Result<(), Refusal> {
         Err(Refusal::unavailable(
             "this host has no terminal to deliver input to",
         ))
     }
-    fn resize(&mut self, _attachment: AttachmentId, _size: TerminalSize) -> Result<(), Refusal> {
+    fn resize(&mut self, _attachment: &Attachment, _size: TerminalSize) -> Result<(), Refusal> {
         Err(Refusal::unavailable("this host has no terminal to resize"))
     }
 }
@@ -1436,7 +1460,7 @@ pub trait Streams {
     }
 
     /// Deliver one validated terminal input frame.
-    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
+    fn input(&mut self, attachment: &Attachment, bytes: &[u8]) -> Result<(), Refusal> {
         let _ = (attachment, bytes);
         Err(Refusal::unavailable(
             "this host has no terminal to deliver input to",
@@ -1445,7 +1469,7 @@ pub trait Streams {
 
     /// Record the newest terminal size. A host without a terminal refuses
     /// rather than reporting a resize it did not apply.
-    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
+    fn resize(&mut self, attachment: &Attachment, size: TerminalSize) -> Result<(), Refusal> {
         let _ = (attachment, size);
         Err(Refusal::unavailable("this host has no terminal to resize"))
     }
@@ -1584,11 +1608,11 @@ impl<T: Terminal> Streams for RetainedStreams<T> {
         }
     }
 
-    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
+    fn input(&mut self, attachment: &Attachment, bytes: &[u8]) -> Result<(), Refusal> {
         self.terminal.input(attachment, bytes)
     }
 
-    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
+    fn resize(&mut self, attachment: &Attachment, size: TerminalSize) -> Result<(), Refusal> {
         self.terminal.resize(attachment, size)
     }
 }
@@ -2541,7 +2565,8 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // and sequence are checked first, so a refusal has no host
                     // effect: no input reaches a terminal and no acknowledgement
                     // frees a frame.
-                    if let Err(refusal) = self.accept_stream(&stream, attachment.as_ref(), streams)
+                    if let Err(refusal) =
+                        self.accept_stream(cx, root, &stream, attachment.as_ref(), streams)
                     {
                         return Err(self.refuse(transport, refusal));
                     }
@@ -2581,6 +2606,8 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
     /// a malformed payload is refused with no host effect.
     fn accept_stream(
         &mut self,
+        cx: &EffectContext,
+        root: &StateRoot,
         frame: &StreamFrame,
         attachment: Option<&Attachment>,
         streams: &mut impl Streams,
@@ -2594,6 +2621,19 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             return Err(Refusal::invalid(
                 "a stream frame names this connection's own attach request",
             ));
+        }
+        // Holding the value is not authority: the row can have been released,
+        // replaced, or ended by its run's closure since the attach. The row is
+        // re-read now, and the owner receives the handle so it can fence the
+        // delivery on the same lifetime immediately before it writes.
+        match attachment.attached(cx, root) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(Refusal::invalid(
+                    "this connection's attachment is no longer attached",
+                ))
+            }
+            Err(error) => return Err(refusal_from(error)),
         }
         match frame.kind {
             StreamKind::Ack => {
@@ -2632,7 +2672,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 // Delivered once, and only after the whole frame checked out.
                 // An owner with no terminal refuses, which closes this
                 // connection rather than dropping the keystroke.
-                streams.input(attachment.id(), &bytes)
+                streams.input(attachment, &bytes)
             }
             StreamKind::Resize => {
                 if frame.stream_id != TERMINAL_STREAM {
@@ -2656,7 +2696,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 self.next_inbound(frame)?;
                 // The owner keeps the newest size. A host with no terminal
                 // refuses instead of reporting a resize it never applied.
-                streams.resize(attachment.id(), TerminalSize { rows, columns })
+                streams.resize(attachment, TerminalSize { rows, columns })
             }
             _ => Err(Refusal::invalid(
                 "a client sends terminal input, resize or acknowledgement",
@@ -2816,10 +2856,17 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                                 .map_err(refusal_from)?;
                         }
                     }
-                    self.outbound.resume(TERMINAL_STREAM, resume);
-                    // A new attachment is a new terminal lifetime: its inbound
-                    // sequence starts again at zero under the new request id.
+                    // A replacement is a new attachment lifetime, and it is
+                    // rebound in one step: the previous attachment's window,
+                    // held chunk, numbering and inbound sequence are dropped, so
+                    // its unacknowledged frames cannot be freed by this
+                    // attachment's acknowledgements and its cursor cannot be
+                    // measured against the previous numbering. The requested
+                    // cursor then positions this attachment's own stream.
+                    self.outbound = Outbound::new();
+                    self.carry = None;
                     self.inbound.clear();
+                    self.outbound.resume(TERMINAL_STREAM, resume);
                     self.attach = Some(request.id);
                     *attachment = Some(handle);
                     Ok(ResponseOutcome::Observed(
