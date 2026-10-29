@@ -273,8 +273,12 @@ During v0.x, MINOR bumps may include breaking changes.
   environment phase keeps its own reserved record, so a host an operator names
   `environment` keeps its own wait, and the run's owner reads its container
   counts from that record — the one the container readiness publisher writes. A
-  read that races a snapshot commit re-resolves the visible one, so an in-flight
-  tab or status never observes a missing snapshot across the handoff. A host
+  read accepts a snapshot only while it is still the visible one, re-resolving
+  one a commit retires mid-read, so an in-flight tab or status never observes a
+  missing or partial snapshot across the handoff. A host process that declares
+  no dependency of its own still names its real wait while the plan launches the
+  entries before it one at a time (`jobs [waiting: admin launching]`), reported
+  as its own `launch` identity in JSON and never attributed as a dependency. A host
   failure the planner published
   survives the run's generic `up` exit: the run's error names the failing entry
   and its observed status. A wait is recorded as

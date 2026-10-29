@@ -494,6 +494,14 @@ mod tests {
         policy
     }
 
+    /// The four-entry graph plus one host that declares no dependency of its
+    /// own: it is still held by the plan launching the entries before it.
+    pub(super) fn policy_with_an_independent_host(checkout: &Path) -> EffectiveContainerPolicy {
+        let mut policy = four_entry_policy(checkout);
+        policy.host_processes.push(process("jobs", &[], false));
+        policy
+    }
+
     fn fixture() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("fixture directory");
         let checkout = dir.path().canonicalize().expect("canonical fixture");
@@ -734,7 +742,10 @@ mod environment_tests {
 
     use effigy_tui::waits::{EntryPhase, WaitOn};
 
-    use super::tests::{four_entry_policy, records, state_of, Clock, FakeLauncher, ENVIRONMENT};
+    use super::tests::{
+        four_entry_policy, policy_with_an_independent_host, records, state_of, Clock, FakeLauncher,
+        ENVIRONMENT,
+    };
     use super::*;
     use crate::runner::managed_run::wait_views;
 
@@ -826,18 +837,24 @@ mod environment_tests {
     }
 
     /// The frame a person would see for this session's published records.
-    fn frame(checkout: &std::path::Path, active: &str) -> String {
-        let names = ["api".to_owned(), "front".to_owned(), "admin".to_owned()];
-        let published = records(checkout);
+    fn frame_of(tabs: &[&str], active: &str, published: &[EntryState]) -> String {
+        let names = tabs
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<Vec<_>>();
         effigy_tui::multiprocess::render_snapshot_frame(effigy_tui::multiprocess::FrameSnapshot {
             process_names: &names,
             active,
-            entry_waits: &published,
+            entry_waits: published,
             logs: &[],
-            width: 120,
+            width: 200,
             height: 30,
         })
         .expect("the frame renders")
+    }
+
+    fn frame(checkout: &std::path::Path, tabs: &[&str], active: &str) -> String {
+        frame_of(tabs, active, &records(checkout))
     }
 
     fn follower(
@@ -1104,7 +1121,7 @@ mod environment_tests {
             .expect("the phase reports its containers");
         let mut parent = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
         parent.environment_progress(healthy, total, clock.at());
-        let presented = frame(&checkout, "api");
+        let presented = frame(&checkout, &["api", "front", "admin"], "api");
         for entry in ["api", "front", "admin"] {
             assert!(
                 presented.contains(&format!("{entry} [waiting: environment]")),
@@ -1137,7 +1154,7 @@ mod environment_tests {
             }),
             "the staged snapshot is not visible before its commit"
         );
-        let presented = frame(&checkout, "front");
+        let presented = frame(&checkout, &["api", "front", "admin"], "front");
         assert!(
             presented.contains("front [waiting: environment]"),
             "a reader in the handoff window still names the environment:\n{presented}"
@@ -1151,12 +1168,12 @@ mod environment_tests {
             effigy_tui::waits::listener_probe_label("/", 200),
             clock.at(),
         );
-        let presented = frame(&checkout, "api");
+        let presented = frame(&checkout, &["api", "front", "admin"], "api");
         assert!(
             presented.contains("api [starting: GET / -> 200 (0s)]"),
             "{presented}"
         );
-        let presented = frame(&checkout, "front");
+        let presented = frame(&checkout, &["api", "front", "admin"], "front");
         assert!(
             presented.contains("front [waiting: api starting]"),
             "{presented}"
@@ -1210,9 +1227,9 @@ mod environment_tests {
             .expect_err("api never became ready");
         assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
 
-        let presented = frame(&checkout, "api");
+        let presented = frame(&checkout, &["api", "front", "admin"], "api");
         assert!(presented.contains("api [failed]"), "{presented}");
-        let presented = frame(&checkout, "front");
+        let presented = frame(&checkout, &["api", "front", "admin"], "front");
         assert!(
             presented.contains("front [not started: api failed]"),
             "{presented}"
@@ -1241,6 +1258,88 @@ mod environment_tests {
                 .contains("500"),
             "{json}"
         );
+    }
+
+    /// A host that declares no dependency of its own is still held while the
+    /// plan launches the entries before it one at a time. It names that hold —
+    /// not an invented dependency — in its record, its frame, the headless text
+    /// and the status JSON (effigy#458).
+    #[test]
+    fn an_independent_host_names_the_schedulers_hold() {
+        let (_dir, checkout) = fixture();
+        let policy = policy_with_an_independent_host(&checkout);
+        let clock = Clock::new();
+        WaitLedger::task(&checkout, "dev", "default").publish_environment_identity(ENVIRONMENT);
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(4),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        let (healthy, total) = ledger
+            .read_progress()
+            .expect("the phase reports its containers");
+        let mut graph = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        graph.environment_progress(healthy, total, clock.at());
+        graph.environment_ready(clock.at());
+
+        // While `api` starts and becomes ready, the independent `jobs` names
+        // the entry whose launch holds it.
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            failure: None,
+            spawns: Vec::new(),
+            frames: Vec::new(),
+        };
+        let ordered = policy.host_processes.iter().collect::<Vec<_>>();
+        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+            .expect("the plan finishes");
+
+        let during_api = &launcher.frames[0];
+        let jobs = state_of(during_api, "jobs");
+        assert_eq!(jobs.phase, EntryPhase::Waiting);
+        assert_eq!(
+            jobs.waiting_on,
+            Some(WaitOn::Launch {
+                name: "admin".to_owned(),
+                phase: EntryPhase::Waiting
+            }),
+            "the hold names the entry before it, never a declared dependency"
+        );
+        assert_eq!(
+            jobs.waiting_on.as_ref().and_then(WaitOn::dependency),
+            None,
+            "the scheduler hold is not a dependency"
+        );
+        let presented = frame_of(&["api", "front", "admin", "jobs"], "jobs", during_api);
+        assert!(
+            presented.contains("jobs [waiting: admin launching]"),
+            "{presented}"
+        );
+        assert!(
+            presented.contains("waiting for admin's launch (waiting)"),
+            "{presented}"
+        );
+        assert_eq!(
+            jobs.headless_line().as_deref(),
+            Some("[managed] jobs: waiting for admin's launch (waiting) (0s)")
+        );
+        // The same record carries the machine-readable identity and state; the
+        // status projection reads exactly these records (the plan has finished
+        // by now, so its own snapshot is settled).
+        let json = serde_json::to_value(jobs).expect("record json");
+        assert_eq!(json["phase"], "waiting");
+        assert_eq!(json["waiting_on"]["kind"], "launch");
+        assert_eq!(json["waiting_on"]["name"], "admin");
+        assert_eq!(json["waiting_on"]["phase"], "waiting");
+        assert_eq!(launcher.spawns, vec!["api", "front", "admin", "jobs"]);
     }
 
     /// The environment's own failure is terminal for every host entry: none

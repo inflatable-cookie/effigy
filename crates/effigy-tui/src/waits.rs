@@ -97,6 +97,11 @@ pub enum WaitOn {
     },
     /// Another entry of the same session, and the phase it is in now.
     Entry { name: String, phase: EntryPhase },
+    /// The scheduler launches the session's entries one at a time: this
+    /// entry's start is held by the entry the plan is launching now. It is a
+    /// real per-entry wait, not a declared dependency, so it is never
+    /// attributed as one (effigy#458).
+    Launch { name: String, phase: EntryPhase },
     /// A readiness probe of this entry itself.
     Probe { probe: String },
     /// The accepted legacy delay: no dependency is named, so the wait names
@@ -126,6 +131,9 @@ impl WaitOn {
             Self::Entry { name, phase } => {
                 format!("waiting for {name} ({})", phase.as_str())
             }
+            Self::Launch { name, phase } => {
+                format!("waiting for {name}'s launch ({})", phase.as_str())
+            }
             Self::Probe { probe } => format!("waiting for {probe} ({})", seconds(elapsed)),
             Self::Delay { remaining_ms } => {
                 format!(
@@ -141,6 +149,7 @@ impl WaitOn {
         match self {
             Self::Environment { .. } => "environment".to_owned(),
             Self::Entry { name, phase } => format!("{name} {}", phase.as_str()),
+            Self::Launch { name, .. } => format!("{name} launching"),
             Self::Probe { probe } => probe.clone(),
             Self::Delay { remaining_ms } => format!("{}s delay", whole_seconds(*remaining_ms)),
         }
@@ -324,6 +333,10 @@ pub struct OrderEntry {
     pub waits_for_readiness: bool,
     /// Whether this entry starts only after the run's environment phase.
     pub after_environment: bool,
+    /// The entry whose launch holds this one: the session launches its entries
+    /// one at a time, so every later entry waits for the one before it even
+    /// when it declares no dependency of its own (effigy#458).
+    pub held_by: Option<String>,
 }
 
 /// One workload's ordering inputs, as the resolved managed plan states them.
@@ -376,6 +389,9 @@ impl SessionOrder {
                 // entry's `after = ["environment"]` states that relationship
                 // rather than changing the order.
                 after_environment: true,
+                // The run's supervisor sequences workloads itself and names
+                // that wait, so the graph adds no second hold.
+                held_by: None,
             })
             .collect();
         Self { entries }
@@ -392,11 +408,18 @@ impl SessionOrder {
     pub fn hosts(entries: &[HostOrder<'_>]) -> Self {
         let entries = entries
             .iter()
-            .map(|entry| OrderEntry {
+            .enumerate()
+            .map(|(index, entry)| OrderEntry {
                 name: entry.name.to_owned(),
                 waits_for: entry.depends_on.to_vec(),
                 waits_for_readiness: true,
                 after_environment: true,
+                // The plan launches one entry at a time: each one is held by
+                // the entry before it until that entry's launch and readiness
+                // observation are over.
+                held_by: index
+                    .checked_sub(1)
+                    .map(|previous| entries[previous].name.to_owned()),
             })
             .collect();
         Self { entries }
@@ -730,6 +753,15 @@ impl EntryWaits {
                 unmet.push(dependency.clone());
             }
         }
+        if let Some(holder) = order.held_by.as_deref() {
+            if let Some(record) = self.records.get(holder) {
+                // The plan proceeds past the holder only once its own launch
+                // and readiness observation are over.
+                if !plan_moved_past(record.phase) {
+                    unmet.push(holder.to_owned());
+                }
+            }
+        }
         unmet
     }
 
@@ -760,6 +792,19 @@ impl EntryWaits {
                     name: dependency.clone(),
                     phase: record.phase,
                 });
+            }
+        }
+        if let Some(holder) = order.held_by.as_deref() {
+            // The scheduler held this entry while the entries before it are
+            // launched one at a time: that is its own wait, never a declared
+            // dependency.
+            if let Some(record) = self.records.get(holder) {
+                if !plan_moved_past(record.phase) {
+                    return Some(WaitOn::Launch {
+                        name: holder.to_owned(),
+                        phase: record.phase,
+                    });
+                }
             }
         }
         None
@@ -821,6 +866,15 @@ impl EntryWaits {
             }
         }
     }
+}
+
+/// Whether the plan has finished with an entry: it observed the entry's
+/// launch and readiness, or the entry can never start.
+fn plan_moved_past(phase: EntryPhase) -> bool {
+    matches!(
+        phase,
+        EntryPhase::Ready | EntryPhase::Exited | EntryPhase::Failed | EntryPhase::NotStarted
+    )
 }
 
 fn seconds(elapsed: Duration) -> String {

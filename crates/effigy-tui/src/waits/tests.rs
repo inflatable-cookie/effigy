@@ -32,18 +32,21 @@ fn four_entry_order() -> SessionOrder {
             waits_for: Vec::new(),
             waits_for_readiness: false,
             after_environment: true,
+            held_by: None,
         },
         OrderEntry {
             name: "front".to_owned(),
             waits_for: vec!["api".to_owned()],
             waits_for_readiness: true,
             after_environment: false,
+            held_by: Some("api".to_owned()),
         },
         OrderEntry {
             name: "admin".to_owned(),
             waits_for: vec!["api".to_owned()],
             waits_for_readiness: true,
             after_environment: false,
+            held_by: Some("front".to_owned()),
         },
     ])
 }
@@ -141,7 +144,20 @@ fn the_four_entry_graph_names_each_entry_s_own_wait_frame_by_frame() {
     assert_eq!(api.tab_label(), "api [ready]");
     assert_eq!(api.waiting_on, None);
     assert!(waits.may_start("front"), "front may start");
-    assert!(waits.may_start("admin"), "admin may start");
+    assert!(
+        !waits.may_start("admin"),
+        "admin waits for the plan to finish launching front"
+    );
+    assert_eq!(
+        waits
+            .state("admin", clock.at(21.0))
+            .expect("admin's state")
+            .waiting_on,
+        Some(WaitOn::Launch {
+            name: "front".to_owned(),
+            phase: EntryPhase::Waiting
+        })
+    );
     waits.started("front", clock.at(21.0));
     waits.started("admin", clock.at(21.0));
     let states = waits.states(clock.at(22.0));
@@ -261,6 +277,62 @@ fn a_legacy_delay_names_itself_not_another_entry() {
     assert_eq!(
         waits
             .state("jobs", clock.at(1.3))
+            .expect("jobs' state")
+            .waiting_on,
+        None
+    );
+}
+
+/// A host that declares no dependency of its own still has a real wait: the
+/// plan launches entries one at a time, so it names that hold — a distinct
+/// kind, never an invented dependency (effigy#458).
+#[test]
+fn an_independent_host_names_the_scheduler_hold() {
+    use super::HostOrder;
+
+    let clock = Clock::new();
+    let order = SessionOrder::hosts(&[
+        HostOrder {
+            name: "api",
+            depends_on: &[],
+        },
+        HostOrder {
+            name: "jobs",
+            depends_on: &[],
+        },
+    ]);
+    let mut waits = EntryWaits::new(order, None, clock.at(0.0));
+    waits.started("api", clock.at(1.0));
+    waits.probing("api", "GET / -> 200", clock.at(1.0));
+    waits.refresh(clock.at(1.0));
+
+    let jobs = waits.state("jobs", clock.at(2.0)).expect("jobs' state");
+    assert_eq!(jobs.phase, EntryPhase::Waiting);
+    assert_eq!(
+        jobs.waiting_on,
+        Some(WaitOn::Launch {
+            name: "api".to_owned(),
+            phase: EntryPhase::Starting
+        })
+    );
+    assert_eq!(
+        jobs.waiting_on.as_ref().and_then(WaitOn::dependency),
+        None,
+        "the scheduler hold is not a dependency"
+    );
+    assert_eq!(
+        jobs.status_line(),
+        "waiting for api's launch (starting) (1s)"
+    );
+    assert_eq!(jobs.tab_label(), "jobs [waiting: api launching]");
+    assert!(!waits.may_start("jobs"));
+
+    // The plan moved past api: jobs launches without any dependency edge.
+    waits.ready("api", clock.at(3.0));
+    assert!(waits.may_start("jobs"));
+    assert_eq!(
+        waits
+            .state("jobs", clock.at(4.0))
             .expect("jobs' state")
             .waiting_on,
         None

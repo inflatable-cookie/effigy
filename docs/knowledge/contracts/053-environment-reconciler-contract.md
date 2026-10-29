@@ -275,8 +275,12 @@ write that races the handoff cannot replace an authoritative entry or failure.
 The environment phase keeps its own reserved record, never an entry name, so a
 host process an operator names `environment` keeps its own wait; the run's owner
 reads that record for the container counts every phase-dependent entry names. A
-read that resolves a snapshot a commit retires re-resolves the visible one, so an
-in-flight front end never observes a missing snapshot across the handoff. A failure the planner published is terminal and is never
+read accepts a snapshot only while it is still the visible one — a listing a
+commit retires mid-read is re-resolved — so an in-flight front end never observes
+a missing or partial snapshot across the handoff. The host plan launches entries
+one at a time, so each later entry names that scheduler hold as its own wait
+(`launch`), distinct from a declared `depends_on` edge and never attributed as
+one. A failure the planner published is terminal and is never
 replaced by the run's generic `up` exit; the run's own environment reason
 carries the planner's failing entry and its report. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting

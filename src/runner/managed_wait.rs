@@ -332,7 +332,7 @@ impl WaitLedger {
     /// retires the snapshot this read resolved re-resolves it, so an in-flight
     /// reader never observes a broken snapshot (effigy#458).
     pub(in crate::runner) fn read(&self, entry: &str) -> Option<EntryState> {
-        read_stable(
+        read_snapshot(
             || self.committed_namespace(),
             |namespace| {
                 let raw = std::fs::read(namespace.join(format!("{}.json", path_component(entry))))
@@ -348,7 +348,7 @@ impl WaitLedger {
     /// order. The environment phase's own record is read with
     /// [`Self::read_phase`], and a snapshot retired mid-read is re-resolved.
     pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
-        read_stable(
+        read_snapshot(
             || self.committed_namespace(),
             |namespace| {
                 let entries = std::fs::read_dir(namespace).ok()?;
@@ -370,22 +370,26 @@ impl WaitLedger {
     }
 }
 
-/// Reads through a snapshot handoff. `resolve` names the snapshot readers
-/// resolve now and `load` reads one; a snapshot that a commit retired between
-/// the two is re-resolved, so an in-flight reader observes a complete snapshot
-/// either side of the switch rather than a missing one (effigy#458).
-fn read_stable<T>(
+/// Reads one complete snapshot through a handoff. `resolve` names the
+/// snapshot readers resolve now and `load` reads one.
+///
+/// A commit retires the previous snapshot right after it takes over, so a
+/// reader that resolved it can find part of it already deleted: the load then
+/// yields a partial view. The snapshot is accepted only while it is still the
+/// visible one — a retired snapshot is re-resolved, so a front end sees the
+/// previous complete snapshot or the new one, never a partial set
+/// (effigy#458).
+fn read_snapshot<T>(
     mut resolve: impl FnMut() -> PathBuf,
     mut load: impl FnMut(&Path) -> Option<T>,
 ) -> Option<T> {
     for _ in 0..4 {
         let namespace = resolve();
-        if let Some(value) = load(&namespace) {
-            return Some(value);
-        }
-        if resolve() == namespace {
-            // The snapshot did not change under us: the record is really absent.
-            return None;
+        match load(&namespace) {
+            Some(value) if resolve() == namespace => return Some(value),
+            Some(_) => continue,
+            None if resolve() == namespace => return None,
+            None => continue,
         }
     }
     None
@@ -532,7 +536,7 @@ mod tests {
         // A reader that resolved the retired snapshot re-resolves it, so it
         // still observes a complete snapshot instead of a missing one.
         let mut attempts = 0;
-        let recovered = read_stable(
+        let recovered = read_snapshot(
             || {
                 attempts += 1;
                 if attempts == 1 {
@@ -556,6 +560,91 @@ mod tests {
             })
         );
         assert!(attempts >= 2, "the reader re-resolved the snapshot");
+    }
+
+    /// A handoff that retires a snapshot *after* `read_dir` succeeded leaves a
+    /// partial listing for an in-flight reader. The read accepts a snapshot
+    /// only while it is still the visible one, so the partial view is never
+    /// returned (effigy#458).
+    #[test]
+    fn a_snapshot_retired_after_read_dir_succeeds_is_never_returned_partial() {
+        let (_home, ledger) = fixture();
+        ledger.clear();
+        let run = ledger.stage(WaitOwner::Run);
+        for entry in ["api", "front"] {
+            run.publish(&EntryState {
+                entry: entry.to_owned(),
+                phase: EntryPhase::Waiting,
+                waiting_on: Some(WaitOn::Environment {
+                    healthy: Some(3),
+                    total: Some(4),
+                }),
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 0,
+            });
+        }
+        ledger.commit(&run);
+        let retired = ledger.committed_namespace();
+
+        let planner = ledger.stage(WaitOwner::Planner);
+        for entry in ["api", "front", "admin"] {
+            planner.publish(&EntryState {
+                entry: entry.to_owned(),
+                phase: EntryPhase::Starting,
+                waiting_on: Some(WaitOn::Probe {
+                    probe: "GET / -> 200".to_owned(),
+                }),
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 0,
+            });
+        }
+
+        // The reader lists the retired snapshot, and the handoff retires it
+        // right there: reading the files that were listed yields a partial
+        // view.
+        let mut loads = 0;
+        let mut resolve_calls = 0;
+        let seen = read_snapshot(
+            || {
+                resolve_calls += 1;
+                if resolve_calls == 1 {
+                    retired.clone()
+                } else {
+                    ledger.committed_namespace()
+                }
+            },
+            |namespace| {
+                loads += 1;
+                let listed = std::fs::read_dir(namespace)
+                    .ok()?
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name())
+                    .collect::<Vec<_>>();
+                if loads == 1 {
+                    // The commit retires this snapshot between the listing and
+                    // the reads, exactly as `commit` does.
+                    ledger.commit(&planner);
+                }
+                let mut states = listed
+                    .into_iter()
+                    .filter_map(|name| std::fs::read(namespace.join(name)).ok())
+                    .filter_map(|raw| serde_json::from_slice::<WaitRecord>(&raw).ok())
+                    .map(|record| record.state.entry)
+                    .collect::<Vec<_>>();
+                states.sort();
+                Some(states)
+            },
+        )
+        .expect("the read resolves the visible snapshot");
+
+        assert_eq!(loads, 2, "the partial read was retried");
+        assert_eq!(
+            seen,
+            vec!["admin".to_owned(), "api".to_owned(), "front".to_owned()],
+            "the visible snapshot is complete"
+        );
     }
 
     /// A host process an operator names `environment` is a host, not the
