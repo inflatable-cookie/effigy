@@ -662,10 +662,14 @@ During v0.x, MINOR bumps may include breaking changes.
   spending `readiness.timeout_secs`, and a still-closed port's progress line
   carries the child's own bounded output tail. A port that never opens is
   bounded by the bring-up's observation budget instead of holding `up` open,
-  and its progress carries that same bounded, redacted tail. A listener the
-  activation did not start is reconciled against its own published generation,
-  so a healthy generation from the previous `up` keeps its route while a
-  withheld listener's `depends_on` chain withholds every dependent route
+  and its progress carries that same bounded, redacted tail. The timed-out
+  generation is settled before the command returns, so it cannot publish a
+  route after the report. A listener the activation did not start is reconciled
+  against its own published generation and the current declaration (domain,
+  TLS, bind, live readiness), so only a generation that still serves the
+  declared target keeps its route, while a withheld listener's `depends_on`
+  chain withholds every dependent route. A log line whose `key=` marker falls
+  outside the bounded read window is dropped rather than printed unredacted
   (effigy#455).
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a

@@ -571,6 +571,11 @@ fn wait_for_listener_activation(
 
 /// Bytes of a child's log this wait reads before bounding the tail it names.
 const LISTENER_OUTPUT_TAIL_READ_BYTES: u64 = 8 * 1024;
+/// Bytes of context this wait reads backwards to find the start of the line its
+/// window begins inside. Keeping that context means a secret-shaped
+/// `key=value` is whole before the redactor sees it, instead of losing its
+/// marker to the window edge (effigy#455).
+const LISTENER_OUTPUT_LINE_CONTEXT_BYTES: u64 = 4 * 1024;
 /// Characters of child output a progress line or a refusal keeps. The child
 /// may print anything, so the tail is bounded and redacted where it is read,
 /// not only where it is printed.
@@ -585,24 +590,46 @@ pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
 /// log, so those are dropped here: an operator reading a failure wants the
 /// child's words. A log that is missing, a symlink, or empty contributes
 /// nothing.
+///
+/// Redaction happens before anything is dropped for being partial. The window
+/// starts at the beginning of a line whenever that line begins within the
+/// bounded context; a line that begins before the context is dropped whole
+/// rather than emitted with its `key=` marker cut off, which would print a
+/// value the redactor can no longer recognise.
 fn listener_output_tail(log_path: &Path) -> Option<String> {
     let metadata = fs::symlink_metadata(log_path).ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return None;
     }
-    let start = metadata
-        .len()
-        .saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
+    let len = metadata.len();
+    let mut start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
     let mut file = fs::File::open(log_path).ok()?;
-    use std::io::{Seek, SeekFrom};
+    use std::io::{Read as _, Seek, SeekFrom};
+    let mut begins_mid_line = start > 0;
+    if start > 0 {
+        let back = start.min(LISTENER_OUTPUT_LINE_CONTEXT_BYTES);
+        file.seek(SeekFrom::Start(start - back)).ok()?;
+        let mut context = Vec::new();
+        (&mut file).take(back).read_to_end(&mut context).ok()?;
+        if let Some(offset) = context.iter().rposition(|byte| *byte == b'\n') {
+            start = start - back + offset as u64 + 1;
+            begins_mid_line = false;
+        }
+    }
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut raw = Vec::new();
-    file.take(LISTENER_OUTPUT_TAIL_READ_BYTES)
+    file.take(LISTENER_OUTPUT_TAIL_READ_BYTES + LISTENER_OUTPUT_LINE_CONTEXT_BYTES)
         .read_to_end(&mut raw)
         .ok()?;
     let text = String::from_utf8_lossy(&raw);
-    let lines = text
-        .lines()
+    let mut lines = text.lines().collect::<Vec<_>>();
+    if begins_mid_line && !lines.is_empty() {
+        // The line this window starts inside began before the context read:
+        // its marker may be gone, so it is not evidence this report may print.
+        lines.remove(0);
+    }
+    let lines = lines
+        .into_iter()
         .map(str::trim_end)
         .filter(|line| !line.trim().is_empty())
         .filter(|line| !line.starts_with("[effigy host-process]"))
@@ -3357,20 +3384,26 @@ while True:
             report.failures[0]
         );
         assert!(
+            report.failures[0]
+                .detail
+                .contains("settled before this activation returned"),
+            "the failure says the timed-out generation was settled: {:?}",
+            report.failures[0]
+        );
+        assert!(
             RouteTable::load(&route_table_path())
                 .expect("route table")
                 .lookup(domain)
                 .is_none(),
             "a listener that never opened its port has no route"
         );
-        // The generation is still starting: its own readiness has not been
-        // overridden by the enclosing budget.
+        // The generation is settled, not merely abandoned: it cannot publish a
+        // route after the activation reported that route withheld.
         let state = read_json(&listener_state(&policy));
-        assert_eq!(state["status"], "starting", "{state}");
+        assert_eq!(state["status"], "stopped", "{state}");
         let stopped =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
         assert!(stopped.complete(), "{stopped:?}");
-        assert_eq!(read_json(&listener_state(&policy))["status"], "stopped");
     }
 
     /// A withheld listener propagates through a multi-level chain: B depends on
@@ -3528,6 +3561,28 @@ while True:
                 .unwrap_or_default()
                 .contains("daemonised"),
             "{state}"
+        );
+    }
+
+    /// A value longer than the read window loses its `key=` marker to the
+    /// window edge, so the line it sits on is dropped whole rather than printed
+    /// with part of the secret (effigy#455).
+    #[test]
+    fn listener_output_tail_never_prints_a_value_whose_marker_was_cut() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let log = dir.path().join("app.log");
+        fs::write(
+            &log,
+            format!(
+                "vite: internal server error\nDB_PASSWORD={}\n",
+                "s3cr3tvalue".repeat(2_000)
+            ),
+        )
+        .expect("write the fixture log");
+        let tail = listener_output_tail(&log).unwrap_or_default();
+        assert!(
+            !tail.contains("s3cr3tvalue"),
+            "a value whose marker is outside the window is never printed: {tail}"
         );
     }
 

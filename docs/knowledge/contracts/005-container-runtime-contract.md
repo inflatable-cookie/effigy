@@ -309,7 +309,11 @@ with it.
 A detached `up` still fails when a listener is withheld, and it reports the
 partial exposure instead of one blanket verdict: the text and JSON name the
 routes that are published, the listener whose route is not, its observed status
-where there was one, and the bounded, redacted child-output tail. The failure
+where there was one, and the bounded, redacted child-output tail. That tail's
+window starts on a line boundary whenever the line begins within a bounded
+context read behind it; a line whose `key=` marker sits outside that context is
+dropped whole rather than printed with a value the redactor can no longer
+recognise. The failure
 is never phrased as an activation whose readiness and exposure are unverified,
 because the activation settled. A process whose `depends_on` listener was
 withheld does not start and withholds its own route too, naming the dependency
@@ -327,14 +331,22 @@ The wait itself is bounded by the activation, not by the child's build. Host
 listener startup shares the bring-up's one runtime-observation budget
 (effigy#411). A listener still starting when that budget is spent withholds its
 own route and the command stops waiting for the remaining declared listeners,
-so `up` cannot hang on a listener that never binds. A listener that later
-activation does not start is never taken on trust either: it is reconciled
-against its own published generation and route first, so a healthy generation
-this activation never touched stays exposed and is named in `exposed_routes`,
-and only a listener with nothing verified now is reported withheld. The listener
-keeps its own readiness semantics: its supervisor is left running, a child that
-eventually answers publishes its own verified route, and
-`readiness.timeout_secs` still starts only when its port first opens.
+so `up` cannot hang on a listener that never binds. The timed-out generation is
+**settled before the command returns**, under the same fenced kernel stop `down`
+uses, so no route can be published after the activation reported that route
+withheld. `effigy container <NAME> restart <process>` starts it again, and
+`readiness.timeout_secs` still bounds only the wait after a listener's port
+first opens.
+
+A listener that a later activation does not start is never taken on trust
+either: it is reconciled against its own published generation and route first,
+so a healthy generation this activation never touched stays exposed and is
+named in `exposed_routes`. Reconciliation compares that generation with the
+**current declaration** — route domain, TLS mode, bind and the declared
+readiness request, which is probed live — and withholds the current route when
+they differ, because the declared target is not the one that generation serves.
+Only a listener with nothing verified against its current declaration is
+reported withheld.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and

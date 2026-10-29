@@ -78,9 +78,56 @@ print("EFFIGY_TOKEN=abcd1234", flush=True)
 time.sleep(120)
 "#;
 
+/// A listener child that binds only after a delay, so it can answer a moment
+/// after an activation has already reported its route withheld.
+const LATE_BIND_CHILD: &str = r#"
+import http.server, os, time
+time.sleep(3)
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+
+/// A 500 listener whose secret-shaped value is longer than the log window the
+/// tail reads: the value's `key=` marker is outside that window.
+const LONG_SECRET_REFUSING_CHILD: &str = r#"
+import http.server, os
+print("vite: internal server error", flush=True)
+print("DB_PASSWORD=" + "s3cr3tvalue" * 2000, flush=True)
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(500)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+
+/// A never-binding listener whose secret-shaped value is longer than the log
+/// window the progress tail reads.
+const LONG_SECRET_CLOSED_CHILD: &str = r#"
+import time
+print("vite: still booting", flush=True)
+print("EFFIGY_TOKEN=" + "s3cr3tvalue" * 2000, flush=True)
+time.sleep(120)
+"#;
+
 const CONTAINER_DOMAIN: &str = "app.exposure.test";
 const FRONT_DOMAIN: &str = "front.exposure.test";
 const API_DOMAIN: &str = "api.exposure.test";
+const CHANGED_API_DOMAIN: &str = "api-new.exposure.test";
 
 /// The most a report keeps of a child-output tail (`bound_text` keeps the head
 /// and the tail of at most 320 bytes).
@@ -155,7 +202,63 @@ struct ExposureFixture {
     root: PathBuf,
     container_host_port: u16,
     state: PathBuf,
+    /// The declared declaration in order: name, route domain, bind port, and
+    /// the observation budget. A rewrite re-renders the manifest from it, so a
+    /// changed declaration keeps every other field exactly as it was.
+    declared: Vec<(String, String, u16)>,
+    health_timeout_secs: u64,
     _env: EnvGuard,
+}
+
+/// The manifest for one fixture checkout: a routed container service and the
+/// given host listeners, declared in order.
+fn render_manifest(listeners: &[(String, String, u16)], health_timeout_secs: u64) -> String {
+    let mut host_processes = String::new();
+    for (name, domain, bind) in listeners {
+        host_processes.push_str(&format!(
+            r#"
+[[containers.e2e.host_processes]]
+name = "{name}"
+run = "exec python3 scripts/{name}.py"
+restart = "never"
+shutdown_grace_secs = 1
+
+[containers.e2e.host_processes.listener]
+bind = "127.0.0.1:{bind}"
+
+[containers.e2e.host_processes.listener.readiness]
+path = "/health"
+status = 200
+timeout_secs = 300
+
+[containers.e2e.host_processes.listener.route]
+domain = "{domain}"
+tls = false
+"#
+        ));
+    }
+    format!(
+        r#"
+[containers]
+default = "e2e"
+
+[containers.e2e]
+compose_file = "docker-compose.yml"
+primary_service = "app"
+project_name = "fixture-exposure-dev"
+working_dir = "/workspace"
+
+[containers.e2e.host]
+mounts = ["./:/workspace"]
+
+[containers.e2e.health]
+timeout_secs = {health_timeout_secs}
+
+[containers.e2e.dns]
+domains = ["{CONTAINER_DOMAIN}"]
+domain_defaults = {{ tls = false }}
+{host_processes}"#
+    )
 }
 
 impl ExposureFixture {
@@ -188,62 +291,22 @@ impl ExposureFixture {
         .expect("write compose");
 
         std::fs::create_dir_all(repo.join("scripts")).expect("mkdir scripts");
-        let mut host_processes = String::new();
+        let mut declared = Vec::new();
         for listener in listeners {
             std::fs::write(
                 repo.join(format!("scripts/{}.py", listener.name)),
                 listener.child.trim(),
             )
             .expect("write listener child");
-            let bind = free_loopback_port();
-            host_processes.push_str(&format!(
-                r#"
-[[containers.e2e.host_processes]]
-name = "{name}"
-run = "exec python3 scripts/{name}.py"
-restart = "never"
-shutdown_grace_secs = 1
-
-[containers.e2e.host_processes.listener]
-bind = "127.0.0.1:{bind}"
-
-[containers.e2e.host_processes.listener.readiness]
-path = "/health"
-status = 200
-timeout_secs = 300
-
-[containers.e2e.host_processes.listener.route]
-domain = "{domain}"
-tls = false
-"#,
-                name = listener.name,
-                domain = listener.domain,
+            declared.push((
+                listener.name.to_owned(),
+                listener.domain.to_owned(),
+                free_loopback_port(),
             ));
         }
         std::fs::write(
             repo.join("effigy.toml"),
-            format!(
-                r#"
-[containers]
-default = "e2e"
-
-[containers.e2e]
-compose_file = "docker-compose.yml"
-primary_service = "app"
-project_name = "fixture-exposure-dev"
-working_dir = "/workspace"
-
-[containers.e2e.host]
-mounts = ["./:/workspace"]
-
-[containers.e2e.health]
-timeout_secs = {health_timeout_secs} # activation-budget
-
-[containers.e2e.dns]
-domains = ["{CONTAINER_DOMAIN}"]
-domain_defaults = {{ tls = false }}
-{host_processes}"#,
-            ),
+            render_manifest(&declared, health_timeout_secs),
         )
         .expect("write manifest");
 
@@ -319,6 +382,8 @@ domain_defaults = {{ tls = false }}
             root,
             container_host_port,
             state,
+            declared,
+            health_timeout_secs,
             _env: env,
         }
     }
@@ -359,21 +424,29 @@ domain_defaults = {{ tls = false }}
     }
 
     /// Shorten the bring-up's observation budget for the next activation.
-    fn set_health_budget(&self, secs: u64) {
-        let manifest_path = self.repo().join("effigy.toml");
-        let manifest = std::fs::read_to_string(&manifest_path).expect("read manifest");
-        let updated = manifest
-            .lines()
-            .map(|line| {
-                if line.trim_end().ends_with("# activation-budget") {
-                    format!("timeout_secs = {secs} # activation-budget")
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(manifest_path, format!("{updated}\n")).expect("write manifest");
+    fn set_health_budget(&mut self, secs: u64) {
+        self.health_timeout_secs = secs;
+        self.rewrite_manifest();
+    }
+
+    /// Change one listener's declared route domain, as an edited manifest
+    /// would: every other declared field, the bind included, stays as it was.
+    fn set_listener_domain(&mut self, name: &str, domain: &str) {
+        let listener = self
+            .declared
+            .iter_mut()
+            .find(|(listener, _, _)| listener == name)
+            .unwrap_or_else(|| panic!("the fixture declares `{name}`"));
+        listener.1 = domain.to_owned();
+        self.rewrite_manifest();
+    }
+
+    fn rewrite_manifest(&self) {
+        std::fs::write(
+            self.repo().join("effigy.toml"),
+            render_manifest(&self.declared, self.health_timeout_secs),
+        )
+        .expect("rewrite manifest");
     }
 
     /// Stop everything this fixture started: host processes first, so no
@@ -643,7 +716,7 @@ fn detached_up_bounds_a_closed_port_and_reports_redacted_progress() {
 /// its port is withheld (effigy#455).
 #[test]
 fn detached_up_second_activation_keeps_a_healthy_listener_past_the_budget() {
-    let fixture = ExposureFixture::new(
+    let mut fixture = ExposureFixture::new(
         "reconcile",
         &[
             FixtureListener {
@@ -712,6 +785,161 @@ fn detached_up_second_activation_keeps_a_healthy_listener_past_the_budget() {
         table.lookup(FRONT_DOMAIN).is_none(),
         "the listener that never opened has no route: {table:?}"
     );
+    fixture.down();
+}
+
+/// A listener the activation stopped waiting for is settled before the command
+/// returns, so it cannot publish a route after the activation reported that
+/// route withheld: the child binds a moment later and the store stays empty for
+/// it (effigy#455).
+#[test]
+fn detached_up_never_publishes_a_timed_out_listener_after_return() {
+    let fixture = ExposureFixture::new("late-bind", &one_listener(LATE_BIND_CHILD), 2);
+    let error = fixture
+        .up(false)
+        .expect_err("a listener that has not bound at the budget withholds its route");
+    let text = error.to_string();
+    assert!(
+        text.contains("observation budget expired"),
+        "the failure names the bounded wait: {text}"
+    );
+    assert!(
+        text.contains("settled before this activation returned"),
+        "the failure says the timed-out generation was settled: {text}"
+    );
+    // Longer than the child's own bind delay: if the generation had survived,
+    // its route would appear now.
+    std::thread::sleep(Duration::from_secs(6));
+    let table = fixture.routes();
+    assert!(
+        table.lookup(FRONT_DOMAIN).is_none(),
+        "a settled generation publishes no late route: {table:?}"
+    );
+    let state = std::fs::read_to_string(
+        fixture
+            .repo()
+            .join(".effigy/runtime/host-processes/e2e/effigy/front.listener.json"),
+    )
+    .expect("the listener state record");
+    assert!(
+        state.contains("\"stopped\""),
+        "the timed-out generation settled as stopped: {state}"
+    );
+    fixture.down();
+}
+
+/// A spent budget reconciles only the current declaration: a listener whose
+/// route domain changed since its published generation started is withheld for
+/// the newly declared target, and the previous generation's own route keeps its
+/// own owner instead of being reported as the new one (effigy#455).
+#[test]
+fn detached_up_reconciles_only_the_current_declaration() {
+    let mut fixture = ExposureFixture::new(
+        "changed-declaration",
+        &[
+            FixtureListener {
+                name: "front",
+                domain: FRONT_DOMAIN,
+                child: READY_CHILD,
+            },
+            FixtureListener {
+                name: "api",
+                domain: API_DOMAIN,
+                child: READY_CHILD,
+            },
+        ],
+        30,
+    );
+    fixture
+        .up(false)
+        .expect("the first activation exposes both listeners");
+    assert!(fixture.routes().lookup(API_DOMAIN).is_some());
+
+    // Only the second listener's declared domain changes; the first now never
+    // binds, so the budget expires before it is reached.
+    fixture.set_listener_domain("api", CHANGED_API_DOMAIN);
+    fixture.set_listener_child("front", CLOSED_PORT_CHILD);
+    fixture.set_health_budget(3);
+    let error = fixture
+        .up(false)
+        .expect_err("the changed declaration has no verified route");
+    let text = error.to_string();
+    assert!(
+        text.contains(&format!("`front` kept route {FRONT_DOMAIN} withheld")),
+        "the listener that never bound is withheld: {text}"
+    );
+    assert!(
+        text.contains(&format!("`api` kept route {CHANGED_API_DOMAIN} withheld")),
+        "a changed declaration is not counted as exposed: {text}"
+    );
+    assert!(
+        text.contains("not the current declaration"),
+        "the refusal names the mismatch: {text}"
+    );
+    let table = fixture.routes();
+    assert!(
+        table.lookup(CHANGED_API_DOMAIN).is_none(),
+        "the newly declared domain has no route: {table:?}"
+    );
+    assert!(
+        table.lookup(API_DOMAIN).is_some(),
+        "the previous generation keeps the route it published: {table:?}"
+    );
+    fixture.down();
+}
+
+/// A secret-shaped value longer than the log window never leaks through the
+/// failure or the progress surface, because a line whose marker is outside the
+/// window is dropped instead of printed unredacted (effigy#455).
+#[test]
+fn detached_up_never_prints_a_secret_whose_marker_left_the_window() {
+    let fixture =
+        ExposureFixture::new("long-secret", &one_listener(LONG_SECRET_REFUSING_CHILD), 30);
+    let error = fixture
+        .up(false)
+        .expect_err("the refusing listener withholds its route");
+    let text = error.to_string();
+    assert!(
+        !text.contains("s3cr3tvalue"),
+        "the failure text never prints a value whose marker was cut: {text}"
+    );
+
+    let fixture = ExposureFixture::new(
+        "long-secret-json",
+        &one_listener(LONG_SECRET_REFUSING_CHILD),
+        30,
+    );
+    let error = fixture
+        .up(true)
+        .expect_err("the refusing listener withholds its route");
+    let rendered = error
+        .json_error_details()
+        .unwrap_or_else(|| panic!("the JSON failure carries its envelope: {error}"));
+    assert!(
+        !rendered.contains("s3cr3tvalue"),
+        "the JSON failure never prints a value whose marker was cut: {rendered}"
+    );
+
+    let fixture = ExposureFixture::new(
+        "long-secret-progress",
+        &one_listener(LONG_SECRET_CLOSED_CHILD),
+        3,
+    );
+    let _ = take_listener_progress();
+    let _ = fixture
+        .up(false)
+        .expect_err("the never-binding listener withholds its route");
+    let progress = take_listener_progress();
+    assert!(
+        !progress.is_empty(),
+        "the closed-port wait still reports progress"
+    );
+    for line in &progress {
+        assert!(
+            !line.contains("s3cr3tvalue"),
+            "a progress line never prints a value whose marker was cut: {line}"
+        );
+    }
     fixture.down();
 }
 
