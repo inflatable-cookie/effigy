@@ -5821,6 +5821,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
 
     let home = fixture.path().join("home");
     private_directory(&home);
+    let guest_adapter = write_switch_fake_guest(fixture.path(), &home);
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
@@ -6007,6 +6008,10 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
         let mut command = Command::new(EFFIGY);
         command
             .env("FAKE_OWNED_STATE", &state)
+            .env("FAKE_GUEST_ADAPTER", &guest_adapter)
+            .env("FAKE_GUEST_ROOT", fixture.path().join("guest"))
+            .env_remove("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF")
+            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
             .args(["container", env])
             .current_dir(&checkout)
             .env("HOME", &cleanup.home)
@@ -7311,7 +7316,7 @@ exit 0
     }
 }
 
-/// A private guest store for the scoped managed handover case. Preparation
+/// A private guest store for the scoped handover cases. Preparation
 /// publishes real context bytes and verifies their digests; the fake never
 /// executes the guest artifact or writes to host paths named by guest scripts.
 fn write_switch_fake_guest(root: &Path, home: &Path) -> PathBuf {
