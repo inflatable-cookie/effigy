@@ -1669,9 +1669,10 @@ or an entry that names another target or is not a link, is refused without
 touching it and without stopping or disabling anything.
 
 Effigy never deletes an activation entry itself. `systemctl --user disable`
-(and `disable --now` on removal) is what removes it, and Effigy verifies the
-result afterwards: if the entry is still there — the manager could not run, or
-something re-created it — setup refuses with the exact
+(and `disable --now` on removal) is what removes it, and Effigy re-observes the
+result afterwards — including when the unit started out disabled or had no
+activation directory at all: if an entry is there — the manager could not run,
+or something appeared or re-created it — setup refuses with the exact
 `systemctl --user disable effigy-gateway.service` command and deletes nothing.
 The same rule covers an upgrade: a changed unit definition disables the login
 activation first, and the rewrite is refused rather than performed while that

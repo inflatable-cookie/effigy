@@ -160,9 +160,10 @@ During v0.x, MINOR bumps may include breaking changes.
   the enable; an `enable` that fails after writing the link is observed as
   enabled, because the link is the fact, and a repeated setup whose unit is
   unchanged reports the link it keeps. Effigy never deletes an activation
-  entry: `systemctl --user disable` removes it and Effigy verifies the result,
-  refusing with the exact command (and deleting nothing) when the entry is still
-  there or is not its own link; a changed definition disables the activation
+  entry: `systemctl --user disable` removes it and Effigy re-observes the
+  result afterwards — even for a disabled unit or a missing activation
+  directory — refusing with the exact command (and deleting nothing) when an
+  entry is there or is not its own link; a changed definition disables the activation
   before it rewrites the unit and refuses if it remains. `setup --remove`
   completes the filesystem removal and then reports a `daemon-reload` that
   refuses, cannot be reached or times out, with the exact

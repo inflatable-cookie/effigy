@@ -356,7 +356,7 @@ pub fn install(
         Observed::Verified(existing, _) if owned_unit(&existing.0) => {
             let previous = existing.0;
             if linked {
-                disable_verified_link(paths, &activation, &entry, systemd)?;
+                disable_verified_link(paths, operator_uid, &activation, &entry, systemd)?;
             }
             if let Err(failure) = run.replace_file(&dir, &name, &bytes, replace) {
                 return Err(rewrite_failed(paths, operator_uid, &previous, linked, failure));
@@ -370,7 +370,7 @@ pub fn install(
         }
         Observed::Absent(_) => {
             if linked {
-                disable_verified_link(paths, &activation, &entry, systemd)?;
+                disable_verified_link(paths, operator_uid, &activation, &entry, systemd)?;
             }
             run.replace_file(&dir, &name, &bytes, replace).map_err(error)?;
         }
@@ -499,8 +499,10 @@ pub fn remove(
                         "the login activation link for {UNIT_NAME} is still present ({reason}); run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup --remove`"
                     )));
                 }
-                verify_link_removed(paths, &activation)?;
             }
+            // Re-observed after the manager ran, even when no entry existed
+            // before it: an entry that appeared meanwhile is refused here too.
+            verify_link_removed(paths, operator_uid)?;
             return Ok(());
         }
         // A stale unit is still Effigy's own file: a rollback that moved the
@@ -520,8 +522,9 @@ pub fn remove(
     // different target or something that is not a link — is refused, not
     // treated as absent.
     let activation = ActivationDir::open(paths, operator_uid)?;
-    let entry = checked_entry(&activation, paths)?;
-    let linked = matches!(entry, ActivationEntry::Ours(_));
+    // The pre-request check: a linked or foreign directory, or an entry Effigy
+    // does not own, is refused before the manager can follow it.
+    checked_entry(&activation, paths)?;
     // `disable --now` runs the unit's ExecStop, which is the ordinary
     // kernel-owned `gateway down`. systemd requests the stop; the gateway
     // engine performs and records it.
@@ -532,11 +535,11 @@ pub fn remove(
     }
     // `disable --now` above is what removes the activation. Effigy never
     // unlinks an activation entry itself — a name-based unlink cannot be bound
-    // to the inode that was verified — so the removal is confirmed here and
-    // refused, with the exact command, when the entry is still there.
-    if linked {
-        verify_link_removed(paths, &activation)?;
-    }
+    // to the inode that was verified — so the result is re-observed here with a
+    // fresh open, even when the unit started out disabled or without an
+    // activation directory: an entry that appeared during the manager request
+    // is refused before the unit file is deleted.
+    verify_link_removed(paths, operator_uid)?;
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     crate::setup::remove_managed_with(cx, &dir, UNIT_NAME, |path| std::fs::remove_file(path))?;
     // The unit file and its link are gone. The manager may still hold the
@@ -818,6 +821,7 @@ fn refusal(paths: &LaunchPaths, operator_uid: u32, failure: impl std::fmt::Displ
 /// refusing, with the exact command, when the entry is still there.
 fn disable_verified_link(
     paths: &LaunchPaths,
+    operator_uid: u32,
     activation: &Option<ActivationDir>,
     entry: &ActivationEntry,
     systemd: &mut impl SystemdUser,
@@ -830,13 +834,15 @@ fn disable_verified_link(
             "the login activation for {UNIT_NAME} could not be removed before the launch unit changes ({reason}); nothing was changed. Run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again"
         )));
     }
-    verify_link_removed(paths, activation)
+    let _ = activation;
+    verify_link_removed(paths, operator_uid)
 }
 
-/// Confirm the manager removed Effigy's activation entry. A remaining entry is
+/// Confirm the manager removed Effigy's activation entry, with a fresh
+/// observation taken after the manager ran. A remaining or uncertain entry is
 /// reported with its exact recovery, never deleted by Effigy.
-fn verify_link_removed(paths: &LaunchPaths, activation: &Option<ActivationDir>) -> io::Result<()> {
-    let remaining = match activation {
+fn verify_link_removed(paths: &LaunchPaths, operator_uid: u32) -> io::Result<()> {
+    let remaining = match ActivationDir::open(paths, operator_uid)? {
         Some(dir) => dir.entry()?,
         None => ActivationEntry::Absent,
     };
@@ -3239,6 +3245,30 @@ mod tests {
         }
     }
 
+    /// A manager whose `disable --now` leaves an activation entry behind on a
+    /// unit that had none before the request.
+    struct CreateEntryOnDisable {
+        paths: LaunchPaths,
+        entry: PathBuf,
+    }
+
+    impl SystemdUser for CreateEntryOnDisable {
+        fn run(&mut self, args: &[&str]) -> io::Result<SystemdOutcome> {
+            if args == ["disable", "--now", UNIT_NAME] || args == ["disable", UNIT_NAME] {
+                let dir = self.paths.wants.parent().unwrap();
+                std::fs::create_dir_all(dir).unwrap();
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+                let _ = std::fs::remove_file(&self.paths.wants);
+                std::os::unix::fs::symlink(&self.entry, &self.paths.wants).unwrap();
+            }
+            Ok(SystemdOutcome {
+                code: 0,
+                stderr: Vec::new(),
+            })
+        }
+    }
+
     /// A manager that removes the activation like the real one and whose
     /// `daemon-reload` then fails in the configured way.
     struct ReloadFails {
@@ -3508,6 +3538,78 @@ mod tests {
                 "{message}"
             );
             // The unit and the link are both untouched.
+            assert!(paths.unit.exists());
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
+        });
+    }
+
+    /// An entry that appears while the manager runs is refused even when the
+    /// unit started out disabled: the activation is re-observed after the
+    /// manager request, before the unit file is deleted.
+    #[test]
+    fn an_entry_that_appears_during_disable_is_refused_before_deleting_the_unit() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+
+            // The operator disabled the unit first: no entry, directory kept.
+            std::fs::remove_file(&paths.wants).unwrap();
+            assert!(!activation_linked(&paths, uid));
+            let mut appearing = CreateEntryOnDisable {
+                paths: paths.clone(),
+                entry: elsewhere.clone(),
+            };
+            let error = remove(cx, &paths, uid, &mut appearing).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("is not Effigy's link to"), "{message}");
+            assert!(message.contains("preserved, not deleted"), "{message}");
+            // The unit survives and the entry that appeared is untouched.
+            assert!(paths.unit.exists());
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+
+            // The same holds when the activation directory did not exist at all.
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::fs::remove_dir(paths.wants.parent().unwrap()).unwrap();
+            let mut appearing = CreateEntryOnDisable {
+                paths: paths.clone(),
+                entry: elsewhere.clone(),
+            };
+            let error = remove(cx, &paths, uid, &mut appearing).unwrap_err();
+            assert!(
+                error.to_string().contains("is not Effigy's link to"),
+                "{error}"
+            );
+            assert!(paths.unit.exists());
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+        });
+    }
+
+    /// A same-target entry that appears during the disable is refused too, and
+    /// the unit is kept.
+    #[test]
+    fn an_appearing_entry_that_names_the_unit_is_refused_before_deleting_it() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            std::fs::remove_file(&paths.wants).unwrap();
+
+            let mut appearing = CreateEntryOnDisable {
+                paths: paths.clone(),
+                entry: paths.unit.clone(),
+            };
+            let error = remove(cx, &paths, uid, &mut appearing).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("is still present"), "{message}");
             assert!(paths.unit.exists());
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
         });

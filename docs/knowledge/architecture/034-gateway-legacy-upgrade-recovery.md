@@ -354,14 +354,24 @@ status reports `low_port: missing` until setup restores the exact record and,
 when the path changed, rewrites the unit to name the image setup ran.
 
 After the unit file is written, the user manager is an observation rather than
-a setup precondition. A `daemon-reload`/`enable` that cannot be spawned,
-refuses, or does not answer within 20 seconds returns the unit as installed and
-not enabled, prints the manager's own sentence, and names the exact
-`systemctl --user daemon-reload`, `enable` and `start` commands (and the
-`loginctl enable-linger` opt-in) that finish the job. Removal keeps the same
-shape: it disables, removes and unlinks the owned unit, and a manager that
-cannot reload afterwards is not treated as a failed removal. A refused disable
-does preserve the unit and names `effigy gateway down` plus the two commands.
+a setup precondition, and every outcome is reported as the *observed* state
+rather than as a claim. A `daemon-reload` that cannot be spawned, refuses or
+does not answer within 20 seconds returns the unit as installed with the
+activation link exactly as it is on disk: absent for a fresh install, present
+when a repeated setup kept it, and present when an `enable` created it before
+failing. The manager's own sentence and the exact `systemctl --user
+daemon-reload`, `enable` and `start` commands (and the `loginctl
+enable-linger` opt-in) are named alongside it.
+
+Removal keeps the same shape in the other direction. It disables the unit,
+re-observes the activation with a fresh open — including when the unit started
+out disabled or had no activation directory — and refuses before deleting the
+unit file if any entry is present or uncertain. A `daemon-reload` that refuses,
+cannot be reached or times out after a completed removal is reported as an
+error naming the exact `systemctl --user daemon-reload` command, because the
+manager may still serve the old definition; it is no longer swallowed. A
+refused disable does preserve the unit and names `effigy gateway down` plus the
+two commands.
 
 A changed definition disables the login activation before the new unit file is
 written, because the user manager may keep the definition it already loaded. A
