@@ -214,6 +214,13 @@ impl Run<'_> {
             }
         }
         let complete = effects.iter().all(|e| e.state.terminal());
+        // A non-gateway sentinel needs the closed row as positive evidence
+        // until it has observed EOF and exited. Gateway has its own bounded
+        // completion fact in the resource row.
+        let delete_after_sentinel = machine
+            && complete
+            && self.sentinel.is_some()
+            && self.owner.resource.kind() != crate::id::ResourceKind::Gateway;
         // The close write keeps the store's own two-minute window, so a busy
         // store delays it rather than losing the run's outcome. A write that
         // still cannot land leaves the run unsettled: the sentinel or the next
@@ -238,7 +245,9 @@ impl Run<'_> {
                             let completion = MachineCompletion { run: self.id, generation: self.owner.generation, workload: workload.clone(), stderr_tail: stderr_tail.clone() };
                             txn.conn().execute("UPDATE resources SET state=?2,updated_at=?3 WHERE name=?1 AND generation=?4", params![self.owner.resource.name().to_string(),serde_json::to_string(&completion)?,txn.now(),self.owner.generation.get() as i64])?;
                         }
-                        txn.conn().execute("DELETE FROM runs WHERE run_id=?1", [self.id.to_string()])?;
+                        if !delete_after_sentinel {
+                            txn.conn().execute("DELETE FROM runs WHERE run_id=?1", [self.id.to_string()])?;
+                        }
                     }
                     Ok::<_,RunError>(())
                 })?;
@@ -265,6 +274,12 @@ impl Run<'_> {
         self.close_checkout_custody(cleanup)?;
         if let Some(mut sentinel) = self.sentinel.take() {
             sentinel.close(cleanup)?;
+        }
+        if delete_after_sentinel {
+            self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                txn.conn().execute("DELETE FROM runs WHERE run_id=?1 AND phase='closed' AND cleanup_outcome='complete'", [self.id.to_string()])?;
+                Ok::<_, RunError>(())
+            })?;
         }
         outcome(self.id, &self.next, workload, effects)
     }

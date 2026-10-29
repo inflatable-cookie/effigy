@@ -2027,6 +2027,61 @@ fn foreground_same_owner_is_busy_and_never_reclaims_a_live_gate() {
 }
 
 #[test]
+fn custody_completed_machine_store_run_closes_sentinel_and_releases_gate() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let mut coordinates = invocation().spec().clone();
+    coordinates.task = TaskId::new(
+        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+        "",
+        Surface::Published,
+        "gateway-setup",
+        None,
+    )
+    .unwrap();
+    coordinates.owner = ResourceId::store(Scope::Machine, "gateway-setup").unwrap();
+    let owner = coordinates.owner.clone();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &ResolvedInvocation::new(coordinates).unwrap(),
+        BeginOpts {
+            id: id(1),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    let sentinel = metadata(&cx.operation().observe().unwrap(), &root, id(1))
+        .verified()
+        .unwrap()
+        .sentinel
+        .clone()
+        .unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let cleanup = cx.operation().cleanup(Duration::from_secs(2)).unwrap();
+    assert!(run.settle(&cleanup, &mut Strict).unwrap().result().is_ok());
+    assert_ne!(
+        effigy_kernel::ident::process_identity(sentinel.pid).verified(),
+        Some(&sentinel)
+    );
+    let reader = effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root);
+    assert!(matches!(
+        summary(reader.verified().unwrap(), id(1)),
+        Observed::Absent(_)
+    ));
+    let _gate = effigy_kernel::gate::Gate::acquire(&cx, &root, &[owner], Wait::FailFast).unwrap();
+}
+
+#[test]
 fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_without_legacy_writes()
 {
     for killed in [false, true] {

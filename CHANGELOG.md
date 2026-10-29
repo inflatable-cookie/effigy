@@ -489,6 +489,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Let completed machine gateway setup runs close their sentinel promptly,
+  avoiding a setup failure caused by a sentinel-close timeout.
+
 - Managed TUI panes now show nested Effigy progress as plain start and finish
   lines instead of repeated spinner redraws and banners. Shutdown takes over
   the progress display cleanly, and sequence labels name useful work instead of
