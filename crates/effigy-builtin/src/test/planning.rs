@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::BuiltinError;
+use crate::{BuiltinError, BuiltinRuntimePorts};
 use effigy_manifest::LoadedCatalog;
 use effigy_tasks::TaskSelector;
 
@@ -49,8 +49,14 @@ pub(super) fn resolve_builtin_test_targets(
     selector: &TaskSelector,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
+    ports: Option<&dyn BuiltinRuntimePorts>,
 ) -> Result<BuiltinTestTargetSet, BuiltinError> {
-    resolve::resolve_builtin_test_targets(selector.prefix.as_deref(), resolved_root, catalogs)
+    resolve::resolve_builtin_test_targets(
+        selector.prefix.as_deref(),
+        resolved_root,
+        catalogs,
+        ports,
+    )
 }
 
 pub(super) fn builtin_test_max_parallel(catalogs: &[LoadedCatalog], resolved_root: &Path) -> usize {

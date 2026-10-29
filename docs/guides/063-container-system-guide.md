@@ -1506,6 +1506,41 @@ answer on their checkout's loopback alias address. That means host and
 container code can use the same stable names without hand-written
 `/etc/hosts` edits.
 
+A linked worktree or marked ephemeral clone answers those aliases on its own
+scoped apex (`postgres.acme-w<key>.test`). Its container targets resolve the
+declared name too, and a task Effigy runs on the host receives the scoped name
+where its configuration carries the declared one - in `[tasks.<name>].env`, an
+env-schema or `.env` value, a declared secret, or a sequence step's
+environment - so `php artisan test` or `cargo test` in a worktree reaches that
+worktree's database. The consumer's manifest keeps the declared name and its
+value source precedence is unchanged.
+
+That covers a task's own `env`, an env-schema or `.env` value, a declared
+secret, a sequence step's environment, a managed session's process plan
+(`mode = "tui"`), a configured test suite's own environment, command and
+`setup`/`teardown` step environments, and a value the child would otherwise
+inherit unchanged from your own shell — such as an exported `DATABASE_URL` — for
+a host task, a sequence step, a managed host workload and a selected host suite.
+Each child boundary decides its own precedence: a key the run delivers to that
+child wins, while a `setup` step's assignment is its own statement, and a key
+that only appears in a command's text assigns nothing — neither hides the
+caller's value from the workload or suite command after it. Every alias a selected suite would use is
+proved before any suite starts, and the proof reads only the endpoints Effigy
+delivered — text that merely mentions the alias proves nothing. Only an endpoint is rewritten - a value
+that is exactly the host, the host of a URL authority, or a host carrying its
+own port - so text that merely names the alias (a search pattern, a JSON blob,
+a comma-separated list), a URL credential and a URL naming another server keep
+their bytes. Effigy rewrites the environment it
+delivers, never a command body.
+
+Before such a run starts, Effigy proves the scope's backing service: its route
+must belong to this checkout and publish an upstream port. When it does not,
+the task refuses with the alias, the service and the command that starts the
+stack (`effigy container up <NAME>`), and nothing runs. The primary checkout
+keeps its declared name, and a container-bound task is not rewritten because
+its target's own network already answers both names. A `--plan` render refuses
+nothing: a task plan shows the aliases it would deliver.
+
 By default, generated TCP aliases, the `container hosts` cookie apex and
 gateway service-alias registration all use the same apex.
 For a linked worktree, that effective apex includes its checkout host key even
