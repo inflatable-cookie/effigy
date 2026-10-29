@@ -70,6 +70,12 @@ impl LaunchPaths {
         Self::at(config.join("systemd/user"), home)
     }
 
+    /// The activation directory itself (`…/default.target.wants`). `wants` is
+    /// the *entry* inside it, so advice about the directory must name this.
+    pub fn activation_dir(&self) -> &Path {
+        self.wants.parent().unwrap_or(&self.user_dir)
+    }
+
     /// Paths under an explicit unit directory, for fixtures.
     pub fn at(user_dir: PathBuf, home: &Path) -> Self {
         let unit = user_dir.join(UNIT_NAME);
@@ -628,7 +634,7 @@ impl ActivationDir {
         }
         // SAFETY: `openat` returned a new owned descriptor and nothing else owns it.
         let dir = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(raw) });
-        verify_directory(&dir, &paths.wants, operator_uid)?;
+        verify_directory(&dir, paths.activation_dir(), operator_uid)?;
         Ok(Some(Self {
             dir,
             unit: paths.unit.clone(),
@@ -807,6 +813,43 @@ fn chmod_advice(mode: &str, path: &Path) -> String {
     }
 }
 
+/// Whether one directory is what Effigy can use without repair.
+fn directory_usable(metadata: &std::fs::Metadata, operator_uid: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    !metadata.file_type().is_symlink()
+        && metadata.is_dir()
+        && metadata.uid() == operator_uid
+        && metadata.mode() & 0o022 == 0
+}
+
+/// The recovery for one unusable directory. A mode problem is repaired with a
+/// quoted `chmod`; a symlink, a non-directory or a foreign owner cannot be, so
+/// those name the move-aside route and never print a `chmod` that would follow a
+/// link or change another account's file.
+fn directory_recovery(metadata: &std::fs::Metadata, path: &Path, operator_uid: u32) -> String {
+    use std::os::unix::fs::MetadataExt;
+    if metadata.file_type().is_symlink() {
+        return "it is a symbolic link; move that entry aside and create a real directory — never chmod through a link, which changes its target".to_owned();
+    }
+    if !metadata.is_dir() {
+        return "it is not a directory; move that entry aside and create a real directory"
+            .to_owned();
+    }
+    if metadata.uid() != operator_uid {
+        return format!(
+            "it is owned by uid {}, not uid {operator_uid}; move it aside and create one owned by this account, or have its owner correct it",
+            metadata.uid()
+        );
+    }
+    if metadata.mode() & 0o022 != 0 {
+        return format!(
+            "it is group- or world-writable; {}",
+            chmod_advice("755", path)
+        );
+    }
+    "it is not usable".to_owned()
+}
+
 /// A directory Effigy will read inside: real, operator-owned and not writable
 /// by another account. The repair is a mode change the operator can make, never
 /// a silent repair, and it is a shell command that cannot touch another path.
@@ -817,7 +860,7 @@ fn verify_directory(dir: &std::fs::File, path: &Path, operator_uid: u32) -> io::
         return Err(error(format!(
             "refusing the directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable. {}, then run `effigy gateway setup` again",
             path_label(path),
-            chmod_advice("755", path)
+            directory_recovery(&metadata, path, operator_uid)
         )));
     }
     Ok(())
@@ -847,8 +890,8 @@ fn activation_dir_refusal(
     failure: impl std::fmt::Display,
 ) -> io::Error {
     error(format!(
-        "refusing the login activation directory {}: it must be Effigy's own real directory, owned by uid {operator_uid}, not a symlink, and not group- or world-writable ({failure}). Move that entry aside (or run `systemctl --user disable {UNIT_NAME}` yourself), then run `effigy gateway setup` again; the systemd user unit directory {} is left as it is",
-        path_label(&paths.wants),
+        "refusing the login activation directory {}: it must be Effigy's own real directory, owned by uid {operator_uid}, not a symlink, and not group- or world-writable ({failure}). Move that directory entry aside (or run `systemctl --user disable {UNIT_NAME}` yourself), then run `effigy gateway setup` again; the service entry inside it and the systemd user unit directory {} are left as they are",
+        path_label(paths.activation_dir()),
         path_label(&paths.user_dir)
     ))
 }
@@ -1021,7 +1064,7 @@ fn verify_user_unit_dir(
         return Err(error(format!(
             "unsafe systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable. {}, then run `effigy gateway setup` again",
             path_label(&paths.user_dir),
-            chmod_advice("755", &paths.user_dir)
+            directory_recovery(metadata, &paths.user_dir, operator_uid)
         )));
     }
     Ok(())
@@ -1960,11 +2003,34 @@ pub fn observe(
             "preserving the systemd unit Effigy does not own at {}; move it aside, then run `effigy gateway setup`",
             paths.unit.display()
         )),
-        UnitState::Unsafe => recovery.push(format!(
-            "the systemd user unit path {} is unsafe: it must be a real directory owned by you and not group- or world-writable. {}, then run `effigy gateway setup`",
-            path_label(&paths.user_dir),
-            chmod_advice("755", &paths.user_dir)
-        )),
+        UnitState::Unsafe => {
+            // Name the first component that is actually unusable, with its own
+            // metadata and without following a link.
+            let unit_dir = std::fs::symlink_metadata(&paths.user_dir);
+            let activation = std::fs::symlink_metadata(paths.activation_dir());
+            let advice = match (&unit_dir, &activation) {
+                (Ok(metadata), _) if !directory_usable(metadata, operator_uid) => {
+                    directory_recovery(metadata, &paths.user_dir, operator_uid)
+                }
+                (_, Ok(metadata)) => {
+                    directory_recovery(metadata, paths.activation_dir(), operator_uid)
+                }
+                (Err(failure), _) => {
+                    format!("it could not be observed ({failure}); inspect it and move it aside")
+                }
+                // The unit directory is usable but its activation directory
+                // could not be observed.
+                (Ok(_), Err(failure)) => {
+                    format!("the activation directory could not be observed ({failure}); inspect it and move it aside")
+                }
+            };
+            recovery.push(format!(
+                "the systemd user unit path {} or its activation directory {} is unsafe: {}, then run `effigy gateway setup`",
+                path_label(&paths.user_dir),
+                path_label(paths.activation_dir()),
+                advice
+            ))
+        }
         UnitState::Installed => {}
     }
     match low_port {
@@ -4296,6 +4362,104 @@ mod tests {
         });
     }
 
+    /// A group-writable activation directory is refused by naming the
+    /// *directory*, not the service entry inside it, and the printed command
+    /// fixes that directory — it must not address (or follow) the entry.
+    #[test]
+    fn a_writable_activation_directory_is_named_and_repaired_as_the_directory() {
+        with_run(|run, cx| {
+            use std::os::unix::fs::PermissionsExt;
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+
+            // Only the activation directory becomes group-writable; the entry
+            // inside it is an ordinary link.
+            let activation = paths.activation_dir().to_path_buf();
+            std::fs::set_permissions(&activation, std::fs::Permissions::from_mode(0o775)).unwrap();
+            let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
+            let message = error.to_string();
+            let word = shell_word(&activation).expect("a printable path");
+            assert!(
+                message.contains(&format!("chmod 755 {word}")),
+                "the chmod addresses the activation directory: {message}"
+            );
+            assert!(
+                !message.contains(&format!("chmod 755 {}", shell_word(&paths.wants).unwrap())),
+                "the chmod does not address the service entry: {message}"
+            );
+
+            // The printed command repairs the directory and leaves the entry
+            // and the unit file exactly as they were.
+            let entry_before = std::fs::read_link(&paths.wants).unwrap();
+            let output = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("chmod 755 {word}"))
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                std::fs::metadata(&activation).unwrap().mode() & 0o777,
+                0o755
+            );
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), entry_before);
+            assert!(paths.unit.exists());
+        });
+    }
+
+    /// A symlinked unit directory is an identity failure: the refusal names the
+    /// link and the move-aside recovery, and neither the error nor the status
+    /// advice prints a `chmod` that would follow the link and change its target.
+    #[test]
+    fn a_symlinked_unit_directory_is_refused_without_a_chmod_through_the_link() {
+        with_run(|run, cx| {
+            use std::os::unix::fs::PermissionsExt;
+            let home = tempfile::tempdir().unwrap();
+            let real = home.path().join("real-systemd-user");
+            std::fs::create_dir_all(real.join("default.target.wants")).unwrap();
+            std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let linked = home.path().join("config/systemd/user");
+            std::fs::create_dir_all(linked.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real, &linked).unwrap();
+            let paths = LaunchPaths::at(linked.clone(), home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+
+            let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains("symbolic link"),
+                "the refusal names the link: {message}"
+            );
+            assert!(
+                message.contains("move that entry aside"),
+                "the recovery is to move it aside: {message}"
+            );
+            assert!(
+                !message.contains("chmod 755"),
+                "no chmod command is prescribed for a link: {message}"
+            );
+
+            // The status advice is the same: no chmod for a linked directory.
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Unsafe);
+            let advice = status.recovery.join("\n");
+            assert!(advice.contains("it is a symbolic link"), "{advice}");
+            assert!(!advice.contains("chmod 755"), "{advice}");
+
+            // The link target is untouched; nothing followed it.
+            assert_eq!(std::fs::metadata(&real).unwrap().mode() & 0o777, 0o700);
+            assert!(std::fs::symlink_metadata(&linked)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        });
+    }
+
     /// A linked activation directory refuses by naming *that* entry with the
     /// move-aside recovery; it must not advise a `chmod` on the parent, which
     /// changes an unrelated directory and can reach a symlink's target.
@@ -4320,12 +4484,16 @@ mod tests {
             let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
             let message = error.to_string();
             assert!(
-                message.contains(&path_label(&paths.wants)),
-                "the refusal names the activation directory itself: {message}"
+                message.contains(&path_label(paths.activation_dir())),
+                "the refusal names the activation directory itself, not the entry: {message}"
             );
             assert!(
-                message.contains("Move that entry aside"),
-                "the recovery is to move the entry: {message}"
+                !message.contains(&format!("directory {}", path_label(&paths.wants))),
+                "the service entry is not named as the directory: {message}"
+            );
+            assert!(
+                message.contains("Move that directory entry aside"),
+                "the recovery is to move the directory entry: {message}"
             );
             assert!(
                 !message.contains("chmod"),

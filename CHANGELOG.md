@@ -174,9 +174,11 @@ During v0.x, MINOR bumps may include breaking changes.
   directory — refusing with the exact command (and deleting nothing) when an
   entry is there or is not its own link, and a missing unit directory counts as
   no activation so a fresh or partially removed installation still tears down;
-  an activation directory that is a symlink is refused by naming that entry and
-  asking you to move it aside (never a `chmod` on its parent), and a directory
-  refusal's `chmod` is one quoted shell word; a changed definition disables the activation
+  an activation directory that is a symlink, is not a directory or is owned by
+  another account is an identity failure refused with the move-aside recovery
+  (never a `chmod` through the link), a directory refusal's `chmod` is one
+  quoted shell word naming the directory that failed rather than the service
+  entry inside it, and only a mode problem is repaired by that command; a changed definition disables the activation
   before it rewrites the unit and refuses if it remains. `setup --remove`
   completes the filesystem removal and then reports a `daemon-reload` that
   refuses, cannot be reached or times out, with the exact
