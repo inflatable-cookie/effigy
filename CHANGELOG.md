@@ -404,38 +404,34 @@ During v0.x, MINOR bumps may include breaking changes.
   registration retires only that consumer on completion or interrupt.
 - Bun links no longer leave a machine-wide registration behind. `deps link bun`
   retires the registration it created once the consumer symlink and ledger
-  exist, and an interrupt retires the same registrations before the signal
-  stops the command. Retiral is the exact `(consumer root, library)` claim, so a
-  sibling Bun root in the same checkout keeps its own claim. The completion
-  retiral runs inside the apply's own index transaction after the ledger
-  commits, so the owner never holds a registration while it does not hold the
-  Bun index lock, a failed ledger write leaves the claim, registration and
-  ledger untouched, a failed index commit restores any registration it retired
-  and rolls the ledger and consumer links back, and a re-link over an existing
-  claim always writes the retired claim out. An interrupted
-  owner stops the `bun link` it is waiting on before retiring anything, since a
-  registration process still running would recreate the registration after its
-  owner died. The interrupt handler is installed before the owner can create a
-  registration, and a child process reserves its place in the cleanup registry
-  before it starts, so neither an interrupt during handler setup nor one during
-  a spawn can leave a registration process running past the cleanup. Stopping
-  that child lets the apply release its own transaction, so the retiral takes the
-  index lock instead of assuming the process still holds it, and the command
-  waits for a pending cleanup before returning. Each child runs in its own
-  process group, so the cleanup stops the whole tree and a wrapper's descendant
-  cannot recreate the registration after it. It also retires nothing unless it holds the Bun index lock for its
-  own apply: a link that only wants that lock planned its registrations before
-  this owner created anything, so they are not in the index yet and this owner
-  cannot see them. While it holds the lock it reads the index instead of waiting
-  for it, retaining any registration another consumer still claims or any
-  registration it cannot verify because the index is unreadable. A shared or
-  foreign registration is never removed. This is what stopped registrations
-  pointing at deleted worktrees accumulating.
+  exist, and an interrupt retires the same registrations before the signal stops
+  the command. Retiral is the exact `(consumer root, library)` claim, so a
+  sibling Bun root in the same checkout keeps its own claim.
+
+  The completion retiral runs inside the apply's own index transaction after the
+  ledger commits: a failed ledger write leaves the claim, registration and ledger
+  untouched, a failed index commit restores any registration it retired and
+  rolls the ledger and consumer links back, and a re-link over an existing claim
+  always writes the retired claim out.
+
+  An interrupted owner retires only what its own apply started. The transaction
+  marks the moment it becomes able to create a registration, so a link that
+  merely wanted the index lock retires nothing; the watcher then takes the index
+  lock itself with a bounded wait and retains any registration another consumer
+  claims, or one it cannot verify. It stops the whole `bun` process tree first —
+  handler installed before the owner can create anything, spawns reserved and
+  published, children in their own process group — and the command waits for the
+  pending cleanup before returning. A shared or foreign registration is never
+  removed. This is what stopped registrations pointing at deleted worktrees
+  accumulating.
 - Bun `deps unlink` now retires only the named consumer's claims when that
   checkout is already gone, instead of no-op'ing and leaving the worktree claim
   behind. Each claim records the checkout that wrote it, so `--repo` recovers a
   nested Bun root without reaching into an independently nested checkout, and a
-  claim without that evidence is reported with the root to name.
+  claim without that evidence is reported with the root to name. Recovery
+  without the ledger releases claims only: it never inspects, removes or verifies
+  a consumer `node_modules` link, because a claim names a registration rather
+  than the consumer tree that owns a link.
 - Bun `deps status` and `doctor` now verify the consumer's `node_modules`
   symlink, which is the link. An absent machine-wide registration is expected;
   one pointing at another path is still reported as a conflict.

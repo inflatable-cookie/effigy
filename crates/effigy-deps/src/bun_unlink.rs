@@ -355,22 +355,27 @@ fn verify_bun_unlink(
             .consumer_repo
             .join("node_modules")
             .join(&package.name);
-        let consumer_expected = if plan
+        // Only a consumer path this plan observed and decided about is verified:
+        // recovery from an orphaned claim mutates no consumer tree, so it has
+        // no consumer evidence to check.
+        let removed = plan
             .symlink_intents
             .iter()
-            .any(|intent| intent.package == package.name)
-        {
-            BunPathObservation::Missing
-        } else {
-            planned_observation(plan, &consumer_path).unwrap_or(BunPathObservation::Missing)
-        };
-        evidence.push(observation_evidence(
-            package,
-            &consumer_path,
-            "bun-consumer-unlink",
-            &consumer_expected,
-            observer,
-        ));
+            .any(|intent| intent.package == package.name);
+        if let Some(planned) = planned_observation(plan, &consumer_path) {
+            let consumer_expected = if removed {
+                BunPathObservation::Missing
+            } else {
+                planned
+            };
+            evidence.push(observation_evidence(
+                package,
+                &consumer_path,
+                "bun-consumer-unlink",
+                &consumer_expected,
+                observer,
+            ));
+        }
 
         let registration_path = bun_registration_path(home, &package.name);
         let registration_expected =

@@ -112,48 +112,45 @@ Unix.
   after an owner did not finish. Unlink of an absent checkout still releases
   that checkout's index references, including nested Bun package roots recorded
   under it, and never scavenges an independently nested checkout or an unnamed
-  dead path.
+  dead path. Recovery without the ledger releases claims only: a claim names a
+  registration, not the consumer tree that owns a link, so no consumer
+  `node_modules` link is inspected, removed, or verified.
 - Exact-owned registrations are retired by the owner that created them when it
   completes, and an interrupt retires the same registrations before the signal
-  takes its default course. The completion retiral runs inside the apply's own
-  index transaction, after the ledger commits, so the owner never holds a
-  registration while it does not hold the index lock: no interrupt can land
-  between the apply and the retiral and leave the registration behind, and a
-  failed ledger write leaves the claim, the registration and the ledger as they
-  were instead of restoring a half-retired transaction afterwards. The index
-  commit is part of that transaction too: a failed write restores any
-  registration the transaction retired and rolls the ledger and consumer links
-  back, so a commit failure cannot leave a link half applied. The retiral decides
-  the index write itself, so a re-link over an existing claim still writes the
-  retired claim out even when the plan planned no index change. Ownership is the recorded
-  `(consumer root, library)` pair: a checkout can hold several Bun package roots
-  (`studio/`, `harness/`), each a consumer with its own claim, so retiral never
-  widens to a root that merely shares a checkout. An interrupted owner may
-  retire only while it holds the index lock for its own apply. A link that only wants that lock planned
-  before this owner created anything, so its registrations are not in the index
-  yet and this owner cannot see them; an interrupted owner that does not hold
-  the lock retires nothing. While it does hold it, it reads the index instead of
-  waiting for the lock it already has, and retains any registration another
-  consumer claims; when the index cannot be read it retires nothing either,
-  because it cannot prove a registration is its own. It also stops the `bun
-  link` processes it is waiting on before it retires anything: a registration
-  process still running would recreate the registration after its owner died.
-  Two windows would let that process escape, so both are closed: the owner
-  installs the interrupt handler synchronously before it can create anything
-  (an asynchronously armed owner could be killed outright while its `bun link`
-  child kept running), and a child reserves its place in the cleanup registry
-  before it starts and publishes its PID after, with cleanup waiting for
-  outstanding spawns and refusing new ones. Stopping that child lets the apply
-  fail and release its own transaction before the retiral runs, so the retiral
-  takes the index lock itself (bounded wait) instead of assuming the process
-  still holds it, and the command waits for a pending interrupt cleanup before
-  it returns, so the process cannot exit with the registration still owned.
-  Every child runs in its own process group and the cleanup stops the whole
-  tree: a wrapper's descendant — the `bun` a shim or script actually runs —
-  would otherwise recreate the registration after the cleanup and keep the
-  ancestor's pipes open while the caller still held the index lock. A leftover claim means an owner died between writing the claim and
-  retiring it; status reports `bun-registration-without-ledger` and
-  `deps unlink bun` or the next link retires it.
+  takes its default course. Ownership is the recorded `(consumer root, library)`
+  pair: a checkout can hold several Bun package roots (`studio/`, `harness/`),
+  each a consumer with its own claim, so retiral never widens to a root that
+  merely shares a checkout.
+- The completion retiral runs inside the apply's own index transaction, after the
+  ledger commits, so the owner never holds a registration while it does not hold
+  the index lock. A failed ledger write leaves the claim, the registration and
+  the ledger as they were; a failed index commit restores any registration the
+  transaction retired and rolls the ledger and consumer links back; and a re-link
+  over an existing claim writes the retired claim out even when the plan planned
+  no index change.
+- An interrupted owner retires only what its own apply started. The transaction
+  marks the moment it becomes able to create a registration, and an owner that
+  never reached it — a link that only wanted the index lock — retires nothing,
+  because its registrations are not in the index yet. The watcher takes the index
+  lock itself with a bounded wait, since the interrupted apply may already have
+  released its transaction, and waits for in-flight child spawns; taking the lock
+  also proves no other link is mid-apply while it decides. Under that lock it
+  reads the index and retains any registration another consumer claims. When the
+  index cannot be read, the lock cannot be taken in time, or the registration's
+  target is unverifiable, it retires nothing: it cannot prove a registration is
+  its own. The command waits for a pending interrupt cleanup before it returns,
+  so the process cannot exit with the registration still owned.
+- Every owned child runs in its own process group, and its PID is published
+  through a spawn reservation, so the cleanup stops the whole tree: a wrapper's
+  descendant — the `bun` a shim or script actually runs — would otherwise
+  recreate the registration after the cleanup and could keep the ancestor's pipes
+  open while the caller still held the index lock. The interrupt handler is
+  installed synchronously before an owner can create anything, so no window
+  exists in which a signal kills the process outright while a `bun link` child
+  keeps running.
+- A leftover claim means an owner died between writing the claim and retiring it;
+  status reports `bun-registration-without-ledger` and `deps unlink bun` or the
+  next link retires it.
 - Validate other repo references before removal. Retain and report stale or
   unverifiable references rather than risk breaking another consumer.
 - Status and doctor verify the consumer's `node_modules` symlink, which is the

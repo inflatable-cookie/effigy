@@ -688,3 +688,66 @@ fn unlink_of_a_deleted_checkout_retires_nested_bun_root_registration() {
     assert_eq!(report.outcome, BunUnlinkOutcome::Unlinked);
     assert_eq!(remaining_consumers(&first.home), vec![other]);
 }
+
+#[test]
+fn orphaned_nested_claim_recovery_never_touches_a_consumer_link() {
+    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&first.home);
+    // A live checkout holding a parent Bun root and a nested one, each with its
+    // own link to the same package, and a claim recorded only for the nested
+    // root. The ledger that would say which link Effigy owns is gone.
+    fs::create_dir_all(first.repo.join(".git")).unwrap();
+    let studio = first.repo.join("studio");
+    fs::create_dir_all(&studio).unwrap();
+    let studio = fs::canonicalize(&studio).unwrap();
+    let package = first.packages[0].package_path.clone();
+    replace_symlink(&package, &first.repo.join("node_modules/underlay"));
+    replace_symlink(&package, &studio.join("node_modules/underlay"));
+    BunRegistrationIndexStore::for_home(&first.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                package.clone(),
+                true,
+                BunConsumerReference::claim(studio.clone(), first.library.clone()),
+            )
+        })
+        .unwrap();
+    replace_symlink(&package, &bun_registration_path(&first.home, "underlay"));
+    assert!(!RepoLinkStateStore::for_repo(&first.repo).path().exists());
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &first.repo,
+            &first.library,
+            &first.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &first.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(
+        report.outcome,
+        BunUnlinkOutcome::Unlinked,
+        "{:?}",
+        report.errors
+    );
+    // Recovery released the nested root's claim and nothing else: the parent
+    // root is a different consumer, and its link is not Effigy's to remove.
+    assert!(report.plan.symlink_intents.is_empty());
+    assert_eq!(
+        fs::canonicalize(first.repo.join("node_modules/underlay")).unwrap(),
+        package
+    );
+    assert_eq!(
+        fs::canonicalize(studio.join("node_modules/underlay")).unwrap(),
+        package
+    );
+    assert!(remaining_consumers(&first.home).is_empty());
+    assert!(report.removed_consumer_links.is_empty());
+}
