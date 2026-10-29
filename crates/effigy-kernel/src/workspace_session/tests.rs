@@ -1082,6 +1082,68 @@ fn backpressure_does_not_block_cancel() {
 }
 
 #[test]
+fn the_byte_window_reopens_on_acknowledgement() {
+    // Regression (review 5694163884): the 512 KiB window counted retained
+    // bytes, so a stream of ~2 KiB frames filled it after 256 frames and then
+    // backpressured for good — acknowledgements never released anything. A
+    // frame is 2 KiB here, so 256 retained frames reach exactly 512 KiB.
+    let mut stream = StreamBuffer::new(StreamId::parse("run:1").expect("stream"));
+    let frame = vec![b'x'; 2048];
+    let mut pushed = 0u64;
+    for _ in 0..300 {
+        match stream.push(StreamKind::Stdout, frame.clone()) {
+            Ok(PushOutcome::Queued(seq)) => {
+                stream.ack(seq).expect("ack");
+                pushed += 1;
+            }
+            other => panic!("expected a queued frame, got {other:?}"),
+        }
+    }
+    assert_eq!(pushed, 300, "a reader that keeps up is never stalled");
+    assert_eq!(stream.unacknowledged(), 0);
+    assert_eq!(
+        stream.queued_bytes(),
+        0,
+        "an acknowledgement releases its bytes"
+    );
+
+    // Retention stays bounded independently: the resume window dropped the
+    // oldest frames, so a cursor before it is a gap rather than a claim of
+    // complete output.
+    assert!(stream.retained_from() > 1);
+    match stream.read(StreamCursor::start()) {
+        ReadOutcome::Gap { from, to, resumed } => {
+            assert_eq!(from, 1);
+            assert_eq!(resumed, to);
+        }
+        other => panic!("expected a gap, got {other:?}"),
+    }
+
+    // The frame window is unchanged: 16 unacknowledged data frames still
+    // backpressure, and one acknowledgement still reopens it.
+    let mut stream = StreamBuffer::new(StreamId::parse("run:2").expect("stream"));
+    for _ in 0..MAX_UNACKNOWLEDGED_FRAMES {
+        stream
+            .push(StreamKind::Stdout, frame.clone())
+            .expect("queued");
+    }
+    assert_eq!(
+        stream.queued_bytes(),
+        MAX_UNACKNOWLEDGED_FRAMES * frame.len()
+    );
+    assert!(matches!(
+        stream.push(StreamKind::Stdout, frame.clone()),
+        Ok(PushOutcome::Backpressured { .. })
+    ));
+    stream.ack(MAX_UNACKNOWLEDGED_FRAMES as u64).expect("ack");
+    assert_eq!(stream.queued_bytes(), 0);
+    assert!(matches!(
+        stream.push(StreamKind::Stdout, frame),
+        Ok(PushOutcome::Queued(_))
+    ));
+}
+
+#[test]
 fn end_carries_the_final_sequence_and_outcome() {
     let mut stream = StreamBuffer::new(StreamId::parse("run:1").expect("stream"));
     stream

@@ -1,11 +1,13 @@
 //! The bounded terminal stream contract (§8.11).
 //!
 //! One `StreamBuffer` is one stream of one attachment: typed frames with a
-//! monotone sequence, an acknowledgement window, a retained resume window and a
-//! cancel flag that stays serviceable under backpressure. It holds no run
-//! authority — a caller that cannot push a frame waits, and a caller that wants
-//! the run stopped asks the supervisor, which is why backpressure never blocks
-//! cancellation.
+//! monotone sequence, a flow-control window of unacknowledged frames and bytes,
+//! a retained resume window and a cancel flag that stays serviceable under
+//! backpressure. The two windows are separate: acknowledging reopens the flow
+//! window, while retention — bounded in frames and bytes — is what a reconnect
+//! resumes from. It holds no run authority — a caller that cannot push a frame
+//! waits, and a caller that wants the run stopped asks the supervisor, which is
+//! why backpressure never blocks cancellation.
 //!
 //! Terminal input is deliberately *not* buffered. It is delivered once to the
 //! owning terminal and never replayed, so a reconnect cannot re-enter text an
@@ -130,8 +132,9 @@ impl std::fmt::Display for StreamError {
 pub enum PushOutcome {
     /// The frame is queued at this sequence.
     Queued(u64),
-    /// Nothing was queued and nothing was dropped: the sender retries later.
-    /// Cancellation and control stay serviceable meanwhile.
+    /// Nothing was queued and nothing was dropped: the sender retries later,
+    /// and an acknowledgement reopens the window. Cancellation and control stay
+    /// serviceable meanwhile.
     Backpressured {
         unacknowledged: usize,
         queued_bytes: usize,
@@ -165,9 +168,14 @@ pub struct StreamBuffer {
     next_seq: u64,
     retained_from: u64,
     frames: std::collections::VecDeque<Frame>,
-    queued_bytes: usize,
-    /// Data frame sequences pushed and not yet acknowledged.
-    unacknowledged: std::collections::VecDeque<u64>,
+    /// Bytes currently retained in `frames`, so the resume window is bounded in
+    /// bytes as well as in frames.
+    retained_bytes: usize,
+    /// The data frames a reader has not acknowledged yet: sequence and bytes.
+    /// This is the flow-control window, not the resume window.
+    unacknowledged: std::collections::VecDeque<(u64, usize)>,
+    /// Bytes in unacknowledged data frames: the 512 KiB window.
+    unacknowledged_bytes: usize,
     acked: u64,
     pending_resize: Option<(u16, u16)>,
     input_frames: u64,
@@ -183,8 +191,9 @@ impl StreamBuffer {
             next_seq: 1,
             retained_from: 1,
             frames: std::collections::VecDeque::new(),
-            queued_bytes: 0,
+            retained_bytes: 0,
             unacknowledged: std::collections::VecDeque::new(),
+            unacknowledged_bytes: 0,
             acked: 0,
             pending_resize: None,
             input_frames: 0,
@@ -208,6 +217,12 @@ impl StreamBuffer {
     pub fn unacknowledged(&self) -> usize {
         self.unacknowledged.len()
     }
+    /// The bytes in unacknowledged data frames: what the 512 KiB window counts.
+    /// An acknowledgement releases them, so a slow reader throttles the sender
+    /// without stalling the stream once it catches up.
+    pub fn queued_bytes(&self) -> usize {
+        self.unacknowledged_bytes
+    }
     pub fn input_frames(&self) -> u64 {
         self.input_frames
     }
@@ -219,9 +234,11 @@ impl StreamBuffer {
         self.retained_from
     }
 
-    /// Queues one data or control frame. A frame that would exceed the
-    /// acknowledgement or byte window is not queued and not dropped: the
-    /// caller retries, and this call never blocks.
+    /// Queues one data or control frame. A data frame that would exceed the
+    /// acknowledgement window or the 512 KiB unacknowledged-byte window is not
+    /// queued and not dropped: the caller retries, and this call never blocks.
+    /// Both windows reopen when the reader acknowledges, so backpressure is a
+    /// delay, never a permanent stall.
     pub fn push(&mut self, kind: StreamKind, payload: Vec<u8>) -> Result<PushOutcome, StreamError> {
         if kind == StreamKind::TerminalInput {
             // Terminal input is delivered once to the owner and never retained.
@@ -238,26 +255,22 @@ impl StreamBuffer {
         }
         if kind.is_data()
             && (self.unacknowledged.len() >= MAX_UNACKNOWLEDGED_FRAMES
-                || self.queued_bytes.saturating_add(payload.len()) > MAX_QUEUED_BYTES)
+                || self.unacknowledged_bytes.saturating_add(payload.len()) > MAX_QUEUED_BYTES)
         {
             return Ok(PushOutcome::Backpressured {
                 unacknowledged: self.unacknowledged.len(),
-                queued_bytes: self.queued_bytes,
+                queued_bytes: self.unacknowledged_bytes,
             });
         }
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.queued_bytes += payload.len();
+        self.retained_bytes += payload.len();
         if kind.is_data() {
-            self.unacknowledged.push_back(seq);
+            self.unacknowledged.push_back((seq, payload.len()));
+            self.unacknowledged_bytes += payload.len();
         }
         self.frames.push_back(Frame { seq, kind, payload });
-        while self.frames.len() > RETAINED_FRAMES {
-            if let Some(dropped) = self.frames.pop_front() {
-                self.queued_bytes = self.queued_bytes.saturating_sub(dropped.payload.len());
-                self.retained_from = dropped.seq + 1;
-            }
-        }
+        self.prune();
         Ok(PushOutcome::Queued(seq))
     }
 
@@ -295,9 +308,10 @@ impl StreamBuffer {
         }
         if seq > self.acked {
             self.acked = seq;
-            while let Some(front) = self.unacknowledged.front() {
-                if *front <= seq {
+            while let Some((front, bytes)) = self.unacknowledged.front().copied() {
+                if front <= seq {
                     self.unacknowledged.pop_front();
+                    self.unacknowledged_bytes = self.unacknowledged_bytes.saturating_sub(bytes);
                 } else {
                     break;
                 }
@@ -352,7 +366,7 @@ impl StreamBuffer {
         }
         let seq = self.next_seq;
         let payload = outcome.clone().unwrap_or_default().into_bytes();
-        self.queued_bytes += payload.len();
+        self.retained_bytes += payload.len();
         self.frames.push_back(Frame {
             seq,
             kind: StreamKind::End,
@@ -361,13 +375,24 @@ impl StreamBuffer {
         self.next_seq += 1;
         self.ended = Some((seq, outcome));
         self.closed = true;
-        while self.frames.len() > RETAINED_FRAMES {
-            if let Some(dropped) = self.frames.pop_front() {
-                self.queued_bytes = self.queued_bytes.saturating_sub(dropped.payload.len());
-                self.retained_from = dropped.seq + 1;
-            }
-        }
+        self.prune();
         Ok(seq)
+    }
+
+    /// Drops the oldest retained frames once the resume window is full. The
+    /// window is bounded in frames and in bytes, so one stream cannot hold
+    /// unbounded memory; a reader whose cursor fell out of it is told the range
+    /// is a gap rather than receiving output that claims to be complete.
+    fn prune(&mut self) {
+        while self.frames.len() > RETAINED_FRAMES
+            || (self.retained_bytes > MAX_QUEUED_BYTES && self.frames.len() > 1)
+        {
+            let Some(dropped) = self.frames.pop_front() else {
+                break;
+            };
+            self.retained_bytes = self.retained_bytes.saturating_sub(dropped.payload.len());
+            self.retained_from = dropped.seq + 1;
+        }
     }
 
     /// Cancels the stream. Control stays serviceable under backpressure because
