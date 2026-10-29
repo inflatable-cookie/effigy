@@ -1612,8 +1612,11 @@ root-owned image whose group you are in but which your group cannot execute is
 refused, and the launch unit that names an image you cannot run is reported
 `stale` rather than healthy. The refusal names the bit that decided it — owner,
 the matched group, or other — and the `chmod` that fixes that bit, with the path
-quoted as printed, instead of advising an other-execute bit a matching group
-would ignore. An identity failure is different: a symbolic or hard link, a
+a safe POSIX shell word (single-quoted, with an embedded quote escaped as
+`'\''`), so `$`, backticks, backslashes and quotes in the path all arrive
+literally; instead of advising an other-execute bit a matching group would
+ignore. A path that is not valid UTF-8 cannot be printed as a shell word at all,
+and the refusal says so rather than printing a command for a different file. An identity failure is different: a symbolic or hard link, a
 foreign owner or a group/world-writable image cannot be repaired by a permission
 bit, so that refusal names the install recovery (one real file owned by your
 account, for example `effigy install:local` as yourself) and prescribes no

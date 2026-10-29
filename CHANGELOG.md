@@ -151,8 +151,9 @@ During v0.x, MINOR bumps may include breaking changes.
   mean the operator can run it: the check follows the account's real access,
   including POSIX group precedence for a root-owned image. An access refusal
   names the bit that decided it (owner, matched group or other) and the
-  `chmod` for that bit with the path quoted, rather than advising an
-  other-execute bit a matching group ignores; an identity refusal (a link, a
+  `chmod` for that bit with the path as a safe POSIX shell word (single-quoted,
+  so `$`, backticks, backslashes and quotes arrive literally), rather than
+  advising an other-execute bit a matching group ignores; an identity refusal (a link, a
   foreign owner, a writable image) names the install recovery instead, because
   no permission bit can repair it. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes

@@ -883,14 +883,22 @@ fn restore_activation_link(paths: &LaunchPaths, operator_uid: u32) -> io::Result
 /// explicit opt-in for a login-less boot start with its reversal.
 pub fn recovery_steps(paths: &LaunchPaths) -> Vec<String> {
     vec![
-        format!(
-            "systemctl --user daemon-reload  # unit: {}",
-            quoted(&paths.unit)
-        ),
+        format!("systemctl --user daemon-reload  # unit: {}", unit_label(paths)),
         format!("systemctl --user enable {UNIT_NAME}"),
         format!("systemctl --user start {UNIT_NAME}"),
         "loginctl enable-linger \"$USER\"  # optional: start at boot without a login; undo with `loginctl disable-linger \"$USER\"`".to_owned(),
     ]
+}
+
+/// The unit path as a shell word for the comments of the recovery commands, or
+/// a bounded note when it cannot be printed as one.
+fn unit_label(paths: &LaunchPaths) -> String {
+    shell_word(&paths.unit).unwrap_or_else(|| {
+        format!(
+            "{} (this path is not valid UTF-8, so no shell command can print it)",
+            paths.unit.display()
+        )
+    })
 }
 
 fn owned_unit(bytes: &[u8]) -> bool {
@@ -1242,8 +1250,27 @@ pub fn verify_executable(executable: &Path, operator_uid: u32) -> io::Result<()>
 
 /// A shell-safe quoted path for the recovery commands, the same quoting the
 /// rest of the Linux operator output uses for an executable path.
-fn quoted(path: &Path) -> String {
-    format!("\"{}\"", path.display())
+/// One POSIX shell word for `path`, or `None` when the path cannot be printed
+/// as one that would address the same file.
+///
+/// The word is single-quoted, so `$`, backticks, backslashes, double quotes and
+/// spaces all reach the shell literally. An embedded single quote uses the
+/// standard `'\''` sequence. A path that is not valid UTF-8 cannot be printed
+/// at all and is refused rather than printed lossily as a command that would
+/// address a different file.
+fn shell_word(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    let mut word = String::with_capacity(text.len() + 2);
+    word.push('\'');
+    for character in text.chars() {
+        if character == '\'' {
+            word.push_str("'\\''");
+        } else {
+            word.push(character);
+        }
+    }
+    word.push('\'');
+    Some(word)
 }
 
 /// An identity refusal: what is wrong and the recovery that can change it.
@@ -1251,19 +1278,36 @@ fn quoted(path: &Path) -> String {
 fn image_identity_refusal(detail: &str, executable: &Path, operator_uid: u32) -> io::Error {
     error(format!(
         "the installed gateway binary {} is not usable for the Linux operator route ({detail}): it must be one real file (not a symbolic or hard link), owned by the operator (uid {operator_uid}) or root, not group- or world-writable, and not empty. Install it as one real file owned by this account (for example `effigy install:local` as this account) and run `effigy gateway setup` again",
-        quoted(executable)
+        executable_label(executable)
     ))
+}
+
+/// The executable path for a message: a shell word when one can be printed,
+/// otherwise the lossy display with the limit stated.
+fn executable_label(executable: &Path) -> String {
+    shell_word(executable).unwrap_or_else(|| {
+        format!(
+            "{} (this path is not valid UTF-8, so no shell command can print it)",
+            executable.display()
+        )
+    })
 }
 
 /// An access refusal: the bit that decided it and the `chmod` for that bit,
 /// with the path quoted so the command can be pasted as printed.
 fn image_access_refusal(class: AccessClass, executable: &Path, operator_uid: u32) -> io::Error {
+    let fix = match shell_word(executable) {
+        Some(word) => format!("Set the bit that applies with `chmod {} {word}` and run `effigy gateway setup` again", class.chmod()),
+        None => format!(
+            "Set the bit that applies ({}) from a shell that can address {}, then run `effigy gateway setup` again; this path is not valid UTF-8, so no shell command can print it",
+            class.chmod(),
+            executable.display()
+        ),
+    };
     error(format!(
-        "the installed gateway binary {} is not usable for the Linux operator route ({detail}): this account (uid {operator_uid}) cannot execute it. Execution follows this account's own access — the owner execute bit when this account owns the image, otherwise the group execute bit when one of this account's process groups is the image's group, and the other execute bit only when no group matches (both when the memberships cannot be read). Set the bit that applies with `chmod {chmod} {path}` and run `effigy gateway setup` again",
-        quoted(executable),
+        "the installed gateway binary {} is not usable for the Linux operator route ({detail}): this account (uid {operator_uid}) cannot execute it. Execution follows this account's own access — the owner execute bit when this account owns the image, otherwise the group execute bit when one of this account's process groups is the image's group, and the other execute bit only when no group matches (both when the memberships cannot be read). {fix}",
+        executable_label(executable),
         detail = class.describe(),
-        chmod = class.chmod(),
-        path = quoted(executable)
     ))
 }
 
@@ -3823,7 +3867,7 @@ mod tests {
     fn the_access_refusal_names_the_bit_that_decided_it_with_a_quoted_path() {
         let operator = 501;
         let path = Path::new("/home/operator/my bin/effigy");
-        let quoted_path = "\"/home/operator/my bin/effigy\"";
+        let quoted_path = shell_word(path).expect("a printable path");
 
         // Each class names its own bit, and the path is quoted as printed.
         for (class, bit) in [
@@ -3919,7 +3963,10 @@ mod tests {
                 !message.contains("chmod"),
                 "an identity failure must not prescribe a chmod: {message}"
             );
-            assert!(message.contains(&quoted(&linked)), "{message}");
+            assert!(
+                message.contains(&shell_word(&linked).expect("printable path")),
+                "{message}"
+            );
             // The second name goes, so the image is one file again.
             std::fs::remove_file(&linked).unwrap();
 
@@ -3936,7 +3983,10 @@ mod tests {
             std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o410)).unwrap();
             let message = verify_executable(&binary, uid).unwrap_err().to_string();
             assert!(
-                message.contains(&format!("chmod u+x {}", quoted(&binary))),
+                message.contains(&format!(
+                    "chmod u+x {}",
+                    shell_word(&binary).expect("printable path")
+                )),
                 "{message}"
             );
 
@@ -3946,13 +3996,61 @@ mod tests {
         });
     }
 
+    /// A recovery command must be a safe POSIX shell word even for a path full
+    /// of metacharacters: what the shell receives has to be exactly the path.
+    #[test]
+    fn recovery_words_survive_shell_metacharacters() {
+        for text in [
+            "/home/operator/my bin/effigy",
+            "/home/op$erator/`id`/effigy",
+            "/home/op\\erator/\"quoted\"/effigy",
+            "/home/op'erator/effigy",
+            "/home/op$erator/`id`\\\"' /effigy",
+        ] {
+            let path = Path::new(text);
+            let word = shell_word(path).expect("a UTF-8 path is printable");
+            // One argument exactly: ask a real shell what it received.
+            let output = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("printf '%s' {word}"))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{word}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                text,
+                "the shell received a different path from {word}"
+            );
+            // The recovery text embeds exactly that word.
+            let message = image_access_refusal(AccessClass::Owner, path, 501).to_string();
+            assert!(message.contains(&format!("chmod u+x {word}")), "{message}");
+        }
+
+        // A path that is not valid UTF-8 cannot be printed as a shell word, so
+        // the recovery names the limit instead of printing a lossy command.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let invalid = PathBuf::from(std::ffi::OsString::from_vec(
+                b"/home/operator/\xffeffigy".to_vec(),
+            ));
+            assert!(shell_word(&invalid).is_none());
+            let message = image_access_refusal(AccessClass::Owner, &invalid, 501).to_string();
+            assert!(
+                message.contains("no shell command can print it"),
+                "{message}"
+            );
+            assert!(!message.contains("chmod u+x"), "{message}");
+        }
+    }
+
     /// The recovery commands quote the unit path like the rest of the operator
     /// output, so they can be pasted as printed.
     #[test]
     fn the_recovery_commands_quote_the_paths_they_name() {
         let home = tempfile::tempdir().unwrap();
         let paths = LaunchPaths::at(home.path().join("unit dir/systemd/user"), home.path());
-        let quoted_unit = quoted(&paths.unit);
+        let quoted_unit = shell_word(&paths.unit).expect("a printable unit path");
         let steps = recovery_steps(&paths);
         assert!(
             steps[0].contains(&quoted_unit),

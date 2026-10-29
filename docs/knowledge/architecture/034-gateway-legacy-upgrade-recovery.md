@@ -446,8 +446,11 @@ refused conservatively (both the group and other bits must allow execution). An
 execute bit alone is not enough — an owner-owned mode `0410` image has one and
 its owner still cannot run it — so a unit naming such an image is reported
 `stale` rather than healthy. The refusal names the rule that decided it — the
-owner bit, the matched group bit, or the other bit — with the quoted `chmod` for
-that bit, so its advice can actually resolve the failure. Identity failures are
+owner bit, the matched group bit, or the other bit — with the `chmod` for that
+bit, the path emitted as a safe POSIX shell word (single-quoted, `'\''` for an
+embedded quote) so `$`, backticks, backslashes and quotes arrive literally; a
+path that is not valid UTF-8 cannot be printed as a shell word and the refusal
+says so. Identity failures are
 separate: a link, a foreign owner or a writable image cannot be repaired by a
 permission bit, so they name the install recovery (one real file owned by the
 account) and prescribe no `chmod`. Setup verifies the result instead of assuming it: after the
