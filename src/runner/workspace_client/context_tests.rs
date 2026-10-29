@@ -3,6 +3,13 @@
 use super::*;
 use crate::runner::workspace_client::guest_fake::FakeGuest;
 
+mod workspace_client_matrix {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/workspace_client/context.rs"
+    ));
+}
+
 const BINARY_DIGEST: &str =
     "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 
