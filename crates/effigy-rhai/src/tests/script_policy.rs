@@ -275,3 +275,115 @@ fn first_party_script_inventory_excludes_generated_fixture_directories() {
         fs::remove_dir_all(root).expect("remove private script inventory fixture");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn workspace_artifact_producer_selects_the_target_and_isolates_receipts() {
+    use effigy_test_support::process::FixtureCommandExt;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let root = temp_root("workspace-artifact-targets");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    // These are owned fixture programs, never the machine's Cargo or a builder.
+    for (name, body) in [
+        (
+            "cargo",
+            r#"#!/bin/sh
+set -eu
+[ "$#" = 6 ] && [ "$1" = build ] && [ "$2" = --release ] && [ "$3" = --bin ] && [ "$4" = effigy ] && [ "$5" = --target ]
+[ "${FIXTURE_BUILD_FAIL:-0}" = 0 ] || exit 17
+mkdir -p "$CARGO_TARGET_DIR/$6/release"
+printf '%s\n' "$6" > "$CARGO_TARGET_DIR/$6/release/effigy"
+"#,
+        ),
+        (
+            "sha256sum",
+            r#"#!/usr/bin/env python3
+import hashlib, pathlib, sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+"#,
+        ),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, body).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let script = format!(
+        "{}\nfn fixture_script(target, output) {{ fs::write_file(output, workspace_artifact_build_script(target, \"v0.15.0-test\")); }}",
+        include_str!("../../../../scripts/build-linux-workspace-artifact.rhai")
+    );
+    let context = script_context(&root);
+    let mut retained = Vec::new();
+    for triple in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+    ] {
+        let output = root.join("build.sh");
+        crate::call_rhai_function(
+            &context,
+            &script,
+            "fixture_script",
+            (triple.to_owned(), output.display().to_string()),
+            &callbacks(),
+        )
+        .unwrap();
+        // Only this run's root substitutes the container's mounted checkout.
+        let body = fs::read_to_string(&output)
+            .unwrap()
+            .replace("/workspace", &root.display().to_string());
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let result = Command::new("/bin/sh")
+            .args(["-c", &body])
+            .env("PATH", &path)
+            .output_owned()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{triple}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let artifact = root
+            .join(".effigy/linux-release/artifacts")
+            .join(format!("effigy-{triple}"));
+        assert_eq!(
+            fs::read_to_string(&artifact).unwrap(),
+            format!("{triple}\n")
+        );
+        let receipt = artifact.with_extension("receipt");
+        let bytes = fs::read(&receipt).unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains(&format!("release_triple={triple}\n")));
+        retained.push((artifact.clone(), fs::read(&artifact).unwrap()));
+        retained.push((receipt, bytes));
+        // A failed target build cannot attest output, or overwrite prior output.
+        let failed = Command::new("/bin/sh")
+            .args(["-c", &body])
+            .env("PATH", &path)
+            .env("FIXTURE_BUILD_FAIL", "1")
+            .output_owned()
+            .unwrap();
+        assert!(!failed.status.success());
+        for (path, bytes) in &retained {
+            assert_eq!(&fs::read(path).unwrap(), bytes);
+        }
+    }
+    let rejected = root.join("unsupported.sh");
+    crate::call_rhai_function(
+        &context,
+        &script,
+        "fixture_script",
+        (
+            "x86_64-apple-darwin".to_owned(),
+            rejected.display().to_string(),
+        ),
+        &callbacks(),
+    )
+    .expect_err("an unknown target cannot receive an attestation");
+    assert!(!rejected.exists());
+    assert!(!root
+        .join(".effigy/linux-release/artifacts/rehearsal.txt")
+        .exists());
+}

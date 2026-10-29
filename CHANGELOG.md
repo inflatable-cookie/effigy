@@ -602,6 +602,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
+- Linux workspace artifact builds select the requested Rust architecture/libc
+  target and retain a separate receipt beside each target binary. Missing target
+  libraries or linkers refuse the build before it can attest an artifact.
+
 - Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
   before handoff and authenticates the bytes launched through that entry.
 

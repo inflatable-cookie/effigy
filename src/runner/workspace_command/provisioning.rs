@@ -31,8 +31,6 @@ use crate::runner::exec_command::BoundedCaptureFailure;
 use super::RunnerError;
 
 const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH_PREFIX: &str = "/tmp/effigy-host";
-/// The receipt an artifact producer writes beside the artifact it produced.
-pub(super) const WORKSPACE_ARTIFACT_RECEIPT_FILE: &str = "rehearsal.txt";
 /// The published checksum the release download authenticates its bytes with.
 const RELEASE_CHECKSUM_SUFFIX: &str = ".sha256";
 /// The stable entry path a handoff or terminal runs. It is a symlink into the
@@ -971,15 +969,17 @@ fn verify_guest_artifact(
     })
 }
 
+/// Each target's producer receipt lives beside its own binary, so producing
+/// another target cannot invalidate a still-current local artifact.
+pub(super) fn workspace_artifact_receipt_path(artifact: &Path) -> PathBuf {
+    let mut path = artifact.as_os_str().to_owned();
+    path.push(".receipt");
+    PathBuf::from(path)
+}
+
 /// The `key=value` receipt an artifact producer writes beside its artifact.
 fn workspace_artifact_receipt(artifact: &Path) -> Result<BTreeMap<String, String>, RunnerError> {
-    let directory = artifact.parent().ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "linux workspace artifact `{}` has no directory to hold a receipt",
-            artifact.display()
-        ))
-    })?;
-    let path = directory.join(WORKSPACE_ARTIFACT_RECEIPT_FILE);
+    let path = workspace_artifact_receipt_path(artifact);
     let raw = std::fs::read_to_string(&path).map_err(|error| {
         RunnerError::task_invocation(format!(
             "cannot read linux workspace artifact receipt `{}`: {error}",
@@ -1991,7 +1991,7 @@ pub(super) fn produced_linux_workspace_artifact_is_current(
         && read_trimmed_identity_file(&workspace_effigy_active_version_file(artifact_path))
             .as_deref()
             == Some(effigy_core::build_info::active_version().as_str())
-        && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
+        && linux_workspace_effigy_artifact_receipt_matches_target(artifact_path, target)
 }
 
 #[cfg(test)]
@@ -2364,7 +2364,7 @@ pub(super) fn linux_workspace_effigy_artifact_is_current(
     expected_identity: &str,
 ) -> bool {
     artifact_path.is_file()
-        && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
+        && linux_workspace_effigy_artifact_receipt_matches_target(artifact_path, target)
         && read_trimmed_identity_file(&workspace_effigy_active_version_file(artifact_path))
             .as_deref()
             == Some(effigy_core::build_info::active_version().as_str())
@@ -2456,7 +2456,7 @@ pub(super) fn linux_workspace_artifact_produced_since(
         && read_trimmed_identity_file(&workspace_effigy_active_version_file(artifact_path))
             .as_deref()
             == Some(effigy_core::build_info::active_version().as_str())
-        && linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
+        && linux_workspace_effigy_artifact_receipt_matches_target(artifact_path, target)
 }
 
 pub(super) fn read_trimmed_identity_file(path: &Path) -> Option<String> {
@@ -2481,14 +2481,13 @@ pub(super) fn describe_linux_workspace_artifact_refusal(
     let artifact_identity =
         read_trimmed_identity_file(&workspace_effigy_install_identity_file(artifact_path))
             .unwrap_or_else(|| "unknown".to_owned());
-    let receipt = if linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target)
-    {
+    let receipt = if linux_workspace_effigy_artifact_receipt_matches_target(artifact_path, target) {
         "matches target"
     } else {
         "missing or names another target"
     };
     format!(
-        "linux workspace artifact `{path}` is not current for `{triple}`: host version `{host}`, host identity `{expected_identity}`, artifact version `{artifact_version}`, artifact identity `{artifact_identity}`, rehearsal receipt {receipt}; rebuild with `EFFIGY_LINUX_RELEASE_TRIPLE={triple} effigy workspace:linux:artifact` from `{root}`",
+        "linux workspace artifact `{path}` is not current for `{triple}`: host version `{host}`, host identity `{expected_identity}`, artifact version `{artifact_version}`, artifact identity `{artifact_identity}`, artifact receipt {receipt}; rebuild with `EFFIGY_LINUX_RELEASE_TRIPLE={triple} effigy workspace:linux:artifact` from `{root}`",
         path = artifact_path.display(),
         triple = target.release_triple(),
         host = effigy_core::build_info::active_version(),
@@ -2627,7 +2626,9 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
 ) -> Result<PathBuf, RunnerError> {
     let cache_path = linux_workspace_effigy_cache_path(target)?;
     let install_identity = workspace_effigy_release_install_identity();
-    if linux_workspace_release_cache_is_current(&cache_path, &install_identity) {
+    if linux_workspace_release_cache_is_current(&cache_path, &install_identity)
+        && verify_guest_artifact(&cache_path, target).is_ok()
+    {
         ensure_workspace_effigy_active_version_file(
             &cache_path,
             &effigy_core::build_info::active_version(),
@@ -2673,13 +2674,7 @@ fn write_workspace_artifact_receipt(
     digest: &str,
     build_kind: &str,
 ) -> Result<(), RunnerError> {
-    let directory = artifact.parent().ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "linux workspace artifact `{}` has no directory to hold a receipt",
-            artifact.display()
-        ))
-    })?;
-    let path = directory.join(WORKSPACE_ARTIFACT_RECEIPT_FILE);
+    let path = workspace_artifact_receipt_path(artifact);
     let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
     let body = format!(
         "release_triple={triple}\nsha256={hex}\nbuild_kind={build_kind}\n",
@@ -2899,14 +2894,11 @@ fn published_release_checksum(
         })
 }
 
-pub(super) fn linux_workspace_effigy_rehearsal_receipt_matches_target(
+pub(super) fn linux_workspace_effigy_artifact_receipt_matches_target(
     artifact_path: &Path,
     target: LinuxWorkspaceTarget,
 ) -> bool {
-    let Some(artifacts_dir) = artifact_path.parent() else {
-        return false;
-    };
-    let receipt_path = artifacts_dir.join("rehearsal.txt");
+    let receipt_path = workspace_artifact_receipt_path(artifact_path);
     let Ok(raw) = std::fs::read_to_string(receipt_path) else {
         return false;
     };

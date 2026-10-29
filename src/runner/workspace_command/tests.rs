@@ -24,10 +24,11 @@ use crate::runner::workspace_command::provisioning::{
     read_trimmed_workspace_effigy_active_version, render_workspace_effigy_staging_path,
     resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
     run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
-    wait_for_in_progress_linux_workspace_artifact_build, workspace_effigy_active_version_file,
-    workspace_effigy_install_identity_file, workspace_effigy_local_install_identity,
-    workspace_effigy_release_install_identity, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
-    WorkspacePermissionMode, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    wait_for_in_progress_linux_workspace_artifact_build, workspace_artifact_receipt_path,
+    workspace_effigy_active_version_file, workspace_effigy_install_identity_file,
+    workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
+    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, WorkspacePermissionMode,
+    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::workspace_command::session::classify_workspace_session_ownership;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -201,10 +202,7 @@ fn write_current_linux_artifact(artifact: &Path, bytes: &str, identity: &str) {
 
 fn write_linux_artifact_receipt(artifact: &Path, triple: &str) {
     std::fs::write(
-        artifact
-            .parent()
-            .expect("artifacts dir")
-            .join("rehearsal.txt"),
+        workspace_artifact_receipt_path(artifact),
         format!("release_triple={triple}\ncompleted_at=2026-10-15T00:00:00Z\n"),
     )
     .expect("write receipt");
@@ -237,7 +235,7 @@ const FRESH_X86_BUILD: &str = r#"touch built.marker
 mkdir -p .effigy/linux-release/artifacts
 printf 'fresh-bytes\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
 printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
-printf 'release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-10-15T00:00:00Z\n' > .effigy/linux-release/artifacts/rehearsal.txt"#;
+printf 'release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-10-15T00:00:00Z\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.receipt"#;
 
 const STALE_IDENTITY: &str = "local:v0.0.0:1:1";
 
@@ -490,7 +488,7 @@ fn bounded_linux_artifact_success_without_valid_output_refuses_without_rebinding
         ),
         (
             "wrong-target",
-            "printf 'new bytes' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\nprintf 'release_triple=aarch64-unknown-linux-gnu\\n' > .effigy/linux-release/artifacts/rehearsal.txt",
+            "printf 'new bytes' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\nprintf 'release_triple=aarch64-unknown-linux-gnu\\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.receipt",
             Some("new bytes"),
             "aarch64-unknown-linux-gnu",
         ),
@@ -577,7 +575,7 @@ printf 'completed\n' >> build.trace"#,
         assert!(message.contains("EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"), "{case}: {message}");
         assert!(!message.contains(&root.display().to_string()), "{message}");
         assert_eq!(std::fs::read_to_string(&artifact).ok().as_deref(), expected_bytes, "{case}");
-        assert!(std::fs::read_to_string(artifact.parent().unwrap().join("rehearsal.txt"))
+        assert!(std::fs::read_to_string(workspace_artifact_receipt_path(&artifact))
             .expect("receipt").contains(&format!("release_triple={receipt_target}\n")), "{case}");
         assert_eq!(
             read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
@@ -616,7 +614,7 @@ fn linux_artifact_wrong_target_build_output_is_refused() {
         r#"touch built.marker
 mkdir -p .effigy/linux-release/artifacts
 printf 'fresh-bytes\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
-printf 'release_triple=aarch64-unknown-linux-gnu\ncompleted_at=2026-10-15T00:00:00Z\n' > .effigy/linux-release/artifacts/rehearsal.txt"#,
+printf 'release_triple=aarch64-unknown-linux-gnu\ncompleted_at=2026-10-15T00:00:00Z\n' > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.receipt"#,
     );
     let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     write_linux_artifact(&artifact, "old-bytes", Some(STALE_IDENTITY));
@@ -995,7 +993,7 @@ fn wait_for_in_progress_linux_workspace_artifact_build_reuses_completed_artifact
     let expected_identity =
         workspace_effigy_local_install_identity(&freshness_anchor).expect("anchor identity");
     let artifact = artifacts_dir.join("effigy-x86_64-unknown-linux-gnu");
-    let receipt = artifacts_dir.join("rehearsal.txt");
+    let receipt = workspace_artifact_receipt_path(&artifact);
     let lock_path = linux_workspace_artifact_lock_path(&root);
     std::fs::create_dir_all(lock_path.parent().expect("lock parent")).expect("mkdir locks");
     std::fs::write(&lock_path, "{}").expect("write lock");
@@ -1886,7 +1884,7 @@ fn a_produced_local_artifact_is_current_only_for_this_host_version() {
     )
     .expect("write version");
     std::fs::write(
-        root.join("rehearsal.txt"),
+        workspace_artifact_receipt_path(&artifact),
         "release_triple=x86_64-unknown-linux-gnu\nsha256=00\n",
     )
     .expect("write receipt");
@@ -1914,4 +1912,48 @@ fn a_failed_shutdown_line_names_the_system_and_the_first_cause_line() {
         workspace_shutdown_failure_line("app", &error),
         "workspace system app shutdown failed: docker compose down exited with code 1"
     );
+}
+
+#[test]
+fn local_artifact_receipts_remain_current_for_each_target() {
+    let root = linux_artifact_fixture("parallel-target-receipts");
+    let targets = [
+        LinuxWorkspaceTarget::X86_64Gnu,
+        LinuxWorkspaceTarget::Aarch64Gnu,
+        LinuxWorkspaceTarget::X86_64Musl,
+        LinuxWorkspaceTarget::Aarch64Musl,
+    ];
+    let mut artifacts = Vec::new();
+    for target in targets {
+        let artifact = root.join(target.artifact_relative_path());
+        write_current_linux_artifact(&artifact, target.release_triple(), "fixture-host");
+        write_linux_artifact_receipt(&artifact, target.release_triple());
+        artifacts.push((artifact, target));
+    }
+    // A legacy aggregate receipt cannot override any target's own evidence.
+    std::fs::write(
+        root.join(".effigy/linux-release/artifacts/rehearsal.txt"),
+        "release_triple=unrelated-target\n",
+    )
+    .unwrap();
+    for (artifact, target) in &artifacts {
+        assert!(linux_workspace_effigy_artifact_is_current(
+            artifact,
+            *target,
+            "fixture-host"
+        ));
+    }
+    let (artifact, target) = &artifacts[0];
+    std::fs::remove_file(workspace_artifact_receipt_path(artifact)).unwrap();
+    assert!(
+        !linux_workspace_effigy_artifact_is_current(artifact, *target, "fixture-host"),
+        "an aggregate receipt cannot substitute for a missing target receipt"
+    );
+    for (artifact, target) in &artifacts[1..] {
+        assert!(linux_workspace_effigy_artifact_is_current(
+            artifact,
+            *target,
+            "fixture-host"
+        ));
+    }
 }

@@ -23,9 +23,9 @@ use crate::runner::workspace_client::guest_fake::{hex_sha256, DiskGuest, FakeGue
 use crate::runner::workspace_command::provisioning::{
     environment_generation, manifest_fragment_digest, operator_workspace_for_policy,
     parse_container_identity, prepare_workspace_guest, stage_host_bytes,
-    verify_pinned_guest_binary, workspace_effigy_active_version_file, LiveWorkspaceEntry,
-    OperatorWorkspace, PreparedWorkspaceGuest, WorkspacePrepareFacts,
-    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, WORKSPACE_ARTIFACT_RECEIPT_FILE,
+    verify_pinned_guest_binary, workspace_artifact_receipt_path,
+    workspace_effigy_active_version_file, LiveWorkspaceEntry, OperatorWorkspace,
+    PreparedWorkspaceGuest, WorkspacePrepareFacts, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 
 const ENTRY_PATH: &str = "/usr/local/bin/effigy";
@@ -123,11 +123,7 @@ fn artifact_with_receipt(repo: &Path, bytes: &str, receipt_digest: Option<&str>)
             digest.strip_prefix("sha256:").unwrap_or(digest)
         ));
     }
-    std::fs::write(
-        path.parent().unwrap().join(WORKSPACE_ARTIFACT_RECEIPT_FILE),
-        receipt,
-    )
-    .expect("artifact receipt");
+    std::fs::write(workspace_artifact_receipt_path(&path), receipt).expect("artifact receipt");
     path
 }
 
@@ -1797,7 +1793,7 @@ fn artifact_bytes(repo: &Path, bytes: &[u8]) -> PathBuf {
     )
     .expect("active version");
     std::fs::write(
-        path.parent().unwrap().join(WORKSPACE_ARTIFACT_RECEIPT_FILE),
+        workspace_artifact_receipt_path(&path),
         format!(
             "release_triple=x86_64-unknown-linux-gnu\nsha256={}\n",
             sha256_text(bytes)
@@ -1828,7 +1824,7 @@ fn script_artifact(repo: &Path, label: &str) -> PathBuf {
     )
     .expect("active version");
     std::fs::write(
-        path.parent().unwrap().join(WORKSPACE_ARTIFACT_RECEIPT_FILE),
+        workspace_artifact_receipt_path(&path),
         format!(
             "release_triple=x86_64-unknown-linux-gnu\nsha256={}\n",
             sha256_text(body.as_bytes())

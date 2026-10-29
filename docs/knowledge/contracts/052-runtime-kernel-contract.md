@@ -2668,7 +2668,12 @@ only, and host access needs a terminal opened through Effigy.
   and the digest its bytes must have, a release download also matches the
   checksum published beside the artifact, and the installed executable is
   re-hashed in the container. A release that publishes no checksum cannot be
-  installed, and an image without a SHA-256 utility refuses Prepare. The guest
+  installed, and an image without a SHA-256 utility refuses Prepare. A local
+  producer builds with the requested Rust `--target` and copies from that
+  target's release directory; unavailable target libraries or linkers fail
+  before publication. Each artifact has its own `<binary>.receipt` containing
+  its target and digest, so producing another target cannot replace its
+  evidence. An aggregate rehearsal receipt is not artifact evidence. The guest
   authenticates installed executables with bounded digest probes, never by
   reading the file into a bounded command's output. The stable
   entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
