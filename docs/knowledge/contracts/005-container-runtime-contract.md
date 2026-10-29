@@ -1365,6 +1365,12 @@ volumes and images; the user sees which, in one line.
 Runtime prep must consume captured context facts and typed execution policy. It
 must not rediscover invocation cwd or handoff state after request construction.
 
+Colima workspace-heavy memory, swap and disk recommendations are advisory and
+appear only when the selected render proves a workspace binding to a service
+present in the environment. An unbound catalog service, default workspace
+identity or unknown direct Compose does not establish that proof. Other Colima
+warnings, including default-profile sharing, remain independent.
+
 ## Cold container launch readiness
 
 For Colima-backed `effigy container up`, Compose must not start until the
