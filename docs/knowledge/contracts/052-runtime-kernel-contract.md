@@ -2413,9 +2413,10 @@ workspace is admitted:
   service will have: injected and retained entries, short and long form, with
   Compose interpolation expanded and a bind-backed named volume resolved
   through its driver options. Every Compose input file Compose is handed is
-  rewritten and validated, not only the first: a later overlay replaces an
-  entry at the same guest target, so a state root bound at another target in an
-  overlay is refused and an overlay entry at a masked target is stripped. The
+  rewritten and validated, not only the first: an overlay, later or
+  intermediate, replaces an entry at the same guest target, so a state root
+  bound at another target in any overlay is refused and an overlay entry at a
+  masked target is stripped. The
   workspace mounts are injected into the first file that defines the primary
   service and the masks are appended to the last one, so they are applied after
   every source file and own their guest paths. A host state root, an ancestor of

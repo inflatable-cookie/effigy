@@ -400,10 +400,10 @@ During v0.x, MINOR bumps may include breaking changes.
   previous generation and key wraps) are masked with empty read-only volumes
   applied last, so an entry the source Compose file already declared cannot be
   mounted over them. Every Compose input file is rewritten and validated, not
-  only the first, because a later overlay replaces an entry at the same guest
-  target: a state root bound at another target in an overlay is refused, and an
-  overlay entry at a masked target is stripped while the masks are appended to
-  the last file that defines the service. The complete effective mount set —
+  only the first, because an overlay — later or intermediate — replaces an entry
+  at the same guest target: a state root bound at another target in any overlay
+  is refused, and an overlay entry at a masked target is stripped while the
+  masks are appended to the last file that defines the service. The complete effective mount set —
   short and long form, injected and retained — is validated with Compose
   interpolation expanded and bind-backed named volumes resolved through their
   driver options: a host state root, an ancestor of one (such as
