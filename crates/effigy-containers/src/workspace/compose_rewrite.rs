@@ -31,6 +31,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         working_dir,
         primary_service,
         library_mounts,
+        managed_volumes,
     } = request;
     if compose_files.is_empty() {
         return Ok((Vec::new(), Vec::new()));
@@ -57,6 +58,7 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
             working_dir,
             primary_service,
             library_mounts,
+            managed_volumes,
         },
         record_optional_extra_mount_decisions,
     )?;
@@ -91,7 +93,9 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         documents.push((source_compose.clone(), compose_dir, parsed));
     }
     let merged_volumes = merge_document_volumes(&documents);
-    let mount_context = super::ComposeMountContext::read(&project_dir, Some(&merged_volumes));
+    let mut mount_context =
+        super::ComposeMountContext::read(&project_dir, Some(&merged_volumes), managed_volumes);
+    mount_context.include_workspace_volumes(&injected_mounts);
     // The injected mounts belong to the first file that defines the primary
     // service; the masks belong to the last one, so they are applied after
     // every source file that can replace them.
@@ -198,10 +202,30 @@ fn merge_document_volumes(
             continue;
         };
         for (name, entry) in volumes {
-            merged.insert(name.clone(), entry.clone());
+            merge_volume_definition(
+                merged
+                    .entry(name.clone())
+                    .or_insert(serde_yaml::Value::Null),
+                entry,
+            );
         }
     }
     serde_yaml::Value::Mapping(merged)
+}
+
+// Compose merges mappings recursively: a later labels-only definition must
+// not hide an earlier external flag or bind driver options from validation.
+fn merge_volume_definition(base: &mut serde_yaml::Value, overlay: &serde_yaml::Value) {
+    if let (Some(base), Some(overlay)) = (base.as_mapping_mut(), overlay.as_mapping()) {
+        for (key, value) in overlay {
+            merge_volume_definition(
+                base.entry(key.clone()).or_insert(serde_yaml::Value::Null),
+                value,
+            );
+        }
+    } else if !overlay.is_null() {
+        *base = overlay.clone();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -902,6 +926,7 @@ mod overlay_tests {
             working_dir,
             primary_service: "app",
             library_mounts: &[],
+            managed_volumes: &[],
         }
     }
 
@@ -927,6 +952,96 @@ mod overlay_tests {
     fn rewritten(draft: &mut crate::policy::render::Draft, path: &Path) -> serde_yaml::Value {
         let body = draft.read(path).expect("rewritten file");
         serde_yaml::from_str(&body).expect("rewritten compose")
+    }
+
+    #[test]
+    fn external_volume_sources_stay_refused_after_a_metadata_only_overlay() {
+        let repo_root = fixture("external-volume-overlay");
+        let canonical = repo_root.canonicalize().unwrap();
+        let base = canonical.join("compose.yml");
+        let overlay = canonical.join("overlay.yml");
+        fs::write(&base, "services:\n  app:\n    image: app\n    volumes:\n      - state-bind:/workspace/leaked\nvolumes:\n  state-bind:\n    external: true\n").unwrap();
+        fs::write(
+            &overlay,
+            "volumes:\n  state-bind:\n    labels:\n      purpose: cache\n",
+        )
+        .unwrap();
+        let config = container_config();
+        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
+        let mut draft = crate::policy::render::Draft::default();
+        let error = rewrite_workspace_mounts_for_direct_compose(
+            request(&canonical, Path::new("/workspace"), &config, &workspace),
+            &[base, overlay],
+            false,
+            &mut draft,
+        )
+        .expect_err("the backend may bind host state through the external volume");
+        assert!(
+            error.to_string().contains("external or explicitly named"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn catalog_owned_volume_aliases_still_verify_external_and_bind_options() {
+        let repo_root = fixture("owned-volume-source");
+        let canonical = repo_root.canonicalize().unwrap();
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).unwrap();
+        let compose = canonical.join("compose.yml");
+        let owned = vec![effigy_catalog::volumes::ManagedVolume {
+            name: "owned-cache".to_owned(),
+            service: "app".to_owned(),
+            persist: false,
+            size_bytes: None,
+            mount_point: None,
+            mount_target: Some("/workspace/cache".to_owned()),
+        }];
+        let config = container_config();
+        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
+        for (definition, failure) in [
+            ("{name: owned-cache, driver: local}".to_owned(), None),
+            ("{name: host-state, driver: local}".to_owned(), Some("cannot prove")),
+            ("{external: true}".to_owned(), Some("cannot prove")),
+            (format!("{{name: owned-cache, driver: local, driver_opts: {{type: none, o: bind, device: {}}}}}", state.display()), Some("host state root")),
+        ] {
+            fs::write(&compose, format!("services:\n  app:\n    image: app\n    volumes:\n      - owned-cache:/workspace/cache\nvolumes:\n  owned-cache: {definition}\n")).unwrap();
+            let mut draft = crate::policy::render::Draft::default();
+            let mut request = request(&canonical, Path::new("/workspace"), &config, &workspace);
+            request.managed_volumes = &owned;
+            let result = rewrite_workspace_mounts_for_direct_compose(request, std::slice::from_ref(&compose), false, &mut draft);
+            match failure {
+                Some(message) => assert!(result.unwrap_err().to_string().contains(message), "{definition}"),
+                None => { result.expect("the catalog's exact owned local volume remains usable"); }
+            }
+        }
+    }
+
+    #[test]
+    fn inherited_bind_driver_options_stay_visible_after_an_overlay() {
+        let repo_root = fixture("bind-volume-overlay");
+        let canonical = repo_root.canonicalize().unwrap();
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).unwrap();
+        let base = canonical.join("compose.yml");
+        let overlay = canonical.join("overlay.yml");
+        fs::write(&base, format!("services:\n  app:\n    image: app\n    volumes:\n      - state-bind:/workspace/leaked\nvolumes:\n  state-bind:\n    driver_opts:\n      type: none\n      o: bind\n      device: {}\n", state.display())).unwrap();
+        fs::write(
+            &overlay,
+            "volumes:\n  state-bind:\n    driver_opts:\n      o: bind,ro\n",
+        )
+        .unwrap();
+        let config = container_config();
+        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
+        let mut draft = crate::policy::render::Draft::default();
+        let error = rewrite_workspace_mounts_for_direct_compose(
+            request(&canonical, Path::new("/workspace"), &config, &workspace),
+            &[base, overlay],
+            false,
+            &mut draft,
+        )
+        .expect_err("inherited device and type still bind the protected host source");
+        assert!(error.to_string().contains("host state root"), "{error}");
     }
 
     /// A later overlay that binds a host state root at another guest target is

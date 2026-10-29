@@ -452,6 +452,7 @@ fn build_effective_policy(
                     working_dir: &working_dir,
                     primary_service: &primary_service,
                     library_mounts,
+                    managed_volumes: &managed_volumes,
                 },
                 &mut compose_files,
                 record_optional_extra_mount_decisions,

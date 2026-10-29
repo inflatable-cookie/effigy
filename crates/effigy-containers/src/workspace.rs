@@ -43,6 +43,7 @@ pub(crate) struct WorkspaceComposeRewrite<'a> {
     pub(crate) working_dir: &'a Path,
     pub(crate) primary_service: &'a str,
     pub(crate) library_mounts: &'a [LibraryMount],
+    pub(crate) managed_volumes: &'a [effigy_catalog::volumes::ManagedVolume],
 }
 
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
@@ -130,6 +131,7 @@ fn build_workspace_runtime_mounts(
         working_dir,
         primary_service,
         library_mounts,
+        managed_volumes: _,
     } = request;
     let workspace_root = working_dir.parent().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
@@ -320,12 +322,13 @@ struct EffectiveMount {
 /// that looks harmless into a bind of a host state root, so the isolation check
 /// reads exactly those two inputs here.
 pub(crate) struct ComposeMountContext {
-    env: std::collections::BTreeMap<String, String>,
+    env: Result<std::collections::BTreeMap<String, String>, String>,
     named_binds: std::collections::BTreeMap<String, NamedVolumeSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NamedVolumeSource {
+    Managed,
     Host(PathBuf),
     /// A named volume whose driver the host cannot resolve to a host path. It
     /// stays refused rather than assumed harmless.
@@ -336,46 +339,125 @@ impl ComposeMountContext {
     /// Read the interpolation inputs for one rendered Compose document: the
     /// project `.env` beside the compose file, then the process environment
     /// (Compose's own order), and the document's `volumes:` driver options.
-    pub(crate) fn read(compose_dir: &Path, document_volumes: Option<&serde_yaml::Value>) -> Self {
-        let mut env = read_compose_env_file(compose_dir);
-        for (name, value) in std::env::vars_os() {
-            if let (Some(name), Some(value)) = (name.to_str(), value.to_str()) {
-                env.insert(name.to_owned(), value.to_owned());
+    pub(crate) fn read(
+        compose_dir: &Path,
+        document_volumes: Option<&serde_yaml::Value>,
+        managed_volumes: &[effigy_catalog::volumes::ManagedVolume],
+    ) -> Self {
+        let env = read_compose_env_file(compose_dir).map(|mut env| {
+            for (name, value) in std::env::vars_os() {
+                if let (Some(name), Some(value)) = (name.to_str(), value.to_str()) {
+                    env.insert(name.to_owned(), value.to_owned());
+                }
             }
-        }
-        Self {
-            named_binds: read_named_volume_bind_sources(document_volumes, &env, compose_dir),
+            env
+        });
+        let mut context = Self {
+            named_binds: std::collections::BTreeMap::new(),
             env,
+        };
+        context.named_binds = read_named_volume_bind_sources(
+            document_volumes,
+            &context,
+            compose_dir,
+            managed_volumes,
+        );
+        context
+    }
+
+    pub(crate) fn include_workspace_volumes(&mut self, mounts: &[RenderedWorkspaceMount]) {
+        for name in mounts
+            .iter()
+            .filter_map(|mount| mount.named_volume.as_ref())
+        {
+            // A source declaration of the same name still needs verification:
+            // injection does not replace its driver or external configuration.
+            self.named_binds
+                .entry(name.clone())
+                .or_insert(NamedVolumeSource::Managed);
         }
     }
 
     fn expand(&self, value: &str) -> Result<String, String> {
-        expand_compose_interpolation(value, &self.env)
+        if !value.contains('$') {
+            return Ok(value.to_owned());
+        }
+        expand_compose_interpolation(value, self.env.as_ref().map_err(Clone::clone)?)
     }
 }
 
-fn read_compose_env_file(compose_dir: &Path) -> std::collections::BTreeMap<String, String> {
+/// Accept the literal subset whose meaning is identical to Compose's dotenv
+/// reader. An unsupported line poisons interpolation rather than silently
+/// omitting a variable or guessing how Compose will expand it.
+fn read_compose_env_file(
+    compose_dir: &Path,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
     let mut env = std::collections::BTreeMap::new();
-    let Ok(raw) = std::fs::read_to_string(compose_dir.join(".env")) else {
-        return env;
+    for name in ["COMPOSE_ENV_FILES", "COMPOSE_DISABLE_ENV_FILE"] {
+        if std::env::var_os(name).is_some() {
+            return Err(format!(
+                "{name} changes Compose environment loading; mount interpolation is unprovable"
+            ));
+        }
+    }
+    let raw = match std::fs::read_to_string(compose_dir.join(".env")) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(env),
+        Err(error) => return Err(format!("cannot read Compose .env: {error}")),
     };
-    for line in raw.lines() {
-        let line = line.trim();
+    for (index, line) in raw.lines().enumerate() {
+        let line = line.trim_matches([' ', '\t', '\r']);
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
+        let unsupported = || {
+            format!("Compose .env line {} is not a provable literal assignment; use simple NAME=value literals for mount interpolation", index + 1)
         };
-        let name = name.trim();
-        if !name.is_empty() {
-            env.insert(
-                name.to_owned(),
-                value.trim().trim_matches('"').trim_matches('\'').to_owned(),
-            );
+        if line
+            .chars()
+            .any(|c| (c.is_control() && c != '\t') || (c.is_whitespace() && c != ' ' && c != '\t'))
+        {
+            return Err(unsupported());
         }
+        let (name, raw_value) = line.split_once('=').ok_or_else(unsupported)?;
+        let name = name.trim_matches([' ', '\t']);
+        if name.is_empty()
+            || !name.bytes().enumerate().all(|(index, byte)| {
+                byte.is_ascii_alphabetic() || byte == b'_' || (index > 0 && byte.is_ascii_digit())
+            })
+            || env.contains_key(name)
+            || matches!(name, "COMPOSE_ENV_FILES" | "COMPOSE_DISABLE_ENV_FILE")
+        {
+            return Err(unsupported());
+        }
+        let raw_value = raw_value.trim_matches([' ', '\t']);
+        let value = if let Some(quote) = raw_value.chars().next().filter(|c| "\"'".contains(*c)) {
+            let quoted = &raw_value[1..];
+            let close = quoted.find(quote).ok_or_else(unsupported)?;
+            let value = &quoted[..close];
+            let suffix = quoted[close + 1..].trim_matches([' ', '\t']);
+            if !suffix.is_empty() && !suffix.starts_with('#') {
+                return Err(unsupported());
+            }
+            if value.contains('\\') || (quote == '"' && value.contains('$')) {
+                return Err(unsupported());
+            }
+            value
+        } else {
+            let comment = raw_value.char_indices().find_map(|(index, c)| {
+                (c == '#' && (index == 0 || raw_value[..index].ends_with([' ', '\t'])))
+                    .then_some(index)
+            });
+            let value =
+                raw_value[..comment.unwrap_or(raw_value.len())].trim_end_matches([' ', '\t']);
+            if value.contains(['$', '\\', '\'', '"']) {
+                return Err(unsupported());
+            }
+            value
+        };
+        env.insert(name.to_owned(), value.to_owned());
     }
-    env
+    Ok(env)
 }
 
 /// Resolve Compose interpolation: `$NAME`, `${NAME}`, `${NAME:-default}`,
@@ -430,6 +512,11 @@ fn expand_compose_braced(
     env: &std::collections::BTreeMap<String, String>,
     value: &str,
 ) -> Result<String, String> {
+    if inner.contains(['$', '{']) {
+        return Err(format!(
+            "nested Compose interpolation is unprovable in `{value}`"
+        ));
+    }
     // Compose's forms, longest marker first so `:-` is not read as `-`.
     for marker in [":-", ":?", ":+", "-", "?", "+"] {
         let Some((name, argument)) = inner.split_once(marker) else {
@@ -493,8 +580,9 @@ fn split_short_mount_source_and_target(raw: &str) -> Option<(&str, &str)> {
 /// The host paths a document's bind-backed named volumes name.
 fn read_named_volume_bind_sources(
     document_volumes: Option<&serde_yaml::Value>,
-    env: &std::collections::BTreeMap<String, String>,
+    context: &ComposeMountContext,
     compose_dir: &Path,
+    managed_volumes: &[effigy_catalog::volumes::ManagedVolume],
 ) -> std::collections::BTreeMap<String, NamedVolumeSource> {
     let mut sources = std::collections::BTreeMap::new();
     let Some(entries) = document_volumes.and_then(serde_yaml::Value::as_mapping) else {
@@ -504,75 +592,91 @@ fn read_named_volume_bind_sources(
         let Some(name) = name.as_str() else {
             continue;
         };
-        let Some(entry) = entry.as_mapping() else {
-            continue;
-        };
-        let field = |field: &str| {
-            entry
-                .get(serde_yaml::Value::String(field.to_owned()))
-                .and_then(serde_yaml::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        };
-        let driver = field("driver").unwrap_or("local");
-        let Some(driver_opts) = entry
-            .get(serde_yaml::Value::String("driver_opts".to_owned()))
-            .and_then(serde_yaml::Value::as_mapping)
-        else {
-            continue;
-        };
-        let option = |name: &str| {
-            driver_opts
-                .get(serde_yaml::Value::String(name.to_owned()))
-                .and_then(serde_yaml::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        };
-        // Compose expands every scalar value before the driver interprets it.
-        // Classifying raw driver/options text could hide a bind just as a raw
-        // service source can hide the named volume that supplies it.
-        let expand_option = |name| {
-            option(name)
-                .map(|value| expand_compose_interpolation(value, env))
-                .transpose()
-        };
-        let expanded = (|| {
-            Ok::<_, String>((
-                expand_compose_interpolation(driver, env)?,
-                expand_option("o")?,
-                expand_option("type")?,
-                expand_option("device")?,
-            ))
-        })();
-        let (driver, flags, volume_type, device) = match expanded {
-            Ok(values) => values,
-            Err(reason) => {
-                sources.insert(name.to_owned(), NamedVolumeSource::Unprovable(reason));
-                continue;
-            }
-        };
-        let bind = flags
-            .as_deref()
-            .is_some_and(|value| value.split(',').any(|part| part == "bind"))
-            || matches!(volume_type.as_deref(), Some("bind" | "none"));
-        let Some(device) = device.as_deref() else {
-            continue;
-        };
-        if !bind {
+        if entry.is_null() {
+            sources.insert(name.to_owned(), NamedVolumeSource::Managed);
             continue;
         }
-        let resolved = if Path::new(device).is_absolute() {
-            NamedVolumeSource::Host(PathBuf::from(device))
-        } else if driver == "local" && device.starts_with('.') {
-            NamedVolumeSource::Host(compose_dir.join(device))
-        } else {
-            NamedVolumeSource::Unprovable(
-                "bind device has no provable absolute host path".to_owned(),
-            )
-        };
-        sources.insert(name.to_owned(), resolved);
+        let owned = managed_volumes.iter().any(|volume| volume.name == name);
+        let source = resolve_named_volume_source(entry, context, compose_dir, name, owned);
+        sources.insert(
+            name.to_owned(),
+            source.unwrap_or_else(NamedVolumeSource::Unprovable),
+        );
     }
     sources
+}
+
+fn resolve_named_volume_source(
+    entry: &serde_yaml::Value,
+    context: &ComposeMountContext,
+    compose_dir: &Path,
+    name: &str,
+    catalog_owned: bool,
+) -> Result<NamedVolumeSource, String> {
+    let entry = entry.as_mapping().ok_or("unsupported volume definition")?;
+    if entry
+        .get("external")
+        .is_some_and(|value| value.as_bool() != Some(false))
+        || entry
+            .get("name")
+            .is_some_and(|alias| !catalog_owned || alias.as_str() != Some(name))
+    {
+        return Err(
+            "external or explicitly named volumes require backend source inspection".to_owned(),
+        );
+    }
+    let field = |field: &str| {
+        entry
+            .get(serde_yaml::Value::String(field.to_owned()))
+            .and_then(serde_yaml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let driver = field("driver").unwrap_or("local");
+    if context.expand(driver)? != "local" {
+        return Err("volume driver has no provable host source".to_owned());
+    }
+    let driver_opts = match entry.get(serde_yaml::Value::String("driver_opts".to_owned())) {
+        None => return Ok(NamedVolumeSource::Managed),
+        Some(value) => value
+            .as_mapping()
+            .ok_or("unsupported volume driver options")?,
+    };
+    if driver_opts.is_empty() {
+        return Ok(NamedVolumeSource::Managed);
+    }
+    let option = |name: &str| {
+        driver_opts
+            .get(serde_yaml::Value::String(name.to_owned()))
+            .and_then(serde_yaml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    // Compose expands every scalar value before the driver interprets it.
+    // Classifying raw driver/options text could hide a bind just as a raw
+    // service source can hide the named volume that supplies it.
+    let expand_option = |name| option(name).map(|value| context.expand(value)).transpose();
+    let flags = expand_option("o")?;
+    let volume_type = expand_option("type")?;
+    let device = expand_option("device")?;
+    let bind = flags
+        .as_deref()
+        .is_some_and(|value| value.split(',').any(|part| part == "bind"))
+        || matches!(volume_type.as_deref(), Some("bind" | "none"));
+    let device = device
+        .as_deref()
+        .ok_or("volume driver has no provable host device")?;
+    if !bind {
+        return Err("volume driver options have no provable host source".to_owned());
+    }
+    let resolved = if Path::new(device).is_absolute() {
+        NamedVolumeSource::Host(PathBuf::from(device))
+    } else if device.starts_with('.') {
+        NamedVolumeSource::Host(compose_dir.join(device))
+    } else {
+        NamedVolumeSource::Unprovable("bind device has no provable absolute host path".to_owned())
+    };
+    Ok(resolved)
 }
 
 /// Refuse a mount that would hand the guest a host state root, expose a
@@ -725,7 +829,7 @@ pub(crate) fn enforce_effective_guest_volume_isolation(
     document_volumes: Option<&serde_yaml::Value>,
     volumes: &[serde_yaml::Value],
 ) -> Result<(), ContainerPolicyError> {
-    let context = ComposeMountContext::read(compose_dir, document_volumes);
+    let context = ComposeMountContext::read(compose_dir, document_volumes, &[]);
     enforce_effective_guest_volume_isolation_against(
         container_name,
         canonical_repo_root,
@@ -779,11 +883,14 @@ fn effective_volume_mount(
         ))
     };
     let named = |name: &str| match context.named_binds.get(name) {
+        Some(NamedVolumeSource::Managed) => Ok(None),
         Some(NamedVolumeSource::Host(path)) => Ok(Some(path.clone())),
         Some(NamedVolumeSource::Unprovable(reason)) => {
             Err(unprovable(format!("{name}` ({reason})")))
         }
-        None => Ok(None),
+        None => Err(unprovable(format!(
+            "{name}` has no inspectable volume definition"
+        ))),
     };
     if let Some(raw) = entry.as_str() {
         // Compose interpolates the whole scalar before parsing it.
@@ -795,6 +902,11 @@ fn effective_volume_mount(
             return Err(unprovable(format!("`{raw}` names a relative target")));
         }
         let source = source.trim();
+        if source.starts_with('~') {
+            return Err(unprovable(
+                "tilde expansion requires an absolute host path".to_owned(),
+            ));
+        }
         let host_source = if source.is_empty() {
             None
         } else if Path::new(source).is_absolute() {
@@ -834,6 +946,14 @@ fn effective_volume_mount(
         .map(|source| context.expand(source))
         .transpose()
         .map_err(unprovable)?;
+    if source
+        .as_deref()
+        .is_some_and(|source| source.starts_with('~'))
+    {
+        return Err(unprovable(
+            "tilde expansion requires an absolute host path".to_owned(),
+        ));
+    }
     let host_source = match kind.as_str() {
         "tmpfs" => None,
         "volume" => match source.as_deref() {

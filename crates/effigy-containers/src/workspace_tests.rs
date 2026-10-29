@@ -1367,6 +1367,152 @@ mod guest_isolation_tests {
     }
 
     #[test]
+    fn external_alias_and_uninspectable_volume_sources_are_refused() {
+        let repo_root = temp_dir("external-volume");
+        let canonical = repo_root.canonicalize().unwrap();
+        // The existing backend volume may bind host state. Without an inspect
+        // receipt the declaration cannot establish what it will mount.
+        for definition in [
+            "state-bind: {external: true}",
+            "state-bind: {external: {name: host-state}}",
+            "state-bind: {name: host-state}",
+            "state-bind: {driver: other-driver}",
+            "state-bind: {driver_opts: {device: /host/state}}",
+            "{}",
+        ] {
+            let definitions = serde_yaml::from_str(definition).unwrap();
+            for raw in [
+                "state-bind:/workspace/leaked",
+                "{type: volume, source: state-bind, target: /workspace/leaked}",
+            ] {
+                let mount = serde_yaml::from_str(raw).unwrap();
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    Some(&definitions),
+                    &[mount],
+                )
+                .expect_err("a volume without a proven source is refused");
+                assert!(
+                    error.to_string().contains("cannot prove"),
+                    "{definition}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dotenv_comments_and_literal_quotes_cannot_hide_a_state_bind() {
+        let repo_root = temp_dir("dotenv-comments");
+        let canonical = repo_root.canonicalize().unwrap();
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).unwrap();
+        for assignment in [
+            format!("EFFIGY_TEST_STATE={} # host state", state.display()),
+            format!("EFFIGY_TEST_STATE=\"{}\" # host state", state.display()),
+            format!("EFFIGY_TEST_STATE='{}' # host state", state.display()),
+        ] {
+            fs::write(canonical.join(".env"), assignment).unwrap();
+            for raw in [
+                "${EFFIGY_TEST_STATE}:/workspace/leaked",
+                "{type: bind, source: '${EFFIGY_TEST_STATE}', target: /workspace/leaked}",
+            ] {
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    None,
+                    &[serde_yaml::from_str(raw).unwrap()],
+                )
+                .expect_err("Compose's comment removal must not hide protected state");
+                assert!(error.to_string().contains("host state root"), "{error}");
+            }
+        }
+        fs::write(
+            canonical.join(".env"),
+            "EFFIGY_TEST_STATE='./data#literal'\n",
+        )
+        .unwrap();
+        fs::create_dir_all(canonical.join("data#literal")).unwrap();
+        enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            None,
+            &[serde_yaml::Value::String(
+                "${EFFIGY_TEST_STATE}:/workspace/data".to_owned(),
+            )],
+        )
+        .expect("a literal hash is not an inline comment");
+    }
+
+    #[test]
+    fn unsupported_dotenv_meanings_are_refused_before_mount_interpolation() {
+        let repo_root = temp_dir("dotenv-unprovable");
+        let canonical = repo_root.canonicalize().unwrap();
+        for assignment in [
+            "EFFIGY_TEST_STATE=${EFFIGY_TEST_OTHER}/.effigy/state",
+            "EFFIGY_TEST_STATE=\"${EFFIGY_TEST_OTHER}/.effigy/state\"",
+            "EFFIGY_TEST_STATE=\"/safe\\t/.effigy/state\"",
+            "EFFIGY_TEST_STATE='/safe\\'/.effigy/state'",
+            "EFFIGY_TEST_STATE='/safe\n/.effigy/state'",
+            "EFFIGY_TEST_STATE: /safe",
+            "export EFFIGY_TEST_STATE=/safe",
+            "EFFIGY_TEST_STATE=/safe\nEFFIGY_TEST_STATE=/other",
+            "EFFIGY_TEST_STATE=/safe\u{a0}",
+        ] {
+            fs::write(canonical.join(".env"), assignment).unwrap();
+            let error = enforce_effective_guest_volume_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &canonical,
+                None,
+                &[serde_yaml::Value::String(
+                    "${EFFIGY_TEST_STATE}:/workspace/leaked".to_owned(),
+                )],
+            )
+            .expect_err("unknown dotenv semantics cannot establish a safe source");
+            assert!(error.to_string().contains("provable literal"), "{error}");
+        }
+        fs::remove_file(canonical.join(".env")).unwrap();
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            None,
+            &[serde_yaml::Value::String(
+                "${EFFIGY_TEST_UNSET:-${EFFIGY_TEST_OTHER}}:/workspace/leaked".to_owned(),
+            )],
+        )
+        .expect_err("nested defaults must not be partially expanded");
+        assert!(
+            error.to_string().contains("nested Compose interpolation"),
+            "{error}"
+        );
+        for raw in [
+            "~/.effigy/state:/workspace/leaked",
+            "{type: bind, source: '~/.effigy/state', target: /workspace/leaked}",
+        ] {
+            let error = enforce_effective_guest_volume_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &canonical,
+                None,
+                &[serde_yaml::from_str(raw).unwrap()],
+            )
+            .expect_err("tilde expansion cannot be mistaken for a project-relative path");
+            assert!(error.to_string().contains("tilde expansion"), "{error}");
+        }
+    }
+
+    #[test]
     fn a_long_form_interpolated_named_bind_cannot_expose_host_state() {
         let repo_root = temp_dir("interpolated-named-bind");
         let canonical = repo_root.canonicalize().unwrap();
@@ -1520,7 +1666,7 @@ mod guest_isolation_tests {
             &canonical,
             Path::new("/workspace"),
             &compose_dir,
-            None,
+            Some(&serde_yaml::from_str("node_modules: {}").unwrap()),
             &ordinary,
         )
         .expect("ordinary volumes and the checkout mount are allowed");

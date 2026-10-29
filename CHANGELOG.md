@@ -388,7 +388,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Workspace guest reads and publication target the host-verified full container
   id; configured hostnames and id prefixes cannot reuse another container's
   context. Compose mount isolation resolves interpolated long-form named-volume
-  sources before checking their host bind paths.
+  sources before checking their host bind paths, refuses external or unprovable
+  volume sources, and handles `.env` literal comments and quotes without guessing
+  at unsupported dotenv expansion or escape syntax.
 
 - **Workspace entry verifies the prepared guest instead of installing one.**
   `effigy exec`, `effigy container shell` and a workspace task no longer

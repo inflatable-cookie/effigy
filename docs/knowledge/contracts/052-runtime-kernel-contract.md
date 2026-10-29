@@ -2413,7 +2413,20 @@ workspace is admitted:
 - Mount isolation validates the complete effective mount set the primary
   service will have: injected and retained entries, short and long form, with
   Compose interpolation expanded and a bind-backed named volume resolved
-  through its driver options. Every Compose input file Compose is handed is
+  through its local driver options. External volumes, explicit volume-name
+  aliases, unknown volume names and drivers whose host source cannot be
+  established are refused without a backend source inspection receipt.
+  Exact aliases from the host catalog's owned-volume inventory remain usable;
+  their driver and external options still undergo verification.
+  Effigy-generated disposable volumes remain owned by the workspace; a source
+  declaration that collides with one still undergoes the same checks. Volume
+  mappings merge recursively across inputs, preserving inherited external flags
+  and driver options. Mount interpolation accepts `.env` literal assignments,
+  including simple single/double quotes and Compose inline comments. Dotenv
+  expansion, escapes, multiline or alternate assignments, duplicate names,
+  environment-file selection overrides, tilde paths and nested Compose interpolation are
+  refused when their meaning cannot be proven; they are never partially read
+  as a safe host path. Every Compose input file Compose is handed is
   rewritten and validated, not only the first: an overlay, later or
   intermediate, replaces an entry at the same guest target, so a state root
   bound at another target in any overlay is refused and an overlay entry at a
