@@ -598,7 +598,7 @@ mod tests {
     }
     use super::*;
     #[test]
-    fn linux_stat_handles_comm_delimiters_and_rejects_bad_evidence() {
+    fn linux_stat_lineage_and_state_reject_bad_evidence() {
         let stat = format!(
             "42 (name ) with ( spaces\n) S {} 98765 0 0",
             vec!["0"; 18].join(" ")

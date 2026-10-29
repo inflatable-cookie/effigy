@@ -165,7 +165,7 @@ pub fn caller(
             break;
         }
         let command = match &facts.argv {
-            Some(argv) => Some(command(argv)),
+            Some(argv) => Some(ancestor_command(argv)),
             None => {
                 unknown.push(format!("parent {next}: arguments are unreadable"));
                 None
@@ -245,7 +245,9 @@ impl Tree for Platform {
     }
 }
 
-/// Redacted, bounded argument boundaries.
+/// Redacted, bounded argument boundaries for the invoking process. Effigy's own
+/// command grammar is known, so a recognised credential name keeps its flag and
+/// loses only the value beside it.
 fn command(argv: &[String]) -> Vec<String> {
     argv.iter()
         .take(ARGV_LIMIT)
@@ -291,6 +293,109 @@ fn redact(argument: &str, previous: Option<&str>) -> String {
     bounded(argument, TEXT_LIMIT)
 }
 
+/// Bounded, redacted argument boundaries for an *ancestor's* command. An
+/// ancestor's command line is arbitrary third-party text, so no credential name
+/// is trusted to describe its values: only recognised flag names and plain
+/// word/path shapes are recorded, and anything else is redacted.
+fn ancestor_command(argv: &[String]) -> Vec<String> {
+    let mut rendered = Vec::new();
+    let mut previous: Option<&str> = None;
+    for argument in argv.iter().take(ARGV_LIMIT) {
+        let recorded = match previous {
+            // A shell string is a command line of its own: read it token by
+            // token so `sh -c 'psql --password …'` loses that value too.
+            Some(flag) if shell_flag(flag) => shell_command(argument),
+            Some(flag) if flag_shaped(flag) => REDACTED.into(),
+            _ => ancestor_token(argument),
+        };
+        rendered.push(recorded);
+        previous = Some(argument);
+    }
+    rendered
+}
+
+/// Token-wise redaction of one shell command string.
+fn shell_command(script: &str) -> String {
+    let mut rendered = Vec::new();
+    let mut previous: Option<&str> = None;
+    for token in script.split_whitespace().take(ARGV_LIMIT) {
+        let recorded = match previous {
+            Some(flag) if flag_shaped(flag) => REDACTED.into(),
+            _ => ancestor_token(token),
+        };
+        rendered.push(recorded);
+        previous = Some(token);
+    }
+    bounded(&rendered.join(" "), TEXT_LIMIT)
+}
+
+/// One ancestor argument kept only when it is a recognised flag name or a
+/// plain word/path. A flag token that is not a recognised name may carry an
+/// attached value (`-pHunter2`), so the whole token is redacted.
+fn ancestor_token(argument: &str) -> String {
+    let argument = argument.trim();
+    if flag_shaped(argument) {
+        return if flag_name(argument) {
+            bounded(argument, TEXT_LIMIT)
+        } else {
+            REDACTED.into()
+        };
+    }
+    if word(argument) && !secret(argument) {
+        return bounded(argument, TEXT_LIMIT);
+    }
+    REDACTED.into()
+}
+
+/// A recognised flag name: `--words` or one of the short flags above. A token
+/// that carries an attached or `=`-joined value is not a flag name.
+fn flag_name(argument: &str) -> bool {
+    if let Some(long) = argument.strip_prefix("--") {
+        return !long.is_empty()
+            && long.len() <= 32
+            && long
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    }
+    SHORT_FLAGS.contains(&argument)
+}
+
+/// Whether a token looks like a flag, whether or not its name is recognised:
+/// the argument after it is its value and is never recorded as it is.
+fn flag_shaped(argument: &str) -> bool {
+    argument.starts_with('-') && argument.len() > 1
+}
+
+/// A plain word or path, with no separator that could carry a value of its own.
+fn word(argument: &str) -> bool {
+    !argument.is_empty()
+        && !argument.starts_with('-')
+        && argument.len() <= MAX_TOKEN
+        && argument
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '+' | '-' | '/'))
+        && argument.chars().any(|c| c.is_ascii_alphanumeric())
+}
+
+/// A value that is a credential however it is spelled.
+fn secret(value: &str) -> bool {
+    secret_value(value) || opaque(value)
+}
+
+/// A long unseparated run of letters and digits is a token, not a word.
+fn opaque(value: &str) -> bool {
+    value.len() >= 24
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/'))
+        && value.chars().any(|c| c.is_ascii_digit())
+        && value.chars().any(|c| c.is_ascii_alphabetic())
+}
+
+fn shell_flag(argument: &str) -> bool {
+    SHELL_FLAGS.contains(&argument.trim())
+}
+
 /// `scheme://user:password@host` keeps its shape and loses the userinfo.
 fn redacted_url(argument: &str) -> Option<String> {
     let (scheme, rest) = argument.split_once("://")?;
@@ -333,6 +438,16 @@ const SECRET_FLAGS: &[&str] = &[
     "--authorization",
     "--bearer",
 ];
+/// Flags that carry a command line as their value; it is read token by token.
+const SHELL_FLAGS: &[&str] = &["-c", "-lc", "-ec", "-ic", "--command"];
+/// Short flag names recorded as they are. A short token that is not one of
+/// these may carry an attached value (`-pHunter2`) and is redacted whole.
+const SHORT_FLAGS: &[&str] = &[
+    "-c", "-lc", "-ec", "-ic", "-il", "-li", "-i", "-l", "-e", "-x", "-n", "-v", "-q", "-h", "-s",
+    "-u", "-p", "-a", "-d", "-f", "-o", "-H", "-m", "-r", "-t", "-w", "-k", "-j",
+];
+/// Longest token shape considered at all; the recorded text is bounded apart.
+const MAX_TOKEN: usize = 4096;
 /// Shapes that are a credential whatever their name says.
 const SECRET_PREFIXES: &[&str] = &[
     "sk-",
@@ -806,6 +921,100 @@ mod tests {
             rendered.contains("\"terminal\":\"/dev/ttys003\""),
             "{rendered}"
         );
+    }
+
+    /// An ancestor's command is arbitrary third-party text, so only a
+    /// recognised flag name and a plain word/path are recorded. A shell string
+    /// is a command line of its own and loses its flag values the same way.
+    #[test]
+    fn gateway_ancestor_commands_lose_every_credential_shaped_value() {
+        let script = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["/bin/zsh", "-lc", "psql --password hunter2 --host db"],
+            );
+        let parent = caller_of(&script, 50).parents[0].command.clone().unwrap();
+        let rendered = parent.join(" ");
+        for exposed in ["hunter2", " db"] {
+            assert!(!rendered.contains(exposed), "{rendered}");
+        }
+        assert_eq!(parent[0], "/bin/zsh", "{rendered}");
+        assert_eq!(parent[1], "-lc", "{rendered}");
+        for kept in ["psql", "--password", "--host"] {
+            assert!(rendered.contains(kept), "{kept} missing from {rendered}");
+        }
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+
+        // A short flag with an attached value, URL userinfo and a value after a
+        // flag are all redacted; the flag names and the program stay.
+        let plain = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &[
+                    "curl",
+                    "-u",
+                    "admin:hunter2",
+                    "https://api.test/?token=abc123",
+                    "--data",
+                    r#"{"password":"hunter2"}"#,
+                    "https://user:pass@example.test/hook",
+                    "-pS3cret",
+                ],
+            );
+        let parent = caller_of(&plain, 50).parents[0].command.clone().unwrap();
+        let rendered = parent.join(" ");
+        for exposed in ["hunter2", "abc123", "admin", "S3cret", "pass@", "?token"] {
+            assert!(!rendered.contains(exposed), "{rendered}");
+        }
+        for kept in ["curl", "-u", "--data"] {
+            assert!(rendered.contains(kept), "{kept} missing from {rendered}");
+        }
+    }
+
+    /// A path and a separated identity stay attributable; a long unseparated
+    /// token does not.
+    #[test]
+    fn gateway_ancestor_tokens_keep_only_a_plain_command_shape() {
+        let token = "a8f5f167f44f4964e6c998dee827110cf2d4c1f7";
+        let fake = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &[])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &[
+                    "node",
+                    "/opt/paseo/bin/paseo",
+                    "run",
+                    "f593c9f2-075b-4243-9e1b-176d303ec799",
+                    token,
+                    "-m",
+                    "wip",
+                ],
+            );
+        let parent = caller_of(&fake, 50).parents[0].command.clone().unwrap();
+        let rendered = parent.join(" ");
+        for exposed in [token, "wip"] {
+            assert!(!rendered.contains(exposed), "{rendered}");
+        }
+        for kept in [
+            "node",
+            "/opt/paseo/bin/paseo",
+            "run",
+            "f593c9f2-075b-4243-9e1b-176d303ec799",
+            "-m",
+        ] {
+            assert!(rendered.contains(kept), "{kept} missing from {rendered}");
+        }
     }
 
     /// Long values are bounded, and the bound itself is visible.

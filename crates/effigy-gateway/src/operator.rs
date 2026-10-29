@@ -717,6 +717,11 @@ fn note_reused_gateway_build(status: &Status) {
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
+    // A `down` is attributable whether it stops a gateway, finds none, or
+    // refuses: one bounded event names its caller before the first read.
+    if let Some(directory) = config.pid_file_path.parent() {
+        run::record_gateway_operator(directory, run::OperatorAction::Down, "gateway down command");
+    }
     let current = status(config)?;
     if current.status == "setup_required" {
         return Err(error(
@@ -725,9 +730,6 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     }
     if current.status == "stopped" {
         return Ok(current);
-    }
-    if let Some(directory) = config.pid_file_path.parent() {
-        run::record_gateway_stop(directory, "gateway down command");
     }
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
@@ -959,6 +961,31 @@ mod tests {
         assert!(up(&config).is_err());
         assert!(down(&config).is_err());
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), before);
+    }
+
+    /// A `down` that finds nothing to stop is still attributable: the request
+    /// is recorded before the first read, so a refused or no-op stop names its
+    /// caller too (effigy#450).
+    #[test]
+    fn a_down_with_nothing_to_stop_still_records_its_caller() {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+        // Whether the read reports `stopped` or `setup_required`, the request is
+        // recorded before that read.
+        let _ = down(&config);
+        let log = std::fs::read_to_string(
+            config
+                .pid_file_path
+                .parent()
+                .unwrap()
+                .join("gateway.stderr.log"),
+        )
+        .expect("the down request is recorded beside the gateway records");
+        let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(record["event"], "gateway_stop");
+        assert_eq!(record["cause"], "gateway down command");
+        assert_eq!(record["caller"]["pid"], std::process::id());
     }
     #[test]
     fn completion_does_not_hide_a_new_owner_before_admission() {

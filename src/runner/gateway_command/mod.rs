@@ -589,6 +589,17 @@ fn run_gateway_down_with_config(
             )
         });
     }
+    // The shared `down` records its own request in the operator's log; a
+    // private root records the same request in its own gateway log before the
+    // first read, so a refusal or a gateway that is already stopped is
+    // attributable too.
+    if let Some(directory) = config.pid_file_path.parent() {
+        effigy_kernel::run::record_gateway_operator(
+            directory,
+            effigy_kernel::run::OperatorAction::Down,
+            "gateway down command",
+        );
+    }
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;

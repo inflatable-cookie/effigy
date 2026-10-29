@@ -358,13 +358,16 @@ private root, including stops.
 
 Every operative `gateway up`, `gateway down` and `gateway setup` action appends
 one bounded event to `gateway.stderr.log` in the gateway state directory it
-targets, before its first effect, so an action that then refuses or fails is
-attributable too. Recording appends to the log the gateway already keeps and
-never creates its directory, so an `up` or `setup` on a machine without
-gateway state stays read-only. Kernel custody settlement appends the same
-record for a machine gateway stop it performs. An event keeps the existing
-`event`, `pid`, `argv`, `cwd` and `cause` fields, redacts credential-shaped
-argument values, and adds a `caller` record:
+targets, when it starts, so an action that then refuses, finds nothing to do or
+fails is attributable too. Recording appends to the log the gateway already
+keeps and never creates its directory, so an `up` or `setup` on a machine
+without gateway state stays read-only. Kernel custody settlement appends the
+same record for a machine gateway stop it performs. No lower-level signal
+helper appends its own event: one action is one record, and a replacement or a
+migration stop stays attributable through the `up` or `setup` action that
+requested it. An event keeps the existing `event`, `pid`, `argv`, `cwd` and
+`cause` fields, redacts credential-shaped argument values, and adds a `caller`
+record:
 
 - the invoking process's start identity (the platform's own process-start
 evidence, so two processes that held one pid stay distinguishable), its
@@ -379,6 +382,19 @@ identity-shaped value; every other environment value is never read;
 vanished parent, unreadable arguments, a pid whose start identity changed while
 it was read, a truncated chain, or a marker whose value failed validation. No
 reason ever quotes the value it rejected.
+
+Redaction has two policies, because the two command lines are different kinds
+of text. The invoking process's own `argv` is Effigy's own command grammar, so a
+credential-named flag (`--token`, `--api-key`, `--password`, `Authorization:`…)
+keeps its name and loses only the value beside it, as does a URL's userinfo and
+a known token prefix. An ancestor's command line is arbitrary third-party text,
+so nothing there is trusted to describe its values: only recognised flag names
+and plain word or path shapes are recorded, a shell string is read token by
+token so `sh -c 'psql --password …'` loses that value, and a value after a flag,
+an attached short-flag value (`-pHunter2`), URL userinfo, a `KEY=value`, a JSON
+body and a long unseparated token are all recorded as `<redacted>`. An
+ancestor's program, flags and plain command words stay, which is what the chain
+is for.
 
 This record is diagnostic evidence only. It never authorizes, refuses or
 delays an operator action, and an unavailable log never fails one. The

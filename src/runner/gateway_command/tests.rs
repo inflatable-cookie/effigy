@@ -1636,6 +1636,28 @@ fn gateway_down_names_each_step_it_takes() {
     );
 }
 
+/// Every `down` request is attributable, including one that finds nothing to
+/// stop: the request is recorded in the private root's own gateway log before
+/// the first read (effigy#450).
+#[test]
+fn gateway_down_records_its_caller_before_it_reads_any_state() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let config = GatewayConfig::private(root.clone());
+    run_gateway_down_with_config(&config, false)
+        .expect("a stopped private gateway reports the stop");
+    let log = std::fs::read_to_string(root.join("gateway.stderr.log"))
+        .expect("the down request is recorded beside the gateway records");
+    let record: serde_json::Value = serde_json::from_str(log.trim()).expect("one event line");
+    assert_eq!(record["event"], "gateway_stop");
+    assert_eq!(record["action"], "down");
+    assert_eq!(record["cause"], "gateway down command");
+    assert_eq!(record["pid"], std::process::id());
+    assert_eq!(record["caller"]["pid"], std::process::id());
+}
+
 #[test]
 fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
     let (done, lines) = effigy_ui::steps::capture_lines(|| {

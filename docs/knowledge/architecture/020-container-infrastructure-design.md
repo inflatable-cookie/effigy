@@ -791,15 +791,25 @@ clean exits, without attributing an unobserved incident to one of them.
 The 2026-10-28 15:26:25Z stop of the installed Mac gateway showed what those
 fields could not answer: which terminal, session, agent or task asked for it.
 The same event now carries a bounded `caller` record for `up`, `down` and
-`setup`: the start identity, session and controlling terminal of the invoking
-process, its parent chain up to and including the session leader (at most eight
-entries, each with pid, start identity, session and redacted command), and only
-allowlisted `PASEO_*`, `NS_*` and `EFFIGY_RUN_*` identity markers whose value
-passes length and identity validation. An unreadable parent, argument or marker,
-or a pid whose start identity changed while it was read, becomes a bounded
-unknown reason instead of a guess, and no environment value is read unless its
-name is on that allowlist. The record names the action before its first effect,
-so a refused or failed `up` or `setup` is attributable as well. Logging stays
+`setup`, and each action names itself when it starts, so a refusal or an action
+with nothing to do is attributable as well: the start identity, session and
+controlling terminal of the invoking process, its parent chain up to and
+including the session leader (at most eight entries, each with pid, start
+identity, session and redacted command), and only allowlisted `PASEO_*`, `NS_*`
+and `EFFIGY_RUN_*` identity markers whose value passes length and identity
+validation. An unreadable parent, argument or marker, or a pid whose start
+identity changed while it was read, becomes a bounded unknown reason instead of
+a guess, and no environment value is read unless its name is on that allowlist.
+
+Redaction treats the two command lines differently. The invoking process's own
+`argv` is Effigy's grammar, so a credential-named flag keeps its name and loses
+only its value. An ancestor's command is arbitrary third-party text, so only
+recognised flag names and plain word or path shapes are kept: a value after a
+flag, an attached short-flag value, a shell string's flag values (read token by
+token), URL userinfo, a `KEY=value`, a JSON body and a long unseparated token
+are recorded as `<redacted>`. A stop signalled by replacement or migration is
+attributable through the `up` or `setup` action that requested it; no
+lower-level signal helper writes a second record for one action. Logging stays
 best effort and never authorizes, refuses or delays an action; the elevated
 child of `gateway setup` writes nothing, because the file would become
 root-owned in the operator's directory.
