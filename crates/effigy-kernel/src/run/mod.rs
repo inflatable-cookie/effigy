@@ -493,6 +493,9 @@ impl<'a> Run<'a> {
         // The gate is held: only now does the settlement window start, so the
         // wait above cannot spend it (effigy#447).
         let cleanup = cleanup()?;
+        if root.is_machine() {
+            settle::compact_machine_closed(&mut store, &inv.spec().owner, &cleanup)?;
+        }
         let mut predecessors = Vec::new();
         for owner in guard.ids() {
             predecessors.extend(

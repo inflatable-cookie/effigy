@@ -41,6 +41,86 @@ pub(super) fn cleanup_effects(cleanup: &CleanupContext) -> Result<EffectContext,
         .effects()
         .map_err(|_| RunError::broken("cleanup needs effects"))
 }
+
+/// Reclaim completed machine rows left between the close commit and sentinel
+/// exit. The owner gate excludes a live owner; the row remains visible until
+/// the exact sentinel is positively gone, including while it is stopped.
+pub(super) fn compact_machine_closed(
+    store: &mut Store,
+    owner: &ResourceId,
+    cleanup: &CleanupContext,
+) -> Result<(), RunError> {
+    use crate::ident::{self, ProcessIdentity, ProcessState};
+    use crate::observe::Observed;
+
+    if owner.kind() == crate::id::ResourceKind::Gateway {
+        return Ok(());
+    }
+    loop {
+        cleanup
+            .operation()
+            .check("compact completed machine runs")?;
+        let rows = {
+            let mut query = store.conn().prepare("SELECT run_id,sentinel_identity FROM runs WHERE owner=?1 AND phase='closed' AND cleanup_outcome='complete' AND sentinel_identity IS NOT NULL ORDER BY generation LIMIT 32")?;
+            let rows = query
+                .query_map([owner.name().to_string()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        if rows.is_empty() {
+            return Ok(());
+        }
+        for (_, encoded) in &rows {
+            let sentinel: ProcessIdentity = serde_json::from_str(encoded)?;
+            loop {
+                cleanup.operation().check("completed sentinel exit")?;
+                match ident::process_identity(sentinel.pid) {
+                    Observed::Absent(_) => break,
+                    Observed::Verified(actual, _) if actual != sentinel => break,
+                    Observed::Unknown(reason) => {
+                        return Err(RunError::unavailable(format!(
+                            "completed sentinel identity: {reason}"
+                        )))
+                    }
+                    Observed::Verified(_, _) => match ident::process_state(sentinel.pid) {
+                        Observed::Absent(_) => break,
+                        Observed::Verified(ProcessState::Zombie, _) => {
+                            // Recheck identity so a reused PID cannot lend its
+                            // zombie state to the recorded sentinel.
+                            match ident::process_identity(sentinel.pid) {
+                                Observed::Verified(_, _) | Observed::Absent(_) => break,
+                                Observed::Unknown(reason) => {
+                                    return Err(RunError::unavailable(format!(
+                                        "completed sentinel identity: {reason}"
+                                    )))
+                                }
+                            }
+                        }
+                        Observed::Verified(_, _) => {}
+                        Observed::Unknown(reason) => {
+                            return Err(RunError::unavailable(format!(
+                                "completed sentinel state: {reason}"
+                            )))
+                        }
+                    },
+                }
+                std::thread::sleep(
+                    Duration::from_millis(5)
+                        .min(cleanup.operation().remaining().unwrap_or_default()),
+                );
+            }
+        }
+        let cx = cleanup_effects(cleanup)?;
+        store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+        for (id, _) in &rows {
+            txn.conn().execute("DELETE FROM runs WHERE run_id=?1 AND owner=?2 AND phase='closed' AND cleanup_outcome='complete'", params![id, owner.name().to_string()])?;
+        }
+        Ok::<_, RunError>(())
+    })?;
+    }
+}
 impl Run<'_> {
     pub(super) fn settle_inner(
         &mut self,
