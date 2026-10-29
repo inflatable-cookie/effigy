@@ -762,8 +762,8 @@ fn custody_recovery_settles_an_empty_group_after_its_anchor_exits() {
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observed = cx.operation().observe().unwrap();
-    eventually(|| {
-        match fresh_status(&observed, &root, RunId::new(1, [9; 10]).unwrap()) {
+    eventually(
+        || match fresh_status(&observed, &root, RunId::new(1, [9; 10]).unwrap()) {
             Observed::Verified(RunStatus::Closed { effects, .. }, _) => {
                 let residue = effects
                     .iter()
@@ -773,8 +773,8 @@ fn custody_recovery_settles_an_empty_group_after_its_anchor_exits() {
                 true
             }
             _ => false,
-        }
-    });
+        },
+    );
 }
 
 #[test]
