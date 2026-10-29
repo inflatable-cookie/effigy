@@ -985,6 +985,78 @@ fn workspace_attachment_sessions_are_distinguished_by_run_and_generation() {
 }
 
 #[test]
+fn workspace_open_workload_context_can_replay_and_attach() {
+    let fixture = home();
+    let cx = OperationContext::new(
+        Deadline::Open(OpenReason::DevServer),
+        CancelToken::default(),
+        context().operation().limits().clone(),
+        EffectClass::Mutate,
+        Placement::Host,
+    )
+    .effects()
+    .unwrap();
+    assert!(
+        cx.operation().observe().is_err(),
+        "workload observation stays bounded"
+    );
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let key = admission_key(6);
+    let ticket = fresh(&cx, &root, key, id(1));
+    assert!(matches!(
+        recorded(&cx, &root, key, id(2)),
+        Recovered::Unknown {
+            reason: UnknownAdmission::ReservedNotAdmitted
+        }
+    ));
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &inv(owner()),
+        begin_opts(id(1)),
+        &cleanup(&cx),
+        &mut fake,
+        ticket,
+    )
+    .unwrap();
+    assert!(matches!(
+        recorded(&cx, &root, key, id(2)),
+        Recovered::Admitted { run: recovered, .. } if recovered == id(1)
+    ));
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let mut terminal =
+        attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([1; 16])).unwrap();
+    assert!(owner.attached(&cx, &root).unwrap());
+    assert!(terminal.attached(&cx, &root).unwrap());
+
+    // A finite parent still wins over the internal phase budget.
+    let expired = cx.child(std::time::Duration::ZERO);
+    assert!(resume_owner(&expired, &root, session(), id(1)).is_err());
+    assert!(attach_secondary(
+        &expired,
+        &root,
+        session(),
+        id(1),
+        AttachmentId::new([2; 16])
+    )
+    .is_err());
+    assert!(terminal.attached(&expired, &root).is_err());
+    assert!(reserve(&expired, &root, key, digest(), id(2)).is_err());
+    assert_eq!(
+        scalar(&cx, &root, "SELECT count(*) FROM run_attachments"),
+        2
+    );
+
+    terminal.release(&cx, &root, Release::Eof).unwrap();
+    assert!(!terminal.attached(&cx, &root).unwrap());
+    assert!(owner.attached(&cx, &root).unwrap());
+    owner.release(&cx, &root, Release::Detach).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+
+#[test]
 fn workspace_attachment_second_terminal_has_its_own_lifetime() {
     let fixture = home();
     let home = fixture.path();

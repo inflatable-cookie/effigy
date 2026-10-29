@@ -153,7 +153,8 @@ During v0.x, MINOR bumps may include breaking changes.
   gives secondary terminals independent lifetimes and bounded run controls.
   Owner EOF stops the supervised run; acknowledged detach leaves it running.
   Session identity is checked against the current journal, and orphaned owners
-  require custody recovery before reconnect handles are available.
+  require custody recovery before reconnect handles are available. Open engine
+  lifetimes use bounded phases for admission replay and attachment access.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

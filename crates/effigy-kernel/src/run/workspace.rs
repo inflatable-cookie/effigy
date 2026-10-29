@@ -226,9 +226,12 @@ pub fn reserve(
     run: RunId,
 ) -> Result<Reservation, RunError> {
     mutations_only(cx, "a workspace admission")?;
-    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+    // An engine's workload may be open-ended; this journal phase, including
+    // replay's owner observation, must still have one finite deadline.
+    let cx = &cx.child(std::time::Duration::from_secs(30));
+    let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(AdmissionReserveBefore)?;
-    let recorded = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+    let recorded = store.transaction_within(cx, BusyWait::Context, |txn| {
         insert_reservation(txn.conn(), txn.now(), key, &digest, run, cx, root)
     })?;
     crate::fault_point!(AdmissionReserveAfter)?;
@@ -570,6 +573,7 @@ impl Attachment {
     }
     /// Whether this attachment is still attached in the journal.
     pub fn attached(&self, cx: &EffectContext, root: &StateRoot) -> Result<bool, RunError> {
+        let cx = cx.child(std::time::Duration::from_secs(30));
         let observed = cx
             .operation()
             .observe()
@@ -780,9 +784,10 @@ fn open(
     id: Option<AttachmentId>,
 ) -> Result<Attachment, RunError> {
     mutations_only(cx, "a workspace attachment")?;
-    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+    let cx = &cx.child(std::time::Duration::from_secs(30));
+    let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(RunAttachBefore)?;
-    let (id, fence) = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+    let (id, fence) = store.transaction_within(cx, BusyWait::Context, |txn| {
         let conn = txn.conn();
         let admitted = admission_session(conn, run)?
             .ok_or_else(|| RunError::refused("this run was not admitted by a session"))?;

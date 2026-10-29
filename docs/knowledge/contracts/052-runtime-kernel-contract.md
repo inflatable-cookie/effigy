@@ -2798,9 +2798,11 @@ while an acknowledged detach records none and leaves the run going, including
 when its original owning pipe closes. `EngineSession::watch_attachment` binds an
 attachment to a separate client liveness pipe; the supervisor's control turn
 releases a killed secondary's row without stopping the owner, and reclaims its
-slot. Watches are bounded to eight secondaries and one owner. Workspace controls
-respect the caller's remaining budget, capped at one second, including a busy
-store; a timeout records no control and the caller may retry. Output reads do
+slot. Watches are bounded to eight secondaries and one owner. Reservation replay,
+attachment opening and attachment status derive finite observation phases even
+when the engine's workload lifetime is open, preserving any shorter caller
+deadline. Workspace controls respect the caller's remaining budget, capped at
+one second, including a busy store; a timeout records no control and the caller may retry. Output reads do
 not hold the writer or share the liveness pipe. `resume_owner` reopens
 the owning client's handle and no other. Both refuse a run this session did not
 admit and grant nothing: the dispatcher's grant check remains the authority.
