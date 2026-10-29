@@ -1681,7 +1681,11 @@ The login activation directory
 by you and not group- or world-writable, and the entry Effigy uses there must be
 its own link to the owned unit. A missing unit directory is simply no
 activation: a fresh installation, or one whose directory you removed before
-retrying, still tears down cleanly instead of being refused. Effigy verifies both before it asks the manager
+retrying, still tears down cleanly instead of being refused. A directory
+refusal's `chmod` is one quoted shell word, so a home containing a space cannot
+split the command, and a symlinked activation directory is refused by naming
+that entry and asking you to move it aside — never by a `chmod` on its parent,
+which would change an unrelated directory and can reach the symlink's target. Effigy verifies both before it asks the manager
 to do anything: a `default.target.wants` that is a symlink to another directory,
 or an entry that names another target or is not a link, is refused without
 touching it and without stopping or disabling anything.

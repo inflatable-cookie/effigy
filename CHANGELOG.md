@@ -173,7 +173,10 @@ During v0.x, MINOR bumps may include breaking changes.
   result afterwards — even for a disabled unit or a missing activation
   directory — refusing with the exact command (and deleting nothing) when an
   entry is there or is not its own link, and a missing unit directory counts as
-  no activation so a fresh or partially removed installation still tears down; a changed definition disables the activation
+  no activation so a fresh or partially removed installation still tears down;
+  an activation directory that is a symlink is refused by naming that entry and
+  asking you to move it aside (never a `chmod` on its parent), and a directory
+  refusal's `chmod` is one quoted shell word; a changed definition disables the activation
   before it rewrites the unit and refuses if it remains. `setup --remove`
   completes the filesystem removal and then reports a `daemon-reload` that
   refuses, cannot be reached or times out, with the exact

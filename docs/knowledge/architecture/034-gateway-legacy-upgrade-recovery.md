@@ -394,7 +394,9 @@ The login activation directory `~<home>/.config/systemd/user/default.target.want
 is treated as an identity of its own. It is opened from the verified unit
 directory with `O_NOFOLLOW | O_DIRECTORY` and its owner and mode are checked
 before anything else happens, so a `default.target.wants` symlink to a foreign
-directory cannot redirect Effigy, or the manager on Effigy's behalf. A missing
+directory cannot redirect Effigy, or the manager on Effigy's behalf. A directory refusal's `chmod` is emitted as one shell word, and a symlinked
+activation directory is refused by naming that entry with the move-aside
+recovery rather than a `chmod` on its parent. A missing
 unit directory is treated as no activation at all — a fresh installation, or one
 whose directory was removed before a retry, has nothing to preserve and still
 tears down cleanly — while a linked, foreign-owned, non-directory or

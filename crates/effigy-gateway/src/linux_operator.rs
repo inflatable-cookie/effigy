@@ -606,7 +606,7 @@ impl ActivationDir {
         let unit_dir = match open_no_follow(&paths.user_dir, libc::O_DIRECTORY) {
             Ok(dir) => dir,
             Err(failure) if failure.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(failure) => return Err(refusal(paths, operator_uid, failure)),
+            Err(failure) => return Err(unit_dir_refusal(paths, operator_uid, failure)),
         };
         verify_directory(&unit_dir, &paths.user_dir, operator_uid)?;
         let name = cstring(Self::NAME)?;
@@ -623,7 +623,7 @@ impl ActivationDir {
             let failure = io::Error::last_os_error();
             return match failure.raw_os_error() {
                 Some(libc::ENOENT) => Ok(None),
-                _ => Err(refusal(paths, operator_uid, failure)),
+                _ => Err(activation_dir_refusal(paths, operator_uid, failure)),
             };
         }
         // SAFETY: `openat` returned a new owned descriptor and nothing else owns it.
@@ -796,25 +796,60 @@ fn cstring(text: &str) -> io::Result<std::ffi::CString> {
     std::ffi::CString::new(text).map_err(|_| error("a fixed name carries a NUL byte"))
 }
 
+/// A `chmod` the operator can paste, with the path as a safe shell word, or a
+/// sentence naming the limit when the path cannot be printed as one.
+fn chmod_advice(mode: &str, path: &Path) -> String {
+    match shell_word(path) {
+        Some(word) => format!("Run `chmod {mode} {word}`"),
+        None => format!(
+            "This path is not valid UTF-8, so no shell command can print it; set its mode from a shell that can address it"
+        ),
+    }
+}
+
 /// A directory Effigy will read inside: real, operator-owned and not writable
 /// by another account. The repair is a mode change the operator can make, never
-/// a silent repair.
+/// a silent repair, and it is a shell command that cannot touch another path.
 fn verify_directory(dir: &std::fs::File, path: &Path, operator_uid: u32) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
     let metadata = dir.metadata()?;
     if !metadata.is_dir() || metadata.uid() != operator_uid || metadata.mode() & 0o022 != 0 {
         return Err(error(format!(
-            "refusing the directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable. Run `chmod 755 {0}` (and `systemctl --user disable {UNIT_NAME}`), then run `effigy gateway setup` again",
-            path.display()
+            "refusing the directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable. {}, then run `effigy gateway setup` again",
+            path_label(path),
+            chmod_advice("755", path)
         )));
     }
     Ok(())
 }
 
-fn refusal(paths: &LaunchPaths, operator_uid: u32, failure: impl std::fmt::Display) -> io::Error {
+/// The systemd user-unit directory could not be opened at all. Its own identity
+/// or mode is the problem, so a quoted `chmod` is the recovery.
+fn unit_dir_refusal(
+    paths: &LaunchPaths,
+    operator_uid: u32,
+    failure: impl std::fmt::Display,
+) -> io::Error {
     error(format!(
-        "refusing the login activation directory {}: it must be a real directory Effigy can bind, owned by uid {operator_uid} and not group- or world-writable ({failure}). Run `systemctl --user disable {UNIT_NAME}` (or move it aside) and `chmod 755 {0}`, then run `effigy gateway setup` again",
-        paths.wants.parent().unwrap_or(&paths.wants).display()
+        "refusing the systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} ({failure}). {}, then run `effigy gateway setup` again",
+        path_label(&paths.user_dir),
+        chmod_advice("755", &paths.user_dir)
+    ))
+}
+
+/// The activation directory itself is not a real directory Effigy can bind —
+/// typically it is a symlink. Name that entry, not its parent: a `chmod` on the
+/// parent changes an unrelated directory and, through a symlink, can reach the
+/// target. The recovery is to move the entry aside.
+fn activation_dir_refusal(
+    paths: &LaunchPaths,
+    operator_uid: u32,
+    failure: impl std::fmt::Display,
+) -> io::Error {
+    error(format!(
+        "refusing the login activation directory {}: it must be Effigy's own real directory, owned by uid {operator_uid}, not a symlink, and not group- or world-writable ({failure}). Move that entry aside (or run `systemctl --user disable {UNIT_NAME}` yourself), then run `effigy gateway setup` again; the systemd user unit directory {} is left as it is",
+        path_label(&paths.wants),
+        path_label(&paths.user_dir)
     ))
 }
 
@@ -984,9 +1019,9 @@ fn verify_user_unit_dir(
         || metadata.mode() & 0o022 != 0
     {
         return Err(error(format!(
-            "unsafe systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable. Run `chmod 755 {}`, then run `effigy gateway setup` again",
-            paths.user_dir.display(),
-            paths.user_dir.display()
+            "unsafe systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} and not group- or world-writable. {}, then run `effigy gateway setup` again",
+            path_label(&paths.user_dir),
+            chmod_advice("755", &paths.user_dir)
         )));
     }
     Ok(())
@@ -1278,17 +1313,17 @@ fn shell_word(path: &Path) -> Option<String> {
 fn image_identity_refusal(detail: &str, executable: &Path, operator_uid: u32) -> io::Error {
     error(format!(
         "the installed gateway binary {} is not usable for the Linux operator route ({detail}): it must be one real file (not a symbolic or hard link), owned by the operator (uid {operator_uid}) or root, not group- or world-writable, and not empty. Install it as one real file owned by this account (for example `effigy install:local` as this account) and run `effigy gateway setup` again",
-        executable_label(executable)
+        path_label(executable)
     ))
 }
 
 /// The executable path for a message: a shell word when one can be printed,
 /// otherwise the lossy display with the limit stated.
-fn executable_label(executable: &Path) -> String {
-    shell_word(executable).unwrap_or_else(|| {
+fn path_label(path: &Path) -> String {
+    shell_word(path).unwrap_or_else(|| {
         format!(
             "{} (this path is not valid UTF-8, so no shell command can print it)",
-            executable.display()
+            path.display()
         )
     })
 }
@@ -1306,7 +1341,7 @@ fn image_access_refusal(class: AccessClass, executable: &Path, operator_uid: u32
     };
     error(format!(
         "the installed gateway binary {} is not usable for the Linux operator route ({detail}): this account (uid {operator_uid}) cannot execute it. Execution follows this account's own access — the owner execute bit when this account owns the image, otherwise the group execute bit when one of this account's process groups is the image's group, and the other execute bit only when no group matches (both when the memberships cannot be read). {fix}",
-        executable_label(executable),
+        path_label(executable),
         detail = class.describe(),
     ))
 }
@@ -1926,9 +1961,9 @@ pub fn observe(
             paths.unit.display()
         )),
         UnitState::Unsafe => recovery.push(format!(
-            "the systemd user unit path {} is unsafe: it must be a real directory owned by you and not group- or world-writable. Run `chmod 755 {}`, then run `effigy gateway setup`",
-            paths.user_dir.display(),
-            paths.user_dir.display()
+            "the systemd user unit path {} is unsafe: it must be a real directory owned by you and not group- or world-writable. {}, then run `effigy gateway setup`",
+            path_label(&paths.user_dir),
+            chmod_advice("755", &paths.user_dir)
         )),
         UnitState::Installed => {}
     }
@@ -4214,6 +4249,97 @@ mod tests {
             // The unit and the link are both untouched.
             assert!(paths.unit.exists());
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
+        });
+    }
+
+    /// A directory refusal's `chmod` is one shell word: a home with a space must
+    /// not split into operands, and the printed command must change exactly the
+    /// directory it names and nothing else.
+    #[test]
+    fn a_directory_refusal_prints_a_chmod_that_touches_only_that_directory() {
+        with_run(|run, cx| {
+            use std::os::unix::fs::PermissionsExt;
+            let home = tempfile::tempdir().unwrap();
+            // `home space` and `home` sit side by side; only the first is the
+            // unit directory.
+            let parent = home.path().join("configs");
+            std::fs::create_dir(&parent).unwrap();
+            let intended = parent.join("home space");
+            let decoy = parent.join("home");
+            for directory in [&intended, &decoy] {
+                std::fs::create_dir(directory).unwrap();
+                std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o775))
+                    .unwrap();
+            }
+            let paths = LaunchPaths::at(intended.clone(), home.path());
+            let binary = installed_binary(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let mut manager = FakeManager::for_paths(&paths);
+            let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
+            let message = error.to_string();
+            let word = shell_word(&intended).expect("a printable path");
+            assert!(
+                message.contains(&format!("chmod 755 {word}")),
+                "the refusal quotes the directory: {message}"
+            );
+
+            // Run exactly the printed command: the intended directory becomes
+            // 0755 and the sibling named without the space is untouched.
+            let output = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("chmod 755 {word}"))
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(std::fs::metadata(&intended).unwrap().mode() & 0o777, 0o755);
+            assert_eq!(std::fs::metadata(&decoy).unwrap().mode() & 0o777, 0o775);
+        });
+    }
+
+    /// A linked activation directory refuses by naming *that* entry with the
+    /// move-aside recovery; it must not advise a `chmod` on the parent, which
+    /// changes an unrelated directory and can reach a symlink's target.
+    #[test]
+    fn a_linked_activation_directory_refusal_names_the_entry_and_never_a_chmod() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+
+            // The activation directory becomes a symlink to a foreign directory.
+            let foreign = home.path().join("foreign-wants");
+            std::fs::create_dir(&foreign).unwrap();
+            let wants_dir = paths.wants.parent().unwrap().to_path_buf();
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::fs::remove_dir(&wants_dir).unwrap();
+            std::os::unix::fs::symlink(&foreign, &wants_dir).unwrap();
+
+            let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains(&path_label(&paths.wants)),
+                "the refusal names the activation directory itself: {message}"
+            );
+            assert!(
+                message.contains("Move that entry aside"),
+                "the recovery is to move the entry: {message}"
+            );
+            assert!(
+                !message.contains("chmod"),
+                "a chmod through the parent would change an unrelated directory: {message}"
+            );
+            assert!(
+                message.contains(&path_label(&paths.user_dir)),
+                "the untouched unit directory is named: {message}"
+            );
+            // The symlink is left exactly as it was.
+            assert!(std::fs::symlink_metadata(&wants_dir)
+                .unwrap()
+                .file_type()
+                .is_symlink());
         });
     }
 
