@@ -140,6 +140,16 @@ impl ProgressSource {
         }
     }
 
+    /// Name a new object or probe after the previous wait ended. Clears
+    /// sub-step, count and event so frames name this wait until `update`.
+    pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.awaiting = awaiting.into();
+        state.sub_step = None;
+        state.count = None;
+        state.event = None;
+    }
+
     /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
     pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
