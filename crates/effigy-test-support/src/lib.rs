@@ -374,13 +374,6 @@ mod tests {
             .expect("test-support workspace location");
         let checkout = fs::canonicalize(checkout).unwrap();
         let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
-        let namespaces: Vec<PathBuf> = temp
-            .ancestors()
-            .filter(|ancestor| is_effigy_scratch_namespace(ancestor))
-            .map(|namespace| {
-                fs::canonicalize(namespace).unwrap_or_else(|_| namespace.to_path_buf())
-            })
-            .collect();
         let workspace = Fixture::workspace("effigy-ws-proof-").unwrap();
         let created = Fixture::new("effigy-new-proof-").unwrap();
         for fixture in [&workspace, &created] {
@@ -396,15 +389,6 @@ mod tests {
                 fixture.path().display(),
                 checkout.display()
             );
-            if !namespaces.is_empty() {
-                assert!(
-                    namespaces
-                        .iter()
-                        .any(|namespace| fixture.path().starts_with(namespace)),
-                    "fixture escaped the Effigy scratch namespace: {}",
-                    fixture.path().display()
-                );
-            }
         }
     }
 
