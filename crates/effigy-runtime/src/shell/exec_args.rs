@@ -50,6 +50,7 @@ pub fn build_container_shell_args(
     }
     append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);
+    append_pane_env(&mut args);
     args.push(OsString::from("-e"));
     args.push(OsString::from(CONTAINER_HANDOFF_ENV));
     args.push(OsString::from(service));
@@ -75,6 +76,7 @@ pub(super) fn build_interactive_container_shell_args(
     }
     append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);
+    append_pane_env(&mut args);
     args.push(OsString::from("-e"));
     args.push(OsString::from(CONTAINER_HANDOFF_ENV));
     args.push(OsString::from(service));
@@ -92,6 +94,16 @@ pub(super) fn build_interactive_container_shell_args(
         &format!("exec {} -i", shell_quote(shell)),
     )));
     args
+}
+
+fn append_pane_env(args: &mut Vec<OsString>) {
+    if effigy_ui::steps::in_managed_pane() {
+        args.push(OsString::from("-e"));
+        args.push(OsString::from(format!(
+            "{}=1",
+            effigy_ui::steps::MANAGED_PANE_ENV
+        )));
+    }
 }
 
 fn append_workspace_exec_identity(

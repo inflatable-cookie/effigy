@@ -385,11 +385,13 @@ fn run_steps(
                 table.timeout_ms,
             ),
         };
+        let subject = step_subject(step);
         planned.push((
             resolve_step_action(step, preflight, selection, passthrough)?,
             step_env,
             label,
             timeout,
+            subject,
         ));
     }
     let mut report = SequenceReport {
@@ -401,7 +403,7 @@ fn run_steps(
         outcome: WorkloadOutcome::Succeeded,
     };
     let total = planned.len();
-    for (index, (action, env, label, timeout)) in planned.into_iter().enumerate() {
+    for (index, (action, env, label, timeout, subject)) in planned.into_iter().enumerate() {
         if report.code != 0 {
             report
                 .steps
@@ -420,7 +422,18 @@ fn run_steps(
         // A step can run for minutes, so each one is a live step that names
         // which step of how many is running.
         let position = index + 1;
-        let step = effigy_ui::steps::step(&sequence_step_label(task_name, position, total, &label));
+        let description = selection
+            .task
+            .description
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        let subject = if total == 1 {
+            description
+        } else {
+            subject.as_deref()
+        };
+        let progress = sequence_step_label(task_name, position, total, subject);
+        let step = effigy_ui::steps::step(&progress);
         let mut child = run.step(index, &label)?;
         let child_id = child.id();
         let result = {
@@ -482,12 +495,11 @@ fn run_steps(
                 )
             }
         };
+        let outcome_label = progress.strip_prefix("running ").unwrap_or(&progress);
         if code == 0 {
-            step.succeed(&format!("step {position}/{total} `{label}` finished"));
+            step.succeed(&format!("{outcome_label} finished"));
         } else {
-            step.fail(&format!(
-                "step {position}/{total} `{label}` failed with exit code {code}"
-            ));
+            step.fail(&format!("{outcome_label} failed with exit code {code}"));
         }
         for warning in child.close(workload.clone()) {
             eprintln!("warning: step `{label}`: {warning}");
@@ -504,14 +516,39 @@ fn run_steps(
     Ok(report)
 }
 
-/// `running dev step 2/4 `build``: which step is running, out of how many.
+/// A human subject from an explicit ID, task reference or command.
+fn step_subject(step: &ManifestManagedRunStep) -> Option<String> {
+    let command = match step {
+        ManifestManagedRunStep::Command(command) => Some(command.as_str()),
+        ManifestManagedRunStep::Step(table) => {
+            if let Some(id) = table.id.as_deref().filter(|id| !id.trim().is_empty()) {
+                return Some(id.to_owned());
+            }
+            if let Some(task) = table.task.as_deref() {
+                return Some(task.to_owned());
+            }
+            table.run.as_deref().or(table.rhai.as_deref())
+        }
+    };
+    command
+        .and_then(|text| text.split_whitespace().next())
+        .map(str::to_owned)
+}
+
 pub(in crate::runner::execute) fn sequence_step_label(
     task_name: &str,
     position: usize,
     total: usize,
-    step: &str,
+    subject: Option<&str>,
 ) -> String {
-    format!("running {task_name} step {position}/{total} `{step}`")
+    let mut label = format!("running {task_name}");
+    if total > 1 {
+        label.push_str(&format!(" step {position}/{total}"));
+    }
+    if let Some(subject) = subject {
+        label.push_str(&format!(": {subject}"));
+    }
+    label
 }
 
 type StepExit = (i32, String, String, WorkloadOutcome);
@@ -898,8 +935,17 @@ mod tests {
     #[test]
     fn a_sequence_step_names_the_task_its_position_and_its_label() {
         assert_eq!(
-            sequence_step_label("dev", 2, 4, "build"),
-            "running dev step 2/4 `build`"
+            sequence_step_label("dev", 2, 4, Some("build")),
+            "running dev step 2/4: build"
+        );
+    }
+
+    #[test]
+    fn single_step_labels_omit_ordinals_and_prefer_description() {
+        assert_eq!(sequence_step_label("dev", 1, 1, None), "running dev");
+        assert_eq!(
+            sequence_step_label("dev", 1, 1, Some("starting services")),
+            "running dev: starting services"
         );
     }
 

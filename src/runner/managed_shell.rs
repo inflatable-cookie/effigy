@@ -61,10 +61,11 @@ pub(crate) fn render_inline_managed_shell_command(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(policy.primary_service.as_str());
+    let pane_env = format!("{}=1", effigy_ui::steps::MANAGED_PANE_ENV);
     let attach = render_inline_compose_command(
         repo_root,
         policy,
-        &compose_args(policy, ["exec", service_name, "sh"]),
+        &compose_args(policy, ["exec", "-e", &pane_env, service_name, "sh"]),
     );
     format!("exec sh -c {}", shell_quote(&attach))
 }
@@ -153,4 +154,27 @@ fn format_os_args(args: &[std::ffi::OsString]) -> String {
         .map(|arg| shell_quote(&arg.to_string_lossy()))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_inline_managed_shell_command;
+
+    #[test]
+    fn inline_shell_tab_passes_the_managed_pane_marker() {
+        let fixture = effigy_test_support::Fixture::workspace("inline-pane-shell-").unwrap();
+        let root = fixture.path();
+        let policy = crate::runner::test_support::effective_container_policy(
+            "fixture",
+            "fixture",
+            "workspace",
+            root.join("compose.yaml"),
+        );
+        let command = render_inline_managed_shell_command(root, &policy, None);
+        assert!(
+            command.contains(&format!("{}=1", effigy_ui::steps::MANAGED_PANE_ENV)),
+            "{command}"
+        );
+        assert!(command.contains("workspace"), "{command}");
+    }
 }

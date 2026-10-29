@@ -132,7 +132,10 @@ pub fn run_cli(raw_args: Vec<String>) {
     // process supervisor.
     let json_requested = command_requests_json(&cmd, global_json_mode);
     let local_qa_json = !global_json_mode && command_requests_local_qa_json(&cmd);
-    let suppress_header = internal_suppress_header || json_requested || local_qa_json;
+    let suppress_header = internal_suppress_header
+        || effigy_ui::steps::in_managed_pane()
+        || json_requested
+        || local_qa_json;
     let emit_json_envelope = json_requested;
     effigy_manifest::set_retired_notice_delivery(if emit_json_envelope {
         effigy_manifest::RetiredNoticeDelivery::JsonEnvelope

@@ -436,6 +436,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Managed TUI panes now show nested Effigy progress as plain start and finish
+  lines instead of repeated spinner redraws and banners. Shutdown takes over
+  the progress display cleanly, and sequence labels name useful work instead of
+  generated step numbers.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
