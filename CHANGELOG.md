@@ -182,7 +182,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `gateway status` keeps a foreign or unsafe activation as its own refusal (it
   is never reported as merely disabled, so its advice cannot hand the manager a
   path Effigy refuses), and an unsafe unit file is named as that file rather
-  than as an unrelated directory, and a post-request activation that is foreign
+  than as an unrelated directory, the unit file must pass the same owner-and-mode
+  trust the kernel applies (a foreign-owned or foreign-writable file is `unsafe`,
+  never `installed`, and removal refuses it before any `systemctl` request), and
+  a post-request activation that is foreign
   or unsafe is reported as that refusal rather than as a missing link — after
   `daemon-reload` as well as after `enable`, and in a failed rewrite's recovery,
   which also re-observes after a failed restore (typed and neutral, so no nested

@@ -1646,7 +1646,11 @@ an unsafe activation directory — is kept as its own refusal with the move-asid
 recovery and never becomes "not enabled", so `status` never tells you to enable
 the unit through a path Effigy refuses. An unsafe unit *file* (a link, a
 non-regular or changed file) is named as that file, not as an unrelated
-directory.
+directory. The unit file also has to pass the same owner and mode trust the
+kernel applies: a file owned by another account or writable by another account
+is reported `unsafe` and named, never `installed`, and `gateway setup --remove`
+refuses it before any `systemctl` request, so the manager cannot stop a unit
+Effigy will not remove.
 
 `unit` is one of `missing`, `installed`, `foreign`, `unsafe` or `stale`. Setup
 writes the unit's own `ExecStart` as quoted `"<installed effigy>" gateway up`

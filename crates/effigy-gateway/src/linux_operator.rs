@@ -513,7 +513,7 @@ fn rewrite_failed(
             "rewriting the launch unit failed: {failure}; {refusal}"
         ));
     }
-    let unit = match read_unit_file_checked(paths) {
+    let unit = match read_unit_file_checked(paths, operator_uid) {
         Ok(Some(bytes)) if bytes == previous => UnitAfterFailure::Previous,
         Ok(Some(_)) => UnitAfterFailure::Different,
         Ok(None) => UnitAfterFailure::Missing,
@@ -2036,7 +2036,7 @@ pub fn observe_unit(paths: &LaunchPaths, operator_uid: u32) -> UnitState {
     {
         return UnitState::Unsafe;
     }
-    match read_unit_file(paths) {
+    match read_unit_file(paths, operator_uid) {
         Ok(Some(bytes)) if owned_unit(&bytes) => match declared_executable(&bytes) {
             Some(executable) if usable_executable(&executable, operator_uid) => {
                 UnitState::Installed
@@ -2065,8 +2065,8 @@ fn declared_executable(bytes: &[u8]) -> Option<PathBuf> {
     executable.is_absolute().then(|| executable.to_path_buf())
 }
 
-fn declared_unit_executable(paths: &LaunchPaths) -> Option<PathBuf> {
-    read_unit_file(paths)
+fn declared_unit_executable(paths: &LaunchPaths, operator_uid: u32) -> Option<PathBuf> {
+    read_unit_file(paths, operator_uid)
         .ok()
         .flatten()
         .and_then(|bytes| declared_executable(&bytes))
@@ -2083,14 +2083,36 @@ fn usable_executable(executable: &Path, operator_uid: u32) -> bool {
         .unwrap_or(false)
 }
 
-fn read_unit_file(paths: &LaunchPaths) -> io::Result<Option<Vec<u8>>> {
-    read_unit_file_checked(paths).map_err(error)
+/// The kernel's own rule for one operator-owned record, applied here too: the
+/// unit file must belong to the operator account and not be writable by another
+/// account. A file that fails it is never reported `installed` and never handed
+/// to the manager, because the kernel refuses it again before removal.
+fn unit_file_trust(uid: u32, mode: u32, operator_uid: u32) -> Result<(), String> {
+    if uid != operator_uid {
+        return Err(format!(
+            "it is owned by uid {uid}, not this account (uid {operator_uid}); move it aside and install it again as this account"
+        ));
+    }
+    if mode & 0o022 != 0 {
+        return Err(format!(
+            "it is writable by another account (mode {:o}); move it aside and install it again with an owner-only mode",
+            mode & 0o777
+        ));
+    }
+    Ok(())
+}
+
+fn read_unit_file(paths: &LaunchPaths, operator_uid: u32) -> io::Result<Option<Vec<u8>>> {
+    read_unit_file_checked(paths, operator_uid).map_err(error)
 }
 
 /// The owned unit file, or the sentence that says why it cannot be trusted.
 /// Status names this reason, so an unsafe *file* is never reported as an
 /// unrelated directory.
-fn read_unit_file_checked(paths: &LaunchPaths) -> Result<Option<Vec<u8>>, String> {
+fn read_unit_file_checked(
+    paths: &LaunchPaths,
+    operator_uid: u32,
+) -> Result<Option<Vec<u8>>, String> {
     use std::os::unix::fs::OpenOptionsExt;
     let before = match std::fs::symlink_metadata(&paths.unit) {
         Ok(metadata) => metadata,
@@ -2111,6 +2133,15 @@ fn read_unit_file_checked(paths: &LaunchPaths) -> Result<Option<Vec<u8>>, String
     if !before.is_file() {
         return Err(format!(
             "the unit file {} is not a regular file; move that entry aside and install a real file",
+            path_label(&paths.unit)
+        ));
+    }
+    // The same owner and mode rule the kernel applies before it removes the
+    // record, checked before status claims the unit or the manager is asked to
+    // disable it.
+    if let Err(detail) = unit_file_trust(before.uid(), before.mode(), operator_uid) {
+        return Err(format!(
+            "the unit file {} cannot be trusted: {detail}",
             path_label(&paths.unit)
         ));
     }
@@ -2272,7 +2303,7 @@ pub fn observe(
             }
         }
         UnitState::Stale => {
-            let executable = declared_unit_executable(paths)
+            let executable = declared_unit_executable(paths, operator_uid)
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "an unreadable executable".to_owned());
             recovery.push(format!(
@@ -2301,7 +2332,7 @@ pub fn observe(
                     path_label(&paths.user_dir),
                     directory_recovery(&metadata, &paths.user_dir, operator_uid)
                 ),
-                _ => read_unit_file_checked(paths).err().unwrap_or_else(|| {
+                _ => read_unit_file_checked(paths, operator_uid).err().unwrap_or_else(|| {
                     "the login launch unit could not be observed; inspect it and move the offending entry aside".to_owned()
                 }),
             };
@@ -4909,6 +4940,70 @@ mod tests {
                 !unsafe_advice.contains("systemctl --user enable"),
                 "status must not advise enable through an unsafe directory: {unsafe_advice}"
             );
+        });
+    }
+
+    /// The unit file carries the same owner and mode trust the kernel applies
+    /// before it removes the record. A wrong owner or a foreign-writable file is
+    /// refused as `unsafe`, never `installed`, and removal refuses before any
+    /// manager request or mutation.
+    #[test]
+    fn an_untrusted_unit_file_is_refused_by_status_and_removal_before_the_manager() {
+        with_run(|run, cx| {
+            use std::os::unix::fs::PermissionsExt;
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let unit_bytes = std::fs::read(&paths.unit).unwrap();
+
+            // The rule itself, including the owner case a strict fake cannot
+            // create (no chown without privilege).
+            assert!(unit_file_trust(uid, 0o100644, uid).is_ok());
+            assert!(unit_file_trust(0o644, 0o100644, uid).is_err());
+            let foreign = unit_file_trust(uid + 1, 0o100644, uid).unwrap_err();
+            assert!(
+                foreign.contains(&format!("owned by uid {}", uid + 1)),
+                "{foreign}"
+            );
+            let writable = unit_file_trust(uid, 0o100664, uid).unwrap_err();
+            assert!(
+                writable.contains("writable by another account"),
+                "{writable}"
+            );
+
+            // A group-writable unit file: status reports unsafe and names it.
+            std::fs::set_permissions(&paths.unit, std::fs::Permissions::from_mode(0o664)).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Unsafe);
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Unsafe);
+            let advice = status.recovery.join("\n");
+            assert!(advice.contains(&path_label(&paths.unit)), "{advice}");
+            assert!(advice.contains("writable by another account"), "{advice}");
+
+            // Removal refuses before any manager call and changes nothing.
+            let calls = manager.calls.len();
+            let error = remove(cx, &paths, uid, &mut manager).unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains("preserving foreign or unsafe systemd unit"),
+                "{message}"
+            );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
+            assert_eq!(std::fs::read(&paths.unit).unwrap(), unit_bytes);
+            assert!(
+                activation_linked(&paths, uid),
+                "the activation is untouched"
+            );
+
+            // A wrong owner is the same rule: the observation refuses it, so
+            // neither status nor removal can reach the manager.
+            std::fs::set_permissions(&paths.unit, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let error = read_unit_file_checked(&paths, uid + 1).unwrap_err();
+            assert!(error.contains("cannot be trusted"), "{error}");
+            assert!(error.contains("owned by uid"), "{error}");
         });
     }
 

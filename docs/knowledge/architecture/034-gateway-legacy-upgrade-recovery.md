@@ -473,7 +473,8 @@ denial fails setup rather than leaving a gateway that cannot serve 80/443.
 capability record without repairing or elevating; a foreign or unsafe
 activation keeps its own refusal (never "not enabled", so no `enable` advice
 through a refused path), and an unsafe unit file is named as that file rather
-than as a directory, omits an unobservable linger
+than as a directory, with the kernel's own owner-and-mode trust applied to that
+file before status claims it or the manager is asked to disable it, omits an unobservable linger
 state, and reports a foreign unit or capability as `foreign` with the exact
 recovery commands. Boot and native user-manager qualification on a Linux host
 remains a separate exact-candidate clean-base proof; guide 063 carries its
