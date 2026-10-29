@@ -417,13 +417,14 @@ pub fn authenticated(session: Session) -> Vec<Frame> {
     ]
 }
 
+type ResponseObserver = Box<dyn FnMut(&Response)>;
 /// Partial reads are normal. Captures raw requests and every host response.
 pub struct Pipe {
     pub input: Vec<u8>,
     pub read: usize,
     pub output: Vec<u8>,
     pub peer: Option<ServerIdentity>,
-    pub on_response: Option<Box<dyn FnMut(&Response)>>,
+    pub on_response: Option<ResponseObserver>,
 }
 impl Pipe {
     pub fn new(frames: &[Frame]) -> Self {
