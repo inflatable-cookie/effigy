@@ -88,6 +88,9 @@ struct ContainerUpPlan {
 struct ContainerUpRuntimeIntegrations {
     gateway_routes: Vec<super::gateway_registration::RegisteredGatewayRoute>,
     managed_host_listeners: Vec<crate::runner::host_process::ManagedHostListenerResult>,
+    /// Listeners that kept their own route withheld. Every other verified
+    /// route stays published, so this list is what exposure reports (effigy#455).
+    managed_host_listener_failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
     tcp_alias_host_notes: Vec<String>,
     warnings: Vec<String>,
 }
@@ -172,6 +175,61 @@ fn detached_activation_failure(
     output_json: bool,
     error: RunnerError,
 ) -> RunnerError {
+    // Partial exposure is not an unverified activation: the environment
+    // settled, and the report names exactly which routes are published and
+    // which listener withheld its own. It gets its own envelope so a failing
+    // host listener never reads as a whole-activation exposure failure
+    // (effigy#455).
+    if let RunnerError::ManagedListenerExposure {
+        environment,
+        exposed,
+        failures,
+    } = &error
+    {
+        let withheld = failures
+            .iter()
+            .map(|failure| {
+                serde_json::json!({
+                    "kind": "host_listener",
+                    "listener": failure.name,
+                    "route_domain": failure.route_domain,
+                    "declared_route_domain": failure.declared_route_domain,
+                    "status": failure.status,
+                    "observed_status": failure.observed_status,
+                    "detail": failure.detail,
+                    "output_tail": failure.output_tail,
+                    "log": failure.log,
+                    "recovery": format!("effigy container {} restart {}", environment, failure.name),
+                })
+            })
+            .collect::<Vec<_>>();
+        let message = format!(
+            "{error}\nDetached activation settled the environment with partial exposure: {} route(s) published, {} listener(s) withheld.\nnext: `effigy container up --detach` retries the withheld routes; `effigy container down` stops the scope.",
+            exposed.len(),
+            failures.len()
+        );
+        if output_json {
+            return RunnerError::CommandJsonFailure {
+                rendered: serde_json::json!({
+                    "state": "partial",
+                    "phase": "listener_exposure",
+                    "activation_stage": operation.stage.unwrap_or("runtime_integrations"),
+                    "identity": operation.identity,
+                    "environment": environment,
+                    "failure_kind": "managed_listener_exposure",
+                    "readiness": "verified",
+                    "exposure": "partial",
+                    "exposed_routes": exposed,
+                    "withheld_routes": withheld,
+                    "recovery": "effigy container up --detach",
+                    "stop": "effigy container down",
+                    "message": message,
+                })
+                .to_string(),
+            };
+        }
+        return RunnerError::task_invocation(message);
+    }
     let message = match &error {
         RunnerError::ManagedHostReadiness { diagnostic, .. } => {
             format!("Detached activation did not complete: {diagnostic}")
@@ -360,6 +418,20 @@ fn run_container_up_inner(
             settling.fail(error.to_string());
             return Err(error);
         }
+    }
+
+    if !integrations.managed_host_listener_failures.is_empty() {
+        // The environment is settled and every verified route is published;
+        // only the failing listeners' own routes are withheld. An attached
+        // session cannot leave a half-exposed stack open, so it keeps its
+        // existing closeout; a detached activation reports exactly which
+        // routes are exposed and which are not (effigy#455).
+        let failure = listener_exposure_failure(&plan.policy, &integrations);
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(failure);
+        }
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
+        return Err(finish_container_up_failure(failure, cleanup_result));
     }
 
     render_container_up_result(repo_root, &plan, health, integrations, output_json)
@@ -663,29 +735,31 @@ fn complete_container_up_runtime_integrations(
     };
 
     let mut warnings = plan.warnings.clone();
-    let managed_host_listeners = match start_host_processes_for_container(repo_root, policy) {
-        Ok(listeners) => listeners,
-        Err(error)
-            if policy
-                .host_processes
-                .iter()
-                .any(|process| process.listener.is_some()) =>
-        {
-            if plan.attach_mode == EffectiveAttachMode::Detached {
-                return Err(detached_activation_error(policy, error));
+    let (managed_host_listeners, managed_host_listener_failures) =
+        match start_host_processes_for_container(repo_root, policy) {
+            Ok(report) => (report.ready, report.failures),
+            Err(error)
+                if policy
+                    .host_processes
+                    .iter()
+                    .any(|process| process.listener.is_some()) =>
+            {
+                if plan.attach_mode == EffectiveAttachMode::Detached {
+                    return Err(detached_activation_error(policy, error));
+                }
+                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+                return Err(finish_container_up_failure(error, cleanup_result));
             }
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
-            return Err(finish_container_up_failure(error, cleanup_result));
-        }
-        Err(error) => {
-            warnings.push(format!("host-process supervisor failed to start: {error}"));
-            Vec::new()
-        }
-    };
+            Err(error) => {
+                warnings.push(format!("host-process supervisor failed to start: {error}"));
+                (Vec::new(), Vec::new())
+            }
+        };
 
     Ok(ContainerUpRuntimeIntegrations {
         gateway_routes,
         managed_host_listeners,
+        managed_host_listener_failures,
         tcp_alias_host_notes,
         warnings,
     })
@@ -738,6 +812,40 @@ fn detached_activation_error(policy: &EffectiveContainerPolicy, error: RunnerErr
         "{error}\ncontainer `{}` stays as Compose left it: gateway exposure is unverified and no teardown ran. Re-run `effigy container up --detach` to reconcile from what is running, or `effigy container down` to stop it.",
         policy.name
     ))
+}
+
+/// The routes this activation verified and published, as one line each, for
+/// the partial-exposure report.
+fn exposed_route_lines(integrations: &ContainerUpRuntimeIntegrations) -> Vec<String> {
+    let mut exposed = integrations
+        .gateway_routes
+        .iter()
+        .map(|route| match route.target.as_deref() {
+            Some(target) => format!("{} -> {target}", route.domain),
+            None => format!("{} (registered)", route.domain),
+        })
+        .collect::<Vec<_>>();
+    for listener in &integrations.managed_host_listeners {
+        exposed.push(format!(
+            "{} -> {}",
+            listener.route_domain, listener.public_url
+        ));
+    }
+    exposed
+}
+
+/// A settled environment whose exposure is partial: the container's verified
+/// routes and every ready listener are published, and each failed listener
+/// kept only its own route withheld.
+fn listener_exposure_failure(
+    policy: &EffectiveContainerPolicy,
+    integrations: &ContainerUpRuntimeIntegrations,
+) -> RunnerError {
+    RunnerError::ManagedListenerExposure {
+        environment: policy.name.clone(),
+        exposed: exposed_route_lines(integrations),
+        failures: integrations.managed_host_listener_failures.clone(),
+    }
 }
 
 fn prepare_sources_for_container_up(repo_root: &Path) -> Result<(), RunnerError> {
@@ -1584,6 +1692,139 @@ mod tests {
         assert!(cause.contains('…'), "{cause}");
         assert!(cause.ends_with("detail"), "{cause}");
     }
+    /// The bring-up's integrations, as `complete_container_up_runtime_integrations`
+    /// hands them to the partial-exposure report: one container route and one
+    /// healthy listener published, one listener withheld.
+    fn partial_exposure_fixture() -> (
+        EffectiveContainerPolicy,
+        super::ContainerUpRuntimeIntegrations,
+    ) {
+        let policy = test_policy(Vec::new());
+        let integrations = super::ContainerUpRuntimeIntegrations {
+            gateway_routes: vec![super::super::gateway_registration::RegisteredGatewayRoute {
+                domain: "web.test".to_owned(),
+                target: Some("127.0.0.1:18080".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                service: Some("app".to_owned()),
+                external_target: false,
+            }],
+            managed_host_listeners: vec![crate::runner::host_process::ManagedHostListenerResult {
+                name: "api".to_owned(),
+                status: "ready".to_owned(),
+                runtime_generation: "runtime-1".to_owned(),
+                generation: "generation-1".to_owned(),
+                address: "127.0.0.1:21001".to_owned(),
+                internal_url: "http://127.0.0.1:21001".to_owned(),
+                public_url: "http://api.test".to_owned(),
+                declared_route_domain: "api.test".to_owned(),
+                route_domain: "api.test".to_owned(),
+                route_tls: false,
+                state_file: "/checkout/.effigy/runtime/api.listener.json".to_owned(),
+            }],
+            managed_host_listener_failures: vec![
+                crate::runner::host_process::ManagedHostListenerFailure {
+                    name: "front".to_owned(),
+                    status: "failed".to_owned(),
+                    declared_route_domain: "acowtancy.test".to_owned(),
+                    route_domain: Some("acowtancy.test".to_owned()),
+                    observed_status: Some(500),
+                    detail: "managed listener at 127.0.0.1:21002 answered /health with HTTP 500 where 200 is required (status_mismatch)".to_owned(),
+                    output_tail: Some("vite: internal server error".to_owned()),
+                    log: "/checkout/.effigy/runtime/front.log".to_owned(),
+                },
+            ],
+            tcp_alias_host_notes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        (policy, integrations)
+    }
+
+    /// Partial exposure names the routes that are published and the listener
+    /// that is not, instead of one blanket unverified-exposure refusal
+    /// (effigy#455).
+    #[test]
+    fn listener_exposure_failure_names_exposed_routes_and_the_withheld_listener() {
+        let (policy, integrations) = partial_exposure_fixture();
+        let error = super::listener_exposure_failure(&policy, &integrations);
+        let text = error.to_string();
+        assert!(
+            text.contains("web.test -> 127.0.0.1:18080"),
+            "the container's published route is named: {text}"
+        );
+        assert!(
+            text.contains("api.test -> http://api.test"),
+            "the ready listener's route is named: {text}"
+        );
+        assert!(
+            text.contains("host listener `front` kept route acowtancy.test withheld"),
+            "the withheld route is named with its listener: {text}"
+        );
+        assert!(
+            text.contains("HTTP 500") && text.contains("vite: internal server error"),
+            "the refusal carries the observed status and the child output tail: {text}"
+        );
+        assert!(
+            !text.contains("exposure are unverified") && !text.contains("readiness and exposure"),
+            "a settled environment with partial exposure is not an unverified activation: {text}"
+        );
+    }
+
+    /// The detached JSON envelope for the same state reports the exposure
+    /// per route: published routes and withheld routes, with the listener's own
+    /// status and bounded output tail.
+    #[test]
+    fn detached_listener_exposure_json_names_exposed_and_withheld_routes() {
+        let (policy, integrations) = partial_exposure_fixture();
+        let operation = DetachedOperationState {
+            active: true,
+            stage: Some("persistent_owner"),
+            identity: Some(detached_activation_identity(&policy)),
+            ..Default::default()
+        };
+        let failure = detached_activation_failure(
+            &operation,
+            true,
+            super::listener_exposure_failure(&policy, &integrations),
+        );
+        let RunnerError::CommandJsonFailure { rendered } = failure else {
+            panic!("detached JSON mode must render a machine failure");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+        assert_eq!(document["state"], "partial");
+        assert_eq!(document["phase"], "listener_exposure");
+        assert_eq!(document["failure_kind"], "managed_listener_exposure");
+        assert_eq!(document["exposure"], "partial");
+        assert_eq!(document["readiness"], "verified");
+        assert_eq!(document["recovery"], "effigy container up --detach");
+        assert_eq!(
+            document["exposed_routes"],
+            json!(["web.test -> 127.0.0.1:18080", "api.test -> http://api.test"])
+        );
+        let withheld = document["withheld_routes"]
+            .as_array()
+            .expect("withheld list");
+        assert_eq!(withheld.len(), 1, "{document}");
+        assert_eq!(withheld[0]["listener"], "front");
+        assert_eq!(withheld[0]["route_domain"], "acowtancy.test");
+        assert_eq!(withheld[0]["observed_status"], 500);
+        assert_eq!(withheld[0]["output_tail"], "vite: internal server error");
+        assert!(
+            withheld[0]["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("status_mismatch"),
+            "{document}"
+        );
+        let message = document["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("partial exposure") && !message.contains("unverified"),
+            "{message}"
+        );
+    }
+
     #[test]
     fn lifecycle_reset_plan_requires_confirmation_only_for_wipe_data() {
         let policy = test_policy(Vec::new());

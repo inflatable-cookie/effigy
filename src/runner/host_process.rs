@@ -158,6 +158,10 @@ struct HostListenerState {
     /// Why the last generation failed, in one line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     diagnostic: Option<String>,
+    /// The status the listener answered when its readiness declared another
+    /// one: a definite refusal, not a transient one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observed_status: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +177,68 @@ pub(in crate::runner) struct ManagedHostListenerResult {
     pub(in crate::runner) route_domain: String,
     pub(in crate::runner) route_tls: bool,
     pub(in crate::runner) state_file: String,
+}
+
+/// One managed listener whose own route was withheld: the process, the route
+/// it would have served, and the bounded evidence its child left behind.
+///
+/// A listener failure is decided per declared route target, so it never speaks
+/// for the container's routes or for another listener's (effigy#455).
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagedHostListenerFailure {
+    pub name: String,
+    pub status: String,
+    pub declared_route_domain: String,
+    /// `None` when the listener never published its route domain.
+    pub route_domain: Option<String>,
+    /// The HTTP status the listener answered when its readiness declared
+    /// another one; `None` when the failure was not a status mismatch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_status: Option<u16>,
+    /// The bounded, redacted reason the listener failed readiness.
+    pub detail: String,
+    /// The bounded, redacted tail of the child's own output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tail: Option<String>,
+    pub log: String,
+}
+
+impl ManagedHostListenerFailure {
+    /// One line a person reads: the listener, its route, and why it failed.
+    pub fn summary(&self) -> String {
+        let route = self
+            .route_domain
+            .as_deref()
+            .unwrap_or(self.declared_route_domain.as_str());
+        format!(
+            "host listener `{}` kept route {route} withheld: {}",
+            self.name, self.detail
+        )
+    }
+}
+
+/// What starting an environment's managed host listeners produced: the
+/// listeners that published their own verified route, and the ones that did
+/// not. Exposure is decided per entry, so one failure never withdraws another
+/// verified route.
+#[derive(Debug, Clone, Default, Serialize)]
+pub(in crate::runner) struct HostProcessListenerReport {
+    pub(in crate::runner) ready: Vec<ManagedHostListenerResult>,
+    pub(in crate::runner) failures: Vec<ManagedHostListenerFailure>,
+}
+
+impl HostProcessListenerReport {
+    /// The refusal a caller that must not continue with a withheld route
+    /// reports; the first failure names the exact listener.
+    pub(in crate::runner) fn refusal(&self) -> Option<RunnerError> {
+        let first = self.failures.first()?;
+        let mut message = first.summary();
+        for failure in self.failures.iter().skip(1) {
+            message.push('\n');
+            message.push_str(&failure.summary());
+        }
+        Some(RunnerError::task_invocation(message))
+    }
 }
 
 /// One restarted host process: its new run, whether it was restarted because
@@ -484,13 +550,67 @@ fn wait_for_listener_activation(
     }
 }
 
+/// Bytes of a child's log this wait reads before bounding the tail it names.
+const LISTENER_OUTPUT_TAIL_READ_BYTES: u64 = 8 * 1024;
+/// Characters of child output a progress line or a refusal keeps. The child
+/// may print anything, so the tail is bounded and redacted where it is read,
+/// not only where it is printed.
+const LISTENER_OUTPUT_TAIL_BYTES: usize = 320;
+/// Characters of a listener's failure detail a report keeps.
+pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
+
+/// The last of a listener child's own output, redacted and bounded, for a
+/// progress line or a refusal.
+///
+/// The supervisor appends its own `[effigy host-process]` lines to the same
+/// log, so those are dropped here: an operator reading a failure wants the
+/// child's words. A log that is missing, a symlink, or empty contributes
+/// nothing.
+fn listener_output_tail(log_path: &Path) -> Option<String> {
+    let metadata = fs::symlink_metadata(log_path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    let start = metadata
+        .len()
+        .saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
+    let mut file = fs::File::open(log_path).ok()?;
+    use std::io::{Seek, SeekFrom};
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut raw = Vec::new();
+    file.take(LISTENER_OUTPUT_TAIL_READ_BYTES)
+        .read_to_end(&mut raw)
+        .ok()?;
+    let text = String::from_utf8_lossy(&raw);
+    let lines = text
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .filter(|line| !line.starts_with("[effigy host-process]"))
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return None;
+    }
+    let tail = lines.join(" | ");
+    Some(effigy_ui::human::bound_text(
+        &tail,
+        LISTENER_OUTPUT_TAIL_BYTES,
+    ))
+}
+
 /// The console progress line for a listener that is alive and has not opened
 /// its port yet: the phase has no deadline, and the line says what ends it.
-fn listener_start_progress(process_name: &str, elapsed: Duration) -> String {
-    format!(
+/// It carries the child's own output tail, so a wait that repeats no longer
+/// says nothing about what the child is doing (effigy#455).
+fn listener_start_progress(process_name: &str, elapsed: Duration, log_path: &Path) -> String {
+    let mut line = format!(
         "[host process] listener `{process_name}` is still starting after {}s: the port is closed and the child is running, so its readiness timeout has not started; `effigy container <env> down` stops it",
         elapsed.as_secs()
-    )
+    );
+    if let Some(tail) = listener_output_tail(log_path) {
+        line.push_str(&format!("; last child output: {tail}"));
+    }
+    line
 }
 
 /// Wait until the listener's supervisor publishes this generation's declared
@@ -565,6 +685,7 @@ fn wait_for_listener_state(
                     return Err(RunnerError::ManagedHostReadiness {
                         process: process_name.to_owned(),
                         diagnostic: state.diagnostic.clone().unwrap_or_default(),
+                        observed_status: state.observed_status,
                     });
                 }
                 _ => {
@@ -575,7 +696,11 @@ fn wait_for_listener_state(
                         next_progress = Instant::now() + LISTENER_START_PROGRESS_INTERVAL;
                         eprintln!(
                             "{}",
-                            listener_start_progress(process_name, started.elapsed())
+                            listener_start_progress(
+                                process_name,
+                                started.elapsed(),
+                                &path.with_file_name(format!("{}.log", sanitize(process_name))),
+                            )
                         );
                     }
                     if Instant::now() >= next_liveness_check {
@@ -1450,6 +1575,9 @@ struct ListenerGeneration<'a> {
     address: Option<SocketAddr>,
     route_owner: Option<ManagedListenerRouteOwner>,
     diagnostic: Option<String>,
+    /// The status a listener answered when its readiness declared another
+    /// one: the observation that made the refusal terminal.
+    observed_status: Option<u16>,
 }
 
 impl<'a> ListenerGeneration<'a> {
@@ -1462,6 +1590,7 @@ impl<'a> ListenerGeneration<'a> {
             address: None,
             route_owner: None,
             diagnostic: None,
+            observed_status: None,
         }
     }
 
@@ -1501,6 +1630,7 @@ impl<'a> ListenerGeneration<'a> {
                 .map(|child| child.start_identity.clone()),
             route_owner: self.route_owner.clone(),
             diagnostic: self.diagnostic.clone(),
+            observed_status: self.observed_status,
         }
     }
 
@@ -1668,6 +1798,7 @@ fn supervise_managed_host_listener(
     };
     if let Err(error) = ready {
         let stopped = matches!(error, ListenerStartupFailure::Stopped);
+        let observed_status = error.observed_status();
         if let Some(report) = stop_generation(run, spec, &mut child, true) {
             *last = Some(report);
         }
@@ -1682,6 +1813,7 @@ fn supervise_managed_host_listener(
             return Ok(GenerationEnd::Stopped);
         }
         state.diagnostic = Some(error.to_string());
+        state.observed_status = observed_status;
         state.write("failed")?;
         return Ok(GenerationEnd::Exited(1));
     }
@@ -1928,6 +2060,17 @@ fn wait_for_ready_listener(
         if probe.outcome == HttpReadinessOutcome::Ready {
             return Ok(());
         }
+        // A definite answer with another status is a terminal refusal, not a
+        // transient one: the child has bound its port and told this readiness
+        // request what it serves, so spending the declared budget cannot
+        // change the answer (effigy#455). Only a closed port or an incomplete
+        // response stays in the budgeted wait.
+        if probe.outcome == HttpReadinessOutcome::StatusMismatch {
+            return Err(ListenerStartupFailure::StatusMismatch {
+                error: listener_status_refusal(address, config, probe.status, log_path),
+                status: probe.status,
+            });
+        }
         let now = Instant::now();
         if probe.outcome == HttpReadinessOutcome::ConnectFailed {
             if now >= next_progress {
@@ -1942,10 +2085,40 @@ fn wait_for_ready_listener(
                 );
             }
         } else if now.duration_since(*answered_at.get_or_insert(now)) >= timeout {
-            return Err(listener_readiness_timeout(address, config, timeout, probe.outcome).into());
+            return Err(listener_readiness_timeout(
+                address,
+                config,
+                timeout,
+                probe.outcome,
+                log_path,
+            )
+            .into());
         }
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// A listener that answers the declared readiness request with another status
+/// fails at once, naming the status it answered and the child's own output.
+fn listener_status_refusal(
+    address: SocketAddr,
+    config: &EffectiveManagedHostListener,
+    observed: Option<u16>,
+    log_path: &Path,
+) -> RunnerError {
+    let observed = observed
+        .map(|status| format!("HTTP {status}"))
+        .unwrap_or_else(|| "a status line that is not the declared one".to_owned());
+    let mut message = format!(
+        "managed listener at {address} answered {} with {observed} where {} is required (status_mismatch); a definite refusal is terminal, so the declared {}s readiness budget is not spent",
+        config.readiness_path,
+        config.readiness_status,
+        config.readiness_timeout_secs
+    );
+    if let Some(tail) = listener_output_tail(log_path) {
+        message.push_str(&format!("; last child output: {tail}"));
+    }
+    RunnerError::task_invocation(message)
 }
 
 fn listener_readiness_timeout(
@@ -1953,14 +2126,19 @@ fn listener_readiness_timeout(
     config: &EffectiveManagedHostListener,
     timeout: Duration,
     last: HttpReadinessOutcome,
+    log_path: &Path,
 ) -> RunnerError {
-    RunnerError::task_invocation(format!(
+    let mut message = format!(
         "timed out after {}s waiting for the managed listener at {address} to answer {} with {} once its port opened ({})",
         timeout.as_secs(),
         config.readiness_path,
         config.readiness_status,
         last.as_str()
-    ))
+    );
+    if let Some(tail) = listener_output_tail(log_path) {
+        message.push_str(&format!("; last child output: {tail}"));
+    }
+    RunnerError::task_invocation(message)
 }
 
 /// Polls the reserved port while one generation serves. Three consecutive
@@ -2017,11 +2195,27 @@ impl ListenerLiveness {
 enum ListenerStartupFailure {
     Stopped,
     Failed(RunnerError),
+    /// The listener answered the readiness request with a definite, different
+    /// status. That observation, not the budget, ends the wait.
+    StatusMismatch {
+        error: RunnerError,
+        status: Option<u16>,
+    },
 }
 
 impl From<RunnerError> for ListenerStartupFailure {
     fn from(error: RunnerError) -> Self {
         Self::Failed(error)
+    }
+}
+
+impl ListenerStartupFailure {
+    /// The HTTP status this failure observed, when it observed one.
+    fn observed_status(&self) -> Option<u16> {
+        match self {
+            Self::StatusMismatch { status, .. } => *status,
+            Self::Stopped | Self::Failed(_) => None,
+        }
     }
 }
 
@@ -2031,7 +2225,7 @@ impl std::fmt::Display for ListenerStartupFailure {
             Self::Stopped => {
                 formatter.write_str("managed listener startup was stopped before readiness")
             }
-            Self::Failed(error) => error.fmt(formatter),
+            Self::Failed(error) | Self::StatusMismatch { error, .. } => error.fmt(formatter),
         }
     }
 }
@@ -2627,6 +2821,28 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         listener_policy_running(checkout, domain, name, LISTENER_CHILD, 30)
     }
 
+    /// A private test gateway home for one fixture name, with the 0700 mode a
+    /// private root requires. The supervisor is a separate process, so it
+    /// cannot see this thread's test gateway home and re-checks the recorded
+    /// root as a private root.
+    fn listener_gateway_home(
+        checkout: &Path,
+        name: &str,
+    ) -> super::super::gateway_command::TestGatewayHomeGuard {
+        let gateway_home = checkout
+            .parent()
+            .expect("fixture root")
+            .join(format!("gateway-{name}"));
+        let gateway_dir = gateway_home.join(".effigy/gateway");
+        fs::create_dir_all(&gateway_dir).expect("gateway state directory");
+        use std::os::unix::fs::PermissionsExt;
+        for directory in [gateway_home.join(".effigy"), gateway_dir] {
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .expect("private gateway permissions");
+        }
+        super::super::gateway_command::set_test_gateway_home(&gateway_home)
+    }
+
     /// [`listener_policy`] with the listener's own child and declared readiness
     /// budget, for the proofs about a child that has not opened its port yet.
     fn listener_policy_running(
@@ -2639,22 +2855,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         super::super::gateway_command::TestGatewayHomeGuard,
         EffectiveContainerPolicy,
     ) {
-        let gateway_home = checkout
-            .parent()
-            .expect("fixture root")
-            .join(format!("gateway-{name}"));
-        // The supervisor is a separate process, so it cannot see this thread's
-        // test gateway home and re-checks the recorded root as a private root.
-        // Private roots require mode 0700, exactly as a real private gateway
-        // would.
-        let gateway_dir = gateway_home.join(".effigy/gateway");
-        fs::create_dir_all(&gateway_dir).expect("gateway state directory");
-        use std::os::unix::fs::PermissionsExt;
-        for directory in [gateway_home.join(".effigy"), gateway_dir] {
-            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-                .expect("private gateway permissions");
-        }
-        let guard = super::super::gateway_command::set_test_gateway_home(&gateway_home);
+        let guard = listener_gateway_home(checkout, name);
         let bind = fixture_listener_bind(&format!("{}|{domain}|{name}", checkout.display()));
         let mut policy = policy(
             checkout,
@@ -2732,6 +2933,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 "#;
 
+    /// A child that answers every request with 500 opens its port and tells
+    /// the readiness probe what it serves: a definite refusal, not a slow
+    /// start.
+    const STATUS_500_LISTENER_CHILD: &str = r#"
+import http.server, os
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(500)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
+"#;
+
+    /// A child that binds its port and closes every request without a status
+    /// line: the port is open, so the declared readiness budget applies, and
+    /// no definite status has been observed.
+    const CLOSING_LISTENER_CHILD: &str = r#"
+import socket, os
+bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
+host, port = bind.rsplit(":", 1)
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((host, int(port)))
+server.listen(8)
+while True:
+    connection, _ = server.accept()
+    connection.close()
+"#;
+
     /// A cold build is phase (a): the port is closed and the child is alive.
     /// That phase has no deadline, so an app that opens its port long after its
     /// declared readiness budget still becomes ready, and the `up` that waits
@@ -2765,23 +2999,22 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
     #[test]
     fn host_process_listener_readiness_budget_starts_when_the_port_opens() {
         let fixture = fixture();
-        let domain = "refusing.host.test";
+        let domain = "incomplete.host.test";
         let (_gateway_home, policy) = listener_policy_running(
             &fixture.checkout,
             domain,
-            "refusing",
-            REFUSING_LISTENER_CHILD,
+            "incomplete",
+            CLOSING_LISTENER_CHILD,
             1,
         );
         let started = Instant::now();
-        let error =
+        let report =
             super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-                .expect_err(
-                    "a listener that never answers the declared status fails before readiness",
-                )
-                .to_string();
+                .expect("a listener that never answers leaves one withheld route");
         let elapsed = started.elapsed();
-        assert!(error.contains("timed out after 1s"), "{error}");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        let detail = &report.failures[0].detail;
+        assert!(detail.contains("timed out after 1s"), "{detail}");
         assert!(
             elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(20),
             "the budget starts when the port opens, so the start fails just after it: {elapsed:?}"
@@ -2792,9 +3025,217 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             state["diagnostic"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("status_mismatch"),
+                .contains("no_status_line"),
             "{state}"
         );
+    }
+
+    /// A listener that answers with a definite, different status is refused as
+    /// soon as that answer is observed: the declared budget is not spent on a
+    /// question the child has already answered (effigy#455). The refusal names
+    /// the status and the child's own output.
+    #[test]
+    fn host_process_listener_status_mismatch_is_a_terminal_refusal() {
+        let fixture = fixture();
+        let domain = "status-mismatch.host.test";
+        let child = format!(
+            "print(\"vite: internal server error\", flush=True)\n{}",
+            STATUS_500_LISTENER_CHILD.trim()
+        );
+        let (_gateway_home, policy) =
+            listener_policy_running(&fixture.checkout, domain, "status-mismatch", &child, 300);
+        let started = Instant::now();
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+                .expect("one failing listener still reports a start");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "a definite status is terminal, not a 300s wait: {elapsed:?}"
+        );
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        let failure = &report.failures[0];
+        assert_eq!(failure.name, "app");
+        assert_eq!(failure.observed_status, Some(500), "{failure:?}");
+        assert_eq!(failure.route_domain.as_deref(), Some(domain));
+        assert!(
+            failure.detail.contains("status_mismatch") && failure.detail.contains("HTTP 500"),
+            "{failure:?}"
+        );
+        assert!(
+            failure
+                .output_tail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("vite: internal server error"),
+            "the refusal carries the child's own output: {failure:?}"
+        );
+        assert!(
+            !failure.detail.contains("timed out"),
+            "a status mismatch is not a timeout: {}",
+            failure.detail
+        );
+        let state = read_json(&listener_state(&policy));
+        assert_eq!(state["status"], "failed", "{state}");
+        assert_eq!(state["observed_status"], 500, "{state}");
+    }
+
+    /// A route the container's own verified registration published earlier in
+    /// the same activation: the store entry a failing host listener must
+    /// leave alone.
+    fn container_route(domain: &str, target: &str) -> effigy_gateway::routes::Route {
+        effigy_gateway::routes::Route {
+            domain: domain.to_owned(),
+            target: Some(target.to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            source: effigy_gateway::routes::RouteSource::Container,
+            project: "fixture".to_owned(),
+            managed_listener: None,
+            tls: false,
+            registered: chrono::Utc::now(),
+        }
+    }
+
+    fn publish_container_route(domain: &str, target: &str) {
+        effigy_gateway::endpoint_store::EndpointStore::for_routes(&route_table_path())
+            .routes(|table| {
+                table.upsert(container_route(domain, target));
+                Ok::<_, effigy_gateway::GatewayError>(())
+            })
+            .expect("the container's verified route is published");
+    }
+
+    /// Exposure is decided per declared route target: a listener that answers
+    /// 500 keeps only its own route withheld, while the container's verified
+    /// route and a ready listener's route stay published (effigy#455).
+    #[test]
+    fn host_process_listener_failure_keeps_every_other_verified_route() {
+        let fixture = fixture();
+        let _gateway_home = listener_gateway_home(&fixture.checkout, "partial-exposure");
+        let front_bind =
+            fixture_listener_bind(&format!("{}|front.test|front", fixture.checkout.display()));
+        let api_bind =
+            fixture_listener_bind(&format!("{}|api.test|api", fixture.checkout.display()));
+        let front = listener_host_process_running(
+            "front",
+            "front.test",
+            &front_bind,
+            &format!(
+                "print(\"vite: internal server error\", flush=True)\n{}",
+                STATUS_500_LISTENER_CHILD.trim()
+            ),
+            300,
+        );
+        let api = listener_host_process_running("api", "api.test", &api_bind, LISTENER_CHILD, 30);
+        let mut policy = policy(&fixture.checkout, vec![front, api]);
+        policy.project_name = "partial-exposure".to_owned();
+
+        // The container's own route was registered by the activation before it
+        // started the host listeners.
+        publish_container_route("web.test", "127.0.0.1:18080");
+
+        let report =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+                .expect("a failed listener is reported, not raised as the whole start");
+        assert_eq!(report.ready.len(), 1, "{report:?}");
+        assert_eq!(report.ready[0].name, "api");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        let failure = &report.failures[0];
+        assert_eq!(failure.name, "front");
+        assert_eq!(failure.observed_status, Some(500));
+        let refusal = report
+            .refusal()
+            .expect("a withheld route is a refusal")
+            .to_string();
+        assert!(
+            refusal.contains("HTTP 500") || refusal.contains("500"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("vite: internal server error"),
+            "the refusal carries the child's output tail: {refusal}"
+        );
+
+        let table = RouteTable::load(&route_table_path()).expect("route table");
+        let container = table
+            .lookup("web.test")
+            .expect("the container's verified route stays published");
+        assert_eq!(container.target.as_deref(), Some("127.0.0.1:18080"));
+        assert_eq!(
+            container.source,
+            effigy_gateway::routes::RouteSource::Container
+        );
+        assert!(
+            table.lookup("api.test").is_some(),
+            "the ready listener keeps its route"
+        );
+        assert!(
+            table.lookup("front.test").is_none(),
+            "the failing listener's route is absent"
+        );
+
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
+    }
+
+    /// A retry after the listener recovers publishes its own route and leaves
+    /// the container's verified route exactly as it was: a route is replaced by
+    /// its own owner, never duplicated (effigy#455).
+    #[test]
+    fn host_process_listener_retry_registers_its_route_without_touching_the_container_route() {
+        let fixture = fixture();
+        let _gateway_home = listener_gateway_home(&fixture.checkout, "listener-retry");
+        let domain = "retry.host.test";
+        let bind = fixture_listener_bind(&format!("{}|{domain}", fixture.checkout.display()));
+        let failing =
+            listener_host_process_running("app", domain, &bind, STATUS_500_LISTENER_CHILD, 300);
+        let mut policy = policy(&fixture.checkout, vec![failing]);
+        policy.project_name = "listener-retry".to_owned();
+        publish_container_route("web.test", "127.0.0.1:18080");
+
+        let failed =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+                .expect("the failing listener is reported");
+        assert_eq!(failed.failures.len(), 1, "{failed:?}");
+        assert!(RouteTable::load(&route_table_path())
+            .expect("route table")
+            .lookup(domain)
+            .is_none());
+
+        // The listener's own child now answers the declared status.
+        let healthy = listener_host_process_running("app", domain, &bind, LISTENER_CHILD, 30);
+        policy.host_processes = vec![healthy];
+        let retried =
+            super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+                .expect("the recovered listener publishes its own route");
+        assert_eq!(retried.failures.len(), 0, "{retried:?}");
+        assert_eq!(retried.ready.len(), 1);
+
+        let table = RouteTable::load(&route_table_path()).expect("route table");
+        assert!(
+            table.lookup(domain).is_some(),
+            "the recovered listener registers its own route"
+        );
+        let container = table
+            .lookup("web.test")
+            .expect("the container's verified route is still published");
+        assert_eq!(container.target.as_deref(), Some("127.0.0.1:18080"));
+        assert_eq!(
+            table
+                .routes
+                .values()
+                .filter(|route| route.source == effigy_gateway::routes::RouteSource::Container)
+                .count(),
+            1,
+            "one container route, not a duplicate: {table:?}"
+        );
+
+        let stopped =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        assert!(stopped.complete(), "{stopped:?}");
     }
 
     /// The child exiting is the failure signal of phase (a): a child that dies
@@ -2812,11 +3253,15 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             60,
         );
         let started = Instant::now();
-        let error =
+        let report =
             super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-                .expect_err("a listener child that exits before binding fails the start")
-                .to_string();
-        assert!(error.contains("exited with code 3"), "{error}");
+                .expect("a listener child that exits still reports its own withheld route");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        assert!(
+            report.failures[0].detail.contains("exited with code 3"),
+            "{:?}",
+            report.failures[0]
+        );
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "the child's exit, not the readiness budget, ends the wait: {:?}",
@@ -2849,11 +3294,15 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             60,
         );
         let started = Instant::now();
-        let error =
+        let report =
             super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-                .expect_err("a child that exits its leader before answering fails the start")
-                .to_string();
-        assert!(error.contains("daemonised"), "{error}");
+                .expect("a child that exits its leader reports its own withheld route");
+        assert_eq!(report.failures.len(), 1, "{report:?}");
+        assert!(
+            report.failures[0].detail.contains("daemonised"),
+            "{:?}",
+            report.failures[0]
+        );
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "the daemonising child is reported, not waited on: {:?}",
@@ -2870,13 +3319,64 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
         );
     }
 
+    /// A wait on a closed port names the child's own output, bounded and
+    /// redacted, instead of repeating a silent count (effigy#455).
+    #[test]
+    fn listener_start_progress_names_the_children_bounded_output_tail() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let log = dir.path().join("app.log");
+        fs::write(
+            &log,
+            format!(
+                "{}
+vite: internal server error\nDB_PASSWORD=hunter2\n",
+                "compiling ".repeat(400)
+            ),
+        )
+        .expect("write the fixture log");
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&log)
+            .and_then(|mut file| {
+                use std::io::Write as _;
+                writeln!(file, "[effigy host-process] supervisor-only line")
+            })
+            .expect("append the supervisor's own line");
+
+        let progress = listener_start_progress("app", Duration::from_secs(90), &log);
+        assert!(progress.contains("still starting after 90s"), "{progress}");
+        let tail = progress
+            .split("last child output: ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("the progress line names the tail: {progress}"));
+        assert!(
+            tail.contains("vite: internal server error"),
+            "the tail is the child's own last output: {tail}"
+        );
+        assert!(
+            tail.contains("DB_PASSWORD=<redacted>")
+                && !tail.contains("hunter2")
+                && !tail.contains("supervisor-only line"),
+            "the tail is redacted and names only the child's output: {tail}"
+        );
+        assert!(
+            tail.len() <= 400,
+            "the tail stays bounded however much the child prints: {} bytes",
+            tail.len()
+        );
+    }
+
     /// A stop requested while a child is still in phase (a) ends the wait and
     /// settles the run: the phase has no deadline, the stop does. The `up`
     /// console carries a progress line for the wait, and the stop that ends it
     /// is the one `down` and `container restart` run (effigy#370).
     #[test]
     fn host_process_owned_stop_during_a_starting_child_settles() {
-        let progress = listener_start_progress("api", Duration::from_secs(30));
+        let progress = listener_start_progress(
+            "api",
+            Duration::from_secs(30),
+            Path::new("/nonexistent/api.log"),
+        );
         assert!(
             progress.contains("still starting after 30s") && progress.contains("down` stops it"),
             "the waiting console names the wait and what ends it: {progress}"
@@ -3367,6 +3867,7 @@ http.server.HTTPServer((host, int(port)), Handler).serve_forever()
             &config,
             Duration::from_secs(1),
             HttpReadinessOutcome::ConnectFailed,
+            Path::new("/nonexistent/timeout.log"),
         )
         .to_string();
         assert!(message.contains("127.0.0.1:9400"), "{message}");

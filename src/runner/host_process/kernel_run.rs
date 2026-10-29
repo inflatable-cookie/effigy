@@ -34,8 +34,9 @@ use serde::{Deserialize, Serialize};
 use super::{
     host_process_dir_for_policy, host_process_state_path, listener_gateway_root,
     managed_host_process_owner, order_host_processes, read_private_json, HostListenerState,
-    HostProcessRestartReport, HostProcessRuntimeSpec, ManagedHostListenerResult,
-    RestartedHostProcess, HOST_LISTENER_STATE_SCHEMA,
+    HostProcessListenerReport, HostProcessRestartReport, HostProcessRuntimeSpec,
+    ManagedHostListenerFailure, ManagedHostListenerResult, RestartedHostProcess,
+    HOST_LISTENER_STATE_SCHEMA,
 };
 use crate::runner::error::RunnerError;
 
@@ -325,14 +326,26 @@ pub(super) fn invocation(
 /// stops short never leaves a running sidecar: the failing path drops the
 /// owning pipes, which is the kernel's owner-loss stop, and settles what it
 /// started.
+///
+/// A listener that fails its own readiness keeps only its own route withheld:
+/// the report carries that failure and the listeners that did publish, so the
+/// caller can report exposure per declared route target (effigy#455). A
+/// failure that is not the listener's own - a start, a state record or a stop
+/// request - still ends the whole start.
 pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-) -> Result<Vec<ManagedHostListenerResult>, RunnerError> {
-    let HostProcessStart { started, listeners } =
-        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
+) -> Result<HostProcessListenerReport, RunnerError> {
+    let HostProcessStart {
+        started,
+        listeners,
+        failures,
+    } = start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
     detach_started(repo_root, policy, started, None)?;
-    Ok(listeners)
+    Ok(HostProcessListenerReport {
+        ready: listeners,
+        failures,
+    })
 }
 
 /// Restarts only the named host processes, and every process that depends on
@@ -358,12 +371,24 @@ pub(in crate::runner) fn restart_host_processes_for_container(
 ) -> Result<HostProcessRestartReport, RunnerError> {
     let selection = restart_selection(policy, requested)?;
     let selected = selection.ordered.iter().cloned().collect::<BTreeSet<_>>();
-    let HostProcessStart { started, listeners } = start_host_processes_inner(
+    let HostProcessStart {
+        started,
+        listeners,
+        failures,
+    } = start_host_processes_inner(
         repo_root,
         policy,
         Some(&selected),
         ReplaceGate::HeldForReplace,
     )?;
+    // A restart names the processes it replaces, so a listener that did not
+    // publish is this restart's failure, not a partial environment: the
+    // processes that did publish stay running and the refusal names them.
+    let refusal = HostProcessListenerReport {
+        ready: listeners.clone(),
+        failures,
+    }
+    .refusal();
     let runs = detach_started(repo_root, policy, started, Some(&selected))?
         .into_iter()
         .collect::<BTreeMap<_, _>>();
@@ -371,6 +396,11 @@ pub(in crate::runner) fn restart_host_processes_for_container(
         .into_iter()
         .map(|listener| (listener.name.clone(), listener))
         .collect::<BTreeMap<_, _>>();
+    if let Some(refusal) = refusal {
+        // The named processes were replaced and settled; only the route the
+        // listener would have served is absent. Report it as the refusal it is.
+        return Err(refusal);
+    }
     Ok(HostProcessRestartReport {
         environment: policy.name.clone(),
         processes: selection
@@ -515,10 +545,12 @@ pub(super) fn start_host_processes_owning(
 }
 
 /// One successful bring-up: the supervisors still held by their owning
-/// clients, and the listener results the caller reports.
+/// clients, the listener results the caller reports, and the listeners that
+/// kept their own route withheld.
 struct HostProcessStart {
     started: Vec<(String, effigy_kernel::supervise::SupervisorClient)>,
     listeners: Vec<ManagedHostListenerResult>,
+    failures: Vec<ManagedHostListenerFailure>,
 }
 
 /// Whether the replace step (stop plus spawn) holds `Gate(Env)`.
@@ -543,6 +575,7 @@ fn start_host_processes_inner(
         return Ok(HostProcessStart {
             started: Vec::new(),
             listeners: Vec::new(),
+            failures: Vec::new(),
         });
     }
     super::validate_host_process_preflight(repo_root, policy)?;
@@ -580,6 +613,7 @@ fn start_host_processes_inner(
         .collect::<std::collections::HashMap<_, _>>();
     let mut started: Vec<(String, effigy_kernel::supervise::SupervisorClient)> = Vec::new();
     let mut listener_results = Vec::new();
+    let mut listener_failures: Vec<ManagedHostListenerFailure> = Vec::new();
     let start_result = (|| -> Result<(), RunnerError> {
         for hp in ordered {
             // `up` starts every declared process; a restart names the ones it
@@ -590,7 +624,9 @@ fn start_host_processes_inner(
             let resource = host_process_resource(policy, &hp.name)?;
             let env = resolved_host_process_environment(hp, &facts)?;
             let listener = resolved_host_process_listener(hp, &listener_binds);
+            let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
             let mut dependencies = Vec::new();
+            let mut dependency_refusal = None;
             for dependency in &hp.depends_on {
                 let dependency_process = by_name.get(dependency.as_str()).ok_or_else(|| {
                     RunnerError::task_invocation(format!(
@@ -599,7 +635,7 @@ fn start_host_processes_inner(
                     ))
                 })?;
                 let state_path = host_process_state_path(&dir, &dependency_process.name);
-                let state = super::wait_for_listener_state(
+                let state = match super::wait_for_listener_state(
                     &state_path,
                     dependency,
                     &managed_host_process_owner(&project_path, policy, dependency_process)?,
@@ -608,7 +644,22 @@ fn start_host_processes_inner(
                             "managed host listener dependency has no gateway route table",
                         )
                     })?,
-                )?;
+                ) {
+                    Ok(state) => state,
+                    // A dependency that failed its own readiness withholds this
+                    // process's route too, and nothing else: the rest of the
+                    // environment is still started (effigy#455).
+                    Err(RunnerError::ManagedHostReadiness {
+                        diagnostic,
+                        observed_status,
+                        ..
+                    }) => {
+                        dependency_refusal =
+                            Some((dependency.clone(), diagnostic, observed_status));
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
                 if state.internal_url.is_none() || state.public_url.is_none() {
                     return Err(RunnerError::task_invocation(format!(
                         "managed host listener `{dependency}` is ready without current endpoint URLs"
@@ -620,7 +671,24 @@ fn start_host_processes_inner(
                     state_file: state_path,
                 });
             }
-            let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
+            if let Some((dependency, diagnostic, observed_status)) = dependency_refusal {
+                let detail =
+                    format!("its dependency `{dependency}` did not become ready: {diagnostic}");
+                match listener.as_ref() {
+                    Some(listener) => listener_failures.push(listener_failure(
+                        hp,
+                        listener,
+                        &log_file,
+                        detail,
+                        observed_status,
+                    )),
+                    // A process without a listener serves no route, so there is
+                    // no exposure to withhold; it stays unstarted and the
+                    // console says why instead of waiting on it.
+                    None => eprintln!("[host process] `{}` was not started: {detail}", hp.name),
+                }
+                continue;
+            }
             let spec = HostProcessRuntimeSpec {
                 schema: super::HOST_PROCESS_SPEC_SCHEMA.to_owned(),
                 project_path: project_path.clone(),
@@ -698,35 +766,55 @@ fn start_host_processes_inner(
             if let Some(listener) = &hp.listener {
                 let owner = managed_host_process_owner(&project_path, policy, hp)?;
                 let state_path = host_process_state_path(&dir, &hp.name);
-                super::wait_for_listener_activation(
-                    &state_path,
-                    &hp.name,
-                    &spec.runtime_generation,
-                    super::SUPERVISOR_ACTIVATION_PUBLICATION_BOUND,
-                )?;
-                let state = super::wait_for_listener_state(
-                    &state_path,
-                    &hp.name,
-                    &owner,
-                    route_table.as_deref().ok_or_else(|| {
-                        RunnerError::task_invocation(
-                            "managed host listener has no gateway route table",
-                        )
-                    })?,
-                )?;
-                listener_results.push(ManagedHostListenerResult {
-                    name: hp.name.clone(),
-                    status: state.status,
-                    runtime_generation: state.runtime_generation,
-                    generation: state.generation,
-                    address: state.address.unwrap_or_default(),
-                    internal_url: state.internal_url.unwrap_or_default(),
-                    public_url: state.public_url.unwrap_or_default(),
-                    declared_route_domain: listener.declared_route_domain.clone(),
-                    route_domain: state.route_domain.unwrap_or_default(),
-                    route_tls: listener.route_tls,
-                    state_file: state_path.display().to_string(),
-                });
+                let waited = (|| -> Result<super::HostListenerState, RunnerError> {
+                    super::wait_for_listener_activation(
+                        &state_path,
+                        &hp.name,
+                        &spec.runtime_generation,
+                        super::SUPERVISOR_ACTIVATION_PUBLICATION_BOUND,
+                    )?;
+                    super::wait_for_listener_state(
+                        &state_path,
+                        &hp.name,
+                        &owner,
+                        route_table.as_deref().ok_or_else(|| {
+                            RunnerError::task_invocation(
+                                "managed host listener has no gateway route table",
+                            )
+                        })?,
+                    )
+                })();
+                match waited {
+                    Ok(state) => listener_results.push(ManagedHostListenerResult {
+                        name: hp.name.clone(),
+                        status: state.status,
+                        runtime_generation: state.runtime_generation,
+                        generation: state.generation,
+                        address: state.address.unwrap_or_default(),
+                        internal_url: state.internal_url.unwrap_or_default(),
+                        public_url: state.public_url.unwrap_or_default(),
+                        declared_route_domain: listener.declared_route_domain.clone(),
+                        route_domain: state.route_domain.unwrap_or_default(),
+                        route_tls: listener.route_tls,
+                        state_file: state_path.display().to_string(),
+                    }),
+                    // This listener never published its own route, so only its
+                    // own route is withheld. Its supervisor is left to settle
+                    // itself; every other started process keeps running and
+                    // the caller reports the partial exposure exactly.
+                    Err(RunnerError::ManagedHostReadiness {
+                        diagnostic,
+                        observed_status,
+                        ..
+                    }) => listener_failures.push(listener_failure(
+                        hp,
+                        listener,
+                        &log_file,
+                        diagnostic,
+                        observed_status,
+                    )),
+                    Err(error) => return Err(error),
+                }
             }
         }
         Ok(())
@@ -760,6 +848,7 @@ fn start_host_processes_inner(
     Ok(HostProcessStart {
         started,
         listeners: listener_results,
+        failures: listener_failures,
     })
 }
 
@@ -847,6 +936,28 @@ fn resolved_host_process_listener(
         listener.bind = bind.clone();
     }
     Some(listener)
+}
+
+/// What one listener's failure contributes to the caller's per-route report:
+/// the process, the route it withheld, and the bounded evidence its child
+/// left behind.
+fn listener_failure(
+    process: &effigy_containers::EffectiveHostProcess,
+    listener: &EffectiveManagedHostListener,
+    log_path: &Path,
+    detail: String,
+    observed_status: Option<u16>,
+) -> ManagedHostListenerFailure {
+    ManagedHostListenerFailure {
+        name: process.name.clone(),
+        status: "failed".to_owned(),
+        declared_route_domain: listener.declared_route_domain.clone(),
+        route_domain: Some(listener.route_domain.clone()),
+        observed_status,
+        detail: effigy_ui::human::bound_text(&detail, super::MAX_LISTENER_FAILURE_DETAIL_BYTES),
+        output_tail: super::listener_output_tail(log_path),
+        log: log_path.display().to_string(),
+    }
 }
 
 /// `127.0.0.1:0` asks Effigy for a concrete port; any other port is the

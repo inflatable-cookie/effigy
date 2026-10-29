@@ -649,6 +649,18 @@ During v0.x, MINOR bumps may include breaking changes.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
+
+- A failing managed host listener withholds only its own route. `container up`
+  now decides exposure per declared route target: a listener that answers its
+  readiness request with the wrong status, or never opens its port, keeps its
+  own route absent while the container's verified routes and every other
+  ready listener stay published. `container up --detach` reports the partial
+  exposure in text and JSON, naming the published routes and the withheld
+  listener with its observed status and a bounded, redacted child-output tail,
+  instead of the whole activation's readiness and exposure as unverified. A
+  definite status mismatch is refused as soon as it is observed rather than
+  spending `readiness.timeout_secs`, and a still-closed port's progress line
+  carries the child's own bounded output tail (effigy#455).
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already

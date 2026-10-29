@@ -28,9 +28,25 @@ pub enum RunnerError {
     Ui(String),
     TaskInvocation(String),
     /// Diagnostic contains only closed-vocabulary observations, never raw stdio.
+    /// `observed_status` is the HTTP status a listener actually answered when
+    /// its readiness declared another one, so a refusal names the exact
+    /// observation that ended it (effigy#455).
     ManagedHostReadiness {
         process: String,
         diagnostic: String,
+        observed_status: Option<u16>,
+    },
+    /// A detached activation settled the environment and published every route
+    /// it verified, while one or more managed host listeners kept their own
+    /// routes withheld. Exposure is partial and attributed per declared route
+    /// target, so an unrelated ready container route is never withdrawn with a
+    /// failing listener (effigy#455).
+    ManagedListenerExposure {
+        environment: String,
+        /// `domain -> target` for each route this activation published.
+        exposed: Vec<String>,
+        /// The listeners that failed, with their bounded, redacted evidence.
+        failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
     },
     ContainerSurfaceRegistryMissing,
     ContainerSurfaceDefaultTargetMissing,
@@ -319,6 +335,7 @@ impl RunnerError {
             // answer, or the work it ran failed.
             RunnerError::Cwd(_)
             | RunnerError::ManagedHostReadiness { .. }
+            | RunnerError::ManagedListenerExposure { .. }
             | RunnerError::WorkspaceSessionCleanup { .. }
             | RunnerError::RunControl { .. }
             | RunnerError::GatewayRouteTable { .. }

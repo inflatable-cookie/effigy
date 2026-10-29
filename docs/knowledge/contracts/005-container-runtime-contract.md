@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-28
+Last Updated: 2026-10-29
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -283,7 +283,38 @@ tls = true
 `readiness.timeout_secs` bounds only the wait after the listener's port first
 answers; a child still building has not opened its port, so the supervisor and
 the `up` that waits on it carry no deadline and the child's own exit is the
-failure that ends the wait.
+failure that ends the wait. The wait still reports what it observed: while the
+port is closed it prints progress at a fixed interval and carries the child's
+own output tail, bounded and with secret-shaped values redacted, so a long
+start is never a silent count. A listener that answers the declared readiness
+request with a different status is refused as soon as that answer is observed.
+The refusal names the status it answered, the status the manifest required and
+the same bounded child-output tail, and the declared budget is not spent on a
+question the child has already answered: a `500` where `200` is required ends
+the start, it does not wait out `timeout_secs`.
+
+## Per-route exposure
+
+Exposure is decided per declared route target, not per activation. `up`
+registers the container's own verified routes first, then starts host
+listeners in `depends_on` order, and each listener publishes only its own route
+after its own readiness. A listener that never reaches readiness withholds
+exactly its own route: the container's published routes, and every other
+listener that did publish, stay exposed, and no unrelated route is withdrawn
+with it.
+
+A detached `up` still fails when a listener is withheld, and it reports the
+partial exposure instead of one blanket verdict: the text and JSON name the
+routes that are published, the listener whose route is not, its observed status
+where there was one, and the bounded, redacted child-output tail. The failure
+is never phrased as an activation whose readiness and exposure are unverified,
+because the activation settled. A process whose `depends_on` listener was
+withheld does not start and withholds its own route too, naming the dependency
+that never became ready. A retry after the listener recovers publishes that
+listener's own route and leaves the container's routes exactly as they were: a
+route is replaced only by its own owner, so a retry never duplicates another
+target's route. An uncertain container identity still publishes no route at
+all, because the readiness wait refuses before any route write.
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
@@ -1563,7 +1594,8 @@ While that stage is `preparation`, `preparation_step` identifies the checked
 boundary: `declaration`, `policy`, `admission`, `validation`, `runtime`, `mounts`,
 `inventory`, `refresh`, or `dispatch`; it is null outside preparation.
 `failure_kind` is one of `endpoint_observation_unknown`, `endpoint_store_refusal`,
-`invocation_refusal`, `managed_readiness`, `gateway_route_refusal`, or `other`;
+`invocation_refusal`, `managed_readiness`, `managed_listener_exposure`,
+`gateway_route_refusal`, or `other`;
 `identity` names the requested environment and checkout. These closed codes do
 not turn an unavailable observation into absence or stop authority. `cause`
 carries the underlying refusal itself — for example the gateway claim or
@@ -1629,6 +1661,19 @@ and the environment/checkout identity, alongside its unavailable state, failure
 kind and recovery advice. Secret-shaped `key=value` details in the cause
 are redacted and the cause is bounded; the generic reconciliation advice never
 replaces the actionable cause.
+
+A settled activation whose exposure is partial is not an unavailable
+activation, and it reports differently. Its state is `partial`, its phase is
+`listener_exposure`, its `failure_kind` is `managed_listener_exposure`, its
+`readiness` is `verified` and its `exposure` is `partial`. It carries
+`exposed_routes` (`domain -> target` for every route this activation published)
+and `withheld_routes`, one entry per failed listener with its `listener`,
+`route_domain`, `status`, `observed_status`, bounded `detail`, bounded
+`output_tail`, `log` and its own `restart` recovery. `activation_stage` keeps
+the stage the activation reached, and the text form names the same published
+and withheld routes. A host listener that answers the wrong status withholds
+only its own route; it never withdraws an unrelated verified container route
+(effigy#455).
 
 ## Handoff contract
 

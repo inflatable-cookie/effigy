@@ -131,7 +131,12 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   processes) run between the runs, outside the gate. The activation run
   publishes `active`, attaching requesting holders in the same transaction. A
   crash before activation leaves nothing to repair: the next `up` reconciles
-  from what is running.
+  from what is running. Exposure is decided per declared route target: a host
+  listener that never reaches its own readiness withholds only its own route,
+  the container's published routes and the other listeners' routes stay
+  exposed, and the activation still publishes `active`. A detached command
+  reports that partial exposure per route rather than the whole activation's
+  readiness and exposure as unverified (effigy#455).
 - **One apply.** `compose up -d --build --remove-orphans`, with no recreate
   flag, from the render. Compose recreates exactly the services whose rendered
   configuration changed (its own `com.docker.compose.config-hash`), so an
@@ -251,7 +256,10 @@ Host sidecars are adopted (052 §10.2, effigy#320): each declared host process
 is an environment-owned detached kernel run with custody of its process group,
 started after the environment's services report ready and in `depends_on`
 order, stopped by `down`, `reset` and session settle with a
-`HostProcessStopReport`.
+`HostProcessStopReport`. A sidecar listener's readiness is its own route claim:
+when it fails, its own route stays withheld while the environment's published
+routes and the other sidecars' routes remain, and a `depends_on` sidecar of a
+withheld listener withholds its route too (effigy#455).
 
 ## 9. Not yet
 
