@@ -150,7 +150,7 @@ fn state_of(cx: &EffectContext, root: &StateRoot, key: AdmissionKey) -> Option<S
         .unwrap()
 }
 fn lookup_now(cx: &EffectContext, root: &StateRoot, key: AdmissionKey) -> Observed<Recovered> {
-    lookup(&observe(), root, key, digest())
+    lookup(&cx.operation().observe().unwrap(), root, key, digest())
 }
 fn admitted<'a>(
     cx: &EffectContext,

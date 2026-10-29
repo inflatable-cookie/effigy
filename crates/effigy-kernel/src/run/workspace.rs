@@ -1083,7 +1083,8 @@ fn current_session(
         [session.run.to_string()],
         |r| r.get(0),
     )?;
-    let invocation: ResolvedInvocation = serde_json::from_str(&invocation)?;
+    let invocation = ResolvedInvocation::decode(invocation.as_bytes())
+        .map_err(|error| RunError::broken(format!("the stored session invocation: {error}")))?;
     if invocation.spec().owner.name().to_string() != record.owner {
         return Err(RunError::refused("the workspace session owner changed"));
     }
