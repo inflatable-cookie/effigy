@@ -625,19 +625,12 @@ fn run_private_gateway_up(
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let tls = live_progress(
-        "checking the published routes",
+        "reading the published routes",
         &format!("the route table at {}", config.route_table_path.display()),
         |progress| {
             let route_table = RouteTable::load(&config.route_table_path)
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            let tls = gateway_tls_summary(config, &route_table);
-            record_route_publication(
-                progress,
-                route_table.len(),
-                tls.cert_ready_count,
-                tls.route_count,
-            );
-            Ok(tls)
+            Ok(summarize_published_routes(config, &route_table, progress))
         },
     )?;
     render_gateway_up_result(
@@ -1729,35 +1722,11 @@ struct GatewayTlsSummary {
 }
 
 fn gateway_tls_summary(config: &GatewayConfig, route_table: &RouteTable) -> GatewayTlsSummary {
-    let mut summary = GatewayTlsSummary {
-        https_addr: config.proxy.tls_bind_addr,
-        route_count: 0,
-        cert_ready_count: 0,
-        missing_domains: Vec::new(),
-        mkcert_available: if config.is_private() {
-            TlsConfig::private_mkcert_available()
-        } else {
-            TlsConfig::mkcert_available()
-        },
-        ca_installed: !config.is_private() && TlsConfig::ca_installed(),
-    };
-
-    let Some(tls_config) = config.tls.as_ref() else {
-        return summary;
-    };
-
-    for route in route_table.all_routes() {
-        if !route.tls {
-            continue;
-        }
-        summary.route_count += 1;
-        match tls_config.load_cert(&route.domain) {
-            Ok(_) => summary.cert_ready_count += 1,
-            Err(_) => summary.missing_domains.push(route.domain.clone()),
-        }
-    }
-
-    summary
+    summarize_published_routes(
+        config,
+        route_table,
+        &ProgressSource::waiting_for("the published routes"),
+    )
 }
 
 fn render_tls_status_line(tls: &GatewayTlsSummary) -> String {
@@ -1882,113 +1851,164 @@ fn probe_low_ports(
     progress: &ProgressSource,
 ) -> std::io::Result<()> {
     let addresses = low_port_addresses(config);
-    if addresses.is_empty() {
-        return Ok(());
-    }
-    let mut argv: Vec<OsString> = vec![
-        std::env::current_exe()?.into_os_string(),
-        effigy_gateway::linux_operator::BIND_PROBE_ENTRY.into(),
-    ];
-    argv.extend(addresses.into_iter().map(OsString::from));
-    let output = effigy_gateway::setup::command(run, cx, argv, false)?;
-    let report = effigy_gateway::linux_operator::BindProbeReport::parse(&output)?;
-    record_bind_probe(progress, &report);
-    match report.refusal() {
-        Some(reason) => Err(std::io::Error::other(reason)),
-        None => Ok(()),
-    }
+    probe_bind_addresses(&addresses, progress, |address| {
+        let argv: Vec<OsString> = vec![
+            std::env::current_exe()?.into_os_string(),
+            effigy_gateway::linux_operator::BIND_PROBE_ENTRY.into(),
+            OsString::from(address),
+        ];
+        let output = effigy_gateway::setup::command(run, cx, argv, false)?;
+        effigy_gateway::linux_operator::BindProbeReport::parse(&output)
+    })
 }
 
 /// Show one operator start phase: the supervisor admitting the run, then the
-/// daemon's own self-test with the status it last reported.
+/// daemon's own self-test with the status and blocker it reports, or the
+/// reason its status could not be read on this pass.
 fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
     match phase {
         StartPhase::Admitting => {
             progress.set_awaiting("the supervisor to start the gateway daemon");
             progress.update("admitting the gateway run", None, None);
         }
-        StartPhase::SelfTest { status } => {
+        StartPhase::SelfTest { status, reason } => {
+            progress.set_awaiting(format!("the gateway to answer on {listener}"));
+            let event = match reason {
+                Some(reason) => format!("gateway status is {status}: {reason}"),
+                None => format!("gateway status is {status}"),
+            };
+            progress.update("checking the gateway self-test", None, Some(event));
+        }
+        StartPhase::Unobserved { reason } => {
             progress.set_awaiting(format!("the gateway to answer on {listener}"));
             progress.update(
                 "checking the gateway self-test",
                 None,
-                Some(format!("gateway status is {status}")),
+                Some(format!("cannot read the gateway status: {reason}")),
             );
         }
     }
 }
 
 /// Show one operator stop phase: the stop request, then the daemon winding
-/// down with the status it last reported.
+/// down with the status and blocker it reports.
 fn observe_stop(progress: &ProgressSource, phase: StopPhase) {
     match phase {
         StopPhase::Requested => {
             progress.set_awaiting("the supervisor to record the stop");
             progress.update("requesting the gateway stop", None, None);
         }
-        StopPhase::Settling { status } => {
+        StopPhase::Settling { status, reason } => {
             progress.set_awaiting("the gateway process to exit");
-            progress.update(
-                "waiting for the gateway to stop",
-                None,
-                Some(format!("gateway status is {status}")),
-            );
+            let event = match reason {
+                Some(reason) => format!("gateway status is {status}: {reason}"),
+                None => format!("gateway status is {status}"),
+            };
+            progress.update("waiting for the gateway to stop", None, Some(event));
         }
     }
 }
 
-/// Name the route table the gateway serves and how many TLS routes have a
-/// certificate yet.
-fn record_route_publication(
+/// Read the published route table one route at a time. Each route is named as
+/// it is read, with its position in the table and what its certificate state
+/// is. Returns the same summary the status and up renders always used.
+fn summarize_published_routes(
+    config: &GatewayConfig,
+    route_table: &RouteTable,
     progress: &ProgressSource,
-    routes: usize,
-    certificates_ready: usize,
-    tls_routes: usize,
-) {
-    progress.update(
-        "checking the published routes",
-        None,
-        Some(format!(
-            "{routes} routes in the table, {certificates_ready} of {tls_routes} TLS routes have certificates"
-        )),
-    );
+) -> GatewayTlsSummary {
+    let mut summary = GatewayTlsSummary {
+        https_addr: config.proxy.tls_bind_addr,
+        route_count: 0,
+        cert_ready_count: 0,
+        missing_domains: Vec::new(),
+        mkcert_available: if config.is_private() {
+            TlsConfig::private_mkcert_available()
+        } else {
+            TlsConfig::mkcert_available()
+        },
+        ca_installed: !config.is_private() && TlsConfig::ca_installed(),
+    };
+    let mut routes = route_table.all_routes();
+    routes.sort_by(|left, right| left.domain.cmp(&right.domain));
+    let total = routes.len() as u64;
+    for (index, route) in routes.iter().enumerate() {
+        let outcome = match config.tls.as_ref() {
+            None => format!(
+                "{} is listed; no certificate store is configured",
+                route.domain
+            ),
+            Some(_) if !route.tls => {
+                format!("{} is an HTTP route; no certificate needed", route.domain)
+            }
+            Some(tls_config) => {
+                summary.route_count += 1;
+                match tls_config.load_cert(&route.domain) {
+                    Ok(_) => {
+                        summary.cert_ready_count += 1;
+                        format!("{} has its certificate", route.domain)
+                    }
+                    Err(_) => {
+                        summary.missing_domains.push(route.domain.clone());
+                        format!("{} has no certificate yet", route.domain)
+                    }
+                }
+            }
+        };
+        progress.update(
+            format!("reading published route {}", route.domain),
+            Some(((index + 1) as u64, total)),
+            Some(outcome),
+        );
+    }
+    summary
 }
 
-/// Name each bind outcome of the low-port probe as its report lands. The probe
-/// is one child process, so every address's outcome arrives together.
+/// Probe each low-port address with its own child, naming each outcome as its
+/// probe returns, so setup shows the address being probed and what it found.
+/// The first refusal stops the probe with the report's own reason.
 #[cfg(any(target_os = "linux", test))]
-fn record_bind_probe(
+fn probe_bind_addresses(
+    addresses: &[String],
     progress: &ProgressSource,
-    report: &effigy_gateway::linux_operator::BindProbeReport,
-) {
-    use effigy_gateway::linux_operator::BindOutcome;
-    let total = report.addresses.len() as u64;
-    let bound = report
-        .addresses
-        .iter()
-        .filter(|probe| probe.outcome == BindOutcome::Bound)
-        .count() as u64;
-    let event = match report
-        .addresses
-        .iter()
-        .find(|probe| probe.outcome != BindOutcome::Bound)
-    {
-        Some(probe) => {
-            let outcome = match &probe.outcome {
-                BindOutcome::Bound => "bound".to_owned(),
-                BindOutcome::InUse => "already in use".to_owned(),
-                BindOutcome::Denied => "denied".to_owned(),
-                BindOutcome::Failed(reason) => format!("failed: {reason}"),
-            };
-            format!("{} {outcome}", probe.address)
+    mut probe: impl FnMut(&str) -> std::io::Result<effigy_gateway::linux_operator::BindProbeReport>,
+) -> std::io::Result<()> {
+    let total = addresses.len() as u64;
+    for (index, address) in addresses.iter().enumerate() {
+        progress.update(
+            format!("probing {address}"),
+            Some((index as u64, total)),
+            None,
+        );
+        let report = probe(address)?;
+        if let Some(outcome) = report.addresses.first() {
+            progress.update(
+                format!("probing {address}"),
+                Some(((index + 1) as u64, total)),
+                Some(format!(
+                    "{} {}",
+                    outcome.address,
+                    bind_outcome_label(&outcome.outcome)
+                )),
+            );
         }
-        None => format!("all {total} addresses bound"),
-    };
-    progress.update(
-        "probing the low-port capability as the operator",
-        Some((bound, total)),
-        Some(event),
-    );
+        if let Some(reason) = report.refusal() {
+            return Err(std::io::Error::other(reason));
+        }
+    }
+    Ok(())
+}
+
+/// The words an operator reads for one bind outcome.
+#[cfg(any(target_os = "linux", test))]
+fn bind_outcome_label(outcome: &effigy_gateway::linux_operator::BindOutcome) -> String {
+    use effigy_gateway::linux_operator::BindOutcome;
+    match outcome {
+        BindOutcome::Bound => "bound".to_owned(),
+        BindOutcome::InUse => "already in use".to_owned(),
+        BindOutcome::Denied => "denied".to_owned(),
+        BindOutcome::Failed(reason) => format!("failed: {reason}"),
+    }
 }
 
 /// Run one setup stage. `action` names what the stage is doing and `awaiting`

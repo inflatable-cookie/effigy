@@ -1853,6 +1853,10 @@ fn bind_report(addresses: &[(&str, BindOutcome)]) -> BindProbeReport {
     }
 }
 
+fn fake_clock(seconds: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(seconds)
+}
+
 /// Fake-clock frames for an operator start: the supervisor admits the run,
 /// then the daemon's own self-test reports the status it is in.
 #[test]
@@ -1861,100 +1865,178 @@ fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
     progress.update("starting the gateway process", None, None);
     observe_start(&progress, "127.0.0.1:80", StartPhase::Admitting);
     assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(1)),
+        progress.frame_at(fake_clock(1)),
         "admitting the gateway run; waiting for the supervisor to start the gateway daemon; 1s elapsed"
     );
     observe_start(
         &progress,
         "127.0.0.1:80",
-        StartPhase::SelfTest { status: "starting" },
+        StartPhase::SelfTest {
+            status: "starting",
+            reason: None,
+        },
     );
     assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(4)),
+        progress.frame_at(fake_clock(4)),
         "checking the gateway self-test; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
     );
 }
 
-/// Fake-clock frames for an operator stop: the request is recorded, then the
-/// daemon winds down through the status it reports.
+/// The self-test's own blocker reaches the operator frame, word for word.
+#[test]
+fn operator_start_frame_carries_the_self_test_blocker() {
+    let progress = ProgressSource::waiting_for("the gateway process to start");
+    progress.update("starting the gateway process", None, None);
+    observe_start(
+        &progress,
+        "127.0.0.1:80",
+        StartPhase::SelfTest {
+            status: "starting",
+            reason: Some("the listener on 127.0.0.1:80 is not bound yet".into()),
+        },
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(6)),
+        "checking the gateway self-test; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
+    );
+}
+
+/// A status that cannot be read on this pass is the step's event, not silence.
+#[test]
+fn operator_start_frame_names_an_unreadable_status() {
+    let progress = ProgressSource::waiting_for("the gateway process to start");
+    progress.update("starting the gateway process", None, None);
+    observe_start(
+        &progress,
+        "127.0.0.1:80",
+        StartPhase::Unobserved {
+            reason: "permission denied reading the gateway record".into(),
+        },
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(3)),
+        "checking the gateway self-test; waiting for the gateway to answer on 127.0.0.1:80; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
+    );
+}
+
+/// Fake-clock frames for an operator stop, with the daemon's blocker while it
+/// winds down.
 #[test]
 fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
     let progress = ProgressSource::waiting_for("the gateway process to exit");
     progress.update("stopping the gateway process", None, None);
     observe_stop(&progress, StopPhase::Requested);
     assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(2)),
+        progress.frame_at(fake_clock(2)),
         "requesting the gateway stop; waiting for the supervisor to record the stop; 2s elapsed"
     );
-    observe_stop(&progress, StopPhase::Settling { status: "stopping" });
+    observe_stop(
+        &progress,
+        StopPhase::Settling {
+            status: "stopping",
+            reason: Some("the daemon is closing its listeners".into()),
+        },
+    );
     assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(5)),
-        "waiting for the gateway to stop; waiting for the gateway process to exit; last: gateway status is stopping; 5s elapsed"
+        progress.frame_at(fake_clock(5)),
+        "waiting for the gateway to stop; waiting for the gateway process to exit; last: gateway status is stopping: the daemon is closing its listeners; 5s elapsed"
     );
 }
 
-/// Fake-clock frames for the low-port probe: one child answers for every
-/// address, so the step waits on it, then names the first address refused.
+/// Fake-clock frames through the real per-address probe: each address is named
+/// while it is probed, and its outcome is the event that follows.
 #[test]
-fn bind_probe_frames_name_the_address_that_refused() {
+fn bind_probe_frames_name_each_address_as_it_is_probed() {
     let awaited = "the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443";
     let progress = ProgressSource::waiting_for(awaited);
-    progress.update(
-        "probing the low-port capability as the operator",
-        None,
-        None,
+    let outcomes = [BindOutcome::Bound, BindOutcome::InUse, BindOutcome::Bound];
+    let addresses = ["127.0.0.1:53", "127.0.0.1:80", "127.0.0.1:443"].map(str::to_owned);
+    let mut frames = Vec::new();
+    let mut calls = 0;
+    let result = probe_bind_addresses(&addresses, &progress, |address| {
+        calls += 1;
+        frames.push(progress.frame_at(fake_clock(calls)));
+        let outcome = outcomes[calls as usize - 1].clone();
+        Ok(bind_report(&[(address, outcome)]))
+    });
+    result.expect("no address refused");
+    assert_eq!(
+        frames,
+        vec![
+            format!("probing 127.0.0.1:53 (0/3); waiting for {awaited}; 1s elapsed"),
+            format!("probing 127.0.0.1:80 (1/3); waiting for {awaited}; last: 127.0.0.1:53 bound; 2s elapsed"),
+            format!("probing 127.0.0.1:443 (2/3); waiting for {awaited}; last: 127.0.0.1:80 already in use; 3s elapsed"),
+        ]
     );
     assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(3)),
-        format!(
-            "probing the low-port capability as the operator; waiting for {awaited}; 3s elapsed"
-        )
-    );
-    record_bind_probe(
-        &progress,
-        &bind_report(&[
-            ("127.0.0.1:53", BindOutcome::Bound),
-            ("127.0.0.1:80", BindOutcome::InUse),
-            ("127.0.0.1:443", BindOutcome::Denied),
-        ]),
-    );
-    assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(4)),
-        format!("probing the low-port capability as the operator (1/3); waiting for {awaited}; last: 127.0.0.1:80 already in use; 4s elapsed")
+        progress.frame_at(fake_clock(4)),
+        format!("probing 127.0.0.1:443 (3/3); waiting for {awaited}; last: 127.0.0.1:443 bound; 4s elapsed")
     );
 }
 
-/// When every address binds, the probe frame says so with the full count.
+/// Negative: a refused address stops the probe. The later addresses are not
+/// probed, and the error is the refusal's own sentence.
 #[test]
-fn bind_probe_frames_report_every_address_bound() {
-    let progress = ProgressSource::waiting_for("the bind probe for 127.0.0.1:53, 127.0.0.1:80");
-    progress.update(
-        "probing the low-port capability as the operator",
-        None,
-        None,
-    );
-    record_bind_probe(
-        &progress,
-        &bind_report(&[
-            ("127.0.0.1:53", BindOutcome::Bound),
-            ("127.0.0.1:80", BindOutcome::Bound),
-        ]),
+fn bind_probe_refusal_stops_at_the_refused_address() {
+    let progress =
+        ProgressSource::waiting_for("the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443");
+    let addresses = ["127.0.0.1:53", "127.0.0.1:80", "127.0.0.1:443"].map(str::to_owned);
+    let mut probed = Vec::new();
+    let result = probe_bind_addresses(&addresses, &progress, |address| {
+        probed.push(address.to_owned());
+        let outcome = if address == "127.0.0.1:80" {
+            BindOutcome::Denied
+        } else {
+            BindOutcome::Bound
+        };
+        Ok(bind_report(&[(address, outcome)]))
+    });
+    let error = result.expect_err("a denied bind refuses setup");
+    assert_eq!(probed, vec!["127.0.0.1:53", "127.0.0.1:80"]);
+    assert!(
+        error.to_string().contains("cannot bind 127.0.0.1:80"),
+        "{error}"
     );
     assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(2)),
-        "probing the low-port capability as the operator (2/2); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80; last: all 2 addresses bound; 2s elapsed"
+        progress.frame_at(fake_clock(5)),
+        "probing 127.0.0.1:80 (2/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:80 denied; 5s elapsed"
     );
 }
 
-/// Fake-clock frame for the route step: the table's routes and how many TLS
-/// routes already have certificates, named as the step's last event.
+/// Fake-clock frames through the real route summary: each route is named as it
+/// is read, with the certificate state the summary found for it.
 #[test]
-fn route_publication_frames_name_the_table_and_its_certificates() {
-    let progress = ProgressSource::waiting_for("the route table at /state/routes.json");
-    progress.update("checking the published routes", None, None);
-    record_route_publication(&progress, 3, 2, 3);
+fn route_frames_name_each_route_as_it_is_read() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    let mut route_table = RouteTable::new();
+    for domain in ["b.test", "a.test"] {
+        route_table.routes.insert(
+            domain.to_owned(),
+            Route {
+                domain: domain.to_owned(),
+                target: Some("127.0.0.1:8080".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                source: RouteSource::Manual,
+                project: "/tmp/demo".to_owned(),
+                tls: true,
+                managed_listener: None,
+                registered: Utc::now(),
+            },
+        );
+    }
+    let awaited = "the route table at /state/routes.json";
+    let progress = ProgressSource::waiting_for(awaited);
+    progress.update("reading the published routes", None, None);
+    let summary = summarize_published_routes(&config, &route_table, &progress);
+    // No certificate store exists here, so both TLS routes are missing one.
+    assert_eq!(summary.route_count, 2);
+    assert_eq!(summary.cert_ready_count, 0);
+    assert_eq!(summary.missing_domains, vec!["a.test", "b.test"]);
     assert_eq!(
-        progress.frame_at(std::time::Duration::from_secs(1)),
-        "checking the published routes; waiting for the route table at /state/routes.json; last: 3 routes in the table, 2 of 3 TLS routes have certificates; 1s elapsed"
+        progress.frame_at(fake_clock(5)),
+        format!("reading published route b.test (2/2); waiting for {awaited}; last: b.test has no certificate yet; 5s elapsed")
     );
 }

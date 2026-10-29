@@ -364,11 +364,13 @@ During v0.x, MINOR bumps may include breaking changes.
   for it.
 - **Gateway setup and operator steps show the phase they are in.** `gateway up`
   and `gateway down` show the supervisor admitting the run, then the daemon's
-  own reported status while it self-tests or winds down. `gateway setup` names
-  each bind probe address as its outcome lands (bound, already in use, denied),
-  the route table with its certificate count, and the child it waits on. Each
-  step names the exact port, record or suffix list it awaits, with elapsed time.
-  Each step still ends with one line; `--json` and piped output are unchanged.
+  own reported status and the blocker that status carries while it self-tests
+  or winds down. `gateway up` names each published route as it is read, with
+  its certificate state. `gateway setup` probes each low-port address in turn
+  and names it as its outcome lands (bound, already in use, denied); a refusal
+  stops at that address. Each step names the exact port, record, route or
+  suffix list it awaits, with elapsed time, and still ends with one line.
+  `--json` and piped output are unchanged.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations

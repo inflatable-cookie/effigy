@@ -519,8 +519,14 @@ pub fn up(config: &GatewayConfig) -> io::Result<Status> {
 pub enum StartPhase {
     /// The supervisor is admitting the daemon run: spawn, journal, gate, custody.
     Admitting,
-    /// The admitted daemon runs its own self-test; `status` is the state it last reported.
-    SelfTest { status: &'static str },
+    /// The admitted daemon runs its own self-test. `status` is the state it
+    /// last reported, and `reason` the blocker that state carries, if any.
+    SelfTest {
+        status: &'static str,
+        reason: Option<String>,
+    },
+    /// The daemon's status could not be read on this pass; `reason` says why.
+    Unobserved { reason: String },
 }
 
 /// [`up`] that reports each phase it enters, so a caller's progress names the
@@ -702,7 +708,7 @@ fn up_with_executable_observed(
     // must not depend on the caller's expired deadline.
     let control = context(budget.readiness, EffectClass::Mutate);
     let control_cx = control.effects().map_err(error)?;
-    let mut reported: Option<&'static str> = None;
+    let mut reported: Option<StartPhase> = None;
     loop {
         if op.check("gateway readiness").is_err() {
             let _ = client.stop(&control_cx, run_id()?);
@@ -711,25 +717,38 @@ fn up_with_executable_observed(
                 budget.readiness.as_secs()
             )));
         }
-        if let Ok(result) = status(config) {
-            if reported != Some(result.status) {
-                reported = Some(result.status);
-                report(StartPhase::SelfTest {
+        match status(config) {
+            Ok(result) => {
+                let phase = StartPhase::SelfTest {
                     status: result.status,
-                });
+                    reason: result.reason.clone(),
+                };
+                if reported.as_ref() != Some(&phase) {
+                    report(phase.clone());
+                    reported = Some(phase);
+                }
+                if result.run == Some(client.run) && result.status == "stopped" {
+                    let reason = result
+                        .reason
+                        .unwrap_or_else(|| "gateway daemon stopped during startup".into());
+                    client
+                        .wait(&context(budget.readiness, EffectClass::Observe))
+                        .map_err(error)?;
+                    return Err(error(reason));
+                }
+                if result.ready {
+                    client.detach(&control_cx, run_id()?).map_err(error)?;
+                    return Ok(result);
+                }
             }
-            if result.run == Some(client.run) && result.status == "stopped" {
-                let reason = result
-                    .reason
-                    .unwrap_or_else(|| "gateway daemon stopped during startup".into());
-                client
-                    .wait(&context(budget.readiness, EffectClass::Observe))
-                    .map_err(error)?;
-                return Err(error(reason));
-            }
-            if result.ready {
-                client.detach(&control_cx, run_id()?).map_err(error)?;
-                return Ok(result);
+            Err(read) => {
+                let phase = StartPhase::Unobserved {
+                    reason: read.to_string(),
+                };
+                if reported.as_ref() != Some(&phase) {
+                    report(phase.clone());
+                    reported = Some(phase);
+                }
             }
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -758,8 +777,12 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
 pub enum StopPhase {
     /// The stop request is recorded in the gateway's run store.
     Requested,
-    /// The daemon winds down; `status` is the state it last reported.
-    Settling { status: &'static str },
+    /// The daemon winds down. `status` is the state it last reported, and
+    /// `reason` the blocker that state carries, if any.
+    Settling {
+        status: &'static str,
+        reason: Option<String>,
+    },
 }
 
 /// [`down`] that reports each phase it enters.
@@ -811,15 +834,17 @@ pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::
         &owner(),
         id,
     );
-    let mut reported: Option<&'static str> = None;
+    let mut reported: Option<StopPhase> = None;
     loop {
         op.check("gateway settle").map_err(error)?;
         let result = status(config)?;
-        if reported != Some(result.status) {
-            reported = Some(result.status);
-            report(StopPhase::Settling {
-                status: result.status,
-            });
+        let phase = StopPhase::Settling {
+            status: result.status,
+            reason: result.reason.clone(),
+        };
+        if reported.as_ref() != Some(&phase) {
+            report(phase.clone());
+            reported = Some(phase);
         }
         if result.status == "stopped" {
             return Ok(result);
