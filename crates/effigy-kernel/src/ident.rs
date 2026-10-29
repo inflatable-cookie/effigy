@@ -231,17 +231,34 @@ pub fn process_lineage(pid: u32) -> std::io::Result<ProcessLineage> {
     platform::lineage(pid)
 }
 
-/// The invoking process's controlling terminal, when it has one. A diagnostic
-/// names a terminal session; a process without a terminal records nothing.
+/// The invoking process's controlling terminal, when it has one. The terminal is
+/// a property of the process, not of its stdin: a command run as
+/// `effigy … < /dev/null`, from a pipeline or with a redirected descriptor still
+/// has one, and `/dev/tty` names it whatever the caller redirected.
 pub fn controlling_terminal() -> Option<String> {
-    // SAFETY: isatty only reads the state of one descriptor.
-    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+    // SAFETY: a constant NUL-terminated path, read-only flags, no creation and
+    // no control terminal is taken over.
+    let fd = unsafe {
+        libc::open(
+            c"/dev/tty".as_ptr(),
+            libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
         return None;
     }
+    let name = terminal_name(fd);
+    // SAFETY: fd was opened above and is owned here; it is closed exactly once.
+    unsafe { libc::close(fd) };
+    name
+}
+
+/// The name of the terminal behind one descriptor, when that descriptor is one.
+fn terminal_name(fd: libc::c_int) -> Option<String> {
     let mut buffer = [0 as libc::c_char; 128];
-    // SAFETY: fd 0 is a terminal per isatty above, and ttyname_r writes at most
-    // buffer.len() bytes into the live, writable and correctly typed buffer.
-    if unsafe { libc::ttyname_r(libc::STDIN_FILENO, buffer.as_mut_ptr(), buffer.len()) } != 0 {
+    // SAFETY: fd is live, and ttyname_r writes at most buffer.len() bytes into
+    // the live, writable and correctly typed buffer.
+    if unsafe { libc::ttyname_r(fd, buffer.as_mut_ptr(), buffer.len()) } != 0 {
         return None;
     }
     // SAFETY: a successful ttyname_r NUL-terminates the buffer.
@@ -679,6 +696,65 @@ mod tests {
         assert!(process_lineage(0).is_err());
         assert!(process_lineage(i32::MAX as u32 + 1).is_err());
     }
+    #[test]
+    fn terminal_name_reads_a_pty_and_refuses_a_pipe() {
+        let mut master: libc::c_int = -1;
+        let mut slave: libc::c_int = -1;
+        // SAFETY: openpty writes both descriptors and no termios/winp is passed.
+        let opened = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(opened, 0, "a pty is available to the test");
+        let name = terminal_name(slave).expect("a pty slave has a terminal name");
+        assert!(name.starts_with("/dev/"), "{name}");
+        // SAFETY: both descriptors were opened above and are closed once each.
+        unsafe {
+            libc::close(slave);
+            libc::close(master);
+        }
+        let mut pipe = [0 as libc::c_int; 2];
+        // SAFETY: pipe writes two descriptors into the live array.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        assert!(terminal_name(pipe[0]).is_none(), "a pipe is not a terminal");
+        // SAFETY: both descriptors were opened above and are closed once each.
+        unsafe {
+            libc::close(pipe[0]);
+            libc::close(pipe[1]);
+        }
+    }
+
+    /// The controlling terminal does not follow stdin: an interactive command
+    /// with stdin redirected still names its terminal (effigy#450 review).
+    #[test]
+    fn controlling_terminal_does_not_depend_on_stdin() {
+        let before = controlling_terminal();
+        // SAFETY: /dev/null is opened read-only for this process only.
+        let null = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(null >= 0, "open /dev/null");
+        // SAFETY: the test process is its own process; stdin is replaced by the
+        // open /dev/null, as `< /dev/null` would, and null is closed after.
+        assert!(unsafe { libc::dup2(null, libc::STDIN_FILENO) } >= 0, "dup2");
+        // SAFETY: null was opened above and is closed exactly once.
+        unsafe { libc::close(null) };
+        assert_eq!(
+            controlling_terminal(),
+            before,
+            "redirecting stdin must not change the controlling terminal"
+        );
+        // SAFETY: isatty only reads the state of one descriptor.
+        assert_eq!(
+            unsafe { libc::isatty(libc::STDIN_FILENO) },
+            0,
+            "the test really did redirect stdin"
+        );
+    }
+
     #[test]
     fn boot_uuid_and_cross_boot_clock_are_strict() {
         assert!(parse_boot_identity("not a UUID").is_none());

@@ -178,6 +178,21 @@ pub fn caller(
                 break;
             }
         }
+        // The chain is the invoking session's chain. A parent in another session
+        // means the walk has already left it — a reparented child, or a leader we
+        // cannot reach — so name that instead of attributing another session.
+        if let (Some(invoking), Some(parent_session)) = (session, facts.session) {
+            if parent_session != invoking {
+                chain_failures.push(bounded(
+                    &format!(
+                        "parent {next}: session {parent_session} is outside the invoking \
+                         session {invoking}"
+                    ),
+                    TEXT_LIMIT,
+                ));
+                break;
+            }
+        }
         let command = match &facts.argv {
             Some(argv) => Some(ancestor_command(argv, facts.executable.as_deref())),
             None => {
@@ -225,7 +240,7 @@ pub fn event(
         "event": action.event(),
         "action": action,
         "pid": pid,
-        "argv": command_text(argv, argv.first().map(String::as_str)),
+        "argv": command_text(argv, argv.first().map(String::as_str), true),
         "cwd": cwd,
         "cause": bounded(cause, TEXT_LIMIT),
         "caller": caller,
@@ -356,15 +371,23 @@ const SHELL_FLAGS: &[&str] = &["-c", "-lc", "-ec", "-ic", "--command"];
 /// arbitrary program or shell script can put a password in any position, and a
 /// known spelling proves nothing about a token's role — and neither is a flag's
 /// value, in `--flag value` or `--flag=value` form.
-fn command_text(argv: &[String], program: Option<&str>) -> Vec<String> {
+fn command_text(argv: &[String], program: Option<&str>, trusted: bool) -> Vec<String> {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
     for (index, argument) in argv.iter().take(ARGV_LIMIT).enumerate() {
-        let recorded = match previous {
-            Some(flag) if shell_flag(flag) => shell_text(argument),
-            Some(flag) if flag_shaped(flag) && !takes_no_value(flag) => REDACTED.into(),
-            _ if index == 0 => program.map_or_else(|| REDACTED.into(), program_text),
-            _ => positional(argument),
+        let recorded = if index == 0 {
+            program.map_or_else(|| REDACTED.into(), program_text)
+        } else if !trusted {
+            // Another program's options are its own: Effigy's flag vocabulary
+            // says nothing about what `--json` means here, and a token that
+            // merely matches one can be that program's value.
+            REDACTED.into()
+        } else {
+            match previous {
+                Some(flag) if shell_flag(flag) => shell_text(argument),
+                Some(flag) if flag_shaped(flag) && !takes_no_value(flag) => REDACTED.into(),
+                _ => positional(argument),
+            }
         };
         rendered.push(recorded);
         previous = Some(argument);
@@ -375,7 +398,7 @@ fn command_text(argv: &[String], program: Option<&str>) -> Vec<String> {
 /// An ancestor's command line. Its program slot names the executable the
 /// operating system reports rather than the caller-chosen `argv[0]`.
 fn ancestor_command(argv: &[String], executable: Option<&str>) -> Vec<String> {
-    command_text(argv, executable)
+    command_text(argv, executable, false)
 }
 
 /// The file name of the program, published only when it is a word this record
@@ -392,17 +415,13 @@ fn program_text(path: &str) -> String {
 /// apply token by token, no program slot is claimed for it, and no positional
 /// token in it is published.
 fn shell_text(script: &str) -> String {
-    let mut rendered = Vec::new();
-    let mut previous: Option<&str> = None;
-    for token in script.split_whitespace().take(ARGV_LIMIT) {
-        let recorded = match previous {
-            Some(flag) if flag_shaped(flag) && !takes_no_value(flag) => REDACTED.into(),
-            _ => positional(token),
-        };
-        rendered.push(recorded);
-        previous = Some(token);
-    }
-    bounded(&rendered.join(" "), TEXT_LIMIT)
+    let rendered = script
+        .split_whitespace()
+        .take(ARGV_LIMIT)
+        .map(|_| REDACTED)
+        .collect::<Vec<_>>()
+        .join(" ");
+    bounded(&rendered, TEXT_LIMIT)
 }
 
 /// The published form of one token that is not itself in a value position: one
@@ -823,7 +842,7 @@ mod tests {
             1,
             vec![Ok(Facts {
                 parent: 0,
-                session: Some(1),
+                session: Some(40),
                 start: "macos:1.000001".into(),
                 executable: Some("/bin/zsh".into()),
                 argv: None,
@@ -837,6 +856,24 @@ mod tests {
                 .unknown
                 .iter()
                 .any(|reason| reason.contains("arguments are unreadable")),
+            "{:?}",
+            record.unknown
+        );
+    }
+
+    /// A parent in another session is not part of the invoking chain: a
+    /// reparented child gets a bounded reason, never another session's leader.
+    #[test]
+    fn gateway_caller_chain_stops_at_a_parent_outside_the_session() {
+        let fake = Fake::default()
+            .facts(50, 1, 40, "macos:1.000050", &[])
+            .facts(1, 0, 1, "macos:1.000001", &["/sbin/launchd"]);
+        let record = caller_of(&fake, 50);
+        assert!(record.parents.is_empty(), "{record:?}");
+        assert!(
+            record.unknown.iter().any(|reason| {
+                reason.contains("parent 1") && reason.contains("outside the invoking session 40")
+            }),
             "{:?}",
             record.unknown
         );
@@ -1019,8 +1056,9 @@ mod tests {
         // Attribution survives: the program and Effigy's own flag names stay,
         // while the action itself is named by the event's `cause` and `action`.
         assert!(parents.contains("effigy"), "{parents}");
-        assert!(parents.contains("--suffix"), "{parents}");
-        // A flag name this record does not define is not published either.
+        // No option of another program is published, not even one that spells a
+        // flag this record defines.
+        assert!(!parents.contains("--suffix"), "{parents}");
         assert!(!parents.contains("--token"), "{parents}");
         assert!(rendered.contains("--suffix"), "{rendered}");
         assert!(parents.contains("<redacted>"), "{parents}");
@@ -1031,12 +1069,12 @@ mod tests {
         );
     }
 
-    /// An ancestor's command publishes only Effigy's own vocabulary. Its flag
-    /// names, values, paths and program name are all caller-controlled text, so
-    /// anything outside that vocabulary is a placeholder — in a direct command
-    /// line and inside a shell string alike.
+    /// An ancestor's command publishes its program and nothing else. Option
+    /// tokens are that program's own, so Effigy's flag vocabulary says nothing
+    /// about them, and a token that merely matches a flag can be its value — in a
+    /// direct command line and inside a shell string alike (effigy#450 review).
     #[test]
-    fn gateway_ancestor_commands_publish_only_effigy_vocabulary() {
+    fn gateway_ancestor_commands_publish_only_the_program() {
         let direct = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -1062,12 +1100,54 @@ mod tests {
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),
-                "--verbose".to_owned(),
+                REDACTED.to_owned(),
             ]
         );
 
-        // A wrapper around Effigy keeps its shell and the flags; the words
-        // inside a script are positional, so they are placeholders.
+        // A value that matches one of Effigy's own flags is another program's
+        // token, and a known spelling does not make it ours.
+        let foreign_option = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["git", "--suffix", "--json", "--verbose"],
+            );
+        let parent = caller_of(&foreign_option, 50).parents[0]
+            .command
+            .clone()
+            .unwrap();
+        assert_eq!(
+            parent,
+            vec![
+                "git".to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+            ]
+        );
+        let foreign_shell = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["/bin/sh", "-c", "git --suffix --json"],
+            );
+        let parent = caller_of(&foreign_shell, 50).parents[0]
+            .command
+            .clone()
+            .unwrap();
+        assert_eq!(
+            parent,
+            vec!["sh".to_owned(), REDACTED.to_owned(), REDACTED.to_owned()]
+        );
+
+        // A wrapper around Effigy keeps only its own program name: the shell
+        // option and the script are that shell's text.
         let wrapper = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -1080,89 +1160,20 @@ mod tests {
         let parent = caller_of(&wrapper, 50).parents[0].command.clone().unwrap();
         assert_eq!(
             parent,
-            vec![
-                "zsh".to_owned(),
-                "-lc".to_owned(),
-                format!("{REDACTED} {REDACTED} {REDACTED} --json"),
-            ]
+            vec!["zsh".to_owned(), REDACTED.to_owned(), REDACTED.to_owned()]
         );
 
-        // A command word in a positional slot is a value, not a word: a known
-        // spelling never establishes a token's role in another program.
-        let word_positional = Fake::default()
+        // Positional words, paths and unknown flags are values like any other.
+        let arbitrary = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
                 40,
                 30,
                 40,
                 "macos:1.000040",
-                &["helper", "login", "gateway"],
+                &["helper", "--hunter2", "gateway"],
             );
-        let parent = caller_of(&word_positional, 50).parents[0]
-            .command
-            .clone()
-            .unwrap();
-        assert_eq!(
-            parent,
-            vec![
-                REDACTED.to_owned(),
-                REDACTED.to_owned(),
-                REDACTED.to_owned()
-            ]
-        );
-        let shell_word_positional = Fake::default()
-            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
-            .facts(
-                40,
-                30,
-                40,
-                "macos:1.000040",
-                &["/bin/sh", "-c", "helper login gateway"],
-            );
-        let parent = caller_of(&shell_word_positional, 50).parents[0]
-            .command
-            .clone()
-            .unwrap();
-        assert_eq!(
-            parent,
-            vec![
-                "sh".to_owned(),
-                "-c".to_owned(),
-                format!("{REDACTED} {REDACTED} {REDACTED}"),
-            ]
-        );
-
-        // A flag name is caller-controlled text too: `--hunter2` is not ours.
-        let arbitrary_flag = Fake::default()
-            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
-            .facts(
-                40,
-                30,
-                40,
-                "macos:1.000040",
-                &["sh", "--hunter2", "hunter2"],
-            );
-        let parent = caller_of(&arbitrary_flag, 50).parents[0]
-            .command
-            .clone()
-            .unwrap();
-        assert_eq!(
-            parent,
-            vec!["sh".to_owned(), REDACTED.to_owned(), REDACTED.to_owned()]
-        );
-
-        // A vocabulary word in a value position is a value, not a word: the
-        // token after a flag is never published, whatever its spelling.
-        let word_value = Fake::default()
-            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
-            .facts(
-                40,
-                30,
-                40,
-                "macos:1.000040",
-                &["helper", "--password", "gateway", "gateway"],
-            );
-        let parent = caller_of(&word_value, 50).parents[0]
+        let parent = caller_of(&arbitrary, 50).parents[0]
             .command
             .clone()
             .unwrap();
@@ -1172,30 +1183,6 @@ mod tests {
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),
                 REDACTED.to_owned(),
-                REDACTED.to_owned(),
-            ]
-        );
-
-        // The same inside a shell string.
-        let shell_word_value = Fake::default()
-            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
-            .facts(
-                40,
-                30,
-                40,
-                "macos:1.000040",
-                &["/bin/sh", "-c", "helper --password gateway"],
-            );
-        let parent = caller_of(&shell_word_value, 50).parents[0]
-            .command
-            .clone()
-            .unwrap();
-        assert_eq!(
-            parent,
-            vec![
-                "sh".to_owned(),
-                "-c".to_owned(),
-                format!("{REDACTED} {REDACTED} {REDACTED}"),
             ]
         );
 
@@ -1216,11 +1203,9 @@ mod tests {
         let parent = caller_of(&shell, 50).parents[0].command.clone().unwrap();
         let rendered = parent.join(" ");
         assert_eq!(parent[0], "sh", "{rendered}");
-        assert_eq!(parent[1], "-c", "{rendered}");
-        for exposed in ["psql", "password", "hunter2", "passwd", "etc"] {
+        for exposed in ["psql", "password", "hunter2", "passwd", "etc", "--verbose"] {
             assert!(!rendered.contains(exposed), "{rendered}");
         }
-        assert!(rendered.contains("--verbose"), "{rendered}");
     }
 
     /// The program slot names the executable the operating system reports rather

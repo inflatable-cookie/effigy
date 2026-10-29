@@ -375,10 +375,15 @@ record:
 
 - the invoking process's start identity (the platform's own process-start
 evidence, so two processes that held one pid stay distinguishable), its
-session and its controlling terminal when it has one;
+session and its controlling terminal when it has one. The terminal is the
+process's controlling terminal from `/dev/tty`, so a command with stdin
+redirected or in a pipeline still names it;
 - the parent chain from the invoking process's parent up to and including its
 session leader, capped at eight entries, each with pid, start identity, session
-and redacted argument boundaries;
+and redacted argument boundaries. The walk stays inside the invoking process's
+session: a parent in another session — a reparented child, or a leader the walk
+cannot reach — ends the chain with a bounded unknown reason instead of naming
+another session's leader;
 - only allowlisted agent/task/run identity markers, read by name from
 `PASEO_*`, `NS_*` and `EFFIGY_RUN_*`, and only when the value is one of the
 supported identity forms: a `8-4-4-4-12` hexadecimal UUID, a decimal id, or —
@@ -393,18 +398,23 @@ Chain failures keep their place in that list, which is capped at eight entries
 and ends with how many reasons it omitted, so a flood of invalid markers can
 never hide a missing or unconfirmed part of the chain.
 
-Command text is published by role, not by spelling. An event records only the
-file name of the program and one of Effigy's own flag names. Every other token is
-`<redacted>`: a positional argument (whatever its spelling, because a positional
-password cannot be told from a command word), a path, an unknown flag name such
-as `--hunter2` or `--token`, a URL, a `KEY=value` pair, a JSON body, and the value
-of any flag — in `--flag value` and `--flag=value` form alike, so
-`gateway setup --suffix down` records `--suffix <redacted>`. The rule applies to
-the invoking process's own `argv`, to an ancestor's `argv`, and token by token
-inside a shell string; a flag this record does not define is treated as taking a
-value, and an ancestor's program slot names the file name of the executable the
-operating system reports, never its caller-chosen `argv[0]`, and only when that
-name is in the published program vocabulary. Attribution therefore rests on the
+Command text is published by role, not by spelling. The invoking process's own
+`argv` is Effigy's grammar, so it records the program's file name and one of
+Effigy's own flag names; every other token is `<redacted>` — a positional
+argument (whatever its spelling, because a positional password cannot be told
+from a command word), a path, an unknown flag such as `--hunter2` or `--token`, a
+URL, a `KEY=value` pair, a JSON body, and the value of any flag in `--flag value`
+or `--flag=value` form, so `gateway setup --suffix down` records
+`--suffix <redacted>`. A flag this record does not define is treated as taking a
+value.
+
+An ancestor's command is another program's text, so only its program is
+published: the file name of the executable the operating system reports — never
+its caller-chosen `argv[0]` — and only when that name is in the published program
+vocabulary. No option token of an ancestor is published, not even one that spells
+an Effigy flag, because that program's flags and their values are its own and a
+token that matches can be a value. A shell command string is read as foreign text
+for the same reason, so nothing inside it is published. Attribution therefore rests on the
 pid, start identity, session, controlling terminal, markers, `cause` and the
 `action`, not on arbitrary text from a command line.
 

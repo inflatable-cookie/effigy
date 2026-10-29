@@ -797,23 +797,25 @@ controlling terminal of the invoking process, its parent chain up to and
 including the session leader (at most eight entries, each with pid, start
 identity, session and redacted command), and only allowlisted `PASEO_*`, `NS_*`
 and `EFFIGY_RUN_*` identity markers whose value is a supported identity form. An
-unreadable parent, argument or marker, or a pid whose start identity changed or
-could not be confirmed by a second read, becomes a bounded unknown reason
-instead of a guess, and no environment value is read unless its name is on that
-allowlist. The reason list keeps chain failures ahead of marker failures and
+unreadable parent, argument or marker, a pid whose start identity changed or
+could not be confirmed by a second read, or a parent in another session —
+a reparented child ends the walk instead of naming another session's leader —
+becomes a bounded unknown reason instead of a guess, and no environment value is
+read unless its name is on that allowlist. The controlling terminal is read from
+`/dev/tty`, so a command with stdin redirected still names it. The reason list keeps chain failures ahead of marker failures and
 ends with how many reasons it omitted, so a full list never hides a missing or
 unconfirmed part of the chain.
 
-Command text is published by role, not by spelling: an event records only the
-file name of the program and one of Effigy's own flag names. Every other token is
-`<redacted>` — a positional argument whatever its spelling, a path, an unknown
-flag such as `--hunter2`, a URL, a `KEY=value` pair, a JSON body, and the value
-of any flag in `--flag value` or `--flag=value` form, so
-`gateway setup --suffix down` records `--suffix <redacted>`. The rule covers the
-invoking process's own `argv`, an ancestor's `argv` and the tokens of a shell
-string; an unknown flag is treated as taking a value, and an ancestor's program
-slot names the executable the operating system reports, never the caller-chosen
-`argv[0]`. A marker value is recorded only when it is a UUID, a decimal
+Command text is published by role, not by spelling. The invoking process's own
+`argv` records the program's file name and one of Effigy's own flag names; every
+other token is `<redacted>` — a positional argument whatever its spelling, a
+path, an unknown flag, a URL, a `KEY=value` pair, a JSON body, and the value of
+any flag in `--flag value` or `--flag=value` form, so `gateway setup --suffix
+down` records `--suffix <redacted>`. An ancestor's command is another program's
+text, so only its program is published — the executable the operating system
+reports, never its caller-chosen `argv[0]` — and no option token of it is, even
+one that spells an Effigy flag; a shell command string is foreign text too and
+publishes nothing inside itself. A marker value is recorded only when it is a UUID, a decimal
 id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
 marker variable is refused by name only. A stop signalled by replacement or
 migration is attributable through the `up` or `setup` action that requested it;

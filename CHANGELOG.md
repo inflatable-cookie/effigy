@@ -227,15 +227,18 @@ During v0.x, MINOR bumps may include breaking changes.
   flag names, so a positional argument (whatever its spelling), a path, an
   unknown flag, a URL, a `KEY=value` pair and the value of any flag in
   `--flag value` or `--flag=value` form are `<redacted>` — `gateway setup
-  --suffix down` records `--suffix <redacted>`. The rule covers the invoking
-  command, an ancestor's command and inside a shell string alike. An ancestor's
-  program slot names the executable the operating system reports (never its
-  caller-chosen `argv[0]`) when that name is in the program vocabulary. The
-  `unknown` list is capped and says how many reasons it omitted, so invalid
-  markers never hide a broken chain. The event is written at the command boundary
-  only: `gateway setup` emits its one setup event and no extra up or down event,
-  and a task run that starts the gateway records `managed gateway start`. Anything unreadable or invalid becomes a
-  bounded `unknown` reason, no other environment value is read, and logging
+  --suffix down` records `--suffix <redacted>`. An ancestor's command publishes
+  only its program name (the executable the operating system reports, never
+  `argv[0]`) and no option token of it; a shell command string publishes nothing
+  inside itself. The walk stays inside the invoking process's session, so a
+  reparented child ends the chain with an unknown reason instead of naming
+  another session's leader, and the controlling terminal is read from `/dev/tty`
+  so a redirected stdin still names it. The `unknown` list is capped and says how
+  many reasons it omitted, so invalid markers never hide a broken chain. The
+  event is written at the command boundary only: `gateway setup` emits its one
+  setup event and no extra up or down event, and a task run that starts the
+  gateway records `managed gateway start`. Anything unreadable or invalid becomes
+  a bounded `unknown` reason, no other environment value is read, and logging
   still never authorizes, refuses or delays the action. The 2026-10-28
   15:26:25Z Mac gateway stop could not have been traced to a terminal, session,
   agent or task from the old record.
