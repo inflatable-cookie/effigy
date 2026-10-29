@@ -1101,9 +1101,11 @@ with the shared render present. A missing render, a stopped or absent
 container, a container created from another render, more than one running
 container for the service, an unreadable inventory, or environments that
 declare the same service name with different shared identities all refuse and
-name the project and recovery command. A data command never publishes a render,
+name the project and recovery command. The data step never publishes a render,
 starts or replaces a shared service, and never falls back to a checkout-local
-service of the same name. Credential values stay out of the Compose command:
+service of the same name; the seed command's environment activation still runs
+the ordinary apply before that proof, and `data dump` starts nothing. Credential
+values stay out of the Compose command:
 a plan's `env NAME=value` prefix becomes `compose exec -e NAME` with the value
 only in the child environment, so neither argv nor the JSON/text report carries
 it. An unshared target keeps the checkout-local route unchanged.
