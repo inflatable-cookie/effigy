@@ -30,7 +30,9 @@ use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
-use crate::runner::host_process::{attributed_environment_failure, HostWaitGraph};
+use crate::runner::host_process::{
+    attributed_environment_failure, begin_environment_phase, HostWaitGraph,
+};
 use crate::runner::managed_wait::WaitLedger;
 use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, TaskTarget};
 
@@ -429,6 +431,11 @@ impl Owner {
         if let Some(environment) = &plan.environment {
             self.wait_ledger
                 .publish_environment_identity(&environment.name);
+            // Every named environment — with or without host processes — begins
+            // its phase settled and count-free here, before this run polls it,
+            // so an interrupted prior run's container counts never reach a
+            // workload's wait (effigy#458).
+            begin_environment_phase(&environment.repo, &environment.name);
             if matches!(environment.binding, Binding::Named { .. }) {
                 if let Ok(policy) = settlement::policy(&environment.repo, &environment.binding) {
                     if !policy.host_processes.is_empty() {

@@ -292,10 +292,11 @@ run's own environment reason carries the planner's failing entry and its report.
 The environment phase's own record is terminal on every exit — a success, a stop
 or a nothing-to-await fallback settles it, and a failure or timeout publishes its
 headline and first piece of evidence. A new session resets that record at its own
-boundary, *before* the run starts polling it — a `container up` resets it before
-its compose step, held or not — so an interrupted prior run's container counts
-are never projected into the new run, and the staged host snapshot is a separate
-record that the reset never touches. Only a dependent
+boundary, *before* the run starts polling it — for every named environment, with
+or without host processes, and a `container up` resets it before its compose
+step, held or not — so an interrupted prior run's container counts are never
+projected into the new run, and the staged host snapshot is a separate record
+that the reset never touches. Only a dependent
 that needs a failed entry's readiness loses its prerequisite; a dependent that
 only needed the entry's start keeps going, including its own scheduled delay. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting

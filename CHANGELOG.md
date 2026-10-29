@@ -289,9 +289,10 @@ During v0.x, MINOR bumps may include breaking changes.
   exits non-zero, even inside its own scheduled delay. The environment phase's
   record is terminal on every exit (settled on success, stop or
   nothing-to-await, attributed on failure or timeout), and a new session resets
-  it at its own boundary — before the run starts polling it, and before a
-  bring-up composes — so an interrupted prior run's counts are never projected
-  into the new run; the reset never touches the staged host snapshot. A host
+  it at its own boundary — for every named environment, with or without host
+  processes, before the run starts polling it, and before a bring-up composes —
+  so an interrupted prior run's counts are never projected into the new run; the
+  reset never touches the staged host snapshot. A host
   failure the planner published
   survives the run's generic `up` exit: the run's error names the failing entry
   and its observed status. A wait is recorded as

@@ -22,6 +22,15 @@ use super::ManagedHostListenerResult;
 use crate::runner::error::RunnerError;
 use crate::runner::managed_wait::{self, WaitLedger, WaitOwner};
 
+/// The run's environment boundary, for every named environment — with or
+/// without host processes: a new session's phase begins settled and count-free
+/// before the run starts polling it, so an interrupted prior run's container
+/// counts are never projected into a workload's wait (effigy#458). The host
+/// snapshot is a separate record and is untouched.
+pub(in crate::runner) fn begin_environment_phase(repo: &std::path::Path, environment: &str) {
+    WaitLedger::environment(repo, environment).settle_phase();
+}
+
 /// The run's environment-failure reason, kept together with the failure the
 /// host planner published when it owned the scope. The planner is the only
 /// process that saw which entry failed and what it reported, so its attribution
@@ -94,7 +103,7 @@ impl HostWaitGraph {
         // phase starts, and an interrupted prior run's counts must never be
         // projected into this one (effigy#458). The host snapshot staged below
         // is a separate record and is untouched.
-        ledger.settle_phase();
+        begin_environment_phase(repo_root, &policy.name);
         let started = policy
             .host_processes
             .iter()
@@ -1662,6 +1671,57 @@ mod environment_tests {
                 .contains("500"),
             "{json}"
         );
+    }
+
+    /// A named environment that declares no host processes still resets its
+    /// phase at the run's boundary: no host graph is staged for it, so the
+    /// reset cannot come from one, and an interrupted prior run's counts must
+    /// never reach a workload's wait (effigy#458).
+    #[test]
+    fn a_named_environment_without_host_processes_still_resets_its_phase() {
+        let (_dir, checkout) = fixture();
+        let mut policy = four_entry_policy(&checkout);
+        policy.host_processes.clear();
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(ledger.read_progress(), Some((3, 4)));
+
+        // The run's boundary for this named environment, with no host graph.
+        begin_environment_phase(&checkout, ENVIRONMENT);
+        assert_eq!(
+            ledger.read_progress(),
+            None,
+            "an interrupted prior run's counts never reach this run"
+        );
+        assert!(
+            !ledger
+                .read_phase()
+                .is_some_and(|phase| phase.holds_a_wait()),
+            "the phase is settled, not waiting"
+        );
+        // The readiness publisher remains the only source of counts.
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(4),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(ledger.read_progress(), Some((4, 4)));
     }
 
     /// The new session's boundary resets the phase record *before* the run
