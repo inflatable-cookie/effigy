@@ -891,16 +891,30 @@ pub(super) fn operator_workspace_for_policy(
     if !environment_declares_operator_workspace(repo_root, policy)? {
         return Ok(None);
     }
-    let (Some(user), Some(home)) = (policy.workspace_user.clone(), policy.workspace_home.clone())
-    else {
-        return Ok(None);
+    let user = policy
+        .workspace_user
+        .as_deref()
+        .map(str::trim)
+        .filter(|user| !user.is_empty());
+    let home = policy
+        .workspace_home
+        .as_deref()
+        .map(str::trim)
+        .filter(|home| Path::new(home).is_absolute());
+    let (Some(user), Some(home)) = (user, home) else {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` declares an operator workspace but has no usable workspace identity; \
+             configure a non-empty `user` and absolute `home` in its system/workspace declaration, \
+             then run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
+            policy.name,
+        )));
     };
     let guest_checkout =
         effigy_containers::load_container_exec_working_dir(repo_root, Some(&policy.name))
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(Some(OperatorWorkspace {
-        user,
-        home,
+        user: user.to_owned(),
+        home: home.to_owned(),
         guest_checkout: guest_checkout.display().to_string(),
     }))
 }

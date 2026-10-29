@@ -27,6 +27,43 @@ container = { image = "node:20", mount = "." }
             );
         }
     }
+
+    #[test]
+    fn conflicting_workspace_aliases_refuse_instead_of_preferring_the_default() {
+        for alternate in [
+            "working_dir = '/alternate'",
+            "working_dir = '/workspace'\nuser = 'other'",
+            "working_dir = '/workspace'\nhome = '/other'",
+            "working_dir = '/workspace'\nmounts = ['cache:/workspace/cache']",
+        ] {
+            let manifest = toml::from_str::<effigy_manifest::TaskManifest>(&format!(
+                "[containers]\ndefault = 'web'\n[containers.web]\nprimary_service = 'app'\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'web'\nworking_dir = '/workspace'\n[systems.dev.workspaces.alt]\ncontainer = 'web'\n{alternate}\n"
+            )).unwrap();
+            for selected in [None, Some("web")] {
+                let error = resolve_operator_workspace_for_container(&manifest, selected)
+                    .expect_err("conflicting aliases cannot safely collapse to a container name")
+                    .to_string();
+                assert!(
+                    error.contains("dev/app") && error.contains("dev/alt"),
+                    "{error}"
+                );
+                assert!(error.contains("distinct container names"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn identical_aliases_normalize_implicit_and_explicit_container_references() {
+        let manifest = toml::from_str::<effigy_manifest::TaskManifest>(
+            "[containers]\ndefault = 'web'\n[containers.web]\nprimary_service = 'app'\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'web'\nworking_dir = '/workspace'\n[systems.audit.workspaces.alt]\nworking_dir = '/workspace'\n"
+        ).unwrap();
+        for selected in [None, Some("web")] {
+            let workspace = resolve_operator_workspace_for_container(&manifest, selected)
+                .unwrap()
+                .expect("identical effective aliases remain supported");
+            assert_eq!(workspace.working_dir.as_deref(), Some("/workspace"));
+        }
+    }
 }
 
 #[cfg(test)]

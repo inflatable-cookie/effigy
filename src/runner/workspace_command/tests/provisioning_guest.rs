@@ -1209,6 +1209,140 @@ fn a_declared_workspace_is_the_container_mode_boundary() {
 }
 
 #[test]
+fn conflicting_workspace_bindings_refuse_policy_prepare_and_both_entry_adapters() {
+    let _env = EnvGuard::set_many(&[("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", None)]);
+    let repo = fixture("conflicting-workspaces");
+    container_mode_manifest(&repo);
+    let mut manifest = std::fs::read_to_string(repo.join("effigy.toml")).unwrap();
+    manifest.push_str(
+        "\n[systems.dev.workspaces.alt]\ncontainer = 'web'\nworking_dir = '/alternate'\n",
+    );
+    std::fs::write(repo.join("effigy.toml"), manifest).unwrap();
+    let policy = web_policy(&repo, "dev", "/home/dev");
+    let selected = crate::runner::workspace_command::resolve_public_workspace_container(
+        &repo,
+        Some("dev"),
+        Some("alt"),
+        "workspace",
+    )
+    .unwrap();
+    assert_eq!(selected.as_deref(), Some("web"));
+    let override_config = effigy_manifest::ManifestWorkspaceConfig {
+        container: Some(effigy_manifest::ManifestWorkspaceContainerRef::Named(
+            "web".to_owned(),
+        )),
+        working_dir: Some("/alternate".to_owned()),
+        ..Default::default()
+    };
+    for override_config in [None, Some(&override_config)] {
+        let error = effigy_containers::load_container_policy_with_workspace(
+            &repo,
+            Some("web"),
+            override_config,
+        )
+        .expect_err("a selected override must not bypass conflicting declarations")
+        .to_string();
+        assert!(error.contains("conflicting operator workspaces"), "{error}");
+    }
+    let prepare = super::super::publish_workspace_guest(&repo, &policy)
+        .unwrap_err()
+        .to_string();
+    let entry = super::super::ensure_workspace_effigy_available_for_policy(&repo, &policy, None)
+        .unwrap_err()
+        .to_string();
+    let origin = std::time::Instant::now();
+    let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
+        origin,
+        origin + std::time::Duration::from_secs(60),
+        4096,
+        4096,
+    );
+    let bounded = super::super::ensure_workspace_effigy_available_for_policy_bounded(
+        &repo,
+        &policy,
+        HOST_CONTAINER_ID,
+        &mut budget,
+    )
+    .unwrap_err()
+    .to_string();
+    for error in [prepare, entry, bounded] {
+        assert!(
+            error.contains("dev/app") && error.contains("dev/alt"),
+            "{error}"
+        );
+        assert!(error.contains(HOST_REPREPARE_COMMAND), "{error}");
+    }
+    assert!(
+        !repo.join(".effigy").exists(),
+        "a refused selection writes no host state or rendered output"
+    );
+}
+
+#[test]
+fn a_declared_custom_workspace_without_identity_refuses_instead_of_becoming_hybrid() {
+    let _env = EnvGuard::set_many(&[("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", None)]);
+    let repo = fixture("missing-workspace-identity");
+    std::fs::write(
+        repo.join("compose.yml"),
+        "services:\n  app:\n    image: custom:fixture\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("effigy.toml"), "[containers]\ndefault = 'web'\n[containers.web]\ncompose_file = 'compose.yml'\nprimary_service = 'app'\nworking_dir = '/workspace'\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'web'\nworking_dir = '/workspace'\n").unwrap();
+    let mut policy = effigy_containers::load_container_policy(&repo, Some("web")).unwrap();
+    assert!(policy.workspace_user.is_none() && policy.workspace_home.is_none());
+    let rendered = policy.read_compose(&policy.compose_files[0]).unwrap();
+    assert!(
+        rendered.contains("/workspace/.effigy/state:ro"),
+        "{rendered}"
+    );
+    for (user, home) in [
+        (None, None),
+        (Some("dev"), None),
+        (None, Some("/home/dev")),
+        (Some(""), Some("/home/dev")),
+        (Some("dev"), Some("")),
+        (Some("dev"), Some("relative/home")),
+    ] {
+        policy.workspace_user = user.map(str::to_owned);
+        policy.workspace_home = home.map(str::to_owned);
+        let prepare = super::super::publish_workspace_guest(&repo, &policy)
+            .unwrap_err()
+            .to_string();
+        let entry =
+            super::super::ensure_workspace_effigy_available_for_policy(&repo, &policy, None)
+                .unwrap_err()
+                .to_string();
+        let origin = std::time::Instant::now();
+        let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
+            origin,
+            origin + std::time::Duration::from_secs(60),
+            4096,
+            4096,
+        );
+        let bounded = super::super::ensure_workspace_effigy_available_for_policy_bounded(
+            &repo,
+            &policy,
+            HOST_CONTAINER_ID,
+            &mut budget,
+        )
+        .unwrap_err()
+        .to_string();
+        for error in [prepare, entry, bounded] {
+            assert!(error.contains("no usable workspace identity"), "{error}");
+            assert!(
+                error.contains("`user`") && error.contains("`home`"),
+                "{error}"
+            );
+            assert!(error.contains(HOST_REPREPARE_COMMAND), "{error}");
+        }
+    }
+    assert!(
+        !repo.join(".effigy").exists(),
+        "an identity refusal writes no host state or rendered output"
+    );
+}
+
+#[test]
 fn explicitly_selected_non_default_workspaces_prepare_and_verify_the_guest() {
     for (system, default_workspace) in [("dev", true), ("audit", true), ("dev", false)] {
         let repo = fixture("selected-workspace");

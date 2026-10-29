@@ -36,17 +36,20 @@ use library_mounts::build_library_mounts;
 
 /// Resolve the operator workspace belonging to a selected container.
 ///
-/// An omitted container keeps the manifest's default selection. A named one
-/// may belong to any declared system/workspace, not only the default binding.
-/// The default binding wins when it names that container, preserving existing
-/// behavior for aliases. Catalog users alone never declare an operator workspace.
+/// A named container may belong to any declared system/workspace. Aliases must
+/// resolve to identical effective configurations: a container name cannot carry
+/// the selection needed to distinguish conflicting mounts or identities.
+/// Catalog users alone never declare an operator workspace.
 ///
-/// Returns a policy error when an explicitly enumerated binding cannot resolve.
+/// Returns a policy error for conflicting declarations or unresolved bindings.
 pub fn resolve_operator_workspace_for_container(
     manifest: &effigy_manifest::TaskManifest,
     requested_container: Option<&str>,
 ) -> Result<Option<ManifestWorkspaceConfig>, ContainerPolicyError> {
-    use effigy_manifest::{ManifestTask, ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer};
+    use effigy_manifest::{
+        ManifestTask, ManifestWorkspaceContainerRef, ResolvedTaskExecutionBinding,
+        ResolvedWorkspaceContainer,
+    };
     let resolve = |task: &ManifestTask| {
         effigy_manifest::resolve_task_execution_binding_from_parts(
             None,
@@ -57,31 +60,20 @@ pub fn resolve_operator_workspace_for_container(
         )
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
     };
-    let default = resolve(&ManifestTask::default());
-    let Some(requested) = requested_container else {
-        return Ok(match default? {
-            Some(ResolvedTaskExecutionBinding::Workspace(binding))
-                if matches!(
-                    binding.container.as_ref(),
-                    Some(ResolvedWorkspaceContainer::Named(_))
-                ) =>
-            {
-                Some(binding.workspace_config)
-            }
-            _ => None,
-        });
+    let requested = match requested_container {
+        Some(name) => name.to_owned(),
+        None => match resolve(&ManifestTask::default())? {
+            Some(ResolvedTaskExecutionBinding::Workspace(binding)) => match binding.container {
+                Some(ResolvedWorkspaceContainer::Named(name)) => name,
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        },
     };
-    // Ambiguous defaults cannot invalidate an explicit system/workspace choice.
-    match default {
-        Ok(Some(ResolvedTaskExecutionBinding::Workspace(binding))) if matches!(binding.container.as_ref(), Some(ResolvedWorkspaceContainer::Named(name)) if name == requested) =>
-        {
-            return Ok(Some(binding.workspace_config));
-        }
-        _ => {}
-    }
     let Some(systems) = manifest.systems.as_ref() else {
         return Ok(None);
     };
+    let mut selected: Option<(String, ManifestWorkspaceConfig)> = None;
     for (system_name, system) in &systems.systems {
         let mut workspaces = system.workspaces.keys().cloned().collect::<Vec<_>>();
         if workspaces.is_empty() {
@@ -99,19 +91,35 @@ pub fn resolve_operator_workspace_for_container(
         for workspace in workspaces {
             let task = ManifestTask {
                 system: Some(system_name.clone()),
-                workspace: Some(workspace),
+                workspace: Some(workspace.clone()),
                 ..Default::default()
             };
             let Some(ResolvedTaskExecutionBinding::Workspace(binding)) = resolve(&task)? else {
                 continue;
             };
-            if matches!(binding.container.as_ref(), Some(ResolvedWorkspaceContainer::Named(name)) if name == requested)
+            if !matches!(binding.container.as_ref(), Some(ResolvedWorkspaceContainer::Named(name)) if name == &requested)
             {
-                return Ok(Some(binding.workspace_config));
+                continue;
+            }
+            let label = format!("{system_name}/{workspace}");
+            let mut config = binding.workspace_config;
+            // Omitted and explicit references to the same resolved container
+            // have identical meaning; compare the remaining effective fields.
+            config.container = Some(ManifestWorkspaceContainerRef::Named(requested.clone()));
+            if let Some((previous, existing)) = &selected {
+                if existing != &config {
+                    return Err(ContainerPolicyError::TaskInvocation(format!(
+                        "container `{requested}` has conflicting operator workspaces `{previous}` and `{label}`; \
+                         give them distinct container names or identical workspace configurations, then run \
+                         `effigy container up` on the host to re-prepare the workspace"
+                    )));
+                }
+            } else {
+                selected = Some((label, config));
             }
         }
     }
-    Ok(None)
+    Ok(selected.map(|(_, config)| config))
 }
 
 #[derive(Clone, Copy)]

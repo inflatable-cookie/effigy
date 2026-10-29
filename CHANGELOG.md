@@ -13,6 +13,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Breaking
 
+- Workspace declarations sharing one container must have identical effective
+  configuration; give workspaces with different paths, mounts or identities
+  distinct container names. Declared workspaces without a usable `user` and
+  absolute `home` now refuse preparation and entry with configuration guidance.
+
 - **Read [guide 085](docs/guides/085-v0.15.0-consumer-migration.md) before
   upgrading.** These entries change what a consumer sees or relies on.
 - **Host ports come from the OS or Compose.** A generated service publishes

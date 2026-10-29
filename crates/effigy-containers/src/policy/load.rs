@@ -257,10 +257,10 @@ fn resolve_container_workspace(
     requested_container_name: Option<&str>,
     workspace_override: Option<&ManifestWorkspaceConfig>,
 ) -> Result<Option<ManifestWorkspaceConfig>, ContainerPolicyError> {
-    let mut workspace = match workspace_override {
-        Some(workspace) => Some(workspace.clone()),
-        None => resolve_operator_workspace_for_container(manifest, requested_container_name)?,
-    };
+    // Even an explicit override must not bypass conflicting declarations:
+    // Prepare and later entry only retain the selected container identity.
+    let declared = resolve_operator_workspace_for_container(manifest, requested_container_name)?;
+    let mut workspace = workspace_override.cloned().or(declared);
     if let Some(workspace) = workspace.as_mut() {
         if let Some(catalog) = manifest.catalog.as_ref() {
             workspace

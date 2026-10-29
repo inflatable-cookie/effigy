@@ -2339,6 +2339,12 @@ The mode boundary is the environment's declared operator workspace, never a
 mode or environment name. Prepare and entry match the selected container against
 workspace declarations across all systems, including explicitly selected
 non-default systems and workspaces; the default binding is not a mode filter.
+Declarations sharing a named container must have identical effective workspace
+configuration (including mounts, checkout path and identity). Conflicting
+declarations refuse by name even when a task supplies a workspace override;
+use distinct container names for distinct workspaces. A declared workspace
+without a non-empty resolved user and absolute home refuses Prepare and entry
+with configuration and host re-prepare guidance; it never becomes hybrid.
 Hybrid mode provisions no guest binary, no context,
 no channel listener and no enrolment credential. Its service lifecycle uses
 the same host engines.
