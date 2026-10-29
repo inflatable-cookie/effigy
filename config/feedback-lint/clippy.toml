@@ -1,0 +1,4 @@
+# Progress bars are created only by the reviewed legacy sinks until migration.
+disallowed-methods = [
+  { path = "indicatif::ProgressBar::new_spinner", reason = "feedback legacy spinner: migrate to a live progress source" },
+]

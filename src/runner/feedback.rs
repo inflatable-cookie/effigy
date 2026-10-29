@@ -23,6 +23,10 @@ use super::error::RunnerError;
 
 /// Run one labelled step. A refusal ends the step with the sentence a person
 /// reads for that failure, not an error variant or a `Debug` tree.
+#[cfg_attr(
+    effigy_feedback_lint,
+    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+)]
 pub(in crate::runner) fn live<T>(
     label: &str,
     work: impl FnOnce(&Step) -> Result<T, RunnerError>,

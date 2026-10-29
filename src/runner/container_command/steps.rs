@@ -9,6 +9,10 @@ pub(super) use effigy_containers::exec::{phase, ComposeSteps, TimedStep};
 
 /// Run one phase under a step, ending it with `summary` or the phase's own
 /// failure.
+#[cfg_attr(
+    effigy_feedback_lint,
+    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+)]
 pub(super) fn during<T>(
     label: impl Into<String>,
     summary: impl AsRef<str>,
