@@ -2002,6 +2002,9 @@ rewrite, used by the runner and by the managed session's run specs):
 - a configured test suite's own delivered environment, its rendered command,
   and the step environment of that suite's `setup`/`teardown` commands — proved
   for the suites the run selects, before any suite starts
+- a value the child would otherwise inherit unchanged from the caller's
+  environment, such as an exported `DATABASE_URL`: each naming an endpoint is
+  resolved and proved like a declared value and delivered to the child
 
 Each is delivered with this checkout's effective alias in place of the
 declared one. That env map is the one Effigy already owns: a consumer whose
@@ -2048,6 +2051,11 @@ so host execution could quietly deliver the canonical alias and reach another
 checkout's service. A sensitive value the declaring environment overrides — the
 task's own `env`, or a sequence step's — is dropped rather than delivered, so it
 is neither resolved nor proved: the declared value outranks the secret source.
+A key a run delivers itself — task `env`, an env-schema value, a secret — is
+never re-resolved from the caller's environment, so the source that wins still
+wins; every other inherited value is. A managed session's client makes that
+proof and hands the resolved values to its supervisor in the supervisor's own
+environment, so the supervisor inherits what was proved.
 
 A plan (`--plan`) runs nothing, so it refuses nothing: a task plan renders the
 aliases it would deliver, and the built-in `test` plan keeps the declared

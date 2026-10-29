@@ -392,9 +392,23 @@ fn run_steps(
         // the same name, so that secret is neither delivered again nor proved
         // (effigy#431 review).
         let mut step_secrets: Option<Vec<(String, SecretString)>> = None;
+        let mut delivered = step_env.keys().cloned().collect::<BTreeSet<_>>();
         if let (Some(resolver), Some(pairs)) = (host_aliases.as_mut(), secrets) {
-            let delivered = step_env.keys().cloned().collect::<BTreeSet<_>>();
-            step_secrets = Some(resolver.resolved_secret_env(pairs, &delivered)?);
+            step_secrets = Some(resolver.resolved_secret_env(pairs, &delivered, true)?);
+        }
+        delivered.extend(
+            secrets
+                .unwrap_or_default()
+                .iter()
+                .map(|(key, _)| (*key).to_owned()),
+        );
+        // A value this step would inherit unchanged is resolved and proved too.
+        let inherited = match host_aliases.as_mut() {
+            Some(resolver) => resolver.resolved_inherited_env(&delivered, true)?,
+            None => Vec::new(),
+        };
+        for (key, value) in inherited {
+            step_env.entry(key).or_insert(value);
         }
         let (label, timeout) = match step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),

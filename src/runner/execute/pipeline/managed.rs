@@ -223,7 +223,7 @@ pub(in crate::runner) fn run_managed_task(
                 (ManagedExecutionMode::Tui, false) => Front::Tui,
                 _ => Front::Text,
             };
-            start_managed_run(&context, plan, front)
+            start_managed_run(&mut context, plan, front)
         }
     }
 }
@@ -332,7 +332,7 @@ impl ManagedContext<'_, '_, '_> {
 /// The client: resolve what only the operator can supply (the vault
 /// passphrase), start the run's supervisor and attach the front end.
 fn start_managed_run(
-    context: &ManagedContext<'_, '_, '_>,
+    context: &mut ManagedContext<'_, '_, '_>,
     plan: effigy_managed::ManagedTaskPlan,
     front: Front,
 ) -> Result<Option<String>, RunnerError> {
@@ -348,7 +348,25 @@ fn start_managed_run(
     )?;
     // Reading the task's secrets here prompts once for the passphrase on
     // this terminal; the supervisor receives it in its spawn environment.
-    context.task_secrets()?;
+    let secrets = context.task_secrets()?;
+    // This checkout's scope resolves the values the session would otherwise
+    // inherit unchanged, and refuses before its supervisor starts when one has
+    // no published backing service. The supervisor receives the resolved values
+    // in its spawn environment (effigy#431 review).
+    let resolved_inherited_env = match context.host_aliases.as_mut() {
+        Some(resolver) => {
+            let mut delivered = context
+                .selection
+                .task
+                .env
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            delivered.extend(secrets.iter().map(|(key, _)| key.clone()));
+            resolver.resolved_inherited_env(&delivered, true)?
+        }
+        None => Vec::new(),
+    };
     let target = context.target(&plan.profile);
     let addressed = Addressed {
         target: &target,
@@ -385,6 +403,7 @@ fn start_managed_run(
         cwd: context.preflight.invocation_cwd.clone(),
         front,
         terminal,
+        resolved_env: &resolved_inherited_env,
     })?;
     match front {
         Front::Detached => managed_run::detach(started, &addressed),
@@ -462,6 +481,7 @@ fn displayed_plan(
     let workloads = managed_workloads(
         context,
         &plan,
+        &[],
         &[],
         "<run token>",
         container_repo_root.as_deref(),
@@ -733,6 +753,7 @@ fn own_managed_run(
         // published backing service for them (effigy#431, contract 005). A key
         // the session's own rendered environment delivers wins over a secret of
         // the same name, so that secret is neither delivered again nor proved.
+        let mut inherited_env = Vec::new();
         if let Some(resolver) = context.host_aliases.as_mut() {
             let mut delivered: std::collections::BTreeSet<String> = selection
                 .task
@@ -747,7 +768,12 @@ fn own_managed_run(
                 .iter()
                 .map(|(key, value)| (key.as_str(), value))
                 .collect::<Vec<_>>();
-            secrets = resolver.resolved_secret_env(&pairs, &delivered)?;
+            secrets = resolver.resolved_secret_env(&pairs, &delivered, true)?;
+            delivered.extend(secrets.iter().map(|(key, _)| key.clone()));
+            // A host workload would otherwise inherit this value unchanged; it
+            // names the declared alias just as a task's own env does
+            // (effigy#431 review).
+            inherited_env = resolver.resolved_inherited_env(&delivered, true)?;
         }
         let role_schema_env = managed_role_schema_env(
             &preflight.catalogs,
@@ -793,9 +819,15 @@ fn own_managed_run(
                 )
                 .collect(),
         };
-        Ok((secrets, env_schema_resolved, container_repo_root, owned))
+        Ok((
+            secrets,
+            inherited_env,
+            env_schema_resolved,
+            container_repo_root,
+            owned,
+        ))
     })();
-    let (secrets, env_schema_resolved, container_repo_root, owned) = match inputs {
+    let (secrets, inherited_env, env_schema_resolved, container_repo_root, owned) = match inputs {
         Ok(inputs) => inputs,
         Err(error) => {
             // The failure's own category: an input that could not be read is
@@ -841,6 +873,7 @@ fn own_managed_run(
             context,
             &plan,
             &secrets,
+            &inherited_env,
             &token,
             container_repo_root.as_deref(),
             pane_feedback,
@@ -1203,6 +1236,7 @@ fn managed_workloads(
     context: &ManagedContext<'_, '_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
     secrets: &[(String, SecretString)],
+    inherited_env: &[(String, String)],
     token: &str,
     container_repo_root: Option<&std::path::Path>,
     pane_feedback: bool,
@@ -1245,6 +1279,11 @@ fn managed_workloads(
                     .map(|(key, value)| (key.clone(), value.expose().to_owned())),
             );
             secret.extend(process.secret_env.clone());
+            // A host workload's inherited value Effigy resolved is delivered
+            // plainly, exactly as the child would have inherited it.
+            for (key, value) in inherited_env {
+                plain.entry(key.clone()).or_insert_with(|| value.clone());
+            }
             let command = if context.container_handoff {
                 render_handoff_managed_standard_command(setup.as_deref(), &run)
             } else {
@@ -1699,6 +1738,7 @@ working_dir = "/workspace"
                 &context,
                 &plan,
                 &[("DATABASE_URL".into(), SecretString::new(secret.into()))],
+                &[],
                 "run-proof",
                 Some(Path::new("/workspace")),
                 false,

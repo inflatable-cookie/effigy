@@ -428,9 +428,23 @@ fn run_standard_task_inner(
     let mut host_aliases = host_aliases;
     let resolved_secret_env = match (host_aliases.resolver.as_mut(), secret_ref) {
         (Some(resolver), Some(pairs)) => {
-            Some(resolver.resolved_secret_env(pairs, host_aliases.plain_env_keys)?)
+            Some(resolver.resolved_secret_env(pairs, host_aliases.plain_env_keys, true)?)
         }
         _ => None,
+    };
+    // Values this run would otherwise inherit unchanged are resolved and proved
+    // too: a `DATABASE_URL` in the caller's environment names the declared
+    // alias just as a task's own `env` does (effigy#431 review).
+    let mut delivered_keys = host_aliases.plain_env_keys.clone();
+    delivered_keys.extend(
+        secret_ref
+            .unwrap_or_default()
+            .iter()
+            .map(|(key, _)| (*key).to_owned()),
+    );
+    let inherited_env = match host_aliases.resolver.as_mut() {
+        Some(resolver) => resolver.resolved_inherited_env(&delivered_keys, true)?,
+        None => Vec::new(),
     };
     let resolved_secret_refs = resolved_secret_env
         .as_deref()
@@ -447,6 +461,7 @@ fn run_standard_task_inner(
         preflight.runtime_args_raw.verbose_root,
         context,
         secret_ref,
+        &inherited_env,
         run,
         workload,
     )

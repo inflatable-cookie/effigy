@@ -507,12 +507,15 @@ During v0.x, MINOR bumps may include breaking changes.
   never proved. It also asks the recorded upstream to accept a connection, so a
   route a stopped stack left behind refuses instead of authorizing a run that
   cannot connect, and a managed session proves only the processes it places on
-  the host. A worktree's first host run records the checkout's scope token
-  before resolving, so a fresh worktree is scoped rather than canonical; a
-  container registry this scoped checkout declares but Effigy cannot read is
-  refused instead of falling back to the canonical names; and a sensitive value
-  the task's or a sequence step's own environment overrides is dropped rather
-  than delivered, so it is neither resolved nor proved. A
+  the host. A value the child would otherwise inherit unchanged - an exported
+  `DATABASE_URL`, say - is resolved and proved the same way, so the caller's own
+  environment cannot reach another checkout's service; a key the run delivers
+  itself keeps its own precedence. A worktree's first host run records the
+  checkout's scope token before resolving, so a fresh worktree is scoped rather
+  than canonical; a container registry this scoped checkout declares but Effigy
+  cannot read is refused instead of falling back to the canonical names; and a
+  sensitive value the task's or a sequence step's own environment overrides is
+  dropped rather than delivered, so it is neither resolved nor proved. A
   container-bound run is untouched: its target's own network already answers
   both names. A checkout that names no default container environment still
   resolves. See

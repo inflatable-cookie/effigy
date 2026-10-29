@@ -235,19 +235,47 @@ impl HostAliasResolver {
         &mut self,
         pairs: &[(&str, &SecretString)],
         overridden: &BTreeSet<String>,
+        verify: bool,
     ) -> Result<Vec<(String, SecretString)>, RunnerError> {
         let mut owned = Vec::with_capacity(pairs.len());
         for (key, value) in pairs {
             if overridden.contains(*key) {
                 continue;
             }
-            let resolved = match self.resolve_value(key, value.expose())? {
+            let resolved = match self.resolve(key, value.expose(), verify)? {
                 Some(resolved) => SecretString::new(resolved),
                 None => SecretString::new(value.expose().to_owned()),
             };
             owned.push(((*key).to_owned(), resolved));
         }
         Ok(owned)
+    }
+
+    /// The inherited environment values this host run would hand the child
+    /// unchanged but that name an alias endpoint. Each is resolved to this
+    /// checkout's effective alias and proved published, so a value Effigy never
+    /// saw cannot reach another checkout's service (effigy#431 review).
+    ///
+    /// A key Effigy delivers itself is skipped: that value already resolved
+    /// under its own source precedence.
+    /// `verify` is the client's proof: a supervisor continues a run its client
+    /// already proved and cannot read the client's private gateway state, so it
+    /// resolves the same values without repeating the route lookup.
+    pub(in crate::runner) fn resolved_inherited_env(
+        &mut self,
+        delivered: &BTreeSet<String>,
+        verify: bool,
+    ) -> Result<Vec<(String, String)>, RunnerError> {
+        let mut resolved = Vec::new();
+        for (key, value) in std::env::vars() {
+            if delivered.contains(&key) {
+                continue;
+            }
+            if let Some(effective) = self.resolve(&key, &value, verify)? {
+                resolved.push((key, effective));
+            }
+        }
+        Ok(resolved)
     }
 
     /// Prove every alias a rendered session command names before the session
@@ -274,11 +302,25 @@ impl HostAliasResolver {
     /// Resolve one value, or `None` when it names no declared alias endpoint.
     /// The key only ever appears in refusal text; a value never does.
     fn resolve_value(&mut self, key: &str, value: &str) -> Result<Option<String>, RunnerError> {
+        self.resolve(key, value, true)
+    }
+
+    /// Resolve one value. `verify` adds the publication proof; a supervisor that
+    /// continues a client-proved run resolves the same values without it, since
+    /// a private client gateway state is not its to read.
+    fn resolve(
+        &mut self,
+        key: &str,
+        value: &str,
+        verify: bool,
+    ) -> Result<Option<String>, RunnerError> {
         let Some((resolved, used)) = self.aliases.resolve(value) else {
             return Ok(None);
         };
-        for alias in used {
-            self.require_published(key, &alias)?;
+        if verify {
+            for alias in used {
+                self.require_published(key, &alias)?;
+            }
         }
         Ok(Some(resolved))
     }

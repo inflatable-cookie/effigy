@@ -419,6 +419,81 @@ fn reached(checkout: &Path) -> (String, String, String, String) {
     )
 }
 
+/// The caller's own environment is a source too: a `DATABASE_URL` this process
+/// exports would otherwise reach the child unchanged, naming the declared alias
+/// and reaching whoever published it. Effigy resolves and proves it like a
+/// declared value (effigy#431 review).
+#[test]
+fn an_inherited_database_url_is_resolved_and_proved_by_a_host_task() {
+    with_private_gateway("scoped-host-alias-inherited", || {
+        let primary = primary_checkout("scoped-host-alias-inherited");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [tasks.inherited]\n\
+             run_in = \"host\"\n\
+             run = \"sh -lc 'printf %s $DATABASE_URL > {}'\"\n",
+            checkout.join("inherited-url.txt").display()
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with an inherited run");
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        let error = run_task(&checkout, "inherited", &[]).expect_err("the run must refuse");
+        assert_task_invocation_error_contains(
+            error,
+            &["DATABASE_URL", &alias, "effigy container up web"],
+        );
+        assert!(!checkout.join("inherited-url.txt").exists());
+
+        publish_alias_route(&checkout, &alias);
+        run_task(&checkout, "inherited", &[]).expect("the run reaches its own service");
+        assert_eq!(
+            fs::read_to_string(checkout.join("inherited-url.txt"))
+                .expect("the task recorded its URL")
+                .trim(),
+            format!("postgres://app@{alias}:5432/app"),
+            "an inherited value is resolved to this checkout's alias"
+        );
+    });
+}
+
+/// The same source rules apply to a managed session's host workload.
+#[test]
+fn an_inherited_database_url_is_resolved_and_proved_by_a_managed_session() {
+    with_private_gateway("scoped-host-alias-inherited-session", || {
+        let primary = primary_checkout("scoped-host-alias-inherited-session");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        write_managed_session_manifest_without_env(&checkout);
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        let error = run_task(&checkout, "dev", &["--headless"])
+            .expect_err("the session refuses before its workload starts");
+        assert_task_invocation_error_contains(
+            error,
+            &["DATABASE_URL", &alias, "effigy container up web"],
+        );
+        assert!(!checkout.join("session-database-url.txt").exists());
+
+        publish_alias_route(&checkout, &alias);
+        run_task(&checkout, "dev", &["--headless"]).expect("the session runs");
+        assert_eq!(
+            fs::read_to_string(checkout.join("session-database-url.txt"))
+                .expect("the session workload recorded its URL")
+                .trim(),
+            format!("postgres://app@{alias}:5432/app"),
+            "an inherited value reaches a host workload resolved"
+        );
+    });
+}
+
 /// A container-bound session's `run_in = "host"` entry runs on the host, so it
 /// resolves this checkout's alias and is proved like any other host entry —
 /// through the public `effigy dev` path, before any container work starts
@@ -505,6 +580,26 @@ fn plan_entry<'a>(plan: &'a str, name: &str) -> &'a str {
     plan.split("; ")
         .find(|entry| entry.contains(&format!("{name}: ")))
         .unwrap_or_else(|| panic!("the `{name}` entry renders: {plan}"))
+}
+
+/// A host-bound session whose workload declares no URL: the value can only come
+/// from the caller's environment.
+fn write_managed_session_manifest_without_env(checkout: &Path) {
+    let out = checkout.join("session-database-url.txt");
+    let manifest = format!(
+        "{MANIFEST}\n\
+         [tasks.record-inherited]\n\
+         run_in = \"host\"\n\
+         run = \"sh -lc 'printf %s $DATABASE_URL > {out}'\"\n\
+         \n\
+         [tasks.dev]\n\
+         mode = \"tui\"\n\
+         concurrent = [\n\
+           {{ name = \"record\", task = \"record-inherited\", run_in = \"host\", start = 1 }},\n\
+         ]\n",
+        out = out.display(),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with an inherited session");
 }
 
 /// The container-bound session fixture: the task binds to a workspace, one
