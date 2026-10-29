@@ -422,9 +422,13 @@ effigy dev stop admin
 state and exit code, then every entry that has not started with the prerequisite
 or probe it waits for. `--json` prints `effigy.managed.status.v1`: each process
 carries `waiting_on` when it is starting against a named wait, and the additive
-`waits` list carries `phase`, `waiting_on` (`kind`, and `name`/`phase`,
-`healthy`/`total`, `probe` or `remaining_ms`) and `not_started_because` for an
-entry that never started. `logs <name>` reads a workload's log; `logs lifecycle` reads the run's own output (setup,
+`waits` list carries `scope` (`workload`, `host` or `environment`), `phase`,
+`waiting_on` (`kind`, and `name`/`phase`, `healthy`/`total`, `probe` or
+`remaining_ms`) and `not_started_because` for an entry that never started. The
+environment's host processes and phase publish their waits in the environment's
+own scope, so a `depends_on` wait and a listener's readiness probe are part of
+the same projection; a wait that settled is recorded as settled and never
+reported. `logs <name>` reads a workload's log; `logs lifecycle` reads the run's own output (setup,
 environment, readiness, starts and exits). A failed run names the failing
 process, its log command and the log's tail in the task error. `stop` is
 idempotent: on a closed run it reports the run's outcome. If the supervisor

@@ -866,7 +866,7 @@ impl Owner {
             None => {
                 self.probe_since = None;
                 if self.published.remove(entry).is_some() {
-                    self.wait_ledger.retire(entry);
+                    self.wait_ledger.settle(entry);
                     self.published_at.remove(entry);
                     self.event(&EngineEvent::Entry {
                         state: EntryState {
@@ -903,11 +903,10 @@ impl Owner {
         if !changed && !(live && due) {
             return;
         }
-        let terminal = matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed);
-        if terminal || state.waiting_on.is_some() {
+        if state.holds_a_wait() {
             self.wait_ledger.publish(state);
         } else {
-            self.wait_ledger.retire(&state.entry);
+            self.wait_ledger.settle(&state.entry);
         }
         // Every change reaches the clients, so their view never keeps a wait
         // the entry has left behind.
@@ -993,10 +992,10 @@ impl Owner {
         let now = Instant::now();
         for state in self.waits.states(now) {
             if !matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed) {
-                self.wait_ledger.retire(&state.entry);
+                self.wait_ledger.settle(&state.entry);
             }
         }
-        self.wait_ledger.retire(super::OUTPUT_LOG);
+        self.wait_ledger.settle(super::OUTPUT_LOG);
         let non_zero = self
             .workloads
             .iter()

@@ -334,3 +334,56 @@ fn a_legacy_delay_tab_names_the_delay() {
     assert!(text.contains("scheduled delay: 2s remaining"), "{text}");
     assert_no_spinner_or_generic_wait(&text);
 }
+
+/// The production host mapping: `SessionOrder::hosts` over the declared
+/// `depends_on`, and the declared readiness request as the probe label. The
+/// frames name `api`'s phase to each dependent and `api`'s own request to its
+/// tab (effigy#458).
+#[test]
+fn host_depends_on_frames_name_the_reader_and_its_own_probe() {
+    use crate::waits::{listener_probe_label, HostOrder, SessionOrder};
+
+    let now = Instant::now();
+    let order = SessionOrder::hosts(&[
+        HostOrder {
+            name: "api",
+            depends_on: &[],
+        },
+        HostOrder {
+            name: "front",
+            depends_on: &["api".to_owned()],
+        },
+        HostOrder {
+            name: "admin",
+            depends_on: &["api".to_owned()],
+        },
+    ]);
+    let mut waits = EntryWaits::new(order, None, now);
+    waits.started("api", now);
+    waits.probing("api", listener_probe_label("/", 200), now);
+    let startup = HashMap::from([
+        ("api".to_owned(), ProcessStartupState::Starting),
+        ("front".to_owned(), ProcessStartupState::Waiting),
+        ("admin".to_owned(), ProcessStartupState::Waiting),
+    ]);
+
+    let frame = render_frame(&waits, "front", &startup, now + Duration::from_secs(12));
+    assert_tab_labels(
+        &frame,
+        &[
+            "api [starting: GET / -> 200 (12s)]",
+            "front [waiting: api starting]",
+            "admin [waiting: api starting]",
+        ],
+    );
+    assert!(frame.contains("waiting for api (starting)"), "{frame}");
+    assert_no_spinner_or_generic_wait(&frame);
+
+    let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(12));
+    assert!(frame.contains("waiting for GET / -> 200 (12s)"), "{frame}");
+
+    // api reached readiness: the dependents no longer wait on it.
+    waits.ready("api", now + Duration::from_secs(20));
+    assert!(waits.may_start("front"), "front starts once api is ready");
+    assert!(waits.may_start("admin"));
+}

@@ -69,8 +69,9 @@ when the real cause was two named services failing their health checks.
   `start_after_ms` delay with what remains of it. A prerequisite failure is
   terminal and attributed (`front: not started — api failed (status 500)`), and
   no dependent starts. The same state reaches the tab, the `--headless` text
-  and `status --json` (`waiting_on`); nothing derives a label from screen or
-  tab order, and no wait borrows another entry's clock (effigy#458).
+  and `status --json` (`waiting_on`, and a `waits` list scoped `workload`,
+  `host` or `environment`); nothing derives a label from screen or tab order,
+  and no wait borrows another entry's clock (effigy#458).
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
   - the evidence (exit code, the last relevant output, the health check's

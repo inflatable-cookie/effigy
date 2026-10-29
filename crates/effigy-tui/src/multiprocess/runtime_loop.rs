@@ -35,10 +35,13 @@ pub(super) fn run_event_loop_with_control(
             runtime.vt_emulator_enabled,
         );
         // The session's own entry state is authoritative: it names what each
-        // entry waits for, so the tab never borrows another entry's label.
-        for entry in runtime.supervisor.entry_waits() {
-            runtime.state.entry_waits.insert(entry.entry.clone(), entry);
-        }
+        // entry waits for, so the tab never borrows another entry's label. The
+        // snapshot is replaced, never merged, so a wait that settled — a
+        // listener that became ready, the run's own probe after it answered —
+        // leaves its tab instead of lingering (effigy#458).
+        runtime
+            .state
+            .apply_entry_waits(runtime.supervisor.entry_waits());
         if runtime.state.shutdown_requested
             && !runtime.state.startup_failed
             && runtime.supervisor.startup_finished()

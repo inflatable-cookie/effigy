@@ -13,10 +13,11 @@
 
 use std::path::{Path, PathBuf};
 
-use effigy_tui::waits::{EntryState, ENTRY_WAIT_SCHEMA};
+use effigy_tui::waits::{EntryPhase, EntryState, ENTRY_WAIT_SCHEMA};
 use serde::{Deserialize, Serialize};
 
 use crate::runner::error::RunnerError;
+use crate::runner::host_process::write_private_json;
 
 /// Every managed wait record lives under this checkout-relative directory.
 const WAITS_DIR: &str = ".effigy/runtime/waits";
@@ -77,30 +78,34 @@ impl WaitLedger {
             scope: self.scope.clone(),
             state: state.clone(),
         };
-        let Ok(rendered) = serde_json::to_vec(&record) else {
-            return;
+        self.write(&state.entry, &record);
+    }
+
+    /// The entry no longer waits: it started, became ready or settled. The
+    /// record says so rather than being deleted, so a front end that reads it
+    /// later never renders a wait the entry has left behind (effigy#458).
+    pub(in crate::runner) fn settle(&self, entry: &str) {
+        let record = WaitRecord {
+            schema: ENTRY_WAIT_SCHEMA.to_owned(),
+            scope: self.scope.clone(),
+            state: EntryState {
+                entry: entry.to_owned(),
+                phase: EntryPhase::Ready,
+                waiting_on: None,
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 0,
+            },
         };
+        self.write(entry, &record);
+    }
+
+    fn write(&self, entry: &str, record: &WaitRecord) {
         if std::fs::create_dir_all(&self.dir).is_err() {
             return;
         }
-        // The rename keeps a reader from seeing half a record.
-        let path = self.path(&state.entry);
-        let temp = path.with_extension("json.tmp");
-        if std::fs::write(&temp, rendered).is_err() {
-            return;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600));
-        }
-        let _ = std::fs::rename(&temp, &path);
-    }
-
-    /// Removes one entry's record: it has started or settled, so it no longer
-    /// waits.
-    pub(in crate::runner) fn retire(&self, entry: &str) {
-        let _ = std::fs::remove_file(self.path(entry));
+        // One accepted private-record writer: temp file, 0600, rename.
+        let _ = write_private_json(&self.path(entry), record);
     }
 
     /// The entry's record, when it publishes one for this scope.
@@ -128,13 +133,6 @@ impl WaitLedger {
         states.sort_by(|left, right| left.entry.cmp(&right.entry));
         states
     }
-}
-
-/// The probe label of a host listener's declared readiness request:
-/// `GET / -> 200`.
-pub(in crate::runner) fn listener_probe_label(path: &str, status: u16) -> String {
-    let path = if path.trim().is_empty() { "/" } else { path };
-    format!("GET {path} -> {status}")
 }
 
 /// The attribution of an entry that failed: the entry that reported it, and
@@ -233,13 +231,6 @@ mod tests {
         });
         let state = ledger.read("front").expect("the record reads back");
         assert_eq!(state.status_line(), "not started — api failed (status 500)");
-    }
-
-    #[test]
-    fn the_listener_probe_names_the_declared_request() {
-        assert_eq!(listener_probe_label("/", 200), "GET / -> 200");
-        assert_eq!(listener_probe_label("/health", 204), "GET /health -> 204");
-        assert_eq!(listener_probe_label("  ", 200), "GET / -> 200");
     }
 
     #[test]

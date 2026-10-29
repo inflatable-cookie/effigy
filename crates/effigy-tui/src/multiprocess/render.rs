@@ -15,7 +15,7 @@ mod help_overlay;
 mod panes;
 
 use footer::render_footer;
-use header::render_tabs;
+use header::{render_tabs, TabBar};
 use help_overlay::{render_help_overlay, render_options_overlay};
 use panes::{render_input_pane, render_output_pane, OutputPaneRenderArgs};
 
@@ -106,12 +106,14 @@ pub(super) fn render_ui(frame: &mut Frame<'_>, state: RenderUiState<'_>) {
     render_tabs(
         frame,
         chunks[0],
-        process_names,
-        active_index,
-        shell_capture_mode,
-        exit_states,
-        startup_states,
-        entry_waits,
+        TabBar {
+            process_names,
+            active_index,
+            shell_capture_mode,
+            exit_states,
+            startup_states,
+            entry_waits,
+        },
     );
 
     if show_help {

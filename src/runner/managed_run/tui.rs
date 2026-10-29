@@ -128,7 +128,8 @@ impl RunSource {
             if named.contains(tab) {
                 continue;
             }
-            let Some(mut state) = self.wait_ledger.read(tab) else {
+            let Some(mut state) = self.wait_ledger.read(tab).filter(EntryState::holds_a_wait)
+            else {
                 continue;
             };
             state.entry = tab.clone();
@@ -185,7 +186,7 @@ impl Shared {
                         // The map holds waits only: an entry that started is
                         // rendered from its own process state, so a settled
                         // wait never lingers on its tab (effigy#458).
-                        if holds_a_wait(&state) {
+                        if state.holds_a_wait() {
                             self.entries.insert(state.entry.clone(), state);
                         } else {
                             self.entries.remove(&state.entry);
@@ -310,17 +311,6 @@ impl Shared {
             }
         }
     }
-}
-
-/// Whether an entry's state is a wait a tab renders, rather than a phase its
-/// own process state already tells.
-fn holds_a_wait(state: &EntryState) -> bool {
-    matches!(
-        state.phase,
-        effigy_tui::waits::EntryPhase::Waiting
-            | effigy_tui::waits::EntryPhase::NotStarted
-            | effigy_tui::waits::EntryPhase::Failed
-    ) || (state.phase == effigy_tui::waits::EntryPhase::Starting && state.waiting_on.is_some())
 }
 
 fn event(process: &str, kind: ProcessEventKind, payload: &str) -> ProcessEvent {

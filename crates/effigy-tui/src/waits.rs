@@ -251,6 +251,32 @@ impl EntryState {
     pub fn is_waiting(&self) -> bool {
         self.phase == EntryPhase::Waiting
     }
+
+    /// Whether this state is a wait a front end renders, rather than a phase
+    /// the entry's own process state already tells: it has not started, it
+    /// never will, or it is starting against a named wait.
+    pub fn holds_a_wait(&self) -> bool {
+        matches!(
+            self.phase,
+            EntryPhase::Waiting | EntryPhase::NotStarted | EntryPhase::Failed
+        ) || (self.phase == EntryPhase::Starting && self.waiting_on.is_some())
+    }
+
+    /// The line a headless/text front end prints for this state, when it is a
+    /// wait. `None` once the entry has started, or while it waits for nothing
+    /// it can name yet, so a settled or empty wait never repeats.
+    pub fn headless_line(&self) -> Option<String> {
+        let says_something = self.holds_a_wait()
+            && !(self.phase == EntryPhase::Waiting && self.waiting_on.is_none());
+        says_something.then(|| format!("[managed] {}: {}", self.entry, self.status_line()))
+    }
+}
+
+/// The probe label of a host listener's declared readiness request:
+/// `GET / -> 200`. It names the request the wait observes, not the whole URL.
+pub fn listener_probe_label(path: &str, status: u16) -> String {
+    let path = if path.trim().is_empty() { "/" } else { path };
+    format!("GET {path} -> {status}")
 }
 
 /// One entry's declared ordering inputs, resolved from the plan.
@@ -671,9 +697,7 @@ impl EntryWaits {
 
     /// The wait an entry shows while it is `Waiting`, derived from the graph.
     fn derived_wait(&self, entry: &str) -> Option<WaitOn> {
-        let Some(order) = self.order.get(entry) else {
-            return None;
-        };
+        let order = self.order.get(entry)?;
         if order.after_environment {
             if let Some(environment) = self.environment.as_ref() {
                 if environment.state != EntryPhase::Ready {

@@ -253,13 +253,17 @@ started after the environment's services report ready and in `depends_on`
 order, stopped by `down`, `reset` and session settle with a
 `HostProcessStopReport`.
 
-While the bring-up holds a process, it publishes what that process waits for
-— its `depends_on` reader and that reader's phase, or its own declared
+The bring-up derives the whole `depends_on` graph once and publishes it
+before the first process can block, so a dependent's tab names its reader while
+that reader is still becoming ready. It then publishes what each process waits
+for — its `depends_on` reader and that reader's phase, or its own declared
 readiness request with elapsed time — as an `effigy.managed.entry-wait.v1`
-record under the checkout's `.effigy/runtime/waits/<scope>/`. A prerequisite
-failure is published as `not_started` with the failing entry and its report, and
-no dependent starts. Front ends read that record; it is a projection, never
-authority (effigy#458).
+record under the checkout's `.effigy/runtime/waits/<scope>/`, and records each
+wait as settled when it ends. A prerequisite failure is published as
+`not_started` with the failing entry and its report, no dependent starts, and
+the plan returns the failure. `status --json` reads both scopes and reports each
+waiting entry with the scope that published it. Front ends read those records;
+they are a projection, never authority (effigy#458).
 
 ## 9. Not yet
 

@@ -258,8 +258,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `start_after_ms` — which names no dependency. A prerequisite failure is
   terminal and attributed (`front: not started — api failed (status 500)`), and
   no dependent starts. `effigy <task> status --json` keeps every existing field
-  and adds `waiting_on` to a waiting process plus a `waits` list of entries
-  that have not started.
+  and adds `waiting_on` to a waiting process plus a `waits` list of entries that
+  have not started, each with the `scope` that published it (`workload`, `host`
+  or `environment`) so the run's own phase, its workloads and its environment's
+  host processes appear in one projection. A wait is recorded as settled when it
+  ends, so a tab or a status never keeps a wait the entry has left behind.
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as

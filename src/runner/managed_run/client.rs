@@ -193,10 +193,9 @@ impl TextFollower {
     fn relay_waits(&mut self, states: impl IntoIterator<Item = EntryState>) {
         let mut lines = String::new();
         for state in states {
-            if !needs_wait_line(&state) {
+            let Some(line) = state.headless_line() else {
                 continue;
-            }
-            let line = format!("[managed] {}: {}", state.entry, state.status_line());
+            };
             if self.waits.get(&state.entry) == Some(&line) {
                 continue;
             }
@@ -479,18 +478,6 @@ pub(in crate::runner) fn detach(
     ));
     lines.push(format!("  stop:   {}", stop_command(addressed)));
     Ok(Some(lines.join("\n")))
-}
-
-/// Whether an entry's published state is a wait a text front end prints: it
-/// has not started, its start failed, or it is starting against a named wait.
-fn needs_wait_line(state: &EntryState) -> bool {
-    match state.phase {
-        effigy_tui::waits::EntryPhase::Waiting
-        | effigy_tui::waits::EntryPhase::NotStarted
-        | effigy_tui::waits::EntryPhase::Failed => true,
-        effigy_tui::waits::EntryPhase::Starting => state.waiting_on.is_some(),
-        _ => false,
-    }
 }
 
 fn next_event(client: &mut SupervisorClient) -> Result<Option<Event>, String> {

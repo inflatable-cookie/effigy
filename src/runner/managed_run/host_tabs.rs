@@ -513,6 +513,45 @@ mod tests {
         }
     }
 
+    /// A settled record is not a wait: once the listener is ready the owner
+    /// records that it settled, and the tab stops naming the probe
+    /// (effigy#458).
+    #[test]
+    fn a_settled_record_names_no_wait() {
+        let dir = tempfile::tempdir().expect("wait dir");
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
+        ledger.clear();
+        let mut tab = tab(HostProcessRestart::Never, None);
+        tab.wait_record = ledger.path("api");
+        ledger.publish(&effigy_tui::waits::EntryState {
+            entry: "api".to_owned(),
+            phase: effigy_tui::waits::EntryPhase::Starting,
+            waiting_on: Some(effigy_tui::waits::WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 12_000,
+        });
+        let mut follower = HostFollower::new(tab.clone());
+        assert_eq!(
+            follower.poll().statuses,
+            vec![HostStatus::Waiting(
+                "waiting for GET / -> 200 (12s)".to_owned()
+            )]
+        );
+        // The entry settled: the bring-up records that, and the tab stops
+        // naming the probe.
+        ledger.settle("api");
+        std::thread::sleep(ListenerPollWait::value());
+        follower.poll();
+        assert_eq!(
+            follower.wait_state(),
+            None,
+            "a record that no longer says the process is waiting is no wait"
+        );
+    }
+
     #[test]
     fn a_log_tail_returns_whole_lines_and_survives_a_truncation() {
         let dir = tempfile::tempdir().expect("log dir");

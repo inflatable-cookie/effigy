@@ -121,7 +121,7 @@ pub(super) fn await_services_ready(
                         services.len(),
                         if services.len() == 1 { "" } else { "s" }
                     ));
-                    waits.retire("environment");
+                    waits.settle("environment");
                     return Ok(ReadinessEnd::Ready);
                 }
                 // A stack whose unready services all fail the same way will

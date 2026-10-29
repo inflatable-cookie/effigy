@@ -63,3 +63,21 @@ pub struct SessionState {
     pub vt_parsers: HashMap<String, VtParser>,
     pub vt_saw_chunk: HashMap<String, bool>,
 }
+
+impl SessionState {
+    /// Replaces the session's entry waits with one snapshot from the process
+    /// that supervises them. A wait that is absent from the snapshot has
+    /// settled — a listener became ready, a probe answered — so its tab stops
+    /// naming it instead of keeping the last wait it saw (effigy#458).
+    pub fn apply_entry_waits(&mut self, snapshot: Vec<crate::waits::EntryState>) {
+        let present = snapshot
+            .iter()
+            .map(|entry| entry.entry.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        self.entry_waits
+            .retain(|name, _| present.contains(name.as_str()));
+        for entry in snapshot {
+            self.entry_waits.insert(entry.entry.clone(), entry);
+        }
+    }
+}

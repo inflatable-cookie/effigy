@@ -39,6 +39,7 @@ use effigy_kernel::run::RunError;
 use effigy_kernel::supervise::EngineSession;
 
 mod kernel_run;
+mod waits;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
@@ -433,7 +434,10 @@ fn dependency_env_prefix(name: &str) -> String {
     format!("EFFIGY_MANAGED_HOST_{normalized}")
 }
 
-fn write_private_json(path: &Path, value: &impl Serialize) -> Result<(), RunnerError> {
+pub(in crate::runner) fn write_private_json(
+    path: &Path,
+    value: &impl Serialize,
+) -> Result<(), RunnerError> {
     let rendered = serde_json::to_vec_pretty(value)
         .map_err(|error| RunnerError::task_invocation_failed_render(path, error))?;
     let temp = path.with_extension(format!(
