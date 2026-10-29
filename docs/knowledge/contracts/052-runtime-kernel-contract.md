@@ -2783,6 +2783,23 @@ integration no longer has to substitute a second authority:
   frames, 16 unacknowledged data frames, 512 KiB queued, a retained resume
   window with `gap` for a missed range, input never buffered, resize
   latest-wins, cancel serviceable under backpressure).
+- Owner loss: `SessionAuthority::owner_lost` takes the terminal and the
+  `OwnerLoss` the supervisor observed — EOF without an acknowledged detach, a
+  disconnect, or TERM/HUP with its signal — records the terminal `lost` and
+  returns a `TerminalEnd` naming exactly the runs that terminal admitted and
+  that have not settled, with the loss as the stop cause. `reap` does the same
+  for a handle dropped without detaching. `SessionHandle::stop_owned` then
+  writes one ordinary journalled stop per named run, refuses the session run,
+  and answers a retried request id with the request it already committed, so a
+  repeated owner loss stops once. Ownership is durable
+  (`workspace_session_owned_runs`), so a supervisor restart reads who owned
+  what instead of guessing.
+- Non-run replay: only `invoke` plans a run. `attach`, `cancel` and `detach`
+  reserve no run identity, and their receipt is recorded with
+  `SessionAdmissions::applied`, so a retry reads `Applied` with the same
+  terminal or stopped run rather than `pending` or `unknown`, and a repeated
+  cancel carrying the same request id is one journalled request, not a second
+  one or an error.
 - Down: `DownCoordination::begin` refuses every holder other than the session
   and its own child runs, live or `Unknown`; `DownChildren` stops only those
   children and takes its permit through `Attachments::permit_exempt`, which

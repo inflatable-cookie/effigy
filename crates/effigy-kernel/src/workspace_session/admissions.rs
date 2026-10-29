@@ -78,6 +78,12 @@ impl Method {
     pub fn records_admission(self) -> bool {
         !matches!(self, Self::Observe)
     }
+    /// Only `invoke` admits a run. `attach`, `cancel` and `detach` act on runs
+    /// that already exist, so their recorded outcome is the operation's own
+    /// receipt and they must never plan a run that will not exist.
+    pub fn admits_a_run(self) -> bool {
+        matches!(self, Self::Invoke)
+    }
 }
 
 /// A 128-bit request id, unique per session generation, including across
@@ -193,16 +199,22 @@ impl AdmissionRequest {
 }
 
 /// A reservation this caller won: the session generation, request id, digest
-/// and the run identity the admission will use.
+/// and — for a method that admits a run — the run identity it will use.
 #[derive(Debug, Clone)]
 pub struct AdmissionTicket {
     key: SessionKey,
     digest: Digest,
     method: Method,
-    run: RunId,
+    run: Option<RunId>,
 }
 impl AdmissionTicket {
-    pub fn run(&self) -> RunId {
+    /// The run an `invoke` reservation will admit. `attach`, `cancel` and
+    /// `detach` plan no run, so they hold a ticket with none.
+    pub fn run(&self) -> Option<RunId> {
+        self.run
+    }
+    /// The run this reservation plans, when the method admits one.
+    pub fn planned_run(&self) -> Option<RunId> {
         self.run
     }
     pub fn method(&self) -> Method {
@@ -357,11 +369,16 @@ pub enum Admission {
         placement: Placement,
         outcome: StoredOutcome,
     },
+    /// A recorded non-run operation: `attach`, `cancel` or `detach` completed
+    /// and its receipt is the outcome. No run exists to name.
+    Applied { outcome: StoredOutcome },
     /// The recorded refusal. Nothing ran.
     Refused(Refusal),
-    /// The request id is reserved by a session this journal proves live; the
-    /// same run is still to come. A retry waits, it does not admit.
-    Pending { run: RunId },
+    /// The request id is reserved by a session this journal proves live and has
+    /// no outcome yet. A retry waits; it never admits or repeats the request.
+    /// `planned_run` names the run an interrupted `invoke` will admit, and is
+    /// `None` for a method that plans no run.
+    Pending { planned_run: Option<RunId> },
     /// Recovery could not establish the admission or the outcome. A retry must
     /// report unknown; admitting a second run would be a second authority.
     Unknown { reason: String },
@@ -436,9 +453,10 @@ impl AdmissionRecord {
     pub fn state(&self) -> AdmissionState {
         self.state
     }
-    pub fn run(&self) -> RunId {
+    /// The run this record names, when the request admitted or planned one.
+    /// A non-run operation names none, so a replay never invents a run.
+    pub fn planned_run(&self) -> Option<RunId> {
         self.run
-            .unwrap_or_else(|| self.key.request().run_id().expect("stored request id"))
     }
     /// The recorded run when one exists.
     pub fn admitted_run(&self) -> Option<RunId> {
@@ -464,7 +482,9 @@ impl AdmissionRecord {
                         placement,
                         phase: None,
                     },
-                    _ => Admission::Pending { run: self.run() },
+                    _ => Admission::Pending {
+                        planned_run: self.run,
+                    },
                 }
             }
             AdmissionState::Completed => match (self.run, self.fence.clone(), self.placement) {
@@ -482,8 +502,17 @@ impl AdmissionRecord {
                         phase: Some(Phase::Closed),
                     },
                 },
+                // A non-run operation's completed record is its receipt.
+                (None, None, None) => match &self.outcome {
+                    Some(outcome) => Admission::Applied {
+                        outcome: outcome.clone(),
+                    },
+                    None => Admission::Unknown {
+                        reason: "a completed non-run request records no outcome".to_owned(),
+                    },
+                },
                 _ => Admission::Unknown {
-                    reason: "a completed admission records no run".to_owned(),
+                    reason: "a completed admission records an inconsistent run".to_owned(),
                 },
             },
             AdmissionState::Refused => match &self.refusal {
@@ -537,7 +566,11 @@ impl SessionAdmissions {
             ));
         }
         let key = SessionKey::of(session, request.clone());
-        let planned = planned_run(session, &key, admission.digest())?;
+        let planned = if admission.method().admits_a_run() {
+            Some(planned_run(session, &key, admission.digest())?)
+        } else {
+            None
+        };
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let considered = store.transaction(
             &cx.child(std::time::Duration::from_secs(30)),
@@ -586,7 +619,7 @@ impl SessionAdmissions {
                         key.request().as_str(),
                         admission.digest().as_str(),
                         admission.method().as_str(),
-                        planned.to_string(),
+                        planned.as_ref().map(ToString::to_string),
                         txn.now(),
                     ],
                 )?;
@@ -641,7 +674,7 @@ impl SessionAdmissions {
         run: &Run<'_>,
         placement: Placement,
     ) -> Result<(), RunError> {
-        if run.id() != ticket.run {
+        if ticket.run != Some(run.id()) {
             return Err(RunError::broken(
                 "an admission named a run other than its reservation",
             ));
@@ -692,7 +725,7 @@ impl SessionAdmissions {
         store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             let record = read_row(txn, &ticket.key)?
                 .ok_or_else(|| RunError::broken("an admission reservation vanished"))?;
-            if record.digest != ticket.digest || record.run != Some(ticket.run) {
+            if record.digest != ticket.digest || record.run != ticket.run {
                 return Err(RunError::broken(
                     "an admission outcome names another request",
                 ));
@@ -704,6 +737,55 @@ impl SessionAdmissions {
                 return Err(RunError::refused(
                     "an outcome needs an admitted run, not a reservation",
                 ));
+            }
+            txn.conn().execute(
+                "UPDATE workspace_session_admissions SET state='completed', outcome=?3, \
+                 exit_code=?4, updated_at=?5 WHERE session_generation=?1 AND request_id=?2",
+                params![
+                    ticket.key.generation().get() as i64,
+                    ticket.key.request().as_str(),
+                    outcome.label(),
+                    outcome.exit_code(),
+                    txn.now(),
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+    }
+
+    /// Records the receipt of a non-run operation (`attach`, `cancel`,
+    /// `detach`). Its outcome is the operation's own answer — a terminal id or
+    /// the run it stopped — so a retry reads the same answer instead of
+    /// repeating the operation. Idempotent: a repeated record for the same
+    /// ticket changes nothing.
+    pub fn applied(
+        cx: &EffectContext,
+        root: &StateRoot,
+        ticket: &AdmissionTicket,
+        outcome: &StoredOutcome,
+    ) -> Result<(), RunError> {
+        if ticket.method.admits_a_run() {
+            return Err(RunError::broken(
+                "a run-admitting request records its run, not an applied receipt",
+            ));
+        }
+        let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+        store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+            let record = read_row(txn, &ticket.key)?
+                .ok_or_else(|| RunError::broken("an admission reservation vanished"))?;
+            if record.digest != ticket.digest {
+                return Err(RunError::broken(
+                    "an admission receipt names another request",
+                ));
+            }
+            match record.state {
+                AdmissionState::Completed => return Ok(()),
+                AdmissionState::Reserved => {}
+                AdmissionState::Admitted | AdmissionState::Refused => {
+                    return Err(RunError::refused(
+                        "a receipt needs a reserved non-run request",
+                    ))
+                }
             }
             txn.conn().execute(
                 "UPDATE workspace_session_admissions SET state='completed', outcome=?3, \
@@ -800,32 +882,36 @@ impl SessionAdmissions {
                 })
             }
         };
-        let planned = record.run();
-        match run::summary(&reader, planned) {
-            Observed::Verified(summary, _) => {
-                let fence = Fence {
-                    resource: session.fence.resource.clone(),
-                    generation: summary.generation,
-                };
-                let placement = record.placement.unwrap_or(Placement::Detached);
-                return Ok(ReserveDecision::Replayed(Admission::Admitted {
-                    run: planned,
-                    fence,
-                    placement,
-                    phase: Some(summary.phase),
-                }));
-            }
-            Observed::Absent(_) => {}
-            Observed::Unknown(reason) => {
-                return Ok(ReserveDecision::Unknown {
-                    reason: reason.to_string(),
-                })
+        // A non-run request names no run, so a reservation of one is pending
+        // while the session is live and does not consult the run journal.
+        let planned = record.planned_run();
+        if let Some(planned) = planned {
+            match run::summary(&reader, planned) {
+                Observed::Verified(summary, _) => {
+                    let fence = Fence {
+                        resource: session.fence.resource.clone(),
+                        generation: summary.generation,
+                    };
+                    let placement = record.placement.unwrap_or(Placement::Detached);
+                    return Ok(ReserveDecision::Replayed(Admission::Admitted {
+                        run: planned,
+                        fence,
+                        placement,
+                        phase: Some(summary.phase),
+                    }));
+                }
+                Observed::Absent(_) => {}
+                Observed::Unknown(reason) => {
+                    return Ok(ReserveDecision::Unknown {
+                        reason: reason.to_string(),
+                    })
+                }
             }
         }
         match reader.run_owner_state(&observe, root, &session.run) {
             Observed::Verified(crate::gate::OwnerState::Held, _) => {
                 Ok(ReserveDecision::Replayed(Admission::Pending {
-                    run: planned,
+                    planned_run: planned,
                 }))
             }
             Observed::Verified(_, _) => Ok(ReserveDecision::Unknown {

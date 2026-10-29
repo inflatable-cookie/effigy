@@ -230,15 +230,26 @@ fn admit_child<'a>(
     session_run: &mut Run<'a>,
     byte: u8,
 ) -> (Run<'a>, AdmissionTicket) {
-    let ticket = reserve(cx, root, session, byte, b"run the dev profile");
-    let id = ticket.run();
+    admit_child_for(cx, root, session, session_run, byte, "dev")
+}
+
+fn admit_child_for<'a>(
+    cx: &EffectContext,
+    root: &'a StateRoot,
+    session: &SessionRef,
+    session_run: &mut Run<'a>,
+    byte: u8,
+    name: &str,
+) -> (Run<'a>, AdmissionTicket) {
+    let ticket = reserve(cx, root, session, byte, name.as_bytes());
+    let id = ticket.run().expect("an invoke reservation plans a run");
     let handle = SessionHandle::new(session.clone());
     let child = handle
         .admit_child(
             cx,
             root,
             session_run,
-            &inv(task("dev"), "dev"),
+            &inv(task(name), name),
             opts(id),
             &cleanup(cx),
             &mut adapter(),
@@ -246,6 +257,57 @@ fn admit_child<'a>(
         )
         .expect("child admission");
     (child, ticket)
+}
+
+/// One non-run request: its id and canonical digest, and the ticket a fresh
+/// reservation wins.
+struct PendingRequest {
+    request: RequestId,
+    admission: AdmissionRequest,
+}
+impl PendingRequest {
+    fn new(method: Method, byte: u8, body: &[u8]) -> Self {
+        Self {
+            request: RequestId::generate([byte; REQUEST_ID_BYTES]),
+            admission: AdmissionRequest::canonical(method, body),
+        }
+    }
+    fn reserve(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        session: &SessionRef,
+    ) -> AdmissionTicket {
+        match SessionHandle::new(session.clone())
+            .reserve(cx, root, &self.request, &self.admission)
+            .expect("reservation")
+        {
+            ReserveDecision::Reserved(ticket) => ticket,
+            other => panic!("expected a fresh reservation, got {other:?}"),
+        }
+    }
+    fn replay(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        session: &SessionRef,
+    ) -> ReserveDecision {
+        SessionHandle::new(session.clone())
+            .reserve(cx, root, &self.request, &self.admission)
+            .expect("replay")
+    }
+}
+
+fn stop_requests(cx: &EffectContext, root: &StateRoot, run: RunId) -> usize {
+    let reader = read_journal(cx, root);
+    reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM requests WHERE run_id=?1 AND state='pending'",
+            [run.to_string()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("request rows") as usize
 }
 
 fn authority(session: &SessionRef) -> (SessionAuthority, ClientGrant) {
@@ -359,7 +421,7 @@ fn a_second_entry_attaches_to_the_same_session() {
     }
     assert_eq!(
         child_ticket.run(),
-        child.id(),
+        Some(child.id()),
         "the admission names the child it admitted"
     );
     assert_eq!(handle.identity(), &session);
@@ -395,7 +457,7 @@ fn a_retry_returns_the_recorded_run_and_never_admits_twice() {
             &root,
             &mut session_run,
             &inv(task("test"), "test"),
-            opts(ticket.run()),
+            opts(ticket.run().expect("an invoke reservation plans a run")),
             &cleanup(&cx),
             &mut adapter(),
             &ticket,
@@ -494,14 +556,14 @@ fn a_reservation_survives_a_supervisor_restart() {
         .reserve(&cx, &root, &request, &admission)
         .expect("reservation")
     {
-        ReserveDecision::Reserved(ticket) => ticket.run(),
+        ReserveDecision::Reserved(ticket) => ticket.run().expect("invoke plans a run"),
         other => panic!("expected a reservation, got {other:?}"),
     };
     let reader = read_journal(&cx, &root);
     match SessionAdmissions::lookup(&reader, &SessionKey::of(&session, request.clone())) {
         Observed::Verified(Some(record), _) => {
             assert_eq!(record.state(), AdmissionState::Reserved);
-            assert_eq!(record.run(), planned);
+            assert_eq!(record.planned_run(), Some(planned));
         }
         other => panic!("the reservation is not readable: {other:?}"),
     }
@@ -509,7 +571,9 @@ fn a_reservation_survives_a_supervisor_restart() {
         .reserve(&cx, &root, &request, &admission)
         .expect("replay")
     {
-        ReserveDecision::Replayed(Admission::Pending { run }) => assert_eq!(run, planned),
+        ReserveDecision::Replayed(Admission::Pending { planned_run }) => {
+            assert_eq!(planned_run, Some(planned))
+        }
         other => panic!("expected a pending replay, got {other:?}"),
     }
 
@@ -640,7 +704,10 @@ fn a_secondary_disconnect_stops_nothing() {
     drop(secondary);
 
     let reaped = authority.reap(&cx, &root).expect("reap");
-    assert_eq!(reaped, vec![secondary_id.clone()]);
+    assert_eq!(reaped.len(), 1);
+    assert_eq!(reaped[0].terminal(), &secondary_id);
+    assert!(!reaped[0].released());
+    assert!(reaped[0].owned().is_empty());
     assert!(is_live(&session_run), "the session keeps running");
     assert_eq!(
         authority.attached().len(),
@@ -924,17 +991,19 @@ fn cancel_is_recorded_once_and_only_for_owned_runs() {
             child.id(),
         )
         .expect("authorised cancel");
-    // The same request id cannot be journalled twice: one request, one settle.
-    assert!(handle
+    // The same request id is one journalled request: a retried cancel reads it
+    // and the child still settles once.
+    handle
         .cancel(
             &cx,
             &root,
             &read_journal(&cx, &root),
             &grant,
             &request,
-            child.id()
+            child.id(),
         )
-        .is_err());
+        .expect("the repeated cancel reads its recorded request");
+    assert_eq!(stop_requests(&cx, &root, child.id()), 1);
     assert_eq!(
         child
             .requests()
@@ -1291,4 +1360,359 @@ fn a_terminal_record_survives_a_restart() {
         Observed::Verified(rows, _) => assert_eq!(rows[0].2, TerminalState::Stopped),
         other => panic!("terminal records are not readable: {other:?}"),
     }
+}
+
+#[test]
+fn a_non_run_reservation_never_plans_a_run() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (session_run, session) = admit_session(&cx, &root, &fence);
+
+    let pending = PendingRequest::new(Method::Cancel, 171, b"stop the dev child");
+    let ticket = pending.reserve(&cx, &root, &session);
+    assert_eq!(
+        ticket.run(),
+        None,
+        "a cancel plans no run, so a replay never names a phantom one"
+    );
+
+    match pending.replay(&cx, &root, &session) {
+        ReserveDecision::Replayed(Admission::Pending { planned_run }) => {
+            assert_eq!(planned_run, None)
+        }
+        other => panic!("expected a pending non-run request, got {other:?}"),
+    }
+    let reader = read_journal(&cx, &root);
+    match SessionAdmissions::lookup(&reader, &SessionKey::of(&session, pending.request.clone())) {
+        Observed::Verified(Some(record), _) => {
+            assert_eq!(record.state(), AdmissionState::Reserved);
+            assert_eq!(record.planned_run(), None);
+            assert_eq!(record.admitted_run(), None);
+        }
+        other => panic!("the reservation is not readable: {other:?}"),
+    }
+
+    // With no live session the reservation cannot be resolved: unknown, never
+    // a fresh request.
+    drop(session_run);
+    match pending.replay(&cx, &root, &session) {
+        ReserveDecision::Unknown { .. } => {}
+        other => panic!("expected unknown, got {other:?}"),
+    }
+}
+
+#[test]
+fn attach_replays_its_recorded_terminal() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (_session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut authority, grant) = authority(&session);
+
+    let pending = PendingRequest::new(Method::Attach, 181, b"attach a tui");
+    let ticket = pending.reserve(&cx, &root, &session);
+    let tui = authority
+        .attach(&cx, &root, &grant, TerminalKind::Tui, terminal(1), None)
+        .expect("attach");
+    let receipt = StoredOutcome::new(format!("attached:{}", tui.id()), None).expect("receipt");
+    SessionAdmissions::applied(&cx, &root, &ticket, &receipt).expect("receipt recorded");
+
+    match pending.replay(&cx, &root, &session) {
+        ReserveDecision::Replayed(Admission::Applied { outcome }) => {
+            assert_eq!(
+                outcome.label(),
+                format!("attached:{}", terminal(1).as_str())
+            );
+        }
+        other => panic!("expected the recorded attachment, got {other:?}"),
+    }
+    // The receipt is the whole answer: a replay attaches nothing a second time.
+    let reader = read_journal(&cx, &root);
+    match terminals(&reader, &session) {
+        Observed::Verified(rows, _) => assert_eq!(rows.len(), 1),
+        other => panic!("terminal records are not readable: {other:?}"),
+    }
+}
+
+#[test]
+fn cancel_replays_and_a_repeated_id_is_one_request() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+    let (child, _ticket) = admit_child(&cx, &root, &session, &mut session_run, 191);
+    let (_authority, grant) = authority(&session);
+    let handle = SessionHandle::new(session.clone());
+
+    let pending = PendingRequest::new(Method::Cancel, 192, b"stop the dev child");
+    let ticket = pending.reserve(&cx, &root, &session);
+    assert_eq!(ticket.run(), None);
+
+    handle
+        .cancel(
+            &cx,
+            &root,
+            &read_journal(&cx, &root),
+            &grant,
+            &pending.request,
+            child.id(),
+        )
+        .expect("cancel");
+    // The same id again is the same durable request, not a second one.
+    handle
+        .cancel(
+            &cx,
+            &root,
+            &read_journal(&cx, &root),
+            &grant,
+            &pending.request,
+            child.id(),
+        )
+        .expect("the repeated cancel reads its recorded request");
+    assert_eq!(stop_requests(&cx, &root, child.id()), 1);
+
+    let receipt = StoredOutcome::new(format!("stopped:{}", child.id()), Some(0)).expect("receipt");
+    SessionAdmissions::applied(&cx, &root, &ticket, &receipt).expect("receipt recorded");
+    match pending.replay(&cx, &root, &session) {
+        ReserveDecision::Replayed(Admission::Applied { outcome }) => {
+            assert_eq!(outcome.label(), format!("stopped:{}", child.id()));
+        }
+        other => panic!("expected the recorded cancellation, got {other:?}"),
+    }
+    assert_eq!(stop_requests(&cx, &root, child.id()), 1, "one settle");
+}
+
+#[test]
+fn detach_replays_its_recorded_receipt() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (_session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut authority, grant) = authority(&session);
+    let mut tui = authority
+        .attach(&cx, &root, &grant, TerminalKind::Tui, terminal(1), None)
+        .expect("attach");
+
+    let pending = PendingRequest::new(Method::Detach, 201, b"detach the tui");
+    let ticket = pending.reserve(&cx, &root, &session);
+    authority
+        .detach(&cx, &root, &mut tui, Some(StreamCursor::at(3)))
+        .expect("detach");
+    let receipt = StoredOutcome::new(format!("detached:{}", tui.id()), None).expect("receipt");
+    SessionAdmissions::applied(&cx, &root, &ticket, &receipt).expect("receipt recorded");
+
+    match pending.replay(&cx, &root, &session) {
+        ReserveDecision::Replayed(Admission::Applied { outcome }) => {
+            assert_eq!(
+                outcome.label(),
+                format!("detached:{}", terminal(1).as_str())
+            );
+        }
+        other => panic!("expected the recorded detach, got {other:?}"),
+    }
+    // A detach is a non-run operation: its record names no run.
+    let reader = read_journal(&cx, &root);
+    match SessionAdmissions::lookup(&reader, &SessionKey::of(&session, pending.request.clone())) {
+        Observed::Verified(Some(record), _) => {
+            assert_eq!(record.state(), AdmissionState::Completed);
+            assert_eq!(record.admitted_run(), None);
+        }
+        other => panic!("the receipt is not readable: {other:?}"),
+    }
+}
+
+#[test]
+fn eof_stops_only_what_that_terminal_owned() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut authority, grant) = authority(&session);
+    let tui = authority
+        .attach(&cx, &root, &grant, TerminalKind::Tui, terminal(1), None)
+        .expect("tui attach");
+    let text = authority
+        .attach(&cx, &root, &grant, TerminalKind::Text, terminal(2), None)
+        .expect("text attach");
+    let (tui_id, text_id) = (tui.id().clone(), text.id().clone());
+    let (child_a, _) = admit_child_for(&cx, &root, &session, &mut session_run, 211, "dev");
+    let (child_b, _) = admit_child_for(&cx, &root, &session, &mut session_run, 212, "test");
+    record_owned(&cx, &root, &session, &tui_id, child_a.id()).expect("tui owns child a");
+    record_owned(&cx, &root, &session, &text_id, child_b.id()).expect("text owns child b");
+
+    // EOF without a detach ends the runs this terminal admitted, and nothing
+    // else: the other terminal's run and the session stay.
+    let end = authority
+        .owner_lost(&cx, &root, &tui_id, OwnerLoss::EndOfInput)
+        .expect("eof");
+    assert!(!end.released());
+    assert_eq!(end.owned().to_vec(), vec![child_a.id()]);
+    assert_eq!(end.cause(), StopCause::OwnerLost);
+    assert_eq!(
+        authority.attached().len(),
+        1,
+        "only the text terminal remains"
+    );
+
+    let handle = SessionHandle::new(session.clone());
+    let stop = RequestId::generate([213; REQUEST_ID_BYTES]);
+    handle
+        .stop_owned(&cx, &root, &read_journal(&cx, &root), &stop, child_a.id())
+        .expect("stop the owned child");
+    // A retried owner loss asks for the same stop, not a second one.
+    handle
+        .stop_owned(&cx, &root, &read_journal(&cx, &root), &stop, child_a.id())
+        .expect("the repeated stop reads its recorded request");
+    assert_eq!(stop_requests(&cx, &root, child_a.id()), 1);
+    assert!(child_b.requests().expect("requests").is_empty());
+    assert!(is_live(&child_b));
+    assert!(
+        is_live(&session_run),
+        "a terminal loss never ends the session"
+    );
+    assert!(
+        handle
+            .stop_owned(
+                &cx,
+                &root,
+                &read_journal(&cx, &root),
+                &RequestId::generate([214; REQUEST_ID_BYTES]),
+                session.run(),
+            )
+            .is_err(),
+        "a terminal loss cannot stop the session run"
+    );
+}
+
+#[test]
+fn eof_after_acknowledged_detach_stops_nothing() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut authority, grant) = authority(&session);
+    let mut tui = authority
+        .attach(&cx, &root, &grant, TerminalKind::Tui, terminal(1), None)
+        .expect("attach");
+    let tui_id = tui.id().clone();
+    let (child, _) = admit_child_for(&cx, &root, &session, &mut session_run, 221, "dev");
+    record_owned(&cx, &root, &session, &tui_id, child.id()).expect("owned");
+
+    authority
+        .detach(&cx, &root, &mut tui, None)
+        .expect("detach acknowledged");
+    let end = authority
+        .owner_lost(&cx, &root, &tui_id, OwnerLoss::EndOfInput)
+        .expect("eof after detach");
+    assert!(end.released(), "the terminal had detached");
+    assert!(end.owned().is_empty());
+    assert!(stop_requests(&cx, &root, child.id()) == 0);
+    assert!(is_live(&child), "the detached child keeps running");
+    assert!(is_live(&session_run));
+}
+
+#[test]
+fn term_and_hup_carry_their_signal_as_the_cause() {
+    assert_eq!(OwnerLoss::Signal(15).cause(), StopCause::Signal(15));
+    assert_eq!(OwnerLoss::Signal(1).cause(), StopCause::Signal(1));
+    assert_eq!(OwnerLoss::Disconnected.cause(), StopCause::OwnerLost);
+    assert_eq!(OwnerLoss::EndOfInput.cause(), StopCause::OwnerLost);
+
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut authority, grant) = authority(&session);
+    let tui = authority
+        .attach(&cx, &root, &grant, TerminalKind::Tui, terminal(1), None)
+        .expect("attach");
+    let tui_id = tui.id().clone();
+    let (child, _) = admit_child_for(&cx, &root, &session, &mut session_run, 231, "dev");
+    record_owned(&cx, &root, &session, &tui_id, child.id()).expect("owned");
+
+    let end = authority
+        .owner_lost(&cx, &root, &tui_id, OwnerLoss::Signal(15))
+        .expect("term");
+    assert_eq!(end.cause(), StopCause::Signal(15));
+    assert_eq!(end.owned().to_vec(), vec![child.id()]);
+    assert!(is_live(&session_run));
+}
+
+#[test]
+fn an_owning_terminals_death_stops_its_runs_and_not_the_session() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut authority, grant) = authority(&session);
+    let tui = authority
+        .attach(&cx, &root, &grant, TerminalKind::Tui, terminal(1), None)
+        .expect("attach");
+    let tui_id = tui.id().clone();
+    let (child, _) = admit_child_for(&cx, &root, &session, &mut session_run, 241, "dev");
+    record_owned(&cx, &root, &session, &tui_id, child.id()).expect("owned");
+
+    // The owning terminal dies: its handle is dropped without a detach.
+    drop(tui);
+    let ended = authority.reap(&cx, &root).expect("reap");
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].terminal(), &tui_id);
+    assert!(!ended[0].released());
+    assert_eq!(ended[0].owned().to_vec(), vec![child.id()]);
+    assert_eq!(ended[0].cause(), StopCause::OwnerLost);
+
+    let handle = SessionHandle::new(session.clone());
+    handle
+        .stop_owned(
+            &cx,
+            &root,
+            &read_journal(&cx, &root),
+            &RequestId::generate([242; REQUEST_ID_BYTES]),
+            child.id(),
+        )
+        .expect("stop the dead terminal's run");
+    assert_eq!(stop_requests(&cx, &root, child.id()), 1);
+    assert!(is_live(&session_run), "the session survives its terminal");
+}
+
+#[test]
+fn owned_runs_survive_a_supervisor_restart() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (_, fence) = active_environment(&cx, &root);
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+    let (mut authority, grant) = authority(&session);
+    let tui = authority
+        .attach(&cx, &root, &grant, TerminalKind::Tui, terminal(1), None)
+        .expect("attach");
+    let tui_id = tui.id().clone();
+    let (child, _) = admit_child_for(&cx, &root, &session, &mut session_run, 251, "dev");
+    record_owned(&cx, &root, &session, &tui_id, child.id()).expect("owned");
+
+    // What a restarted supervisor reads: the durable record of who owned what,
+    // and the same terminal attachment.
+    let reader = read_journal(&cx, &root);
+    match owned(&reader, &session, &tui_id) {
+        Observed::Verified(runs, _) => assert_eq!(runs, vec![child.id()]),
+        other => panic!("owned runs are not readable: {other:?}"),
+    }
+    assert_eq!(
+        SessionRef::resolve(&reader, &environment())
+            .verified()
+            .cloned()
+            .flatten(),
+        Some(session.clone())
+    );
+    // The session is owned by its environment, never by a terminal.
+    assert!(record_owned(&cx, &root, &session, &tui_id, session.run()).is_err());
 }

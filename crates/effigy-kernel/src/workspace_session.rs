@@ -34,9 +34,9 @@ pub use admissions::{
 };
 pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use grants::{
-    host_entropy, refusal_category, terminals, AttachedTerminal, ClientGrant, Enrolment,
-    SessionAuthority, SessionBinding, TerminalId, TerminalKind, TerminalState, SECRET_BYTES,
-    TERMINAL_ID_BYTES,
+    host_entropy, owned, record_owned, refusal_category, terminals, AttachedTerminal, ClientGrant,
+    Enrolment, OwnerLoss, SessionAuthority, SessionBinding, TerminalEnd, TerminalId, TerminalKind,
+    TerminalState, SECRET_BYTES, TERMINAL_ID_BYTES,
 };
 pub use streams::{
     Frame, PushOutcome, ReadOutcome, StreamBuffer, StreamCursor, StreamError, StreamFrame,
@@ -324,7 +324,7 @@ impl SessionHandle {
     ) -> Result<Run<'a>, RunError> {
         if session_run.id() != self.session.run
             || session_run.fence() != &self.session.fence
-            || ticket.run() != opts.id
+            || ticket.run() != Some(opts.id)
         {
             return Err(RunError::broken(
                 "a child admission names a different session or ticket",
@@ -344,6 +344,10 @@ impl SessionHandle {
     /// of its child runs. The request is journalled against the target's current
     /// fence and the control socket wakes its owner; naming another client's run
     /// is refused before anything is written.
+    ///
+    /// Repeated with the same request id it is the same durable request, not a
+    /// second one: a retried `cancel` answers with the run it already asked to
+    /// stop, and the target still settles once.
     pub fn cancel(
         &self,
         cx: &EffectContext,
@@ -355,6 +359,27 @@ impl SessionHandle {
     ) -> Result<RunId, RunError> {
         grant.authorise_target(reader, &self.session, target)?;
         request_stop(cx, root, reader, request, target)
+    }
+
+    /// Stops one run that a terminal owned, after that terminal's EOF,
+    /// disconnect or signal. The caller passes the request id it journalled and
+    /// the [`OwnerLoss`] it observed; the stop is an ordinary journalled
+    /// request, so a retried owner loss asks once and the run settles once. Only
+    /// the runs [`SessionAuthority::owner_lost`] returned may be named here.
+    pub fn stop_owned(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        reader: &StoreReader,
+        request: &RequestId,
+        run: RunId,
+    ) -> Result<RunId, RunError> {
+        if run == self.session.run {
+            return Err(RunError::refused(
+                "a terminal loss never stops the workspace session itself",
+            ));
+        }
+        request_stop(cx, root, reader, request, run)
     }
 
     /// The down coordination for this session (§8.7): a foreign live or
@@ -380,16 +405,33 @@ pub(crate) fn request_stop(
 ) -> Result<RunId, RunError> {
     let fence = target_fence(reader, target)?;
     let stop = request.run_id()?;
-    run::request(
-        cx,
-        root,
-        &run::Request {
-            id: stop,
-            run: target,
-            expected: fence.clone(),
-            action: RequestAction::Stop,
-        },
-    )?;
+    // A committed request is the durable fact: the same id naming the same stop
+    // is that request, not a duplicate one. The journal refuses a second row, so
+    // a retried cancel or owner loss answers instead of erroring.
+    match recorded_request(reader, stop)? {
+        Some(recorded) if recorded.run == target && recorded.expected == fence => {
+            if !matches!(recorded.action, RequestAction::Stop) {
+                return Err(RunError::refused(
+                    "this request id already names another action",
+                ));
+            }
+        }
+        Some(_) => {
+            return Err(RunError::refused(
+                "this request id already names another run",
+            ))
+        }
+        None => run::request(
+            cx,
+            root,
+            &run::Request {
+                id: stop,
+                run: target,
+                expected: fence.clone(),
+                action: RequestAction::Stop,
+            },
+        )?,
+    }
     if let Ok(observe) = cx
         .operation()
         .child(std::time::Duration::from_secs(1))
@@ -416,4 +458,20 @@ fn target_fence(reader: &StoreReader, target: RunId) -> Result<Fence, RunError> 
         resource: decode_owner(&canonical)?,
         generation: Generation::new(generation as u64),
     })
+}
+
+/// A journalled control request by id, whatever its state. The row is the
+/// durable record `run::request` wrote, so a retry can recognise its own.
+fn recorded_request(reader: &StoreReader, id: RunId) -> Result<Option<run::Request>, RunError> {
+    let action = reader
+        .conn()
+        .query_row(
+            "SELECT action FROM requests WHERE request_id=?1",
+            [id.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    action
+        .map(|action| serde_json::from_str(&action).map_err(RunError::from))
+        .transpose()
 }

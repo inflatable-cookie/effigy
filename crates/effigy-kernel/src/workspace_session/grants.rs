@@ -18,6 +18,7 @@
 //! session.
 
 use super::*;
+use crate::ctx::StopCause;
 use crate::human::Category;
 use crate::store::Store;
 use rusqlite::{params, OptionalExtension};
@@ -29,6 +30,8 @@ use std::sync::Arc;
 
 /// The additive table this module owns (§8.7 terminal enrolment records).
 const TABLE: &str = "workspace_session_terminals";
+/// The additive table that records which terminal admitted which run.
+const OWNED_TABLE: &str = "workspace_session_owned_runs";
 /// Bytes in a capability or an enrolment secret.
 pub const SECRET_BYTES: usize = 32;
 /// Bytes in a terminal id.
@@ -327,6 +330,62 @@ impl TerminalState {
     }
 }
 
+/// How one terminal's ownership of its work ended (§8.11): EOF without an
+/// acknowledged detach, the client going away, or a signal the terminal
+/// received. None of these stops the session; they stop the runs that terminal
+/// admitted, and an acknowledged detach stops nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerLoss {
+    /// End of input on the terminal, with no detach acknowledged.
+    EndOfInput,
+    /// The terminal or its client disappeared without closing cleanly.
+    Disconnected,
+    /// The terminal received this signal: TERM, HUP, or an operator's own.
+    Signal(i32),
+}
+impl OwnerLoss {
+    /// The cause the owned work is stopped with. A signal names itself; an EOF
+    /// or a disconnect is owner loss.
+    pub fn cause(self) -> StopCause {
+        match self {
+            Self::EndOfInput | Self::Disconnected => StopCause::OwnerLost,
+            Self::Signal(signal) => StopCause::Signal(signal),
+        }
+    }
+}
+
+/// What ending one terminal did. `owned` is exactly the work that terminal
+/// admitted and that has not settled, so the supervisor stops that list and
+/// nothing else; the session run is never in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalEnd {
+    terminal: TerminalId,
+    kind: TerminalKind,
+    /// True when the terminal had acknowledged a detach: its work stays.
+    released: bool,
+    cause: StopCause,
+    owned: Vec<RunId>,
+}
+impl TerminalEnd {
+    pub fn terminal(&self) -> &TerminalId {
+        &self.terminal
+    }
+    pub fn kind(&self) -> TerminalKind {
+        self.kind
+    }
+    /// Whether the terminal had already detached, so nothing is stopped.
+    pub fn released(&self) -> bool {
+        self.released
+    }
+    pub fn cause(&self) -> StopCause {
+        self.cause.clone()
+    }
+    pub fn owned(&self) -> &[RunId] {
+        &self.owned
+    }
+}
+
 /// One live terminal handle. Its `Drop` marks the handle gone in memory; the
 /// supervisor's next turn records it as `lost` through
 /// [`SessionAuthority::reap`]. Dropping it never writes a stop request.
@@ -595,14 +654,15 @@ impl SessionAuthority {
         Ok(())
     }
 
-    /// Records every handle that was dropped without detaching, as `lost`. Its
-    /// death stops nothing: the row is evidence about a client, not about the
-    /// run.
+    /// Records every handle that was dropped without detaching, as `lost`, and
+    /// returns what ending each terminal did — including the runs it owned, so
+    /// the supervisor stops that work and the session keeps running. A drop is
+    /// an owner loss, not evidence about the run.
     pub fn reap(
         &mut self,
         cx: &EffectContext,
         root: &StateRoot,
-    ) -> Result<Vec<TerminalId>, Refusal> {
+    ) -> Result<Vec<TerminalEnd>, Refusal> {
         let mut lost = Vec::new();
         for (id, slot) in self.terminals.iter_mut() {
             if slot.state == TerminalState::Attached && slot.dropped.load(Ordering::Acquire) {
@@ -617,10 +677,78 @@ impl SessionAuthority {
                     slot.capability,
                 )?;
                 slot.state = TerminalState::Lost;
-                lost.push(id.clone());
+                lost.push((id.clone(), slot.kind));
             }
         }
-        Ok(lost)
+        // The owned runs are read after the rows are recorded, so a failed read
+        // cannot leave a terminal attached to a client that has gone.
+        let mut ended = Vec::new();
+        for (id, kind) in lost {
+            let owned = open_owned_runs(cx, root, &self.binding.session, &id)?;
+            ended.push(TerminalEnd {
+                terminal: id,
+                kind,
+                released: false,
+                cause: StopCause::OwnerLost,
+                owned,
+            });
+        }
+        Ok(ended)
+    }
+
+    /// Ends one terminal: EOF without detach, a disconnect, or TERM/HUP.
+    ///
+    /// The terminal's row is recorded `lost`, and the returned [`TerminalEnd`]
+    /// names the runs that terminal admitted and that have not settled — the
+    /// only work this call authorises stopping, with the loss as its cause. A
+    /// terminal that already detached releases nothing and stops nothing, and
+    /// the session run is never in the list: no terminal loss ends the session
+    /// (§8.7, §8.11).
+    pub fn owner_lost(
+        &mut self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        terminal: &TerminalId,
+        loss: OwnerLoss,
+    ) -> Result<TerminalEnd, Refusal> {
+        let Some(slot) = self.terminals.get(terminal) else {
+            return Err(Refusal::new(
+                RefusalCode::InvalidRequest,
+                "this terminal is not attached to the session",
+            ));
+        };
+        let kind = slot.kind;
+        if slot.state != TerminalState::Attached {
+            // A detached, lost or stopped terminal owns nothing any more.
+            return Ok(TerminalEnd {
+                terminal: terminal.clone(),
+                kind,
+                released: true,
+                cause: loss.cause(),
+                owned: Vec::new(),
+            });
+        }
+        write_terminal(
+            cx,
+            root,
+            &self.binding.session,
+            terminal,
+            kind,
+            TerminalState::Lost,
+            None,
+            slot.capability,
+        )?;
+        if let Some(slot) = self.terminals.get_mut(terminal) {
+            slot.state = TerminalState::Lost;
+        }
+        let owned = open_owned_runs(cx, root, &self.binding.session, terminal)?;
+        Ok(TerminalEnd {
+            terminal: terminal.clone(),
+            kind,
+            released: false,
+            cause: loss.cause(),
+            owned,
+        })
     }
 
     /// Tells every attached terminal the container is stopping (§8.7 step 4)
@@ -664,6 +792,132 @@ impl SessionAuthority {
             .map(|(id, slot)| (id.clone(), slot.kind))
             .collect()
     }
+}
+
+/// Records that `terminal` admitted `run`, so EOF, TERM/HUP or that terminal's
+/// death stops exactly that run. One run has one owning client; recording the
+/// same pair twice changes nothing.
+pub fn record_owned(
+    cx: &EffectContext,
+    root: &StateRoot,
+    session: &SessionRef,
+    terminal: &TerminalId,
+    run: RunId,
+) -> Result<(), Refusal> {
+    if run == session.run() {
+        return Err(Refusal::new(
+            RefusalCode::InvalidRequest,
+            "the session is owned by its environment, not by a terminal",
+        ));
+    }
+    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)
+        .map_err(|error| unavailable(RunError::from(error)))?;
+    store
+        .transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+            txn.conn().execute(
+                "INSERT INTO workspace_session_owned_runs \
+                 (run_id, session_run, terminal_id, created_at) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(run_id) DO NOTHING",
+                params![
+                    run.to_string(),
+                    session.run().to_string(),
+                    terminal.as_str(),
+                    txn.now(),
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .map_err(unavailable)
+}
+
+/// Every run `terminal` admitted, settled or not. A supervisor restart reads
+/// this instead of guessing who owned what.
+pub fn owned(
+    reader: &StoreReader,
+    session: &SessionRef,
+    terminal: &TerminalId,
+) -> Observed<Vec<RunId>> {
+    let rows = (|| -> Result<Vec<RunId>, Refusal> {
+        let mut statement = reader
+            .conn()
+            .prepare(&format!(
+                "SELECT run_id FROM {OWNED_TABLE} WHERE session_run=?1 AND terminal_id=?2 \
+                 ORDER BY created_at, run_id"
+            ))
+            .map_err(|error| unavailable(RunError::from(error)))?;
+        let mapped = statement
+            .query_map(
+                params![session.run().to_string(), terminal.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|error| unavailable(RunError::from(error)))?;
+        let mut runs = Vec::new();
+        for row in mapped {
+            let id = row.map_err(|error| unavailable(RunError::from(error)))?;
+            runs.push(
+                id.parse()
+                    .map_err(|_| Refusal::new(RefusalCode::Unknown, "a stored owned run id"))?,
+            );
+        }
+        Ok(runs)
+    })();
+    match rows {
+        Ok(runs) => Observed::Verified(runs, session_evidence()),
+        Err(refusal) => {
+            Observed::Unknown(UnknownReason::Inconsistent(refusal.diagnostic().to_owned()))
+        }
+    }
+}
+
+/// The runs `terminal` owned that have not settled: the stop list for an owner
+/// loss. A settled run is evidence of what happened, not work to stop again.
+fn open_owned_runs(
+    cx: &EffectContext,
+    root: &StateRoot,
+    session: &SessionRef,
+    terminal: &TerminalId,
+) -> Result<Vec<RunId>, Refusal> {
+    let observe = cx
+        .operation()
+        .child(std::time::Duration::from_secs(30))
+        .observe()
+        .map_err(|_| {
+            Refusal::new(
+                RefusalCode::Unavailable,
+                "the journal could not be observed",
+            )
+        })?;
+    let reader = match Store::read(&observe, root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => {
+            return Err(Refusal::new(
+                RefusalCode::Unknown,
+                "the session journal is absent",
+            ))
+        }
+        Observed::Unknown(reason) => {
+            return Err(Refusal::new(RefusalCode::Unknown, reason.to_string()))
+        }
+    };
+    let owned = match owned(&reader, session, terminal) {
+        Observed::Verified(owned, _) => owned,
+        Observed::Absent(_) => Vec::new(),
+        Observed::Unknown(reason) => {
+            return Err(Refusal::new(RefusalCode::Unknown, reason.to_string()))
+        }
+    };
+    let mut open = Vec::new();
+    for run in owned {
+        match crate::run::summary(&reader, run) {
+            Observed::Verified(summary, _) if summary.phase != Phase::Closed => open.push(run),
+            Observed::Verified(_, _) => {}
+            Observed::Absent(_) => {}
+            Observed::Unknown(reason) => {
+                return Err(Refusal::new(RefusalCode::Unknown, reason.to_string()))
+            }
+        }
+    }
+    Ok(open)
 }
 
 /// Reads the durable terminal rows of one session, newest first.
