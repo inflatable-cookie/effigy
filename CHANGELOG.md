@@ -350,6 +350,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Workspace guest publication now completes as a journalled obligation under
+  the environment activation gate before publishing active or attaching task
+  holders. Concurrent prepares and stops serialize; interrupted publication
+  keeps immutable generations and cannot report a successful activation.
+
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as

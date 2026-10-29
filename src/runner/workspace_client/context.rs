@@ -724,8 +724,10 @@ pub(crate) fn sha256_text(bytes: &[u8]) -> String {
     render_digest(sha256(bytes))
 }
 
-/// The guest filesystem surface Prepare may use. Each call is a journalled
-/// effect of the Prepare run (R2); nothing else in the guest writes here.
+/// The guest filesystem surface Prepare may use. Production calls are covered
+/// by the required additive publication effect of the gated environment
+/// activation (R2). Its intent precedes guest I/O and its receipt precedes active.
+/// Existing immutable objects may be verified, never replaced.
 pub(crate) trait GuestWorkspace: GuestReader {
     /// Create a generation directory with `mode`.
     fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError>;

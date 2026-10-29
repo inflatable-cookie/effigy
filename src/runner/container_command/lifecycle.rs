@@ -354,22 +354,10 @@ fn run_container_up_inner(
     // The stage keeps its documented name (closed JSON vocabulary).
     operation.stage = Some("persistent_owner");
     let settling = steps::phase("settling the environment");
-    match environment::activate(&bring_up, holders) {
+    match environment::activate(&bring_up, &plan.policy, holders) {
         Ok(()) => settling.succeed("environment settled"),
         Err(error) => {
             settling.fail(error.to_string());
-            return Err(error);
-        }
-    }
-
-    // Activation is the host Prepare for a container-mode workspace: publish
-    // the guest context and pinned executable now, so a shell or task in this
-    // environment finds them without another command (contract 052 §8.2).
-    let publishing = steps::phase("publishing the workspace guest context");
-    match crate::runner::workspace_command::publish_workspace_guest(repo_root, &plan.policy) {
-        Ok(_) => publishing.succeed("workspace guest context published"),
-        Err(error) => {
-            publishing.fail(error.to_string());
             return Err(error);
         }
     }

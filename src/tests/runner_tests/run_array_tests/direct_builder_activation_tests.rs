@@ -309,6 +309,7 @@ shell = "/bin/sh"
         managed_listener: None,
         registered: chrono::Utc::now(),
     });
+    fs::create_dir_all(routes_path.parent().unwrap()).unwrap();
     routes.save(&routes_path).unwrap();
     let routes_before = fs::read(&routes_path).unwrap();
     let bin_dir = install_fake_container_runtime(&root);

@@ -52,6 +52,15 @@ pub(in crate::runner) fn publish_workspace_guest(
     provisioning::publish_workspace_guest(repo_root, policy).map(|_prepared| ())
 }
 
+/// Only the host environment activation owns this publication boundary.
+pub(in crate::runner) fn publish_workspace_guest_in(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    run: &mut effigy_containers::environment::EnvRun<'_>,
+) -> Result<(), RunnerError> {
+    provisioning::publish_workspace_guest_in(repo_root, policy, run).map(|_| ())
+}
+
 pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

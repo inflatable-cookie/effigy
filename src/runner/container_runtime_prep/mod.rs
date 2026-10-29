@@ -389,12 +389,11 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
         |binding| reconcile_runtime_aliases_stage(repo_root, policy, &binding),
     )?;
     if let Some(bring_up) = bring_up {
-        crate::runner::environment::activate(&bring_up, start.holders)?;
+        crate::runner::environment::activate(&bring_up, policy, start.holders)?;
+    } else {
+        // Reusing an already-running stack still prepares through Gate(Env).
+        crate::runner::workspace_command::publish_workspace_guest(repo_root, policy)?;
     }
-    // Activation is the host Prepare for a container-mode workspace (§8.2):
-    // publish the guest context and pinned executable with the generation the
-    // environment just promoted.
-    crate::runner::workspace_command::publish_workspace_guest(repo_root, policy)?;
     Ok(())
 }
 

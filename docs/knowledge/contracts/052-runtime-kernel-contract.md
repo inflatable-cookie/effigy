@@ -2705,6 +2705,28 @@ transport is implemented or qualified. The channel is separate from the
 kernel's remote custody protocol: the former requests host authority; the
 latter proves and controls a workload already admitted by the host.
 
+**Prepare publication.** Container-mode activation uses the actual environment
+owner run and `Gate(Env)`. A typed kernel-owned additive publication obligation
+commits before guest staging, immutable file writes or pointer switches. Its
+receipt names the activation fence, full container identity, VM boot identity,
+artifact digest and context generation. Only after that receipt is applied and
+the required obligation is completed may activation publish active and attach
+requesting holders. Container up, task activation and workspace handoff use
+this same boundary; publication never follows settlement as a separate effect.
+
+Existing holders remain attached to their original selections. This narrow
+operation permits only additive immutable binary, snapshot and context objects
+and atomic pointers for future invocations; it grants no stop, reset, runtime
+replacement or generic environment-effect permission. Those transitions still
+require `TransitionPermit` and its holder checks. Guest identity is re-probed
+before publishing the context. An existing object with wrong bytes is refused;
+recovery skips retained orphan context documents instead of overwriting them.
+Partial publication or a missing receipt leaves activation unsuccessful and
+pending. Recovery retains additive bytes without replaying container I/O; a
+fresh activation verifies or publishes a complete generation under the gate.
+No database transaction spans guest I/O. Hybrid activation emits no guest
+publication obligation or artifacts.
+
 **Wire.** TLS pins the server identity from the selected context before the
 client sends a credential. A length-prefixed UTF-8 JSON frame has a four-byte
 big-endian length, at most 1 MiB; malformed, oversized, duplicate-key or

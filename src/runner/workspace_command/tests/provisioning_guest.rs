@@ -84,6 +84,19 @@ fn local_identity() -> WorkspaceEnvironmentIdentity {
     }
 }
 
+/// An isolated fake activation fence for tests that do not run the engine.
+fn local_fence() -> effigy_kernel::run::Fence {
+    use effigy_kernel::id::{CheckoutId, CheckoutKind, Generation, ResourceId};
+    effigy_kernel::run::Fence {
+        resource: ResourceId::environment(
+            CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]),
+            "dev",
+        )
+        .unwrap(),
+        generation: Generation::new(7),
+    }
+}
+
 fn guest() -> FakeGuest {
     FakeGuest::new().with_container(container_identity())
 }
@@ -150,7 +163,7 @@ fn prepare(
                 vm_type: None,
             },
             container,
-            environment: local_identity(),
+            environment: local_fence(),
             artifact_install_identity: None,
         },
     )
@@ -178,7 +191,7 @@ fn prepare_refusal(repo: &Path, guest: &mut FakeGuest, artifact: &Path) -> Strin
                 vm_type: None,
             },
             container: container_identity(),
-            environment: local_identity(),
+            environment: local_fence(),
             artifact_install_identity: None,
         },
     )
@@ -1426,7 +1439,7 @@ fn explicitly_selected_non_default_workspaces_prepare_and_verify_the_guest() {
                     vm_type: None,
                 },
                 container: container_identity(),
-                environment: local_identity(),
+                environment: local_fence(),
                 artifact_install_identity: None,
             },
         )
@@ -1799,7 +1812,7 @@ fn prepare_disk(
                 vm_type: None,
             },
             container: container_identity(),
-            environment: local_identity(),
+            environment: local_fence(),
             artifact_install_identity: None,
         },
     )
@@ -2038,7 +2051,7 @@ fn a_musl_only_image_refuses_a_glibc_artifact() {
                 vm_type: None,
             },
             container: container_identity(),
-            environment: local_identity(),
+            environment: local_fence(),
             artifact_install_identity: None,
         },
     )
@@ -2110,4 +2123,179 @@ fn entry_refuses_a_context_prepared_for_another_image_c_library() {
 
     assert!(error.contains("prepared for container"), "{error}");
     assert!(error.contains(HOST_REPREPARE_COMMAND));
+}
+
+#[test]
+fn interrupted_publication_skips_existing_context_documents() {
+    let repo = fixture("orphan-context");
+    let mut guest = guest();
+    let artifact = artifact(&repo, "immutable executable");
+    let first = prepare(
+        &repo,
+        &mut guest,
+        &artifact,
+        Some(operator_workspace()),
+        None,
+        None,
+        container_identity(),
+    )
+    .unwrap();
+    let orphan = first.context_generation + 1;
+    let path = crate::runner::workspace_client::context::context_path(orphan);
+    use crate::runner::workspace_client::context::GuestWorkspace;
+    guest
+        .write_file(
+            &path,
+            b"retained orphan from interrupted publication",
+            0o444,
+        )
+        .unwrap();
+    let next = prepare(
+        &repo,
+        &mut guest,
+        &artifact,
+        Some(operator_workspace()),
+        Some("changed-session"),
+        None,
+        container_identity(),
+    )
+    .unwrap();
+    assert_eq!(next.context_generation, orphan + 1);
+    assert_eq!(
+        guest.text(&path).unwrap(),
+        "retained orphan from interrupted publication"
+    );
+}
+
+#[test]
+fn prepare_refuses_to_overwrite_a_corrupt_immutable_executable() {
+    let repo = fixture("corrupt-immutable");
+    let mut guest = guest();
+    let artifact = artifact(&repo, "immutable executable");
+    let first = prepare(
+        &repo,
+        &mut guest,
+        &artifact,
+        Some(operator_workspace()),
+        None,
+        None,
+        container_identity(),
+    )
+    .unwrap();
+    let path = binary_path(&first.binary.digest);
+    use crate::runner::workspace_client::context::GuestWorkspace;
+    guest.write_file(&path, b"changed bytes", 0o555).unwrap();
+    let error = prepare_refusal(&repo, &mut guest, &artifact);
+    assert!(error.contains("immutable workspace executable"), "{error}");
+    assert_eq!(guest.text(&path).unwrap(), "changed bytes");
+}
+
+#[test]
+fn concurrent_activation_publications_pin_distinct_immutable_fake_guest_contexts() {
+    use effigy_containers::environment::{activate_with, BackendError, EnvContext};
+    use effigy_kernel::ctx::CancelToken;
+    use std::sync::{mpsc, Arc, Mutex};
+    let repo = fixture("gated-concurrent-contexts");
+    let home = Fixture::new("gated-publication-home-").unwrap();
+    let _env = EnvGuard::set_many(&[
+        ("HOME", Some(home.path().display().to_string())),
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(home.path().join(".effigy").display().to_string()),
+        ),
+    ]);
+    let policy = policy(&repo, true);
+    let context = crate::runner::environment::context(&repo).unwrap();
+    let environment = crate::runner::environment::env_ref(&policy).unwrap();
+    let artifact = artifact(&repo, "shared immutable executable");
+    let shared_guest = Arc::new(Mutex::new(guest()));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let publish = |ctx: &EnvContext<'_>, first: bool| {
+        let mut published = None;
+        activate_with(ctx, &environment, &[], |run| {
+            run.publish_guest_with(|fence| {
+                // Pause before locking the fake: only Gate(Env) serializes Prepare.
+                if first {
+                    entered_tx.send(()).unwrap();
+                    release_rx
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(std::time::Duration::from_secs(10))
+                        .unwrap();
+                }
+                let mut guest = shared_guest.lock().unwrap();
+                let prepared = prepare_workspace_guest(
+                    &mut *guest,
+                    &artifact,
+                    crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Gnu,
+                    WorkspacePrepareFacts {
+                        repo_root: &repo,
+                        policy: &policy,
+                        operator_workspace: Some(operator_workspace()),
+                        session_run_id: None,
+                        enrolment: None,
+                        channel: WorkspaceChannelLocator::default(),
+                        backend:
+                            crate::runner::workspace_client::context::WorkspaceBackendDescriptor {
+                                kind: "fake".into(),
+                                profile: "test".into(),
+                                runtime: None,
+                                vm_type: None,
+                            },
+                        container: container_identity(),
+                        environment: fence.clone(),
+                        artifact_install_identity: None,
+                    },
+                )
+                .map_err(|error| BackendError::Uncertain(error.to_string()))?
+                .unwrap();
+                let path = context_path(prepared.context_generation);
+                published = Some((
+                    path.clone(),
+                    guest.text(&path).unwrap(),
+                    prepared.context_generation,
+                ));
+                Ok(effigy_kernel::run::GuestPublicationReceipt {
+                    environment: fence.clone(),
+                    container_id: prepared.activation.container.container_id,
+                    vm_boot_id: prepared.activation.container.vm_boot_id,
+                    artifact_digest: prepared.binary.digest,
+                    context_generation: prepared.context_generation,
+                })
+            })
+        })
+        .unwrap();
+        published.unwrap()
+    };
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            let ctx = EnvContext::new(context.root, CancelToken::default()).unwrap();
+            publish(&ctx, true)
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let second = scope.spawn(|| {
+            let ctx = EnvContext::new(context.root, CancelToken::default()).unwrap();
+            publish(&ctx, false)
+        });
+        release_tx.send(()).unwrap();
+        let original = first.join().unwrap();
+        let next = second.join().unwrap();
+        assert_eq!((original.2, next.2), (1, 2));
+        let mut guest = shared_guest.lock().unwrap();
+        assert_eq!(
+            guest.text(&original.0).unwrap(),
+            original.1,
+            "the first published document is immutable"
+        );
+        let current = read_published_context(&mut *guest).unwrap().unwrap();
+        assert_eq!(current.generation, next.2);
+        assert_eq!(
+            current.context.activation.environment.generation,
+            environment_generation(&policy).unwrap().generation
+        );
+    });
 }

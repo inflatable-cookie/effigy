@@ -1794,3 +1794,42 @@ fn effect_states_read_as_words_in_a_refusal() {
         );
     }
 }
+
+#[test]
+fn guest_publication_is_typed_owner_bound_and_required_before_active() {
+    let home = effigy_test_support::Fixture::new("guest-publication-kernel-").unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut task = begin(&cx, &root, owner(), 60, &mut fake);
+    assert!(Attachments::intend_guest_publication(&mut task).is_err());
+    task.finish(WorkloadOutcome::Succeeded).unwrap();
+    task.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut run = begin(&cx, &root, env(), 61, &mut fake);
+    let ticket = Attachments::intend_guest_publication(&mut run).unwrap();
+    assert!(Attachments::publish_active(&mut run).is_err());
+    let mut receipt = GuestPublicationReceipt {
+        environment: run.fence().clone(),
+        container_id: "a".repeat(64),
+        vm_boot_id: "boot-a".into(),
+        artifact_digest: format!("sha256:{}", "b".repeat(64)),
+        context_generation: 0,
+    };
+    assert!(Attachments::guest_published(&mut run, &ticket, receipt.clone()).is_err());
+    assert!(Attachments::publish_active(&mut run).is_err());
+    // Raw environment intents and reserved kinds remain forbidden.
+    assert!(run
+        .intend(EffectSpec {
+            target: run.fence().clone(),
+            kind: GUEST_PUBLICATION_KIND.into(),
+            payload: Value::Null,
+            settlement: Settlement::Retain,
+            required: false
+        })
+        .is_err());
+    receipt.context_generation = 1;
+    Attachments::guest_published(&mut run, &ticket, receipt).unwrap();
+    Attachments::publish_active(&mut run).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}

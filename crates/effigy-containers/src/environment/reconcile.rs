@@ -761,6 +761,37 @@ impl<'r> EnvRun<'r> {
         })
     }
 
+    /// One required, additive guest publication under this activation's owner
+    /// gate. The intent commits before I/O; its receipt commits before active.
+    pub fn publish_guest_with(
+        &mut self,
+        publish: impl FnOnce(
+            &effigy_kernel::run::Fence,
+        )
+            -> Result<effigy_kernel::run::GuestPublicationReceipt, BackendError>,
+    ) -> Result<(), EnvError> {
+        let intent = Attachments::intend_guest_publication(&mut self.run);
+        let ticket = self.kernel(intent)?;
+        self.transitioned = true;
+        let fence = self.run.fence().clone();
+        match publish(&fence) {
+            Ok(receipt) => {
+                let recorded = Attachments::guest_published(&mut self.run, &ticket, receipt);
+                self.kernel(recorded)
+            }
+            Err(error) => {
+                self.failed = true;
+                let recorded = Attachments::guest_publication_unknown(
+                    &mut self.run,
+                    &ticket,
+                    UnknownReason::Inconsistent(error.to_string()),
+                );
+                self.kernel(recorded)?;
+                Err(EnvError::Backend(error))
+            }
+        }
+    }
+
     /// Publishes `active` and attaches requesting holders.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
         let result = Attachments::publish_active_for(&mut self.run, holders);

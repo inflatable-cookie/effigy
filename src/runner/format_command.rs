@@ -101,9 +101,7 @@ fn resolve_rust_files(
     canonical_root: &Path,
     files: &[PathBuf],
 ) -> Result<Vec<PathBuf>, RunnerError> {
-    let invocation_cwd = std::env::current_dir().map_err(|error| {
-        RunnerError::task_invocation(format!("cannot read the working directory: {error}"))
-    })?;
+    let invocation_cwd = super::command_context::current_working_dir()?;
 
     let mut resolved: Vec<PathBuf> = Vec::new();
     for file in files {

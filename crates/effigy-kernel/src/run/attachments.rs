@@ -26,6 +26,24 @@ pub struct Holder {
     pub run: RunId,
     pub liveness: Observed<Liveness>,
 }
+/// The fixed additive publication obligation; never authorizes a stop, reset,
+/// replacement of an existing immutable object, or a change to a live client.
+pub const GUEST_PUBLICATION_KIND: &str = "kernel:workspace-guest-publication";
+
+/// Only the kernel can construct a ticket for this additive operation.
+#[derive(Debug)]
+pub struct GuestPublicationTicket(EffectTicket);
+
+/// Verified publication facts recorded before the environment becomes active.
+#[derive(Debug, Clone, Serialize)]
+pub struct GuestPublicationReceipt {
+    pub environment: Fence,
+    pub container_id: String,
+    pub vm_boot_id: String,
+    pub artifact_digest: String,
+    pub context_generation: u64,
+}
+
 #[derive(Debug)]
 pub struct Attachments;
 /// Borrows the gated environment run exclusively. No caller can release the
@@ -106,6 +124,86 @@ impl TransitionPermit<'_, '_> {
     }
 }
 impl Attachments {
+    /// Journal only additive immutable guest publication under Gate(Env).
+    /// Existing holders are preserved: this operation never reconfigures their
+    /// runtime or rewrites the executable/context they already selected.
+    pub fn intend_guest_publication(run: &mut Run<'_>) -> Result<GuestPublicationTicket, RunError> {
+        if run.owner.resource.kind() != ResourceKind::Env {
+            return Err(RunError::refused(
+                "guest publication needs the environment owner",
+            ));
+        }
+        run.can_effect()?;
+        let spec = EffectSpec {
+            target: run.owner.clone(),
+            kind: GUEST_PUBLICATION_KIND.to_owned(),
+            payload: serde_json::json!({"schema": "effigy.workspace-guest-publication.v1"}),
+            settlement: Settlement::Retain,
+            required: true,
+        };
+        let result = (|| {
+            crate::fault_point!(IntendBefore)?;
+            let sequence = run.store.transaction(&run.cx, |txn| {
+                journal::check_fence(txn.conn(), &run.owner)?;
+                let sequence = journal::insert_effect(txn, run.id, &spec)?;
+                // An earlier active state must not advertise this unfinished
+                // activation after a partial publication or lost receipt.
+                txn.conn().execute(
+                    "UPDATE resources SET state='pending',updated_at=?2 WHERE name=?1",
+                    params![run.owner.resource.name().to_string(), txn.now()],
+                )?;
+                Ok::<_, RunError>(sequence)
+            })?;
+            crate::fault_point!(IntendAfter)?;
+            Ok(GuestPublicationTicket(EffectTicket {
+                run: run.id,
+                owner: run.owner.clone(),
+                sequence,
+            }))
+        })();
+        if result.is_err() {
+            run.poisoned = true;
+        }
+        result
+    }
+
+    /// Record the exact identity and digest, then complete the required
+    /// obligation. No active publication may precede this receipt.
+    pub fn guest_published(
+        run: &mut Run<'_>,
+        ticket: &GuestPublicationTicket,
+        receipt: GuestPublicationReceipt,
+    ) -> Result<(), RunError> {
+        let hex = receipt
+            .artifact_digest
+            .strip_prefix("sha256:")
+            .unwrap_or("");
+        if receipt.environment != run.owner
+            || receipt.container_id.len() != 64
+            || !receipt.container_id.bytes().all(|b| b.is_ascii_hexdigit())
+            || receipt.vm_boot_id.trim().is_empty()
+            || hex.len() != 64
+            || !hex.bytes().all(|b| b.is_ascii_hexdigit())
+            || receipt.context_generation == 0
+        {
+            return Err(RunError::refused(
+                "invalid workspace guest publication receipt",
+            ));
+        }
+        run.applied(&ticket.0, serde_json::to_value(receipt)?)?;
+        run.completed(&ticket.0, crate::outcome::RequiredObligation::Applied)
+    }
+
+    /// An attempted publication with no trustworthy receipt is uncertain;
+    /// recovery retains additive bytes and never replays a container effect.
+    pub fn guest_publication_unknown(
+        run: &mut Run<'_>,
+        ticket: &GuestPublicationTicket,
+        reason: UnknownReason,
+    ) -> Result<(), RunError> {
+        run.unknown(&ticket.0, reason)
+    }
+
     /// Publishes an environment's applied generation under its owner gate.
     /// Engines call this only after their required startup effects completed.
     pub fn publish_active(run: &mut Run<'_>) -> Result<(), RunError> {

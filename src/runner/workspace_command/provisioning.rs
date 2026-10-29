@@ -341,9 +341,9 @@ pub(in crate::runner) struct WorkspacePrepareFacts<'a> {
     /// The container identity the host verified before publishing: the full
     /// backend id, plus the boot and platform the guest reported.
     pub(in crate::runner) container: WorkspaceContainerIdentity,
-    /// The environment engine's activation generation (§8.2). The activation
-    /// path resolves it; a publisher never invents one.
-    pub(in crate::runner) environment: WorkspaceEnvironmentIdentity,
+    /// The activation owner's typed fence (§8.2), supplied while its gate is
+    /// held. Its generation is the one the completed activation will publish.
+    pub(in crate::runner) environment: effigy_kernel::run::Fence,
     /// The install identity of the produced artifact this Prepare consumed. It
     /// is the producer's own identity, never minted by the consumer.
     pub(in crate::runner) artifact_install_identity: Option<String>,
@@ -376,7 +376,10 @@ pub(in crate::runner) fn prepare_workspace_guest(
     let activation = WorkspaceActivationIdentity {
         host_user: host_user(),
         checkout_id: crate::runner::task_engine::checkout::mint(facts.repo_root)?.text(),
-        environment: facts.environment,
+        environment: WorkspaceEnvironmentIdentity {
+            resource_id: format!("env:{}", facts.policy.name),
+            generation: facts.environment.generation.get().to_string(),
+        },
         container: facts.container,
     };
     let closure = workspace_source_closure(facts.repo_root, &paths)?;
@@ -405,6 +408,16 @@ pub(in crate::runner) fn prepare_workspace_guest(
         facts.artifact_install_identity.as_deref(),
     )?;
     publish_source_snapshots(guest, &closure.snapshots)?;
+    // A restart or replacement outside Effigy's gate may race container I/O.
+    // Never publish a context/receipt for a different identity than we probed.
+    let observed = guest.probe_container_identity()?;
+    if !activation.container.container_matches(&observed)
+        || !activation.container.boot_matches(&observed)
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "workspace identity changed during publication; run `{HOST_REPREPARE_COMMAND}` on the host"
+        )));
+    }
     let context_generation = publish_context_generation(guest, &mut context)?;
     if let Some(enrolment) = facts.enrolment.as_ref() {
         publish_enrolment_credential(guest, &workspace.user, enrolment)?;
@@ -420,10 +433,9 @@ pub(in crate::runner) fn prepare_workspace_guest(
 /// Publish the guest context and pinned executable for one container-mode
 /// workspace: the host's Prepare/activation path (§8.2, §8.9).
 ///
-/// `effigy container up`, a task's environment apply and the workspace handoff
-/// all publish through here, so the recovery command the entry refusals name
-/// really does repair the state. Hybrid mode (no operator workspace) publishes
-/// nothing.
+/// The workspace handoff and already-running task path open an activation
+/// here. Container up and a task's fresh activation call the same publisher
+/// inside their existing owner run. Hybrid mode publishes nothing.
 pub(super) fn publish_workspace_guest(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -431,9 +443,61 @@ pub(super) fn publish_workspace_guest(
     if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
         return Ok(None);
     }
+    if operator_workspace_for_policy(repo_root, policy)?.is_none() {
+        return Ok(None);
+    }
+    let ctx = crate::runner::environment::context(repo_root)?;
+    let env = crate::runner::environment::env_ref(policy)?;
+    let mut prepared = None;
+    effigy_containers::environment::activate_with(&ctx, &env, &[], |run| {
+        prepared = publish_workspace_guest_in(repo_root, policy, run).map_err(|error| {
+            effigy_containers::environment::EnvError::Invalid(error.to_string())
+        })?;
+        Ok(())
+    })
+    .map_err(crate::runner::environment::error)?;
+    Ok(prepared)
+}
+
+/// The activation run commits the publication intent before this publisher
+/// performs any guest I/O, and records its receipt before attaching holders.
+pub(super) fn publish_workspace_guest_in(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    run: &mut effigy_containers::environment::EnvRun<'_>,
+) -> Result<Option<PreparedWorkspaceGuest>, RunnerError> {
+    if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
+        return Ok(None);
+    }
     let Some(operator_workspace) = operator_workspace_for_policy(repo_root, policy)? else {
         return Ok(None);
     };
+    let mut prepared = None;
+    run.publish_guest_with(|fence| {
+        let result = publish_workspace_guest_effect(repo_root, policy, operator_workspace, fence)
+            .map_err(|error| {
+            effigy_containers::environment::BackendError::Uncertain(error.to_string())
+        })?;
+        let receipt = effigy_kernel::run::GuestPublicationReceipt {
+            environment: fence.clone(),
+            container_id: result.activation.container.container_id.clone(),
+            vm_boot_id: result.activation.container.vm_boot_id.clone(),
+            artifact_digest: result.binary.digest.clone(),
+            context_generation: result.context_generation,
+        };
+        prepared = Some(result);
+        Ok(receipt)
+    })
+    .map_err(crate::runner::environment::error)?;
+    Ok(prepared)
+}
+
+fn publish_workspace_guest_effect(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    operator_workspace: OperatorWorkspace,
+    fence: &effigy_kernel::run::Fence,
+) -> Result<PreparedWorkspaceGuest, RunnerError> {
     let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy)?;
     // The host verified the backend's full id when it bound this guest. Every
     // read, probe and publication below targets that exact id, never an alias.
@@ -466,12 +530,13 @@ pub(super) fn publish_workspace_guest(
                 vm_type: None,
             },
             container: bound,
-            // Read after activation: the generation the environment engine just
-            // promoted is the one this context is bound to.
-            environment: environment_generation(policy)?,
+            // This owner-run fence is the generation activation will publish,
+            // never a second read of an already-settled activation.
+            environment: fence.clone(),
             artifact_install_identity,
         },
-    )
+    )?
+    .ok_or_else(|| RunnerError::task_invocation("declared workspace publication returned no guest"))
 }
 
 /// Prepare from the resolved policy: the workspace handoff's Prepare path.
@@ -692,9 +757,22 @@ fn publish_context_generation(
             return Ok(current);
         }
     }
-    let generation = current.map_or(1, |generation| generation.saturating_add(1));
-    context.generation = generation;
-    let body = context.render()?;
+    let mut generation = current.unwrap_or(0);
+    let body = loop {
+        generation = generation.checked_add(1).ok_or_else(|| {
+            RunnerError::task_invocation("workspace context generation exhausted")
+        })?;
+        context.generation = generation;
+        let body = context.render()?;
+        match guest.read_file(&context_path(generation))? {
+            Some(existing) if existing == body => {
+                guest.replace_pointer(CONTEXT_CURRENT_PATH, &generation.to_string())?;
+                return Ok(generation);
+            }
+            Some(_) => continue, // retained orphan from an interrupted publication
+            None => break body,
+        }
+    };
     guest.ensure_dir(&context_dir(generation), 0o755)?;
     guest.write_file(&context_path(generation), &body, 0o444)?;
     // Sealed after the document is written: the workspace user can read the
@@ -718,6 +796,14 @@ fn install_pinned_guest_binary(
 ) -> Result<(), RunnerError> {
     let executable = binary_path(&binary.digest);
     let installed = guest.file_sha256(&executable)?;
+    if installed
+        .as_deref()
+        .is_some_and(|hex| !digest_matches(&binary.digest, hex))
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "immutable workspace executable `{executable}` has different bytes; run `{HOST_REPREPARE_COMMAND}` with a fresh container"
+        )));
+    }
     if !installed
         .as_deref()
         .is_some_and(|hex| digest_matches(&binary.digest, hex))
@@ -974,6 +1060,12 @@ pub(super) fn environment_generation(
             policy.name
         ))
     })?;
+    if record.state != effigy_containers::environment::EnvState::Active {
+        return Err(RunnerError::task_invocation(format!(
+            "environment `{}` has no completed activation; run `{HOST_REPREPARE_COMMAND}` on the host",
+            policy.name
+        )));
+    }
     Ok(WorkspaceEnvironmentIdentity {
         resource_id: format!("env:{}", policy.name),
         generation: record.generation.get().to_string(),
@@ -1194,11 +1286,12 @@ fn publish_source_snapshots(
         let directory = snapshot_dir(digest);
         let path = snapshot_path(digest);
         guest.ensure_dir(&directory, 0o755)?;
-        if guest
-            .file_sha256(&path)?
-            .is_none_or(|hex| !digest_matches(digest, &hex))
-        {
-            guest.write_file(&path, bytes, 0o444)?;
+        match guest.file_sha256(&path)? {
+            Some(hex) if !digest_matches(digest, &hex) => return Err(RunnerError::task_invocation(
+                format!("immutable workspace snapshot `{path}` has different bytes; run `{HOST_REPREPARE_COMMAND}` with a fresh container")
+            )),
+            Some(_) => {},
+            None => guest.write_file(&path, bytes, 0o444)?,
         }
         guest.ensure_dir(&directory, 0o555)?;
     }
