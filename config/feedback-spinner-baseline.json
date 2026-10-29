@@ -1,17 +1,5 @@
 [
   [
-    "crates/effigy-containers/src/environment/reconcile.rs",
-    456,
-    "let waiting = effigy_ui::steps::step(&format!(",
-    41
-  ],
-  [
-    "crates/effigy-containers/src/environment/reconcile.rs",
-    797,
-    "let settling = effigy_ui::steps::step(&format!(\"settling environment `{env}`\"));",
-    42
-  ],
-  [
     "crates/effigy-containers/src/exec.rs",
     31,
     "pub use compose_steps::{phase, ComposeSteps, TimedStep};",
@@ -97,49 +85,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    217,
+    231,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    815,
+    844,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    989,
+    1018,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    992,
+    1021,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    994,
+    1023,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    996,
+    1025,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1013,
+    1042,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1015,
+    1044,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -202,12 +190,6 @@
     491,
     "let whole_stack = steps::phase(format!(\"starting the `{}` stack\", plan.policy.name));",
     30
-  ],
-  [
-    "src/runner/container_command/profile.rs",
-    218,
-    "step: Some(effigy_ui::steps::step(label)),",
-    42
   ],
   [
     "src/runner/container_command/readiness.rs",
