@@ -56,6 +56,8 @@ const LINUX_WORKSPACE_ARTIFACT_LOCK_WAIT_POLL_INTERVAL: std::time::Duration =
 pub(super) enum LinuxWorkspaceTarget {
     X86_64Gnu,
     Aarch64Gnu,
+    X86_64Musl,
+    Aarch64Musl,
 }
 
 /// Where a Prepare may find the produced guest artifact (§8.9).
@@ -80,15 +82,43 @@ impl LinuxWorkspaceTarget {
         match self {
             Self::X86_64Gnu => "x86_64-unknown-linux-gnu",
             Self::Aarch64Gnu => "aarch64-unknown-linux-gnu",
+            Self::X86_64Musl => "x86_64-unknown-linux-musl",
+            Self::Aarch64Musl => "aarch64-unknown-linux-musl",
         }
     }
 
-    pub(super) fn from_machine(machine: &str) -> Option<Self> {
-        match machine.trim() {
-            "x86_64" | "amd64" => Some(Self::X86_64Gnu),
-            "aarch64" | "arm64" => Some(Self::Aarch64Gnu),
-            _ => None,
-        }
+    /// The artifact family an image needs: its platform **and** its C library
+    /// (§8.9). An artifact built against the other C library does not run, so a
+    /// guest whose libc this host cannot prove has no selectable artifact.
+    pub(super) fn from_image(machine: &str, libc: &str) -> Result<Self, RunnerError> {
+        let machine = match machine.trim() {
+            "x86_64" | "amd64" => "x86_64",
+            "aarch64" | "arm64" => "aarch64",
+            other => {
+                return Err(RunnerError::task_invocation(format!(
+                    "workspace container image platform `{other}` has no pinned Linux guest \
+                     artifact; run `{HOST_REPREPARE_COMMAND}` with a supported image"
+                )))
+            }
+        };
+        let libc = match libc.trim().to_ascii_lowercase().as_str() {
+            "gnu" | "glibc" => "gnu",
+            "musl" => "musl",
+            other => {
+                return Err(RunnerError::task_invocation(format!(
+                    "the workspace container image reports no provable C library (`{other}`), so \
+                     no guest artifact can be proven to run in it; an artifact matches the \
+                     image's libc, never a guess. Run `{HOST_REPREPARE_COMMAND}` with an image \
+                     that ships a glibc or musl loader"
+                )))
+            }
+        };
+        Ok(match (machine, libc) {
+            ("x86_64", "gnu") => Self::X86_64Gnu,
+            ("aarch64", "gnu") => Self::Aarch64Gnu,
+            ("x86_64", "musl") => Self::X86_64Musl,
+            _ => Self::Aarch64Musl,
+        })
     }
 
     pub(super) fn artifact_relative_path(self) -> PathBuf {
@@ -406,13 +436,8 @@ pub(super) fn publish_workspace_guest(
     };
     let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy);
     let observed = guest.probe_container_identity()?;
-    let target = LinuxWorkspaceTarget::from_machine(&observed.platform).ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "workspace container image platform `{}` has no pinned Linux guest artifact; \
-             run `{HOST_REPREPARE_COMMAND}` with a supported image",
-            observed.platform
-        ))
-    })?;
+    // The artifact must match the image's C library as well as its platform.
+    let target = LinuxWorkspaceTarget::from_image(&observed.platform, &observed.libc)?;
     // The container fence is the backend's full id, verified on the host before
     // anything is published; the guest compares its own view to it. The probe
     // and the binding are taken through different paths, so they are checked
@@ -428,6 +453,7 @@ pub(super) fn publish_workspace_guest(
         container_id: binding.id().to_owned(),
         vm_boot_id: observed.vm_boot_id.clone(),
         platform: observed.platform.clone(),
+        libc: observed.libc.clone(),
     };
     if !bound.container_matches(&observed) {
         return Err(RunnerError::task_invocation(format!(
@@ -1559,7 +1585,9 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
             "printf 'cgroup=%s\\n' \"$(cat /proc/self/cgroup 2>/dev/null | tr '\\n' ' ')\"\n\
              printf 'boot=%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\"\n\
              printf 'hostname=%s\\n' \"$(hostname)\"\n\
-             printf 'platform=%s\\n' \"$(uname -m)\"",
+             printf 'platform=%s\\n' \"$(uname -m)\"\n\
+             printf 'libc_musl=%s\\n' \"$(ls /lib/ld-musl-*.so.1 2>/dev/null | head -n1)\"\n\
+             printf 'libc_glibc=%s\\n' \"$(ls /lib/*-linux-gnu*/libc.so.6 /lib/libc.so.6 /lib64/libc.so.6 2>/dev/null | head -n1)\"",
             false,
         )?;
         if !output.status.success() {
@@ -1628,11 +1656,24 @@ pub(super) fn parse_container_identity(
         .or_else(|| field("hostname"));
     let vm_boot_id = field("boot");
     let platform = field("platform");
+    // The loader a guest can see tells the host which C library the image has,
+    // and therefore which artifact family can run in it (§8.9). An image with
+    // neither marker is unproven, not glibc by default.
+    let libc = field("libc").unwrap_or_else(|| {
+        if field("libc_musl").is_some() {
+            "musl".to_owned()
+        } else if field("libc_glibc").is_some() {
+            "gnu".to_owned()
+        } else {
+            String::new()
+        }
+    });
     match (container_id, vm_boot_id, platform) {
         (Some(container_id), Some(vm_boot_id), Some(platform)) => Ok(WorkspaceContainerIdentity {
             container_id,
             vm_boot_id,
             platform,
+            libc,
         }),
         _ => Err(RunnerError::task_invocation(
             "the container identity probe returned no id, boot id or platform",
@@ -1916,11 +1957,23 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
             (true, LinuxWorkspaceTarget::Aarch64Gnu) => {
                 "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact"
             }
+            (true, LinuxWorkspaceTarget::X86_64Musl) => {
+                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-musl effigy workspace:linux:artifact"
+            }
+            (true, LinuxWorkspaceTarget::Aarch64Musl) => {
+                "bounded container command build left no current workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-musl effigy workspace:linux:artifact"
+            }
             (false, LinuxWorkspaceTarget::X86_64Gnu) => {
                 "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-gnu effigy workspace:linux:artifact"
             }
             (false, LinuxWorkspaceTarget::Aarch64Gnu) => {
                 "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-gnu effigy workspace:linux:artifact"
+            }
+            (false, LinuxWorkspaceTarget::X86_64Musl) => {
+                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=x86_64-unknown-linux-musl effigy workspace:linux:artifact"
+            }
+            (false, LinuxWorkspaceTarget::Aarch64Musl) => {
+                "bounded container command could not refresh the stale workspace artifact; rebuild with EFFIGY_LINUX_RELEASE_TRIPLE=aarch64-unknown-linux-musl effigy workspace:linux:artifact"
             }
         },
         None,

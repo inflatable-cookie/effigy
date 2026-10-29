@@ -69,6 +69,7 @@ fn observed_identity(container_id: &str) -> WorkspaceContainerIdentity {
         container_id: container_id.to_owned(),
         vm_boot_id: "3f6a1c92-5b7e-4c1d-8a2f-0e9d7c6b5a41".to_owned(),
         platform: "x86_64".to_owned(),
+        libc: "gnu".to_owned(),
     }
 }
 
@@ -1256,7 +1257,8 @@ fn the_identity_probe_reads_the_full_container_id_the_backend_exposes() {
     // A guest that can only read its hostname publishes the short id, which
     // still matches its full id.
     let short_only = format!(
-        "boot=boot-a\nhostname={short}\nplatform=x86_64\ncontainer={short}\n",
+        "boot=boot-a\nhostname={short}\nplatform=x86_64\ncontainer={short}\n\
+         libc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6\n",
         short = &HOST_CONTAINER_ID[..12]
     );
     let parsed = parse_container_identity(&short_only).expect("identity");
@@ -1744,4 +1746,105 @@ fn staged_host_bytes_are_private_exclusive_and_removed() {
 
     drop(staged);
     assert!(!path.exists(), "the guard removes the staged bytes");
+}
+
+// ------------------------------------------------------- image libc family
+
+/// An image that needs a musl artifact refuses Prepare when only the glibc
+/// artifact exists: the bytes are authenticated, but for the wrong C library.
+#[test]
+fn a_musl_only_image_refuses_a_glibc_artifact() {
+    let repo = fixture("musl-only");
+    let mut guest = guest();
+    let artifact = artifact(&repo, "pinned guest bytes");
+
+    let policy = policy(&repo, true);
+    let error = prepare_workspace_guest(
+        &mut guest,
+        &artifact,
+        crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Musl,
+        WorkspacePrepareFacts {
+            repo_root: &repo,
+            policy: &policy,
+            operator_workspace: Some(operator_workspace()),
+            session_run_id: Some("run-7".to_owned()),
+            enrolment: None,
+            channel: WorkspaceChannelLocator::default(),
+            backend: crate::runner::workspace_client::context::WorkspaceBackendDescriptor {
+                kind: "Docker Desktop".to_owned(),
+                profile: "default".to_owned(),
+                runtime: None,
+                vm_type: None,
+            },
+            container: container_identity(),
+            environment: local_identity(),
+            artifact_install_identity: None,
+        },
+    )
+    .expect_err("a glibc artifact cannot be published to a musl image")
+    .to_string();
+
+    assert!(error.contains("x86_64-unknown-linux-musl"), "{error}");
+    assert!(error.contains("has no receipt naming target"), "{error}");
+    assert!(
+        guest.paths().is_empty(),
+        "nothing is published for the wrong C library"
+    );
+}
+
+#[test]
+fn the_identity_probe_reports_the_image_c_library() {
+    let musl = format!(
+        "cgroup=0::/ \nboot=boot-a\nhostname=app\nplatform=x86_64\n\
+         libc_musl=/lib/ld-musl-x86_64.so.1\nlibc_glibc=\n"
+    );
+    assert_eq!(
+        parse_container_identity(&musl).expect("musl identity").libc,
+        "musl"
+    );
+
+    let glibc = "cgroup=0::/\nboot=boot-a\nhostname=app\nplatform=aarch64\n\
+                 libc_musl=\nlibc_glibc=/lib/aarch64-linux-gnu/libc.so.6\n";
+    assert_eq!(
+        parse_container_identity(glibc)
+            .expect("glibc identity")
+            .libc,
+        "gnu"
+    );
+
+    // Neither marker: the image's C library is unproven, and Prepare refuses
+    // rather than guessing glibc.
+    let unknown = "cgroup=0::/\nboot=boot-a\nhostname=app\nplatform=x86_64\n\
+                   libc_musl=\nlibc_glibc=\n";
+    let identity = parse_container_identity(unknown).expect("identity");
+    assert_eq!(identity.libc, "");
+    let error = crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::from_image(
+        &identity.platform,
+        &identity.libc,
+    )
+    .expect_err("an unproven libc refuses")
+    .to_string();
+    assert!(error.contains("no provable C library"), "{error}");
+}
+
+#[test]
+fn entry_refuses_a_context_prepared_for_another_image_c_library() {
+    let repo = fixture("libc-fence");
+    let _env = EnvGuard::set_many(&[(
+        EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+        Some("download".to_owned()),
+    )]);
+    let mut guest = guest();
+    published(&repo, &mut guest);
+
+    let mut musl_image = observed_identity(HOST_CONTAINER_ID);
+    musl_image.libc = "musl".to_owned();
+    let mut replaced_image = guest.clone().with_container(musl_image);
+
+    let error = verify_pinned_guest_binary(&mut replaced_image, &entry())
+        .expect_err("an image whose libc changed refuses at entry")
+        .to_string();
+
+    assert!(error.contains("prepared for container"), "{error}");
+    assert!(error.contains(HOST_REPREPARE_COMMAND));
 }

@@ -4,17 +4,25 @@ use std::path::{Path, PathBuf};
 use crate::ContainerPolicyError;
 
 use super::{
-    build_workspace_runtime_environment, build_workspace_runtime_mounts,
-    enforce_effective_guest_volume_isolation, is_guest_mask_target, RenderedWorkspaceMount,
-    WorkspaceComposeRewrite, WorkspaceExtraMountDecision,
+    build_workspace_runtime_environment, build_workspace_runtime_mounts, is_guest_mask_target,
+    RenderedWorkspaceMount, WorkspaceComposeRewrite, WorkspaceExtraMountDecision,
 };
 
+/// Rewrite and validate every Compose file the workspace container will be
+/// started with.
+///
+/// Compose merges the `-f` files in order, so a later overlay can replace an
+/// earlier entry at the same guest target. Validating only the first file would
+/// let an overlay bind a host state root, or replace a state mask, after the
+/// first file was checked. Every file is therefore rewritten in place, the
+/// injected workspace mounts stay in the first file, and the host state masks
+/// are appended to the last one so they win over all source files.
 pub(super) fn rewrite_workspace_mounts_for_direct_compose(
     request: WorkspaceComposeRewrite<'_>,
-    source_compose: &Path,
+    compose_files: &[PathBuf],
     record_optional_extra_mount_decisions: bool,
     draft: &mut crate::policy::render::Draft,
-) -> Result<(PathBuf, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
+) -> Result<(Vec<PathBuf>, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
     let WorkspaceComposeRewrite {
         repo_root,
         container_name,
@@ -24,25 +32,22 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         primary_service,
         library_mounts,
     } = request;
+    if compose_files.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
     let workspace_root = working_dir.parent().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{container_name}` workspace exec working dir `{}` must have a parent directory",
             working_dir.display()
         ))
     })?;
-    let compose_dir = source_compose
+    let project_dir = compose_files[0]
         .parent()
         .ok_or_else(|| ContainerPolicyError::Read {
-            path: source_compose.to_path_buf(),
+            path: compose_files[0].clone(),
             error: std::io::Error::other("compose file has no parent directory"),
-        })?;
-    let content = draft.read(source_compose)?;
-    let mut parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to parse compose file {} for workspace mount rewrite: {error}",
-            source_compose.display()
-        ))
-    })?;
+        })?
+        .to_path_buf();
     let (injected_mounts, extra_mount_decisions) = build_workspace_runtime_mounts(
         WorkspaceComposeRewrite {
             repo_root,
@@ -55,60 +60,147 @@ pub(super) fn rewrite_workspace_mounts_for_direct_compose(
         },
         record_optional_extra_mount_decisions,
     )?;
-    inject_workspace_named_volumes(&mut parsed, &injected_mounts);
-    // Read the document's bind-backed named volumes before the services are
-    // borrowed mutably: a named volume's `driver_opts.device` is a host path
-    // the service entries only name.
-    let document_volumes = parsed
-        .get("volumes")
+    let injected_targets = injected_mounts
+        .iter()
+        .map(|mount| mount.target.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let (mask_mounts, ordinary_mounts): (Vec<_>, Vec<_>) = injected_mounts
+        .iter()
         .cloned()
-        .unwrap_or(serde_yaml::Value::Null);
+        .partition(|mount| is_guest_mask_target(&mount.target, working_dir));
     let injected_env = build_workspace_runtime_environment(repo_root, config, primary_service)?;
-    {
-        let services = parsed
-            .get_mut("services")
-            .and_then(serde_yaml::Value::as_mapping_mut)
-            .ok_or_else(|| {
-                ContainerPolicyError::TaskInvocation(format!(
-                    "compose file {} is missing a `services` mapping for workspace mount rewrite",
-                    source_compose.display()
-                ))
-            })?;
-        let service = services
-            .get_mut(serde_yaml::Value::String(primary_service.to_owned()))
-            .and_then(serde_yaml::Value::as_mapping_mut)
-            .ok_or_else(|| {
-                ContainerPolicyError::TaskInvocation(format!(
-                    "compose file {} does not define primary service `{primary_service}` for workspace mount rewrite",
-                    source_compose.display()
-                ))
-            })?;
-        rewrite_workspace_service_volumes(
-            service,
-            container_name,
-            compose_dir,
-            repo_root,
-            workspace_root,
-            working_dir,
-            &injected_mounts,
-            &document_volumes,
-        )?;
-        if !injected_env.is_empty() {
-            inject_workspace_service_environment(service, &injected_env);
+
+    // Parse every file first: a named volume's bind device may be declared in
+    // one file and used by a service in another.
+    let mut documents = Vec::with_capacity(compose_files.len());
+    for source_compose in compose_files {
+        let compose_dir = source_compose
+            .parent()
+            .ok_or_else(|| ContainerPolicyError::Read {
+                path: source_compose.clone(),
+                error: std::io::Error::other("compose file has no parent directory"),
+            })?
+            .to_path_buf();
+        let content = draft.read(source_compose)?;
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to parse compose file {} for workspace mount rewrite: {error}",
+                source_compose.display()
+            ))
+        })?;
+        documents.push((source_compose.clone(), compose_dir, parsed));
+    }
+    let merged_volumes = merge_document_volumes(&documents);
+    let mount_context = super::ComposeMountContext::read(&project_dir, Some(&merged_volumes));
+    // The injected mounts belong to the first file that defines the primary
+    // service; the masks belong to the last one, so they are applied after
+    // every source file that can replace them.
+    let defines_primary_service = |document: &serde_yaml::Value| {
+        document
+            .get("services")
+            .and_then(serde_yaml::Value::as_mapping)
+            .is_some_and(|services| {
+                services.contains_key(serde_yaml::Value::String(primary_service.to_owned()))
+            })
+    };
+    let first_service = documents
+        .iter()
+        .position(|(_, _, document)| defines_primary_service(document))
+        .ok_or_else(|| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "no Compose file handed to the workspace container defines primary service \
+                 `{primary_service}` for workspace mount rewrite"
+            ))
+        })?;
+    let last_service = documents
+        .iter()
+        .rposition(|(_, _, document)| defines_primary_service(document))
+        .expect("a defining file exists");
+    let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
+    let mut rewrite_paths = Vec::with_capacity(documents.len());
+
+    for (index, (source_compose, compose_dir, mut parsed)) in documents.into_iter().enumerate() {
+        let appended = ordinary_mounts
+            .iter()
+            .filter(|_| index == first_service)
+            .chain(mask_mounts.iter().filter(|_| index == last_service))
+            .collect::<Vec<_>>();
+        if !appended.is_empty() || index == first_service {
+            // A file that does not define the primary service contributes no
+            // injected mounts and needs none of their named-volume declarations.
+            inject_workspace_named_volumes(&mut parsed, &injected_mounts);
+            let services = parsed
+                .get_mut("services")
+                .and_then(serde_yaml::Value::as_mapping_mut)
+                .ok_or_else(|| {
+                    ContainerPolicyError::TaskInvocation(format!(
+                        "compose file {} is missing a `services` mapping for workspace mount rewrite",
+                        source_compose.display()
+                    ))
+                })?;
+            let service = services
+                .get_mut(serde_yaml::Value::String(primary_service.to_owned()))
+                .and_then(serde_yaml::Value::as_mapping_mut)
+                .ok_or_else(|| {
+                    ContainerPolicyError::TaskInvocation(format!(
+                        "compose file {} does not define primary service `{primary_service}` for \
+                         workspace mount rewrite",
+                        source_compose.display()
+                    ))
+                })?;
+            rewrite_workspace_service_volumes(
+                service,
+                container_name,
+                &compose_dir,
+                repo_root,
+                workspace_root,
+                working_dir,
+                &injected_targets,
+                &appended,
+                &mount_context,
+                &project_dir,
+            )?;
+            if index == first_service && !injected_env.is_empty() {
+                inject_workspace_service_environment(service, &injected_env);
+            }
+        }
+        compact_workspace_named_volume_mounts(&mut parsed, primary_service);
+        normalize_runtime_rewrite_paths(&mut parsed, &compose_dir, index == 0);
+
+        let rewrite_path = if index == 0 {
+            rewrite_dir.join(format!("{container_name}.workspace.compose.yml"))
+        } else {
+            rewrite_dir.join(format!("{container_name}.workspace.compose.{index}.yml"))
+        };
+        let rendered = serde_yaml::to_string(&parsed).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to serialize workspace mount rewrite for `{container_name}`: {error}"
+            ))
+        })?;
+        draft.insert(rewrite_path.clone(), rendered.into_bytes());
+        rewrite_paths.push(rewrite_path);
+    }
+    Ok((rewrite_paths, extra_mount_decisions))
+}
+
+/// The `volumes:` mappings of every Compose file, merged in order so a later
+/// file's driver options win, as Compose resolves them.
+fn merge_document_volumes(
+    documents: &[(PathBuf, PathBuf, serde_yaml::Value)],
+) -> serde_yaml::Value {
+    let mut merged = serde_yaml::Mapping::new();
+    for (_, _, document) in documents {
+        let Some(volumes) = document
+            .get("volumes")
+            .and_then(serde_yaml::Value::as_mapping)
+        else {
+            continue;
+        };
+        for (name, entry) in volumes {
+            merged.insert(name.clone(), entry.clone());
         }
     }
-    compact_workspace_named_volume_mounts(&mut parsed, primary_service);
-    normalize_runtime_rewrite_paths(&mut parsed, compose_dir, true);
-
-    let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
-    let rewrite_path = rewrite_dir.join(format!("{container_name}.workspace.compose.yml"));
-    let rendered = serde_yaml::to_string(&parsed).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to serialize workspace mount rewrite for `{container_name}`: {error}"
-        ))
-    })?;
-    draft.insert(rewrite_path.clone(), rendered.into_bytes());
-    Ok((rewrite_path, extra_mount_decisions))
+    serde_yaml::Value::Mapping(merged)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -119,8 +211,10 @@ fn rewrite_workspace_service_volumes(
     repo_root: &Path,
     workspace_root: &Path,
     working_dir: &Path,
-    injected_mounts: &[RenderedWorkspaceMount],
-    document_volumes: &serde_yaml::Value,
+    injected_targets: &std::collections::BTreeSet<String>,
+    appended_mounts: &[&RenderedWorkspaceMount],
+    mount_context: &super::ComposeMountContext,
+    project_dir: &Path,
 ) -> Result<(), ContainerPolicyError> {
     let key = serde_yaml::Value::String("volumes".to_owned());
     let volumes = match service.get_mut(&key) {
@@ -144,16 +238,10 @@ fn rewrite_workspace_service_volumes(
         .unwrap_or_else(|_| repo_root.to_path_buf());
     let workspace_root_rendered = workspace_root.display().to_string();
     let working_dir_rendered = working_dir.display().to_string();
-    let injected_targets = injected_mounts
-        .iter()
-        .map(|mount| mount.target.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    // The host state masks are applied last: an entry the source Compose file
-    // already declared must not be mounted over them.
-    let (mask_mounts, ordinary_mounts): (Vec<_>, Vec<_>) = injected_mounts
-        .iter()
-        .partition(|mount| is_guest_mask_target(&mount.target, working_dir));
-    let mut rewritten = ordinary_mounts
+    // The injected mounts this file appends. The caller puts the ordinary
+    // mounts in the first file and the state masks in the last, so the masks
+    // hold against every source file.
+    let mut rewritten = appended_mounts
         .iter()
         .map(|mount| serde_yaml::Value::String(mount.rendered.clone()))
         .collect::<Vec<_>>();
@@ -168,7 +256,7 @@ fn rewrite_workspace_service_volumes(
                 describe_compose_entry(entry),
             )));
         };
-        if injected_targets.contains(target.as_str()) {
+        if injected_targets.contains(&target) {
             continue;
         }
         if target == workspace_root_rendered || target == working_dir_rendered {
@@ -190,22 +278,28 @@ fn rewrite_workspace_service_volumes(
         rewritten.push(entry.clone());
     }
 
-    rewritten.extend(
-        mask_mounts
-            .into_iter()
-            .map(|mount| serde_yaml::Value::String(mount.rendered.clone())),
-    );
-    // Validate the complete effective list, including entries this rewrite
-    // retained and the host paths their sources resolve to, before it is
-    // published.
-    enforce_effective_guest_volume_isolation(
+    // Validate the complete effective list this file contributes, including
+    // entries the rewrite retained and the host paths their sources resolve to.
+    // A relative source is checked against this file's own directory and the
+    // project directory, because Compose may resolve it against either.
+    super::enforce_effective_guest_volume_isolation_against(
         container_name,
         &canonical_repo_root,
         working_dir,
         compose_dir,
-        Some(document_volumes),
+        mount_context,
         &rewritten,
     )?;
+    if project_dir != compose_dir {
+        super::enforce_effective_guest_volume_isolation_against(
+            container_name,
+            &canonical_repo_root,
+            working_dir,
+            project_dir,
+            mount_context,
+            &rewritten,
+        )?;
+    }
     *volumes = rewritten;
     Ok(())
 }
@@ -782,4 +876,192 @@ fn looks_like_remote_build_context(path: &str) -> bool {
 
 fn looks_like_named_build_context(path: &str) -> bool {
     path.starts_with("service:")
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+    use std::fs;
+
+    fn fixture(label: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-overlay-{label}-"))
+            .expect("fixture directory")
+    }
+
+    fn request<'a>(
+        repo_root: &'a Path,
+        working_dir: &'a Path,
+        config: &'a effigy_manifest::ManifestContainerConfig,
+        workspace: &'a effigy_manifest::ManifestWorkspaceConfig,
+    ) -> WorkspaceComposeRewrite<'a> {
+        WorkspaceComposeRewrite {
+            repo_root,
+            container_name: "web",
+            config,
+            workspace,
+            working_dir,
+            primary_service: "app",
+            library_mounts: &[],
+        }
+    }
+
+    fn container_config() -> effigy_manifest::ManifestContainerConfig {
+        toml::from_str("primary_service = \"app\"\n").expect("container config")
+    }
+
+    fn service_volumes(document: &serde_yaml::Value) -> Vec<String> {
+        document["services"]["app"]["volumes"]
+            .as_sequence()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| match entry.as_str() {
+                        Some(raw) => raw.to_owned(),
+                        None => describe_compose_entry(entry),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn rewritten(draft: &mut crate::policy::render::Draft, path: &Path) -> serde_yaml::Value {
+        let body = draft.read(path).expect("rewritten file");
+        serde_yaml::from_str(&body).expect("rewritten compose")
+    }
+
+    /// A later overlay that binds a host state root at another guest target is
+    /// refused, even though the first file never mentions it.
+    #[test]
+    fn an_overlay_that_binds_a_host_state_root_elsewhere_is_refused() {
+        let repo_root = fixture("state-elsewhere");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let base = canonical.join("compose.yml");
+        let overlay = canonical.join("overlay.yml");
+        fs::write(&base, "services:\n  app:\n    image: app\n").expect("base compose");
+        fs::write(
+            &overlay,
+            format!(
+                "services:\n  app:\n    volumes:\n      - \"{}:/workspace/leaked\"\n",
+                state.display()
+            ),
+        )
+        .expect("overlay compose");
+        let config = container_config();
+        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
+        let mut draft = crate::policy::render::Draft::default();
+
+        let error = rewrite_workspace_mounts_for_direct_compose(
+            request(&canonical, Path::new("/workspace"), &config, &workspace),
+            &[base, overlay],
+            false,
+            &mut draft,
+        )
+        .expect_err("the overlay would expose host state");
+
+        assert!(error.to_string().contains("host state root"), "{error}");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    /// A later overlay that re-declares a masked guest target is stripped, and
+    /// the masks are appended to the last file that defines the service, so the
+    /// mask still wins.
+    #[test]
+    fn an_overlay_that_replaces_a_mask_is_stripped_and_the_mask_reapplied() {
+        let repo_root = fixture("mask-replaced");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let base = canonical.join("compose.yml");
+        let overlay = canonical.join("overlay.yml");
+        fs::write(&base, "services:\n  app:\n    image: app\n").expect("base compose");
+        fs::write(
+            &overlay,
+            format!(
+                "services:\n  app:\n    volumes:\n      - \"{}:/workspace/.effigy/state\"\n",
+                state.display()
+            ),
+        )
+        .expect("overlay compose");
+        let config = container_config();
+        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
+        let mut draft = crate::policy::render::Draft::default();
+
+        let (paths, _) = rewrite_workspace_mounts_for_direct_compose(
+            request(&canonical, Path::new("/workspace"), &config, &workspace),
+            &[base, overlay],
+            false,
+            &mut draft,
+        )
+        .expect("the overlay entry is stripped rather than honoured");
+
+        assert_eq!(paths.len(), 2, "every input file is rewritten");
+        let overlay_document = rewritten(&mut draft, &paths[1]);
+        let volumes = service_volumes(&overlay_document);
+        assert!(
+            !volumes
+                .iter()
+                .any(|entry| entry.contains(&state.display().to_string())),
+            "the overlay cannot bind the state root at the masked target: {volumes:?}"
+        );
+        let mask_target = "/workspace/.effigy/state";
+        let mask_index = volumes
+            .iter()
+            .position(|entry| entry.contains(mask_target))
+            .expect("the mask owns the target");
+        assert_eq!(
+            volumes
+                .iter()
+                .filter(|entry| entry.contains(mask_target))
+                .count(),
+            1,
+            "one entry owns the masked target: {volumes:?}"
+        );
+        assert!(
+            volumes[mask_index].ends_with(&format!(":{mask_target}:ro")),
+            "the entry at the masked target is the read-only mask: {volumes:?}"
+        );
+        assert!(
+            volumes[mask_index..]
+                .iter()
+                .all(|entry| entry.ends_with(":ro")),
+            "the masks are applied after every other entry: {volumes:?}"
+        );
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    /// Compose resolves a relative source against the project directory, so a
+    /// relative entry in another directory is checked there too.
+    #[test]
+    fn a_relative_overlay_source_is_checked_against_the_project_directory() {
+        let repo_root = fixture("relative-overlay");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let overlay_dir = canonical.join("overlays");
+        fs::create_dir_all(&overlay_dir).expect("overlay directory");
+        let base = canonical.join("compose.yml");
+        let overlay = overlay_dir.join("extra.yml");
+        fs::write(&base, "services:\n  app:\n    image: app\n").expect("base compose");
+        fs::write(
+            &overlay,
+            "services:\n  app:\n    volumes:\n      - \".effigy/state:/workspace/leaked\"\n",
+        )
+        .expect("overlay compose");
+        let config = container_config();
+        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
+        let mut draft = crate::policy::render::Draft::default();
+
+        let error = rewrite_workspace_mounts_for_direct_compose(
+            request(&canonical, Path::new("/workspace"), &config, &workspace),
+            &[base, overlay],
+            false,
+            &mut draft,
+        )
+        .expect_err("the project-directory resolution names a host state root");
+
+        assert!(error.to_string().contains("host state root"), "{error}");
+        let _ = fs::remove_dir_all(repo_root);
+    }
 }

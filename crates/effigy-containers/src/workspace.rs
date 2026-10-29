@@ -51,16 +51,26 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     record_optional_extra_mount_decisions: bool,
     draft: &mut crate::policy::render::Draft,
 ) -> Result<Vec<WorkspaceExtraMountDecision>, ContainerPolicyError> {
-    let Some(source_compose) = compose_files.first().cloned() else {
+    if compose_files.is_empty() {
         return Ok(Vec::new());
-    };
+    }
+    // Every file Compose is handed is rewritten and validated, not only the
+    // first: a later overlay replaces entries at the same guest target.
     let (rewritten, decisions) = rewrite_workspace_mounts_for_direct_compose(
         request,
-        &source_compose,
+        compose_files,
         record_optional_extra_mount_decisions,
         draft,
     )?;
-    compose_files[0] = rewritten;
+    if rewritten.len() != compose_files.len() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "workspace mount rewrite produced {} file(s) for {} Compose input(s); \
+             every input must be rewritten so an overlay cannot bypass mount isolation",
+            rewritten.len(),
+            compose_files.len(),
+        )));
+    }
+    compose_files.clone_from_slice(&rewritten);
     Ok(decisions)
 }
 
@@ -679,6 +689,11 @@ fn enforce_guest_mount_isolation(
 /// sources Compose will use: interpolation expanded, bind-backed named volumes
 /// resolved through the document's `volumes:` driver options, short and long
 /// forms alike (§8.1, §8.2).
+/// Validate one file's effective mount list with its own document's named
+/// volumes. Production rewrites read every Compose input, so the merged view
+/// ([`enforce_effective_guest_volume_isolation_against`]) is what they use; this
+/// entry point is the single-file proof seam.
+#[cfg(test)]
 pub(crate) fn enforce_effective_guest_volume_isolation(
     container_name: &str,
     canonical_repo_root: &Path,
@@ -688,13 +703,34 @@ pub(crate) fn enforce_effective_guest_volume_isolation(
     volumes: &[serde_yaml::Value],
 ) -> Result<(), ContainerPolicyError> {
     let context = ComposeMountContext::read(compose_dir, document_volumes);
+    enforce_effective_guest_volume_isolation_against(
+        container_name,
+        canonical_repo_root,
+        working_dir,
+        compose_dir,
+        &context,
+        volumes,
+    )
+}
+
+/// Validate one effective mount list against a mount context already read from
+/// the complete Compose project, so every file's entries are resolved the way
+/// Compose will resolve them.
+pub(crate) fn enforce_effective_guest_volume_isolation_against(
+    container_name: &str,
+    canonical_repo_root: &Path,
+    working_dir: &Path,
+    compose_dir: &Path,
+    context: &ComposeMountContext,
+    volumes: &[serde_yaml::Value],
+) -> Result<(), ContainerPolicyError> {
     let mut mounts = Vec::with_capacity(volumes.len());
     for entry in volumes {
         mounts.push(effective_volume_mount(
             container_name,
             entry,
             compose_dir,
-            &context,
+            context,
         )?);
     }
     check_guest_mounts(container_name, canonical_repo_root, working_dir, mounts)

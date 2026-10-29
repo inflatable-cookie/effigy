@@ -1271,24 +1271,40 @@ fn workspace_linux_cache_path_is_versioned() {
 }
 
 #[test]
-fn linux_workspace_target_maps_machine_names() {
+fn linux_workspace_target_maps_the_image_platform_and_libc() {
+    let select = |machine: &str, libc: &str| {
+        LinuxWorkspaceTarget::from_image(machine, libc).expect("selectable image")
+    };
+    assert_eq!(select("x86_64", "gnu"), LinuxWorkspaceTarget::X86_64Gnu);
+    assert_eq!(select("amd64", "glibc"), LinuxWorkspaceTarget::X86_64Gnu);
+    assert_eq!(select("aarch64", "gnu"), LinuxWorkspaceTarget::Aarch64Gnu);
+    assert_eq!(select("arm64", "musl"), LinuxWorkspaceTarget::Aarch64Musl);
+    assert_eq!(select("x86_64", "musl"), LinuxWorkspaceTarget::X86_64Musl);
     assert_eq!(
-        LinuxWorkspaceTarget::from_machine("x86_64"),
-        Some(LinuxWorkspaceTarget::X86_64Gnu)
+        LinuxWorkspaceTarget::X86_64Musl.release_triple(),
+        "x86_64-unknown-linux-musl"
     );
-    assert_eq!(
-        LinuxWorkspaceTarget::from_machine("amd64"),
-        Some(LinuxWorkspaceTarget::X86_64Gnu)
+    assert_ne!(
+        LinuxWorkspaceTarget::X86_64Musl.artifact_relative_path(),
+        LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path(),
+        "a musl image never selects the glibc artifact"
     );
-    assert_eq!(
-        LinuxWorkspaceTarget::from_machine("aarch64"),
-        Some(LinuxWorkspaceTarget::Aarch64Gnu)
+
+    // An image whose libc cannot be proven has no selectable artifact: an
+    // artifact matches the image's C library, never a guess (§8.9).
+    let error = LinuxWorkspaceTarget::from_image("x86_64", "")
+        .expect_err("an unproven libc refuses")
+        .to_string();
+    assert!(error.contains("no provable C library"), "{error}");
+    assert!(error.contains("effigy container up"));
+
+    let error = LinuxWorkspaceTarget::from_image("ppc64le", "gnu")
+        .expect_err("an unsupported platform refuses")
+        .to_string();
+    assert!(
+        error.contains("has no pinned Linux guest artifact"),
+        "{error}"
     );
-    assert_eq!(
-        LinuxWorkspaceTarget::from_machine("arm64"),
-        Some(LinuxWorkspaceTarget::Aarch64Gnu)
-    );
-    assert_eq!(LinuxWorkspaceTarget::from_machine("ppc64le"), None);
 }
 
 #[test]

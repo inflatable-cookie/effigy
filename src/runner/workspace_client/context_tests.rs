@@ -19,6 +19,7 @@ fn container() -> WorkspaceContainerIdentity {
         container_id: "9d1c0b6a7f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4".to_owned(),
         vm_boot_id: "3f6a1c92-5b7e-4c1d-8a2f-0e9d7c6b5a41".to_owned(),
         platform: "aarch64".to_owned(),
+        libc: "gnu".to_owned(),
     }
 }
 

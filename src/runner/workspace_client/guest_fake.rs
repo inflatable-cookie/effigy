@@ -44,6 +44,7 @@ impl Default for FakeGuest {
                 container_id: "fake-container".to_owned(),
                 vm_boot_id: "fake-boot".to_owned(),
                 platform: "x86_64".to_owned(),
+                libc: "gnu".to_owned(),
             },
         }
     }

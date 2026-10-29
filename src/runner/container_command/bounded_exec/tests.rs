@@ -208,6 +208,12 @@ case "$args" in
         printf '%s' "$FAKE_BOUNDED_DIGEST"
         exit 0
         ;;
+    *"/proc/sys/kernel/random/boot_id"*)
+        # The entry compares the live container, boot, platform and image libc
+        # to the published context before it runs anything.
+        printf '%s' "$FAKE_BOUNDED_PROBE"
+        exit 0
+        ;;
     *"$FAKE_DIGEST_HEX"*)
         # The entry authenticates the installed executable with a digest probe,
         # never by reading its bytes into the caller's capture budget.
@@ -469,17 +475,84 @@ fn public_guest_digest() -> String {
     format!("sha256:{}", "ab".repeat(32))
 }
 
+/// The identity the fixture's guest reports: the published short container id
+/// as its full id's prefix, the context's boot and platform, and a glibc image.
+fn public_guest_identity_probe() -> String {
+    let full_id = "0123456789abcdef".repeat(4);
+    format!(
+        "cgroup=0::/docker/{full_id} \nboot=boot\nhostname={full_id}\nplatform=x86_64\n\
+         libc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6\n"
+    )
+}
+
+/// Establish the environment activation fence the entry check reads.
+///
+/// The fixture's own state store is activated exactly as `container up` would
+/// activate it, so `environment_generation` finds the record and the published
+/// context can name the generation it is bound to. Only the fixture store is
+/// touched: HOME and `EFFIGY_TEST_CONTAINERS_HOME` point at it while the
+/// activation runs.
+fn public_environment_identity(
+    home: &Path,
+    repo_root: &Path,
+) -> crate::runner::workspace_client::context::WorkspaceEnvironmentIdentity {
+    let _lock = lock_test();
+    let _env = EnvGuard::set_many(&[
+        ("HOME", Some(home.display().to_string())),
+        (
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(home.join(".effigy").display().to_string()),
+        ),
+    ]);
+    let policy = effigy_containers::load_container_policy(repo_root, Some("web"))
+        .expect("fixture container policy");
+    let env = crate::runner::environment::env_ref(&policy).expect("fixture environment ref");
+    let context = crate::runner::environment::context(repo_root).expect("fixture environment ctx");
+    effigy_containers::environment::activate(&context, &env, &[])
+        .expect("fixture environment activation");
+    let record = crate::runner::environment::record(&policy).expect("fixture activation record");
+    crate::runner::workspace_client::context::WorkspaceEnvironmentIdentity {
+        // The host derives this identity from the policy name at Prepare and
+        // again at entry; the generation is the record's activation generation.
+        resource_id: format!("env:{}", policy.name),
+        generation: record.generation.get().to_string(),
+    }
+}
+
+/// Assert the fixture context pins the activation fence this run will read, so
+/// a fixture that drifted fails loudly instead of as a product refusal.
+fn assert_public_activation_fence(repo_root: &Path, context_path: &Path, mode: &str) {
+    let policy = effigy_containers::load_container_policy(repo_root, Some("web"))
+        .expect("fixture container policy");
+    let record = crate::runner::environment::record(&policy)
+        .expect("fixture activation record before entry");
+    let published = crate::runner::workspace_client::context::WorkspaceContext::parse(
+        &fs::read(context_path).expect("read published fixture context"),
+    )
+    .expect("parse published fixture context");
+    assert_eq!(
+        published.activation.environment.generation,
+        record.generation.get().to_string(),
+        "fixture mode {mode} must publish the activation generation the entry reads"
+    );
+    assert_eq!(
+        published.activation.environment.resource_id,
+        format!("env:{}", policy.name),
+        "fixture mode {mode} must publish the environment resource the entry reads"
+    );
+}
+
 /// Write the guest context the fixture pretends Prepare published.
 ///
 /// The document is the real one: `identity-invalid` pins a version this host
 /// cannot speak to, and every other mode pins this build.
-fn write_public_guest_context(dir: &Path, mode: &str) -> PathBuf {
+fn write_public_guest_context(dir: &Path, repo_root: &Path, mode: &str) -> PathBuf {
     use crate::runner::workspace_client::context::{
         GuestBinaryIdentity, WorkspaceActivationIdentity, WorkspaceBackendDescriptor,
         WorkspaceChannelLocator, WorkspaceContainerIdentity, WorkspaceContext,
-        WorkspaceContextInput, WorkspaceEnvironmentIdentity, WorkspaceHostIdentity,
-        WorkspacePathMap, CHANNEL_PROTOCOL_VERSION,
+        WorkspaceContextInput, WorkspaceHostIdentity, WorkspacePathMap, CHANNEL_PROTOCOL_VERSION,
     };
+    let environment = public_environment_identity(&dir.join("home"), repo_root);
     let host_version = effigy_core::build_info::active_version();
     let guest_version = if mode == "identity-invalid" {
         "9.9.9".to_owned()
@@ -500,14 +573,12 @@ fn write_public_guest_context(dir: &Path, mode: &str) -> PathBuf {
         activation: WorkspaceActivationIdentity {
             host_user: "tester".to_owned(),
             checkout_id: "0:00".to_owned(),
-            environment: WorkspaceEnvironmentIdentity {
-                resource_id: "env:demo-web".to_owned(),
-                generation: "sha256:aa".to_owned(),
-            },
+            environment,
             container: WorkspaceContainerIdentity {
                 container_id: "0123456789abcdef".to_owned(),
                 vm_boot_id: "boot".to_owned(),
                 platform: "x86_64".to_owned(),
+                libc: "gnu".to_owned(),
             },
         },
         session_run_id: Some("run-1".to_owned()),
@@ -542,9 +613,13 @@ fn public_guest_preparation_stdout(dir: &Path, mode: &str) -> u64 {
     let context = fs::read(dir.join(format!("guest-context-{mode}.json")))
         .map(|bytes| bytes.len() as u64)
         .unwrap_or(0);
-    // The generation number, the document, the digest pointer and the digest
-    // probe's one line: never the executable's own bytes.
-    1 + context + public_guest_digest().len() as u64 + 64
+    // The generation number, the document, the identity probe document, the
+    // digest pointer and the digest probe's one line: never the executable's
+    // own bytes.
+    1 + context
+        + public_guest_identity_probe().len() as u64
+        + public_guest_digest().len() as u64
+        + 64
 }
 
 #[cfg(unix)]
@@ -615,9 +690,10 @@ fn run_guarded_public_case(
         .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
         .env(
             "FAKE_BOUNDED_CONTEXT_FILE",
-            write_public_guest_context(dir.path(), mode),
+            write_public_guest_context(dir.path(), repo_root, mode),
         )
         .env("FAKE_BOUNDED_DIGEST", public_guest_digest())
+        .env("FAKE_BOUNDED_PROBE", public_guest_identity_probe())
         .env("FAKE_BOUNDED_BIN_DIR", bin_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::from(child_stdout))
@@ -680,6 +756,11 @@ fn guarded_public_entry_child() {
             "public fixture identity must match the child runtime identity"
         );
     }
+    assert_public_activation_fence(
+        &repo_root,
+        &PathBuf::from(std::env::var_os("FAKE_BOUNDED_CONTEXT_FILE").expect("fake context file")),
+        &mode,
+    );
     let limits = limits(deadline_ms, stdout_limit, 256);
     let command = if mode == "remove-before-command" {
         "SECRET_ARG_MARKER_142"
@@ -735,9 +816,10 @@ fn guarded_public_entry_child() {
             assert_eq!(value["stdout_bytes"], "command-only".len());
             assert_eq!(value["attempts"], 1);
             // Three owned-service listings plus the published generation, its
-            // document, the digest pointer and the pinned executable.
+            // document, the identity probe, the digest pointer and the pinned
+            // executable.
             assert_eq!(
-                value["preparation"]["captures"], 7,
+                value["preparation"]["captures"], 8,
                 "public command must verify the published guest context and its pinned executable"
             );
             let preparation_stdout = value["preparation"]["retained"]["stdout_bytes"]
@@ -808,7 +890,7 @@ fn guarded_public_entry_child() {
             assert_eq!(details["phase"], "command_execution");
             assert_eq!(details["attempts"], 2);
             assert_eq!(details["workspace_user_fallback"], true);
-            assert_eq!(details["preparation"]["captures"], 7);
+            assert_eq!(details["preparation"]["captures"], 8);
             assert!(!final_marker.exists());
         }
         "remove-before-command" => {
@@ -980,7 +1062,7 @@ fn public_failure_case(mode: &str) -> GuardedPublicOutcome {
     // The fallback proof needs preparation (the published context, its digest
     // pointer and the pinned executable) to fit, then an inner command that
     // overflows on its second attempt.
-    let _ = write_public_guest_context(dir.path(), mode);
+    let _ = write_public_guest_context(dir.path(), &repo, mode);
     let fallback_limit = format!(
         "demo-web-app-1\tUp\t\tdemo-web\t{}\tapp\tfalse\n",
         repo.display()

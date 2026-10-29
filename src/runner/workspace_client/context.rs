@@ -141,6 +141,11 @@ pub(crate) struct WorkspaceContainerIdentity {
     pub(crate) vm_boot_id: String,
     /// The image platform, never the host's `uname` (§8.9).
     pub(crate) platform: String,
+    /// The image's C library: `gnu`, `musl`, or empty when the guest cannot
+    /// prove it. The guest artifact must match (§8.9), so it is part of the
+    /// identity a context is bound to.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) libc: String,
 }
 
 impl WorkspaceContainerIdentity {
@@ -148,10 +153,13 @@ impl WorkspaceContainerIdentity {
         self.container_id == live.container_id && self.boot_matches(live)
     }
 
-    /// The boot and platform half of the fence. The container id is checked by
-    /// [`Self::container_matches`] so a short guest id can match its full id.
+    /// The boot, platform and image-libc half of the fence. The container id is
+    /// checked by [`Self::container_matches`] so a short guest id can match its
+    /// full id.
     pub(crate) fn boot_matches(&self, live: &Self) -> bool {
-        self.vm_boot_id == live.vm_boot_id && self.platform == live.platform
+        self.vm_boot_id == live.vm_boot_id
+            && self.platform == live.platform
+            && self.libc == live.libc
     }
 
     /// The container half of the fence: equal, or one id is the other's

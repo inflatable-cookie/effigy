@@ -2412,11 +2412,16 @@ workspace is admitted:
 - Mount isolation validates the complete effective mount set the primary
   service will have: injected and retained entries, short and long form, with
   Compose interpolation expanded and a bind-backed named volume resolved
-  through its driver options. The masks are applied last and own their guest
-  paths. A host state root, an ancestor of one mounted anywhere but the masked
-  checkout mount, a second source for one guest path, an entry whose source
-  cannot be proven, and anything overlapping the guest's `/run/effigy` store
-  are refused by name.
+  through its driver options. Every Compose input file Compose is handed is
+  rewritten and validated, not only the first: a later overlay replaces an
+  entry at the same guest target, so a state root bound at another target in an
+  overlay is refused and an overlay entry at a masked target is stripped. The
+  workspace mounts are injected into the first file that defines the primary
+  service and the masks are appended to the last one, so they are applied after
+  every source file and own their guest paths. A host state root, an ancestor of
+  one mounted anywhere but the masked checkout mount, a second source for one
+  guest path, an entry whose source cannot be proven, and anything overlapping
+  the guest's `/run/effigy` store are refused by name.
 
 Ordinary source edits and task outputs in the mounted checkout are workspace
 files, not host records. The context's authoritative inputs are host
@@ -2623,6 +2628,12 @@ only, and host access needs a terminal opened through Effigy.
 - Each release publishes version-locked Linux x86_64 and aarch64 artifacts
   with a checksum and provenance manifest naming the version, protocol
   version, target and libc baseline, and catalog schema.
+- The artifact family is the image's platform **and** its C library, never a
+  host `uname` and never a default: a glibc image takes the `*-gnu` artifact and
+  a musl image the `*-musl` one. The guest reports the loader it can see, and an
+  image whose C library the host cannot prove refuses Prepare rather than
+  guessing. An image with no artifact for its own family refuses with the host
+  re-prepare command and the missing target named.
 - The store is `/run/effigy/bin/<digest>/effigy`, one immutable file per
   digest, selected by the digest in `/run/effigy/bin/current`. An artifact is
   authenticated before it is published: its producer receipt names the target

@@ -251,7 +251,11 @@ During v0.x, MINOR bumps may include breaking changes.
   environment, container and VM-boot generations it belongs to;
   `/run/effigy/bin/<digest>/effigy` in a guest-private store that new
   invocations reach through `/usr/local/bin/effigy`; and, when the session
-  supplies one, a 0600 enrolment credential. The digest is verified, not
+  supplies one, a 0600 enrolment credential. The artifact family is the image's
+  platform **and** C library — a glibc image takes the `*-gnu` artifact and a
+  musl image the `*-musl` one — and an image whose libc the host cannot prove,
+  or that has no artifact for its family, refuses Prepare instead of running
+  bytes built against another C library. The digest is verified, not
   declared: the artifact must carry a producer receipt naming its target and
   SHA-256, a release download must match the checksum the release publishes
   beside it, and the executable the guest will run is re-hashed in the
@@ -395,14 +399,18 @@ During v0.x, MINOR bumps may include breaking changes.
   checkout's `.effigy/state` and `.effigy/secrets` (the local vault, its
   previous generation and key wraps) are masked with empty read-only volumes
   applied last, so an entry the source Compose file already declared cannot be
-  mounted over them. The complete effective mount set — short and long form,
-  injected and retained — is validated with Compose interpolation expanded and
-  bind-backed named volumes resolved through their driver options: a host state
-  root, an ancestor of one (such as `<checkout>/.effigy`) mounted anywhere but
-  the masked checkout mount, a second source for one guest path, an entry whose
-  source cannot be proven, or anything overlapping the guest's own
-  `/run/effigy` store is refused by name (contract 052 §7.3 families 1 and
-  10-11, §8.10 R1).
+  mounted over them. Every Compose input file is rewritten and validated, not
+  only the first, because a later overlay replaces an entry at the same guest
+  target: a state root bound at another target in an overlay is refused, and an
+  overlay entry at a masked target is stripped while the masks are appended to
+  the last file that defines the service. The complete effective mount set —
+  short and long form, injected and retained — is validated with Compose
+  interpolation expanded and bind-backed named volumes resolved through their
+  driver options: a host state root, an ancestor of one (such as
+  `<checkout>/.effigy`) mounted anywhere but the masked checkout mount, a second
+  source for one guest path, an entry whose source cannot be proven, or anything
+  overlapping the guest's own `/run/effigy` store is refused by name (contract
+  052 §7.3 families 1 and 10-11, §8.10 R1).
 - Deep doctor now bounds owned v2 scan-cache generations to 128 MiB and 32
   scopes after changed publications. Legacy v1 cache is left for manual cleanup.
 
