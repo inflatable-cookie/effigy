@@ -513,8 +513,13 @@ fn wait_for_listener_state(
     let mut next_liveness_check = Instant::now();
     let started = Instant::now();
     let mut next_progress = started;
+    let mut next_wait_report = started;
     loop {
-        on_wait(Instant::now());
+        let now = Instant::now();
+        if now >= next_wait_report {
+            next_wait_report = now + Duration::from_secs(1);
+            on_wait(now);
+        }
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
                 return Err(RunnerError::task_invocation(format!(
