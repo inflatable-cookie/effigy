@@ -518,7 +518,7 @@ shared = true
         /// reads exactly what the adapter ran.
         fn install_fake_runtime(&self) {
             let script = format!(
-                "#!/bin/sh\nprintf 'call %s\\n' \"$*\" >> {log}\nprintf 'credential-env=%s\\n' \"${{MYSQL_PWD:+present}}\" >> {log}\ncase \"$*\" in\n  *'--version'*) printf 'fake 1.0\\n' ;;\n  *'ps --all'*) printf '%s\\n' \"$EFFIGY_TEST_PS_ROW\" ;;\n  *'ssh --profile'*) for last; do :; done; if grep -q '^export MYSQL_PWD=' \"$last\" 2>/dev/null; then printf 'credential-file=present\\n' >> {log}; else printf 'credential-file=absent\\n' >> {log}; fi ;;\n  *' exec '*) while IFS= read -r line || [ -n \"$line\" ]; do printf 'stdin %s\\n' \"$line\" >> {log}; done; printf 'dump-body\\n' ;;\nesac\nexit 0\n",
+                "#!/bin/sh\nprintf 'call %s\\n' \"$*\" >> {log}\nprintf 'credential-env=%s\\n' \"${{MYSQL_PWD:+present}}\" >> {log}\ncase \"$*\" in\n  *'--version'*) printf 'fake 1.0\\n' ;;\n  *'ps --all'*) printf '%s\\n' \"$EFFIGY_TEST_PS_ROW\" ;;\n  *'ssh --profile'*) for last; do :; done; if grep -q '^export MYSQL_PWD=' \"$last\" 2>/dev/null; then printf 'credential-file=present\\n' >> {log}; else printf 'credential-file=absent\\n' >> {log}; fi ;;\n  *' exec '*) while IFS= read -r line || [ -n \"$line\" ]; do printf 'stdin %s\\n' \"$line\" >> {log}; done; printf 'dump-body\\n'; i=0; while [ \"$i\" -lt 12000 ]; do printf '%s\\n' '0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789'; i=$((i+1)); done ;;\nesac\nexit 0\n",
                 log = self.log.display()
             );
             self.write_runtime(script.as_str());
@@ -1069,10 +1069,16 @@ shared = true
                 !rendered.contains("secret"),
                 "credential in report: {rendered}"
             );
+            // The whole dump, not a bounded prefix: the adapter's deadline
+            // path retains complete output for the artifact.
+            let dump = fs::read(&dump_path).expect("dump artifact");
+            assert!(dump.starts_with(b"dump-body\n"), "dump prefix");
             assert_eq!(
-                fs::read_to_string(&dump_path).expect("dump artifact"),
-                "dump-body\n"
+                dump.len(),
+                "dump-body\n".len() + 12_000 * 101,
+                "complete dump"
             );
+
             let calls = repo.calls();
             assert!(
                 calls.contains(&binding.project_name),
@@ -1331,6 +1337,68 @@ shared = true
         assert!(
             !calls.contains(" up ") && !calls.contains(" start "),
             "a shared seed activates nothing: {calls}"
+        );
+    }
+
+    /// Two concurrent data commands never share a credential file, so neither
+    /// can source a partially written value (effigy#477 review).
+    #[test]
+    fn concurrent_shared_seeds_keep_their_credentials_separate() {
+        let _lock = lock_test();
+        let repo = FixtureRepo::new("effigy-shared-data-concurrent-", STACK_HYBRID_MANIFEST);
+        repo.install_fake_runtime();
+        let _env = repo.env();
+        let manifest = repo.manifest();
+        let stack = repo.policy("stack");
+        repo.publish_shared_render(&stack);
+        let binding = shared_binding(&stack, &manifest);
+        repo.set_inventory_row(
+            &binding.project_name,
+            &binding.service_name,
+            &binding.render_digest,
+            "Up 2 minutes",
+        );
+        let command = vec![
+            "env".to_owned(),
+            "MYSQL_PWD=secret".to_owned(),
+            "mysql".to_owned(),
+            "-uroot".to_owned(),
+            "-e".to_owned(),
+            "DROP DATABASE IF EXISTS `acowtancy`; CREATE DATABASE `acowtancy`;".to_owned(),
+        ];
+        let handles = (0..4)
+            .map(|_| {
+                let policy = stack.clone();
+                let binding = binding.clone();
+                let command = command.clone();
+                std::thread::spawn(move || {
+                    run_shared_data_command(&policy, &binding, &command, None)
+                        .expect("concurrent shared exec")
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().expect("thread");
+        }
+        let calls = repo.calls();
+        assert_eq!(
+            calls.lines().filter(|line| line.contains(" exec ")).count(),
+            4,
+            "{calls}"
+        );
+        assert_eq!(
+            calls.matches("credential-env=present").count(),
+            4,
+            "every exec receives the value through its own file: {calls}"
+        );
+        assert!(!calls.contains("secret"), "credential in argv: {calls}");
+        let leftovers = fs::read_dir(repo.home.join(".effigy/data-credentials"))
+            .expect("credentials directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("credential entries");
+        assert!(
+            leftovers.is_empty(),
+            "each exec removes its own credential file"
         );
     }
 

@@ -1112,13 +1112,18 @@ selection needs its environment already running. `data dump` starts nothing.
 
 A credential travels by name only. The exec forwards the client variable
 (`MYSQL_PWD`, `PGPASSWORD`) with `compose exec -e NAME`; its value lives in a
-private file under the Effigy home that the Compose client sources before it
-runs — on the host for a host backend, and through `colima ssh` inside the VM
-for the VM-hosted backend, the same transport managed task secrets use. The
-file is 0600 inside a 0700 directory, named by the render digest and service,
-and never pruned, like the render's own private Compose inputs. No value reaches
-a command line, the Compose invocation, or a report. An unshared target keeps
-the checkout-local route unchanged.
+per-operation private file under the Effigy home that the Compose client sources
+before it runs — on the host for a host backend, and through `colima ssh` inside
+the VM for the VM-hosted backend, the same transport managed task secrets use.
+The file is 0600 inside a 0700 directory, created exclusively, never rewritten
+and removed when the call returns, so concurrent data commands never share a
+credential path. No value reaches a command line, the Compose invocation, or a
+report.
+
+Every shared Compose call carries one absolute deadline: 15 minutes for a
+control call and one hour for a data exec. Expiry terminates the owned process
+group, and the call's complete output stays captured so a dump is never
+truncated. An unshared target keeps the checkout-local route unchanged.
 
 ## Shared service data volumes (`data_from`)
 

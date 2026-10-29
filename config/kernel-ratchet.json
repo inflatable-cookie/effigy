@@ -82,13 +82,15 @@
       "std::fs::remove_file": 2,
       "std::fs::rename": 2
     },
+    "crates/effigy-deps/src/bun_owner.rs": {
+      "signal_hook.registration": 1
+    },
     "crates/effigy-deps/src/cargo_lock_record.rs": {
       "std::fs::remove_file": 1
     },
     "crates/effigy-deps/src/process.rs": {
-      "nix::sys::signal::kill": 4,
+      "nix::sys::signal::kill": 5,
       "std.process.Command.new": 2,
-      "std.process.Command.output": 1,
       "std.process.Command.spawn": 1
     },
     "crates/effigy-deps/src/state.rs": {
@@ -111,6 +113,10 @@
       "std::fs::remove_file": 4,
       "std::fs::rename": 2,
       "std::fs::write": 1
+    },
+    "crates/effigy-gateway/src/linux_operator.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.spawn": 1
     },
     "crates/effigy-gateway/src/ports.rs": {
       "std.process.Command.new": 1,
@@ -278,9 +284,13 @@
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
     },
+    "src/runner/container_command/shared_credentials.rs": {
+      "std.fs.OpenOptions.write": 2,
+      "std::fs::remove_file": 1
+    },
     "src/runner/container_command/support.rs": {
-      "std.process.Command.new": 5,
-      "std.process.Command.output": 5
+      "std.process.Command.new": 4,
+      "std.process.Command.output": 4
     },
     "src/runner/container_runtime.rs": {
       "std.process.Command.new": 3,
@@ -351,6 +361,10 @@
       "std::fs::rename": 1,
       "std::fs::write": 1
     },
+    "src/runner/managed_secrets.rs": {
+      "std.fs.OpenOptions.write": 4,
+      "std::fs::remove_file": 1
+    },
     "src/runner/qa_group_command/mod.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -408,10 +422,10 @@
     },
     "crates/effigy-containers/src/backend/tests.rs": {
       "std::fs::remove_file": 1,
-      "std::fs::write": 2
+      "std::fs::write": 3
     },
     "crates/effigy-containers/src/catalog_sources.rs": {
-      "std::fs::write": 7
+      "std::fs::write": 8
     },
     "crates/effigy-containers/src/colima/tests.rs": {
       "std::env::remove_var": 11,
@@ -438,8 +452,10 @@
     },
     "crates/effigy-containers/src/environment/tests/faults.rs": {
       "nix::sys::signal::kill": 1,
-      "std.process.Command.new": 1,
-      "std::fs::write": 3
+      "std.process.Command.new": 1
+    },
+    "crates/effigy-containers/src/exec/colima_cleanup.rs": {
+      "std::fs::write": 2
     },
     "crates/effigy-containers/src/exec/colima_runtime.rs": {
       "std::env::remove_var": 1,
@@ -498,7 +514,7 @@
       "std::fs::write": 5
     },
     "crates/effigy-containers/src/policy/render/tests.rs": {
-      "std::fs::write": 18
+      "std::fs::write": 21
     },
     "crates/effigy-containers/src/policy/restart.rs": {
       "std::fs::write": 1
@@ -530,7 +546,7 @@
       "std::fs::write": 19
     },
     "crates/effigy-contracts/src/tests.rs": {
-      "std::fs::write": 17
+      "std::fs::write": 20
     },
     "crates/effigy-core/src/build_info.rs": {
       "std.process.Command.new": 3,
@@ -556,7 +572,7 @@
       "std::fs::write": 13
     },
     "crates/effigy-deps/src/bun_apply/tests.rs": {
-      "std::fs::remove_file": 4,
+      "std::fs::remove_file": 5,
       "std::fs::write": 1
     },
     "crates/effigy-deps/src/bun_plan.rs": {
@@ -585,18 +601,23 @@
     },
     "crates/effigy-gateway/src/identity.rs": {
       "std::fs::remove_file": 1,
-      "std::fs::write": 14
+      "std::fs::write": 12
+    },
+    "crates/effigy-gateway/src/linux_operator.rs": {
+      "std.process.Command.new": 4,
+      "std.process.Command.output": 3,
+      "std.process.Command.status": 1
     },
     "crates/effigy-gateway/src/server/tests.rs": {
       "std.process.Command.new": 7,
       "std.process.Command.spawn": 7,
-      "std::fs::write": 20
+      "std::fs::write": 9
     },
     "crates/effigy-gateway/src/setup.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1,
       "std::fs::remove_file": 2,
-      "std::fs::write": 11
+      "std::fs::write": 14
     },
     "crates/effigy-gateway/src/setup/broker.rs": {
       "std::fs::remove_file": 1,
@@ -613,13 +634,13 @@
       "std::env::set_var": 2
     },
     "crates/effigy-manifest/src/bundles/source.rs": {
-      "std::fs::write": 4
+      "std::fs::write": 7
     },
     "crates/effigy-manifest/src/bundles/source/prepare.rs": {
       "std::fs::write": 16
     },
     "crates/effigy-manifest/src/composition.rs": {
-      "std::env::remove_var": 4,
+      "std::env::remove_var": 6,
       "std::env::set_var": 1,
       "std::fs::write": 4
     },
@@ -631,7 +652,9 @@
       "std::fs::write": 1
     },
     "crates/effigy-manifest/src/sources.rs": {
-      "std.process.Command.new": 1
+      "std.process.Command.new": 2,
+      "std.process.Command.output": 1,
+      "std::fs::write": 5
     },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 11
@@ -648,7 +671,8 @@
       "std.process.Command.new": 3,
       "std.process.Command.output": 2,
       "std.process.Command.status": 1,
-      "std::fs::write": 10
+      "std::fs::remove_file": 1,
+      "std::fs::write": 12
     },
     "crates/effigy-release/src/tests.rs": {
       "std.process.Command.new": 13,
@@ -694,7 +718,7 @@
       "std.process.Command.spawn": 1,
       "std.process.Command.status": 1,
       "std::fs::remove_file": 1,
-      "std::fs::write": 19
+      "std::fs::write": 26
     },
     "crates/effigy-secrets/src/storage/tests.rs": {
       "std.process.Command.new": 3,
@@ -703,7 +727,7 @@
       "std::fs::write": 3
     },
     "crates/effigy-state/src/artifact/tests.rs": {
-      "std::fs::write": 8
+      "std::fs::write": 10
     },
     "crates/effigy-state/src/tests.rs": {
       "std::fs::write": 2
@@ -740,13 +764,22 @@
       "std::env::set_var": 2,
       "std::fs::write": 8
     },
+    "src/runner/container_command/shared_credentials.rs": {
+      "std::fs::write": 1
+    },
+    "src/runner/container_command/shared_data.rs": {
+      "std::env::set_var": 1,
+      "std::fs::remove_file": 2,
+      "std::fs::write": 6
+    },
     "src/runner/container_command/support.rs": {
-      "std::fs::write": 7
+      "libc::kill": 1,
+      "std::fs::write": 14
     },
     "src/runner/container_runtime_prep/tests.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.status": 1,
-      "std::fs::write": 12
+      "std::fs::write": 11
     },
     "src/runner/db_seed.rs": {
       "std::fs::write": 5
@@ -757,9 +790,7 @@
     },
     "src/runner/doctor_ports.rs": {
       "nix::sys::signal::kill": 1,
-      "std.process.Command.new": 1,
-      "std::fs::File::create": 1,
-      "std::fs::write": 6
+      "std::fs::write": 5
     },
     "src/runner/exec_command/bounded.rs": {
       "std.process.Command.new": 1,
@@ -769,16 +800,14 @@
       "std::fs::write": 10
     },
     "src/runner/exec_command/transport/colima.rs": {
-      "nix::sys::signal::kill": 2,
-      "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1
+      "nix::sys::signal::kill": 2
     },
     "src/runner/execute/pipeline/command.rs": {
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
     },
     "src/runner/execute/pipeline/managed.rs": {
-      "std::fs::write": 4
+      "std::fs::write": 6
     },
     "src/runner/execute/sequence_run.rs": {
       "std::fs::write": 1
@@ -802,7 +831,7 @@
       "std.process.Command.new": 5,
       "std.process.Command.output": 1,
       "std.process.Command.spawn": 4,
-      "std::fs::write": 29
+      "std::fs::write": 24
     },
     "src/runner/host_process.rs": {
       "nix::sys::signal::kill": 7,
@@ -811,13 +840,19 @@
       "std.process.Command.spawn": 2,
       "std.process.Command.status": 1,
       "std::fs::remove_file": 1,
-      "std::fs::write": 4
+      "std::fs::write": 2
     },
     "src/runner/host_process/kernel_run.rs": {
       "std::fs::write": 1
     },
+    "src/runner/managed_run/engine.rs": {
+      "std::fs::write": 2
+    },
     "src/runner/managed_run/tests/faults.rs": {
       "libc::kill": 1
+    },
+    "src/runner/managed_secrets/tests.rs": {
+      "std.process.Command.new": 1
     },
     "src/runner/program_fallback.rs": {
       "std.process.Command.new": 7,
@@ -835,7 +870,7 @@
     "src/runner/scratch.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1,
-      "std::fs::write": 11
+      "std::fs::write": 15
     },
     "src/runner/script_command/tests.rs": {
       "std::fs::write": 1
@@ -855,7 +890,7 @@
     "src/runner/state_command.rs": {
       "std::env::remove_var": 1,
       "std::env::set_var": 2,
-      "std::fs::write": 17
+      "std::fs::write": 28
     },
     "src/runner/task_engine/checkout.rs": {
       "std::fs::write": 2
@@ -864,8 +899,6 @@
       "std::fs::write": 2
     },
     "src/runner/task_engine/legacy.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1,
       "std::fs::write": 2
     },
     "src/runner/task_engine/remote/tests.rs": {
@@ -875,6 +908,8 @@
       "std.process.Command.spawn": 1
     },
     "src/runner/task_engine/tests.rs": {
+      "std::env::remove_var": 2,
+      "std::env::set_var": 2,
       "std::fs::write": 2
     },
     "src/runner/uninstall_command.rs": {
@@ -883,9 +918,8 @@
     "src/runner/workspace_command/permissions.rs": {
       "nix::sys::signal::kill": 3,
       "std.fs.OpenOptions.write": 2,
-      "std.process.Command.new": 4,
+      "std.process.Command.new": 3,
       "std.process.Command.output": 3,
-      "std.process.Command.spawn": 1,
       "std::fs::remove_file": 1,
       "std::fs::write": 14
     },
@@ -906,6 +940,9 @@
       "std::env::remove_var": 2,
       "std::env::set_var": 2
     },
+    "src/tests/runner_tests/builtin_command_tests/execution_failure_tests.rs": {
+      "libc::kill": 2
+    },
     "src/tests/runner_tests/catalog_membership_tests/nested_container_target_tests.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1,
@@ -916,10 +953,13 @@
       "std.process.Command.status": 1
     },
     "src/tests/runner_tests/managed_and_locking_tests/locking_tests.rs": {
+      "std::env::remove_var": 2,
+      "std::env::set_var": 1,
       "std::fs::write": 1
     },
     "src/tests/runner_tests/managed_and_locking_tests/managed_headless_tests.rs": {
-      "std::fs::write": 2
+      "std::fs::remove_file": 1,
+      "std::fs::write": 4
     },
     "src/tests/runner_tests/managed_and_locking_tests/managed_supervisor_fault_tests.rs": {
       "std.process.Command.new": 1,

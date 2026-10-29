@@ -1433,10 +1433,16 @@ Credentials travel by variable name only. The exec forwards the database
 client's variable (`MYSQL_PWD` or `PGPASSWORD`) with `compose exec -e NAME`, and
 the value lives in a private file under the Effigy home that the Compose client
 sources before it runs: on the host for Docker, or inside the Colima VM through
-the same `colima ssh` transport that carries managed task secrets. The file is
-0600 inside a 0700 directory, named by the render digest and service, and never
-pruned, exactly like the render's own private Compose inputs. No credential
-value appears in a command line or a report.
+the same `colima ssh` transport that carries managed task secrets. Each exec
+creates its own file (0600 inside a 0700 directory, created exclusively and
+never rewritten) and removes it when the call returns, so concurrent data
+commands never share a credential path. No credential value appears in a
+command line or a report.
+
+Each shared Compose call is bounded. A control call (an ensure's `compose up`)
+gets 15 minutes and a data exec (reset, import or dump) gets one hour; on
+expiry Effigy terminates the call's whole process group. The call's complete
+output is still captured, so a logical dump is never truncated.
 
 ## Cache Lifecycle
 

@@ -506,10 +506,14 @@ During v0.x, MINOR bumps may include breaking changes.
   shared service, or falls back to a local service of the same name; a seed that
   selects a shared target therefore skips its environment activation, and a
   mixed selection needs the local environment already running. The exec forwards
-  the client credential by name only: its value lives in a private 0600 file that
-  the Compose client sources before it runs, on the host or through the Colima
-  VM transport, so no credential value reaches a command line or a report.
-  Unshared targets keep the checkout-local route.
+  the client credential by name only: each call creates its own private 0600 file
+  that the Compose client sources before it runs, on the host or through the
+  Colima VM transport, and removes it afterwards, so concurrent data commands
+  never share a credential path and no value reaches a command line or a report.
+  Every shared Compose call is bounded (15 minutes for a control call, one hour
+  for a data exec) and takes its process group with it on expiry, while the
+  complete output still feeds the dump artifact. Unshared targets keep the
+  checkout-local route.
 
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy
