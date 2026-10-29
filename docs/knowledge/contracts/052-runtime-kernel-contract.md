@@ -295,7 +295,12 @@ terminal close, or losing verifiable custody evidence is **residue**. It is
 reported to the invoking stream while a custodian remains; subsequent doctor
 and runs observations report only survivors whose checkout/run tags or fresh
 identity evidence can actually be read. They never recover authority from a
-PID, PGID, session number or old lock body. If owner and guard both die, there
+PID, PGID, session number or old lock body. Every residue entry names its
+effect kind, the redacted label that effect's own intent recorded and the
+kernel's reason; a settle that stops on its last open effect has no later
+effect to carry that reason, and a caller that requires complete cleanup (the
+gateway setup session) reports the settled outcome's entries rather than a
+bare "unresolved cleanup" (effigy#476). If owner and guard both die, there
 is no replay, durable completion or durable residue acknowledgement. A process
 that also discarded its tags may be unidentifiable; views state that limit and
 never claim a complete inventory or successful cleanup. Discovered residue

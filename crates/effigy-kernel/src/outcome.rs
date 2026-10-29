@@ -105,6 +105,24 @@ pub struct Residue {
     pub observation: Observed<String>,
     pub next: Invocation,
 }
+impl Residue {
+    /// What stayed unresolved, in the words an operator acts on: the effect
+    /// kind, the reason the kernel recorded, and (the kernel keeps it in that
+    /// reason) the redacted label the effect's own intent recorded. A settle
+    /// can stop on its *last* open effect, where no later effect carries the
+    /// reason, so a caller that requires complete cleanup reports this instead
+    /// of a bare "unresolved cleanup" (effigy#476).
+    pub fn describe(&self) -> String {
+        let reason = match &self.observation {
+            // A residue reason is already a rendered observation; the settle
+            // keeps it as the detail of an `Inconsistent`, so render that
+            // detail rather than wrapping the same sentence twice.
+            Observed::Unknown(UnknownReason::Inconsistent(detail)) => detail.clone(),
+            other => other.unproven(),
+        };
+        format!("`{}`: {reason}", self.kind)
+    }
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct Warning {
     pub code: String,
@@ -203,6 +221,11 @@ impl<T> Outcome<T> {
     pub fn add_residue(&mut self, residue: Residue) {
         self.cleanup = CleanupOutcome::Incomplete;
         self.residue.push(residue);
+    }
+    /// Every effect the settle could not release, one entry each, in the
+    /// kernel's own words. Empty when cleanup completed.
+    pub fn unresolved(&self) -> Vec<String> {
+        self.residue.iter().map(Residue::describe).collect()
     }
     pub fn exit_code(&self) -> i32 {
         match &self.workload {

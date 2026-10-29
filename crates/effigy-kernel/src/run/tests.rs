@@ -1202,6 +1202,52 @@ fn gateway_setup_replace_is_journalled_and_preserved_on_recovery() {
         b"owned platform output"
     );
 }
+/// A settle can stop on its last open effect, where no later effect carries the
+/// reason. The settled outcome must still name that effect, the redacted label
+/// its intent recorded and the custody reason, so a caller that requires
+/// complete cleanup can report it (effigy#476).
+#[test]
+fn gateway_settle_names_the_final_unresolved_custody_effect_and_reason() {
+    use crate::custody;
+    use crate::outcome::ErrorCode;
+    let reason = crate::observe::UnknownReason::Inconsistent("group anchor unavailable".into());
+    let effect = Effect {
+        sequence: 5,
+        spec: EffectSpec {
+            target: Fence {
+                resource: ResourceId::store(Scope::Machine, "gateway-setup").unwrap(),
+                generation: Generation::new(1),
+            },
+            kind: custody::KIND.into(),
+            payload: serde_json::json!({"digest": "fixture", "label": "gateway setup adapter"}),
+            settlement: Settlement::Release(Value::Null),
+            required: true,
+        },
+        state: EffectState::Residue,
+        receipt: None,
+        reason: Some(reason.to_string()),
+    };
+    let settled =
+        settle::outcome(id(5), &next(), WorkloadOutcome::Succeeded, vec![effect]).unwrap();
+    assert_eq!(settled.cleanup(), CleanupOutcome::Incomplete);
+    assert!(matches!(
+        settled.result(),
+        Err(error) if error.code == ErrorCode::Incomplete
+    ));
+    let unresolved = settled.unresolved();
+    assert_eq!(unresolved.len(), 1, "{unresolved:?}");
+    let text = &unresolved[0];
+    assert!(text.contains("`kernel:process`"), "{text}");
+    assert!(text.contains("gateway setup adapter"), "{text}");
+    assert!(text.contains("group anchor unavailable"), "{text}");
+    // The rendered reason appears once: a residue detail is not re-wrapped.
+    assert_eq!(
+        text.matches("group anchor unavailable").count(),
+        1,
+        "{text}"
+    );
+}
+
 #[test]
 fn gateway_store_latest_run_tracks_generation_and_absence() {
     let home = home();

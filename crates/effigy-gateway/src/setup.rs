@@ -298,10 +298,27 @@ pub fn session<T>(
     .map_err(error)?;
     let settled = run.settle(&cleanup, &mut adapter).map_err(error)?;
     if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
-        return Err(error("gateway setup has unresolved cleanup"));
+        return Err(unresolved_cleanup(&settled));
     }
     drop(staged);
     result
+}
+
+/// What setup could not release, by effect and custody reason. The settle can
+/// stop on its last open effect, where no later effect carries the reason, so
+/// this reads the settled outcome instead of reporting a bare "unresolved
+/// cleanup" the operator cannot act on (effigy#476).
+fn unresolved_cleanup(
+    settled: &effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>,
+) -> io::Error {
+    let unresolved = settled.unresolved();
+    if unresolved.is_empty() {
+        return error("gateway setup has unresolved cleanup");
+    }
+    error(format!(
+        "gateway setup left cleanup unresolved: {}",
+        unresolved.join("; ")
+    ))
 }
 pub fn command(
     run: &mut Run<'_>,
@@ -1086,6 +1103,46 @@ pub(crate) mod tests {
         run.settle(&op.cleanup(Duration::from_secs(5)).unwrap(), &mut adapter)
             .unwrap();
     }
+    #[test]
+    fn unresolved_cleanup_names_the_effect_and_the_custody_reason() {
+        // The settle can stop on its last open effect (effigy#476), so setup
+        // reports the settled outcome itself instead of a bare unresolved
+        // cleanup: the effect kind, the label its intent recorded and the
+        // kernel's own custody reason. The recorded reason already is a
+        // rendered observation, so it must not be wrapped a second time.
+        let recorded =
+            effigy_kernel::observe::UnknownReason::Inconsistent("group anchor unavailable".into());
+        let reason = effigy_kernel::observe::UnknownReason::Inconsistent(format!(
+            "gateway setup adapter: {recorded}"
+        ));
+        let mut settled = effigy_kernel::outcome::Outcome::new(
+            Err(effigy_kernel::outcome::ErrorInfo {
+                code: effigy_kernel::outcome::ErrorCode::Incomplete,
+                message: "cleanup has unresolved effects".into(),
+                details: serde_json::Value::Null,
+            }),
+            WorkloadOutcome::Succeeded,
+            effigy_kernel::outcome::CleanupOutcome::Incomplete,
+            &[],
+        )
+        .unwrap();
+        settled.add_residue(effigy_kernel::outcome::Residue {
+            kind: "kernel:process".into(),
+            id: ResourceId::store(Scope::Machine, "gateway-setup").unwrap(),
+            observation: Observed::Unknown(reason),
+            next: operator::next(),
+        });
+        let message = unresolved_cleanup(&settled).to_string();
+        assert!(message.contains("`kernel:process`"), "{message}");
+        assert!(message.contains("gateway setup adapter"), "{message}");
+        assert!(message.contains("group anchor unavailable"), "{message}");
+        assert_eq!(
+            message.matches("the evidence contradicts itself").count(),
+            1,
+            "a recorded reason is not wrapped twice: {message}"
+        );
+    }
+
     #[test]
     #[ignore = "proof: needs the kernel custody fixture (EFFIGY_KERNEL_CUSTODY_FIXTURE)"]
     fn setup_sequence_runs_two_foreground_commands_in_one_run() {

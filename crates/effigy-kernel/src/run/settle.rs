@@ -45,15 +45,20 @@ pub(super) fn cleanup_effects(cleanup: &CleanupContext) -> Result<EffectContext,
 /// What an open effect is, in the words an operator acts on: its sequence, its
 /// kind and the label its own intent recorded, never a process-table guess.
 fn unresolved_effect(effect: &Effect) -> String {
-    let label = effect
+    let label = effect_label(effect)
+        .map(|label| format!(" `{label}`"))
+        .unwrap_or_default();
+    format!("effect {} `{}`{label}", effect.sequence, effect.spec.kind)
+}
+
+/// The redacted label the effect's own intent recorded, when it recorded one.
+fn effect_label(effect: &Effect) -> Option<&str> {
+    effect
         .spec
         .payload
         .get("label")
         .and_then(Value::as_str)
         .filter(|label| !label.is_empty())
-        .map(|label| format!(" `{label}`"))
-        .unwrap_or_default();
-    format!("effect {} `{}`{label}", effect.sequence, effect.spec.kind)
 }
 
 /// Reclaim completed machine rows left between the close commit and sentinel
@@ -399,7 +404,7 @@ impl Run<'_> {
     }
 }
 
-pub(super) fn outcome(
+pub(crate) fn outcome(
     id: RunId,
     next: &Invocation,
     workload: WorkloadOutcome,
@@ -435,12 +440,19 @@ pub(super) fn outcome(
             },
         });
         if !effect.state.terminal() {
+            // The effect's own intent recorded its redacted label. A settle that
+            // stops on this effect has no later one to carry the reason, so the
+            // description has to name both here (effigy#476).
+            let label = effect_label(&effect).map(str::to_owned);
+            let reason = effect.reason.unwrap_or_else(|| "unresolved effect".into());
+            let detail = match label {
+                Some(label) => format!("{label}: {reason}"),
+                None => reason,
+            };
             outcome.add_residue(Residue {
                 kind: effect.spec.kind,
                 id: effect.spec.target.resource,
-                observation: Observed::Unknown(UnknownReason::Inconsistent(
-                    effect.reason.unwrap_or_else(|| "unresolved effect".into()),
-                )),
+                observation: Observed::Unknown(UnknownReason::Inconsistent(detail)),
                 next: next.clone(),
             });
         }
