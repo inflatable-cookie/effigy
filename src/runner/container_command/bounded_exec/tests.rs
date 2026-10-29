@@ -316,12 +316,11 @@ fn public_fixture(
     name: &str,
     workspace_identity: bool,
 ) -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
-    // The public path needs a checkout path outside the temporary directory
-    // (the Colima host-path guard refuses a repo under it), so the fixture is a
-    // fresh directory in the Effigy scratch namespace. Never a hardcoded shared
-    // directory: the fixture stays under the scratch root the run was given.
-    let parent = effigy_test_support::scratch_parent().expect("public fixture scratch root");
-    let (dir, bin_dir, repo_root) = fixture_in(name, Some(&parent));
+    // A fresh directory in the run's own scratch, never a hardcoded shared
+    // directory. The child's own `<fixture>/tmp` (set below) is its temporary
+    // directory, so the checkout is not under it and the Colima host-path guard
+    // is satisfied without moving the fixture out of the run's scratch.
+    let (dir, bin_dir, repo_root) = fixture_in(name, None);
     let home = dir.path().join("home");
     fs::create_dir_all(&home).expect("mkdir isolated home");
     // The child's own temp directory stays inside this fixture, so the repo is
@@ -1994,8 +1993,7 @@ mod handoff_local_tests {
         std::path::PathBuf,
         std::path::PathBuf,
     ) {
-        let parent = effigy_test_support::scratch_parent().expect("handoff fixture scratch root");
-        let (dir, bin_dir, repo_root) = super::fixture_in(name, Some(&parent));
+        let (dir, bin_dir, repo_root) = super::fixture_in(name, None);
         let workspace = repo_root.join("workspace");
         fs::create_dir_all(&workspace).expect("mkdir handoff workspace");
         fs::write(

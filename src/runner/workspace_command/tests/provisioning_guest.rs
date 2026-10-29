@@ -1380,8 +1380,30 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
         "the running process started from A's bytes"
     );
 
+    // The live executable's identity before publication: its bytes and the
+    // moment they were last written.
+    let live_path = guest
+        .host_path(&first_executable)
+        .expect("live executable path");
+    let before_bytes = std::fs::read(&live_path).expect("old bytes");
+    let before_digest = sha256_text(&before_bytes);
+    let before_modified = std::fs::metadata(&live_path)
+        .and_then(|metadata| metadata.modified())
+        .expect("live executable mtime");
+    let live_pid = running.id();
+    eprintln!(
+        "live proof: head={} pid={} executable={} sha256={} mtime={:?}",
+        std::env::var("EFFIGY_LIVE_PROOF_HEAD").unwrap_or_else(|_| "head-unset".to_owned()),
+        live_pid,
+        live_path.display(),
+        before_digest,
+        before_modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("mtime after epoch"),
+    );
+
     // Publish artifact B while A runs.
-    let before = std::fs::read(guest.host_path(&first_executable).unwrap()).expect("old bytes");
+    let before = before_bytes.clone();
     let artifact_b = script_artifact(&repo, "generation-b", 5);
     let second = prepare_disk(
         &repo,
@@ -1399,8 +1421,31 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
         running.try_wait().expect("poll").is_none(),
         "publication must not disturb the running executable"
     );
-    let after = std::fs::read(guest.host_path(&first_executable).unwrap()).expect("old bytes");
+    let after = std::fs::read(&live_path).expect("old bytes");
     assert_eq!(before, after, "the live executable's bytes never change");
+    let after_digest = sha256_text(&after);
+    let after_modified = std::fs::metadata(&live_path)
+        .and_then(|metadata| metadata.modified())
+        .expect("live executable mtime");
+    assert_eq!(
+        (before_digest.as_str(), before_modified),
+        (after_digest.as_str(), after_modified),
+        "the live executable's digest and mtime never change"
+    );
+    assert!(
+        running
+            .try_wait()
+            .expect("poll after publication")
+            .is_none(),
+        "the process that started from those bytes is still running"
+    );
+    eprintln!(
+        "live proof: after publication sha256={} mtime={:?} still-running=true",
+        after_digest,
+        after_modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("mtime after epoch"),
+    );
 
     // A new invocation resolves the new generation through the entry path.
     let fresh = Command::new(&entered)
@@ -1425,6 +1470,12 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
             .map(|path| path.is_file())
             .unwrap_or(false),
         "the superseded generation stays on disk for the run that holds it"
+    );
+
+    eprintln!(
+        "live proof: fresh invocation ran {} and entry link names {}",
+        String::from_utf8_lossy(&fresh.stdout).trim(),
+        std::fs::read_link(&entered).expect("entry link").display()
     );
 
     // Stop only the process this test started.

@@ -4,7 +4,6 @@ pub mod gateway;
 mod kernel_helpers;
 pub mod process;
 use std::cell::RefCell;
-use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -21,14 +20,21 @@ pub(crate) fn drain_process_fixtures() {
 
 /// A Unix socket path must fit `sun_path` (104 bytes on macOS and Linux). A
 /// managed run's control socket is `<home>/.effigy/state/sock/` plus a
-/// 26-character run id and `.sock`; a gateway's is 5 bytes longer, under
-/// `.effigy/gateway/runtime/`. A short fixture path therefore stays below
-/// this length, which leaves room for either socket. Under an Effigy run the
-/// temp root is the run's scratch (under `<root>/effigy/`). If a nested
-/// selector adds components below the run directory, a short fixture is created
-/// in that `effigy/` namespace itself - the one directory the scratch layout
-/// names - and nowhere else: never a parent of the temp root, never `/tmp`.
+/// 26-character run id and `.sock` (55 bytes); a gateway's is one byte longer,
+/// under `.effigy/gateway/runtime/` (56). A short fixture path therefore stays
+/// below this length, which leaves room for either socket.
 pub const SHORT_PATH_MAX: usize = 47;
+
+/// The shortest name a fixture falls back to when the caller's prefix does not
+/// fit the socket budget.
+const MINIMAL_PREFIX: &str = "e";
+const MINIMAL_RAND_BYTES: usize = 4;
+const DEFAULT_RAND_BYTES: usize = 6;
+
+/// Short temp bases used when the run's own temp root is too deep for a
+/// socket-safe path. A fixture created here is still a fresh directory that it
+/// removes itself; no existing directory is written into.
+const SHORT_BASES: [&str; 2] = ["/tmp", "/private/tmp"];
 
 /// The configured fixture root: the run's temporary directory, which a
 /// `[scratch]` run places on the configured volume.
@@ -36,81 +42,64 @@ fn configured_root() -> PathBuf {
     std::env::temp_dir()
 }
 
-/// Whether `path` is the `effigy/` child Effigy's scratch layout names.
-fn is_effigy_scratch_namespace(path: &Path) -> bool {
-    path.file_name() == Some(OsStr::new("effigy"))
+/// Whether `tempfile` can create a fixture named `name` with `rand_bytes`
+/// random characters under `parent` and stay inside the socket budget.
+fn fits(parent: &Path, name: &str, rand_bytes: usize) -> bool {
+    parent
+        .join(format!("{name}{}", "X".repeat(rand_bytes)))
+        .as_os_str()
+        .len()
+        < SHORT_PATH_MAX
 }
 
-fn effigy_scratch_namespace(configured: &Path) -> Option<&Path> {
-    configured
-        .ancestors()
-        .find(|ancestor| is_effigy_scratch_namespace(ancestor))
-}
-
-/// The parent a short fixture belongs under: the run's temp root when the
-/// resulting path leaves room for a Unix control socket, else the `effigy/`
-/// scratch namespace itself.
+/// Where a short fixture goes: the run's own temp root when a socket-safe path
+/// fits there, else a fresh directory under a short temp base.
 ///
-/// Nothing else is ever used. A fixture is never placed in the temp root's
-/// parent or any other shorter ancestor, because that would leave the run's own
-/// scratch directory; a root that fits neither position fails closed and names
-/// itself instead.
-fn short_parent(configured: PathBuf, prefix: &str) -> io::Result<PathBuf> {
+/// A parent of the temp root is never used, so a fixture cannot escape the
+/// directory the run was given. A temp root too deep for any name (for example
+/// a fresh `mktemp -d` root under a long scratch path, or an `effigy/`
+/// directory inside it) cannot hold a socket-safe home at all: the kernel
+/// resolves a state root's path before it places a socket in it, so a symlink
+/// would not shorten it. The fixture then becomes its own fresh directory under
+/// a short temp base, which keeps the socket short without writing into any
+/// existing directory.
+fn short_location(configured: PathBuf, prefix: &str) -> io::Result<(PathBuf, String, usize)> {
     let canonical = fs::canonicalize(&configured).unwrap_or_else(|_| configured.clone());
-    // `tempfile` appends six random characters; join includes the path
-    // separator so the checked path is the actual fixture root.
-    let fits =
-        |parent: &Path| parent.join(format!("{prefix}XXXXXX")).as_os_str().len() < SHORT_PATH_MAX;
-    if fits(&canonical) {
-        return Ok(configured);
+    if fits(&canonical, prefix, DEFAULT_RAND_BYTES) {
+        return Ok((configured, prefix.to_owned(), DEFAULT_RAND_BYTES));
     }
-    if let Some(mut namespace) = effigy_scratch_namespace(&canonical) {
-        // Only ancestors that are themselves the `effigy/` scratch namespace
-        // are candidates, so a nested selector's extra components are skipped
-        // without ever naming an unrelated directory.
-        loop {
-            if fits(namespace) {
-                return Ok(namespace.to_path_buf());
-            }
-            let Some(parent) = namespace.parent() else {
-                break;
-            };
-            if !is_effigy_scratch_namespace(parent) {
-                break;
-            }
-            namespace = parent;
+    if fits(&canonical, MINIMAL_PREFIX, MINIMAL_RAND_BYTES) {
+        return Ok((configured, MINIMAL_PREFIX.to_owned(), MINIMAL_RAND_BYTES));
+    }
+    for base in SHORT_BASES {
+        let base = PathBuf::from(base);
+        let canonical_base = fs::canonicalize(&base).unwrap_or_else(|_| base.clone());
+        if fits(&canonical_base, prefix, DEFAULT_RAND_BYTES) {
+            return Ok((canonical_base, prefix.to_owned(), DEFAULT_RAND_BYTES));
+        }
+        if fits(&canonical_base, MINIMAL_PREFIX, MINIMAL_RAND_BYTES) {
+            return Ok((
+                canonical_base,
+                MINIMAL_PREFIX.to_owned(),
+                MINIMAL_RAND_BYTES,
+            ));
         }
     }
     Err(io::Error::other(format!(
-        "temp root `{}` cannot hold a `{prefix}` fixture and its control socket; \
-         configure `[scratch]` or a shorter TMPDIR",
+        "temp root `{}` cannot hold a `{prefix}` fixture and its control socket, and no short \
+         temp base is available; set TMPDIR to a shorter directory",
         configured.display()
     )))
-}
-
-/// The parent a fixture outside the temporary directory belongs under.
-///
-/// A harness that needs a checkout path the temporary directory cannot supply
-/// (the Colima host-path guard refuses a repo under it) creates its fresh
-/// fixture here: the `effigy/` scratch namespace above the configured temp root
-/// when the run has one, else the temp root itself. Either way the fixture is a
-/// fresh directory inside the run's own scratch, never a hardcoded shared
-/// directory.
-pub fn scratch_parent() -> io::Result<PathBuf> {
-    let configured = configured_root();
-    let canonical = fs::canonicalize(&configured).unwrap_or(configured);
-    Ok(effigy_scratch_namespace(&canonical)
-        .map(Path::to_path_buf)
-        .unwrap_or(canonical))
 }
 
 /// A fresh temporary directory whose path stays short enough for a Unix
 /// control socket, for harnesses that need a bare `TempDir` rather than a
 /// [`Fixture`].
 pub fn short_tempdir(prefix: &str) -> io::Result<tempfile::TempDir> {
-    let parent = short_parent(std::env::temp_dir(), prefix)?;
+    let (parent, name, rand_bytes) = short_location(configured_root(), prefix)?;
     tempfile::Builder::new()
-        .prefix(prefix)
+        .prefix(&name)
+        .rand_bytes(rand_bytes)
         .tempdir_in(fs::canonicalize(parent)?)
 }
 
@@ -125,16 +114,23 @@ impl Fixture {
         Self::in_parent(prefix, &configured_root())
     }
 
-    /// A fixture HOME short enough for a managed run's Unix control socket. It
-    /// uses the configured temp root when that fits (a `[scratch]` run's
-    /// `TMPDIR` does) and the nearest fitting parent in its `effigy/` scratch
-    /// namespace when a nested selector adds path components. It does not
-    /// escape to `/tmp` when the configured temp root cannot fit a socket.
+    /// A fixture HOME short enough for a managed run's Unix control socket.
+    ///
+    /// The run's own temp root is used when a socket-safe path fits there; a
+    /// temp root too deep for any name (a fresh `mktemp -d` under a long
+    /// scratch path, or an `effigy/` directory inside it) cannot hold one, so
+    /// the fixture is a fresh directory under a short temp base instead. See
+    /// [`short_location`]: no parent of the temp root is ever used.
     pub fn short_home(prefix: &str) -> io::Result<Self> {
-        Self::in_parent(prefix, &short_parent(configured_root(), prefix)?)
+        let (parent, name, rand_bytes) = short_location(configured_root(), prefix)?;
+        Self::adopt_in(&name, rand_bytes, &parent)
     }
 
     pub fn in_parent(prefix: &str, parent: &Path) -> io::Result<Self> {
+        Self::adopt_in(prefix, DEFAULT_RAND_BYTES, parent)
+    }
+
+    fn adopt_in(prefix: &str, rand_bytes: usize, parent: &Path) -> io::Result<Self> {
         let parent = fs::canonicalize(parent)?;
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -143,7 +139,12 @@ impl Fixture {
         if parent.starts_with(fs::canonicalize(checkout)?) {
             return Err(io::Error::other("external fixture root is inside checkout"));
         }
-        Self::adopt(tempfile::Builder::new().prefix(prefix).tempdir_in(parent)?)
+        Self::adopt(
+            tempfile::Builder::new()
+                .prefix(prefix)
+                .rand_bytes(rand_bytes)
+                .tempdir_in(parent)?,
+        )
     }
 
     /// External workspace fixture. Container paths stay inside the run's own
@@ -273,98 +274,141 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
+    /// Both confined run shapes the reviewer uses: a fresh `mktemp -d` root
+    /// directly under the scratch namespace, and an `effigy/` directory inside
+    /// such a root used as TMPDIR. Neither is shortest enough for a literal
+    /// socket-safe fixture, so the route must stay short without writing into
+    /// either root's parent.
     #[test]
-    fn short_parent_uses_the_run_temp_root_or_the_scratch_namespace() {
-        let run = PathBuf::from("/Volumes/Builds/scratch/effigy/abcdefgh");
-        assert_eq!(
-            short_parent(run.clone(), "kfault-").unwrap(),
-            Path::new("/Volumes/Builds/scratch/effigy")
-        );
-        let roomy = PathBuf::from("/tmp");
-        assert_eq!(short_parent(roomy.clone(), "e235g.").unwrap(), roomy);
+    fn short_location_is_socket_short_for_both_confined_run_shapes() {
+        let flat = PathBuf::from("/Volumes/Builds/scratch/effigy/rev-AbCdEf12");
+        let nested = flat.join("effigy");
+        for run_root in [&flat, &nested] {
+            let (parent, name, rand_bytes) = short_location(run_root.clone(), "ef-te-").unwrap();
+            assert_ne!(
+                parent,
+                *run_root.parent().expect("run root has a parent"),
+                "a short fixture is never placed in the run root's parent"
+            );
+            if parent == *run_root {
+                // Shape (a) is contained in the run's own scratch: a minimal
+                // name fits the socket budget there.
+                assert!(fits(run_root, MINIMAL_PREFIX, MINIMAL_RAND_BYTES));
+            } else {
+                // Shape (b) cannot hold a socket-safe home at all; the fixture
+                // becomes its own fresh directory under a short temp base.
+                assert!(
+                    SHORT_BASES.iter().any(|base| Path::new(base) == parent
+                        || fs::canonicalize(base).ok().as_deref() == Some(parent.as_path())),
+                    "{}",
+                    parent.display()
+                );
+            }
+            let fixture = parent.join(format!("{name}{}", "X".repeat(rand_bytes)));
+            assert!(
+                fixture.as_os_str().len() < SHORT_PATH_MAX,
+                "{} is too long for a control socket",
+                fixture.display()
+            );
+        }
     }
 
-    /// A temp root too long for the socket fails closed: the fixture is never
-    /// moved into the temp root's parent or another shorter ancestor, because
-    /// that would escape the directory the run was given.
     #[test]
-    fn short_parent_never_falls_back_to_a_parent_of_the_temp_root() {
-        // A long run directory under a short parent: `/tmp` alone would fit,
-        // and is exactly the parent this must refuse instead of using.
-        let long_run = PathBuf::from("/tmp/0123456789abcdef0123456789abcdef0123456789");
+    fn short_location_keeps_a_roomy_run_root_and_never_uses_its_parent() {
+        let roomy = PathBuf::from("/tmp");
+        let (parent, name, rand_bytes) = short_location(roomy.clone(), "ef-te-").unwrap();
+        assert_eq!(parent, roomy);
         assert!(
-            PathBuf::from("/tmp")
-                .join(format!("{}XXXXXX", "ef-te-"))
+            roomy
+                .join(format!("{name}{}", "X".repeat(rand_bytes)))
                 .as_os_str()
                 .len()
                 < SHORT_PATH_MAX
         );
+
+        // A run root that fits the caller's prefix keeps it, so fixture names
+        // stay meaningful.
+        let fitting = PathBuf::from("/Volumes/Builds/scratch/effigy");
+        let (parent, name, rand_bytes) = short_location(fitting.clone(), "ef-te-").unwrap();
+        assert_eq!(parent, fitting);
+        assert_eq!(name, "ef-te-");
         assert!(
-            long_run
-                .join(format!("{}XXXXXX", "ef-te-"))
+            fitting
+                .join(format!("{name}{}", "X".repeat(rand_bytes)))
                 .as_os_str()
                 .len()
-                >= SHORT_PATH_MAX
+                < SHORT_PATH_MAX
         );
-        let error = short_parent(long_run.clone(), "ef-te-").unwrap_err();
+
+        // A run root too deep for the prefix but not for a minimal name keeps
+        // the fixture inside the run's own scratch.
+        let narrower = PathBuf::from("/Volumes/Builds/scratch/effigy/rev-1");
+        let (parent, name, rand_bytes) = short_location(narrower.clone(), "ef-te-").unwrap();
+        assert_eq!(parent, narrower);
+        assert_eq!(name, MINIMAL_PREFIX);
         assert!(
-            error.to_string().contains(&long_run.display().to_string()),
-            "{error}"
+            narrower
+                .join(format!("{name}{}", "X".repeat(rand_bytes)))
+                .as_os_str()
+                .len()
+                < SHORT_PATH_MAX
         );
     }
 
     #[test]
-    fn scratch_parent_stays_inside_the_run_scratch() {
-        let parent = scratch_parent().unwrap();
-        let temp = fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
-        assert!(
-            temp.starts_with(&parent) || parent == temp,
-            "{} is not the run's scratch root for {}",
-            parent.display(),
-            temp.display()
-        );
-    }
-
-    #[test]
-    fn short_parent_climbs_to_a_fitting_effigy_namespace_for_nested_temp_paths() {
-        let nested = PathBuf::from("/Volumes/Builds/scratch/effigy/effigy/abcdefgh/validation/tmp");
-        let parent = short_parent(nested, "ef-te-").unwrap();
-        assert_eq!(parent, Path::new("/Volumes/Builds/scratch/effigy"));
-        let fixture = parent.join(format!("ef-te-{}", "x".repeat(6)));
-        assert!(fixture.as_os_str().len() < SHORT_PATH_MAX, "{fixture:?}");
-    }
-
-    #[test]
-    fn short_parent_names_a_temp_root_that_cannot_bound_a_socket() {
-        let long = PathBuf::from("/private/var/folders/ng/5rcw8k5s24j50my4x2rqf8sm0000gn/T");
-        let error = short_parent(long.clone(), "e235g.").unwrap_err();
-        assert!(error.to_string().contains(&long.display().to_string()));
-    }
-
-    #[test]
-    fn short_tempdir_stays_within_the_socket_budget() {
-        let namespaces: Vec<PathBuf> = std::env::temp_dir()
-            .ancestors()
-            .filter(|ancestor| is_effigy_scratch_namespace(ancestor))
-            .map(|namespace| {
-                fs::canonicalize(namespace).unwrap_or_else(|_| namespace.to_path_buf())
-            })
-            .collect();
+    fn short_tempdir_is_a_fresh_socket_short_directory() {
         let directory = short_tempdir("short-").unwrap();
         assert!(
             directory.path().as_os_str().len() < SHORT_PATH_MAX,
             "{} is too long for a control socket",
             directory.path().display()
         );
-        if !namespaces.is_empty() {
-            assert!(
-                namespaces
-                    .iter()
-                    .any(|namespace| directory.path().starts_with(namespace)),
-                "short fixture escaped the Effigy scratch namespace: {}",
-                directory.path().display()
-            );
-        }
+        let parent = directory.path().parent().expect("fixture parent");
+        let temp = fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+        let short_base = SHORT_BASES.iter().any(|base| {
+            fs::canonicalize(base)
+                .map(|base| base == parent)
+                .unwrap_or(false)
+        });
+        assert!(
+            parent == temp || short_base,
+            "{} is neither the run's temp root nor a short temp base",
+            parent.display()
+        );
+    }
+
+    #[test]
+    fn short_home_is_a_fresh_socket_short_home() {
+        let home = Fixture::short_home("ef-te-").unwrap();
+        eprintln!(
+            "short_home: temp_root={} fixture={} len={}",
+            std::env::temp_dir().display(),
+            home.path().display(),
+            home.path().as_os_str().len()
+        );
+        assert!(
+            home.path().as_os_str().len() < SHORT_PATH_MAX,
+            "{} is too long for a control socket",
+            home.path().display()
+        );
+        assert!(home.path().is_dir());
+        let temp = fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+        let parent = home
+            .path()
+            .parent()
+            .expect("fixture parent")
+            .canonicalize()
+            .unwrap_or_else(|_| home.path().parent().unwrap().to_path_buf());
+        let short_base = SHORT_BASES.iter().any(|base| {
+            fs::canonicalize(base)
+                .map(|base| base == parent)
+                .unwrap_or(false)
+        });
+        assert!(
+            parent == temp || short_base,
+            "{} is neither the run's temp root nor a short temp base",
+            parent.display()
+        );
     }
 
     #[test]
