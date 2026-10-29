@@ -2088,6 +2088,205 @@ fn a_full_stream_window_still_serves_cancel_and_resumes_after_an_ack() {
     assert_eq!(stops, 2);
 }
 
+fn enrol_request(session: Session, capability: Secret) -> EnrolRequest {
+    EnrolRequest {
+        credential: Secret::new([0; 32]),
+        capability: *capability.bytes(),
+        session_run_id: session.run,
+        session_generation: session.generation,
+        environment_generation: Generation::new(4),
+        container_id: "c0ffee".into(),
+        vm_boot_id: "boot-1".into(),
+    }
+}
+
+fn enrolable_book(session: Session, credential: &Secret) -> GrantBook {
+    let mut grants = GrantBook::new();
+    grants.enrollable(Enrolment {
+        credential: credential.clone(),
+        session,
+        environment_generation: Generation::new(4),
+        container_id: "c0ffee".into(),
+        vm_boot_id: "boot-1".into(),
+        host_user: "operator".into(),
+        checkout: "checkout".into(),
+        scope: EnrolmentScope {
+            operations: [Method::Observe].into_iter().collect(),
+            targets: BTreeSet::new(),
+        },
+    });
+    grants
+}
+
+#[test]
+fn a_revoked_generation_ends_the_enrolment_credential() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-revoke-enrol");
+    let credential = Secret::new([0x79; 32]);
+    let mut grants = enrolable_book(session, &credential);
+    let first = Secret::new([0x44; 32]);
+    let mut request = enrol_request(session, first.clone());
+    request.credential = credential.clone();
+    grants.enrol(&credential, &request).expect("enrolled");
+    assert!(grants.authenticate(&first).is_ok());
+
+    // Revoking another session leaves this one enrolable.
+    grants.revoke_generation(RunId::new(1, [77; 10]).expect("run id"), Generation::new(9));
+    assert!(grants.enrolable());
+    // Revoking this generation ends both the issued capability and the
+    // credential that could mint another one (§8.11).
+    grants.revoke_generation(session.run, session.generation);
+    assert!(!grants.enrolable());
+    assert_eq!(
+        grants.authenticate(&first).expect_err("revoked").code,
+        RefusalCode::Unauthenticated
+    );
+    let second = Secret::new([0x45; 32]);
+    let mut again = enrol_request(session, second.clone());
+    again.credential = credential.clone();
+    assert_eq!(
+        grants
+            .enrol(&credential, &again)
+            .expect_err("the credential is gone with its generation")
+            .code,
+        RefusalCode::Forbidden
+    );
+
+    // The same over the wire: a re-enrolment after revocation refuses and
+    // issues nothing.
+    let mut wire = enrolable_book(session, &credential);
+    wire.revoke_generation(session.run, session.generation);
+    let mut host = Server::new(
+        host(),
+        fence(session),
+        pinned(),
+        wire,
+        Dispatcher::new(
+            Admitter::default(),
+            Resolver::new(task("workspace-channel").resource()),
+            Observer::default(),
+            Ids::new(&[67]),
+        ),
+    );
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Enrol(enrol_request(session, Secret::new([0x46; 32]))),
+        ]),
+        peer(),
+    );
+    let refusal = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect_err("a revoked enrolment refuses");
+    assert_eq!(refusal.code, RefusalCode::Forbidden);
+    assert!(!host.grants.enrolable());
+    assert!(host.grants.authenticate(&Secret::new([0x46; 32])).is_err());
+}
+
+#[test]
+fn a_reused_server_starts_each_connection_with_no_stream_state() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-reuse");
+    let (_run, live) = admitted_run(&cx, &root, session, 41, &[121]);
+    let mut host = server(session, &[122, 123]);
+    let attach = |id: u8| {
+        Frame::Request(request(
+            session,
+            RequestBody::Attach(AttachBody {
+                run: live,
+                streams: vec![StreamKind::Stdout],
+                cursor: None,
+            }),
+            id,
+        ))
+    };
+    // The first connection fills the window, detaches, then closes on a frame
+    // no authenticated connection may carry (so no EOF release).
+    let mut first_streams = ScriptedStreams::frames(MAX_UNACKED_STREAM_FRAMES + 2);
+    let mut first = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach(1),
+            Frame::Request(request(
+                session,
+                RequestBody::Detach(RunBody { run: live }),
+                2,
+            )),
+            Frame::Hello(hello()),
+        ]),
+        peer(),
+    );
+    let _ = host
+        .serve(
+            &mut first,
+            &cx,
+            &observe_context(),
+            &root,
+            &mut first_streams,
+        )
+        .expect_err("the connection closes");
+    assert_eq!(
+        host.outbound.window().unacked(),
+        MAX_UNACKED_STREAM_FRAMES,
+        "the first connection left its window full"
+    );
+    assert!(first_streams.remaining() > 0);
+    assert!(host.stream_id.is_none(), "the detach cleared the stream");
+    assert!(host.carry.is_none(), "the detach dropped the held chunk");
+
+    // The second connection reuses the same server: it publishes nothing
+    // before its own attach, and its frames name its own request id.
+    let mut second_streams = ScriptedStreams::frames(MAX_UNACKED_STREAM_FRAMES);
+    let mut second = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach(3),
+        ]),
+        peer(),
+    );
+    host.serve(
+        &mut second,
+        &cx,
+        &observe_context(),
+        &root,
+        &mut second_streams,
+    )
+    .expect("served");
+    let frames = written_frames(&second);
+    let attach_at = frames
+        .iter()
+        .position(|frame| matches!(frame, Frame::Response(_)))
+        .expect("the attach was answered");
+    let data: Vec<&StreamFrame> = frames
+        .iter()
+        .filter_map(|frame| match frame {
+            Frame::Stream(stream) if stream.kind == StreamKind::Stdout => Some(stream),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        data.len(),
+        MAX_UNACKED_STREAM_FRAMES,
+        "the window was reset for the new connection"
+    );
+    let first_data = frames
+        .iter()
+        .position(
+            |frame| matches!(frame, Frame::Stream(stream) if stream.kind == StreamKind::Stdout),
+        )
+        .expect("data was published");
+    assert!(
+        first_data > attach_at,
+        "nothing is published before this connection attaches"
+    );
+    let own = RequestId::new([3; 16]);
+    assert!(
+        data.iter().all(|frame| frame.id == own),
+        "every frame names this connection's attach"
+    );
+    assert_eq!(second_streams.remaining(), 0);
+}
+
 #[test]
 fn a_connection_is_bounded_and_a_bad_frame_closes_it() {
     let (_fixture, cx, root, session) = journal("effigy-channel-bounded");

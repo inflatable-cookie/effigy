@@ -915,8 +915,10 @@ impl GrantBook {
         self.grants.push(grant.clone());
         Ok(grant)
     }
-    /// End every grant bound to a session run at or below a generation. A
-    /// capability from a dead generation is worth nothing (§8.11).
+    /// End every grant bound to a session run at or below a generation, and
+    /// end the enrolment credential that could mint a new one for it. A
+    /// capability from a dead generation is worth nothing, and re-enrolment
+    /// cannot revive it (§8.11: the credential is revoked on generation change).
     pub fn revoke_generation(&mut self, session_run_id: RunId, generation: Generation) {
         for grant in &mut self.grants {
             if grant.binding.session.run == session_run_id
@@ -925,6 +927,16 @@ impl GrantBook {
                 grant.revoked = true;
             }
         }
+        if self.enrolment.as_ref().is_some_and(|enrolment| {
+            enrolment.session.run == session_run_id && enrolment.session.generation <= generation
+        }) {
+            self.enrolment = None;
+        }
+    }
+    /// Whether this book can still enrol a capability. A revoked generation
+    /// leaves nothing to enrol with.
+    pub fn enrolable(&self) -> bool {
+        self.enrolment.is_some()
     }
     pub fn revoke_all(&mut self) {
         for grant in &mut self.grants {
@@ -2051,6 +2063,10 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         root: &StateRoot,
         streams: &mut impl Streams,
     ) -> Result<Served, Refusal> {
+        // A server may serve successive connections, so each one starts with no
+        // queued stream state: a previous connection's window, carry or request
+        // id never reaches this one.
+        self.begin_connection();
         // The pin is decided before a single byte crosses the connection, so a
         // mismatched identity never receives a credential and never learns a
         // version.
@@ -2074,6 +2090,13 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 closed: true,
             }),
         }
+    }
+
+    /// Drop everything the previous connection left queued.
+    fn begin_connection(&mut self) {
+        self.outbound = Outbound::new();
+        self.stream_id = None;
+        self.carry = None;
     }
 
     /// The unauthenticated half: `hello`, `hello_ok`, then `authenticate` or
@@ -2201,6 +2224,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 .release(cx, root, Release::Eof)
                 .map_err(refusal_from)?;
         }
+        self.begin_connection();
         state.closed = true;
         Ok(())
     }
@@ -2339,6 +2363,10 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                         None => self.dispatcher.detach(cx, root, session, body)?,
                     }
                     self.stream_id = None;
+                    // A detached connection has no attachment to publish for,
+                    // so an unpublished chunk from it is dropped rather than
+                    // carried to whatever attaches next.
+                    self.carry = None;
                     Ok(ResponseOutcome::Observed(Value::Null))
                 }
             }
