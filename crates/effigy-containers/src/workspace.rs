@@ -847,10 +847,12 @@ fn check_guest_mounts(
     mounts: impl IntoIterator<Item = EffectiveMount>,
 ) -> Result<(), ContainerPolicyError> {
     let protected = guest_protected_host_paths(canonical_repo_root);
-    let checkout_target = working_dir.display().to_string();
-    let mask_targets = guest_mask_targets(working_dir);
+    let checkout_target =
+        normalize_guest_target(container_name, &working_dir.display().to_string())?;
+    let mask_targets = guest_mask_targets(Path::new(&checkout_target));
     let mut targets = std::collections::BTreeSet::new();
-    for mount in mounts {
+    for mut mount in mounts {
+        mount.target = normalize_guest_target(container_name, &mount.target)?;
         check_guest_mount(
             container_name,
             &protected,
@@ -869,6 +871,25 @@ fn check_guest_mounts(
         }
     }
     Ok(())
+}
+
+/// Compare Linux guest destinations without depending on host filesystem
+/// canonicalization. Parent traversal is refused; redundant separators and
+/// current-directory components have one spelling for every isolation check.
+fn normalize_guest_target(
+    container_name: &str,
+    target: &str,
+) -> Result<String, ContainerPolicyError> {
+    if !target.starts_with('/') || target.split('/').any(|part| part == "..") {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` mount target `{target}` must be an absolute guest path \
+             without `..` traversal; write the destination directly before preparing the workspace"
+        )));
+    }
+    let parts = target
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".");
+    Ok(format!("/{}", parts.collect::<Vec<_>>().join("/")))
 }
 
 /// The guest paths the host state masks own, in the checkout's terms.

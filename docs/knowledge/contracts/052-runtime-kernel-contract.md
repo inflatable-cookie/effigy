@@ -2421,7 +2421,11 @@ workspace is admitted:
   requests to the secrets engine.
 - Mount isolation validates the complete effective mount set the primary
   service will have: injected and retained entries, short and long form, with
-  Compose interpolation expanded and a bind-backed named volume resolved
+  absolute guest targets checked before comparison. Parent (`..`) traversal
+  refuses; redundant separators and current-directory (`.`) components normalize
+  before private-store overlap, mask ownership and duplicate-target checks.
+  This also applies to checkout destinations and every Compose overlay.
+  Compose interpolation is expanded and a bind-backed named volume is resolved
   through its local driver options. External volumes, explicit volume-name
   aliases, unknown volume names and drivers whose host source cannot be
   established are refused without a backend source inspection receipt.

@@ -13,6 +13,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Breaking
 
+- Workspace guest mount targets must be absolute and contain no `..` components.
+  Equivalent spellings using repeated separators or `.` share the same private
+  store, state-mask and duplicate-target checks.
+
 - Workspace declarations sharing one container must have identical effective
   configuration; give workspaces with different paths, mounts or identities
   distinct container names. Declared workspaces without a usable `user` and

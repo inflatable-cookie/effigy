@@ -955,6 +955,53 @@ mod overlay_tests {
     }
 
     #[test]
+    fn traversing_or_aliased_private_targets_in_an_overlay_are_refused() {
+        let repo = fixture("target-traversal");
+        let canonical = repo.canonicalize().unwrap();
+        fs::create_dir(canonical.join("data")).unwrap();
+        let base = canonical.join("compose.yml");
+        let middle = canonical.join("middle.yml");
+        let last = canonical.join("last.yml");
+        fs::write(&base, "services:\n  app:\n    image: app\n").unwrap();
+        fs::write(
+            &last,
+            "services:\n  app:\n    environment:\n      MODE: fixture\n",
+        )
+        .unwrap();
+        let config = container_config();
+        let workspace = effigy_manifest::ManifestWorkspaceConfig::default();
+        for target in [
+            "/run/other/../effigy/context",
+            "/workspace/other/../.effigy/state",
+            "/run//effigy/./context",
+        ] {
+            for mount in [
+                format!("./data:{target}"),
+                format!("{{type: bind, source: ./data, target: '{target}'}}"),
+            ] {
+                fs::write(
+                    &middle,
+                    format!("services:\n  app:\n    volumes:\n      - {mount}\n"),
+                )
+                .unwrap();
+                let mut draft = crate::policy::render::Draft::default();
+                let error = rewrite_workspace_mounts_for_direct_compose(
+                    request(&canonical, Path::new("/workspace"), &config, &workspace),
+                    &[base.clone(), middle.clone(), last.clone()],
+                    false,
+                    &mut draft,
+                )
+                .expect_err("an intermediate overlay cannot shadow guest-private storage");
+                assert!(error.to_string().contains("mount target"), "{error}");
+                assert!(
+                    !canonical.join(".effigy/runtime").exists(),
+                    "refused rendering writes no host output"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn external_volume_sources_stay_refused_after_a_metadata_only_overlay() {
         let repo_root = fixture("external-volume-overlay");
         let canonical = repo_root.canonicalize().unwrap();

@@ -1207,6 +1207,119 @@ mod guest_isolation_tests {
     }
 
     #[test]
+    fn guest_target_traversal_refuses_declared_and_short_and_long_compose_mounts() {
+        let repo = temp_dir("target-traversal");
+        let canonical = repo.canonicalize().unwrap();
+        let data = canonical.join("data");
+        fs::create_dir(&data).unwrap();
+        for target in [
+            "/run/other/../effigy/context",
+            "/run/effigy/../effigy/bin",
+            "/workspace/other/../.effigy/state",
+            "/workspace/other/../.effigy/secrets",
+            "/workspace/cache/../data",
+        ] {
+            let error = enforce_guest_mount_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &[bind_mount(&data, target)],
+            )
+            .expect_err("injected mounts must not hide their effective target");
+            assert!(
+                error.to_string().contains("without `..` traversal"),
+                "{error}"
+            );
+            for raw in [
+                format!("./data:{target}"),
+                format!("{{type: bind, source: ./data, target: '{target}'}}"),
+                format!("{{type: volume, source: cache, target: '{target}'}}"),
+            ] {
+                let definitions = serde_yaml::from_str("cache: {}").unwrap();
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    Some(&definitions),
+                    &[serde_yaml::from_str(&raw).unwrap()],
+                )
+                .expect_err("Compose forms obey the same target boundary");
+                assert!(
+                    error.to_string().contains("without `..` traversal"),
+                    "{error}"
+                );
+            }
+        }
+        let error = enforce_guest_mount_isolation(
+            "dev",
+            &canonical,
+            Path::new("/outer/../workspace"),
+            &[bind_mount(&data, "/workspace/data")],
+        )
+        .expect_err("the checkout destination also cannot carry parent traversal");
+        assert!(
+            error.to_string().contains("without `..` traversal"),
+            "{error}"
+        );
+        let mount =
+            serde_yaml::from_str("{type: bind, source: ./data, target: run/effigy/context}")
+                .unwrap();
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            None,
+            &[mount],
+        )
+        .expect_err("long-form targets must also be absolute guest paths");
+        assert!(error.to_string().contains("absolute guest path"), "{error}");
+    }
+
+    #[test]
+    fn guest_target_aliases_share_store_mask_and_duplicate_checks() {
+        let repo = temp_dir("target-aliases");
+        let canonical = repo.canonicalize().unwrap();
+        let data = canonical.join("data");
+        fs::create_dir(&data).unwrap();
+        for (target, reason) in [
+            ("/run//effigy/./context", "guest's own store"),
+            ("/workspace/.effigy/./state", "masked checkout path"),
+            ("//workspace//.effigy/secrets/", "masked checkout path"),
+        ] {
+            let error = enforce_guest_mount_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &[bind_mount(&data, target)],
+            )
+            .expect_err("equivalent spellings do not evade protected destinations");
+            assert!(error.to_string().contains(reason), "{error}");
+        }
+        let mounts = [
+            bind_mount(&data, "/workspace/data"),
+            bind_mount(&data, "//workspace//./data/"),
+        ];
+        let error =
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect_err("two aliases of one guest path are duplicate destinations");
+        assert!(
+            error
+                .to_string()
+                .contains("two sources at guest path `/workspace/data`"),
+            "{error}"
+        );
+        enforce_guest_mount_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &[bind_mount(&data, "//workspace//./data/")],
+        )
+        .expect("an ordinary destination may use redundant separators and dots");
+    }
+
+    #[test]
     fn a_mount_into_the_guest_private_store_is_refused() {
         let repo_root = temp_dir("guest-store");
         let canonical = repo_root.canonicalize().expect("canonical root");
