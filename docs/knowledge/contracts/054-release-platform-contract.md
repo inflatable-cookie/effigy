@@ -517,9 +517,9 @@ an invented one. Nothing in those fixtures pushes, tags or publishes.
 ## 13. Implementation record: Effigy's own release (§4.4)
 
 `config/release.toml` is one declaration for Effigy: the `effigy` identity, a
-`preflight` pre gate and the `ci`, `format`, `test`, `qa`, `build`, `smoke` and
-`metadata` certify gates, the `binary` artifact, and the `tag` and `binaries`
-targets. §13 records the choices §4.4 left open.
+`preflight` pre gate and the `secret-audit`, `ci`, `format`, `test`, `qa`,
+`build`, `smoke` and `metadata` certify gates, the `binary` artifact, and the
+`tag` and `binaries` targets. §13 records the choices §4.4 left open.
 
 **The Effigy-only commands are repo tasks, and two of them are gates.** The
 retired `release validate|preflight|proof|check-binary|verify-install|evidence`
