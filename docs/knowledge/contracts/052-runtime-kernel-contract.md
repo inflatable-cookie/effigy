@@ -2837,9 +2837,17 @@ and `Admission` receives the reservation's `AdmissionTicket`, which the engine
 hands to `EngineLaunch::admission`, so the run an engine admits is the run the
 record names. `observe` reserves nothing and attaches nothing; a capability is
 memory-only, checked before every effect, and its operation and target scope is
-the host's, never the client's. The transport, the guest client and the runner
-integration remain separate tasks. `test:kernel:workspace-channel` owns these
-proofs.
+the host's, never the client's. Every request is checked against the grant's
+server-side binding as well as its own claims, and enrolment issues a capability
+for the session the host recorded, never the one an `enrol` frame names.
+A connection owns at most one attachment: attaching to another run refuses,
+replacing this connection's own secondary releases the replaced row, and only
+the connection that admitted a run holds its owner handle. Captured output is
+published through a pump bounded by the acknowledgement window, so a control
+request is answered while data is backpressured; the connection's lifetime is
+its session's, and a closed connection whose frames were malformed releases no
+owner lifetime. The transport, the guest client and the runner integration
+remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map
 

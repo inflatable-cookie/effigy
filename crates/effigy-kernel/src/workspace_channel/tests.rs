@@ -378,6 +378,85 @@ fn peer() -> Option<ServerIdentity> {
     Some(ServerIdentity { digest: pinned() })
 }
 
+/// A run admitted through the kernel's own reservation, so attachment and
+/// control proofs act on a live owner.
+fn admitted_run<'a>(
+    cx: &EffectContext,
+    root: &'a StateRoot,
+    session: Session,
+    request: u8,
+    ids: &[u8],
+) -> (Run<'a>, RunId) {
+    // Its own owner gate, so two admitted runs in one proof do not contend.
+    let owner = task(&format!("workspace-channel-{request}")).resource();
+    let mut dispatcher = Dispatcher::new(
+        Admitter::default(),
+        Resolver::new(owner.clone()),
+        Observer::default(),
+        Ids::new(ids),
+    );
+    let id = RequestId::new([request; 16]);
+    let AdmissionReply::Accepted(accepted) = dispatcher
+        .invoke(
+            cx,
+            &observe_context(),
+            root,
+            session,
+            id,
+            Digest::of(b"invite"),
+            &invocation_body("build"),
+        )
+        .expect("reserved")
+    else {
+        panic!("a fresh admission is accepted");
+    };
+    let ticket = dispatcher.admission.tickets[0].clone();
+    let run = Run::begin_admitted(
+        cx,
+        root,
+        &invocation(owner),
+        BeginOpts {
+            id: ticket.run(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next_argv(),
+            custody: None,
+        },
+        &cleanup(cx),
+        &mut NoEffects,
+        ticket,
+    )
+    .expect("admitted");
+    (run, accepted.run)
+}
+
+/// One connection's captured output, as the attachment's owner would publish it.
+#[derive(Debug)]
+struct ScriptedStreams {
+    chunks: VecDeque<StreamChunk>,
+}
+impl ScriptedStreams {
+    fn frames(count: usize) -> Self {
+        Self {
+            chunks: (0..count)
+                .map(|_| StreamChunk {
+                    stream_id: 1,
+                    kind: StreamKind::Stdout,
+                    bytes: vec![0x41; MAX_STREAM_PAYLOAD],
+                })
+                .collect(),
+        }
+    }
+    fn remaining(&self) -> usize {
+        self.chunks.len()
+    }
+}
+impl Streams for ScriptedStreams {
+    fn next_chunk(&mut self) -> Option<StreamChunk> {
+        self.chunks.pop_front()
+    }
+}
+
 #[test]
 fn a_frame_round_trips_through_its_length_prefix() {
     let hello = hello();
@@ -441,7 +520,7 @@ fn pin_mismatch_refuses_before_a_credential_is_disclosed() {
     });
     let mut pipe = Pipe::new(stream(&[Frame::Authenticate(capability())]), other);
     let refusal = host
-        .serve(&mut pipe, &cx, &observe_context(), &root)
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
         .expect_err("a pin mismatch refuses");
     assert_eq!(refusal.code, RefusalCode::IdentityMismatch);
     let frames = written_frames(&pipe);
@@ -450,9 +529,15 @@ fn pin_mismatch_refuses_before_a_credential_is_disclosed() {
     // An unverified connection is not a pin either.
     let mut anonymous = Pipe::new(Vec::new(), None);
     assert_eq!(
-        host.serve(&mut anonymous, &cx, &observe_context(), &root)
-            .expect_err("an unverified peer refuses")
-            .code,
+        host.serve(
+            &mut anonymous,
+            &cx,
+            &observe_context(),
+            &root,
+            &mut NoStreams
+        )
+        .expect_err("an unverified peer refuses")
+        .code,
         RefusalCode::IdentityMismatch
     );
     assert!(written_frames(&anonymous)
@@ -495,7 +580,7 @@ fn version_and_digest_mismatch_refuse_before_authentication() {
             peer(),
         );
         let refusal = host
-            .serve(&mut pipe, &cx, &observe_context(), &root)
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
             .expect_err("a mismatch refuses");
         assert!(matches!(
             refusal.code,
@@ -529,7 +614,7 @@ fn no_request_crosses_before_authentication() {
     );
     let mut host = server(session, &[1]);
     let refusal = host
-        .serve(&mut pipe, &cx, &observe_context(), &root)
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
         .expect_err("an unauthenticated request refuses");
     assert_eq!(refusal.code, RefusalCode::Unauthenticated);
     assert_eq!(host.dispatcher.observer.calls, 0);
@@ -550,7 +635,7 @@ fn an_unknown_capability_refuses_without_dispatch() {
     );
     let mut host = server(session, &[1]);
     let refusal = host
-        .serve(&mut pipe, &cx, &observe_context(), &root)
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
         .expect_err("an unissued capability refuses");
     assert_eq!(refusal.code, RefusalCode::Unauthenticated);
     assert_eq!(host.dispatcher.observer.calls, 0);
@@ -636,7 +721,7 @@ fn observe_writes_nothing_and_retries_re_observe() {
         peer(),
     );
     let served = host
-        .serve(&mut pipe, &cx, &observe_context(), &root)
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
         .expect("served");
     assert_eq!(served.responses, 2);
     assert_eq!(host.dispatcher.observer.calls, 2);
@@ -1322,40 +1407,66 @@ fn recorded_admissions_map_to_accepted_completed_conflict_and_unknown() {
 }
 
 #[test]
-fn a_stream_window_backpressures_data_but_never_control() {
+fn a_stream_window_backpressures_data_and_frees_only_what_was_acknowledged() {
     let mut outbound = Outbound::new();
     let id = RequestId::new([9; 16]);
     let payload = vec![0x7f; MAX_STREAM_PAYLOAD];
-    let mut pushes = 0;
+    let mut frames = 0;
     loop {
         let left = outbound.push_chunk(id, 1, StreamKind::Stdout, &payload);
         if left.len() == payload.len() {
             break;
         }
-        pushes += 1;
-        assert!(pushes <= MAX_UNACKED_STREAM_FRAMES);
-        if !left.is_empty() {
-            assert!(pushes >= MAX_UNACKED_STREAM_FRAMES);
-        }
+        frames += 1;
+        assert!(frames <= MAX_UNACKED_STREAM_FRAMES);
+        assert!(left.is_empty());
     }
+    assert_eq!(frames, MAX_UNACKED_STREAM_FRAMES);
+    let queued = outbound.take();
+    assert_eq!(queued.len(), MAX_UNACKED_STREAM_FRAMES);
     assert_eq!(outbound.window().unacked(), MAX_UNACKED_STREAM_FRAMES);
-    assert_eq!(outbound.take().len(), MAX_UNACKED_STREAM_FRAMES);
-    // The window is full, so a further data frame is held back, while a
-    // control frame is not subject to it: cancellation stays serviceable.
     assert_eq!(
-        outbound.window_mut().offer(1),
-        Queue::Backpressure,
-        "a full window backpressures data"
+        outbound.window().queued(),
+        MAX_UNACKED_STREAM_FRAMES * MAX_STREAM_PAYLOAD
     );
-    assert!(outbound.control_reserved());
-    outbound.window_mut().acknowledge(MAX_UNACKED_STREAM_FRAMES);
-    assert_eq!(outbound.window().unacked(), 0);
-    assert_eq!(outbound.window_mut().offer(1), Queue::Admitted);
-    // A single payload above the frame bound is never queued.
+    // The window is full, so a further data frame is held back.
+    let left = outbound.push_chunk(id, 1, StreamKind::Stdout, &payload);
+    assert_eq!(left, payload.as_slice());
+    // An acknowledgement frees exactly the frames at or below its sequence.
+    outbound.acknowledge(1, 7);
+    assert_eq!(outbound.window().unacked(), MAX_UNACKED_STREAM_FRAMES - 8);
+    for freed in 0..8 {
+        assert!(
+            outbound
+                .push_chunk(id, 1, StreamKind::Stdout, &payload)
+                .is_empty(),
+            "frame {freed} fits the acknowledged space"
+        );
+    }
     assert_eq!(
-        outbound.window_mut().offer(MAX_STREAM_PAYLOAD + 1),
-        Queue::Backpressure
+        outbound.push_chunk(id, 1, StreamKind::Stdout, &payload),
+        payload.as_slice(),
+        "the window is full again"
     );
+    let resumed = outbound.take();
+    assert_eq!(resumed.len(), 8);
+    assert_eq!(resumed[0].seq, 16, "the sequence continues after a resume");
+    // A chunk larger than one frame is split into bounded frames, never sent
+    // as an oversized payload.
+    let mut fresh = Outbound::new();
+    let large = vec![0x5a; MAX_STREAM_PAYLOAD * 2 + 1];
+    assert!(fresh
+        .push_chunk(id, 1, StreamKind::Stdout, &large)
+        .is_empty());
+    let split = fresh.take();
+    assert_eq!(split.len(), 3);
+    for frame in &split {
+        let payload = frame
+            .payload
+            .as_deref()
+            .expect("a data frame carries bytes");
+        assert!(decode_stream_payload(payload).expect("base64").len() <= MAX_STREAM_PAYLOAD);
+    }
 }
 
 #[test]
@@ -1443,7 +1554,7 @@ fn a_full_conversation_serves_observe_invoke_attach_refusals_and_eof() {
         peer(),
     );
     let served = host
-        .serve(&mut pipe, &cx, &observe_context(), &root)
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
         .expect("served");
     assert_eq!(served.responses, 3);
     assert!(served.closed);
@@ -1491,6 +1602,7 @@ fn an_enrolment_issues_a_scoped_capability_and_nothing_else() {
     let mut grants = GrantBook::new();
     grants.enrollable(Enrolment {
         credential: enrolment.clone(),
+        session,
         environment_generation: Generation::new(4),
         container_id: "c0ffee".into(),
         vm_boot_id: "boot-1".into(),
@@ -1545,7 +1657,7 @@ fn an_enrolment_issues_a_scoped_capability_and_nothing_else() {
         peer(),
     );
     let served = host
-        .serve(&mut pipe, &cx, &observe_context(), &root)
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
         .expect("served");
     assert_eq!(served.responses, 2);
     let frames = written_frames(&pipe);
@@ -1578,6 +1690,405 @@ fn an_enrolment_issues_a_scoped_capability_and_nothing_else() {
 }
 
 #[test]
+fn an_enrolment_cannot_name_another_session() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-enrol-fence");
+    let enrolment = Secret::new([0x78; 32]);
+    let mut grants = GrantBook::new();
+    grants.enrollable(Enrolment {
+        credential: enrolment.clone(),
+        session,
+        environment_generation: Generation::new(4),
+        container_id: "c0ffee".into(),
+        vm_boot_id: "boot-1".into(),
+        host_user: "operator".into(),
+        checkout: "checkout".into(),
+        scope: EnrolmentScope {
+            operations: [Method::Observe].into_iter().collect(),
+            targets: BTreeSet::new(),
+        },
+    });
+    let mut host = Server::new(
+        host(),
+        fence(session),
+        pinned(),
+        grants,
+        Dispatcher::new(
+            Admitter::default(),
+            Resolver::new(task("workspace-channel").resource()),
+            Observer::default(),
+            Ids::new(&[64]),
+        ),
+    );
+    let enrolled = Secret::new([0x43; 32]);
+    // The credential is issued for this host session, so a frame that claims
+    // another run or generation refuses before a capability exists.
+    for claimed in [
+        Session {
+            run: RunId::new(1, [77; 10]).expect("run id"),
+            generation: session.generation,
+        },
+        Session {
+            run: session.run,
+            generation: Generation::new(9),
+        },
+    ] {
+        let mut pipe = Pipe::new(
+            stream(&[
+                Frame::Hello(hello()),
+                Frame::Enrol(EnrolRequest {
+                    credential: enrolment.clone(),
+                    capability: *enrolled.bytes(),
+                    session_run_id: claimed.run,
+                    session_generation: claimed.generation,
+                    environment_generation: Generation::new(4),
+                    container_id: "c0ffee".into(),
+                    vm_boot_id: "boot-1".into(),
+                }),
+            ]),
+            peer(),
+        );
+        let refusal = host
+            .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+            .expect_err("a foreign session refuses");
+        assert_eq!(refusal.code, RefusalCode::IdentityMismatch);
+        assert!(host.grants.authenticate(&enrolled).is_err());
+    }
+    // The same credential for its own session enrols the capability.
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Enrol(EnrolRequest {
+                credential: enrolment,
+                capability: *enrolled.bytes(),
+                session_run_id: session.run,
+                session_generation: session.generation,
+                environment_generation: Generation::new(4),
+                container_id: "c0ffee".into(),
+                vm_boot_id: "boot-1".into(),
+            }),
+            Frame::Request(request(
+                session,
+                RequestBody::Observe(ObserveBody {
+                    op: "run:status".into(),
+                    target: None,
+                }),
+                1,
+            )),
+        ]),
+        peer(),
+    );
+    let served = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect("enrolled");
+    assert_eq!(served.responses, 1);
+    assert_eq!(
+        host.grants
+            .authenticate(&enrolled)
+            .expect("issued")
+            .session(),
+        session
+    );
+}
+
+#[test]
+fn a_grant_is_used_only_on_the_connection_its_binding_names() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-grant-fence");
+    let other = Session {
+        run: RunId::new(1, [88; 10]).expect("run id"),
+        generation: Generation::new(1),
+    };
+    let mut grants = GrantBook::new();
+    // The capability is bound to another session than this connection's fence.
+    grants.issue(
+        capability(),
+        GrantBinding {
+            session: other,
+            ..binding(other)
+        },
+        session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    let mut host = Server::new(
+        host(),
+        fence(session),
+        pinned(),
+        grants,
+        Dispatcher::new(
+            Admitter::default(),
+            Resolver::new(task("workspace-channel").resource()),
+            Observer::default(),
+            Ids::new(&[65]),
+        ),
+    );
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            Frame::Request(request(
+                session,
+                RequestBody::Observe(ObserveBody {
+                    op: "run:status".into(),
+                    target: None,
+                }),
+                1,
+            )),
+        ]),
+        peer(),
+    );
+    let served = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect("served");
+    assert_eq!(served.responses, 1);
+    assert_eq!(host.dispatcher.observer.calls, 0);
+    let frames = written_frames(&pipe);
+    assert!(matches!(
+        &frames[1],
+        Frame::Response(Response {
+            outcome: ResponseOutcome::Refused(Refusal {
+                code: RefusalCode::IdentityMismatch,
+                ..
+            }),
+            ..
+        })
+    ));
+    // The same grant on its own connection is accepted.
+    let mut own_grants = GrantBook::new();
+    own_grants.issue(
+        capability(),
+        binding(session),
+        session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    let mut own = Server::new(
+        crate::workspace_channel::tests::host(),
+        fence(session),
+        pinned(),
+        own_grants,
+        Dispatcher::new(
+            Admitter::default(),
+            Resolver::new(task("workspace-channel").resource()),
+            Observer::default(),
+            Ids::new(&[66]),
+        ),
+    );
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            Frame::Request(request(
+                session,
+                RequestBody::Observe(ObserveBody {
+                    op: "run:status".into(),
+                    target: None,
+                }),
+                1,
+            )),
+        ]),
+        peer(),
+    );
+    own.serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect("served");
+    assert_eq!(own.dispatcher.observer.calls, 1);
+}
+
+#[test]
+fn an_attachment_is_replaced_or_refused_and_never_orphaned() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-attach-lifecycle");
+    let (_first, first_run) = admitted_run(&cx, &root, session, 21, &[101]);
+    let (_second, second_run) = admitted_run(&cx, &root, session, 22, &[102]);
+    let mut host = server(session, &[103]);
+    let attach = |id: u8, run: RunId| {
+        Frame::Request(request(
+            session,
+            RequestBody::Attach(AttachBody {
+                run,
+                streams: vec![StreamKind::Stdout],
+                cursor: None,
+            }),
+            id,
+        ))
+    };
+    // The conversation ends on a frame no authenticated connection may carry,
+    // so the host closes it without an EOF release: exactly the state a client
+    // that vanished leaves for the liveness watch.
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach(1, first_run),
+            // Same run, another request id: this connection's own secondary is
+            // replaced, and the old row is released rather than orphaned.
+            attach(2, first_run),
+            // Another run at the same time refuses; one connection, one
+            // attachment.
+            attach(3, second_run),
+            Frame::Hello(hello()),
+        ]),
+        peer(),
+    );
+    let refusal = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect_err("an unexpected frame closes the connection");
+    assert_eq!(refusal.code, RefusalCode::InvalidRequest);
+    let frames = written_frames(&pipe);
+    let responses: Vec<&Response> = frames
+        .iter()
+        .filter_map(|frame| match frame {
+            Frame::Response(response) => Some(response),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(responses.len(), 3);
+    let opened = |response: &Response| match &response.outcome {
+        ResponseOutcome::Observed(value) => {
+            serde_json::from_value::<AttachView>(value.clone()).expect("an attach view")
+        }
+        other => panic!("expected an attachment, got {other:?}"),
+    };
+    let first = opened(responses[0]);
+    let second = opened(responses[1]);
+    assert_eq!(first.run, first_run);
+    assert_eq!(second.run, first_run);
+    assert_ne!(first.attachment, second.attachment);
+    assert!(matches!(
+        &responses[2].outcome,
+        ResponseOutcome::Refused(Refusal {
+            code: RefusalCode::Forbidden,
+            ..
+        })
+    ));
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("root {other:?}"),
+    };
+    let state = |attachment: AttachmentId| -> String {
+        reader
+            .conn()
+            .query_row(
+                "SELECT state FROM run_attachments WHERE attachment_id=?1",
+                [attachment.to_string()],
+                |row| row.get(0),
+            )
+            .expect("an attachment row")
+    };
+    // The replaced secondary was released when it was replaced; the newest one
+    // is still attached for its client, and the owner row was never touched.
+    assert_eq!(state(first.attachment), "released");
+    assert_eq!(state(second.attachment), "attached");
+    let secondaries: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary'",
+            [first_run.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(secondaries, 2, "the replace opened exactly one more row");
+    let foreign: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM run_attachments WHERE run_id=?1",
+            [second_run.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(foreign, 1, "only the refused run's owner row exists");
+}
+
+#[test]
+fn a_full_stream_window_still_serves_cancel_and_resumes_after_an_ack() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-backpressure");
+    let (_run, live) = admitted_run(&cx, &root, session, 31, &[111]);
+    let mut host = server(session, &[112, 113]);
+    let mut streams = ScriptedStreams::frames(MAX_UNACKED_STREAM_FRAMES + 4);
+    let cancel = |id: u8| {
+        Frame::Request(request(
+            session,
+            RequestBody::Cancel(RunBody { run: live }),
+            id,
+        ))
+    };
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            Frame::Request(request(
+                session,
+                RequestBody::Attach(AttachBody {
+                    run: live,
+                    streams: vec![StreamKind::Stdout],
+                    cursor: None,
+                }),
+                1,
+            )),
+            // The window fills below; these controls are still answered.
+            cancel(2),
+            cancel(3),
+            Frame::Stream(StreamFrame {
+                id: RequestId::new([1; 16]),
+                stream_id: 1,
+                seq: (MAX_UNACKED_STREAM_FRAMES as u64) - 1,
+                kind: StreamKind::Ack,
+                payload: None,
+                rows: None,
+                columns: None,
+            }),
+        ]),
+        peer(),
+    );
+    let served = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    assert_eq!(served.responses, 3);
+    let frames = written_frames(&pipe);
+    let data = |frames: &[Frame]| {
+        frames
+            .iter()
+            .filter(|frame| {
+                matches!(
+                    frame,
+                    Frame::Stream(StreamFrame {
+                        kind: StreamKind::Stdout,
+                        ..
+                    })
+                )
+            })
+            .count()
+    };
+    // Sixteen data frames fill the window; the cancel responses are written
+    // anyway, and only the acknowledgement lets the held chunk resume.
+    assert_eq!(data(&frames), MAX_UNACKED_STREAM_FRAMES + 4);
+    assert!(streams.remaining() == 0);
+    let cancel_responses = frames
+        .iter()
+        .filter(|frame| {
+            matches!(
+                frame,
+                Frame::Response(Response {
+                    outcome: ResponseOutcome::Observed(_),
+                    ..
+                }) if true
+            )
+        })
+        .count();
+    assert_eq!(cancel_responses, 3, "attach and both cancels were answered");
+    // Both cancellations reached the run's mailbox as stop requests.
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("root {other:?}"),
+    };
+    let stops: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM requests WHERE run_id=?1 AND state='pending'",
+            [live.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(stops, 2);
+}
+
+#[test]
 fn a_connection_is_bounded_and_a_bad_frame_closes_it() {
     let (_fixture, cx, root, session) = journal("effigy-channel-bounded");
     let mut host = server(session, &[71]);
@@ -1590,7 +2101,7 @@ fn a_connection_is_bounded_and_a_bad_frame_closes_it() {
         peer(),
     );
     let refusal = host
-        .serve(&mut pipe, &cx, &observe_context(), &root)
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
         .expect_err("a second hello refuses");
     assert_eq!(refusal.code, RefusalCode::InvalidRequest);
     let frames = written_frames(&pipe);

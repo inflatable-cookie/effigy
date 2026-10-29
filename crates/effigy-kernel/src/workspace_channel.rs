@@ -34,7 +34,7 @@ use crate::run::{
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::io;
 
@@ -59,9 +59,6 @@ pub const MAX_UNACKED_STREAM_FRAMES: usize = 16;
 pub const MAX_QUEUED_STREAM_BYTES: usize = 512 << 10;
 /// Longest diagnostic a refusal carries: a sentence, never a transcript.
 pub const MAX_DIAGNOSTIC_BYTES: usize = 512;
-/// Frames one connection may carry before it is closed. A bounded session, so
-/// a connection cannot outlive its own handshake by forever.
-pub const MAX_FRAMES_PER_CONNECTION: usize = 4096;
 
 /// A refusal code: the stable codes §8.11 names, which a client switches on.
 /// The diagnostic is for the person at the terminal and never carries a
@@ -672,6 +669,28 @@ pub struct SessionFence {
     pub vm_boot_id: String,
 }
 impl SessionFence {
+    /// A grant is only usable on the connection whose session facts it was
+    /// issued for. The client's request claims are checked separately; this is
+    /// the host's own binding, so a grant from another session, container,
+    /// environment generation or VM boot can never be replayed here.
+    fn verify_grant(&self, binding: &GrantBinding) -> Result<(), Refusal> {
+        if binding.session != self.session {
+            return Err(Refusal::identity(
+                "this capability belongs to another workspace session",
+            ));
+        }
+        if binding.environment_generation != self.environment_generation {
+            return Err(Refusal::stale(
+                "this capability was issued for another environment generation",
+            ));
+        }
+        if binding.container_id != self.container_id || binding.vm_boot_id != self.vm_boot_id {
+            return Err(Refusal::identity(
+                "this capability was issued for another container or VM boot",
+            ));
+        }
+        Ok(())
+    }
     fn verify(&self, request: &Request) -> Result<(), Refusal> {
         if request.context_generation != self.context_generation {
             return Err(Refusal::stale(
@@ -758,6 +777,9 @@ impl Grant {
 #[derive(Debug, Clone)]
 pub struct Enrolment {
     pub credential: Secret,
+    /// The session this credential enrols into. The host knows it; the guest's
+    /// frame must agree with it, and a frame that names another session refuses.
+    pub session: Session,
     pub environment_generation: Generation,
     pub container_id: String,
     pub vm_boot_id: String,
@@ -775,6 +797,7 @@ pub struct EnrolmentScope {
 #[derive(Debug, Clone)]
 struct EnrolmentGrant {
     secret: Secret,
+    session: Session,
     environment_generation: Generation,
     container_id: String,
     vm_boot_id: String,
@@ -817,6 +840,7 @@ impl GrantBook {
     pub fn enrollable(&mut self, enrolment: Enrolment) {
         self.enrolment = Some(EnrolmentGrant {
             secret: enrolment.credential,
+            session: enrolment.session,
             environment_generation: enrolment.environment_generation,
             container_id: enrolment.container_id,
             vm_boot_id: enrolment.vm_boot_id,
@@ -863,16 +887,23 @@ impl GrantBook {
                 "this enrolment credential is bound to another container or VM boot",
             ));
         }
+        // The session comes from the host's own enrolment record. A frame that
+        // names another run or generation refuses, so a guest cannot enrol a
+        // capability into a session it was not given (§8.11).
+        if request.session_run_id != enrolment.session.run
+            || request.session_generation != enrolment.session.generation
+        {
+            return Err(Refusal::identity(
+                "this enrolment names a different workspace session than the credential was issued for",
+            ));
+        }
         let binding = GrantBinding {
             host_user: enrolment.host_user.clone(),
             checkout: enrolment.checkout.clone(),
-            session: Session {
-                run: request.session_run_id,
-                generation: request.session_generation,
-            },
-            environment_generation: request.environment_generation,
-            container_id: request.container_id.clone(),
-            vm_boot_id: request.vm_boot_id.clone(),
+            session: enrolment.session,
+            environment_generation: enrolment.environment_generation,
+            container_id: enrolment.container_id.clone(),
+            vm_boot_id: enrolment.vm_boot_id.clone(),
         };
         let grant = Grant {
             secret: Secret::new(request.capability),
@@ -1068,7 +1099,8 @@ pub fn decode_stream_payload(payload: &str) -> Result<Vec<u8>, Refusal> {
 pub struct StreamWindow {
     unacked: usize,
     queued: usize,
-    sizes: std::collections::VecDeque<usize>,
+    sizes: VecDeque<usize>,
+    open: VecDeque<(u32, u64)>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Queue {
@@ -1092,15 +1124,28 @@ impl StreamWindow {
         self.sizes.push_back(decoded);
         Queue::Admitted
     }
-    /// The receiver consumed `count` frames, which frees their queued bytes.
-    pub fn acknowledge(&mut self, count: usize) {
+    /// The receiver consumed up to `seq` on `stream_id`. Only frames still open
+    /// in order are freed, so an acknowledgement can never free a frame the
+    /// client has not seen.
+    pub fn acknowledge(&mut self, stream_id: u32, seq: u64) {
+        let mut count = 0;
+        for (open_stream, open_seq) in &self.open {
+            if *open_stream != stream_id || *open_seq > seq {
+                break;
+            }
+            count += 1;
+        }
         for _ in 0..count {
+            let _ = self.open.pop_front();
             let Some(freed) = self.sizes.pop_front() else {
                 break;
             };
             self.unacked = self.unacked.saturating_sub(1);
             self.queued = self.queued.saturating_sub(freed);
         }
+    }
+    fn track(&mut self, stream_id: u32, seq: u64) {
+        self.open.push_back((stream_id, seq));
     }
     pub fn unacked(&self) -> usize {
         self.unacked
@@ -1137,6 +1182,7 @@ impl Outbound {
                 break;
             }
             let seq = self.sequence(stream_id, kind);
+            self.window.track(stream_id, seq);
             self.data.push(StreamFrame {
                 id,
                 stream_id,
@@ -1158,9 +1204,9 @@ impl Outbound {
             .or_insert(0);
         *next
     }
-    /// A control frame is never subject to the data window (§8.11).
-    pub fn control_reserved(&self) -> bool {
-        true
+    /// The receiver consumed up to `seq` on one stream.
+    pub fn acknowledge(&mut self, stream_id: u32, seq: u64) {
+        self.window.acknowledge(stream_id, seq);
     }
     pub fn take(&mut self) -> Vec<StreamFrame> {
         std::mem::take(&mut self.data)
@@ -1168,8 +1214,28 @@ impl Outbound {
     pub fn window(&self) -> &StreamWindow {
         &self.window
     }
-    pub fn window_mut(&mut self) -> &mut StreamWindow {
-        &mut self.window
+}
+
+/// One captured chunk a connection may publish as data frames. The owner of
+/// the run's logs supplies these; the channel only bounds and frames them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamChunk {
+    pub stream_id: u32,
+    pub kind: StreamKind,
+    pub bytes: Vec<u8>,
+}
+/// Where a connection's data frames come from. The bounded stream loop that
+/// reads a run's captured output belongs to the attachment's owner; a host
+/// with nothing to stream uses [`NoStreams`].
+pub trait Streams {
+    fn next_chunk(&mut self) -> Option<StreamChunk>;
+}
+/// A host with nothing to publish on this connection.
+#[derive(Debug, Default)]
+pub struct NoStreams;
+impl Streams for NoStreams {
+    fn next_chunk(&mut self) -> Option<StreamChunk> {
+        None
     }
 }
 
@@ -1924,6 +1990,11 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     pinned: Digest,
     grants: GrantBook,
     dispatcher: Dispatcher<A, R, O, I>,
+    /// Data frames this connection has queued and the client has not yet
+    /// acknowledged, plus the request id they name.
+    outbound: Outbound,
+    stream_id: Option<RequestId>,
+    carry: Option<StreamChunk>,
 }
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> fmt::Debug for Server<A, R, O, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1957,6 +2028,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             pinned,
             grants,
             dispatcher,
+            outbound: Outbound::new(),
+            stream_id: None,
+            carry: None,
         }
     }
     pub fn grants(&self) -> &GrantBook {
@@ -1975,6 +2049,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         cx: &EffectContext,
         observe: &ObserveContext,
         root: &StateRoot,
+        streams: &mut impl Streams,
     ) -> Result<Served, Refusal> {
         // The pin is decided before a single byte crosses the connection, so a
         // mismatched identity never receives a credential and never learns a
@@ -1990,7 +2065,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     streams: 0,
                     closed: false,
                 };
-                self.converse(transport, cx, observe, root, grant, &mut state)?;
+                self.converse(transport, cx, observe, root, grant, streams, &mut state)?;
                 Ok(state)
             }
             None => Ok(Served {
@@ -2049,6 +2124,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
     /// The authenticated half. Each request is fenced, authorised, dispatched
     /// and answered; a client refusal or end of stream releases the client's
     /// attachment.
+    #[allow(clippy::too_many_arguments)]
     fn converse<T: Transport>(
         &mut self,
         transport: &mut T,
@@ -2056,16 +2132,16 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         observe: &ObserveContext,
         root: &StateRoot,
         grant: Grant,
+        streams: &mut impl Streams,
         state: &mut Served,
     ) -> Result<(), Refusal> {
         let mut attachment: Option<Attachment> = None;
-        let mut detach_acknowledged = false;
-        let mut frames = 0usize;
-        while frames < MAX_FRAMES_PER_CONNECTION {
-            frames += 1;
-            let Some(body) = read_frame(transport)? else {
-                break;
-            };
+        // A connection outlives as many frames as its session needs. Every
+        // frame is bounded above, and the transport owns the lifetime; there
+        // is no count at which the host would end a live run instead of the
+        // client's own end of stream.
+        self.pump(transport, streams)?;
+        while let Some(body) = read_frame(transport)? {
             let frame = match decode_frame(&body) {
                 Ok(frame) => frame,
                 // A malformed frame closes the connection before dispatch.
@@ -2074,15 +2150,8 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             match frame {
                 Frame::Request(request) => {
                     state.responses += 1;
-                    let response = self.answer(
-                        cx,
-                        observe,
-                        root,
-                        &grant,
-                        &request,
-                        &mut attachment,
-                        &mut detach_acknowledged,
-                    );
+                    let response =
+                        self.answer(cx, observe, root, &grant, &request, &mut attachment);
                     write_frame(transport, &Frame::Response(response))?;
                 }
                 Frame::Stream(stream) => {
@@ -2099,16 +2168,17 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // client's own terminal, never the host authority. They
                     // create no effect here, and the bounded stream loop that
                     // consumes them belongs to the attachment's owner.
-                    if !matches!(
-                        stream.kind,
-                        StreamKind::Ack | StreamKind::TerminalInput | StreamKind::Resize
-                    ) {
-                        return Err(self.refuse(
-                            transport,
-                            Refusal::invalid(
-                                "a client sends terminal input, resize or acknowledgement",
-                            ),
-                        ));
+                    match stream.kind {
+                        StreamKind::Ack => self.outbound.acknowledge(stream.stream_id, stream.seq),
+                        StreamKind::TerminalInput | StreamKind::Resize => {}
+                        _ => {
+                            return Err(self.refuse(
+                                transport,
+                                Refusal::invalid(
+                                    "a client sends terminal input, resize or acknowledgement",
+                                ),
+                            ))
+                        }
                     }
                 }
                 Frame::Refuse(refusal) => return Err(refusal),
@@ -2121,19 +2191,56 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     ))
                 }
             }
+            self.pump(transport, streams)?;
         }
-        if let Some(mut handle) = attachment {
-            if !detach_acknowledged {
-                // EOF without a detach: the kernel records the owner's stop or
-                // releases this client's own row, and a secondary never stops
-                // the owner's run.
-                handle
-                    .release(cx, root, Release::Eof)
-                    .map_err(refusal_from)?;
-            }
+        // End of stream is the client going away: the kernel records the
+        // owner's stop or releases this client's own row, and a secondary never
+        // stops the owner's run. A detached handle is already gone.
+        if let Some(mut handle) = attachment.take() {
+            handle
+                .release(cx, root, Release::Eof)
+                .map_err(refusal_from)?;
         }
         state.closed = true;
         Ok(())
+    }
+
+    /// Publish captured output as data frames, stopping at the client's
+    /// acknowledgement window. A chunk that does not fit is kept, so the next
+    /// acknowledgement resumes it in order; control frames never wait behind it
+    /// (§8.11).
+    fn pump<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        streams: &mut impl Streams,
+    ) -> Result<(), Refusal> {
+        let Some(id) = self.stream_id else {
+            // Nothing is attached, so there is nothing to publish.
+            return Ok(());
+        };
+        loop {
+            if self.carry.is_none() {
+                self.carry = streams.next_chunk();
+            }
+            let Some(chunk) = self.carry.take() else {
+                return Ok(());
+            };
+            let left = self
+                .outbound
+                .push_chunk(id, chunk.stream_id, chunk.kind, &chunk.bytes)
+                .to_vec();
+            for frame in self.outbound.take() {
+                write_frame(transport, &Frame::Stream(frame))?;
+            }
+            if !left.is_empty() {
+                self.carry = Some(StreamChunk {
+                    stream_id: chunk.stream_id,
+                    kind: chunk.kind,
+                    bytes: left,
+                });
+                return Ok(());
+            }
+        }
     }
 
     /// One request: fence, grant, then the typed entry point.
@@ -2146,9 +2253,11 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         grant: &Grant,
         request: &Request,
         attachment: &mut Option<Attachment>,
-        detach_acknowledged: &mut bool,
     ) -> Response {
         let answered = (|| -> Result<ResponseOutcome, Refusal> {
+            // The grant's binding is the host's own record; the request's
+            // claims are checked against it afterwards.
+            self.fence.verify_grant(grant.binding())?;
             self.fence.verify(request)?;
             grant.authorise(request.method(), request.body.target())?;
             if request.method().mutates() {
@@ -2176,6 +2285,16 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     })
                 }
                 RequestBody::Attach(body) => {
+                    // One attachment per connection. Attaching to another run
+                    // refuses, and replacing this connection's own secondary
+                    // releases the old row first, so nothing is orphaned.
+                    if let Some(current) = attachment.as_mut() {
+                        if current.run() != body.run {
+                            return Err(Refusal::forbidden(
+                                "this connection is attached to another run; detach it first",
+                            ));
+                        }
+                    }
                     let handle = self
                         .dispatcher
                         .attach(cx, root, session, request.id, body)?;
@@ -2185,6 +2304,18 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                         client: handle.client(),
                         cursor: body.cursor.unwrap_or(0),
                     };
+                    if let Some(previous) = attachment.take() {
+                        // A different attachment id on the same run is a second
+                        // row this connection is leaving: release it as an end
+                        // of stream, which for a secondary never stops the run.
+                        if previous.id() != handle.id() && previous.client() == Client::Secondary {
+                            let mut previous = previous;
+                            previous
+                                .release(cx, root, Release::Eof)
+                                .map_err(refusal_from)?;
+                        }
+                    }
+                    self.stream_id = Some(request.id);
                     *attachment = Some(handle);
                     Ok(ResponseOutcome::Observed(
                         serde_json::to_value(view)
@@ -2199,17 +2330,15 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 RequestBody::Detach(body) => {
                     // An acknowledged detach releases this client's own
                     // lifetime and records no stop, so a Detached run keeps
-                    // going (§8.11).
-                    match attachment
-                        .as_mut()
-                        .filter(|handle| handle.run() == body.run)
-                    {
-                        Some(handle) => handle
+                    // going (§8.11). The handle is taken, so a later end of
+                    // stream has nothing left to send a stop for.
+                    match attachment.take().filter(|handle| handle.run() == body.run) {
+                        Some(mut handle) => handle
                             .release(cx, root, Release::Detach)
                             .map_err(refusal_from)?,
                         None => self.dispatcher.detach(cx, root, session, body)?,
                     }
-                    *detach_acknowledged = true;
+                    self.stream_id = None;
                     Ok(ResponseOutcome::Observed(Value::Null))
                 }
             }
