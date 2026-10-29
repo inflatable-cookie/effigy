@@ -55,6 +55,7 @@ impl MachineFacts {
         let mut guard =
             Gate::acquire(cx, root, std::slice::from_ref(&options.owner), options.wait)?;
         let mut store = Store::open(cx, root)?;
+        settle::compact_machine_closed(&mut store, &options.owner, cleanup)?;
         // Upgrade recovery uses the same settlement rules as Run::begin,
         // without manufacturing a successor run merely to edit a fact.
         for predecessor in journal::predecessors(store.conn(), &options.owner)? {

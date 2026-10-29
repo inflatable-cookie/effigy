@@ -502,4 +502,82 @@ mod tests {
             1
         );
     }
+
+    #[test]
+    fn machine_closed_row_survives_live_sentinel_and_is_reclaimed_after_exit() {
+        use crate::ident::{self, ProcessIdentity, ProcessState};
+        use crate::observe::Observed;
+        struct Sentinel(ProcessIdentity);
+        impl Drop for Sentinel {
+            fn drop(&mut self) {
+                // SAFETY: signal only the identity-checked child created by
+                // this fixture. waitpid targets that child and the null status
+                // pointer is permitted; resume it even on an assertion failure.
+                unsafe {
+                    if ident::process_identity(self.0.pid).verified() == Some(&self.0) {
+                        libc::kill(self.0.pid as i32, libc::SIGCONT);
+                        libc::kill(self.0.pid as i32, libc::SIGKILL);
+                    }
+                    libc::waitpid(self.0.pid as i32, std::ptr::null_mut(), 0);
+                }
+            }
+        }
+        let fixture = effigy_test_support::Fixture::new("kernel-machine-close-crash-").unwrap();
+        let cx = context();
+        let root = StateRoot::runtime_machine_effects(&cx, fixture.path()).unwrap();
+        let owner = ResourceId::store(crate::id::Scope::Machine, "gateway-setup").unwrap();
+        let invocation = inv(owner);
+        let mut opts = options();
+        opts.custody.as_mut().unwrap().placement = Placement::Inline;
+        let mut adapter = Fake::new(fixture.path());
+        let mut run =
+            Run::begin(&cx, &root, &invocation, opts, &cleanup(&cx), &mut adapter).unwrap();
+        let sentinel = run.sentinel.as_ref().unwrap().identity.clone();
+        let _child = Sentinel(sentinel.clone());
+        // SAFETY: the registered sentinel is the freshly spawned fixture child.
+        assert_eq!(unsafe { libc::kill(sentinel.pid as i32, libc::SIGSTOP) }, 0);
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        fault::arm_point(Point::SentinelClose, Fault::Eperm);
+        assert!(run.settle(&cleanup(&cx), &mut adapter).is_err());
+        fault::arm(None);
+        let successor = || {
+            let mut options = options();
+            options.id = id(2);
+            options.custody = None;
+            options
+        };
+        let short = cx.operation().cleanup(Duration::from_millis(200)).unwrap();
+        assert!(matches!(
+            Run::begin(&cx, &root, &invocation, successor(), &short, &mut adapter),
+            Err(RunError::Interrupted(Interrupt::TimedOut { phase, .. })) if phase == "completed sentinel exit"
+        ));
+        let read = Store::read(&cx.operation().observe().unwrap(), &root);
+        assert!(matches!(
+            summary(read.verified().unwrap(), id(1)),
+            Observed::Verified(_, _)
+        ));
+        drop(read);
+        // SAFETY: the same stopped, unreaped fixture child remains ours.
+        assert_eq!(unsafe { libc::kill(sentinel.pid as i32, libc::SIGCONT) }, 0);
+        let next = Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            successor(),
+            &cleanup(&cx),
+            &mut adapter,
+        )
+        .unwrap();
+        let read = Store::read(&cx.operation().observe().unwrap(), &root);
+        assert!(matches!(
+            summary(read.verified().unwrap(), id(1)),
+            Observed::Absent(_)
+        ));
+        assert!(matches!(
+            ident::process_state(sentinel.pid),
+            Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _)
+        ));
+        drop(read);
+        next.settle(&cleanup(&cx), &mut adapter).unwrap();
+    }
 }
