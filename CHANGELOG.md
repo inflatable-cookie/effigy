@@ -278,17 +278,27 @@ During v0.x, MINOR bumps may include breaking changes.
 - The workspace channel binds one attachment's streams to its terminal
   (contract 052 §8.11). Output sequence numbers are one series per stream id
   shared by every kind on it, so a stream's stdout and stderr no longer restart
-  each other. The `Streams` seam is the connection's stream endpoint: `resume`
-  meets an `attach` cursor against the retained reader and answers `At { next }`,
-  a bounded `Gap { from, to }`, or `Refused`, so a reconnect resumes from
-  retained bytes, reports the missing range before any data, or is refused
-  rather than emitting sequence 0 as if uninterrupted. `input` carries one
-  validated terminal input frame exactly once and `resize` records the newest
-  size with no queue behind it; a frame is accepted only for the connection's
-  own attach request, its own terminal stream and the stream's next sequence, so
-  an unknown stream, a foreign request, a repeated or out-of-order frame or a
+  each other, and a retained chunk is published with its absolute log position
+  so a client's resume cursor, the frame sequence and the retained log are one
+  coordinate system across reconnects and chunk boundaries. `RetainedStreams`
+  is the kernel's own endpoint over `run::read_log`: an `attach` cursor is
+  accepted only where the log still holds that position, refused when it is
+  ahead of the retained end or names no stream, and a position the log rotated
+  past becomes one `gap` frame naming the first missing offset, ahead of the
+  data that resumes there — so a reconnect never restarts at sequence zero and
+  every frame on a stream keeps a strictly increasing sequence. The endpoint
+  re-checks the connection's attachment on every read. `Terminal::input`
+  receives one validated terminal input frame exactly once and
+  `Terminal::resize` the newest size with no queue behind it; a host with no
+  terminal owner refuses both instead of reporting a delivery it did not make.
+  An inbound frame is accepted only for the connection's own attach request,
+  its own terminal stream and the stream's next sequence, and an
+  acknowledgement must be shape-only and name a data frame this connection
+  published and has not freed, so an unknown stream, a foreign request, a
+  repeated or out-of-order frame, a duplicate or stale acknowledgement or a
   malformed payload refuses and closes with no host effect. The retained reader,
-  front end and transport that implement the seam remain separate tasks.
+  the terminal owner, front end and transport remain separate tasks.
+
 - The workspace session layer (contract 052 §8.7): one environment-owned
   `Detached` session run, resolved through its own validated
   environment→session record so a borrowing child or host hold is never mistaken

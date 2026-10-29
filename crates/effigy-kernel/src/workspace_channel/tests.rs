@@ -5,13 +5,15 @@ use super::*;
 use crate::ctx::{
     CancelToken, CleanupContext, Deadline, EffectClass, Limits, ObserveContext, OperationContext,
 };
+use crate::custody::Stream;
+use crate::fs::{FileName, Trust};
 use crate::gate::Wait;
 use crate::id::{
     CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResourceId, Route, Surface, TaskId,
 };
 use crate::observe::{AbsenceProof, Observed};
 use crate::outcome::Invocation;
-use crate::root::StateRoot;
+use crate::root::{Family, StateRoot};
 use crate::run::{BeginOpts, Effect, Reconciled, Run, SettlementAdapter};
 use crate::store::Store;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -442,6 +444,7 @@ impl ScriptedStreams {
                 .map(|_| StreamChunk {
                     stream_id: 1,
                     kind: StreamKind::Stdout,
+                    cursor: None,
                     bytes: vec![0x41; MAX_STREAM_PAYLOAD],
                 })
                 .collect(),
@@ -452,7 +455,7 @@ impl ScriptedStreams {
     }
 }
 impl Streams for ScriptedStreams {
-    fn next_chunk(&mut self) -> Option<StreamChunk> {
+    fn next_chunk(&mut self, _attachment: Option<&Attachment>) -> Option<StreamChunk> {
         self.chunks.pop_front()
     }
 }
@@ -2296,30 +2299,29 @@ struct RecordingTerminal {
     attachment_ids: Vec<AttachmentId>,
     size: Option<TerminalSize>,
     resizes: usize,
-    resume: Option<StreamResume>,
-    resumed: Vec<(u32, u64)>,
     chunks: VecDeque<StreamChunk>,
 }
-impl Streams for RecordingTerminal {
-    fn next_chunk(&mut self) -> Option<StreamChunk> {
-        self.chunks.pop_front()
-    }
-    fn resume(&mut self, stream_id: u32, cursor: u64) -> StreamResume {
-        self.resumed.push((stream_id, cursor));
-        match self.resume {
-            Some(resume) => resume,
-            None if cursor == 0 => StreamResume::At { next: 0 },
-            None => StreamResume::Refused,
-        }
-    }
+impl Terminal for RecordingTerminal {
     fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
         self.attachment_ids.push(attachment);
         self.input.push(bytes.to_vec());
         Ok(())
     }
-    fn resize(&mut self, _attachment: AttachmentId, size: TerminalSize) {
+    fn resize(&mut self, _attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
         self.resizes += 1;
         self.size = Some(size);
+        Ok(())
+    }
+}
+impl Streams for RecordingTerminal {
+    fn next_chunk(&mut self, _attachment: Option<&Attachment>) -> Option<StreamChunk> {
+        self.chunks.pop_front()
+    }
+    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
+        Terminal::input(self, attachment, bytes)
+    }
+    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
+        Terminal::resize(self, attachment, size)
     }
 }
 
@@ -2671,114 +2673,360 @@ fn an_acknowledgement_is_only_for_a_stream_and_frame_this_connection_sent() {
     assert_eq!(refusal.code, RefusalCode::InvalidRequest);
 }
 
+/// Write one captured segment for `run`'s `stream`, as the custody capture
+/// writes it: the file name carries the absolute offset it starts at.
+fn write_segment(
+    root: &StateRoot,
+    run: RunId,
+    sequence: i64,
+    stream: Stream,
+    base: u64,
+    bytes: &[u8],
+) {
+    use std::io::Write;
+    let runs = root
+        .family(Family::Runs)
+        .expect("runs family")
+        .expect("created family");
+    let dir = runs
+        .child(&run.to_string(), Trust::Private, true)
+        .expect("run directory")
+        .expect("created directory");
+    let name = FileName::new(&format!("{sequence}.{}.{base}.log", stream.name())).expect("name");
+    let (mut file, _) = dir
+        .open_file(
+            &name,
+            libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+            Some(0o600),
+            Trust::Private,
+        )
+        .expect("segment")
+        .expect("created segment");
+    file.write_all(bytes).expect("segment bytes");
+}
+
+/// The kernel's own retained endpoint over `run`'s captured stdout, so a
+/// cursor test reads real segments instead of a fake that returns a number.
+fn retained_stdout(root: &StateRoot, run: RunId) -> RetainedStreams<RecordingTerminal> {
+    RetainedStreams::new(
+        observe_context(),
+        root.clone(),
+        run,
+        vec![(1, Stream::Stdout)],
+        RecordingTerminal::default(),
+    )
+}
+
+fn stream_frames(frames: &[Frame]) -> Vec<&StreamFrame> {
+    frames
+        .iter()
+        .filter_map(|frame| match frame {
+            Frame::Stream(stream) => Some(stream),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Publish `count` frames on stream 0, then hand the connection these
+/// acknowledgements. Returns the refusal code and whether the window is still
+/// full when the connection closed.
+fn acked_frames(count: usize, acks: Vec<StreamFrame>) -> (RefusalCode, usize) {
+    let mut outbound = Outbound::new();
+    let id = RequestId::new([9; 16]);
+    for _ in 0..count {
+        assert!(outbound
+            .push_chunk(id, TERMINAL_STREAM, StreamKind::Stdout, b"x")
+            .is_empty());
+    }
+    let _ = outbound.take();
+    let _ = id;
+    let mut accepted = None;
+    for ack in acks {
+        // The same rules the server applies to an acknowledgement frame.
+        if ack.payload.is_some() || ack.rows.is_some() || ack.columns.is_some() {
+            accepted = Some(RefusalCode::InvalidRequest);
+            break;
+        }
+        if !outbound.acknowledge(ack.stream_id, ack.seq) {
+            accepted = Some(RefusalCode::InvalidRequest);
+            break;
+        }
+    }
+    (
+        accepted.unwrap_or(RefusalCode::InvalidRequest),
+        outbound.window().unacked(),
+    )
+}
+
+fn ack_frame(stream_id: u32, seq: u64) -> StreamFrame {
+    StreamFrame {
+        id: RequestId::new([9; 16]),
+        stream_id,
+        seq,
+        kind: StreamKind::Ack,
+        payload: None,
+        rows: None,
+        columns: None,
+    }
+}
+
 #[test]
-fn a_reconnect_resumes_at_the_retained_cursor() {
+fn an_acknowledgement_needs_its_own_open_frame_and_no_payload() {
+    // A malformed acknowledgement is refused and frees nothing.
+    let mut padded = ack_frame(TERMINAL_STREAM, 0);
+    padded.payload = Some(encode_stream_payload(b"0"));
+    let (code, unacked) = acked_frames(4, vec![padded]);
+    assert_eq!(code, RefusalCode::InvalidRequest);
+    assert_eq!(unacked, 4, "a malformed acknowledgement frees no frame");
+
+    // A duplicate and a stale acknowledgement are refused; only the frames at
+    // or below a valid sequence are freed, once.
+    assert_eq!(acked_frames(4, vec![ack_frame(TERMINAL_STREAM, 3)]).1, 0);
+    let (code, unacked) = acked_frames(
+        4,
+        vec![ack_frame(TERMINAL_STREAM, 3), ack_frame(TERMINAL_STREAM, 3)],
+    );
+    assert_eq!(code, RefusalCode::InvalidRequest);
+    assert_eq!(unacked, 0, "the duplicate freed nothing further");
+    let (code, unacked) = acked_frames(
+        4,
+        vec![ack_frame(TERMINAL_STREAM, 3), ack_frame(TERMINAL_STREAM, 1)],
+    );
+    assert_eq!(code, RefusalCode::InvalidRequest);
+    assert_eq!(unacked, 0, "a stale acknowledgement frees nothing further");
+
+    // An acknowledgement for a stream this connection never published, or for
+    // a resumed position it has not published itself, is refused.
+    let (code, unacked) = acked_frames(4, vec![ack_frame(7, 0)]);
+    assert_eq!(code, RefusalCode::InvalidRequest);
+    assert_eq!(unacked, 4);
+    let mut outbound = Outbound::new();
+    outbound.resume(TERMINAL_STREAM, 40);
+    assert!(
+        !outbound.acknowledge(TERMINAL_STREAM, 39),
+        "a resumed position is not a frame this connection published"
+    );
+    assert_eq!(outbound.window().unacked(), 0);
+}
+
+#[test]
+fn a_reconnect_resumes_at_the_retained_position_not_at_zero() {
     let (_fixture, cx, root, session) = journal("effigy-channel-resume");
     let (_run, live) = admitted_run(&cx, &root, session, 74, &[137]);
+    // The log holds offsets 0..80; the client stopped reading at 40.
+    let bytes: Vec<u8> = (0..80u8).map(|n| b'a' + n % 26).collect();
+    write_segment(&root, live, 1, Stream::Stdout, 0, &bytes);
     let mut host = server(session, &[138]);
-    let mut terminal = RecordingTerminal {
-        resume: Some(StreamResume::At { next: 40 }),
-        chunks: [StreamChunk {
-            stream_id: TERMINAL_STREAM,
-            kind: StreamKind::TerminalOutput,
-            bytes: b"retained".to_vec(),
-        }]
-        .into(),
-        ..Default::default()
-    };
+    let mut streams = retained_stdout(&root, live);
     let mut pipe = Pipe::new(
         stream(&[
             Frame::Hello(hello()),
             Frame::Authenticate(capability()),
-            attach_frame(session, live, 1, vec![StreamKind::TerminalOutput], Some(40)),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], Some(40)),
         ]),
         peer(),
     );
-    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut terminal)
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
         .expect("served");
-    assert_eq!(
-        terminal.resumed,
-        vec![(TERMINAL_STREAM, 40)],
-        "the requested cursor met the retained reader"
-    );
     let frames = written_frames(&pipe);
-    let data: Vec<&StreamFrame> = frames
-        .iter()
-        .filter_map(|frame| match frame {
-            Frame::Stream(stream) if stream.kind.is_data() => Some(stream),
-            _ => None,
-        })
+    let data: Vec<&StreamFrame> = stream_frames(&frames)
+        .into_iter()
+        .filter(|stream| stream.kind == StreamKind::Stdout)
         .collect();
-    assert_eq!(data.len(), 1);
+    assert_eq!(
+        data.len(),
+        1,
+        "the retained bytes after the cursor are published once: {frames:?}"
+    );
     assert_eq!(
         data[0].seq, 40,
-        "output resumes at the retained cursor, never at zero"
+        "output resumes at the retained position the client asked for"
+    );
+    assert_eq!(
+        decode_stream_payload(data[0].payload.as_deref().expect("payload")).expect("base64"),
+        bytes[40..],
+        "the retained bytes from the cursor are exactly what was not read"
     );
     assert!(
-        !frames.iter().any(|frame| matches!(
+        !stream_frames(&frames)
+            .iter()
+            .any(|stream| stream.kind == StreamKind::Gap),
+        "a position the log still holds reports no gap"
+    );
+    // The endpoint re-checked this connection's own attachment before reading.
+    assert!(matches!(
+        Store::read(&observe_context(), &root),
+        Observed::Verified(_, _)
+    ));
+}
+
+#[test]
+fn a_reconnect_reports_the_bounded_gap_the_retained_log_holds() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-gap");
+    let (_run, live) = admitted_run(&cx, &root, session, 75, &[139]);
+    // Offsets 0..100 rotated away; the kept segment starts at 100.
+    write_segment(&root, live, 1, Stream::Stdout, 100, b"resumed");
+    let mut host = server(session, &[140]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], Some(8)),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    let frames = written_frames(&pipe);
+    let published = stream_frames(&frames);
+    let gap = published
+        .iter()
+        .position(|stream| stream.kind == StreamKind::Gap)
+        .expect("the missing range was reported");
+    let data = published
+        .iter()
+        .position(|stream| stream.kind.is_data())
+        .expect("retained output was published");
+    assert!(
+        gap < data,
+        "the gap precedes the data it stands for: {frames:?}"
+    );
+    let gap = published[gap];
+    assert_eq!(gap.gap_range(), Some(StreamGap { from: 8, to: 100 }));
+    // Distinct, strictly increasing positions: the gap names the first missing
+    // offset and the data starts where the log resumes.
+    assert_eq!(
+        gap.seq, 8,
+        "the gap names the first position it cannot give"
+    );
+    assert_eq!(published[data].seq, 100);
+    assert!(gap.seq < published[data].seq);
+    assert_eq!(
+        decode_stream_payload(published[data].payload.as_deref().expect("payload"))
+            .expect("base64"),
+        b"resumed"
+    );
+}
+
+#[test]
+fn a_gap_and_the_data_after_it_keep_one_strictly_increasing_series() {
+    let mut outbound = Outbound::new();
+    let id = RequestId::new([7; 16]);
+    outbound.resume(TERMINAL_STREAM, 8);
+    outbound
+        .push_retained(id, TERMINAL_STREAM, StreamKind::Stdout, 100, b"ab")
+        .expect("retained frame");
+    let frames = outbound.take();
+    assert_eq!(
+        frames.iter().map(|frame| frame.seq).collect::<Vec<_>>(),
+        vec![8, 100],
+        "a gap and the data that resumes it are distinct positions"
+    );
+    // A source that rewinds behind what this connection published refuses.
+    assert!(outbound
+        .push_retained(id, TERMINAL_STREAM, StreamKind::Stdout, 50, b"late")
+        .is_err());
+}
+
+#[test]
+fn a_cursor_past_the_retained_end_is_refused_without_an_attachment() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-cursor-future");
+    let (_run, live) = admitted_run(&cx, &root, session, 76, &[141]);
+    write_segment(&root, live, 1, Stream::Stdout, 0, b"abcde");
+    let mut host = server(session, &[142]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            // The log ends at 5, so 40 is a position it cannot resume from.
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], Some(40)),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    let frames = written_frames(&pipe);
+    assert!(
+        frames.iter().any(|frame| matches!(
             frame,
-            Frame::Stream(StreamFrame {
-                kind: StreamKind::Gap,
+            Frame::Response(Response {
+                outcome: ResponseOutcome::Refused(Refusal {
+                    code: RefusalCode::InvalidRequest,
+                    ..
+                }),
                 ..
             })
         )),
-        "a retained position reports no gap"
+        "a future cursor is refused: {frames:?}"
     );
+    assert!(
+        !stream_frames(&frames)
+            .iter()
+            .any(|stream| stream.kind.is_data()),
+        "nothing was published as if the cursor resumed"
+    );
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("root {other:?}"),
+    };
+    let secondaries: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary'",
+            [live.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(secondaries, 0, "a refused cursor opened no attachment");
 }
 
 #[test]
-fn a_reconnect_reports_a_bounded_gap_before_retained_output() {
-    let (_fixture, cx, root, session) = journal("effigy-channel-gap");
-    let (_run, live) = admitted_run(&cx, &root, session, 75, &[139]);
-    let mut host = server(session, &[140]);
-    let mut terminal = RecordingTerminal {
-        resume: Some(StreamResume::Gap { from: 8, to: 40 }),
-        chunks: [StreamChunk {
-            stream_id: TERMINAL_STREAM,
-            kind: StreamKind::TerminalOutput,
-            bytes: b"resumed".to_vec(),
-        }]
-        .into(),
-        ..Default::default()
-    };
+fn the_retained_endpoint_delivers_input_and_the_newest_size_to_the_owner() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-retained-input");
+    let (_run, live) = admitted_run(&cx, &root, session, 79, &[147]);
+    let mut host = server(session, &[148]);
+    // The kernel's own endpoint, reading a real captured log and delivering to
+    // the terminal owner exactly as lane B's front end would receive it.
+    let mut streams = retained_stdout(&root, live);
     let mut pipe = Pipe::new(
         stream(&[
             Frame::Hello(hello()),
             Frame::Authenticate(capability()),
-            attach_frame(session, live, 1, vec![StreamKind::TerminalOutput], Some(8)),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], None),
+            Frame::Stream(input_frame(1, 0, b"typed")),
+            Frame::Stream(resize_frame(1, 1, 24, 80)),
+            Frame::Stream(resize_frame(1, 2, 30, 100)),
+            Frame::Stream(input_frame(1, 3, b"\x04")),
         ]),
         peer(),
     );
-    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut terminal)
+    let served = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
         .expect("served");
-    let frames = written_frames(&pipe);
-    let data = frames
-        .iter()
-        .position(|frame| matches!(frame, Frame::Stream(stream) if stream.kind.is_data()))
-        .expect("retained output was published");
-    let gap = frames
-        .iter()
-        .position(|frame| matches!(frame, Frame::Stream(stream) if stream.kind == StreamKind::Gap))
-        .expect("the missing range was reported");
-    assert!(gap < data, "the gap precedes the data it stands for");
-    let Frame::Stream(gap) = &frames[gap] else {
-        unreachable!("a gap frame")
-    };
-    assert_eq!(gap.gap_range(), Some(StreamGap { from: 8, to: 40 }));
-    assert_eq!(gap.seq, 40, "the gap names where output resumes");
-    let Frame::Stream(first) = &frames[data] else {
-        unreachable!("a data frame")
-    };
-    assert_eq!(first.seq, 40);
+    assert_eq!(served.streams, 4);
+    assert!(served.closed);
+    let terminal = streams.terminal_mut();
+    assert_eq!(terminal.input, vec![b"typed".to_vec(), vec![0x04]]);
+    assert_eq!(terminal.resizes, 2);
+    assert_eq!(
+        terminal.size,
+        Some(TerminalSize {
+            rows: 30,
+            columns: 100
+        })
+    );
+    assert_eq!(terminal.attachment_ids.len(), 2);
+    // A secondary's EOF never stops the owner's run.
+    assert_eq!(stops(&root, live), 0);
 }
 
 #[test]
-fn a_cursor_the_reader_did_not_retain_is_refused_without_an_attachment() {
-    // The default source retains nothing past the start, so it serves cursor
-    // zero and refuses a later one instead of restarting at zero.
-    let (_fixture, cx, root, session) = journal("effigy-channel-cursor-refused");
-    let (_run, live) = admitted_run(&cx, &root, session, 76, &[141]);
-    let mut host = server(session, &[142]);
+fn a_source_with_nothing_retained_refuses_a_resume_cursor() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-nothing-retained");
+    let (_run, live) = admitted_run(&cx, &root, session, 78, &[145]);
+    let mut host = server(session, &[146]);
     let mut pipe = Pipe::new(
         stream(&[
             Frame::Hello(hello()),
@@ -2801,27 +3049,32 @@ fn a_cursor_the_reader_did_not_retain_is_refused_without_an_attachment() {
                 ..
             })
         )),
-        "an invalid cursor is refused: {frames:?}"
+        "a cursor a source did not retain is refused: {frames:?}"
     );
-    assert!(
-        !frames
-            .iter()
-            .any(|frame| matches!(frame, Frame::Stream(stream) if stream.kind.is_data())),
-        "nothing was published as if the cursor resumed"
+    assert!(!stream_frames(&frames)
+        .iter()
+        .any(|stream| stream.kind.is_data()));
+}
+
+#[test]
+fn a_resize_with_no_terminal_owner_is_refused_not_silently_applied() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-resize-no-terminal");
+    let (_run, live) = admitted_run(&cx, &root, session, 77, &[143]);
+    let mut host = server(session, &[144]);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], None),
+            Frame::Stream(resize_frame(1, 0, 24, 80)),
+        ]),
+        peer(),
     );
-    let reader = match Store::read(&observe_context(), &root) {
-        Observed::Verified(reader, _) => reader,
-        other => panic!("root {other:?}"),
-    };
-    let secondaries: i64 = reader
-        .conn()
-        .query_row(
-            "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary'",
-            [live.to_string()],
-            |row| row.get(0),
-        )
-        .expect("count");
-    assert_eq!(secondaries, 0, "a refused cursor opened no attachment");
+    let refusal = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut NoStreams)
+        .expect_err("a host with no terminal cannot resize");
+    assert_eq!(refusal.code, RefusalCode::Unavailable);
+    assert_eq!(stops(&root, live), 0);
 }
 
 #[test]

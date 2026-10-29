@@ -1037,14 +1037,15 @@ pub struct TerminalSize {
 
 impl StreamFrame {
     /// A bounded gap report on `stream_id`. Its sequence is the first position
-    /// the client will actually receive, and its payload is the missing range.
+    /// the log can no longer give, so the data that resumes at `to` keeps the
+    /// stream's sequence strictly increasing, and its payload is the range.
     pub fn gap(id: RequestId, stream_id: u32, gap: StreamGap) -> Result<Self, Refusal> {
         let bytes = serde_json::to_vec(&gap)
             .map_err(|_| Refusal::invalid("a stream gap is not encodable"))?;
         Ok(Self {
             id,
             stream_id,
-            seq: gap.to,
+            seq: gap.from,
             kind: StreamKind::Gap,
             payload: Some(encode_stream_payload(&bytes)),
             rows: None,
@@ -1184,10 +1185,19 @@ impl StreamWindow {
         self.sizes.push_back(decoded);
         Queue::Admitted
     }
-    /// The receiver consumed up to `seq` on `stream_id`. Only frames still open
-    /// in order are freed, so an acknowledgement can never free a frame the
-    /// client has not seen.
-    pub fn acknowledge(&mut self, stream_id: u32, seq: u64) {
+    /// The receiver consumed up to `seq` on `stream_id`, which names an open
+    /// data frame this connection published. Frames are freed in order, and a
+    /// sequence that is not open — a duplicate, a stale one, a control frame or
+    /// a frame another connection published — frees nothing and reports
+    /// `false`, so an invalid acknowledgement has no effect on the window.
+    pub fn acknowledge(&mut self, stream_id: u32, seq: u64) -> bool {
+        if !self
+            .open
+            .iter()
+            .any(|(open_stream, open_seq)| *open_stream == stream_id && *open_seq == seq)
+        {
+            return false;
+        }
         let mut count = 0;
         for (open_stream, open_seq) in &self.open {
             if *open_stream != stream_id || *open_seq > seq {
@@ -1203,6 +1213,7 @@ impl StreamWindow {
             self.unacked = self.unacked.saturating_sub(1);
             self.queued = self.queued.saturating_sub(freed);
         }
+        true
     }
     fn track(&mut self, stream_id: u32, seq: u64) {
         self.open.push_back((stream_id, seq));
@@ -1220,9 +1231,10 @@ impl StreamWindow {
 pub struct Outbound {
     window: StreamWindow,
     data: Vec<StreamFrame>,
-    /// The next sequence each stream id will publish. Numbering is per stream
-    /// id and shared by every kind on it, so one stream's stdout and stderr do
-    /// not restart each other (§8.11).
+    /// The next position each stream id will publish. Numbering is per stream
+    /// id and shared by every kind on it (§8.11), and its unit is whatever the
+    /// source reads in: a retained stream's absolute byte offset, or a plain
+    /// frame ordinal for a source that keeps no position.
     next_seq: BTreeMap<u32, u64>,
 }
 impl Outbound {
@@ -1238,13 +1250,65 @@ impl Outbound {
         kind: StreamKind,
         bytes: &'a [u8],
     ) -> &'a [u8] {
+        self.push(id, stream_id, kind, None, bytes)
+            .expect("a positional chunk is the only one that can move backwards")
+    }
+    /// Queue one chunk the retained reader holds at absolute position `from`,
+    /// so the client's resume cursor, the frame sequences and the retained log
+    /// are one coordinate system across reconnects and chunk boundaries.
+    ///
+    /// A jump forward — bytes the log rotated away — is reported as one
+    /// `gap` frame that names where it resumes, so a receiver enforcing a
+    /// strictly increasing sequence sees the control frame and the data that
+    /// follows as distinct positions. A position behind what this connection
+    /// already published is a source defect and refuses.
+    pub fn push_retained<'a>(
+        &mut self,
+        id: RequestId,
+        stream_id: u32,
+        kind: StreamKind,
+        from: u64,
+        bytes: &'a [u8],
+    ) -> Result<&'a [u8], Refusal> {
+        self.push(id, stream_id, kind, Some(from), bytes)
+    }
+    fn push<'a>(
+        &mut self,
+        id: RequestId,
+        stream_id: u32,
+        kind: StreamKind,
+        from: Option<u64>,
+        bytes: &'a [u8],
+    ) -> Result<&'a [u8], Refusal> {
+        let next = *self.next_seq.entry(stream_id).or_insert(0);
+        if let Some(from) = from {
+            if from < next {
+                return Err(Refusal::unknown(
+                    "the retained stream position moved behind what this connection published",
+                ));
+            }
+            if from > next {
+                // The bounded range the log no longer holds. Its sequence is
+                // the first missing position, so the data that resumes at
+                // `from` keeps the stream's sequence strictly increasing.
+                self.data.push(StreamFrame::gap(
+                    id,
+                    stream_id,
+                    StreamGap {
+                        from: next,
+                        to: from,
+                    },
+                )?);
+                self.next_seq.insert(stream_id, from);
+            }
+        }
         let mut offset = 0;
         while offset < bytes.len() {
             let end = (offset + MAX_STREAM_PAYLOAD).min(bytes.len());
             if self.window.offer(end - offset) == Queue::Backpressure {
                 break;
             }
-            let seq = self.sequence(stream_id);
+            let seq = *self.next_seq.entry(stream_id).or_insert(0);
             self.window.track(stream_id, seq);
             self.data.push(StreamFrame {
                 id,
@@ -1255,35 +1319,31 @@ impl Outbound {
                 rows: None,
                 columns: None,
             });
+            let next = match from {
+                // A retained frame's sequence is the absolute position of its
+                // first byte, so the next frame starts where this one ended.
+                Some(_) => seq.saturating_add((end - offset) as u64),
+                // A source with no retained position numbers frames.
+                None => seq.saturating_add(1),
+            };
+            self.next_seq.insert(stream_id, next);
             offset = end;
         }
-        &bytes[offset..]
+        Ok(&bytes[offset..])
     }
-    fn sequence(&mut self, stream_id: u32) -> u64 {
-        let next = self.next_seq.entry(stream_id).or_insert(0);
-        let seq = *next;
-        *next = next.saturating_add(1);
-        seq
-    }
-    /// Continue `stream_id` at `next`, for a connection that resumed from a
-    /// retained cursor or reported a bounded gap. A position behind what this
-    /// connection already published never rewinds the sequence.
+    /// Continue `stream_id` at `next`, from the retained position the client
+    /// asked to resume at. A position behind what this connection already
+    /// published never rewinds the sequence.
     pub fn resume(&mut self, stream_id: u32, next: u64) {
         let current = self.next_seq.entry(stream_id).or_insert(0);
         if next > *current {
             *current = next;
         }
     }
-    /// The highest sequence this stream has published, once it has any. A
-    /// resumed stream counts the retained frames the client already consumed.
-    pub fn sent(&self, stream_id: u32) -> Option<u64> {
-        self.next_seq
-            .get(&stream_id)
-            .and_then(|next| next.checked_sub(1))
-    }
-    /// The receiver consumed up to `seq` on one stream.
-    pub fn acknowledge(&mut self, stream_id: u32, seq: u64) {
-        self.window.acknowledge(stream_id, seq);
+    /// The receiver consumed up to `seq` on one stream: `false` when that
+    /// sequence names no frame this connection published and left open.
+    pub fn acknowledge(&mut self, stream_id: u32, seq: u64) -> bool {
+        self.window.acknowledge(stream_id, seq)
     }
     pub fn take(&mut self) -> Vec<StreamFrame> {
         std::mem::take(&mut self.data)
@@ -1299,6 +1359,10 @@ impl Outbound {
 pub struct StreamChunk {
     pub stream_id: u32,
     pub kind: StreamKind,
+    /// The absolute retained position of `bytes[0]` on `stream_id`, when the
+    /// source reads a retained log. `None` is a source with no retained
+    /// position, whose frames are numbered instead.
+    pub cursor: Option<u64>,
     pub bytes: Vec<u8>,
 }
 
@@ -1306,34 +1370,64 @@ pub struct StreamChunk {
 /// to resume at (052 §8.11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamResume {
-    /// The source holds the stream from `next`; sequence numbering continues
-    /// there, so a resume never looks like a first read.
+    /// Output continues at `next`: the client's own cursor inside the retained
+    /// range, or the position it is caught up to. The connection numbers the
+    /// stream there, and a retained position ahead of it is reported as a
+    /// bounded gap before any data.
     At { next: u64 },
-    /// Bytes between `from` and `to` were rotated away. The connection reports
-    /// that bounded gap before any data and numbers output from `to`.
-    Gap { from: u64, to: u64 },
-    /// The source cannot serve this cursor, or retains nothing at it. The
+    /// The source cannot serve this cursor — it is ahead of the retained end,
+    /// names no stream this attachment carries, or the log is unreadable. The
     /// attach is refused rather than restarted at sequence zero.
     Refused,
 }
 
-/// One connection's stream endpoint: the attached run's retained output on the
-/// way out, and the terminal's input and resize on the way in. The attachment's
-/// owner implements it — the retained reader and the front end that holds the
-/// terminal — so the channel frames and validates bytes without owning either.
+/// The attached run's terminal owner, as lane B implements it: the front end
+/// that holds the terminal and hands validated bytes and sizes to it.
 ///
-/// A host with nothing to stream uses [`NoStreams`].
-pub trait Streams {
-    fn next_chunk(&mut self) -> Option<StreamChunk>;
+/// The kernel has no per-run terminal writer — `run::Attachment` carries
+/// retained logs and stop/escalate control, not a terminal input channel — so
+/// no kernel type implements this yet. A host with no terminal uses
+/// [`NoTerminal`], which refuses rather than silently dropping input.
+pub trait Terminal {
+    /// Deliver one validated terminal input frame, exactly once and in
+    /// sequence order.
+    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal>;
+    /// Record the newest terminal size. The owner keeps the latest size; the
+    /// connection holds no queue, so a burst cannot grow into a backlog.
+    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal>;
+}
+/// A terminal owner for a host that has no terminal on this connection.
+#[derive(Debug, Default)]
+pub struct NoTerminal;
+impl Terminal for NoTerminal {
+    fn input(&mut self, _attachment: AttachmentId, _bytes: &[u8]) -> Result<(), Refusal> {
+        Err(Refusal::unavailable(
+            "this host has no terminal to deliver input to",
+        ))
+    }
+    fn resize(&mut self, _attachment: AttachmentId, _size: TerminalSize) -> Result<(), Refusal> {
+        Err(Refusal::unavailable("this host has no terminal to resize"))
+    }
+}
 
-    /// Where this source resumes `stream_id` at the client's `cursor`. It is
-    /// asked before the attachment is opened, so it writes nothing, and the
-    /// answer decides the connection's first sequence on that stream.
+/// One connection's stream endpoint: the attached run's retained output on the
+/// way out, and the terminal's input and resize on the way in. Lane B's front
+/// end and retained reader implement it, so the channel frames and validates
+/// bytes without owning either. [`RetainedStreams`] is the kernel's own
+/// implementation over a run's captured logs, and [`NoStreams`] is a host with
+/// nothing to publish.
+pub trait Streams {
+    /// The next chunk to publish, if any. The connection's live attachment is
+    /// passed so the endpoint can re-check its own lifetime before reading.
+    fn next_chunk(&mut self, attachment: Option<&Attachment>) -> Option<StreamChunk>;
+
+    /// Where this source meets the client's requested `cursor` for
+    /// `stream_id`, asked before the attachment opens so it writes nothing.
     ///
     /// The default is a source with nothing retained: it serves the start of a
     /// stream and refuses any later cursor, so a reconnect is never presented
     /// as an uninterrupted sequence from zero.
-    fn resume(&mut self, _stream_id: u32, cursor: u64) -> StreamResume {
+    fn resume(&mut self, _run: RunId, _stream_id: u32, cursor: u64) -> StreamResume {
         if cursor == 0 {
             StreamResume::At { next: 0 }
         } else {
@@ -1341,27 +1435,161 @@ pub trait Streams {
         }
     }
 
-    /// Deliver one validated terminal input frame to the attached run's
-    /// terminal, exactly once and in sequence order. A source with no terminal
-    /// has nowhere to deliver it and refuses, so the connection closes instead
-    /// of the channel claiming a delivery it did not make.
-    fn input(&mut self, _attachment: AttachmentId, _bytes: &[u8]) -> Result<(), Refusal> {
+    /// Deliver one validated terminal input frame.
+    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
+        let _ = (attachment, bytes);
         Err(Refusal::unavailable(
             "this host has no terminal to deliver input to",
         ))
     }
 
-    /// Record the newest terminal size for `attachment`. A resize is not
-    /// buffered: the owner keeps the latest size and the connection holds no
-    /// queue, so a burst of resizes cannot grow into a backlog.
-    fn resize(&mut self, _attachment: AttachmentId, _size: TerminalSize) {}
+    /// Record the newest terminal size. A host without a terminal refuses
+    /// rather than reporting a resize it did not apply.
+    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
+        let _ = (attachment, size);
+        Err(Refusal::unavailable("this host has no terminal to resize"))
+    }
 }
 /// A host with nothing to publish on this connection and no terminal on it.
 #[derive(Debug, Default)]
 pub struct NoStreams;
 impl Streams for NoStreams {
-    fn next_chunk(&mut self) -> Option<StreamChunk> {
+    fn next_chunk(&mut self, _attachment: Option<&Attachment>) -> Option<StreamChunk> {
         None
+    }
+}
+
+/// The kernel's production stream endpoint for one attached run (§8.11): the
+/// run's captured process logs read by absolute retained position, plus the
+/// terminal owner the front end supplies.
+///
+/// The retained log is the only authority for a position. A resume cursor, a
+/// frame sequence and a rotation gap are all byte offsets in the same log, so a
+/// reconnect resumes exactly where the client stopped, a gap is reported from
+/// the offsets the log no longer holds, and no replay store or second cursor
+/// exists. The attachment's own lifetime is re-checked on every read, so a
+/// released or replaced row stops publication.
+#[derive(Debug)]
+pub struct RetainedStreams<T: Terminal> {
+    observe: ObserveContext,
+    root: StateRoot,
+    run: RunId,
+    /// Stream id `n` names the `n`th captured stream here; the stream decides
+    /// the kind of frames it publishes.
+    plan: Vec<(i64, crate::custody::Stream)>,
+    /// The next retained byte each stream id will publish.
+    next: Vec<u64>,
+    terminal: T,
+}
+
+impl<T: Terminal> RetainedStreams<T> {
+    /// The endpoint for `run`'s captured streams, in stream-id order.
+    pub fn new(
+        observe: ObserveContext,
+        root: StateRoot,
+        run: RunId,
+        plan: Vec<(i64, crate::custody::Stream)>,
+        terminal: T,
+    ) -> Self {
+        let next = vec![0; plan.len()];
+        Self {
+            observe,
+            root,
+            run,
+            plan,
+            next,
+            terminal,
+        }
+    }
+    /// The run this endpoint serves.
+    pub fn run(&self) -> RunId {
+        self.run
+    }
+    /// The terminal owner this endpoint delivers input and resize to.
+    pub fn terminal_mut(&mut self) -> &mut T {
+        &mut self.terminal
+    }
+}
+
+impl<T: Terminal> Streams for RetainedStreams<T> {
+    fn next_chunk(&mut self, attachment: Option<&Attachment>) -> Option<StreamChunk> {
+        let attachment = attachment?;
+        // A released attachment, a replaced row or an unreadable journal stops
+        // publication instead of reading past the client's lifetime.
+        if !matches!(
+            attachment.attached_observed(&self.observe, &self.root),
+            Ok(true)
+        ) {
+            return None;
+        }
+        for index in 0..self.plan.len() {
+            let (sequence, stream) = self.plan[index];
+            let read = match run::read_log(
+                &self.observe,
+                &self.root,
+                self.run,
+                sequence,
+                stream,
+                self.next[index],
+                MAX_STREAM_PAYLOAD,
+            ) {
+                Observed::Verified(read, _) => read,
+                // No captured log for this stream, or one that cannot be read:
+                // nothing to publish here rather than invented output.
+                Observed::Absent(_) | Observed::Unknown(_) => continue,
+            };
+            if read.bytes.is_empty() {
+                self.next[index] = read.end;
+                continue;
+            }
+            self.next[index] = read.from.saturating_add(read.bytes.len() as u64);
+            let kind = match stream {
+                crate::custody::Stream::Stdout => StreamKind::Stdout,
+                crate::custody::Stream::Stderr => StreamKind::Stderr,
+            };
+            return Some(StreamChunk {
+                stream_id: index as u32,
+                kind,
+                // The frame's position in the retained log, so the client's
+                // cursor and the frame sequence are one coordinate system.
+                cursor: Some(read.from),
+                bytes: read.bytes,
+            });
+        }
+        None
+    }
+
+    fn resume(&mut self, run: RunId, stream_id: u32, cursor: u64) -> StreamResume {
+        if run != self.run {
+            return StreamResume::Refused;
+        }
+        let Some(&(sequence, stream)) = self.plan.get(stream_id as usize) else {
+            return StreamResume::Refused;
+        };
+        match run::read_log(&self.observe, &self.root, run, sequence, stream, cursor, 1) {
+            // The log's end is its extent: a cursor at or before it is a
+            // position this attachment continues from. A cursor past it is a
+            // future position, refused rather than clamped or clamped-to-zero.
+            Observed::Verified(read, _) if cursor <= read.end => {
+                self.next[stream_id as usize] = cursor;
+                StreamResume::At { next: cursor }
+            }
+            // A stream with nothing captured yet still serves its start; any
+            // later cursor was not retained here.
+            Observed::Absent(_) if cursor == 0 => {
+                self.next[stream_id as usize] = 0;
+                StreamResume::At { next: 0 }
+            }
+            _ => StreamResume::Refused,
+        }
+    }
+
+    fn input(&mut self, attachment: AttachmentId, bytes: &[u8]) -> Result<(), Refusal> {
+        self.terminal.input(attachment, bytes)
+    }
+
+    fn resize(&mut self, attachment: AttachmentId, size: TerminalSize) -> Result<(), Refusal> {
+        self.terminal.resize(attachment, size)
     }
 }
 
@@ -2127,9 +2355,6 @@ pub struct Server<A: Admission, R: Resolver, O: Observer, I: RunIds> {
     /// The next inbound sequence this connection accepts per stream id:
     /// terminal input and resize, in order and never replayed.
     inbound: BTreeMap<u32, u64>,
-    /// A bounded gap report owed to the client after its attach response, at
-    /// most one, written before any data frame.
-    gap: Option<StreamFrame>,
 }
 impl<A: Admission, R: Resolver, O: Observer, I: RunIds> fmt::Debug for Server<A, R, O, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2140,15 +2365,6 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> fmt::Debug for Server<A,
             .finish_non_exhaustive()
     }
 }
-/// What one connection's cursor negotiation decided, before its attachment
-/// exists. `Gap` carries the bounded range the client will not receive.
-enum Resume {
-    /// Publishing on the stream continues at this sequence.
-    At(u64),
-    /// A gap frame precedes the data that resumes at `to`.
-    Gap(StreamGap),
-}
-
 /// What one connection did. `Closed` is an ordinary end of stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Served {
@@ -2176,7 +2392,6 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
             attach: None,
             carry: None,
             inbound: BTreeMap::new(),
-            gap: None,
         }
     }
     pub fn grants(&self) -> &GrantBook {
@@ -2232,7 +2447,6 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         self.attach = None;
         self.carry = None;
         self.inbound.clear();
-        self.gap = None;
     }
 
     /// The unauthenticated half: `hello`, `hello_ok`, then `authenticate` or
@@ -2299,7 +2513,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         // frame is bounded above, and the transport owns the lifetime; there
         // is no count at which the host would end a live run instead of the
         // client's own end of stream.
-        self.pump(transport, streams)?;
+        self.pump(transport, streams, attachment.as_ref())?;
         while let Some(body) = read_frame(transport)? {
             let frame = match decode_frame(&body) {
                 Ok(frame) => frame,
@@ -2342,7 +2556,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     ))
                 }
             }
-            self.pump(transport, streams)?;
+            self.pump(transport, streams, attachment.as_ref())?;
         }
         // End of stream is the client going away: the kernel records the
         // owner's stop or releases this client's own row, and a secondary never
@@ -2383,17 +2597,22 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         }
         match frame.kind {
             StreamKind::Ack => {
-                let Some(sent) = self.outbound.sent(frame.stream_id) else {
+                // An acknowledgement is only its sequence: no payload and no
+                // size fields. A malformed one refuses before the window moves.
+                if frame.payload.is_some() || frame.rows.is_some() || frame.columns.is_some() {
                     return Err(Refusal::invalid(
-                        "a client acknowledges a stream this connection does not carry",
-                    ));
-                };
-                if frame.seq > sent {
-                    return Err(Refusal::invalid(
-                        "a client acknowledges a frame this connection has not sent",
+                        "an acknowledgement carries only the sequence it consumed",
                     ));
                 }
-                self.outbound.acknowledge(frame.stream_id, frame.seq);
+                // The sequence must name a frame this connection published and
+                // has not freed. A duplicate, a stale one, one for a control
+                // frame and one for a retained position this connection never
+                // published all refuse, so none of them frees the window.
+                if !self.outbound.acknowledge(frame.stream_id, frame.seq) {
+                    return Err(Refusal::invalid(
+                        "a client acknowledges no open frame this connection published",
+                    ));
+                }
                 Ok(())
             }
             StreamKind::TerminalInput => {
@@ -2411,7 +2630,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 let bytes = decode_stream_payload(payload)?;
                 self.next_inbound(frame)?;
                 // Delivered once, and only after the whole frame checked out.
-                // A source with no terminal refuses, which closes this
+                // An owner with no terminal refuses, which closes this
                 // connection rather than dropping the keystroke.
                 streams.input(attachment.id(), &bytes)
             }
@@ -2435,8 +2654,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     ));
                 }
                 self.next_inbound(frame)?;
-                streams.resize(attachment.id(), TerminalSize { rows, columns });
-                Ok(())
+                // The owner keeps the newest size. A host with no terminal
+                // refuses instead of reporting a resize it never applied.
+                streams.resize(attachment.id(), TerminalSize { rows, columns })
             }
             _ => Err(Refusal::invalid(
                 "a client sends terminal input, resize or acknowledgement",
@@ -2465,28 +2685,34 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
         &mut self,
         transport: &mut T,
         streams: &mut impl Streams,
+        attachment: Option<&Attachment>,
     ) -> Result<(), Refusal> {
-        // A bounded gap report is the first thing published after the attach
-        // that requested it, so the client learns where output resumes before
-        // it sees a data frame.
-        if let Some(gap) = self.gap.take() {
-            write_frame(transport, &Frame::Stream(gap))?;
-        }
         let Some(id) = self.attach else {
             // Nothing is attached, so there is nothing to publish.
             return Ok(());
         };
         loop {
             if self.carry.is_none() {
-                self.carry = streams.next_chunk();
+                self.carry = streams.next_chunk(attachment);
             }
             let Some(chunk) = self.carry.take() else {
                 return Ok(());
             };
-            let left = self
-                .outbound
-                .push_chunk(id, chunk.stream_id, chunk.kind, &chunk.bytes)
-                .to_vec();
+            // A retained chunk carries the absolute log position of its first
+            // byte, so the frame sequence is that position: a client's cursor,
+            // a gap and the data around it are one series across reconnects and
+            // chunk boundaries. A gap the log reports this way becomes one
+            // `gap` frame naming the first missing position, ahead of the data.
+            let left = match chunk.cursor {
+                Some(from) => self
+                    .outbound
+                    .push_retained(id, chunk.stream_id, chunk.kind, from, &chunk.bytes)
+                    .map(|left| left.to_vec())?,
+                None => self
+                    .outbound
+                    .push_chunk(id, chunk.stream_id, chunk.kind, &chunk.bytes)
+                    .to_vec(),
+            };
             for frame in self.outbound.take() {
                 write_frame(transport, &Frame::Stream(frame))?;
             }
@@ -2494,6 +2720,9 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                 self.carry = Some(StreamChunk {
                     stream_id: chunk.stream_id,
                     kind: chunk.kind,
+                    cursor: chunk
+                        .cursor
+                        .map(|from| from + (chunk.bytes.len() - left.len()) as u64),
                     bytes: left,
                 });
                 return Ok(());
@@ -2559,14 +2788,8 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // attach, so a reconnect never restarts at sequence zero as
                     // if its output had been uninterrupted (§8.11).
                     let cursor = body.cursor.unwrap_or(0);
-                    let resume = match streams.resume(TERMINAL_STREAM, cursor) {
-                        StreamResume::At { next } => Resume::At(next),
-                        StreamResume::Gap { from, to } if to >= from => {
-                            Resume::Gap(StreamGap { from, to })
-                        }
-                        StreamResume::Gap { .. } => {
-                            return Err(Refusal::invalid("a retained stream gap is ordered"))
-                        }
+                    let resume = match streams.resume(body.run, TERMINAL_STREAM, cursor) {
+                        StreamResume::At { next } => next,
                         StreamResume::Refused => {
                             return Err(Refusal::invalid(
                                 "this attachment cannot resume at the requested cursor",
@@ -2593,13 +2816,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                                 .map_err(refusal_from)?;
                         }
                     }
-                    match resume {
-                        Resume::At(next) => self.outbound.resume(TERMINAL_STREAM, next),
-                        Resume::Gap(gap) => {
-                            self.outbound.resume(TERMINAL_STREAM, gap.to);
-                            self.gap = Some(StreamFrame::gap(request.id, TERMINAL_STREAM, gap)?);
-                        }
-                    }
+                    self.outbound.resume(TERMINAL_STREAM, resume);
                     // A new attachment is a new terminal lifetime: its inbound
                     // sequence starts again at zero under the new request id.
                     self.inbound.clear();
@@ -2633,7 +2850,6 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // accepts no further input.
                     self.carry = None;
                     self.inbound.clear();
-                    self.gap = None;
                     Ok(ResponseOutcome::Observed(Value::Null))
                 }
             }

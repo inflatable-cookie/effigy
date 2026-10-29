@@ -2792,7 +2792,9 @@ rule grants authority after capability revocation or generation change.
 A `stream` frame names `id`, `stream_id`, monotonically increasing `seq`,
 `kind` and payload. `id` is the attach request that opened the connection's
 attachment, `stream_id` 0 is that attachment's terminal, and `seq` is one
-series per stream id shared by every kind on it. Kinds are `event`, `stdout`,
+strictly increasing series per stream id shared by every kind on it — retained
+output's series is the absolute log position of each frame, and a source that
+keeps no position numbers frames instead. Kinds are `event`, `stdout`,
 `stderr`, `terminal_output`, `terminal_input`, `resize`, `ack`, `end` and
 `gap`; events carry typed host
 status or outcome, resize carries positive rows and columns, and `end`
@@ -3017,23 +3019,36 @@ and never carries an unpublished chunk or a full window into it.
 
 Stream sequences are numbered once per stream id and shared by every kind on
 it, so a stream's stdout and stderr form `0, 1` rather than restarting each
-other, and the acknowledgement window frees frames in that one series. The
-connection's stream endpoint is the `Streams` seam: the attachment's owner
-supplies retained chunks and implements the terminal's inbound side. `resume`
-meets the client's requested `attach` cursor against the retained reader before
-the attachment opens, and answers `At { next }`, a bounded
-`Gap { from, to }` or `Refused`; the connection numbers output from there and
-writes at most one gap frame before any data, so a reconnect is never presented
-as an uninterrupted sequence from zero, and a cursor the reader did not retain
-is refused without opening an attachment. `input` delivers one validated
-terminal input frame exactly once; `resize` records the newest size, with no
-queue behind it. An inbound frame is accepted only for the connection's own
-attach request id, its own terminal stream and the stream's next sequence, and
-only as `terminal_input`, `resize` or `ack` for a frame this connection sent;
-an unknown stream, a foreign request, a repeated or out-of-order sequence, a
-malformed payload or an outbound kind refuses and closes with no host effect —
-no input reaches a terminal, no size is recorded and no frame is freed. The
-transport, the guest client and the runner integration remain separate tasks.
+other, and the acknowledgement window frees frames in that one series. A source
+that reads a retained log publishes each chunk with its absolute position, and
+the sequence is then that position: one frame's sequence is its first byte's
+offset, so a cursor, a frame sequence and the retained log are one coordinate
+system across reconnects and chunk boundaries with no replay store or second
+cursor. `RetainedStreams` is the kernel's own
+endpoint over `run::read_log`: it answers `resume(run, stream_id, cursor)` with
+`At { next }` only for a position the log still holds, up to its end, and
+`Refused` for a future cursor, an unknown stream, a stream nothing was captured
+for at a later cursor, or an unreadable log — so a reconnect is refused rather
+than restarted at sequence zero, and a refused cursor opens no attachment. A
+retained position the log rotates past becomes one `gap` frame naming the first
+missing offset, ahead of the data that resumes there, so every emitted frame on
+a stream keeps a strictly increasing sequence and the gap is never presented as
+complete output. The endpoint re-checks the connection's attachment with
+`Attachment::attached_observed` on every read, so a released or replaced row
+stops publication. `input` delivers one validated terminal input frame exactly
+once to the terminal owner — `Terminal::input` — and `resize` hands over the
+newest size with no queue behind it. An inbound frame is accepted only for the
+connection's own attach request id, its own terminal stream and the stream's
+next sequence, and only as `terminal_input`, `resize` or `ack`; an
+acknowledgement must also be shape-only and name a data frame this connection
+published and has not freed. An unknown stream, a foreign request, a repeated,
+out-of-order, duplicate, stale or resumed-unsent sequence, a malformed payload
+or an outbound kind refuses and closes with no host effect — no input reaches a
+terminal, no size is recorded and no frame is freed. A host with no terminal
+owner refuses input and resize (`NoTerminal`) instead of reporting a delivery it
+did not make; the kernel currently has no per-run terminal input/resize writer,
+which is the bounded follow-up on the runner glue task. The transport, the guest
+client and the runner integration remain separate tasks.
 `test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map
