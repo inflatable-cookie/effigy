@@ -137,7 +137,13 @@ Unix.
   consumer claims; when the index cannot be read it retires nothing either,
   because it cannot prove a registration is its own. It also stops the `bun
   link` processes it is waiting on before it retires anything: a registration
-  process still running would recreate the registration after its owner died. A leftover claim means an owner died between writing the claim and
+  process still running would recreate the registration after its owner died.
+  Two windows would let that process escape, so both are closed: the owner
+  installs the interrupt handler synchronously before it can create anything
+  (an asynchronously armed owner could be killed outright while its `bun link`
+  child kept running), and a child reserves its place in the cleanup registry
+  before it starts and publishes its PID after, with cleanup waiting for
+  outstanding spawns and refusing new ones. A leftover claim means an owner died between writing the claim and
   retiring it; status reports `bun-registration-without-ledger` and
   `deps unlink bun` or the next link retires it.
 - Validate other repo references before removal. Retain and report stale or

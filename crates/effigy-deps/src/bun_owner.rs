@@ -65,10 +65,16 @@ impl BunLinkOwner {
         if registrations.is_empty() {
             return Self { id: 0 };
         }
-        let owners = OWNERS.get_or_init(|| {
-            watch_interrupts();
-            Mutex::new(Vec::new())
-        });
+        // The registry has to exist before the watcher can read it, and the
+        // watcher has to be live before this owner can create anything: an
+        // interrupt in either gap would kill the process and leave a started
+        // `bun link` behind with no owner to retire it.
+        let owners = OWNERS.get_or_init(|| Mutex::new(Vec::new()));
+        if !ensure_interrupt_watcher() {
+            // Completion still retires the registration; only an interrupt
+            // cannot be cleaned up, and that is reported once above.
+            return Self { id: 0 };
+        }
         let id = NEXT_OWNER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         owners
             .lock()
@@ -99,51 +105,110 @@ impl Drop for BunLinkOwner {
     }
 }
 
-fn watch_interrupts() {
+/// Whether the interrupt watcher is installed, so a signal from now on is
+/// handled instead of killing the process outright.
+static WATCHER: OnceLock<bool> = OnceLock::new();
+
+fn ensure_interrupt_watcher() -> bool {
+    *WATCHER.get_or_init(install_interrupt_watcher)
+}
+
+fn interrupt_watcher_installed() -> bool {
+    WATCHER.get().copied().unwrap_or(false)
+}
+
+/// Install the interrupt watcher synchronously, before any registration exists.
+///
+/// `Signals::new` registers the signal handlers in the calling thread, so once
+/// this returns a signal is buffered for the watcher instead of taking its
+/// default action. That ordering matters: an owner that armed asynchronously
+/// could have a `bun link` child running while a signal still killed the
+/// process outright, leaving the child to create a registration nobody owns.
+fn install_interrupt_watcher() -> bool {
     use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
 
-    std::thread::Builder::new()
+    let signals = match signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP]) {
+        Ok(signals) => signals,
+        Err(error) => {
+            eprintln!("effigy: cannot watch for interrupts while linking: {error}");
+            return false;
+        }
+    };
+    let spawned = std::thread::Builder::new()
         .name("effigy-bun-link-interrupt".to_owned())
-        .spawn(|| {
-            let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP])
-            else {
-                return;
-            };
-            for signal in signals.forever() {
-                let owners = OWNERS
-                    .get()
-                    .map(|owners| {
-                        owners
-                            .lock()
-                            .unwrap_or_else(|poison| poison.into_inner())
-                            .clone()
-                    })
-                    .unwrap_or_default();
-                let mut failures = Vec::new();
-                // Stop the `bun link` this owner is waiting on before retiring
-                // anything: left running, it would recreate the registration
-                // after the owner died. Then retire, and repeat once because
-                // the stopped child may have been mid-write when it died.
-                for _ in 0..2 {
-                    crate::process::terminate_owned_children();
-                    for owner in &owners {
-                        let retirement = retire_owned_bun_registrations(
-                            &owner.home,
-                            &owner.consumer_repo,
-                            &owner.library_path,
-                            &owner.registrations,
-                            &StdReadOnlyProcess,
-                            &FsBunPlanObserver,
-                        );
-                        failures.extend(retirement.failures);
-                    }
+        .spawn(move || watch_interrupts(signals))
+        .is_ok();
+    if !spawned {
+        eprintln!("effigy: cannot start the interrupt watcher while linking");
+        return false;
+    }
+    true
+}
+
+fn watch_interrupts(mut signals: signal_hook::iterator::Signals) {
+    for signal in signals.forever() {
+        let owners = OWNERS
+            .get()
+            .map(|owners| {
+                owners
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .clone()
+            })
+            .unwrap_or_default();
+        let mut failures = Vec::new();
+        // Stop the `bun link` this owner is waiting on before retiring
+        // anything: left running, it would recreate the registration after the
+        // owner died. A second pass covers a child that was mid-write or
+        // mid-spawn when the first one ran.
+        for _ in 0..2 {
+            let pass = crate::process::interrupt_cleanup(|| {
+                let mut pass = Vec::new();
+                for owner in &owners {
+                    let retirement = retire_owned_bun_registrations(
+                        &owner.home,
+                        &owner.consumer_repo,
+                        &owner.library_path,
+                        &owner.registrations,
+                        &StdReadOnlyProcess,
+                        &FsBunPlanObserver,
+                    );
+                    pass.extend(retirement.failures);
                 }
-                for failure in &failures {
-                    eprintln!("effigy: interrupted Bun link could not retire: {failure}");
-                }
-                let _ = signal_hook::low_level::emulate_default_handler(signal);
-                return;
-            }
-        })
-        .ok();
+                pass
+            });
+            failures.extend(pass);
+        }
+        for failure in &failures {
+            eprintln!("effigy: interrupted Bun link could not retire: {failure}");
+        }
+        let _ = signal_hook::low_level::emulate_default_handler(signal);
+        return;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn arming_installs_the_interrupt_watcher_before_it_returns() {
+        let home = TempDir::new().unwrap();
+        let consumer = TempDir::new().unwrap();
+        let library = TempDir::new().unwrap();
+        assert!(!interrupt_watcher_installed());
+
+        let owner = BunLinkOwner::arm(
+            home.path(),
+            consumer.path(),
+            library.path(),
+            vec![("underlay".to_owned(), library.path().to_path_buf())],
+        );
+
+        // A signal now is handled instead of killing the process outright, so a
+        // `bun link` this owner starts can never outlive the cleanup.
+        assert!(interrupt_watcher_installed());
+        drop(owner);
+    }
 }

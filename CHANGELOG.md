@@ -415,7 +415,10 @@ During v0.x, MINOR bumps may include breaking changes.
   claim always writes the retired claim out. An interrupted
   owner stops the `bun link` it is waiting on before retiring anything, since a
   registration process still running would recreate the registration after its
-  owner died. It also retires nothing unless it holds the Bun index lock for its
+  owner died. The interrupt handler is installed before the owner can create a
+  registration, and a child process reserves its place in the cleanup registry
+  before it starts, so neither an interrupt during handler setup nor one during
+  a spawn can leave a registration process running past the cleanup. It also retires nothing unless it holds the Bun index lock for its
   own apply: a link that only wants that lock planned its registrations before
   this owner created anything, so they are not in the index yet and this owner
   cannot see them. While it holds the lock it reads the index instead of waiting
