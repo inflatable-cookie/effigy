@@ -30,7 +30,7 @@ use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
-use crate::runner::host_process::HostWaitGraph;
+use crate::runner::host_process::{attributed_environment_failure, HostWaitGraph};
 use crate::runner::managed_wait::WaitLedger;
 use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, TaskTarget};
 
@@ -481,9 +481,24 @@ impl Owner {
                     let now = Instant::now();
                     self.waits.environment_failed(&reason, now);
                     self.publish_waits(now);
-                    if let Some(hosts) = self.host_waits.as_mut() {
-                        hosts.environment_failed(&reason, now);
-                    }
+                    // A host planner that took the scope over published the
+                    // failing entry and its report itself: its records stay,
+                    // and the run names that failure instead of the generic
+                    // `up` exit (effigy#458).
+                    let reason = match self.host_waits.as_mut() {
+                        Some(hosts) if !hosts.owns() => attributed_environment_failure(
+                            &reason,
+                            &crate::runner::managed_wait::WaitLedger::environment(
+                                &environment.repo,
+                                &environment.name,
+                            ),
+                        ),
+                        Some(hosts) => {
+                            hosts.environment_failed_if_owned(&reason, now);
+                            reason
+                        }
+                        None => reason,
+                    };
                     return Err(End::StartFailed(reason, None));
                 }
             }

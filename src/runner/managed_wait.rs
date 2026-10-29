@@ -25,6 +25,11 @@ const WAITS_DIR: &str = ".effigy/runtime/waits";
 /// written before the environment phase can block, so `status` can find the
 /// environment's own records while it is still coming up.
 const SESSION_RECORD: &str = "session.json";
+/// Who currently publishes one environment scope's entries. The run's owner
+/// publishes the host graph before its environment phase can block; the host
+/// planner takes the same scope over when it starts the plan, so the two never
+/// write the same entries at once (effigy#458).
+const OWNER_RECORD: &str = "owner.json";
 
 /// The environment identity a scope publishes before its phase blocks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +37,24 @@ struct SessionRecord {
     schema: String,
     scope: String,
     environment: String,
+}
+
+/// Who publishes one environment scope's entries right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::runner) enum WaitOwner {
+    /// The run's own owner, before the environment's host planner takes over.
+    Run,
+    /// The environment's host planner: the one process that starts hosts.
+    Planner,
+}
+
+/// The one record naming the current publisher of a scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OwnerRecord {
+    schema: String,
+    scope: String,
+    owner: WaitOwner,
 }
 
 /// One published record: the session it belongs to and the entry's state.
@@ -112,6 +135,28 @@ impl WaitLedger {
         self.write(entry, &record);
     }
 
+    /// Claims this scope for one publisher. The last claim wins: the host
+    /// planner claims it when it starts the plan, and the run's owner stops
+    /// publishing from then on (effigy#458).
+    pub(in crate::runner) fn claim_owner(&self, owner: WaitOwner) {
+        if std::fs::create_dir_all(&self.dir).is_err() {
+            return;
+        }
+        let record = OwnerRecord {
+            schema: ENTRY_WAIT_SCHEMA.to_owned(),
+            scope: self.scope.clone(),
+            owner,
+        };
+        let _ = write_private_json(&self.dir.join(OWNER_RECORD), &record);
+    }
+
+    /// Who publishes this scope's entries now, when it recorded a claim.
+    pub(in crate::runner) fn current_owner(&self) -> Option<WaitOwner> {
+        let raw = std::fs::read(self.dir.join(OWNER_RECORD)).ok()?;
+        let record: OwnerRecord = serde_json::from_slice(&raw).ok()?;
+        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope).then_some(record.owner)
+    }
+
     /// Names the environment this scope's waits belong to. The run publishes
     /// it before its environment phase can block, so a status read during
     /// bring-up finds the environment's host waits and counts (effigy#458).
@@ -158,6 +203,7 @@ impl WaitLedger {
         let mut states = entries
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name() != SESSION_RECORD)
+            .filter(|entry| entry.file_name() != OWNER_RECORD)
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
             .filter_map(|entry| {
                 let raw = std::fs::read(entry.path()).ok()?;

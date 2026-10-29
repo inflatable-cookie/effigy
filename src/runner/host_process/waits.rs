@@ -20,7 +20,40 @@ use std::collections::BTreeMap;
 
 use super::ManagedHostListenerResult;
 use crate::runner::error::RunnerError;
-use crate::runner::managed_wait::{self, WaitLedger};
+use crate::runner::managed_wait::{self, WaitLedger, WaitOwner};
+
+/// The run's environment-failure reason, kept together with the failure the
+/// host planner published when it owned the scope. The planner is the only
+/// process that saw which entry failed and what it reported, so its attribution
+/// is the one a person needs: `...; api failed: readiness probe GET / returned
+/// 500` (effigy#458).
+pub(in crate::runner) fn attributed_environment_failure(
+    reason: &str,
+    ledger: &WaitLedger,
+) -> String {
+    let published = ledger.read_all();
+    let failed = published
+        .iter()
+        .find(|state| state.phase == effigy_tui::waits::EntryPhase::Failed)
+        .and_then(|state| {
+            state
+                .detail
+                .as_deref()
+                .map(|detail| format!("{} {detail}", state.entry))
+        })
+        .or_else(|| {
+            published.iter().find_map(|state| {
+                state
+                    .not_started_because
+                    .as_ref()
+                    .map(|cause| format!("{} not started — {}", state.entry, cause.text()))
+            })
+        });
+    match failed {
+        Some(failure) => format!("{reason}; {failure}"),
+        None => reason.to_owned(),
+    }
+}
 
 /// What one bring-up performed, once its whole plan ran.
 #[derive(Debug, Default)]
@@ -31,6 +64,10 @@ pub(in crate::runner) struct HostPlanOutcome {
 /// The published waits of one host-process bring-up.
 pub(in crate::runner) struct HostWaitGraph {
     ledger: WaitLedger,
+    /// Who this graph publishes for. It writes only while that claim is the
+    /// scope's current one, so the run's owner and the host planner never
+    /// overwrite each other's entries (effigy#458).
+    owner: WaitOwner,
     waits: EntryWaits,
     /// The last state published per entry, and when, so a settled record is
     /// written once and a live wait refreshes without a write per call.
@@ -52,12 +89,20 @@ impl HostWaitGraph {
     ) -> Self {
         let ledger = WaitLedger::environment(repo_root, &policy.name);
         ledger.clear();
+        ledger.claim_owner(WaitOwner::Run);
         let started = policy
             .host_processes
             .iter()
             .map(|process| process.name.clone())
             .collect::<BTreeSet<_>>();
-        let mut graph = Self::build(&ledger, policy, &started, Some(&policy.name), now);
+        let mut graph = Self::build(
+            &ledger,
+            WaitOwner::Run,
+            policy,
+            &started,
+            Some(&policy.name),
+            now,
+        );
         graph.publish_all(now);
         graph
     }
@@ -72,18 +117,17 @@ impl HostWaitGraph {
         started: &BTreeSet<String>,
         now: Instant,
     ) -> Self {
-        // The planner runs after the environment reported ready.
-        Self::build(
-            &WaitLedger::environment(repo_root, &policy.name),
-            policy,
-            started,
-            None,
-            now,
-        )
+        // The planner runs after the environment reported ready, and it takes
+        // the scope over here: from this point the run's owner publishes
+        // nothing for these entries (effigy#458).
+        let ledger = WaitLedger::environment(repo_root, &policy.name);
+        ledger.claim_owner(WaitOwner::Planner);
+        Self::build(&ledger, WaitOwner::Planner, policy, started, None, now)
     }
 
     fn build(
         ledger: &WaitLedger,
+        owner: WaitOwner,
         policy: &EffectiveContainerPolicy,
         started: &BTreeSet<String>,
         environment: Option<&str>,
@@ -107,10 +151,18 @@ impl HostWaitGraph {
         }
         Self {
             ledger: ledger.clone(),
+            owner,
             waits,
             published: BTreeMap::new(),
             published_at: BTreeMap::new(),
         }
+    }
+
+    /// Whether this graph still publishes the scope: the host planner's claim
+    /// hands ownership over from the run's owner, and the previous owner stops
+    /// writing rather than alternating its stale wait back in.
+    pub(in crate::runner) fn owns(&self) -> bool {
+        self.ledger.current_owner() == Some(self.owner)
     }
 
     /// Publishes every entry's own wait: a waiting entry names its dependency
@@ -118,6 +170,9 @@ impl HostWaitGraph {
     /// request, and a settled entry says so. Only a changed meaning or a live
     /// wait's refresh writes a record (effigy#458).
     pub(in crate::runner) fn publish_all(&mut self, now: Instant) {
+        if !self.owns() {
+            return;
+        }
         self.waits.refresh(now);
         for state in self.waits.states(now) {
             let due = should_publish(
@@ -150,6 +205,17 @@ impl HostWaitGraph {
         self.publish_all(now);
     }
 
+    /// The environment's own terminal report: no host process starts, and each
+    /// one says so with the environment's report. It applies only while this
+    /// graph still owns the scope, so a failure the host planner published is
+    /// never replaced by the run's generic environment reason (effigy#458).
+    pub(in crate::runner) fn environment_failed_if_owned(&mut self, detail: &str, now: Instant) {
+        if self.owns() {
+            self.waits.environment_failed(detail, now);
+            self.publish_all(now);
+        }
+    }
+
     /// The environment reported ready: the host entries now wait on their own
     /// `depends_on` readers instead of the phase.
     pub(in crate::runner) fn environment_ready(&mut self, now: Instant) {
@@ -157,15 +223,14 @@ impl HostWaitGraph {
         self.publish_all(now);
     }
 
-    /// The environment failed: no host process starts, and each one says so
-    /// with the environment's own report.
-    pub(in crate::runner) fn environment_failed(&mut self, detail: &str, now: Instant) {
-        self.waits.environment_failed(detail, now);
-        self.publish_all(now);
-    }
-
     /// The run settled: every wait this graph published is over.
     pub(in crate::runner) fn settle_all(&mut self, now: Instant) {
+        if !self.owns() {
+            // The planner owns these entries and its records are the run's
+            // terminal result: its settled entries and its attributed failures
+            // stay as it published them.
+            return;
+        }
         let entries = self.waits.states(now);
         for state in entries {
             if !matches!(
@@ -734,6 +799,236 @@ mod environment_tests {
         );
     }
 
+    fn follower(
+        checkout: &std::path::Path,
+        entry: &str,
+    ) -> crate::runner::managed_run::HostFollower {
+        let ledger = WaitLedger::environment(checkout, ENVIRONMENT);
+        crate::runner::managed_run::HostFollower::new(crate::runner::managed_run::HostProcessTab {
+            name: entry.to_owned(),
+            log: std::path::PathBuf::from(format!("/nonexistent/{entry}.log")),
+            listener_state: None,
+            restart: effigy_containers::HostProcessRestart::Never,
+            restart_delay_ms: 0,
+            wait_record: ledger.path(entry),
+        })
+    }
+
+    /// The overlap that matters: the run's owner keeps publishing the
+    /// environment wait on its progress ticks while the host planner takes the
+    /// scope over and names api's own readiness request. The planner's records
+    /// stay — through the TUI reader, the headless text and the JSON status —
+    /// and the parent never alternates its stale environment wait back in
+    /// (effigy#458).
+    #[test]
+    fn the_planner_takes_ownership_and_the_parent_never_overwrites_its_waits() {
+        let (_dir, checkout) = fixture();
+        let policy = four_entry_policy(&checkout);
+        let clock = Clock::new();
+        WaitLedger::task(&checkout, "dev", "default").publish_environment_identity(ENVIRONMENT);
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+
+        // The run's owner published the environment phase for every host.
+        let mut parent = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        parent.environment_progress(3, 4, clock.at());
+        assert_eq!(
+            state_of(&records(&checkout), "api").waiting_on,
+            Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4)
+            })
+        );
+
+        // The planner takes the scope over before it starts any listener, then
+        // publishes api's own declared request and the dependents' wait.
+        let all = policy
+            .host_processes
+            .iter()
+            .map(|process| process.name.clone())
+            .collect::<BTreeSet<_>>();
+        let mut planner = HostWaitGraph::for_policy(&checkout, &policy, &all, clock.at());
+        planner.publish_all(clock.at());
+        planner.started("api", clock.at());
+        planner.probing(
+            "api",
+            effigy_tui::waits::listener_probe_label("/", 200),
+            clock.at(),
+        );
+
+        // The parent keeps ticking while api's readiness probe runs, as the
+        // run's progress callback does.
+        for tick in 1..=4 {
+            let at = clock.at() + Duration::from_millis(250 * tick);
+            parent.environment_progress(3, 4, at);
+            parent.publish_all(at);
+            parent.environment_ready(at);
+            assert!(!parent.owns(), "the planner owns the scope now");
+        }
+        let published = records(&checkout);
+        assert_eq!(
+            state_of(&published, "api").waiting_on,
+            Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned()
+            }),
+            "the planner's probe survives the parent's ticks"
+        );
+        for dependent in ["front", "admin"] {
+            assert_eq!(
+                state_of(&published, dependent).waiting_on,
+                Some(WaitOn::Entry {
+                    name: "api".to_owned(),
+                    phase: EntryPhase::Starting
+                }),
+                "{dependent} names api's phase, never the stale environment phase"
+            );
+        }
+
+        // The TUI reader names the planner's state for its tab.
+        let mut api_tab = follower(&checkout, "api");
+        assert_eq!(
+            api_tab.poll().statuses,
+            vec![crate::runner::managed_run::HostStatus::Waiting(
+                "waiting for GET / -> 200 (0s)".to_owned()
+            )]
+        );
+        assert_eq!(
+            api_tab.wait_state().map(EntryState::tab_label).as_deref(),
+            Some("api [starting: GET / -> 200 (0s)]")
+        );
+        assert!(
+            !api_tab.may_announce_started(),
+            "a probe wait is not a started host"
+        );
+        let mut front_tab = follower(&checkout, "front");
+        front_tab.poll();
+        assert_eq!(
+            front_tab.wait_state().map(EntryState::tab_label).as_deref(),
+            Some("front [waiting: api starting]")
+        );
+
+        // The headless text and the JSON status name the same state.
+        assert_eq!(
+            state_of(&published, "front").headless_line().as_deref(),
+            Some("[managed] front: waiting for api (starting) (0s)")
+        );
+        let views = wait_views(&checkout, "dev", "default", Some(ENVIRONMENT));
+        let front = views
+            .iter()
+            .find(|view| view.state.entry == "front")
+            .expect("front is reported");
+        assert_eq!(front.scope, "host");
+        let json = serde_json::to_value(front).expect("view json");
+        assert_eq!(json["waiting_on"]["kind"], "entry");
+        assert_eq!(json["waiting_on"]["name"], "api");
+        assert_eq!(json["waiting_on"]["phase"], "starting");
+        let _ = &ledger;
+    }
+
+    /// A failure the planner published is the run's terminal result: the
+    /// parent's generic environment reason never replaces it, and the run's
+    /// reason keeps the planner's attributed failure (effigy#458).
+    #[test]
+    fn the_parent_keeps_the_planners_attributed_failure() {
+        let (_dir, checkout) = fixture();
+        let policy = four_entry_policy(&checkout);
+        let clock = Clock::new();
+        WaitLedger::task(&checkout, "dev", "default").publish_environment_identity(ENVIRONMENT);
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        // The run's owner published the phase, then the planner took over.
+        let mut parent = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        parent.environment_progress(4, 4, clock.at());
+        parent.environment_ready(clock.at());
+        let all = policy
+            .host_processes
+            .iter()
+            .map(|process| process.name.clone())
+            .collect::<BTreeSet<_>>();
+        let mut planner = HostWaitGraph::for_policy(&checkout, &policy, &all, clock.at());
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            failure: Some(RunnerError::ManagedHostReadiness {
+                process: "api".to_owned(),
+                diagnostic: "readiness probe GET / returned 500; the listener never became ready"
+                    .to_owned(),
+            }),
+            spawns: Vec::new(),
+            frames: Vec::new(),
+        };
+        let ordered = policy.host_processes.iter().collect::<Vec<_>>();
+        let error = run_host_plan(&ordered, None, &mut planner, &mut launcher, &|| clock.at())
+            .expect_err("api never became ready");
+        assert_eq!(launcher.spawns, vec!["api"], "no dependent spawned");
+
+        // The `up` child exits nonzero and the parent reports its environment
+        // failure: that must not replace the planner's attribution.
+        let up_reason = "environment `web` did not come up: `up` exited 1 after 4s";
+        parent.environment_failed_if_owned(up_reason, clock.at() + Duration::from_secs(4));
+        parent.settle_all(clock.at() + Duration::from_secs(4));
+        let published = records(&checkout);
+        let api = state_of(&published, "api");
+        assert_eq!(api.phase, EntryPhase::Failed);
+        assert!(
+            api.status_line().contains("500"),
+            "api's own report survives: {}",
+            api.status_line()
+        );
+        for dependent in ["front", "admin"] {
+            let state = state_of(&published, dependent);
+            assert_eq!(state.phase, EntryPhase::NotStarted, "{dependent}");
+            assert_eq!(
+                state
+                    .not_started_because
+                    .as_ref()
+                    .map(|cause| cause.name.as_str()),
+                Some("api"),
+                "{dependent} names the failing prerequisite, not the environment"
+            );
+        }
+
+        // The run's reason keeps the planner's identity and observed status.
+        let reason = attributed_environment_failure(up_reason, &ledger);
+        assert!(reason.starts_with(up_reason), "{reason}");
+        assert!(reason.contains("api"), "{reason}");
+        assert!(reason.contains("500"), "{reason}");
+
+        // TUI, text and JSON all keep the attributed terminal result.
+        let mut front_tab = follower(&checkout, "front");
+        assert_eq!(
+            front_tab.poll().statuses,
+            vec![crate::runner::managed_run::HostStatus::NotStarted(
+                "not started — api failed: readiness probe GET / returned 500; the listener never became ready"
+                    .to_owned()
+            )]
+        );
+        assert!(front_tab.wait_state().is_some());
+        assert!(
+            state_of(&published, "front")
+                .headless_line()
+                .unwrap_or_default()
+                .contains("api failed: readiness probe GET / returned 500"),
+            "{:?}",
+            state_of(&published, "front").headless_line()
+        );
+        let views = wait_views(&checkout, "dev", "default", Some(ENVIRONMENT));
+        let front = views
+            .iter()
+            .find(|view| view.state.entry == "front")
+            .expect("front is reported");
+        let json = serde_json::to_value(front).expect("view json");
+        assert_eq!(json["scope"], "host");
+        assert_eq!(json["phase"], "not_started");
+        assert_eq!(json["not_started_because"]["name"], "api");
+        assert!(
+            json["not_started_because"]["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("500"),
+            "{json}"
+        );
+        let _ = error;
+    }
+
     /// The environment's own failure is terminal for every host entry: none
     /// starts, and each names the environment and what it reported.
     #[test]
@@ -742,7 +1037,7 @@ mod environment_tests {
         let policy = four_entry_policy(&checkout);
         let clock = Clock::new();
         let mut graph = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
-        graph.environment_failed(
+        graph.environment_failed_if_owned(
             "`up` exited 1 after 4s; web is unhealthy after 3 failed checks",
             clock.at() + Duration::from_secs(4),
         );

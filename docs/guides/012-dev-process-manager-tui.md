@@ -370,8 +370,13 @@ The environment's host processes are managed entries from the moment the run
 starts: the run publishes their graph and the environment identity before its
 phase can block, so during a slow bring-up `api`, `front` and `admin` all name
 the environment and its healthy container count, and a tab is announced as
-started only once its published wait is over. The planner then takes the same
-records over and names each process's `depends_on` reader. A prerequisite failure is terminal
+started only once its published wait is over. The host planner then claims the
+same records before it starts any listener and names each process's
+`depends_on` reader; only the current owner writes them, so the run's phase
+never alternates back in over the planner's state. If the planner published a
+failure, that entry and its report stay — the run's generic `up` exit never
+replaces them, and the run's own error names the failing entry and what it
+observed. A prerequisite failure is terminal
 and attributed — `front [not started: api failed]`, and the pane reads
 `not started — api failed (status 500)` — and no dependent starts. The same
 state reaches `--headless` (`[managed] front: waiting for api (starting) (4s)`,

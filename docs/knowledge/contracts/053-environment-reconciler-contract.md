@@ -266,7 +266,12 @@ wait as settled when it ends. A prerequisite failure is published as
 `not_started` with the failing entry and its report, no dependent starts, and
 the plan returns the failure. A record is written once when its meaning changes
 and refreshed only while it is a live wait, so a settled entry is never
-rewritten on an owner-loop tick. `status --json` reads both scopes — the run's
+rewritten on an owner-loop tick. Exactly one publisher owns the scope: the run's
+owner claims it before the phase can block, and the host planner claims it before
+it starts any listener, so the two never overwrite each other's entries. A
+failure the planner published is terminal and is never replaced by the run's
+generic `up` exit; the run's own environment reason carries the planner's
+failing entry and its report. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting
 entry with the scope that published it. Front ends read those records; they are
 a projection, never authority (effigy#458).
