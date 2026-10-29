@@ -674,6 +674,7 @@ fn start_host_processes_inner(
                             cwd: launch_cwd,
                             env: environment,
                             handoff: None,
+                            admission: None,
                         },
                         executable,
                         effigy_kernel::supervise::ClientMode::Owning,

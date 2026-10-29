@@ -993,7 +993,7 @@ fn store_settle_write_survives_another_process_holding_the_store() {
     let cx = effects(EffectClass::Mutate);
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let (_, invocation, id) = stress_invocation(home.path(), "settle-busy", &cx);
-    let cleanup = cx.operation().cleanup(Duration::from_secs(1)).unwrap();
+    let admission_cleanup = cx.operation().cleanup(Duration::from_secs(30)).unwrap();
     let mut adapter = StressAdapter;
     let run = Run::begin(
         &cx,
@@ -1006,7 +1006,7 @@ fn store_settle_write_survives_another_process_holding_the_store() {
             next: Invocation::validated(vec!["next".into()], |args| args == ["next"]).unwrap(),
             custody: None,
         },
-        &cleanup,
+        &admission_cleanup,
         &mut adapter,
     )
     .unwrap();
@@ -1015,6 +1015,7 @@ fn store_settle_write_survives_another_process_holding_the_store() {
         &[(STRESS_HOME, home.path().to_str().unwrap())],
     );
     holder.expect("HOLDING", Duration::from_secs(30));
+    let cleanup = cx.operation().cleanup(Duration::from_secs(1)).unwrap();
     // The cleanup budget is one second; the store's own settle window is two
     // minutes. The settle must outlast the other process's write lock and
     // still record the outcome (K4, §5.5).
