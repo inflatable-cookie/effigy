@@ -349,11 +349,6 @@ fn replayed(
     cx: &ObserveContext,
     root: &StateRoot,
 ) -> Result<Recovered, RunError> {
-    if row.digest != *offered {
-        return Ok(Recovered::Conflict {
-            recorded: row.digest.clone(),
-        });
-    }
     current_session(
         conn,
         key.session,
@@ -363,6 +358,11 @@ fn replayed(
                 .ok_or_else(|| RunError::refused("the recorded session owner is unknown"))?,
         ),
     )?;
+    if row.digest != *offered {
+        return Ok(Recovered::Conflict {
+            recorded: row.digest.clone(),
+        });
+    }
     let journal = journal_run(conn, row.run)?;
     match (row.state, journal) {
         // A reservation whose admission never committed is never readmitted,
@@ -759,7 +759,7 @@ pub fn resume_owner(
     session: Session,
     run: RunId,
 ) -> Result<Attachment, RunError> {
-    open(cx, root, session, run, Client::Owner, None)
+    open(cx, root, session, run, Opening::Owner)
 }
 
 /// Attach a second terminal to a run this session admitted. Its lifetime,
@@ -772,7 +772,28 @@ pub fn attach_secondary(
     run: RunId,
     id: AttachmentId,
 ) -> Result<Attachment, RunError> {
-    open(cx, root, session, run, Client::Secondary, Some(id))
+    open(cx, root, session, run, Opening::CreateSecondary(id))
+}
+
+/// Recover a secondary handle after a lost creation response or before its
+/// liveness watch was registered. The dispatcher must recheck its grant. This
+/// reopens only the exact still-attached secondary in the current session;
+/// it neither allocates another slot nor revives a released attachment. The
+/// caller can register its watch or release the recovered row to reclaim it.
+pub fn resume_secondary(
+    cx: &EffectContext,
+    root: &StateRoot,
+    session: Session,
+    run: RunId,
+    id: AttachmentId,
+) -> Result<Attachment, RunError> {
+    open(cx, root, session, run, Opening::ResumeSecondary(id))
+}
+
+enum Opening {
+    Owner,
+    CreateSecondary(AttachmentId),
+    ResumeSecondary(AttachmentId),
 }
 
 fn open(
@@ -780,13 +801,16 @@ fn open(
     root: &StateRoot,
     session: Session,
     run: RunId,
-    client: Client,
-    id: Option<AttachmentId>,
+    opening: Opening,
 ) -> Result<Attachment, RunError> {
     mutations_only(cx, "a workspace attachment")?;
     let cx = &cx.child(std::time::Duration::from_secs(30));
     let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(RunAttachBefore)?;
+    let client = match opening {
+        Opening::Owner => Client::Owner,
+        _ => Client::Secondary,
+    };
     let (id, fence) = store.transaction_within(cx, BusyWait::Context, |txn| {
         let conn = txn.conn();
         let admitted = admission_session(conn, run)?
@@ -804,8 +828,8 @@ fn open(
         let fence = fence(conn, &record.owner, record.generation)?;
         journal::check_fence(conn, &fence)?;
         live_owner(&cx.operation().observe().map_err(|_| RunError::refused("observation required"))?, root, conn, run, &record)?;
-        match client {
-            Client::Owner => {
+        match opening {
+            Opening::Owner => {
                 let attached: bool = conn.query_row(
                     "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE run_id=?1 AND lifetime='owner' AND state='attached')",
                     [run.to_string()],
@@ -818,8 +842,18 @@ fn open(
                 }
                 Ok((owner_attachment(run), fence))
             }
-            Client::Secondary => {
-                let id = id.ok_or_else(|| RunError::broken("a secondary needs its id"))?;
+            Opening::ResumeSecondary(id) => {
+                let attached: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM run_attachments WHERE attachment_id=?1 AND run_id=?2 AND session_id=?3 AND session_generation=?4 AND lifetime='secondary' AND state='attached')",
+                    params![id.to_string(), run.to_string(), session.run.to_string(), session.generation.get() as i64],
+                    |r| r.get(0),
+                )?;
+                if !attached {
+                    return Err(RunError::refused("this secondary attachment is no longer attached to this run and session"));
+                }
+                Ok((id, fence))
+            }
+            Opening::CreateSecondary(id) => {
                 let attached: i64 = conn.query_row(
                     "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary' AND state='attached'",
                     [run.to_string()],

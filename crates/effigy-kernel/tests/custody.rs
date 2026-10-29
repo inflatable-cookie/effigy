@@ -1361,6 +1361,35 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
     ));
 }
 
+/// Attaching caller dies after row commit, before returning its response to
+/// the parent or registering a supervisor watch. The unit fault proof kills
+/// at RunAttachAfter, before even the handle is returned.
+#[test]
+#[ignore = "helper process"]
+fn helper_workspace_secondary_creation_loss() {
+    let home = std::env::var_os("EFFIGY_CUSTODY_ATTACHMENT_HOME").expect("private fixture root");
+    let cx = context();
+    let root = StateRoot::effects(&cx, Path::new(&home)).unwrap();
+    let _ = attach_secondary(
+        &cx,
+        &root,
+        Session {
+            run: id(7),
+            generation: Generation::new(1),
+        },
+        id(9),
+        AttachmentId::new([8; 16]),
+    )
+    .expect("secondary commit");
+    // SAFETY: kill only this explicitly spawned helper, before handing the
+    // committed attachment back to the parent or to any liveness watcher.
+    assert_eq!(
+        unsafe { libc::kill(std::process::id() as libc::pid_t, libc::SIGKILL) },
+        0
+    );
+    panic!("self SIGKILL returned");
+}
+
 /// Handle EOF and acknowledged detach drive the real detached engine's custody,
 /// including a killed secondary's independent liveness pipe and slot reuse.
 #[test]
@@ -1408,16 +1437,53 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
         while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
         let cx = context();
 
+        eprintln!("workspace lifetime {cause:?}: losing secondary creation response");
+        let mut attaching = ChildGuard(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "helper_workspace_secondary_creation_loss",
+                    "--exact",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("EFFIGY_CUSTODY_ATTACHMENT_HOME", home.path())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+        );
+        eventually(|| match attaching.0.try_wait().unwrap() {
+            Some(status) => {
+                use std::os::unix::process::ExitStatusExt;
+                assert_eq!(status.signal(), Some(libc::SIGKILL));
+                true
+            }
+            None => false,
+        });
+        let secondary_id = AttachmentId::new([8; 16]);
+        // Creation committed, but the owner has never seen a handle or watch.
+        assert!(attach_secondary(&cx, &root, key.session, id(9), secondary_id).is_err());
+        assert!(
+            resume_secondary(&cx, &root, key.session, id(9), secondary_id)
+                .unwrap()
+                .attached(&cx, &root)
+                .unwrap()
+        );
+        assert!(matches!(
+            engine_status(home.path()),
+            Observed::Verified(RunStatus::Live(_), _)
+        ));
         let listener = std::os::unix::net::UnixListener::bind(home.path().join("a.sock")).unwrap();
         listener.set_nonblocking(true).unwrap();
         eprintln!("workspace lifetime {cause:?}: requesting secondary watch");
-        client.send_frame(b"watch-secondary").unwrap();
+        client.send_frame(b"resume-secondary").unwrap();
         loop {
             if let Event::Engine(bytes) = client.event(cx.operation()).unwrap() {
                 assert_eq!(
                     String::from_utf8(bytes).unwrap(),
-                    "watch-secondary",
-                    "secondary watch acknowledgement"
+                    "resume-secondary",
+                    "recovered secondary watch acknowledgement"
                 );
                 break;
             }

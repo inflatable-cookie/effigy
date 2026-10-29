@@ -2787,7 +2787,9 @@ that transaction and by a unique index, and an ordinary run may not take a
 reserved id, so a reservation is never swapped for another workload. A key with
 a record is classified before any proposed id is judged, so a same-key retry
 recovers its admission or reports its digest conflict whatever entropy it
-offers. Only the binding that actually admitted a run answers for attachment and
+offers. Both replay outcomes first validate the recorded session owner and
+current generation; a conflicting digest never bypasses that fence. Only the
+binding that actually admitted a run answers for attachment and
 records its outcome; a reservation that never committed keeps answering
 `Unknown`. `lookup` answers a reconnect from the same records, `Unknown`
 included, and never admits again. A
@@ -2809,7 +2811,12 @@ while an acknowledged detach records none and leaves the run going, including
 when its original owning pipe closes. `EngineSession::watch_attachment` binds an
 attachment to a separate client liveness pipe; the supervisor's control turn
 releases a killed secondary's row without stopping the owner, and reclaims its
-slot. Watches are bounded to eight secondaries and one owner. Reservation replay,
+slot. If the attaching caller loses the creation response or dies before watch
+registration, `resume_secondary` reopens the exact still-attached secondary ID
+under the current recorded session and live workload fence. It allocates no
+slot and revives no released row; the authorised dispatcher can register the
+recovered handle or release it to reclaim the slot without stopping the owner.
+Watches are bounded to eight secondaries and one owner. Reservation replay,
 attachment opening and attachment status derive finite observation phases even
 when the engine's workload lifetime is open, preserving any shorter caller
 deadline. Workspace controls respect the caller's remaining budget, capped at

@@ -1391,6 +1391,92 @@ fn workspace_attachment_control_bound_holds_under_concurrency() {
 }
 
 #[test]
+#[cfg(feature = "fault-injection")]
+fn workspace_secondary_resume_after_death_at_commit_before_handle_return() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(74), id(1), &mut fake);
+    let owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let status = run_kill_child(fixture.path(), "secondary-create", Point::RunAttachAfter);
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    let attachment_id = AttachmentId::new([8; 16]);
+    assert!(
+        attach_secondary(&cx, &root, session(), id(1), attachment_id).is_err(),
+        "the killed caller committed its row"
+    );
+    let mut recovered = resume_secondary(&cx, &root, session(), id(1), attachment_id).unwrap();
+    recovered.release(&cx, &root, Release::Eof).unwrap();
+    assert!(owner.attached(&cx, &root).unwrap());
+    assert!(run.requests().unwrap().is_empty());
+    assert_eq!(run.phase().unwrap(), Phase::Admitted);
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM run_attachments WHERE state='attached'"
+        ),
+        1
+    );
+    attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([9; 16])).unwrap();
+}
+
+#[test]
+fn workspace_secondary_resume_reclaims_only_its_current_attached_row() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(73), id(1), &mut fake);
+    let owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    assert!(resume_secondary(&cx, &root, session(), id(1), owner.id()).is_err());
+    assert!(resume_secondary(&cx, &root, session(), id(1), AttachmentId::new([99; 16])).is_err());
+    // Simulate lost responses for all slots. Recovery must work at the bound
+    // without allocating an extra row or requiring the discarded handles.
+    for n in 0..SECONDARY_MAX {
+        attach_secondary(
+            &cx,
+            &root,
+            session(),
+            id(1),
+            AttachmentId::new([n as u8; 16]),
+        )
+        .unwrap();
+    }
+    assert!(attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([99; 16])).is_err());
+    let other = Session {
+        run: id(202),
+        generation: Generation::new(1),
+    };
+    assert!(resume_secondary(&cx, &root, other, id(1), AttachmentId::new([0; 16])).is_err());
+    assert!(resume_secondary(&cx, &root, session(), id(2), AttachmentId::new([0; 16])).is_err());
+    for n in 0..SECONDARY_MAX {
+        let attachment_id = AttachmentId::new([n as u8; 16]);
+        let mut recovered = resume_secondary(&cx, &root, session(), id(1), attachment_id).unwrap();
+        assert_eq!(recovered.client(), Client::Secondary);
+        assert_eq!(recovered.fence(), run.fence());
+        recovered.release(&cx, &root, Release::Eof).unwrap();
+        assert!(
+            resume_secondary(&cx, &root, session(), id(1), attachment_id).is_err(),
+            "released IDs cannot be revived"
+        );
+    }
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM run_attachments WHERE state='attached'"
+        ),
+        1
+    );
+    assert!(owner.attached(&cx, &root).unwrap());
+    assert!(run.requests().unwrap().is_empty());
+    assert_eq!(run.phase().unwrap(), Phase::Admitted);
+    attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([99; 16])).unwrap();
+}
+
+#[test]
 fn workspace_attachment_bounds_terminals_and_control_requests() {
     let fixture = home();
     let home = fixture.path();
@@ -1625,6 +1711,10 @@ fn child_step(home: &std::path::Path, step: &str) -> Result<(), RunError> {
     let mut fake = Fake::new(home);
     let key = admission_key(1);
     match step {
+        "secondary-create" => {
+            let _ = attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([8; 16]))?;
+            panic!("post-commit kill did not fire");
+        }
         "kill-recovery" => {
             struct KillRecovery<'a>(&'a StateRoot);
             impl SettlementAdapter for KillRecovery<'_> {
@@ -1780,6 +1870,8 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
     let mut fake = Fake::new(fixture.path());
     let run = admitted(&cx, &root, key, id(1), &mut fake);
     let mut attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let secondary_id = AttachmentId::new([61; 16]);
+    let _secondary = attach_secondary(&cx, &root, session(), id(1), secondary_id).unwrap();
     let mut store = Store::open(&cx, &root).unwrap();
     for change in [
         "generation=generation+1",
@@ -1797,8 +1889,20 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
             .unwrap();
         assert!(reserve(&cx, &root, admission_key(62), digest(), id(2)).is_err());
         assert!(reserve(&cx, &root, key, digest(), id(3)).is_err());
+        assert!(
+            reserve(&cx, &root, key, other_digest(), id(3)).is_err(),
+            "conflict must not bypass session fencing: {change}"
+        );
+        assert!(
+            matches!(
+                lookup(&observe(), &root, key, other_digest()),
+                Observed::Unknown(_)
+            ),
+            "lookup conflict must not bypass recorded owner: {change}"
+        );
         assert!(matches!(lookup_now(&cx, &root, key), Observed::Unknown(_)));
         assert!(resume_owner(&cx, &root, session(), id(1)).is_err());
+        assert!(resume_secondary(&cx, &root, session(), id(1), secondary_id).is_err());
         assert!(
             attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([61; 16])).is_err()
         );
@@ -1817,7 +1921,7 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
                 &root,
                 "SELECT count(*) FROM run_attachments WHERE state='attached'"
             ),
-            1
+            2
         );
         assert!(run.requests().unwrap().is_empty());
         store
@@ -1832,10 +1936,11 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
                 .unwrap()
                 .resource());
                 txn.conn().execute(
-                    "UPDATE runs SET generation=1,owner=?2,phase='admitted' WHERE run_id=?1",
+                    "UPDATE runs SET generation=1,owner=?2,invocation=?3,phase='admitted' WHERE run_id=?1",
                     params![
                         session().run.to_string(),
-                        original.spec().owner.name().to_string()
+                        original.spec().owner.name().to_string(),
+                        serde_json::to_string(&original)?
                     ],
                 )?;
                 Ok::<_, RunError>(())
@@ -1855,6 +1960,35 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
         request: RequestId::new([62; 16]),
     };
     assert!(reserve(&cx, &root, missing, digest(), id(2)).is_err());
+}
+
+#[test]
+fn workspace_conflicting_replay_refuses_a_changed_recorded_session_owner() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let key = admission_key(75);
+    fresh(&cx, &root, key, id(1));
+    let mut store = Store::open(&cx, &root).unwrap();
+    store.transaction(&cx, |txn| {
+        txn.conn().execute(
+            "UPDATE runs SET owner=(SELECT owner FROM runs WHERE run_id=?2),invocation=(SELECT invocation FROM runs WHERE run_id=?2) WHERE run_id=?1",
+            params![session().run.to_string(), id(202).to_string()],
+        )?;
+        // The current journal identity is internally valid. Only the owner
+        // captured with this key distinguishes its obsolete reservation.
+        current_session(txn.conn(), session(), None)?;
+        Ok::<_, RunError>(())
+    }).unwrap();
+    for offered in [digest(), other_digest()] {
+        assert!(reserve(&cx, &root, key, offered.clone(), id(2)).is_err());
+        assert!(matches!(
+            lookup(&observe(), &root, key, offered),
+            Observed::Unknown(_)
+        ));
+    }
+    assert_eq!(state_of(&cx, &root, key).as_deref(), Some("reserved"));
+    assert_eq!(runs(&cx, &root), 0);
 }
 
 #[test]

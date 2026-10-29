@@ -635,9 +635,9 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
                 session.event(vec![u8::from(session.detached())]);
                 continue;
             }
-            if frame == b"watch-secondary" {
+            if frame == b"resume-secondary" {
                 let key = session.admission().expect("workspace ticket").key();
-                let attachment = attach_secondary(
+                let attachment = resume_secondary(
                     &cx,
                     &root,
                     key.session,

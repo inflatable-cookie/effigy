@@ -36,9 +36,10 @@ pub use attachments::{
 pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
 pub use workspace::{
-    attach_secondary, lookup, reserve, resume_owner, AdmissionKey, AdmissionTicket, Attachment,
-    AttachmentId, Chunk, Client, Gap, RecordedOutcome, Recovered, Release, RequestId, Reservation,
-    Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK, SECONDARY_MAX,
+    attach_secondary, lookup, reserve, resume_owner, resume_secondary, AdmissionKey,
+    AdmissionTicket, Attachment, AttachmentId, Chunk, Client, Gap, RecordedOutcome, Recovered,
+    Release, RequestId, Reservation, Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK,
+    SECONDARY_MAX,
 };
 mod workspace;
 pub(crate) use settle::settle_interrupted_wait;
@@ -371,7 +372,17 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(cx, root, inv, opts, || Ok(cleanup.clone()), adapter, None, None, None)
+        Self::begin_under(
+            cx,
+            root,
+            inv,
+            opts,
+            || Ok(cleanup.clone()),
+            adapter,
+            None,
+            None,
+            None,
+        )
     }
 
     /// [`Run::begin`] with the cleanup window made once the gate is held.
