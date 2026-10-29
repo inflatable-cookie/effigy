@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use effigy_containers::EffectiveContainerPolicy;
-use effigy_test_support::Fixture;
+use effigy_test_support::{process::FixtureCommandExt, Fixture};
 
 use crate::contract_test_support::EnvGuard;
 use crate::runner::workspace_client::context::{
@@ -1348,7 +1348,7 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
 
     // Artifact A is a real program: it prints the digest of the bytes it is
     // running from and then waits, so the test can publish while it runs.
-    let artifact_a = script_artifact(&repo, "generation-a", 5);
+    let artifact_a = script_artifact(&repo, "generation-a");
     let first = prepare_disk(
         &repo,
         &mut guest,
@@ -1362,8 +1362,9 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
 
     let mut running = Command::new(&entered)
         .arg("hold")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("the published executable starts");
     let mut reported = String::new();
     {
@@ -1404,7 +1405,7 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
 
     // Publish artifact B while A runs.
     let before = before_bytes.clone();
-    let artifact_b = script_artifact(&repo, "generation-b", 5);
+    let artifact_b = script_artifact(&repo, "generation-b");
     let second = prepare_disk(
         &repo,
         &mut guest,
@@ -1450,7 +1451,7 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
     // A new invocation resolves the new generation through the entry path.
     let fresh = Command::new(&entered)
         .arg("report")
-        .output()
+        .output_owned()
         .expect("a fresh invocation starts");
     assert!(fresh.status.success());
     assert_eq!(
@@ -1478,9 +1479,15 @@ fn publishing_a_new_artifact_never_replaces_a_live_guest_executable() {
         std::fs::read_link(&entered).expect("entry link").display()
     );
 
-    // Stop only the process this test started.
-    let _ = running.kill();
-    let _ = running.wait();
+    // EOF releases the shell builtin without leaving a sleeping child. The
+    // owned group guard also stops this exact fixture on an assertion unwind.
+    drop(running.stdin.take());
+    let exit = running
+        .wait()
+        .expect("the live guest exits after stdin EOF");
+    assert!(exit.success(), "live guest exit: {exit}");
+    assert!(running.group_closed(), "the live guest group is closed");
+    eprintln!("live proof: stopped pid={live_pid} exit={exit} group-closed=true");
     let _ = std::fs::remove_dir_all(guest_root);
 }
 
@@ -1509,11 +1516,11 @@ fn artifact_bytes(repo: &Path, bytes: &[u8]) -> PathBuf {
 
 /// An executable artifact whose bytes name their generation, so a running
 /// process proves which bytes it started from.
-fn script_artifact(repo: &Path, label: &str, hold_seconds: u64) -> PathBuf {
+fn script_artifact(repo: &Path, label: &str) -> PathBuf {
     let body = format!(
         "#!/bin/sh\n\
          printf 'running {label}\\n'\n\
-         if [ \"$1\" = hold ]; then sleep {hold_seconds}; fi\n"
+         if [ \"$1\" = hold ]; then read -r release || :; fi\n"
     );
     let path = repo
         .join("artifacts")
