@@ -73,6 +73,9 @@ pub struct Facts {
     pub session: Option<u32>,
     /// Start identity text: two processes that held one pid are distinguishable.
     pub start: String,
+    /// The executable path the operating system reports for the process, never
+    /// its `argv[0]`, which `execve` lets a caller choose.
+    pub executable: Option<String>,
     pub argv: Option<Vec<String>>,
 }
 /// The process table, as much of it as provenance needs.
@@ -110,7 +113,10 @@ pub fn caller(
     terminal: Option<String>,
     marker: impl Fn(&str) -> Option<OsString>,
 ) -> Caller {
-    let mut unknown = Vec::new();
+    // Marker and chain failures are collected apart: the chain explains a
+    // missing or short record, so it keeps its place in a bounded list.
+    let mut marker_failures = Vec::new();
+    let mut chain_failures = Vec::new();
     let mut markers = BTreeMap::new();
     for name in MARKERS {
         let Some(value) = marker(name) else {
@@ -120,14 +126,14 @@ pub fn caller(
             Ok(value) => {
                 markers.insert((*name).to_owned(), value);
             }
-            Err(reason) => unknown.push(bounded(&format!("{name}: {reason}"), TEXT_LIMIT)),
+            Err(reason) => marker_failures.push(bounded(&format!("{name}: {reason}"), TEXT_LIMIT)),
         }
     }
     let own = tree.process(pid);
     let (start, session, mut next) = match &own {
         Ok(facts) => (Some(facts.start.clone()), facts.session, facts.parent),
         Err(reason) => {
-            unknown.push(bounded(&format!("caller {pid}: {reason}"), TEXT_LIMIT));
+            chain_failures.push(bounded(&format!("caller {pid}: {reason}"), TEXT_LIMIT));
             (None, None, 0)
         }
     };
@@ -138,7 +144,7 @@ pub fn caller(
     let mut seen = BTreeSet::from([pid]);
     while own.is_ok() && !own_leader && next != 0 {
         if parents.len() == CHAIN_LIMIT {
-            unknown.push(format!(
+            chain_failures.push(format!(
                 "parent chain truncated after {CHAIN_LIMIT} entries before its session leader"
             ));
             break;
@@ -146,12 +152,12 @@ pub fn caller(
         let facts = match tree.process(next) {
             Ok(facts) => facts,
             Err(reason) => {
-                unknown.push(bounded(&format!("parent {next}: {reason}"), TEXT_LIMIT));
+                chain_failures.push(bounded(&format!("parent {next}: {reason}"), TEXT_LIMIT));
                 break;
             }
         };
         if !seen.insert(next) {
-            unknown.push(format!("parent chain repeats pid {next}; stopped"));
+            chain_failures.push(format!("parent chain repeats pid {next}; stopped"));
             break;
         }
         // A pid can be reused between two reads. The start identity is the only
@@ -161,11 +167,11 @@ pub fn caller(
         match tree.process(next) {
             Ok(again) if again.start == facts.start => {}
             Ok(_) => {
-                unknown.push(format!("parent {next}: identity changed while it was read"));
+                chain_failures.push(format!("parent {next}: identity changed while it was read"));
                 break;
             }
             Err(reason) => {
-                unknown.push(bounded(
+                chain_failures.push(bounded(
                     &format!("parent {next}: identity is unconfirmed ({reason})"),
                     TEXT_LIMIT,
                 ));
@@ -173,9 +179,9 @@ pub fn caller(
             }
         }
         let command = match &facts.argv {
-            Some(argv) => Some(ancestor_command(argv)),
+            Some(argv) => Some(ancestor_command(argv, facts.executable.as_deref())),
             None => {
-                unknown.push(format!("parent {next}: arguments are unreadable"));
+                chain_failures.push(format!("parent {next}: arguments are unreadable"));
                 None
             }
         };
@@ -193,7 +199,6 @@ pub fn caller(
         }
         next = facts.parent;
     }
-    unknown.truncate(UNKNOWN_LIMIT);
     Caller {
         pid,
         start,
@@ -201,7 +206,7 @@ pub fn caller(
         terminal: terminal.map(|path| bounded(&path, TEXT_LIMIT)),
         parents,
         markers,
-        unknown,
+        unknown: bounded_reasons(chain_failures, marker_failures),
     }
 }
 
@@ -243,6 +248,9 @@ impl Tree for Platform {
             parent: lineage.parent,
             session: lineage.session,
             start,
+            executable: ident::process_executable(pid)
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned()),
             // One unreadable command never hides the rest of the chain.
             argv: ident::process_arguments(pid).ok().map(|argv| {
                 argv.into_iter()
@@ -305,7 +313,7 @@ fn redact(argument: &str, previous: Option<&str>) -> String {
 /// ancestor's command line is arbitrary third-party text, so no credential name
 /// is trusted to describe its values: only recognised flag names and plain
 /// word/path shapes are recorded, and anything else is redacted.
-fn ancestor_command(argv: &[String]) -> Vec<String> {
+fn ancestor_command(argv: &[String], executable: Option<&str>) -> Vec<String> {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
     for (index, argument) in argv.iter().take(ARGV_LIMIT).enumerate() {
@@ -314,8 +322,9 @@ fn ancestor_command(argv: &[String]) -> Vec<String> {
             // token so `sh -c 'psql --password ...'` loses that value too.
             Some(flag) if shell_flag(flag) => shell_command(argument),
             Some(flag) if flag_shaped(flag) => REDACTED.into(),
-            // Only the program the kernel executed is positional text at all.
-            _ if index == 0 => ancestor_program(argument),
+            // The program slot is the operating system's executable, never the
+            // caller-chosen `argv[0]`.
+            _ if index == 0 => ancestor_program(executable),
             _ => ancestor_token(argument),
         };
         rendered.push(recorded);
@@ -341,12 +350,15 @@ fn shell_command(script: &str) -> String {
     bounded(&rendered.join(" "), TEXT_LIMIT)
 }
 
-/// The program this process was started as. Only its file name is recorded:
-/// `argv[0]` is the one argument the kernel set rather than a value the caller
-/// passed, and the directory a program lives in is arbitrary text that can
-/// carry a secret.
-fn ancestor_program(argument: &str) -> String {
-    let name = argument.rsplit('/').next().unwrap_or(argument).trim();
+/// The program this process was started as, named from the executable the
+/// operating system reports. Only its file name is recorded, and an unreadable
+/// executable records nothing: `argv[0]` is caller-chosen (`exec -a`), and the
+/// directory a program lives in is arbitrary text that can carry a secret.
+fn ancestor_program(executable: Option<&str>) -> String {
+    let Some(executable) = executable else {
+        return REDACTED.into();
+    };
+    let name = executable.rsplit('/').next().unwrap_or(executable).trim();
     if program_name(name) {
         return bounded(name, TEXT_LIMIT);
     }
@@ -564,6 +576,26 @@ fn effigy_run_id(value: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || matches!(c, '2'..='7'))
 }
 
+/// A bounded reason list that always says when it was cut: chain failures come
+/// first, because they explain a missing or unconfirmed part of the record, and
+/// the last slot names how many reasons were omitted.
+fn bounded_reasons(chain: Vec<String>, markers: Vec<String>) -> Vec<String> {
+    let total = chain.len() + markers.len();
+    let mut reasons = chain
+        .into_iter()
+        .chain(markers)
+        .take(UNKNOWN_LIMIT)
+        .collect::<Vec<_>>();
+    if total > UNKNOWN_LIMIT {
+        reasons.truncate(UNKNOWN_LIMIT - 1);
+        reasons.push(format!(
+            "{} further reasons omitted",
+            total - (UNKNOWN_LIMIT - 1)
+        ));
+    }
+    reasons
+}
+
 /// Keep one diagnostic text field inside its bound at a character boundary.
 fn bounded(value: &str, limit: usize) -> String {
     if value.chars().count() <= limit {
@@ -601,6 +633,31 @@ mod tests {
                     parent,
                     session: Some(session),
                     start: start.into(),
+                    // The operating system reports the executable separately
+                    // from the caller-chosen argument vector.
+                    executable: argv.first().map(|program| (*program).to_owned()),
+                    argv: Some(argv.iter().map(|arg| (*arg).to_owned()).collect()),
+                })],
+            );
+            self
+        }
+        /// A process whose `argv[0]` is not its executable, as `exec -a` sets it.
+        fn renamed(
+            mut self,
+            pid: u32,
+            parent: u32,
+            session: u32,
+            start: &str,
+            argv: &[&str],
+            executable: Option<&str>,
+        ) -> Self {
+            self.answers.insert(
+                pid,
+                vec![Ok(Facts {
+                    parent,
+                    session: Some(session),
+                    start: start.into(),
+                    executable: executable.map(str::to_owned),
                     argv: Some(argv.iter().map(|arg| (*arg).to_owned()).collect()),
                 })],
             );
@@ -627,6 +684,7 @@ mod tests {
                         parent,
                         session: Some(session),
                         start: start.into(),
+                        executable: Some("/bin/zsh".into()),
                         argv: Some(vec!["/bin/zsh".into()]),
                     }),
                     Err(reason.into()),
@@ -641,6 +699,7 @@ mod tests {
                     parent: 1,
                     session: Some(pid),
                     start: start.into(),
+                    executable: Some("/bin/sh".into()),
                     argv: Some(vec!["/bin/sh".into()]),
                 })
             };
@@ -846,6 +905,7 @@ mod tests {
                 parent: 0,
                 session: Some(1),
                 start: "macos:1.000001".into(),
+                executable: Some("/bin/zsh".into()),
                 argv: None,
             })],
         );
@@ -1102,6 +1162,67 @@ mod tests {
         for kept in ["curl", "-u", "--data"] {
             assert!(rendered.contains(kept), "{kept} missing from {rendered}");
         }
+    }
+
+    /// The program slot comes from the executable the operating system reports,
+    /// never from `argv[0]`, which `exec -a` lets a caller set to anything.
+    #[test]
+    fn gateway_ancestor_program_comes_from_the_executable_not_argv0() {
+        let renamed = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .renamed(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["hunter2", "login"],
+                Some("/usr/bin/helper"),
+            );
+        let parent = caller_of(&renamed, 50).parents[0].command.clone().unwrap();
+        assert_eq!(parent[0], "helper", "{parent:?}");
+        assert!(!parent.join(" ").contains("hunter2"), "{parent:?}");
+
+        // With no executable fact, no program name is claimed either.
+        let unknown = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .renamed(40, 30, 40, "macos:1.000040", &["hunter2", "login"], None);
+        let parent = caller_of(&unknown, 50).parents[0].command.clone().unwrap();
+        assert_eq!(parent[0], REDACTED, "{parent:?}");
+        assert!(!parent.join(" ").contains("hunter2"), "{parent:?}");
+    }
+
+    /// A bounded reason list keeps the chain's own failure and says how much it
+    /// omitted, so an invalid-marker flood never hides a missing chain.
+    #[test]
+    fn gateway_caller_reports_when_reasons_are_bounded() {
+        let fake = Fake::default()
+            .facts(50, 40, 30, "macos:1.000050", &[])
+            .unreadable(40, "permission denied");
+        // Every allowlisted marker carries an invalid value.
+        let record = caller(&fake, 50, None, |_| Some(OsString::from("hunter2")));
+        assert!(record.markers.is_empty(), "{:?}", record.markers);
+        assert!(
+            record.unknown.len() <= UNKNOWN_LIMIT,
+            "{:?}",
+            record.unknown
+        );
+        assert!(
+            record
+                .unknown
+                .iter()
+                .any(|reason| reason.contains("parent 40") && reason.contains("permission denied")),
+            "{:?}",
+            record.unknown
+        );
+        assert!(
+            record
+                .unknown
+                .last()
+                .is_some_and(|reason| reason.contains("further reasons omitted")),
+            "{:?}",
+            record.unknown
+        );
+        assert!(!record.unknown.join("\n").contains("hunter2"));
     }
 
     /// A program is attributable by its file name, and a positional identity or

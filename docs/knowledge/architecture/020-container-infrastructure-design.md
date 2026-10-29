@@ -800,13 +800,16 @@ and `EFFIGY_RUN_*` identity markers whose value is a supported identity form. An
 unreadable parent, argument or marker, or a pid whose start identity changed or
 could not be confirmed by a second read, becomes a bounded unknown reason
 instead of a guess, and no environment value is read unless its name is on that
-allowlist.
+allowlist. The reason list keeps chain failures ahead of marker failures and
+ends with how many reasons it omitted, so a full list never hides a missing or
+unconfirmed part of the chain.
 
 Redaction treats the two command lines differently. The invoking process's own
 `argv` is Effigy's grammar, so a credential-named flag keeps its name and loses
 only its value. An ancestor's command is arbitrary third-party text, so no
-positional token in it is treated as safe: only the file name of the program the
-kernel executed and recognised flag names are kept. A positional value in a
+positional token in it is treated as safe: only the file name of the executable
+the operating system reports for the process (never its caller-chosen
+`argv[0]`) and recognised flag names are kept. A positional value in a
 direct command line, path-shaped text, the same value inside a shell string
 (read token by token), a value after a flag, an attached short-flag value, URL
 userinfo, a `KEY=value`, a JSON body and a long unseparated token are recorded

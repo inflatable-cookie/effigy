@@ -224,10 +224,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `NS_*` and `EFFIGY_RUN_*` identity markers whose value is a UUID, a decimal
   id or Effigy's own base32 run id. Values that look like credentials are
   redacted: a credential-named flag keeps its name in Effigy's own argv, while
-  an ancestor's command keeps only the program's file name and recognised flag
-  names, so a positional value (word or path shaped), a shell string's
-  positional values, a flag's value, an attached short-flag value, URL userinfo
-  and `KEY=value` pairs are `<redacted>`. Anything unreadable or invalid becomes a
+  an ancestor's command keeps only the executable file name the operating
+  system reports (never its caller-chosen `argv[0]`) and recognised flag names,
+  so a positional value (word or path shaped), a shell string's positional
+  values, a flag's value, an attached short-flag value, URL userinfo and
+  `KEY=value` pairs are `<redacted>`. The `unknown` list is capped and says how
+  many reasons it omitted, so invalid markers never hide a broken chain. Anything unreadable or invalid becomes a
   bounded `unknown` reason, no other environment value is read, and logging
   still never authorizes, refuses or delays the action. The
   2026-10-28 15:26:25Z Mac gateway stop could not have been traced to a

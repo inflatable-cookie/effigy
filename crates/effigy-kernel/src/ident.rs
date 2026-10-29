@@ -92,6 +92,46 @@ pub fn started_before(identity: &ProcessIdentity, time: std::time::SystemTime) -
     }
 }
 
+/// The executable a process was started from, read from the operating system
+/// rather than from its argument vector: `execve` lets a caller choose
+/// `argv[0]`, so only this fact names the program. Unreadable is uncertainty.
+pub fn process_executable(pid: u32) -> std::io::Result<std::path::PathBuf> {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut bytes = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: the buffer is writable for exactly the length passed, lives
+        // for the call and is disjoint from the arguments; a positive return is
+        // the number of bytes written, including the terminating NUL.
+        let written = unsafe {
+            libc::proc_pidpath(pid as i32, bytes.as_mut_ptr().cast(), bytes.len() as u32)
+        };
+        if written <= 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let written = usize::try_from(written).map_err(|_| std::io::ErrorKind::InvalidData)?;
+        let bytes = bytes
+            .get(..written)
+            .ok_or(std::io::ErrorKind::InvalidData)?;
+        let value = bytes.strip_suffix(&[0]).unwrap_or(bytes);
+        let path = std::str::from_utf8(value)
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
+        return Ok(std::path::PathBuf::from(path));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // `/proc/<pid>/exe` resolves to the file that was executed; a process we
+        // may not inspect is unreadable rather than unknown-but-assumed.
+        return std::fs::read_link(format!("/proc/{pid}/exe"));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
 /// Read exact argument boundaries without using a process-table pattern scan.
 pub fn process_arguments(pid: u32) -> std::io::Result<Vec<std::ffi::OsString>> {
     use std::os::unix::ffi::OsStringExt;

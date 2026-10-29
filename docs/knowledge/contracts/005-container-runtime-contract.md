@@ -385,6 +385,9 @@ vanished parent, unreadable arguments, a pid whose start identity changed or
 could not be confirmed by a second read, a truncated chain, or a marker whose
 value is not a supported identity form. No reason ever quotes the value it
 rejected, so a password pasted into a marker variable is refused by name only.
+Chain failures keep their place in that list, which is capped at eight entries
+and ends with how many reasons it omitted, so a flood of invalid markers can
+never hide a missing or unconfirmed part of the chain.
 
 Redaction has two policies, because the two command lines are different kinds
 of text. The invoking process's own `argv` is Effigy's own command grammar, so a
@@ -392,7 +395,9 @@ credential-named flag (`--token`, `--api-key`, `--password`, `Authorization:`…
 keeps its name and loses only the value beside it, as does a URL's userinfo and
 a known token prefix. An ancestor's command line is arbitrary third-party text,
 so no positional token in it is treated as safe: only the file name of the
-program the kernel executed and recognised flag names are recorded. The rest —
+executable the operating system reports for the process — never its
+caller-chosen `argv[0]`, which `exec -a` can set to anything — and recognised
+flag names are recorded. The rest —
 a positional value in a direct command line, path-shaped text, the same value
 inside a shell string (which is read token by token), a value after a flag, an
 attached short-flag value such as `-pHunter2`, URL userinfo, a `KEY=value`, a
