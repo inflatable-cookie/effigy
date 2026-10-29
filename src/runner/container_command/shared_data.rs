@@ -1506,6 +1506,140 @@ shared = true
         assert_no_shared_activity("builtin", &repo, &shared, &render_before);
     }
 
+    const CROSS_CATALOG_ROOT_MANIFEST: &str = r#"
+[data.targets.acowtancy]
+service = "postgres"
+database = "acowtancy"
+
+[catalog]
+alias = "root"
+
+[catalog.members]
+barn = "barn"
+
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.stack.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+database = "acowtancy"
+
+[tasks."data:seed"]
+run = [{ task = "barn/step" }]
+"#;
+
+    const CROSS_CATALOG_BARN_MANIFEST: &str = r#"
+[catalog]
+alias = "barn"
+
+[containers]
+default = "catalog"
+
+[containers.catalog]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.catalog.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.catalog.services.mysql]
+catalog = "mariadb"
+version = "10.11"
+database = "barn"
+password = "secret"
+shared = true
+
+[systems]
+default = "barn-system"
+
+[systems.barn-system]
+default_workspace = "main"
+
+[systems.barn-system.workspaces.main]
+container = "catalog"
+
+[tasks.step]
+run_in = "container"
+run = "true"
+"#;
+
+    /// A data seed whose sequence task routes into another catalog keeps that
+    /// catalog's shared service safe: the decision belongs to the policy being
+    /// activated, not to the seed's starting environment (effigy#477 review).
+    #[test]
+    fn a_catalog_routed_seed_step_never_reconciles_that_catalogs_shared_service() {
+        let _lock = lock_test();
+        let repo = FixtureRepo::new(
+            "effigy-shared-data-cross-catalog-",
+            CROSS_CATALOG_ROOT_MANIFEST,
+        );
+        fs::create_dir_all(repo.root.join("barn")).expect("mkdir barn");
+        fs::write(
+            repo.root.join("barn/effigy.toml"),
+            CROSS_CATALOG_BARN_MANIFEST,
+        )
+        .expect("write barn manifest");
+        repo.install_fake_runtime();
+        let _env = repo.env();
+        let barn = load_container_policy(&repo.root.join("barn"), Some("catalog"))
+            .expect("load barn policy");
+        let shared = barn
+            .shared_services
+            .first()
+            .expect("barn's shared service")
+            .clone();
+        assert!(
+            !shared.compose_file.exists(),
+            "the shared render starts unpublished"
+        );
+        repo.clear_calls();
+        let source = repo.seed_source();
+
+        let error = run_container_data_seed(
+            &repo.root,
+            None,
+            &[effigy_cli::BootstrapDbSeedInput {
+                target: Some("acowtancy".to_owned()),
+                path: source,
+            }],
+            true,
+            false,
+            true,
+        )
+        .expect_err("a routed step into another catalog must not start its shared service");
+        let message = error.to_string();
+        assert!(
+            message.contains("must not start it because bringing it up would reconcile"),
+            "{message}"
+        );
+        assert!(message.contains("container `catalog`"), "{message}");
+        let calls = repo.calls();
+        for forbidden in [" up ", " start ", " stop ", " rm "] {
+            assert!(
+                !calls.contains(forbidden),
+                "the routed step must not {forbidden:?} anything: {calls}"
+            );
+        }
+        assert!(
+            !calls.contains(&shared.project_name),
+            "the other catalog's shared project must not be touched: {calls}"
+        );
+        assert!(
+            !shared.compose_file.exists(),
+            "the other catalog's shared render must not be published: {}",
+            shared.compose_file.display()
+        );
+    }
+
     /// An app-defined `data:seed` task likewise never touches the unrelated
     /// shared service. Its activation runs through the data-seed session
     /// context, which refuses shared reconciliation.

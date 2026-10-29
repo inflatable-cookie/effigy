@@ -510,7 +510,8 @@ During v0.x, MINOR bumps may include breaking changes.
   whose environment has shared services and is stopped refuses and names
   `effigy container up <NAME>` instead of bringing it up, because that would
   reconcile them; an environment with no shared services keeps its prior
-  bring-up behaviour. The exec forwards
+  bring-up behaviour, and the decision is made per activated environment, so a
+  catalog-routed step cannot start another catalog's shared service. The exec forwards
   the client credential by name only: each call creates its own private 0600 file
   that the Compose client sources before it runs, on the host or through the
   Colima VM transport, and removes it afterwards, so concurrent data commands

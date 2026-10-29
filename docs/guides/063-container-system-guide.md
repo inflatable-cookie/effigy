@@ -1429,12 +1429,15 @@ service the target does not use. `data seed` therefore does not activate its
 environment when any selected target is shared, and a seed's environment
 activation never reconciles shared services: an unshared target still seeds
 through the checkout-local route while any shared service of that environment is
-left untouched. Because bringing a stopped environment that has shared services
-up would reconcile them, a data seed for a target in such an environment refuses
-when it is stopped and names `effigy container up <NAME>` instead of starting
-anything. An environment with no shared services keeps its prior behaviour: a
-stopped local stack is still brought up before the seed. `data dump` stays
-read-only and starts nothing.
+left untouched. The decision belongs to the environment actually being
+activated: a sequence or catalog-routed step into another catalog's container is
+judged by that catalog's declaration, so a seed cannot start an unrelated shared
+service elsewhere. Because bringing a stopped environment that has shared
+services up would reconcile them, a data seed for a target in such an
+environment refuses when it is stopped and names `effigy container up <NAME>`
+instead of starting anything. An environment with no shared services keeps its
+prior behaviour: a stopped local stack is still brought up before the seed.
+`data dump` stays read-only and starts nothing.
 
 Credentials travel by variable name only. The exec forwards the database
 client's variable (`MYSQL_PWD` or `PGPASSWORD`) with `compose exec -e NAME`, and

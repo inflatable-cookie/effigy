@@ -22,7 +22,7 @@ pub(in crate::runner) struct RuntimeSessionContext {
     /// shared services alone. A data seed's session sets this so no route can
     /// publish, start or replace a shared service it does not target
     /// (effigy#477). Default `false`: ordinary commands keep reconciling.
-    pub(in crate::runner) leave_shared_services_alone: bool,
+    pub(in crate::runner) data_seed_session: bool,
 }
 
 thread_local! {
@@ -76,12 +76,12 @@ mod tests {
         let outer = RuntimeSessionContext {
             lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
             public_workspace_cleanup: PublicWorkspaceCleanupOverride::Default,
-            leave_shared_services_alone: false,
+            data_seed_session: false,
         };
         let inner = RuntimeSessionContext {
             lease_refresh_policy: LeaseRefreshPolicy::RefreshOnActivation,
             public_workspace_cleanup: PublicWorkspaceCleanupOverride::ForceStopOnExit,
-            leave_shared_services_alone: true,
+            data_seed_session: true,
         };
 
         with_runtime_session_context(outer, || {

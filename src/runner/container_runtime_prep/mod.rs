@@ -164,6 +164,21 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
 /// This is the one activation path shared by the standard task pipeline and
 /// container-routed builtin test suites: the policy loads from the manifest
 /// that owns the declared runtime target.
+/// Whether an activation of `policy` may reconcile that environment's shared
+/// services.
+///
+/// A data seed's session leaves them alone, but the decision belongs to the
+/// policy actually activated: a catalog-routed step into another catalog's
+/// container is judged by that catalog's declaration, so a seed that started in
+/// an environment without shared services still cannot start, publish or
+/// replace an unrelated shared service elsewhere (effigy#477).
+pub(in crate::runner) fn reconcile_shared_services_for(
+    policy: &EffectiveContainerPolicy,
+    session_context: RuntimeSessionContext,
+) -> bool {
+    !(session_context.data_seed_session && !policy.shared_services.is_empty())
+}
+
 pub(in crate::runner) fn activate_routed_container_runtime(
     repo_root: &Path,
     container_name: &str,
@@ -214,7 +229,7 @@ pub(in crate::runner) fn activate_routed_container_runtime_with(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
-            reconcile_shared_services: !session_context.leave_shared_services_alone,
+            reconcile_shared_services: reconcile_shared_services_for(&policy, session_context),
         },
         &plan,
     )

@@ -1113,7 +1113,9 @@ session) leaves shared services alone. Because bringing a stopped environment
 up would reconcile them, such a seed refuses and names `effigy container up
 <env>` instead of starting anything; an environment with no shared services keeps
 its ordinary activation, so a stopped local stack is still brought up before the
-seed. `data dump` starts nothing.
+seed. The decision is made per activated environment from that environment's own
+policy, so a sequence or catalog-routed step into another catalog's container
+also leaves that catalog's shared services alone. `data dump` starts nothing.
 
 A credential travels by name only. The exec forwards the client variable
 (`MYSQL_PWD`, `PGPASSWORD`) with `compose exec -e NAME`; its value lives in a

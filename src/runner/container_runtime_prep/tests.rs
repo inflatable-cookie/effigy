@@ -452,22 +452,42 @@ fn runtime_compose_up_stage_propagates_a_compose_failure() {
 /// A task's environment ensure starts the shared services and delivers the
 /// compose-env secrets before the same apply `container up` runs, so
 /// alternating the two paths recreates nothing (effigy#371).
-/// A data seed's session context makes every routed activation leave shared
-/// services alone; an ordinary session still reconciles them (effigy#477).
+/// A data seed's routed activation judges the policy it actually activates: an
+/// environment with shared services is left alone, one without them keeps its
+/// ordinary activation, and an ordinary session still reconciles both
+/// (effigy#477 review).
 #[test]
-fn a_data_seed_session_never_reconciles_shared_services() {
+fn a_data_seed_session_decides_from_the_policy_being_activated() {
     use crate::runner::db_seed::data_seed_runtime_session_context;
     use crate::runner::runtime_session_context::{
         with_runtime_session_context, RuntimeSessionContext,
     };
 
-    fn capture(session: RuntimeSessionContext) -> Option<bool> {
+    fn policy_with_shared_service() -> EffectiveContainerPolicy {
+        let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+        policy.shared_services = vec![effigy_containers::SharedServiceBinding {
+            service_name: "mysql".to_owned(),
+            catalog: "mariadb".to_owned(),
+            domain_label: "mysql".to_owned(),
+            project_name: "effigy-shared-mariadb-0721de3e".to_owned(),
+            compose_file: PathBuf::from("/machine/shared/mariadb/compose.yml"),
+            host: "127.0.0.1".to_owned(),
+            host_port: 33_066,
+            container_port: 3306,
+            host_env_vars: vec![],
+            port_env_vars: vec![],
+            render_digest: "abc".to_owned(),
+        }];
+        policy
+    }
+
+    fn capture(session: RuntimeSessionContext, policy: &EffectiveContainerPolicy) -> Option<bool> {
         let mut captured = None;
         with_runtime_session_context(session, || {
             let _ = activate_routed_container_runtime_with(
                 Path::new("/tmp/demo-repo"),
                 "web",
-                |_repo_root, _container_name| Ok(test_policy(PathBuf::from("docker-compose.yml"))),
+                |_repo_root, _container_name| Ok(policy.clone()),
                 |_repo_root, _policy, request, _plan| {
                     captured = Some(request.reconcile_shared_services);
                     Err(crate::runner::error::RunnerError::task_invocation(
@@ -479,13 +499,20 @@ fn a_data_seed_session_never_reconciles_shared_services() {
         captured
     }
 
+    let shared = policy_with_shared_service();
+    let unshared = test_policy(PathBuf::from("docker-compose.yml"));
     assert_eq!(
-        capture(data_seed_runtime_session_context()),
+        capture(data_seed_runtime_session_context(), &shared),
         Some(false),
-        "a data seed's routed activation must not reconcile shared services"
+        "a data seed must leave an activated environment's shared services alone"
     );
     assert_eq!(
-        capture(RuntimeSessionContext::default()),
+        capture(data_seed_runtime_session_context(), &unshared),
+        Some(true),
+        "an environment with no shared services keeps its ordinary activation"
+    );
+    assert_eq!(
+        capture(RuntimeSessionContext::default(), &shared),
         Some(true),
         "an ordinary task activation still reconciles shared services"
     );
