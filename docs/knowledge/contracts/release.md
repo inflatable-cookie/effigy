@@ -16,7 +16,7 @@ certified artifact and the two targets:
 | Part | Declaration |
 | --- | --- |
 | `pre` gate | `preflight` — `sh scripts/release/checks.sh preflight --skip-smoke` (metadata and docs on the source tree; the certify `smoke` gate proves the prepared binary) |
-| `certify` gates | `ci`, `format`, `test`, `qa`, `build`, `smoke`, and `metadata = { task = "release:metadata" }` — all against the prepared commit |
+| `certify` gates | `secret-audit`, `ci`, `format`, `test`, `qa`, `build`, `smoke`, and `metadata = { task = "release:metadata" }` — all against the prepared commit |
 | artifact | `binary` from `release:artifact`, pattern `target/release/effigy`; certify copies it and records `sha256` |
 | target `tag` | one annotated tag per identity, pushed at publish |
 | target `binaries` | `task` target `release:publish:binaries`, `check = release:check:binaries`, `verify = release:verify:binaries` |
@@ -26,6 +26,14 @@ A release with a non-`tag` target stops at `publish` for approval by default
 and continues.
 
 ## Repo tasks that replaced the retired commands
+
+The secret audit pins `v0.14.1` to `20465f1ff690340ee9ef461915ca769da1c76fca`,
+refuses shallow or unrelated history, and scans the committed candidate tree
+and every post-boundary change. Its [fixture receipt](../../../scripts/release/secret-audit-allowlist.tsv)
+records exact path and SHA-256 blob exemptions with their source evidence; a
+changed blob is scanned again. The cache key includes that receipt, the rules,
+and both commits. Reports identify paths, rules and commits without values.
+The fixture dispositions are recorded in [Q-020](../questions.md#q-020-release-secret-audit-history-boundary).
 
 The Effigy-only checks were `effigy release validate|preflight|proof|
 check-binary|verify-install|evidence …` until v0.15. They are now repo tasks in
