@@ -436,6 +436,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Show Colima workspace sizing recommendations only for a selected workspace
+  service, avoiding misleading advice for hybrid and database-only environments.
+
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already

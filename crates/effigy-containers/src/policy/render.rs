@@ -82,6 +82,27 @@ pub fn prepare_inputs(
 }
 
 impl EffectiveContainerPolicy {
+    /// Whether this render binds a workspace to a service it defines.
+    pub(crate) fn has_selected_workspace_service(&self) -> bool {
+        let Some(render) = &self.render else {
+            return false;
+        };
+        if matches!(&render.request, Request::Named(None)) {
+            return false;
+        }
+        self.compose_files
+            .first()
+            .and_then(|file| self.read_compose(file).ok())
+            .and_then(|content| serde_yaml::from_str::<serde_yaml::Value>(&content).ok())
+            .and_then(|document| {
+                document
+                    .get("services")?
+                    .get(&self.primary_service)
+                    .cloned()
+            })
+            .is_some_and(|service| service.is_mapping())
+    }
+
     /// Read the resolved snapshot, including before its first publication.
     /// A rendered input names other files of its generation relative to the
     /// Compose project directory, so readers resolve them where Compose will.
