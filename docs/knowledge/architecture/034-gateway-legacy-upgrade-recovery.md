@@ -388,15 +388,23 @@ and recreated with `readlinkat`/`unlinkat`/`symlinkat` on that descriptor. The
 entry has three states — absent, Effigy's own link, or foreign (a link to
 another target, or something that is not a link) — and a foreign entry is
 refused, never treated as absent, because the manager resolves the same path.
-That validation happens *before* any `systemctl --user` request that could
-follow the directory — `enable` on a repeated setup, `disable --now` on
-`setup --remove` — and before the unit file is deleted. A path-based
-`remove_file` would resolve every parent component, so a `default.target.wants`
-symlink to a foreign directory could delete that directory's entry (and a
-manager following the same path could stop the service); instead it is refused
-with the exact `systemctl --user disable`/`chmod` recovery, on upgrade, on
-fresh install, on a repeated setup and in `setup --remove` alike. Status reports
-such a directory or entry as not enabled.
+The entry itself is bound, not only its directory: removal renames it aside
+inside the verified directory, verifies it under that private name, and only
+then unlinks it, so an entry the manager replaced between the check and the
+unlink is put back and refused instead of deleted. That validation happens
+*before* any `systemctl --user` request that could follow the directory —
+`enable` on a repeated setup, `disable --now` on `setup --remove` — and before
+the unit file is deleted. A path-based `remove_file` would resolve every parent
+component, so a `default.target.wants` symlink to a foreign directory could
+delete that directory's entry (and a manager following the same path could stop
+the service); instead it is refused with the exact `systemctl --user
+disable`/`chmod` recovery, on upgrade, on fresh install, on a repeated setup and
+in `setup --remove` alike. Status reports such a directory or entry as not
+enabled.
+
+An `enable` that fails after writing the link is reported as enabled *and* as a
+failed manager request with its recovery commands: the link proves filesystem
+activation, not that the manager finished its own request.
 
 A failed rewrite restores only an activation this run actually dropped, so a
 unit the operator had disabled is never enabled by a recovery path, and the
