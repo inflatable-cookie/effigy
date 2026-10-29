@@ -148,21 +148,32 @@ pub(super) fn ensure_workspace_permissions_ready(
     let allow_repair = true;
     let perm_plan = plan_workspace_permission_prep(&plan.owned_disposable_paths());
     let progress_label = render_workspace_permission_progress_label(&perm_plan);
-    let mut progress = super::WorkspaceTransientProgressReporter::new(
+    let progress = super::WorkspaceOpProgress::start(
         repo_override.is_some(),
-        &progress_label,
+        super::PROBE_PERMISSION_PREP,
         false,
     );
+    progress.update(
+        progress_label,
+        Some((0, perm_plan.targets.len() as u64)),
+        None,
+    );
     let mut backend = super::permissions::compose_backend(workspace_repo_root, policy);
-    super::permissions::ensure_workspace_permissions_ready_with(
+    match super::permissions::ensure_workspace_permissions_ready_with(
         policy,
         container_name,
         allow_repair,
         &mut backend,
-    )
-    .inspect_err(|_| progress.finish(false))?;
-    progress.finish(true);
-    Ok(())
+    ) {
+        Ok(()) => {
+            progress.finish_clear();
+            Ok(())
+        }
+        Err(error) => {
+            progress.fail_error(&error);
+            Err(error)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -369,63 +380,107 @@ pub(in crate::runner) fn prepare_workspace_guest(
     let Some(workspace) = facts.operator_workspace.as_ref() else {
         return Ok(None);
     };
-    let binary = verify_guest_artifact(artifact, target)?;
-    let paths = workspace_path_map(facts.repo_root, workspace)?;
-    let activation = WorkspaceActivationIdentity {
-        host_user: host_user(),
-        checkout_id: crate::runner::task_engine::checkout::mint(facts.repo_root)?.text(),
-        environment: WorkspaceEnvironmentIdentity {
-            resource_id: format!("env:{}", facts.policy.name),
-            generation: facts.environment.generation.get().to_string(),
-        },
-        container: facts.container,
+    let progress = super::WorkspaceOpProgress::start(false, super::PROBE_GUEST_PUBLICATION, false);
+    progress.update("verifying guest artifact", None, None);
+    let binary = match verify_guest_artifact(artifact, target) {
+        Ok(binary) => binary,
+        Err(error) => {
+            progress.fail_error(&error);
+            return Err(error);
+        }
     };
-    let closure = workspace_source_closure(facts.repo_root, &paths)?;
-    let mut context = WorkspaceContext::new(WorkspaceContextInput {
-        generation: 1,
-        host: WorkspaceHostIdentity {
-            version: effigy_core::build_info::active_version(),
-            protocol: CHANNEL_PROTOCOL_VERSION,
-        },
-        binary: binary.clone(),
-        activation: activation.clone(),
-        session_run_id: facts.session_run_id,
-        paths: paths.clone(),
-        backend: facts.backend,
-        sources: closure.pins,
-        routes: workspace_routes(facts.policy),
-        channel: facts.channel,
-    });
-    // The executable and the rendered snapshots are published before the
-    // context that names them, so an entry never resolves a generation whose
-    // executable or snapshot is still missing.
-    install_pinned_guest_binary(
-        guest,
-        artifact,
-        &binary,
-        facts.artifact_install_identity.as_deref(),
-    )?;
-    publish_source_snapshots(guest, &closure.snapshots)?;
-    // A restart or replacement outside Effigy's gate may race container I/O.
-    // Never publish a context/receipt for a different identity than we probed.
-    let observed = guest.probe_container_identity()?;
-    if !activation.container.container_matches(&observed)
-        || !activation.container.boot_matches(&observed)
-    {
-        return Err(RunnerError::task_invocation(format!(
-            "workspace identity changed during publication; run `{HOST_REPREPARE_COMMAND}` on the host"
-        )));
+    let paths = match workspace_path_map(facts.repo_root, workspace) {
+        Ok(paths) => paths,
+        Err(error) => {
+            progress.fail_error(&error);
+            return Err(error);
+        }
+    };
+    let result = (|| {
+        let activation = WorkspaceActivationIdentity {
+            host_user: host_user(),
+            checkout_id: crate::runner::task_engine::checkout::mint(facts.repo_root)?.text(),
+            environment: WorkspaceEnvironmentIdentity {
+                resource_id: format!("env:{}", facts.policy.name),
+                generation: facts.environment.generation.get().to_string(),
+            },
+            container: facts.container.clone(),
+        };
+        let closure = workspace_source_closure(facts.repo_root, &paths)?;
+        let mut context = WorkspaceContext::new(WorkspaceContextInput {
+            generation: 1,
+            host: WorkspaceHostIdentity {
+                version: effigy_core::build_info::active_version(),
+                protocol: CHANNEL_PROTOCOL_VERSION,
+            },
+            binary: binary.clone(),
+            activation: activation.clone(),
+            session_run_id: facts.session_run_id.clone(),
+            paths: paths.clone(),
+            backend: facts.backend.clone(),
+            sources: closure.pins,
+            routes: workspace_routes(facts.policy),
+            channel: facts.channel.clone(),
+        });
+        // The executable and the rendered snapshots are published before the
+        // context that names them, so an entry never resolves a generation whose
+        // executable or snapshot is still missing.
+        progress.update(
+            "installing pinned guest binary",
+            None,
+            Some("guest artifact verified".to_owned()),
+        );
+        install_pinned_guest_binary(
+            guest,
+            artifact,
+            &binary,
+            facts.artifact_install_identity.as_deref(),
+        )?;
+        progress.update(
+            "publishing source snapshots",
+            None,
+            Some("guest binary installed".to_owned()),
+        );
+        publish_source_snapshots(guest, &closure.snapshots)?;
+        // A restart or replacement outside Effigy's gate may race container I/O.
+        // Never publish a context/receipt for a different identity than we probed.
+        progress.now_waiting_for(super::PROBE_CONTAINER_IDENTITY);
+        progress.update("probing workspace container identity", None, None);
+        let observed = guest.probe_container_identity()?;
+        if !activation.container.container_matches(&observed)
+            || !activation.container.boot_matches(&observed)
+        {
+            return Err(RunnerError::task_invocation(format!(
+                "workspace identity changed during publication; run `{HOST_REPREPARE_COMMAND}` on the host"
+            )));
+        }
+        progress.now_waiting_for(super::PROBE_GUEST_PUBLICATION);
+        progress.update(
+            "publishing workspace context",
+            None,
+            Some(format!("container `{}`", observed.container_id)),
+        );
+        let context_generation = publish_context_generation(guest, &mut context)?;
+        if let Some(enrolment) = facts.enrolment.as_ref() {
+            progress.update(
+                "publishing enrolment credential",
+                None,
+                Some("workspace context published".to_owned()),
+            );
+            publish_enrolment_credential(guest, &workspace.user, enrolment)?;
+        }
+        Ok(Some(PreparedWorkspaceGuest {
+            activation,
+            binary,
+            context_generation,
+            paths,
+        }))
+    })();
+    match &result {
+        Ok(_) => progress.finish_clear(),
+        Err(error) => progress.fail_error(error),
     }
-    let context_generation = publish_context_generation(guest, &mut context)?;
-    if let Some(enrolment) = facts.enrolment.as_ref() {
-        publish_enrolment_credential(guest, &workspace.user, enrolment)?;
-    }
-    Ok(Some(PreparedWorkspaceGuest {
-        activation,
-        binary,
-        context_generation,
-        paths,
-    }))
+    result
 }
 
 /// Publish the guest context and pinned executable for one container-mode
@@ -506,7 +561,21 @@ fn publish_workspace_guest_effect(
     let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy)?;
     // The host verified the backend's full id when it bound this guest. Every
     // read, probe and publication below targets that exact id, never an alias.
-    let bound = guest.probe_container_identity()?;
+    let progress = super::WorkspaceOpProgress::start(false, super::PROBE_CONTAINER_IDENTITY, false);
+    progress.update("probing workspace container identity", None, None);
+    let bound = match guest.probe_container_identity() {
+        Ok(bound) => bound,
+        Err(error) => {
+            progress.fail_error(&error);
+            return Err(error);
+        }
+    };
+    progress.update(
+        "probing workspace container identity",
+        None,
+        Some(format!("container `{}`", bound.container_id)),
+    );
+    progress.finish_clear();
     let target = LinuxWorkspaceTarget::from_image(&bound.platform, &bound.libc)?;
     let (artifact, artifact_install_identity) =
         produced_linux_workspace_effigy_artifact(repo_root, target)?;

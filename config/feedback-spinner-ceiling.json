@@ -138,12 +138,6 @@
     44
   ],
   [
-    "src/cli/entrypoint.rs",
-    261,
-    ".then(|| effigy_ui::steps::step(transient_spinner_label(&command)));",
-    36
-  ],
-  [
     "src/runner/bootstrap_command/mod.rs",
     242,
     "self.running = Some(effigy_ui::steps::step(&label));",
@@ -454,11 +448,5 @@
     591,
     "let step = effigy_ui::steps::step(&admission_wait_label(&target.label, None));",
     34
-  ],
-  [
-    "src/runner/workspace_command/mod.rs",
-    565,
-    "let spinner = renderer.spinner(label).ok();",
-    32
   ]
 ]
