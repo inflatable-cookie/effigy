@@ -170,7 +170,10 @@ During v0.x, MINOR bumps may include breaking changes.
   removed, so the unlink never targets the shared unit name and a replacement
   arriving at that name is left in place. The move and the put-back are
   exclusive renames that never overwrite an entry Effigy did not write, and an
-  entry replaced inside the private directory is refused and kept aside. An
+  entry replaced inside the private directory is refused and kept aside.
+  `setup --remove` completes the filesystem removal and then reports a
+  `daemon-reload` that refuses, cannot be reached or times out, with the exact
+  `systemctl --user daemon-reload` command, instead of a silent teardown. An
   `enable` that fails after writing the link is reported as enabled and still
   carries the manager failure and its recovery commands. A failed unit rewrite
   restores the previous file's activation and says the installed route still

@@ -399,11 +399,27 @@ in place and reported. Both the move and the put-back are exclusive renames
 either destination is replaced, and a put-back refuses, naming where Effigy's
 entry is kept, when the unit name was taken in the meantime. An entry replaced
 inside the private directory is refused and kept aside, never deleted and never
-installed as Effigy's activation link. The residual limit is a same-uid process
-that deliberately writes into Effigy's private removal directory in that
-interval; such a process can already delete Effigy's own unit file, so it is
-outside this protection rather than a name the manager or a normal setup can
-reach. That
+installed as Effigy's activation link.
+
+What the staged removal cannot do is bind the final unlink to the inode. POSIX
+has no inode-conditional unlink, so a same-uid writer that replaces the staged
+name between the last verification and the `unlinkat` inside the private
+directory is deleted. That is an **open product question reported to the
+operator for a ruling** (review 5693581777); it is recorded here as a limit, not
+as accepted or compliant behaviour. The ruling has to choose between:
+
+- accepting the same-uid limit explicitly, on the grounds that such a process
+  can already replace or delete Effigy's own unit file and installed binary;
+- no longer deleting the activation entry in Effigy at all, delegating it to
+  `systemctl --user disable`, verifying the entry is gone afterwards and
+  refusing with the exact command when the manager cannot do it — at the cost
+  that a host without a user manager can no longer remove the link; or
+- staging in a directory the operator account cannot write, which needs an
+  administrator-owned directory and changes the one-admin-action rule.
+
+Until that ruling, removal keeps the strongest portable behaviour: the shared
+unit name is never unlinked, and a replacement that appears there is preserved
+and reported. That
 validation happens *before* any `systemctl --user` request that could follow
 the directory — `enable` on a repeated setup, `disable --now` on
 `setup --remove` — and before the unit file is deleted. A path-based
@@ -416,7 +432,12 @@ such a directory or entry as not enabled.
 
 An `enable` that fails after writing the link is reported as enabled *and* as a
 failed manager request with its recovery commands: the link proves filesystem
-activation, not that the manager finished its own request.
+activation, not that the manager finished its own request. Removal keeps the
+same rule in the other direction: the unit file and the activation are removed,
+and a `daemon-reload` that refuses, cannot be reached or times out is then
+reported as a failure naming the exact `systemctl --user daemon-reload` command,
+because a removal is not finished while the manager still serves the old
+definition.
 
 A failed rewrite restores only an activation this run actually dropped, so a
 unit the operator had disabled is never enabled by a recovery path, and the

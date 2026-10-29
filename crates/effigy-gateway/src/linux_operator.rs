@@ -538,9 +538,15 @@ pub fn remove(
     }
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     crate::setup::remove_managed_with(cx, &dir, UNIT_NAME, |path| std::fs::remove_file(path))?;
-    // The unit file and its link are gone, so a manager that cannot reload is
-    // not a removal failure: it only keeps a definition systemd already knows.
-    let _ = systemd.run(&["daemon-reload"]);
+    // The unit file and its link are gone. The manager may still hold the
+    // definition it loaded, so a reload that refuses, cannot be reached or
+    // times out is reported with the exact command: setup must not claim a
+    // clean teardown while the manager still serves the old unit.
+    if let Some(reason) = manager_refusal(systemd.run(&["daemon-reload"])) {
+        return Err(error(format!(
+            "the launch unit and its login activation are removed, but the user manager did not reload its definitions ({reason}). Run `systemctl --user daemon-reload` to drop the loaded unit"
+        )));
+    }
     Ok(())
 }
 
@@ -3503,26 +3509,49 @@ mod tests {
     }
 
     /// Cleanup does not depend on the manager answering a reload: the owned
-    /// file and its link are already gone.
+    /// The filesystem removal completes, but a manager that refuses, cannot be
+    /// reached or times out on `daemon-reload` is reported with the exact
+    /// command instead of a clean teardown while it still serves the old unit.
     #[test]
-    fn cleanup_does_not_fail_when_the_manager_cannot_reload() {
+    fn removal_surfaces_a_manager_that_cannot_reload() {
         with_run(|run, cx| {
-            let home = tempfile::tempdir().unwrap();
-            let paths = paths(home.path());
-            let binary = installed_binary(home.path());
-            let uid = nix::unistd::Uid::effective().as_raw();
-            let mut manager = FakeManager::for_paths(&paths);
-            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            for (label, fault) in [
+                ("refused", Fault::Refused),
+                ("unreachable", Fault::Unreachable),
+                ("wedged", Fault::Wedged),
+            ] {
+                let home = tempfile::tempdir().unwrap();
+                let paths = paths(home.path());
+                let binary = installed_binary(home.path());
+                let uid = nix::unistd::Uid::effective().as_raw();
+                let mut manager = FakeManager::for_paths(&paths);
+                install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+                assert!(activation_linked(&paths, uid), "{label}");
 
-            let mut wedged = FakeSystemd::with_fault("daemon-reload", Fault::Wedged);
-            remove(cx, &paths, uid, &mut wedged).unwrap();
-            assert!(!paths.unit.exists());
-            assert!(!paths.wants.exists());
-            assert_eq!(observe_unit(&paths, uid), UnitState::Missing);
-            assert!(wedged
-                .calls
-                .iter()
-                .any(|call| call.first().map(String::as_str) == Some("disable")));
+                let mut reloading = FakeSystemd::with_fault("daemon-reload", fault);
+                let error = remove(cx, &paths, uid, &mut reloading).unwrap_err();
+                let message = error.to_string();
+                assert!(
+                    message.contains("login activation are removed"),
+                    "{label}: {message}"
+                );
+                assert!(
+                    message.contains("did not reload its definitions"),
+                    "{label}: {message}"
+                );
+                assert!(
+                    message.contains("systemctl --user daemon-reload"),
+                    "{label}: {message}"
+                );
+                // The removal itself is complete and reported as such.
+                assert!(!paths.unit.exists(), "{label}");
+                assert!(!paths.wants.exists(), "{label}");
+                assert_eq!(observe_unit(&paths, uid), UnitState::Missing, "{label}");
+                assert!(reloading
+                    .calls
+                    .iter()
+                    .any(|call| call.first().map(String::as_str) == Some("disable")));
+            }
         });
     }
 

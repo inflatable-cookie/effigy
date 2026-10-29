@@ -1655,8 +1655,10 @@ within 20 seconds, setup does not fail after writing the unit: it prints the
 manager's own sentence and the exact `systemctl --user daemon-reload`, `enable`
 and `start` commands that finish the enable, and keeps the installed unit.
 Removal behaves the same way: it disables, removes and unlinks the unit Effigy
-owns, and a manager that cannot reload is reported rather than treated as a
-failed removal.
+owns, and a `daemon-reload` that refuses, cannot be reached or times out is then
+reported as a failure naming the exact `systemctl --user daemon-reload` command
+— the removal itself is done, but the manager may still serve the definition it
+loaded.
 
 The login activation directory
 (`~/.config/systemd/user/default.target.wants`) must be a real directory owned
