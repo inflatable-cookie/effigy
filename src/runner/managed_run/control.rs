@@ -238,14 +238,19 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
             .filter(EntryState::holds_a_wait)
             .and_then(|state| state.waiting_on);
     }
+    // The run publishes its environment identity before the phase can block,
+    // so status reports the host waits throughout bring-up, not only once the
+    // `ENVIRONMENT` effect is recorded (effigy#458).
+    let environment_name = status
+        .environment
+        .as_ref()
+        .map(|environment| environment.name.clone())
+        .or_else(|| task_waits.environment_identity());
     status.waits = wait_views(
         &addressed.target.root,
         addressed.task,
         addressed.profile,
-        status
-            .environment
-            .as_ref()
-            .map(|environment| environment.name.as_str()),
+        environment_name.as_deref(),
     );
     status.next = match status.state.as_str() {
         "running" | "stopping" => vec![addressed.command("logs"), addressed.command("stop")],
@@ -749,5 +754,97 @@ mod tests {
         let only_run = wait_views(repo, "dev", "default", None);
         assert_eq!(only_run.len(), 1);
         assert_eq!(only_run[0].state.entry, "jobs");
+    }
+
+    fn target(root: &std::path::Path) -> crate::runner::task_engine::TaskTarget {
+        crate::runner::task_engine::TaskTarget {
+            root: root.to_path_buf(),
+            catalog: String::new(),
+            task: "dev".to_owned(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+            profile: Some("default".to_owned()),
+            shared_lock: None,
+            argument_scope: None,
+            label: "dev".to_owned(),
+        }
+    }
+
+    /// The public status path while the environment is still coming up: the
+    /// run has recorded no `ENVIRONMENT` effect yet, but it published its
+    /// environment identity before the phase could block, so `status --json`
+    /// reports the host waits and the environment's own counts (effigy#458).
+    #[test]
+    fn status_reports_the_host_waits_while_the_environment_is_still_coming_up() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let repo = dir.path();
+        let task = WaitLedger::task(repo, "dev", "default");
+        task.clear();
+        task.publish_environment_identity("app");
+        let environment = WaitLedger::environment(repo, "app");
+        environment.clear();
+        environment.publish(&waiting(
+            "api",
+            WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            },
+        ));
+        environment.publish(&waiting(
+            "front",
+            WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            },
+        ));
+        environment.publish(&waiting(
+            "admin",
+            WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            },
+        ));
+
+        let target = target(repo);
+        let addressed = Addressed {
+            target: &target,
+            task: "dev",
+            profile: "default",
+        };
+        let status = status_view(&addressed);
+        assert!(
+            status.environment.is_none(),
+            "the environment effect is not recorded while its phase runs"
+        );
+        let described = status
+            .waits
+            .iter()
+            .map(|view| (view.scope, view.state.entry.as_str(), view.state.phase))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            vec![
+                ("host", "admin", EntryPhase::Waiting),
+                ("host", "api", EntryPhase::Waiting),
+                ("host", "front", EntryPhase::Waiting),
+            ]
+        );
+        // The JSON carries the identity and the phase of what each waits for.
+        let json = serde_json::to_value(&status).expect("status json");
+        assert_eq!(json["waits"][2]["scope"], "host");
+        assert_eq!(json["waits"][2]["entry"], "front");
+        assert_eq!(json["waits"][2]["waiting_on"]["kind"], "entry");
+        assert_eq!(json["waits"][2]["waiting_on"]["name"], "api");
+        assert_eq!(json["waits"][2]["waiting_on"]["phase"], "starting");
+        let rendered = render(&status);
+        assert!(
+            rendered.contains("waiting for api (starting) (4s) (host)"),
+            "{rendered}"
+        );
+
+        // The environment reported ready and the planner settled every wait.
+        for entry in ["api", "front", "admin"] {
+            environment.settle(entry);
+        }
+        let status = status_view(&addressed);
+        assert!(status.waits.is_empty(), "{:?}", status.waits);
     }
 }

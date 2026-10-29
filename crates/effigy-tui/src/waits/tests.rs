@@ -285,7 +285,10 @@ fn host_depends_on_and_workload_order_map_to_their_own_waits() {
     let front = hosts.get("front").expect("front's order");
     assert_eq!(front.waits_for, vec!["api".to_owned()]);
     assert!(front.waits_for_readiness, "host readers wait for readiness");
-    assert!(!front.after_environment, "hosts start inside the bring-up");
+    assert!(
+        front.after_environment,
+        "a bring-up starts host processes after the environment reports ready"
+    );
     assert!(
         !hosts.get("api").expect("api's order").waits_for_readiness
             || hosts.get("api").expect("api's order").waits_for.is_empty()
@@ -414,4 +417,99 @@ fn every_frame_keeps_each_entry_s_label_its_own() {
             }
         }
     }
+}
+
+/// A writer publishes a state when its meaning changes, and refreshes only a
+/// live wait: a started process or a settled record that merely ages is never
+/// rewritten, so one owner-loop tick is not one ledger write (effigy#458).
+#[test]
+fn only_a_changed_meaning_or_a_live_wait_is_written() {
+    use std::time::Duration;
+
+    let now = base_clock();
+    let started = EntryState {
+        entry: "api".to_owned(),
+        phase: EntryPhase::Starting,
+        waiting_on: None,
+        not_started_because: None,
+        detail: None,
+        elapsed_ms: 0,
+    };
+    assert!(should_publish(None, None, &started, now), "the first state");
+    let aged = EntryState {
+        elapsed_ms: 60_000,
+        ..started.clone()
+    };
+    assert!(
+        !should_publish(
+            Some(&started),
+            Some(now),
+            &aged,
+            now + Duration::from_secs(60)
+        ),
+        "a started process only ages"
+    );
+
+    let waiting = EntryState {
+        phase: EntryPhase::Waiting,
+        waiting_on: Some(WaitOn::Entry {
+            name: "api".to_owned(),
+            phase: EntryPhase::Starting,
+        }),
+        ..started.clone()
+    };
+    assert!(
+        should_publish(Some(&started), Some(now), &waiting, now),
+        "a transition"
+    );
+    assert!(
+        !should_publish(
+            Some(&waiting),
+            Some(now),
+            &waiting,
+            now + Duration::from_millis(100)
+        ),
+        "a live wait keeps its refresh interval"
+    );
+    assert!(
+        should_publish(Some(&waiting), Some(now), &waiting, now + WAIT_REFRESH),
+        "a live wait refreshes its elapsed time"
+    );
+    let ready_dependency = EntryState {
+        waiting_on: Some(WaitOn::Entry {
+            name: "api".to_owned(),
+            phase: EntryPhase::Ready,
+        }),
+        ..waiting.clone()
+    };
+    assert!(
+        should_publish(
+            Some(&waiting),
+            Some(now),
+            &ready_dependency,
+            now + Duration::from_millis(1)
+        ),
+        "the dependency's phase is a change of meaning"
+    );
+
+    let not_started = EntryState {
+        phase: EntryPhase::NotStarted,
+        waiting_on: None,
+        not_started_because: Some(Attribution::new("api", "failed (status 500)")),
+        ..started.clone()
+    };
+    assert!(should_publish(Some(&waiting), Some(now), &not_started, now));
+    assert!(
+        !should_publish(
+            Some(&not_started),
+            Some(now),
+            &not_started,
+            now + Duration::from_secs(60)
+        ),
+        "a terminal state is written once"
+    );
+}
+
+fn base_clock() -> Instant {
+    Instant::now()
 }

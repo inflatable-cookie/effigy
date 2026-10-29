@@ -14,7 +14,9 @@ use std::collections::BTreeSet;
 use std::time::Instant;
 
 use effigy_containers::{EffectiveContainerPolicy, EffectiveHostProcess};
-use effigy_tui::waits::{EntryState, EntryWaits, HostOrder, SessionOrder};
+use effigy_tui::waits::{should_publish, EntryState, EntryWaits, HostOrder, SessionOrder};
+
+use std::collections::BTreeMap;
 
 use super::ManagedHostListenerResult;
 use crate::runner::error::RunnerError;
@@ -30,9 +32,36 @@ pub(in crate::runner) struct HostPlanOutcome {
 pub(in crate::runner) struct HostWaitGraph {
     ledger: WaitLedger,
     waits: EntryWaits,
+    /// The last state published per entry, and when, so a settled record is
+    /// written once and a live wait refreshes without a write per call.
+    published: BTreeMap<String, EntryState>,
+    published_at: BTreeMap<String, Instant>,
 }
 
 impl HostWaitGraph {
+    /// The graph as the run's owner publishes it before the environment phase
+    /// can block: the ledger is this session's, every declared host process
+    /// waits for the environment, and nothing has started. The run's owner
+    /// publishes it here so `status`, the tabs and the headless text name the
+    /// host waits throughout bring-up, not only once the planner runs
+    /// (effigy#458).
+    pub(in crate::runner) fn for_environment_phase(
+        repo_root: &std::path::Path,
+        policy: &EffectiveContainerPolicy,
+        now: Instant,
+    ) -> Self {
+        let ledger = WaitLedger::environment(repo_root, &policy.name);
+        ledger.clear();
+        let started = policy
+            .host_processes
+            .iter()
+            .map(|process| process.name.clone())
+            .collect::<BTreeSet<_>>();
+        let mut graph = Self::build(&ledger, policy, &started, Some(&policy.name), now);
+        graph.publish_all(now);
+        graph
+    }
+
     /// The graph of `policy`'s host processes. `started` names what this call
     /// replaces; every other declared process is already running, so it counts
     /// as ready and a dependent never waits for an entry this call does not
@@ -41,6 +70,23 @@ impl HostWaitGraph {
         repo_root: &std::path::Path,
         policy: &EffectiveContainerPolicy,
         started: &BTreeSet<String>,
+        now: Instant,
+    ) -> Self {
+        // The planner runs after the environment reported ready.
+        Self::build(
+            &WaitLedger::environment(repo_root, &policy.name),
+            policy,
+            started,
+            None,
+            now,
+        )
+    }
+
+    fn build(
+        ledger: &WaitLedger,
+        policy: &EffectiveContainerPolicy,
+        started: &BTreeSet<String>,
+        environment: Option<&str>,
         now: Instant,
     ) -> Self {
         let order = SessionOrder::hosts(
@@ -53,33 +99,83 @@ impl HostWaitGraph {
                 })
                 .collect::<Vec<_>>(),
         );
-        let mut waits = EntryWaits::new(order, None, now);
+        let mut waits = EntryWaits::new(order, environment, now);
         for process in &policy.host_processes {
             if !started.contains(&process.name) {
                 waits.ready(&process.name, now);
             }
         }
         Self {
-            ledger: WaitLedger::environment(repo_root, &policy.name),
+            ledger: ledger.clone(),
             waits,
+            published: BTreeMap::new(),
+            published_at: BTreeMap::new(),
         }
     }
 
     /// Publishes every entry's own wait: a waiting entry names its dependency
     /// and that dependency's phase, a starting listener names its readiness
-    /// request, and a settled entry says so.
+    /// request, and a settled entry says so. Only a changed meaning or a live
+    /// wait's refresh writes a record (effigy#458).
     pub(in crate::runner) fn publish_all(&mut self, now: Instant) {
         self.waits.refresh(now);
         for state in self.waits.states(now) {
-            self.publish_state(&state);
+            let due = should_publish(
+                self.published.get(&state.entry),
+                self.published_at.get(&state.entry).copied(),
+                &state,
+                now,
+            );
+            if !due {
+                continue;
+            }
+            if state.holds_a_wait() {
+                self.ledger.publish(&state);
+            } else {
+                self.ledger.settle(&state.entry);
+            }
+            self.published_at.insert(state.entry.clone(), now);
+            self.published.insert(state.entry.clone(), state);
         }
     }
 
-    fn publish_state(&self, state: &EntryState) {
-        if state.holds_a_wait() {
-            self.ledger.publish(state);
-        } else {
-            self.ledger.settle(&state.entry);
+    /// The environment phase reported the containers that are healthy now.
+    pub(in crate::runner) fn environment_progress(
+        &mut self,
+        healthy: u32,
+        total: u32,
+        now: Instant,
+    ) {
+        self.waits.environment_progress(healthy, total);
+        self.publish_all(now);
+    }
+
+    /// The environment reported ready: the host entries now wait on their own
+    /// `depends_on` readers instead of the phase.
+    pub(in crate::runner) fn environment_ready(&mut self, now: Instant) {
+        self.waits.environment_ready(now);
+        self.publish_all(now);
+    }
+
+    /// The environment failed: no host process starts, and each one says so
+    /// with the environment's own report.
+    pub(in crate::runner) fn environment_failed(&mut self, detail: &str, now: Instant) {
+        self.waits.environment_failed(detail, now);
+        self.publish_all(now);
+    }
+
+    /// The run settled: every wait this graph published is over.
+    pub(in crate::runner) fn settle_all(&mut self, now: Instant) {
+        let entries = self.waits.states(now);
+        for state in entries {
+            if !matches!(
+                state.phase,
+                effigy_tui::waits::EntryPhase::NotStarted | effigy_tui::waits::EntryPhase::Failed
+            ) {
+                self.ledger.settle(&state.entry);
+                self.published.remove(&state.entry);
+                self.published_at.remove(&state.entry);
+            }
         }
     }
 
@@ -101,6 +197,11 @@ impl HostWaitGraph {
     pub(in crate::runner) fn ready(&mut self, entry: &str, now: Instant) {
         self.waits.ready(entry, now);
         self.publish_all(now);
+    }
+
+    /// One entry's current state.
+    pub(in crate::runner) fn state(&self, entry: &str, now: Instant) -> Option<EntryState> {
+        self.waits.state(entry, now)
     }
 
     /// The entry failed: it is terminal with what it reported, and every
@@ -172,6 +273,17 @@ pub(in crate::runner) fn run_host_plan(
         }
         // The entry whose failure ends the plan: the dependency being awaited,
         // or the process itself once its own start is what fails.
+        // A blocked entry never starts: its prerequisite failed, so the plan
+        // ends with the attributed result instead of launching a process that
+        // cannot be what the graph promised (effigy#458).
+        if let Some(state) = graph.state(&process.name, now()) {
+            if matches!(
+                state.phase,
+                effigy_tui::waits::EntryPhase::NotStarted | effigy_tui::waits::EntryPhase::Failed
+            ) {
+                return Err(RunnerError::task_invocation(state.status_line()));
+            }
+        }
         let mut awaited = process.name.clone();
         let step = (|| -> Result<(), RunnerError> {
             for dependency in &process.depends_on {
@@ -226,21 +338,21 @@ mod tests {
 
     use super::*;
 
-    const ENVIRONMENT: &str = "web";
+    pub(super) const ENVIRONMENT: &str = "web";
 
     /// A clock the test advances: the same `Instant` values production reads.
-    struct Clock(Cell<Instant>);
+    pub(super) struct Clock(Cell<Instant>);
 
     impl Clock {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self(Cell::new(Instant::now()))
         }
 
-        fn at(&self) -> Instant {
+        pub(super) fn at(&self) -> Instant {
             self.0.get()
         }
 
-        fn advance(&self, millis: u64) {
+        pub(super) fn advance(&self, millis: u64) {
             self.0.set(self.0.get() + Duration::from_millis(millis));
         }
     }
@@ -274,7 +386,7 @@ mod tests {
 
     /// The environment, `api` (with its declared readiness request), and the
     /// two entries that depend on it.
-    fn four_entry_policy(checkout: &Path) -> EffectiveContainerPolicy {
+    pub(super) fn four_entry_policy(checkout: &Path) -> EffectiveContainerPolicy {
         let mut policy = crate::runner::test_support::effective_container_policy(
             ENVIRONMENT,
             "fixture-project",
@@ -299,11 +411,11 @@ mod tests {
         (dir, checkout)
     }
 
-    fn records(checkout: &Path) -> Vec<EntryState> {
+    pub(super) fn records(checkout: &Path) -> Vec<EntryState> {
         WaitLedger::environment(checkout, ENVIRONMENT).read_all()
     }
 
-    fn state_of<'a>(states: &'a [EntryState], entry: &str) -> &'a EntryState {
+    pub(super) fn state_of<'a>(states: &'a [EntryState], entry: &str) -> &'a EntryState {
         states
             .iter()
             .find(|state| state.entry == entry)
@@ -312,14 +424,14 @@ mod tests {
 
     /// A strict launcher: it records every spawn, answers readiness from the
     /// script, and publishes through the production progress callback.
-    struct FakeLauncher<'a> {
-        ledger: &'a WaitLedger,
-        clock: &'a Clock,
+    pub(super) struct FakeLauncher<'a> {
+        pub(super) ledger: &'a WaitLedger,
+        pub(super) clock: &'a Clock,
         /// Readiness outcomes, by process, consumed in launch order.
-        failure: Option<RunnerError>,
-        spawns: Vec<String>,
+        pub(super) failure: Option<RunnerError>,
+        pub(super) spawns: Vec<String>,
         /// The published records at each observed moment.
-        frames: Vec<Vec<EntryState>>,
+        pub(super) frames: Vec<Vec<EntryState>>,
     }
 
     impl FakeLauncher<'_> {
@@ -517,5 +629,160 @@ mod tests {
                 )
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod environment_tests {
+    //! The environment frame, driven by the production handoff: the run's
+    //! owner publishes the host graph and its environment identity before the
+    //! phase can block, `status` and the headless text read those same records,
+    //! and the plan then starts the hosts only after the environment is ready.
+
+    use std::time::Duration;
+
+    use effigy_tui::waits::{EntryPhase, WaitOn};
+
+    use super::tests::{four_entry_policy, records, state_of, Clock, FakeLauncher, ENVIRONMENT};
+    use super::*;
+    use crate::runner::managed_run::wait_views;
+
+    fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let checkout = dir.path().canonicalize().expect("canonical fixture");
+        WaitLedger::environment(&checkout, ENVIRONMENT).clear();
+        WaitLedger::task(&checkout, "dev", "default").clear();
+        (dir, checkout)
+    }
+
+    #[test]
+    fn the_run_publishes_every_host_wait_before_the_phase_can_block() {
+        let (_dir, checkout) = fixture();
+        let policy = four_entry_policy(&checkout);
+        let clock = Clock::new();
+        // The run's owner names its environment in its own scope first, so a
+        // status read during bring-up finds the environment's records.
+        WaitLedger::task(&checkout, "dev", "default").publish_environment_identity(ENVIRONMENT);
+        let mut graph = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        graph.environment_progress(3, 4, clock.at() + Duration::from_secs(2));
+
+        let published = records(&checkout);
+        for entry in ["api", "front", "admin"] {
+            let state = state_of(&published, entry);
+            assert_eq!(state.phase, EntryPhase::Waiting, "{entry}");
+            assert_eq!(
+                state.waiting_on,
+                Some(WaitOn::Environment {
+                    healthy: Some(3),
+                    total: Some(4)
+                }),
+                "{entry} names the environment it waits for"
+            );
+            assert_eq!(state.tab_label(), format!("{entry} [waiting: environment]"));
+            assert_eq!(
+                state.headless_line().as_deref(),
+                Some(
+                    format!(
+                        "[managed] {entry}: waiting for environment (containers 3/4 healthy) (0s)"
+                    )
+                    .as_str()
+                )
+            );
+        }
+
+        // `status` reads the run's own scope for the environment identity and
+        // reports the same host waits while the phase is still running.
+        let views = wait_views(&checkout, "dev", "default", Some(ENVIRONMENT));
+        assert_eq!(
+            views
+                .iter()
+                .map(|view| (view.scope, view.state.entry.as_str(), view.state.phase))
+                .collect::<Vec<_>>(),
+            vec![
+                ("host", "admin", EntryPhase::Waiting),
+                ("host", "api", EntryPhase::Waiting),
+                ("host", "front", EntryPhase::Waiting),
+            ]
+        );
+        let json = serde_json::to_value(&views[1]).expect("view json");
+        assert_eq!(json["scope"], "host");
+        assert_eq!(json["waiting_on"]["kind"], "environment");
+        assert_eq!(json["waiting_on"]["healthy"], 3);
+        assert_eq!(json["waiting_on"]["total"], 4);
+
+        // The phase reports ready, and only then does the plan start the hosts.
+        graph.environment_ready(clock.at() + Duration::from_secs(5));
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            failure: None,
+            spawns: Vec::new(),
+            frames: Vec::new(),
+        };
+        let ordered = policy.host_processes.iter().collect::<Vec<_>>();
+        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+            .expect("the plan finishes once the environment is ready");
+        assert_eq!(launcher.spawns, vec!["api", "front", "admin"]);
+        assert!(
+            records(&checkout).iter().all(|state| !state.holds_a_wait()),
+            "every wait settled"
+        );
+        assert!(
+            wait_views(&checkout, "dev", "default", Some(ENVIRONMENT)).is_empty(),
+            "a settled environment reports no waits"
+        );
+    }
+
+    /// The environment's own failure is terminal for every host entry: none
+    /// starts, and each names the environment and what it reported.
+    #[test]
+    fn an_environment_failure_marks_every_host_not_started() {
+        let (_dir, checkout) = fixture();
+        let policy = four_entry_policy(&checkout);
+        let clock = Clock::new();
+        let mut graph = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        graph.environment_failed(
+            "`up` exited 1 after 4s; web is unhealthy after 3 failed checks",
+            clock.at() + Duration::from_secs(4),
+        );
+        let published = records(&checkout);
+        for entry in ["api", "front", "admin"] {
+            let state = state_of(&published, entry);
+            assert_eq!(state.phase, EntryPhase::NotStarted, "{entry}");
+            assert_eq!(
+                state
+                    .not_started_because
+                    .as_ref()
+                    .map(|cause| cause.name.as_str()),
+                Some("environment"),
+                "{entry}"
+            );
+            assert!(
+                state
+                    .headless_line()
+                    .unwrap_or_default()
+                    .contains("unhealthy"),
+                "{entry}: {:?}",
+                state.headless_line()
+            );
+        }
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            failure: None,
+            spawns: Vec::new(),
+            frames: Vec::new(),
+        };
+        let ordered = policy.host_processes.iter().collect::<Vec<_>>();
+        let error = run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+            .expect_err("no host process starts after its environment failed");
+        assert!(error.to_string().contains("not started"), "{error}");
+        assert!(
+            launcher.spawns.is_empty(),
+            "no host process spawned: {:?}",
+            launcher.spawns
+        );
     }
 }

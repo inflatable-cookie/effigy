@@ -22,6 +22,8 @@ mod tui;
 mod wire;
 
 pub(in crate::runner) use client::{attach_text, detach, start, ClientStart};
+#[cfg(test)]
+pub(in crate::runner) use control::wait_views;
 pub(in crate::runner) use control::OUTPUT_LOG;
 pub(in crate::runner) use control::{logs, status, stop, stop_run, Addressed};
 pub(in crate::runner) use engine::{

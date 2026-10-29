@@ -21,6 +21,18 @@ use crate::runner::host_process::write_private_json;
 
 /// Every managed wait record lives under this checkout-relative directory.
 const WAITS_DIR: &str = ".effigy/runtime/waits";
+/// The one record naming the environment a scope's waits belong to. It is
+/// written before the environment phase can block, so `status` can find the
+/// environment's own records while it is still coming up.
+const SESSION_RECORD: &str = "session.json";
+
+/// The environment identity a scope publishes before its phase blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionRecord {
+    schema: String,
+    scope: String,
+    environment: String,
+}
 
 /// One published record: the session it belongs to and the entry's state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +112,29 @@ impl WaitLedger {
         self.write(entry, &record);
     }
 
+    /// Names the environment this scope's waits belong to. The run publishes
+    /// it before its environment phase can block, so a status read during
+    /// bring-up finds the environment's host waits and counts (effigy#458).
+    pub(in crate::runner) fn publish_environment_identity(&self, environment: &str) {
+        if std::fs::create_dir_all(&self.dir).is_err() {
+            return;
+        }
+        let record = SessionRecord {
+            schema: ENTRY_WAIT_SCHEMA.to_owned(),
+            scope: self.scope.clone(),
+            environment: environment.to_owned(),
+        };
+        let _ = write_private_json(&self.dir.join(SESSION_RECORD), &record);
+    }
+
+    /// The environment this scope's waits belong to, when it published one.
+    pub(in crate::runner) fn environment_identity(&self) -> Option<String> {
+        let raw = std::fs::read(self.dir.join(SESSION_RECORD)).ok()?;
+        let record: SessionRecord = serde_json::from_slice(&raw).ok()?;
+        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
+            .then_some(record.environment)
+    }
+
     fn write(&self, entry: &str, record: &WaitRecord) {
         if std::fs::create_dir_all(&self.dir).is_err() {
             return;
@@ -122,6 +157,7 @@ impl WaitLedger {
         };
         let mut states = entries
             .filter_map(Result::ok)
+            .filter(|entry| entry.file_name() != SESSION_RECORD)
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
             .filter_map(|entry| {
                 let raw = std::fs::read(entry.path()).ok()?;

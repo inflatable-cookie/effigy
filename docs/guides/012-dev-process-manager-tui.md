@@ -364,7 +364,14 @@ or a host process's `depends_on` blocks it, `waiting for environment
 (containers 3/4 healthy)` while the environment phase runs, `waiting for GET /
 -> 200 (12s)` for a listener's declared readiness request, and `scheduled
 delay: 1.2s remaining` for the accepted legacy `start_after_ms`, which orders
-nothing and therefore names no dependency. A prerequisite failure is terminal
+nothing and therefore names no dependency.
+
+The environment's host processes are managed entries from the moment the run
+starts: the run publishes their graph and the environment identity before its
+phase can block, so during a slow bring-up `api`, `front` and `admin` all name
+the environment and its healthy container count, and a tab is announced as
+started only once its published wait is over. The planner then takes the same
+records over and names each process's `depends_on` reader. A prerequisite failure is terminal
 and attributed — `front [not started: api failed]`, and the pane reads
 `not started — api failed (status 500)` — and no dependent starts. The same
 state reaches `--headless` (`[managed] front: waiting for api (starting) (4s)`,
@@ -428,7 +435,9 @@ carries `waiting_on` when it is starting against a named wait, and the additive
 environment's host processes and phase publish their waits in the environment's
 own scope, so a `depends_on` wait and a listener's readiness probe are part of
 the same projection; a wait that settled is recorded as settled and never
-reported. `logs <name>` reads a workload's log; `logs lifecycle` reads the run's own output (setup,
+reported. The run publishes its environment identity before its phase can
+block, so `status` reports those host waits throughout bring-up rather than
+only once the environment effect is recorded. `logs <name>` reads a workload's log; `logs lifecycle` reads the run's own output (setup,
 environment, readiness, starts and exits). A failed run names the failing
 process, its log command and the log's tail in the task error. `stop` is
 idempotent: on a closed run it reports the run's outcome. If the supervisor

@@ -24,12 +24,13 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{EffectSpec, RequestAction, RunError, Settlement};
 use effigy_kernel::supervise::{EngineSession, OwnerWatch};
-use effigy_tui::waits::{EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn};
+use effigy_tui::waits::{should_publish, EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn};
 
 use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
+use crate::runner::host_process::HostWaitGraph;
 use crate::runner::managed_wait::WaitLedger;
 use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, TaskTarget};
 
@@ -40,8 +41,6 @@ const GRACE: Duration = Duration::from_secs(3);
 const SETUP_BUDGET: Duration = Duration::from_secs(1800);
 /// Owner loop interval.
 const TURN: Duration = Duration::from_millis(20);
-/// How often a waiting entry's published elapsed time is refreshed.
-const WAIT_REFRESH: Duration = Duration::from_millis(500);
 /// Settle budget: workload groups, remote groups and the environment down.
 pub(in crate::runner) const SETTLE_BUDGET: Duration = Duration::from_secs(240);
 /// Placeholder an exec workload's command carries for its group nonce.
@@ -321,6 +320,7 @@ pub(in crate::runner) fn own<T>(
         published: BTreeMap::new(),
         published_at: BTreeMap::new(),
         probe_since: None,
+        host_waits: None,
         holds_environment: plan.environment.is_some(),
         source_manifest: plan.source_manifest.clone(),
         container_repo_root: plan.container_repo_root.clone(),
@@ -366,6 +366,9 @@ struct Owner {
     published_at: BTreeMap<String, Instant>,
     /// When the run's own readiness probe wait started.
     probe_since: Option<Instant>,
+    /// The environment's host processes while the run's own phase owns them:
+    /// they wait for the environment before the planner can start them.
+    host_waits: Option<crate::runner::host_process::HostWaitGraph>,
 }
 
 impl Owner {
@@ -419,6 +422,25 @@ impl Owner {
         // Every workload's wait is named before anything starts, so a front
         // end never has to guess from the tab order (effigy#458).
         self.publish_waits(Instant::now());
+        // The environment's host processes are managed entries too: they wait
+        // for the phase before the planner can start them, so the run's owner
+        // publishes them now, while the environment is still coming up. Their
+        // planner takes the same records over once the phase is ready.
+        if let Some(environment) = &plan.environment {
+            self.wait_ledger
+                .publish_environment_identity(&environment.name);
+            if matches!(environment.binding, Binding::Named { .. }) {
+                if let Ok(policy) = settlement::policy(&environment.repo, &environment.binding) {
+                    if !policy.host_processes.is_empty() {
+                        self.host_waits = Some(HostWaitGraph::for_environment_phase(
+                            &environment.repo,
+                            &policy,
+                            Instant::now(),
+                        ));
+                    }
+                }
+            }
+        }
         if let Some(environment) = &plan.environment {
             // The watch is held locally while the phase runs: the stop probe
             // and the phase's own progress both borrow this owner.
@@ -431,6 +453,14 @@ impl Owner {
                 let now = Instant::now();
                 self.waits.refresh(now);
                 self.publish_waits(now);
+                if let Some(hosts) = self.host_waits.as_mut() {
+                    match counts {
+                        Some((healthy, total)) => {
+                            hosts.environment_progress(healthy, total, now);
+                        }
+                        None => hosts.publish_all(now),
+                    }
+                }
             };
             let brought_up =
                 environment::bring_up(run, environment, &plan.token, &mut stop, &mut progress);
@@ -441,6 +471,9 @@ impl Owner {
                     self.waits.environment_ready(now);
                     self.waits.refresh(now);
                     self.publish_waits(now);
+                    if let Some(hosts) = self.host_waits.as_mut() {
+                        hosts.environment_ready(now);
+                    }
                     self.health = Some(RouteHealth::new(environment));
                 }
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
@@ -448,6 +481,9 @@ impl Owner {
                     let now = Instant::now();
                     self.waits.environment_failed(&reason, now);
                     self.publish_waits(now);
+                    if let Some(hosts) = self.host_waits.as_mut() {
+                        hosts.environment_failed(&reason, now);
+                    }
                     return Err(End::StartFailed(reason, None));
                 }
             }
@@ -884,23 +920,16 @@ impl Owner {
     }
 
     fn publish_state(&mut self, state: &EntryState, now: Instant) {
-        let changed = match (self.published.get(&state.entry), &state.waiting_on) {
-            // A delay's remaining time moves every turn; its own refresh keeps
-            // the record live without a write per turn.
-            (Some(previous), Some(WaitOn::Delay { .. }))
-                if matches!(previous.waiting_on, Some(WaitOn::Delay { .. })) =>
-            {
-                false
-            }
-            _ => self.published.get(&state.entry) != Some(state),
-        };
-        let due = self
-            .published_at
-            .get(&state.entry)
-            .is_some_and(|at| now.duration_since(*at) >= WAIT_REFRESH);
-        let live = state.waiting_on.is_some()
-            && matches!(state.phase, EntryPhase::Waiting | EntryPhase::Starting);
-        if !changed && !(live && due) {
+        // A settled entry only ages after its transition, so it is written
+        // once: comparing the meaning, not the elapsed time, keeps the owner
+        // loop from rewriting and re-emitting every 20 ms (effigy#458).
+        let due = should_publish(
+            self.published.get(&state.entry),
+            self.published_at.get(&state.entry).copied(),
+            state,
+            now,
+        );
+        if !due {
             return;
         }
         if state.holds_a_wait() {
@@ -996,6 +1025,9 @@ impl Owner {
             }
         }
         self.wait_ledger.settle(super::OUTPUT_LOG);
+        if let Some(hosts) = self.host_waits.as_mut() {
+            hosts.settle_all(now);
+        }
         let non_zero = self
             .workloads
             .iter()

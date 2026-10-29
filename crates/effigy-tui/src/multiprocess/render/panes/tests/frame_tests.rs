@@ -19,25 +19,23 @@ use crate::waits::{EntryPhase, EntryState, EntryWaits, OrderEntry, SessionOrder}
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TABS: [&str; 4] = ["lifecycle", "api", "front", "admin"];
 
+/// The production host mapping: `api` declares a readiness request and
+/// `front`/`admin` depend on it. The environment phase precedes all three.
 fn four_entry_order() -> SessionOrder {
-    SessionOrder::new(vec![
-        OrderEntry {
-            name: "api".to_owned(),
-            waits_for: Vec::new(),
-            waits_for_readiness: false,
-            after_environment: true,
+    use crate::waits::HostOrder;
+
+    SessionOrder::hosts(&[
+        HostOrder {
+            name: "api",
+            depends_on: &[],
         },
-        OrderEntry {
-            name: "front".to_owned(),
-            waits_for: vec!["api".to_owned()],
-            waits_for_readiness: true,
-            after_environment: false,
+        HostOrder {
+            name: "front",
+            depends_on: &["api".to_owned()],
         },
-        OrderEntry {
-            name: "admin".to_owned(),
-            waits_for: vec!["api".to_owned()],
-            waits_for_readiness: true,
-            after_environment: false,
+        HostOrder {
+            name: "admin",
+            depends_on: &["api".to_owned()],
         },
     ])
 }
@@ -145,13 +143,15 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
         ("admin".to_owned(), ProcessStartupState::Waiting),
     ]);
 
+    // The environment reports three of four containers healthy: every host
+    // entry names that phase, and none names another entry's wait.
     let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(2));
     assert_tab_labels(
         &frame,
         &[
             "api [waiting: environment]",
-            "front [waiting: api waiting]",
-            "admin [waiting: api waiting]",
+            "front [waiting: environment]",
+            "admin [waiting: environment]",
         ],
     );
     assert!(
@@ -160,13 +160,40 @@ fn waiting_tabs_name_their_own_dependency_and_phase() {
     );
     assert_no_spinner_or_generic_wait(&frame);
 
-    // `front`'s tab names `front` and what `front` waits for, never api's
-    // environment wait.
+    // The environment is ready and `api` starts against its own request: the
+    // dependents now name `api` starting, and `api`'s own pane names the
+    // request.
+    waits.environment_ready(now);
+    waits.started("api", now);
+    waits.probing("api", "GET / -> 200", now);
     let frame = render_frame(&waits, "front", &startup, now + Duration::from_secs(2));
-    assert!(frame.contains("front [waiting: api waiting]"), "{frame}");
-    assert!(frame.contains("waiting for api (waiting)"), "{frame}");
+    assert_tab_labels(
+        &frame,
+        &[
+            "api [starting: GET / -> 200 (2s)]",
+            "front [waiting: api starting]",
+            "admin [waiting: api starting]",
+        ],
+    );
+    assert!(frame.contains("waiting for api (starting)"), "{frame}");
     assert!(!frame.contains("waiting for environment"), "{frame}");
     assert_no_spinner_or_generic_wait(&frame);
+
+    let frame = render_frame(&waits, "api", &startup, now + Duration::from_secs(2));
+    assert!(frame.contains("waiting for GET / -> 200 (2s)"), "{frame}");
+    assert_no_spinner_or_generic_wait(&frame);
+
+    // api is ready; both dependents may start.
+    waits.ready("api", now);
+    waits.started("front", now);
+    waits.started("admin", now);
+    let running = HashMap::from([
+        ("api".to_owned(), ProcessStartupState::Running),
+        ("front".to_owned(), ProcessStartupState::Starting),
+        ("admin".to_owned(), ProcessStartupState::Starting),
+    ]);
+    let frame = render_frame(&waits, "front", &running, now + Duration::from_secs(3));
+    assert_tab_labels(&frame, &["api [ready]", "front [starting]"]);
 }
 
 /// `api` starts, then waits on its readiness probe with elapsed seconds; the

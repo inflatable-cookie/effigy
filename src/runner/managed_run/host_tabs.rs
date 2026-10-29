@@ -205,6 +205,13 @@ impl HostFollower {
         std::mem::replace(&mut self.started, true)
     }
 
+    /// Whether this process may be announced as started. A published wait
+    /// means no host process is running yet, so a tab must keep naming the
+    /// wait instead of claiming the process ran (effigy#458).
+    pub(in crate::runner) fn may_announce_started(&self) -> bool {
+        self.wait_state().is_none()
+    }
+
     /// The wait the bring-up published for this process, if it still holds
     /// it: the dependency and its phase, the listener's own probe, or the
     /// prerequisite that failed.
@@ -549,6 +556,53 @@ mod tests {
             follower.wait_state(),
             None,
             "a record that no longer says the process is waiting is no wait"
+        );
+    }
+
+    /// A host that is still waiting for the environment (or for a reader) is
+    /// never announced as started, so its tab cannot claim it ran; a process
+    /// with no wait is (effigy#458).
+    #[test]
+    fn a_blocked_host_is_not_announced_as_started() {
+        use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
+
+        let dir = tempfile::tempdir().expect("wait dir");
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
+        ledger.clear();
+        let mut tab = tab(HostProcessRestart::Never, None);
+        tab.name = "front".to_owned();
+        tab.wait_record = ledger.path("front");
+
+        ledger.publish(&EntryState {
+            entry: "front".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        let mut follower = HostFollower::new(tab.clone());
+        assert_eq!(
+            follower.poll().statuses,
+            vec![HostStatus::Waiting(
+                "waiting for environment (containers 3/4 healthy) (0s)".to_owned()
+            )]
+        );
+        assert!(
+            !follower.may_announce_started(),
+            "a host that waits for the environment has not started"
+        );
+
+        // The planner launched it and settled its wait.
+        ledger.settle("front");
+        std::thread::sleep(ListenerPollWait::value());
+        follower.poll();
+        assert!(
+            follower.may_announce_started(),
+            "a process with no wait is the one to announce"
         );
     }
 

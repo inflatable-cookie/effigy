@@ -238,11 +238,14 @@ impl Shared {
             let Some(host) = self.hosts.get_mut(&name) else {
                 continue;
             };
-            if !host.announce_started() {
+            // The status poll also reads the process's published wait, so a
+            // blocked host is announced as started only once that wait is
+            // over (effigy#458).
+            let poll = host.poll();
+            if host.may_announce_started() && !host.announce_started() {
                 self.queue
                     .push_back(event(&name, ProcessEventKind::Started, ""));
             }
-            let poll = host.poll();
             for status in poll.statuses {
                 self.queue.push_back(ProcessEvent {
                     process: name.clone(),

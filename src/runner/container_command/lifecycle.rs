@@ -246,8 +246,12 @@ fn run_container_up_inner(
     operation.stage = Some("preparation");
     let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
     // A new bring-up owns its environment's published waits: a record left by
-    // an earlier session is never read as this one's (effigy#458).
-    crate::runner::managed_wait::WaitLedger::environment(repo_root, &plan.policy.name).clear();
+    // an earlier session is never read as this one's (effigy#458). A run that
+    // holds this environment published its host graph before this `up` could
+    // block, so it owns that ledger and this child never clears it.
+    if crate::runner::environment::requested_holder().is_none() {
+        crate::runner::managed_wait::WaitLedger::environment(repo_root, &plan.policy.name).clear();
+    }
     operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
     operation.identity = Some(detached_activation_identity(&plan.policy));
 

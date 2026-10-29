@@ -46,6 +46,7 @@ pub(in crate::runner) use kernel_run::{
     start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
     HostProcessStopReport,
 };
+pub(in crate::runner) use waits::HostWaitGraph;
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
 const HOST_PROCESS_SPEC_SCHEMA: &str = "effigy.managed.host-process-spec.v1";

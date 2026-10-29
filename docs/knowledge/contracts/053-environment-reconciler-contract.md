@@ -253,17 +253,23 @@ started after the environment's services report ready and in `depends_on`
 order, stopped by `down`, `reset` and session settle with a
 `HostProcessStopReport`.
 
-The bring-up derives the whole `depends_on` graph once and publishes it
-before the first process can block, so a dependent's tab names its reader while
-that reader is still becoming ready. It then publishes what each process waits
+The run's own owner publishes the environment identity and the whole host graph
+before its environment phase can block; every host entry waits for that phase
+first, and the planner takes the same records over once readiness is observed.
+Within the planner the graph is published before the first process can block,
+so a dependent's tab names its reader while that reader is still becoming
+ready. It then publishes what each process waits
 for — its `depends_on` reader and that reader's phase, or its own declared
 readiness request with elapsed time — as an `effigy.managed.entry-wait.v1`
 record under the checkout's `.effigy/runtime/waits/<scope>/`, and records each
 wait as settled when it ends. A prerequisite failure is published as
 `not_started` with the failing entry and its report, no dependent starts, and
-the plan returns the failure. `status --json` reads both scopes and reports each
-waiting entry with the scope that published it. Front ends read those records;
-they are a projection, never authority (effigy#458).
+the plan returns the failure. A record is written once when its meaning changes
+and refreshed only while it is a live wait, so a settled entry is never
+rewritten on an owner-loop tick. `status --json` reads both scopes — the run's
+scope names its environment before the phase blocks — and reports each waiting
+entry with the scope that published it. Front ends read those records; they are
+a projection, never authority (effigy#458).
 
 ## 9. Not yet
 

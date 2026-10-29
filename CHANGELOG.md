@@ -261,8 +261,13 @@ During v0.x, MINOR bumps may include breaking changes.
   and adds `waiting_on` to a waiting process plus a `waits` list of entries that
   have not started, each with the `scope` that published it (`workload`, `host`
   or `environment`) so the run's own phase, its workloads and its environment's
-  host processes appear in one projection. A wait is recorded as settled when it
-  ends, so a tab or a status never keeps a wait the entry has left behind.
+  host processes appear in one projection. The run publishes its host graph and
+  environment identity before its phase can block, so a host tab says it waits
+  for the environment (and its healthy container count) during bring-up and is
+  announced as started only once it actually is. A wait is recorded as settled
+  when it ends, and only a changed meaning or a live wait's refresh writes a
+  record, so a settled entry is never rewritten on an owner-loop tick and a tab
+  or a status never keeps a wait the entry has left behind.
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as

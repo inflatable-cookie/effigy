@@ -31,6 +31,10 @@ use serde::{Deserialize, Serialize};
 /// end follows when the process that owns the wait is another process.
 pub const ENTRY_WAIT_SCHEMA: &str = "effigy.managed.entry-wait.v1";
 
+/// How often a live wait's published elapsed time is refreshed. A wait whose
+/// meaning has not changed is not rewritten more often than this.
+pub const WAIT_REFRESH: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// One entry's phase in its session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -262,6 +266,17 @@ impl EntryState {
         ) || (self.phase == EntryPhase::Starting && self.waiting_on.is_some())
     }
 
+    /// Whether two states mean the same thing. Elapsed time is excluded: it
+    /// advances on its own and is refreshed by [`should_publish`], so a
+    /// settled record is never rewritten just because it aged.
+    pub fn means_the_same_as(&self, other: &Self) -> bool {
+        self.entry == other.entry
+            && self.phase == other.phase
+            && self.waiting_on == other.waiting_on
+            && self.not_started_because == other.not_started_because
+            && self.detail == other.detail
+    }
+
     /// The line a headless/text front end prints for this state, when it is a
     /// wait. `None` once the entry has started, or while it waits for nothing
     /// it can name yet, so a settled or empty wait never repeats.
@@ -270,6 +285,25 @@ impl EntryState {
             && !(self.phase == EntryPhase::Waiting && self.waiting_on.is_none());
         says_something.then(|| format!("[managed] {}: {}", self.entry, self.status_line()))
     }
+}
+
+/// Whether a writer must publish this state now: its meaning changed, or it is
+/// a live wait whose elapsed time is due for a refresh.
+///
+/// A started process or a settled record only ages, so it is written once and
+/// then left alone however often the owner loop turns (effigy#458).
+pub fn should_publish(
+    previous: Option<&EntryState>,
+    published_at: Option<Instant>,
+    state: &EntryState,
+    now: Instant,
+) -> bool {
+    if previous.is_none_or(|previous| !previous.means_the_same_as(state)) {
+        return true;
+    }
+    let live = state.waiting_on.is_some()
+        && matches!(state.phase, EntryPhase::Waiting | EntryPhase::Starting);
+    live && published_at.is_some_and(|at| now.saturating_duration_since(at) >= WAIT_REFRESH)
 }
 
 /// The probe label of a host listener's declared readiness request:
@@ -347,8 +381,14 @@ impl SessionOrder {
         Self { entries }
     }
 
-    /// The environment's host-process graph: each process waits for the
-    /// readers its own `depends_on` declares, and for their readiness.
+    /// The environment's host-process graph: each process waits first for the
+    /// environment phase and then for the readers its own `depends_on`
+    /// declares, and for their readiness.
+    ///
+    /// A bring-up starts host processes after the environment's services
+    /// report ready, so the phase is a real wait of theirs. The planner marks
+    /// the phase ready before it starts them; while the environment is still
+    /// coming up the same graph names it instead.
     pub fn hosts(entries: &[HostOrder<'_>]) -> Self {
         let entries = entries
             .iter()
@@ -356,9 +396,7 @@ impl SessionOrder {
                 name: entry.name.to_owned(),
                 waits_for: entry.depends_on.to_vec(),
                 waits_for_readiness: true,
-                // Host processes start inside the environment's own bring-up,
-                // after its readiness: the phase is not a wait of theirs.
-                after_environment: false,
+                after_environment: true,
             })
             .collect();
         Self { entries }
