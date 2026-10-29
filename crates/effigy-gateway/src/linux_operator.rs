@@ -551,7 +551,7 @@ fn rewrite_failed(
             )),
             // The restore can lose a race of its own, so what it left behind is
             // observed before any advice is given.
-            Err(restore) => restore_failed(paths, operator_uid, unit_text, failure, restore),
+            Err(restore) => restore_failed(paths, operator_uid, unit_text, failure, &restore),
         };
     }
     let enable = match (unit, activation.is_absent()) {
@@ -581,12 +581,15 @@ fn restore_failed(
     operator_uid: u32,
     unit_text: &str,
     failure: impl std::fmt::Display,
-    restore: impl std::fmt::Display,
+    restore: &RestoreFailure,
 ) -> io::Error {
+    // The failure text is neutral, so the only advice here is the one this
+    // observation supports: `enable` needs a verified absent activation.
+    let detail = restore.detail();
     let after = observe_activation(paths, operator_uid);
     if let Some(refusal) = activation_recovery(paths, &after) {
         return error(format!(
-            "rewriting the launch unit failed: {failure}; {unit_text}, and its login activation could not be restored ({restore}); {refusal}"
+            "rewriting the launch unit failed: {failure}; {unit_text}, and its login activation could not be restored ({detail}); {refusal}"
         ));
     }
     let advice = if after.is_absent() {
@@ -598,7 +601,7 @@ fn restore_failed(
         )
     };
     error(format!(
-        "rewriting the launch unit failed: {failure}; {unit_text} but its login activation could not be restored ({restore}), so the login activation is {} .{advice}",
+        "rewriting the launch unit failed: {failure}; {unit_text} but its login activation could not be restored ({detail}), so the login activation is {}.{advice}",
         activation_label(&after)
     ))
 }
@@ -782,35 +785,63 @@ impl ActivationDir {
     /// Put Effigy's activation entry back inside the bound directory. An entry
     /// that appeared in the meantime is only a successful restore when it is
     /// verified as Effigy's own link, never merely because it exists.
-    fn link_entry(&self) -> io::Result<()> {
+    fn link_entry(&self) -> Result<(), RestoreFailure> {
         use std::os::fd::AsRawFd;
         use std::os::unix::ffi::OsStrExt;
         let target = std::ffi::CString::new(self.unit.as_os_str().as_bytes())
-            .map_err(|_| error("the unit path cannot be a link target"))?;
-        let name = cstring(UNIT_NAME)?;
+            .map_err(|_| RestoreFailure::Io("the unit path cannot be a link target".to_owned()))?;
+        let name = cstring(UNIT_NAME).map_err(|failure| RestoreFailure::Io(failure.to_string()))?;
         // SAFETY: live directory descriptor and two NUL-terminated strings.
         if unsafe { libc::symlinkat(target.as_ptr(), self.dir.as_raw_fd(), name.as_ptr()) } != 0 {
             let failure = io::Error::last_os_error();
             if failure.raw_os_error() != Some(libc::EEXIST) {
-                return Err(error(format!(
-                    "restoring the login activation link {} failed: {failure}",
-                    self.entry.display()
-                )));
+                return Err(RestoreFailure::Io(failure.to_string()));
             }
-            return match self.entry()? {
-                ActivationEntry::Ours(_) => Ok(()),
-                ActivationEntry::Foreign => Err(error(format!(
-                    "the login activation entry {} appeared while the launch unit was being restored and is not Effigy's link to {}; move it aside, then run `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again",
-                    self.entry.display(),
-                    self.unit.display()
-                ))),
-                ActivationEntry::Absent => Err(error(format!(
-                    "the login activation entry {} vanished while it was being restored; run `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again",
-                    self.entry.display()
-                ))),
+            // Something is already there. Only Effigy's own link is a restore;
+            // anything else is typed for the caller to report without advice.
+            return match self.entry() {
+                Ok(ActivationEntry::Ours(_)) => Ok(()),
+                Ok(ActivationEntry::Foreign) => Err(RestoreFailure::Foreign(self.entry.clone())),
+                Ok(ActivationEntry::Absent) => Err(RestoreFailure::Vanished(self.entry.clone())),
+                Err(failure) => Err(RestoreFailure::Io(failure.to_string())),
             };
         }
         Ok(())
+    }
+}
+
+/// Why restoring the login activation failed. The failure carries no commands:
+/// the caller observes what was left behind and chooses the advice, so a nested
+/// message can never smuggle `enable` advice through a rejected activation.
+#[derive(Debug)]
+enum RestoreFailure {
+    /// Effigy's entry was replaced by an entry it does not own.
+    Foreign(PathBuf),
+    /// Effigy's entry vanished while it was being restored.
+    Vanished(PathBuf),
+    /// The activation directory itself is not usable, with its reason.
+    Directory(String),
+    /// The link could not be created, with the operating system's reason.
+    Io(String),
+}
+
+impl RestoreFailure {
+    /// A neutral sentence: what happened, never what to run.
+    fn detail(&self) -> String {
+        match self {
+            Self::Foreign(entry) => format!(
+                "a foreign login activation entry is present at {}",
+                path_label(entry)
+            ),
+            Self::Vanished(entry) => format!(
+                "the login activation entry at {} vanished while it was being restored",
+                path_label(entry)
+            ),
+            Self::Directory(reason) => {
+                format!("the login activation directory is not usable ({reason})")
+            }
+            Self::Io(reason) => format!("creating the login activation link failed ({reason})"),
+        }
     }
 }
 
@@ -1085,11 +1116,13 @@ fn verify_link_removed(paths: &LaunchPaths, operator_uid: u32) -> io::Result<()>
 /// Put the login activation link back after a failed rewrite, so the route the
 /// installation already had keeps working. An entry that appeared meanwhile is
 /// restored only when it verifies as Effigy's own link.
-fn restore_activation_link(paths: &LaunchPaths, operator_uid: u32) -> io::Result<()> {
-    let Some(dir) = ActivationDir::open(paths, operator_uid)? else {
-        return Err(error(format!(
+fn restore_activation_link(paths: &LaunchPaths, operator_uid: u32) -> Result<(), RestoreFailure> {
+    let Some(dir) = ActivationDir::open(paths, operator_uid)
+        .map_err(|failure| RestoreFailure::Directory(failure.to_string()))?
+    else {
+        return Err(RestoreFailure::Directory(format!(
             "the login activation directory {} is gone",
-            paths.wants.display()
+            path_label(paths.activation_dir())
         )));
     };
     dir.link_entry()
@@ -5170,8 +5203,9 @@ mod tests {
 
     /// A restore attempt that races a replacement is refused without enable
     /// advice, and only a verified absent activation is offered the enable
-    /// recovery. The fault is the state the restore leaves behind, so it is
-    /// driven directly here.
+    /// recovery. The first case is the real `link_entry` failure: an entry that
+    /// appears where Effigy's link was dropped is typed as foreign, and its own
+    /// text carries no command at all.
     #[test]
     fn a_restore_failure_that_races_a_replacement_gives_no_enable_advice() {
         with_run(|run, cx| {
@@ -5182,20 +5216,32 @@ mod tests {
             let mut manager = FakeManager::for_paths(&paths);
             install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
             let elsewhere = home.path().join("elsewhere.service");
-            std::fs::write(&elsewhere, b"[Unit]\\n").unwrap();
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
 
-            // The activation was replaced while the restore ran.
+            // The real restore path: a foreign entry appeared where Effigy's
+            // link was dropped, so `link_entry` refuses it.
             std::fs::remove_file(&paths.wants).unwrap();
             std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let restore = restore_activation_link(&paths, uid).unwrap_err();
+            assert!(matches!(restore, RestoreFailure::Foreign(_)), "{restore:?}");
+            assert!(
+                !restore.detail().contains("systemctl"),
+                "the typed failure carries no command: {}",
+                restore.detail()
+            );
             let message = restore_failed(
                 &paths,
                 uid,
                 "the previous unit file is unchanged",
                 "disk full",
-                "the login activation entry is not a symbolic link Effigy wrote",
+                &restore,
             )
             .to_string();
             assert!(message.contains("disk full"), "{message}");
+            assert!(
+                message.contains("a foreign login activation entry is present at"),
+                "the real failure is reported: {message}"
+            );
             assert!(
                 message.to_lowercase().contains("do not enable"),
                 "the refusal replaces enable advice: {message}"
@@ -5206,17 +5252,22 @@ mod tests {
             );
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
 
-            // An unsafe activation directory is the same.
+            // An unsafe activation directory is the same, through the real path.
             std::fs::remove_file(&paths.wants).unwrap();
             let activation = paths.activation_dir().to_path_buf();
             std::fs::remove_dir(&activation).unwrap();
             std::os::unix::fs::symlink(home.path(), &activation).unwrap();
+            let restore = restore_activation_link(&paths, uid).unwrap_err();
+            assert!(
+                matches!(restore, RestoreFailure::Directory(_)),
+                "{restore:?}"
+            );
             let message = restore_failed(
                 &paths,
                 uid,
                 "the previous unit file is unchanged",
                 "disk full",
-                "not a directory",
+                &restore,
             )
             .to_string();
             assert!(!message.contains("systemctl --user enable"), "{message}");
@@ -5224,12 +5275,13 @@ mod tests {
             // Absent activation: the enable recovery is safe and offered.
             std::fs::remove_file(&activation).unwrap();
             std::fs::create_dir(&activation).unwrap();
+            let restore = RestoreFailure::Io("disk full".to_owned());
             let message = restore_failed(
                 &paths,
                 uid,
                 "the previous unit file is unchanged",
                 "disk full",
-                "not a directory",
+                &restore,
             )
             .to_string();
             assert!(message.contains("could not be restored"), "{message}");

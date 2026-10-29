@@ -431,7 +431,8 @@ enabled *and* as a failed manager request. A post-request activation that is
 foreign or unsafe is reported as that refusal — after `daemon-reload` as well as
 after `enable`, and in a failed rewrite's recovery — and the `enable` recovery is
 offered only for a genuinely absent activation. A failed rewrite re-observes the
-activation after a failed restore, names an unreadable, missing or changed unit
+activation after a failed restore (the restore failure is typed and neutral, so
+no nested message can carry enable advice), names an unreadable, missing or changed unit
 file as what it is, and reports the activation it observed rather than asserting
 it is off. Removal keeps the rule in the other
 direction: the unit file and the activation are removed, and a `daemon-reload`

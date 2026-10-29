@@ -185,8 +185,9 @@ During v0.x, MINOR bumps may include breaking changes.
   than as an unrelated directory, and a post-request activation that is foreign
   or unsafe is reported as that refusal rather than as a missing link — after
   `daemon-reload` as well as after `enable`, and in a failed rewrite's recovery,
-  which also re-observes after a failed restore, names an unreadable, missing or
-  changed unit file as what it is, and describes the activation it observed
+  which also re-observes after a failed restore (typed and neutral, so no nested
+  message carries enable advice), names an unreadable, missing or changed unit
+  file as what it is, and describes the activation it observed
   instead of claiming it is off — with `enable` offered only for a verified
   absent activation and a unit file to enable; a changed
   definition disables the activation

@@ -1682,7 +1682,8 @@ refusal instead, because enabling through it would hand the manager the path
 Effigy refuses. The same rule covers a failed unit rewrite: its recovery never
 recommends `enable` through an activation Effigy refuses, re-observes the
 activation after a restore attempt that fails (a replacement during the restore
-is reported as that refusal), reports an unreadable, missing or changed unit
+is reported as that refusal; the restore failure itself describes only what
+happened and carries no command), reports an unreadable, missing or changed unit
 file as what it is, and describes the activation it observed instead of claiming
 it is off. `enable` appears there only for a verified absent activation with a
 unit file to enable.
