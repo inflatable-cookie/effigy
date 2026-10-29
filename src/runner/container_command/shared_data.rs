@@ -1340,6 +1340,27 @@ shared = true
         );
     }
 
+    const UNSHARED_TARGET_NO_SHARED_SERVICES_MANIFEST: &str = r#"
+[data.targets.acowtancy]
+service = "postgres"
+database = "acowtancy"
+
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.stack.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+database = "acowtancy"
+"#;
+
     const UNSHARED_TARGET_MANIFEST: &str = r#"
 [data.targets.acowtancy]
 service = "postgres"
@@ -1388,6 +1409,51 @@ shared = true
             fs::read(&shared.compose_file).expect("shared render"),
             render_before,
             "{case}: the shared render must not be republished"
+        );
+    }
+
+    /// The same unshared target in an environment with **no** shared services:
+    /// the seed keeps its prior behaviour and activates the stopped local
+    /// environment instead of refusing (effigy#477 review).
+    #[test]
+    fn public_unshared_seed_still_activates_an_environment_without_shared_services() {
+        let _lock = lock_test();
+        let repo = FixtureRepo::new(
+            "effigy-shared-data-unshared-no-shared-",
+            UNSHARED_TARGET_NO_SHARED_SERVICES_MANIFEST,
+        );
+        repo.install_fake_runtime();
+        let _env = repo.env();
+        let stack = repo.policy("stack");
+        assert!(stack.shared_services.is_empty());
+        repo.clear_calls();
+        let source = repo.seed_source();
+
+        let result = run_container_data_seed(
+            &repo.root,
+            None,
+            &[effigy_cli::BootstrapDbSeedInput {
+                target: Some("acowtancy".to_owned()),
+                path: source,
+            }],
+            true,
+            false,
+            true,
+        );
+        let calls = repo.calls();
+        if let Err(error) = &result {
+            let message = error.to_string();
+            assert!(
+                !message.contains("must not start it because bringing it up would reconcile"),
+                "an environment with no shared services must not be refused: {message}"
+            );
+        }
+        // Prior behaviour: the seed's activation brings the stopped local
+        // stack up. The fake runtime starts nothing, so the seed then fails at
+        // readiness, which is the point: it was never refused for sharing.
+        assert!(
+            calls.contains(&format!("-p {} up -d", stack.project_name)),
+            "the seed must activate the stopped local environment: {calls}"
         );
     }
 

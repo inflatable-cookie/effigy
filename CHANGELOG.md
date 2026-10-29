@@ -507,8 +507,10 @@ During v0.x, MINOR bumps may include breaking changes.
   service of the same name; a seed that selects a shared target skips its
   environment activation, and every activation a data seed performs (including a
   routed app-defined `data:seed` task) leaves shared services alone. A seed
-  whose environment is stopped refuses and names `effigy container up <NAME>`
-  instead of bringing it up, because that would reconcile them. The exec forwards
+  whose environment has shared services and is stopped refuses and names
+  `effigy container up <NAME>` instead of bringing it up, because that would
+  reconcile them; an environment with no shared services keeps its prior
+  bring-up behaviour. The exec forwards
   the client credential by name only: each call creates its own private 0600 file
   that the Compose client sources before it runs, on the host or through the
   Colima VM transport, and removes it afterwards, so concurrent data commands

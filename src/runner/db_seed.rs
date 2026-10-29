@@ -71,9 +71,22 @@ struct SeedMetadataEntry {
 
 pub(in crate::runner) fn data_seed_runtime_session_context() -> RuntimeSessionContext {
     RuntimeSessionContext {
-        // A data command proves and serves its own target; every activation it
-        // performs must leave unrelated shared services untouched (effigy#477).
         leave_shared_services_alone: true,
+        ..RuntimeSessionContext::default()
+    }
+}
+
+/// The session context for a data seed against one selected environment.
+///
+/// Only an environment that has shared services needs a data seed's activations
+/// to leave them alone. An environment with none keeps its ordinary activation,
+/// so a stopped local stack still starts before the seed exactly as it did
+/// before shared targets existed (effigy#477 review).
+pub(in crate::runner) fn data_seed_session_context_for(
+    policy: Option<&effigy_containers::EffectiveContainerPolicy>,
+) -> RuntimeSessionContext {
+    RuntimeSessionContext {
+        leave_shared_services_alone: policy.is_none_or(|policy| !policy.shared_services.is_empty()),
         ..RuntimeSessionContext::default()
     }
 }
@@ -588,8 +601,8 @@ pub(in crate::runner) fn run_db_seed_task(
 ) -> Result<(), RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     if manifest.tasks.contains_key(DB_SEED_TASK) {
-        prepare_db_seed_runtime(repo_root, &manifest)?;
-        return run_manifest_db_seed_task(repo_root, env_overrides);
+        let policy = prepare_db_seed_runtime(repo_root, &manifest)?;
+        return run_manifest_db_seed_task(repo_root, env_overrides, policy.as_ref());
     }
     let policy = effigy_containers::load_container_policy(repo_root, None)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
@@ -614,8 +627,8 @@ pub(in crate::runner) fn run_db_seed_task_for_policy(
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     if manifest.tasks.contains_key(DB_SEED_TASK) {
         // An app-defined seed task owns its own environment binding.
-        prepare_db_seed_runtime(repo_root, &manifest)?;
-        return run_manifest_db_seed_task(repo_root, env_overrides);
+        let policy = prepare_db_seed_runtime(repo_root, &manifest)?;
+        return run_manifest_db_seed_task(repo_root, env_overrides, policy.as_ref());
     }
     let entries = resolve_builtin_db_seed_entries(repo_root, &manifest, policy, env_overrides)?;
     let shared = shared_seed_bindings(&entries);
@@ -638,8 +651,9 @@ pub(in crate::runner) fn run_db_seed_task_for_policy(
 fn run_manifest_db_seed_task(
     repo_root: &Path,
     env_overrides: &BTreeMap<String, String>,
+    policy: Option<&effigy_containers::EffectiveContainerPolicy>,
 ) -> Result<(), RunnerError> {
-    with_runtime_session_context(data_seed_runtime_session_context(), || {
+    with_runtime_session_context(data_seed_session_context_for(policy), || {
         run_manifest_task_with_surface_and_env(
             &TaskInvocation {
                 name: DB_SEED_TASK.to_owned(),
@@ -661,9 +675,9 @@ fn run_manifest_db_seed_task(
 fn prepare_db_seed_runtime(
     repo_root: &Path,
     manifest: &effigy_manifest::TaskManifest,
-) -> Result<(), RunnerError> {
+) -> Result<Option<effigy_containers::EffectiveContainerPolicy>, RunnerError> {
     let Some(task) = manifest.tasks.get(DB_SEED_TASK) else {
-        return Ok(());
+        return Ok(None);
     };
     let binding_resolution = resolve_execution_binding_resolution(
         manifest
@@ -677,7 +691,7 @@ fn prepare_db_seed_runtime(
         "database seed",
     )?;
     let Some(policy) = binding_resolution.effective_policy(repo_root)? else {
-        return Ok(());
+        return Ok(None);
     };
     let session_context = data_seed_runtime_session_context();
     let plan = db_seed_runtime_activation_plan(
@@ -697,10 +711,12 @@ fn prepare_db_seed_runtime(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
-            reconcile_shared_services: false,
+            // An environment with no shared services keeps its ordinary
+            // activation, so a stopped local stack still starts before the seed.
+            reconcile_shared_services: policy.shared_services.is_empty(),
         },
     )?;
-    Ok(())
+    Ok(Some(policy))
 }
 
 fn prepare_builtin_db_seed_runtime(
@@ -716,7 +732,9 @@ fn prepare_builtin_db_seed_runtime(
             repo_override: Some(repo_root.to_path_buf()),
             route: RuntimeActivationRoute::DataSeed,
             session_context,
-            reconcile_shared_services: false,
+            // Only an environment that has shared services must leave them
+            // alone; one with none keeps its prior bring-up behaviour.
+            reconcile_shared_services: policy.shared_services.is_empty(),
         },
     )?;
     Ok(())
