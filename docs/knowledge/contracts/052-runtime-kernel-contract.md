@@ -1113,6 +1113,24 @@ recovery; the native helper keeps the full nonce verification requirement.
 cgroups add Linux-only infrastructure and delegation policy. Neither replaces the
 portable anchor needed on macOS.
 
+An anchor must be able to show its evidence, so it restores the state a secure
+exec clears. Its image is the run's own executable, and an image that carries a
+file capability — the installed `effigy` carries `cap_net_bind_service` for the
+low-port gateway — is a secure exec: Linux clears the process's dumpable
+attribute, and `/proc/<pid>/environ` then refuses the same account's reads. On
+Linux the entry therefore restores the ordinary dumpable state before it
+acknowledges its pid, so the recorded `{pid, start, boot}` generation, the
+recorded group membership and the nonce all stay readable and the identity
+proof is exactly as strict as above (effigy#476). The anchor runs no workload
+code and its environment holds only the nonce, which is already evidence rather
+than a credential, so nothing else is exposed. A refused restore leaves the
+anchor as it was and settlement fail-closed; it never widens authority. A
+secure-exec *workload* whose environment is unreadable for the same reason is
+still fail-closed: recovery cannot prove its nonce, so it is never signalled.
+The probe guard helper (`__kernel-probe-guard`) is verified through the same
+environment evidence and has the same Linux limit; it is not custody and keeps
+its current behaviour until its own proof covers it.
+
 A fork-only anchor in the blocked leader cannot obtain the new effect's nonce
 through macOS `KERN_PROCARGS2`: it exposes the exec-time environment, even when
 the libc environment was changed before fork. The existing single-threaded

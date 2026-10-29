@@ -96,6 +96,20 @@ fn main() {
         probe_fixture::run(entry, &args, router.root_cancel());
         return;
     }
+    if entry == "__kernel-anchor" {
+        // The anchor's image is the run's own executable, and an image that
+        // carries a file capability or a setuid bit is a secure exec: the
+        // kernel clears `dumpable`, so `/proc/<pid>/environ` refuses the
+        // operator's own reads. The installed `effigy` carries
+        // `cap_net_bind_service` for the low-port gateway, so a Linux gateway
+        // setup anchor is exactly such an image (effigy#476). Model that
+        // post-exec state here; the anchor's own entry must prove it can still
+        // be read as the group's evidence.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            libc::prctl(libc::PR_SET_DUMPABLE, 0);
+        }
+    }
     if entry.starts_with("__kernel-") {
         let result = engine_entry(
             entry,
@@ -413,12 +427,28 @@ fn main() {
             ],
             ..spec(home)
         }
+    } else if entry == "anchor-gone-orphan" {
+        ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+            ..spec(home)
+        }
     } else {
         spec(home)
     };
     let mut child = Custody::spawn(&mut run, workload, &cx).unwrap();
-    if entry == "inline-orphan" {
+    if matches!(entry, "inline-orphan" | "anchor-gone-orphan") {
         child.wait(&op);
+    }
+    if entry == "anchor-gone-orphan" {
+        std::fs::write(
+            home.join("anchor.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "process": child.identity(),
+                "anchor": child.anchor(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     }
 
     std::fs::write(
@@ -428,7 +458,7 @@ fn main() {
     .unwrap();
     std::fs::write(home.join("ready"), b"ready").unwrap();
     loop {
-        if entry == "inline-orphan" {
+        if matches!(entry, "inline-orphan" | "anchor-gone-orphan") {
             std::thread::sleep(Duration::from_millis(10));
             continue;
         }

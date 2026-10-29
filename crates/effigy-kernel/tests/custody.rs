@@ -649,6 +649,134 @@ fn a_completed_invocation_leaves_no_custody_anchor() {
     );
 }
 
+/// A lost anchor is not a live group. Q-014 makes TERM retire an idle anchor,/// so a completed workload can be left with no anchor at settle; an empty
+/// original group still proves closure and settlement must finish.
+#[test]
+fn custody_settles_an_empty_group_after_its_anchor_exits() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root);
+    let mut child = Custody::spawn(&mut run, spec(home.path(), "exit 0"), &cx).unwrap();
+    let anchor = child.anchor().expect("the run is anchored");
+    let exit = *child.wait(cx.operation()).verified().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete(&mut run, exit).unwrap();
+    // Q-014: TERM retires an idle anchor. Wait for the recorded generation to
+    // leave the live states, exactly as a cooperative exit does.
+    assert!(matches!(
+        effigy_kernel::custody::signal_verified_process(&anchor, libc::SIGTERM, || true),
+        Observed::Verified(..)
+    ));
+    eventually(|| {
+        !matches!(
+            effigy_kernel::ident::process_state(anchor.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    });
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let result = run
+        .settle(
+            &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+    assert_eq!(result.cleanup(), CleanupOutcome::Complete);
+}
+
+/// A live anchor still has to be its group's evidence. Its image is the run's
+/// own executable, and an image that carries a file capability is a secure
+/// exec: the kernel clears `dumpable`, and `/proc/<pid>/environ` refuses the
+/// operator's reads. The installed `effigy` carries `cap_net_bind_service`, so
+/// this is the Linux gateway-setup shape (effigy#476); the fixture models that
+/// exec state for every anchor, which makes this proof the regression. On a
+/// host without that kernel rule it still proves a live anchor retires last.
+#[test]
+fn custody_retires_an_anchor_whose_image_cleared_its_evidence() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root);
+    let mut child = Custody::spawn(&mut run, spec(home.path(), "exit 0"), &cx).unwrap();
+    let anchor = child.anchor().expect("the run is anchored");
+    let exit = *child.wait(cx.operation()).verified().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let result = run
+        .settle(
+            &cx.operation().cleanup(Duration::from_secs(20)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+    assert_eq!(result.cleanup(), CleanupOutcome::Complete);
+    assert!(
+        matches!(
+            effigy_kernel::ident::process_state(anchor.pid),
+            Observed::Absent(_) | Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+        ),
+        "settlement retires the anchor it was given"
+    );
+}
+
+/// A sentinel settles a run whose owner died after its finite child exited and
+/// its anchor was retired. The owner's cores are gone, so recovery proves the
+/// original group from the kernel alone: an empty group is closure.
+#[test]
+fn custody_recovery_settles_an_empty_group_after_its_anchor_exits() {
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("anchor-gone-orphan")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("ready").exists());
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("anchor.json")).unwrap()).unwrap();
+    let anchor: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(record["anchor"].clone()).unwrap();
+    assert!(matches!(
+        effigy_kernel::custody::signal_verified_process(&anchor, libc::SIGTERM, || true),
+        Observed::Verified(..)
+    ));
+    eventually(|| {
+        !matches!(
+            effigy_kernel::ident::process_state(anchor.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    });
+    assert_eq!(unsafe { libc::kill(owner.0.id() as i32, libc::SIGKILL) }, 0);
+    eventually(|| owner.0.try_wait().unwrap().is_some());
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let observed = cx.operation().observe().unwrap();
+    eventually(|| {
+        match fresh_status(&observed, &root, RunId::new(1, [9; 10]).unwrap()) {
+            Observed::Verified(RunStatus::Closed { effects, .. }, _) => {
+                let residue = effects
+                    .iter()
+                    .filter(|effect| effect.reason.is_some())
+                    .collect::<Vec<_>>();
+                assert!(residue.is_empty(), "{residue:?}");
+                true
+            }
+            _ => false,
+        }
+    });
+}
+
 #[test]
 fn custody_pty_is_a_controlling_terminal_and_drains_before_reap() {
     let home = home();

@@ -489,6 +489,20 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- `effigy gateway setup` settles on Linux after it installs the low-port
+  capability. The installed `effigy` then carries
+  `cap_net_bind_service=ep`, so every later custody exec of it is a secure
+  exec: the kernel clears the process's dumpable attribute, and
+  `/proc/<pid>/environ` refuses the operator's own reads. The group anchor
+  re-execs that same image, so custody could no longer read the anchor's
+  nonce, refused to signal it, and the setup run timed out in settle with the
+  process group still held by an anchor nobody could verify. The anchor now
+  restores its own readable evidence at entry — it runs no workload code and
+  holds no secret beyond the nonce the contract asks it to expose — so the
+  recorded generation, group and nonce still prove identity before any signal.
+  A settle that still cannot finish now names the effect and the recorded
+  custody reason instead of only the elapsed wait.
+
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy
   state to migrate, so first-ever setup reaches the platform step instead of

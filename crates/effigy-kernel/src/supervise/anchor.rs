@@ -22,6 +22,36 @@ impl Image {
     }
 }
 
+/// The anchor's whole substance is the evidence custody reads about it: its
+/// recorded `{pid, boot, start}` generation, its group membership, and the
+/// custody nonce in its environment. Its image is the run's own executable,
+/// and an image that carries a file capability (the installed `effigy` carries
+/// `cap_net_bind_service` for the low-port gateway) is a secure exec: the
+/// kernel clears the dumpable attribute, which makes `/proc/<pid>/environ`
+/// refuse the operator's own reads. Custody then cannot verify the anchor it
+/// holds, refuses to signal it, and the group never closes (effigy#476).
+///
+/// The anchor runs no workload code, inherits no workload stream and holds no
+/// secret beyond the nonce the contract requires it to expose, so restoring the
+/// readable state gives nothing away and keeps the identity proof exactly as
+/// strict as it was: the recorded generation, group and nonce are all still
+/// required before any signal.
+#[cfg(target_os = "linux")]
+fn restore_evidence_readability() {
+    // SAFETY: PR_GET_DUMPABLE and PR_SET_DUMPABLE take one integer argument and
+    // only read or set this process's own dumpable attribute.
+    let state = unsafe { libc::prctl(libc::PR_GET_DUMPABLE) };
+    if state != 0 {
+        // 1 is the ordinary state, and a failed query is not proof that the
+        // environment is unreadable, so neither one changes anything.
+        return;
+    }
+    // SAFETY: as above; 1 selects the ordinary dumpable state.
+    // A refused request leaves the anchor exactly as it was: custody's identity
+    // requirements do not move, and settlement stays fail-closed.
+    unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1) };
+}
+
 pub(super) fn entry() -> Result<(), RunError> {
     if std::env::var("EFFIGY_CUSTODY_NONCE")
         .unwrap_or_default()
@@ -29,6 +59,8 @@ pub(super) fn entry() -> Result<(), RunError> {
     {
         return Err(RunError::broken("anchor nonce missing"));
     }
+    #[cfg(target_os = "linux")]
+    restore_evidence_readability();
     // SAFETY: supported signals and SIG_IGN/SIG_DFL; this single-threaded helper
     // never forwards or handles workload signals. INT and HUP stay ignored
     // because a terminal delivers them to the whole foreground group, where the
