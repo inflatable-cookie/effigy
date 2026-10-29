@@ -11,6 +11,7 @@ mod diagnostics;
 mod events;
 mod lifecycle;
 mod render;
+pub use render::{render_snapshot_frame, FrameSnapshot};
 mod runtime_loop;
 mod setup;
 mod state;

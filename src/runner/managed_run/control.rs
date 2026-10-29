@@ -115,18 +115,21 @@ pub(in crate::runner) fn wait_views(
         })
         .collect::<Vec<_>>();
     if let Some(environment) = environment {
-        for state in
-            super::super::managed_wait::WaitLedger::environment(repo_root, environment).read_all()
-        {
+        let ledger = super::super::managed_wait::WaitLedger::environment(repo_root, environment);
+        // The phase has its own storage key, so a host process an operator
+        // named `environment` is a host — never the phase (effigy#458).
+        if let Some(phase) = ledger.read_phase().filter(EntryState::holds_a_wait) {
+            views.push(ManagedWaitView {
+                scope: "environment",
+                state: phase,
+            });
+        }
+        for state in ledger.read_all() {
             if !state.holds_a_wait() {
                 continue;
             }
             views.push(ManagedWaitView {
-                scope: if state.entry == "environment" {
-                    "environment"
-                } else {
-                    "host"
-                },
+                scope: "host",
                 state,
             });
         }
@@ -754,6 +757,46 @@ mod tests {
         let only_run = wait_views(repo, "dev", "default", None);
         assert_eq!(only_run.len(), 1);
         assert_eq!(only_run[0].state.entry, "jobs");
+    }
+
+    /// A host process named `environment` is reported as a host, and the
+    /// environment phase as the phase: they never share a record or a scope
+    /// (effigy#458).
+    #[test]
+    fn status_keeps_a_host_named_environment_apart_from_the_phase() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let repo = dir.path();
+        let environment = WaitLedger::environment(repo, "app");
+        environment.clear();
+        environment.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        environment.publish(&waiting(
+            "environment",
+            WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            },
+        ));
+
+        let described = wait_views(repo, "dev", "default", Some("app"))
+            .into_iter()
+            .map(|view| (view.scope, view.state.entry))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            vec![
+                ("environment", "environment".to_owned()),
+                ("host", "environment".to_owned()),
+            ]
+        );
     }
 
     /// Status reports every waiting entry, including two names that a lossy

@@ -370,11 +370,13 @@ The environment's host processes are managed entries from the moment the run
 starts: the run publishes their graph and the environment identity before its
 phase can block, so during a slow bring-up `api`, `front` and `admin` all name
 the environment and its healthy container count, and a tab is announced as
-started only once its published wait is over. The host planner then claims the
-scope before it starts any listener and names each process's `depends_on`
-reader. Each publisher writes only its own record set and readers follow the
-claim, so a write that races the handoff — the run's phase still ticking while
-the planner publishes — never replaces the planner's state. If the planner
+started only once its published wait is over. The host planner then takes the
+scope over before it starts any listener and names each process's `depends_on`
+reader. Each publisher stages a complete snapshot and commits it with one atomic
+record, so a reader always sees a whole snapshot: a write that races the handoff
+— the run's phase still ticking while the planner publishes — never replaces the
+planner's state, and the window before the commit still shows the run's
+environment waits rather than announcing a host as started. If the planner
 published a failure, that entry and its report stay: the run's generic `up`
 exit never replaces them, and the run's own error names the failing entry and
 what it observed. A prerequisite failure is terminal

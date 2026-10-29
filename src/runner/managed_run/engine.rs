@@ -486,7 +486,7 @@ impl Owner {
                     // and the run names that failure instead of the generic
                     // `up` exit (effigy#458).
                     let reason = match self.host_waits.as_mut() {
-                        Some(hosts) if !hosts.owns() => attributed_environment_failure(
+                        Some(hosts) if !hosts.is_visible() => attributed_environment_failure(
                             &reason,
                             &crate::runner::managed_wait::WaitLedger::environment(
                                 &environment.repo,

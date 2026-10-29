@@ -69,9 +69,9 @@ when the real cause was two named services failing their health checks.
   `start_after_ms` delay with what remains of it. A prerequisite failure is
   terminal and attributed (`front: not started — api failed (status 500)`), and
   no dependent starts, and a host tab is never announced as started while its
-  published wait still holds it, and each publisher of the environment's entries
-  writes only its own record set while readers follow the current claim. The
-  same state reaches the tab, the
+  published wait still holds it (a missing record is never evidence of a start),
+  and each publisher of the environment's entries stages a complete snapshot and
+  commits it atomically. The same state reaches the tab, the
   `--headless` text and `status --json` (`waiting_on`, and a `waits` list scoped
   `workload`, `host` or `environment`), published before the environment phase
   can block; nothing derives a label from screen or tab order, and no wait

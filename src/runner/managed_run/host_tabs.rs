@@ -108,6 +108,16 @@ pub(in crate::runner) enum HostStatus {
 }
 
 impl HostStatus {
+    /// Whether this status is evidence that a process actually started. A
+    /// missing wait record is no evidence either way, so only a supervisor's
+    /// own report or a settled record may announce a start (effigy#458).
+    fn reports_a_start(&self) -> bool {
+        matches!(
+            self,
+            Self::Running | Self::Ready(_) | Self::Restarting | Self::Exited(_)
+        )
+    }
+
     /// The line a tab or the headless front end shows for this status.
     pub(in crate::runner) fn line(&self) -> String {
         match self {
@@ -184,6 +194,9 @@ pub(in crate::runner) struct HostFollower {
     next_poll: std::time::Instant,
     /// The bring-up's published wait, while it holds this process.
     wait: Option<EntryState>,
+    /// Whether the published record says the wait is over: the planner only
+    /// settles an entry once it launched the process.
+    settled: bool,
 }
 
 impl HostFollower {
@@ -196,6 +209,7 @@ impl HostFollower {
             started: false,
             next_poll: std::time::Instant::now(),
             wait: None,
+            settled: false,
         }
     }
 
@@ -205,11 +219,14 @@ impl HostFollower {
         std::mem::replace(&mut self.started, true)
     }
 
-    /// Whether this process may be announced as started. A published wait
-    /// means no host process is running yet, so a tab must keep naming the
-    /// wait instead of claiming the process ran (effigy#458).
+    /// Whether this process may be announced as started. It needs evidence
+    /// that it did start — the supervisor's own report, or a published record
+    /// the planner settled after launching it. A missing record, including the
+    /// window before a publisher stages its snapshot, is no evidence, so a tab
+    /// never claims a process ran because its wait is not visible yet
+    /// (effigy#458).
     pub(in crate::runner) fn may_announce_started(&self) -> bool {
-        self.wait_state().is_none()
+        self.wait_state().is_none() && (self.settled || self.status.reports_a_start())
     }
 
     /// The wait the bring-up published for this process, if it still holds
@@ -231,6 +248,10 @@ impl HostFollower {
     /// observation, and an entry that started no longer waits.
     fn read_wait(&mut self) {
         self.wait = self.tab.wait_ledger.read(&self.tab.name);
+        self.settled = self
+            .wait
+            .as_ref()
+            .is_some_and(|state| !state.holds_a_wait());
     }
 
     /// This follower's status line, and whether it changed since the last
@@ -546,6 +567,83 @@ mod tests {
             follower.wait_state(),
             None,
             "a record that no longer says the process is waiting is no wait"
+        );
+    }
+
+    /// The handoff window: while the planner's snapshot is staged but not yet
+    /// committed, a tab reads the run's complete environment wait and never
+    /// announces a start it has no evidence for; once the planner commits, it
+    /// names the planner's state; only a settled record or the supervisor's own
+    /// report announces the process (effigy#458).
+    #[test]
+    fn a_staged_snapshot_never_erases_a_wait_or_announces_a_start() {
+        use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
+
+        let dir = tempfile::tempdir().expect("wait dir");
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
+        ledger.clear();
+        let parent = ledger.stage(crate::runner::managed_wait::WaitOwner::Run);
+        parent.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        ledger.commit(&parent);
+
+        let mut tab = tab(HostProcessRestart::Never, None);
+        tab.wait_ledger = ledger.clone();
+        let mut follower = HostFollower::new(tab.clone());
+        follower.poll();
+        assert_eq!(
+            follower
+                .wait_state()
+                .map(|state| state.tab_label())
+                .as_deref(),
+            Some("api [waiting: environment]")
+        );
+        assert!(!follower.may_announce_started());
+
+        // The planner stages its own snapshot, not visible yet.
+        let planner = ledger.stage(crate::runner::managed_wait::WaitOwner::Planner);
+        planner.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        ledger.commit(&planner);
+        std::thread::sleep(ListenerPollWait::value());
+        follower.poll();
+        assert_eq!(
+            follower
+                .wait_state()
+                .map(|state| state.tab_label())
+                .as_deref(),
+            Some("api [starting: GET / -> 200 (0s)]"),
+            "the committed planner snapshot is the one read"
+        );
+        assert!(
+            !follower.may_announce_started(),
+            "a probe wait is not a start"
+        );
+
+        // The planner launched it and settled the wait.
+        planner.settle("api");
+        std::thread::sleep(ListenerPollWait::value());
+        follower.poll();
+        assert!(
+            follower.may_announce_started(),
+            "a settled record is evidence the process started"
         );
     }
 

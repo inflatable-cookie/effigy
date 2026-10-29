@@ -30,9 +30,13 @@ const SESSION_RECORD: &str = "session.json";
 /// planner takes the same scope over when it starts the plan, so the two never
 /// write the same entries at once (effigy#458).
 const OWNER_RECORD: &str = "owner.json";
-/// The environment phase's own record. It belongs to the phase, not to either
-/// publisher, so it is read whichever one currently owns the entries.
-const ENVIRONMENT_ENTRY: &str = "environment";
+/// The environment phase's own record. It is a reserved storage key, never an
+/// entry name: [`path_component`] escapes `@`, so a host process that an
+/// operator names `environment` keeps its own record beside the phase's
+/// (effigy#458).
+const PHASE_RECORD: &str = "@environment.json";
+/// Where an unclaimed scope's entries live. A task scope never claims one.
+const DEFAULT_NAMESPACE: &str = "entries";
 
 /// The environment identity a scope publishes before its phase blocks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +46,7 @@ struct SessionRecord {
     environment: String,
 }
 
-/// Who publishes one environment scope's entries right now.
+/// Who publishes one environment scope's entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::runner) enum WaitOwner {
@@ -53,11 +57,7 @@ pub(in crate::runner) enum WaitOwner {
 }
 
 impl WaitOwner {
-    /// The directory this publisher writes its entries in, and the one readers
-    /// resolve while it owns the scope. Because every publisher writes only to
-    /// its own directory, a write that races a handoff can never land on the
-    /// entry the current owner published (effigy#458).
-    fn directory(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Self::Run => "run",
             Self::Planner => "planner",
@@ -65,19 +65,22 @@ impl WaitOwner {
     }
 }
 
-/// The one record naming the current publisher of a scope.
+/// The one record naming the current publisher of a scope: the directory its
+/// complete snapshot lives in. Switching it is one atomic rename, so a reader
+/// always resolves a whole snapshot — the previous publisher's until the new
+/// one is complete, and the new one's afterwards (effigy#458).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OwnerRecord {
     schema: String,
     scope: String,
-    owner: WaitOwner,
+    directory: String,
 }
 
 /// One published record: the session it belongs to and the entry's state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WaitRecord {
     schema: String,
-    /// `<scope>`: the environment name, or `task-<task>` / `task-<task>-<profile>`.
+    /// `<scope>`: the environment name, or the task and profile.
     scope: String,
     #[serde(flatten)]
     state: EntryState,
@@ -85,17 +88,17 @@ struct WaitRecord {
 
 /// Where the entries of one scope publish their waits.
 ///
-/// Records live per publisher: `<scope>/run/<entry>.json` and
-/// `<scope>/planner/<entry>.json`. Readers resolve the directory the current
-/// owner claimed, so a publisher that has lost the scope can keep writing and
-/// never change what a front end reads (effigy#458).
+/// Records live in one directory per published snapshot. A publisher stages a
+/// complete snapshot in a fresh directory and then commits it by replacing
+/// `owner.json`, so readers resolve the whole previous snapshot until the new
+/// one is complete. A publisher that has lost the scope keeps writing its own
+/// directory, which nothing reads (effigy#458).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct WaitLedger {
     dir: PathBuf,
     scope: String,
-    /// The namespace this writer publishes in. `None` reads the current
-    /// owner's entries and writes the environment phase's own record.
-    owner: Option<WaitOwner>,
+    /// The snapshot this ledger publishes in, when it is a publisher.
+    namespace: Option<PathBuf>,
 }
 
 impl WaitLedger {
@@ -120,16 +123,7 @@ impl WaitLedger {
         Self {
             dir: repo_root.join(WAITS_DIR).join(&scope),
             scope,
-            owner: None,
-        }
-    }
-
-    /// This ledger's records, as one publisher writes them.
-    fn owned(&self, owner: WaitOwner) -> Self {
-        Self {
-            dir: self.dir.clone(),
-            scope: self.scope.clone(),
-            owner: Some(owner),
+            namespace: None,
         }
     }
 
@@ -139,65 +133,148 @@ impl WaitLedger {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 
+    /// Starts a fresh, not yet visible snapshot for `owner`. The caller
+    /// publishes the complete snapshot into it and only then commits it, so a
+    /// reader never resolves a half-written set of records (effigy#458).
+    pub(in crate::runner) fn stage(&self, owner: WaitOwner) -> Self {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let directory = format!(
+            "{}-{}-{}",
+            owner.name(),
+            std::process::id(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let namespace = self.dir.join(&directory);
+        let _ = std::fs::create_dir_all(&namespace);
+        Self {
+            dir: self.dir.clone(),
+            scope: self.scope.clone(),
+            namespace: Some(namespace),
+        }
+    }
+
+    /// Makes a staged snapshot the one readers resolve. The switch is one
+    /// atomic record replace; the snapshot it replaces is dropped afterwards.
+    pub(in crate::runner) fn commit(&self, staged: &Self) {
+        let Some(namespace) = staged.namespace.as_ref() else {
+            return;
+        };
+        let Some(directory) = namespace.file_name().and_then(|name| name.to_str()) else {
+            return;
+        };
+        let previous = self.committed_namespace();
+        let record = OwnerRecord {
+            schema: ENTRY_WAIT_SCHEMA.to_owned(),
+            scope: self.scope.clone(),
+            directory: directory.to_owned(),
+        };
+        if write_private_json(&self.dir.join(OWNER_RECORD), &record).is_err() {
+            return;
+        }
+        if previous != *namespace {
+            // The snapshot readers resolved until now is no longer reachable.
+            let _ = std::fs::remove_dir_all(previous);
+        }
+    }
+
+    /// Whether this publisher's snapshot is the one readers resolve now.
+    pub(in crate::runner) fn is_visible(&self) -> bool {
+        self.namespace
+            .as_ref()
+            .is_some_and(|namespace| self.committed_namespace() == *namespace)
+    }
+
+    /// The directory readers resolve: the committed snapshot, or the default
+    /// one for a scope that never claimed a publisher.
+    fn committed_namespace(&self) -> PathBuf {
+        let raw = std::fs::read(self.dir.join(OWNER_RECORD)).ok();
+        let directory = raw
+            .and_then(|raw| serde_json::from_slice::<OwnerRecord>(&raw).ok())
+            .filter(|record| record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
+            .map(|record| record.directory);
+        match directory {
+            Some(directory) => self.dir.join(directory),
+            None => self.dir.join(DEFAULT_NAMESPACE),
+        }
+    }
+
+    /// The directory this ledger writes entry records in.
+    fn namespace(&self) -> PathBuf {
+        self.namespace
+            .clone()
+            .unwrap_or_else(|| self.committed_namespace())
+    }
+
     /// Publishes one entry's state. A best-effort write: a front end that
     /// cannot read a record falls back to the entry's own process status, and
     /// the record is never the run's authority.
     pub(in crate::runner) fn publish(&self, state: &EntryState) {
-        let record = WaitRecord {
-            schema: ENTRY_WAIT_SCHEMA.to_owned(),
-            scope: self.scope.clone(),
-            state: state.clone(),
-        };
-        self.write(&state.entry, &record);
+        self.write_entry(
+            &state.entry,
+            WaitRecord {
+                schema: ENTRY_WAIT_SCHEMA.to_owned(),
+                scope: self.scope.clone(),
+                state: state.clone(),
+            },
+        );
     }
 
     /// The entry no longer waits: it started, became ready or settled. The
     /// record says so rather than being deleted, so a front end that reads it
     /// later never renders a wait the entry has left behind (effigy#458).
     pub(in crate::runner) fn settle(&self, entry: &str) {
-        let record = WaitRecord {
+        self.write_entry(
+            entry,
+            WaitRecord {
+                schema: ENTRY_WAIT_SCHEMA.to_owned(),
+                scope: self.scope.clone(),
+                state: EntryState {
+                    entry: entry.to_owned(),
+                    phase: EntryPhase::Ready,
+                    waiting_on: None,
+                    not_started_because: None,
+                    detail: None,
+                    elapsed_ms: 0,
+                },
+            },
+        );
+    }
+
+    /// The environment phase's own wait, under its reserved storage key.
+    pub(in crate::runner) fn publish_phase(&self, state: &EntryState) {
+        self.write_phase(WaitRecord {
+            schema: ENTRY_WAIT_SCHEMA.to_owned(),
+            scope: self.scope.clone(),
+            state: state.clone(),
+        });
+    }
+
+    /// The environment phase is over.
+    pub(in crate::runner) fn settle_phase(&self) {
+        self.write_phase(WaitRecord {
             schema: ENTRY_WAIT_SCHEMA.to_owned(),
             scope: self.scope.clone(),
             state: EntryState {
-                entry: entry.to_owned(),
+                entry: "environment".to_owned(),
                 phase: EntryPhase::Ready,
                 waiting_on: None,
                 not_started_because: None,
                 detail: None,
                 elapsed_ms: 0,
             },
-        };
-        self.write(entry, &record);
+        });
     }
 
-    /// Claims this scope for one publisher and returns the ledger that
-    /// publishes in its namespace. The claim is one atomic record replace: the
-    /// host planner claims it when it starts the plan, and from that moment
-    /// readers resolve the planner's entries, while the run's owner keeps
-    /// writing only its own (effigy#458).
-    pub(in crate::runner) fn claim(&self, owner: WaitOwner) -> Self {
-        if std::fs::create_dir_all(&self.dir).is_err() {
-            return self.owned(owner);
-        }
-        let record = OwnerRecord {
-            schema: ENTRY_WAIT_SCHEMA.to_owned(),
-            scope: self.scope.clone(),
-            owner,
-        };
-        let _ = write_private_json(&self.dir.join(OWNER_RECORD), &record);
-        self.owned(owner)
-    }
-
-    /// Who publishes this scope's entries now, when it recorded a claim.
-    pub(in crate::runner) fn current_owner(&self) -> Option<WaitOwner> {
-        let raw = std::fs::read(self.dir.join(OWNER_RECORD)).ok()?;
-        let record: OwnerRecord = serde_json::from_slice(&raw).ok()?;
-        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope).then_some(record.owner)
+    /// The environment phase's wait, whichever publisher owns the entries.
+    pub(in crate::runner) fn read_phase(&self) -> Option<EntryState> {
+        let raw = std::fs::read(self.dir.join(PHASE_RECORD)).ok()?;
+        let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
+        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope).then_some(record.state)
     }
 
     /// Names the environment this scope's waits belong to. The run publishes
     /// it before its environment phase can block, so a status read during
-    /// bring-up finds the environment's host waits and counts (effigy#458).
+    /// bring-up finds the environment's own host waits and counts (effigy#458).
     pub(in crate::runner) fn publish_environment_identity(&self, environment: &str) {
         if std::fs::create_dir_all(&self.dir).is_err() {
             return;
@@ -218,25 +295,7 @@ impl WaitLedger {
             .then_some(record.environment)
     }
 
-    /// The directory this ledger's entries are written in: its own namespace
-    /// when it is a publisher, else the one the current owner claimed.
-    fn namespace(&self) -> PathBuf {
-        let owner = self
-            .owner
-            .or_else(|| self.current_owner())
-            .unwrap_or(WaitOwner::Run);
-        self.dir.join(owner.directory())
-    }
-
-    fn write(&self, entry: &str, record: &WaitRecord) {
-        if entry == ENVIRONMENT_ENTRY {
-            // The phase's record belongs to the phase, not to a publisher.
-            if std::fs::create_dir_all(&self.dir).is_err() {
-                return;
-            }
-            let _ = write_private_json(&self.dir.join(format!("{ENVIRONMENT_ENTRY}.json")), record);
-            return;
-        }
+    fn write_entry(&self, entry: &str, record: WaitRecord) {
         let namespace = self.namespace();
         if std::fs::create_dir_all(&namespace).is_err() {
             return;
@@ -244,46 +303,44 @@ impl WaitLedger {
         // One accepted private-record writer: temp file, 0600, rename.
         let _ = write_private_json(
             &namespace.join(format!("{}.json", path_component(entry))),
-            record,
+            &record,
         );
     }
 
-    /// The entry's record, when it publishes one for this scope. The
-    /// environment phase's record is read whichever publisher owns the
-    /// entries; every other entry resolves the current owner's namespace.
+    fn write_phase(&self, record: WaitRecord) {
+        if std::fs::create_dir_all(&self.dir).is_err() {
+            return;
+        }
+        let _ = write_private_json(&self.dir.join(PHASE_RECORD), &record);
+    }
+
+    /// The entry's record from the snapshot readers resolve now.
     pub(in crate::runner) fn read(&self, entry: &str) -> Option<EntryState> {
-        let path = if entry == ENVIRONMENT_ENTRY {
-            self.dir.join(format!("{ENVIRONMENT_ENTRY}.json"))
-        } else {
-            self.namespace()
-                .join(format!("{}.json", path_component(entry)))
-        };
-        let raw = std::fs::read(path).ok()?;
+        let raw = std::fs::read(
+            self.committed_namespace()
+                .join(format!("{}.json", path_component(entry))),
+        )
+        .ok()?;
         let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
         (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope).then_some(record.state)
     }
 
-    /// Every published record of this scope, in entry-name order: the
-    /// environment phase's own record, then the current owner's entries.
+    /// Every entry record of the snapshot readers resolve now, in entry-name
+    /// order. The environment phase's own record is read with [`Self::read_phase`].
     pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
-        let mut states = Vec::new();
-        if let Some(phase) = self.read(ENVIRONMENT_ENTRY) {
-            states.push(phase);
-        }
-        let Ok(entries) = std::fs::read_dir(self.namespace()) else {
-            return states;
+        let Ok(entries) = std::fs::read_dir(self.committed_namespace()) else {
+            return Vec::new();
         };
-        states.extend(
-            entries
-                .filter_map(Result::ok)
-                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-                .filter_map(|entry| {
-                    let raw = std::fs::read(entry.path()).ok()?;
-                    let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
-                    (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
-                        .then_some(record.state)
-                }),
-        );
+        let mut states = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .filter_map(|entry| {
+                let raw = std::fs::read(entry.path()).ok()?;
+                let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
+                (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
+                    .then_some(record.state)
+            })
+            .collect::<Vec<_>>();
         states.sort_by(|left, right| left.entry.cmp(&right.entry));
         states
     }
@@ -376,6 +433,71 @@ mod tests {
         assert!(ledger.read("admin").is_none());
         ledger.clear();
         assert!(ledger.read("front").is_none());
+    }
+
+    /// A host process an operator names `environment` is a host, not the
+    /// environment phase: the phase has its own storage key, so the two never
+    /// overwrite each other (effigy#458).
+    #[test]
+    fn a_host_named_environment_keeps_its_own_record() {
+        let (_home, ledger) = fixture();
+        ledger.clear();
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        ledger.publish(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 12_000,
+        });
+
+        let phase = ledger.read_phase().expect("the phase record");
+        assert_eq!(
+            phase.waiting_on,
+            Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4)
+            })
+        );
+        let host = ledger.read("environment").expect("the host's own record");
+        assert_eq!(
+            host.waiting_on,
+            Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned()
+            }),
+            "the host's wait is its own, not the phase's"
+        );
+        assert_eq!(
+            ledger
+                .read_all()
+                .iter()
+                .map(|state| state.entry.as_str())
+                .collect::<Vec<_>>(),
+            vec!["environment"],
+            "the phase is read on its own key, never as an entry"
+        );
+
+        ledger.settle_phase();
+        assert!(!ledger
+            .read_phase()
+            .is_some_and(|phase| phase.holds_a_wait()));
+        assert!(
+            ledger.read("environment").is_some(),
+            "the host record stays"
+        );
     }
 
     /// Two accepted entry names are two records. A lossy file name would let
@@ -488,7 +610,7 @@ mod tests {
     fn a_publisher_that_lost_the_scope_cannot_change_what_readers_see() {
         let (_home, ledger) = fixture();
         ledger.clear();
-        let run = ledger.claim(WaitOwner::Run);
+        let run = ledger.stage(WaitOwner::Run);
         run.publish(&EntryState {
             entry: "api".to_owned(),
             phase: EntryPhase::Waiting,
@@ -500,6 +622,7 @@ mod tests {
             detail: None,
             elapsed_ms: 0,
         });
+        ledger.commit(&run);
         assert_eq!(
             ledger.read("api").and_then(|state| state.waiting_on),
             Some(WaitOn::Environment {
@@ -508,8 +631,10 @@ mod tests {
             })
         );
 
-        // The planner takes the scope over before it starts any listener.
-        let planner = ledger.claim(WaitOwner::Planner);
+        // The planner stages its complete snapshot before it starts any
+        // listener, and commits it afterwards. A reader paused in between still
+        // resolves the run's whole snapshot, never an empty one.
+        let planner = ledger.stage(WaitOwner::Planner);
         planner.publish(&EntryState {
             entry: "api".to_owned(),
             phase: EntryPhase::Starting,
@@ -520,7 +645,30 @@ mod tests {
             detail: None,
             elapsed_ms: 0,
         });
-        assert_eq!(ledger.current_owner(), Some(WaitOwner::Planner));
+        assert_eq!(
+            ledger.read("api").and_then(|state| state.waiting_on),
+            Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4)
+            }),
+            "a reader between staging and commit sees the previous complete snapshot"
+        );
+        assert!(
+            !planner.is_visible(),
+            "the staged planner snapshot is not visible before its commit"
+        );
+        assert!(
+            run.is_visible(),
+            "the run's snapshot stays visible until the planner commits"
+        );
+        ledger.commit(&planner);
+        assert!(planner.is_visible());
+        assert_eq!(
+            ledger.read("api").and_then(|state| state.waiting_on),
+            Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned()
+            })
+        );
 
         // The run's owner keeps publishing, as its progress ticks do: its
         // writes land in its own namespace and are not what a reader resolves.

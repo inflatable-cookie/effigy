@@ -121,7 +121,7 @@ pub(super) fn await_services_ready(
                         services.len(),
                         if services.len() == 1 { "" } else { "s" }
                     ));
-                    waits.settle("environment");
+                    waits.settle_phase();
                     return Ok(ReadinessEnd::Ready);
                 }
                 // A stack whose unready services all fail the same way will
@@ -177,7 +177,7 @@ fn publish_environment_wait(
 ) {
     let total = u32::try_from(services.len()).unwrap_or(u32::MAX);
     let healthy = u32::try_from(services.len().saturating_sub(unready.len())).unwrap_or(u32::MAX);
-    waits.publish(&EntryState {
+    waits.publish_phase(&EntryState {
         entry: "environment".to_owned(),
         phase: EntryPhase::Waiting,
         waiting_on: Some(WaitOn::Environment {

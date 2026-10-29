@@ -267,11 +267,13 @@ wait as settled when it ends. A prerequisite failure is published as
 the plan returns the failure. A record is written once when its meaning changes
 and refreshed only while it is a live wait, so a settled entry is never
 rewritten on an owner-loop tick. Exactly one publisher owns the scope: the run's
-owner claims it before the phase can block, and the host planner claims it before
-it starts any listener. Each publisher writes only its own record set, and
-readers resolve the set the current claim names, so the claim is one atomic
-record replace and a write that races the handoff cannot replace an authoritative
-entry or failure. A failure the planner published is terminal and is never
+owner publishes it before the phase can block, and the host planner takes it over
+before it starts any listener. Each publisher stages a complete snapshot in its
+own directory and commits it by replacing one record, so a reader always resolves
+a whole snapshot — the previous publisher's until the new one is complete — and a
+write that races the handoff cannot replace an authoritative entry or failure.
+The environment phase keeps its own reserved record, never an entry name, so a
+host process an operator names `environment` keeps its own wait. A failure the planner published is terminal and is never
 replaced by the run's generic `up` exit; the run's own environment reason
 carries the planner's failing entry and its report. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting

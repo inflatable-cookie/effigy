@@ -266,10 +266,14 @@ During v0.x, MINOR bumps may include breaking changes.
   for the environment (and its healthy container count) during bring-up and is
   announced as started only once it actually is. Each publisher of the
   environment's entries — the run before readiness, the host planner after —
-  writes only its own record set and readers follow the current claim, so a
-  write that races the handoff never replaces the other's state, and a host
-  failure the planner published survives the run's generic `up` exit: the run's
-  error names the failing entry and its observed status. A wait is recorded as
+  stages a complete snapshot and commits it with one atomic record, so readers
+  always resolve a whole snapshot: a write that races the handoff never
+  replaces the other's state, and the window before the commit still shows the
+  run's environment waits instead of announcing a host as started. The
+  environment phase keeps its own reserved record, so a host an operator names
+  `environment` keeps its own wait. A host failure the planner published
+  survives the run's generic `up` exit: the run's error names the failing entry
+  and its observed status. A wait is recorded as
   settled when it ends, and only a changed meaning or a live wait's refresh
   writes a record, so a settled entry is never rewritten on an owner-loop tick
   and a tab or a status never keeps a wait the entry has left behind. Record
