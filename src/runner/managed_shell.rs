@@ -64,7 +64,16 @@ pub(crate) fn render_inline_managed_shell_command(
     let attach = render_inline_compose_command(
         repo_root,
         policy,
-        &compose_args(policy, ["exec", service_name, "sh"]),
+        &compose_args(
+            policy,
+            [
+                "exec",
+                "-e",
+                "EFFIGY_INTERNAL_MANAGED_PANE=1",
+                service_name,
+                "sh",
+            ],
+        ),
     );
     format!("exec sh -c {}", shell_quote(&attach))
 }

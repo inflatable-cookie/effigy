@@ -431,6 +431,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Managed TUI panes now show nested Effigy progress as plain start and finish lines instead of repeated spinner redraws and banners.
+
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already

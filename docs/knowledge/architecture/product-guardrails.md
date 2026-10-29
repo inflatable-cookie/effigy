@@ -49,7 +49,10 @@ when the real cause was two named services failing their health checks.
   `waiting for web to report healthy (attempt 4, last: HTTP 404)` or
   `fetching bundle decodelabs`. The label changes as the work moves on, and
   each step ends with a one-line success or failure. Spinners write to stderr
-  and never appear in `--json`, piped or non-terminal output.
+  and never appear in `--json`, piped or non-terminal output. A managed TUI
+  owns its screen: nested Effigy processes in its panes use plain start and
+  finish lines without banners or spinner redraws. Application output remains
+  unfiltered.
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
   - the evidence (exit code, the last relevant output, the health check's

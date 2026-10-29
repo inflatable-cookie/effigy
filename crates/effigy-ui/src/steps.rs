@@ -19,7 +19,8 @@
 //! process-wide sink, which serialises finish lines and never interleaves a
 //! spinner with them. While the managed-run TUI owns the terminal,
 //! [`suspend_terminal`] silences the sink so the two never draw over each
-//! other.
+//! other. Nested Effigy processes in managed panes instead write bounded
+//! plain start and finish lines.
 
 use std::cell::RefCell;
 use std::io::{IsTerminal, Write};
@@ -31,6 +32,14 @@ use anstyle::Style;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::theme::{is_ci_environment, resolve_color_enabled, OutputMode};
+
+/// Product handoff for children whose output belongs to a managed TUI pane.
+pub const MANAGED_PANE_ENV: &str = "EFFIGY_INTERNAL_MANAGED_PANE";
+
+/// Whether this process writes feedback into a managed pane.
+pub fn in_managed_pane() -> bool {
+    std::env::var_os(MANAGED_PANE_ENV).is_some_and(|value| value == "1")
+}
 
 const TICK: Duration = Duration::from_millis(80);
 const SPINNER_TEMPLATE: &str = "{spinner} {msg}";
@@ -45,6 +54,8 @@ pub enum StepMode {
     /// One plain `✓`/`✗` line per finished step, for verbose non-terminal
     /// output where an animated spinner would be noise.
     Lines,
+    /// Plain start and finish lines in a managed pane.
+    Pane,
     /// An asynchronous spinner on stderr, plus one line per finished step.
     Spinner,
 }
@@ -70,6 +81,7 @@ impl StepMode {
             Self::Silent => 0,
             Self::Lines => 1,
             Self::Spinner => 2,
+            Self::Pane => 3,
         }
     }
 
@@ -77,6 +89,7 @@ impl StepMode {
         match value {
             1 => Self::Lines,
             2 => Self::Spinner,
+            3 => Self::Pane,
             _ => Self::Silent,
         }
     }
@@ -113,6 +126,9 @@ impl Step {
     fn new(sink: Arc<Sink>, parent: Option<&Step>, label: &str) -> Self {
         let mode = sink.mode();
         let bar = (mode == StepMode::Spinner && !is_capturing()).then(|| sink.start_bar(label));
+        if mode == StepMode::Pane && !is_capturing() && !sink.is_suspended() {
+            sink.write_line(&format!("Started: {label}\n"));
+        }
         let step = Self {
             inner: Arc::new(StepInner {
                 label: Mutex::new(label.to_owned()),
@@ -179,6 +195,11 @@ impl Step {
         self.finish_children();
         if let Some(bar) = self.inner.bar.as_ref() {
             bar.finish_and_clear();
+        }
+        if self.inner.mode == StepMode::Pane && !is_capturing() && !self.inner.sink.is_suspended() {
+            self.inner
+                .sink
+                .write_line(&format!("Finished: {}\n", self.label()));
         }
     }
 
@@ -311,7 +332,7 @@ impl Sink {
         };
         let line = format!(
             "{} {}\n",
-            crate::style_text(self.color, style, mark),
+            crate::style_text(self.color && mode != StepMode::Pane, style, mark),
             summary
         );
         self.write_above_bars(&line);
@@ -393,6 +414,10 @@ pub fn configure(mode: StepMode) {
 /// Configure the mode from the terminal and the invocation's output mode.
 pub fn configure_from_terminal(output_json: bool, verbose: bool) {
     JSON_OUTPUT.store(output_json, Ordering::SeqCst);
+    if !output_json && in_managed_pane() {
+        configure(StepMode::Pane);
+        return;
+    }
     configure(StepMode::resolve(
         output_json,
         verbose,
@@ -607,6 +632,15 @@ mod tests {
             assert!(line.starts_with("✓ service "), "whole line: {line}");
             assert_eq!(line.matches("ready").count(), 40);
         }
+    }
+
+    #[test]
+    fn pane_mode_writes_one_plain_start_and_finish() {
+        let (sink, buffer) = sink(StepMode::Pane);
+        let step = Step::new(sink, None, "running web");
+        step.succeed("web finished");
+        let text = buffer.text();
+        assert_eq!(text, "Started: running web\n✓ web finished\n");
     }
 
     #[test]

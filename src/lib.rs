@@ -48,6 +48,9 @@ use std::path::Path;
 /// with the active binary display version, so local bootstrap installs can
 /// surface a build suffix without changing release semver.
 pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult<()> {
+    if effigy_ui::steps::in_managed_pane() {
+        return Ok(());
+    }
     effigy_cli::header::render_cli_header(
         renderer,
         root,

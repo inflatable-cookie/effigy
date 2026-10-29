@@ -421,6 +421,7 @@ fn displayed_plan(
         &[],
         "<run token>",
         container_repo_root.as_deref(),
+        false,
     )?;
     for process in &mut plan.processes {
         match process.role {
@@ -519,7 +520,10 @@ fn tui_tabs(
             // no session access reaches it. A nested `effigy` run there is a
             // top-level invocation and resolves its own access (`dev`'s
             // local-dev rules, or a prompt).
-            env: BTreeMap::new(),
+            env: BTreeMap::from([(
+                effigy_ui::steps::MANAGED_PANE_ENV.to_owned(),
+                "1".to_owned(),
+            )]),
         });
     }
     Ok(ManagedTabs {
@@ -665,6 +669,7 @@ fn own_managed_run(
     context: &ManagedContext<'_, '_>,
     mut plan: effigy_managed::ManagedTaskPlan,
 ) -> Result<Option<String>, RunnerError> {
+    let pane_feedback = owner.payload.front == Front::Tui;
     let preflight = context.preflight;
     let selection = context.selection;
     let token = generate_managed_run_token();
@@ -772,6 +777,7 @@ fn own_managed_run(
             &secrets,
             &token,
             container_repo_root.as_deref(),
+            pane_feedback,
         )
     };
     managed_run::own(owner, owned, prepare, workloads)
@@ -1133,6 +1139,7 @@ fn managed_workloads(
     secrets: &[(String, SecretString)],
     token: &str,
     container_repo_root: Option<&std::path::Path>,
+    pane_feedback: bool,
 ) -> Result<Vec<WorkloadSpec>, RunnerError> {
     let repo = context.repo();
     let binding = context.binding_resolution.binding();
@@ -1147,8 +1154,15 @@ fn managed_workloads(
         .iter()
         .filter(|process| process.role == ManagedProcessRole::Standard)
     {
-        let run = process.run.clone();
-        let setup = process.setup.clone();
+        let mark = |command: String| {
+            if pane_feedback {
+                format!("export {}=1; {command}", effigy_ui::steps::MANAGED_PANE_ENV)
+            } else {
+                command
+            }
+        };
+        let run = mark(process.run.clone());
+        let setup = process.setup.clone().map(mark);
         let runs_on_host = process.run_on_host
             || context.container_handoff
             || matches!(
@@ -1621,6 +1635,7 @@ working_dir = "/workspace"
                 &[("DATABASE_URL".into(), SecretString::new(secret.into()))],
                 "run-proof",
                 Some(Path::new("/workspace")),
+                false,
             )
             .unwrap();
             assert_eq!(workloads.len(), 1);
