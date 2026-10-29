@@ -155,14 +155,22 @@ pub fn caller(
             break;
         }
         // A pid can be reused between two reads. The start identity is the only
-        // proof that every fact in this link belongs to one process; when it
-        // moves, the link is unknown rather than a mixture of two processes.
-        if tree
-            .process(next)
-            .is_ok_and(|again| again.start != facts.start)
-        {
-            unknown.push(format!("parent {next}: identity changed while it was read"));
-            break;
+        // proof that every fact in this link belongs to one process: a second
+        // read must succeed and agree, or the link would mix one process's start
+        // identity with another's command and ancestry.
+        match tree.process(next) {
+            Ok(again) if again.start == facts.start => {}
+            Ok(_) => {
+                unknown.push(format!("parent {next}: identity changed while it was read"));
+                break;
+            }
+            Err(reason) => {
+                unknown.push(bounded(
+                    &format!("parent {next}: identity is unconfirmed ({reason})"),
+                    TEXT_LIMIT,
+                ));
+                break;
+            }
         }
         let command = match &facts.argv {
             Some(argv) => Some(ancestor_command(argv)),
@@ -317,7 +325,7 @@ fn ancestor_command(argv: &[String]) -> Vec<String> {
 }
 
 /// Token-wise redaction of one shell command string. The string is arbitrary
-/// text, so no token in it is taken as a program: only paths and flag names are
+/// text, so no token in it is taken as a program: only recognised flag names are
 /// recorded, and every other positional token is a value that may be secret.
 fn shell_command(script: &str) -> String {
     let mut rendered = Vec::new();
@@ -333,37 +341,40 @@ fn shell_command(script: &str) -> String {
     bounded(&rendered.join(" "), TEXT_LIMIT)
 }
 
-/// The program this process was started as. It is an identity, not a value, and
-/// it is the only positional text an ancestor's own `argv` contributes.
+/// The program this process was started as. Only its file name is recorded:
+/// `argv[0]` is the one argument the kernel set rather than a value the caller
+/// passed, and the directory a program lives in is arbitrary text that can
+/// carry a secret.
 fn ancestor_program(argument: &str) -> String {
-    let argument = argument.trim();
-    if word(argument) && !secret(argument) {
-        return bounded(argument, TEXT_LIMIT);
+    let name = argument.rsplit('/').next().unwrap_or(argument).trim();
+    if program_name(name) {
+        return bounded(name, TEXT_LIMIT);
     }
     REDACTED.into()
 }
 
-/// Any other ancestor argument: a recognised flag name or a path, and nothing
-/// else. Arbitrary positional text is where a positional password lives, so it
-/// is never recorded (effigy#450 review).
+/// A program name: bounded letters, digits and a few separators, and never a
+/// credential shape.
+fn program_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '+' | '-'))
+        && name.chars().any(|c| c.is_ascii_alphabetic())
+        && !secret(name)
+}
+
+/// Any other ancestor argument: a recognised flag name, and nothing else.
+/// Arbitrary positional text and path-shaped text are where a positional secret
+/// lives, so neither is ever recorded (effigy#450 review).
 fn ancestor_token(argument: &str) -> String {
     let argument = argument.trim();
-    if flag_shaped(argument) {
-        return if flag_name(argument) {
-            bounded(argument, TEXT_LIMIT)
-        } else {
-            REDACTED.into()
-        };
-    }
-    if path(argument) && !secret(argument) {
+    if flag_shaped(argument) && flag_name(argument) {
         return bounded(argument, TEXT_LIMIT);
     }
     REDACTED.into()
-}
-
-/// A path names a program or a file; a bare word can be a value.
-fn path(argument: &str) -> bool {
-    word(argument) && argument.contains('/')
 }
 
 /// A recognised flag name: `--words` or one of the short flags above. A token
@@ -383,17 +394,6 @@ fn flag_name(argument: &str) -> bool {
 /// the argument after it is its value and is never recorded as it is.
 fn flag_shaped(argument: &str) -> bool {
     argument.starts_with('-') && argument.len() > 1
-}
-
-/// A plain word or path, with no separator that could carry a value of its own.
-fn word(argument: &str) -> bool {
-    !argument.is_empty()
-        && !argument.starts_with('-')
-        && argument.len() <= MAX_TOKEN
-        && argument
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '+' | '-' | '/'))
-        && argument.chars().any(|c| c.is_ascii_alphanumeric())
 }
 
 /// A value that is a credential however it is spelled.
@@ -465,8 +465,6 @@ const SHORT_FLAGS: &[&str] = &[
     "-c", "-lc", "-ec", "-ic", "-il", "-li", "-i", "-l", "-e", "-x", "-n", "-v", "-q", "-h", "-s",
     "-u", "-p", "-a", "-d", "-f", "-o", "-H", "-m", "-r", "-t", "-w", "-k", "-j",
 ];
-/// Longest token shape considered at all; the recorded text is bounded apart.
-const MAX_TOKEN: usize = 4096;
 /// Shapes that are a credential whatever their name says.
 const SECRET_PREFIXES: &[&str] = &[
     "sk-",
@@ -612,6 +610,30 @@ mod tests {
             self.answers.insert(pid, vec![Err(reason.into())]);
             self
         }
+        /// A pid whose first read succeeds and whose second read fails: it may
+        /// have been replaced between its identity read and its other facts.
+        fn unconfirmed(
+            mut self,
+            pid: u32,
+            parent: u32,
+            session: u32,
+            start: &str,
+            reason: &str,
+        ) -> Self {
+            self.answers.insert(
+                pid,
+                vec![
+                    Ok(Facts {
+                        parent,
+                        session: Some(session),
+                        start: start.into(),
+                        argv: Some(vec!["/bin/zsh".into()]),
+                    }),
+                    Err(reason.into()),
+                ],
+            );
+            self
+        }
         /// The same pid answering differently on successive reads: a reused pid.
         fn reused(mut self, pid: u32, first: &str, second: &str) -> Self {
             let answer = |start: &str| {
@@ -719,7 +741,7 @@ mod tests {
         );
         assert_eq!(
             record.parents[1].command.as_deref(),
-            Some(&["/bin/zsh".into()][..])
+            Some(&["zsh".into()][..])
         );
         assert_eq!(record.session, Some(30));
         assert!(record.unknown.is_empty(), "{:?}", record.unknown);
@@ -835,6 +857,25 @@ mod tests {
                 .unknown
                 .iter()
                 .any(|reason| reason.contains("arguments are unreadable")),
+            "{:?}",
+            record.unknown
+        );
+    }
+
+    /// A parent whose second identity read fails is unknown: the record must not
+    /// mix one process's start identity with another's command and ancestry.
+    #[test]
+    fn gateway_caller_chain_refuses_a_parent_whose_identity_is_unconfirmed() {
+        let fake = Fake::default()
+            .facts(50, 40, 30, "macos:1.000050", &[])
+            .unconfirmed(40, 1, 30, "macos:1.000040", "the process is gone");
+        let record = caller_of(&fake, 50);
+        assert!(record.parents.is_empty(), "{record:?}");
+        assert!(
+            record
+                .unknown
+                .iter()
+                .any(|reason| reason.contains("parent 40") && reason.contains("unconfirmed")),
             "{:?}",
             record.unknown
         );
@@ -974,13 +1015,12 @@ mod tests {
         );
     }
 
-    /// An ancestor's command is arbitrary third-party text. Only the program it
-    /// was started as, recognised flag names and paths are recorded; every other
-    /// positional token is a value and is redacted, in a direct command line and
-    /// inside a shell string alike.
+    /// An ancestor's command is arbitrary third-party text. Only the program's
+    /// file name and recognised flag names are recorded; every positional token
+    /// is redacted, in a direct command line and inside a shell string alike,
+    /// because a positional password can be shaped like a word or a path.
     #[test]
-    fn gateway_ancestor_commands_keep_only_programs_flags_and_paths() {
-        // A positional password is not a word we may trust.
+    fn gateway_ancestor_commands_keep_only_the_program_and_flag_names() {
         let direct = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -989,10 +1029,11 @@ mod tests {
                 40,
                 "macos:1.000040",
                 &[
-                    "helper",
+                    "/opt/helper/bin/helper",
                     "/opt/helper/bin/x",
                     "login",
                     "hunter2",
+                    "hunter2/abc",
                     "--verbose",
                 ],
             );
@@ -1001,14 +1042,16 @@ mod tests {
             parent,
             vec![
                 "helper".to_owned(),
-                "/opt/helper/bin/x".to_owned(),
+                "<redacted>".to_owned(),
+                "<redacted>".to_owned(),
                 "<redacted>".to_owned(),
                 "<redacted>".to_owned(),
                 "--verbose".to_owned(),
             ]
         );
 
-        // The same positional secret inside a shell string.
+        // The same positional secrets inside a shell string, including a
+        // path-shaped one.
         let shell = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -1016,13 +1059,17 @@ mod tests {
                 30,
                 40,
                 "macos:1.000040",
-                &["/bin/sh", "-c", "helper login hunter2 --verbose"],
+                &[
+                    "/bin/sh",
+                    "-c",
+                    "helper login hunter2 /etc/passwd --verbose",
+                ],
             );
         let parent = caller_of(&shell, 50).parents[0].command.clone().unwrap();
         let rendered = parent.join(" ");
-        assert_eq!(parent[0], "/bin/sh", "{rendered}");
+        assert_eq!(parent[0], "sh", "{rendered}");
         assert_eq!(parent[1], "-c", "{rendered}");
-        for exposed in ["helper", "hunter2", "login"] {
+        for exposed in ["helper", "hunter2", "login", "passwd", "etc"] {
             assert!(!rendered.contains(exposed), "{rendered}");
         }
         assert!(rendered.contains("--verbose"), "{rendered}");
@@ -1057,8 +1104,8 @@ mod tests {
         }
     }
 
-    /// A path and a program name stay attributable; a positional identity and a
-    /// long opaque token do not, because neither can be told from a credential.
+    /// A program is attributable by its file name, and a positional identity or
+    /// opaque token is not: neither can be told from a credential.
     #[test]
     fn gateway_ancestor_tokens_keep_only_a_plain_command_shape() {
         let token = "a8f5f167f44f4964e6c998dee827110cf2d4c1f7";
@@ -1070,7 +1117,6 @@ mod tests {
                 40,
                 "macos:1.000040",
                 &[
-                    "node",
                     "/opt/paseo/bin/paseo",
                     "run",
                     "f593c9f2-075b-4243-9e1b-176d303ec799",
@@ -1083,8 +1129,7 @@ mod tests {
         assert_eq!(
             parent,
             vec![
-                "node".to_owned(),
-                "/opt/paseo/bin/paseo".to_owned(),
+                "paseo".to_owned(),
                 "<redacted>".to_owned(),
                 "<redacted>".to_owned(),
                 "<redacted>".to_owned(),
@@ -1104,9 +1149,12 @@ mod tests {
         let record = caller(&fake, 50, Some(long.clone()), |_| None);
         let rendered = serde_json::to_string(&record).unwrap();
         assert!(!rendered.contains(&long), "{rendered}");
-        let argument = record.parents[0].command.as_ref().unwrap()[0].clone();
-        assert_eq!(argument.chars().count(), TEXT_LIMIT);
-        assert!(argument.ends_with('…'));
+        // A long positional argument is a value, so it is not recorded at all.
+        assert_eq!(
+            record.parents[0].command.as_ref().unwrap()[0],
+            REDACTED,
+            "{rendered}"
+        );
         assert_eq!(
             record
                 .terminal
@@ -1115,6 +1163,20 @@ mod tests {
                 .map(Iterator::count),
             Some(TEXT_LIMIT)
         );
+        // The invoking process's own command line and its cause are truncated,
+        // visibly, rather than being written whole.
+        let event = event(
+            OperatorAction::Up,
+            &long,
+            50,
+            &[long.clone()],
+            Some(Path::new("/src/effigy")),
+            &record,
+        );
+        let argv = event["argv"][0].as_str().unwrap();
+        assert_eq!(argv.chars().count(), TEXT_LIMIT);
+        assert!(argv.ends_with('…'), "{argv}");
+        assert_eq!(event["cause"].as_str().unwrap().chars().count(), TEXT_LIMIT);
         assert!(record.unknown.len() <= UNKNOWN_LIMIT);
     }
 }

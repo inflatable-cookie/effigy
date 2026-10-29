@@ -797,19 +797,20 @@ controlling terminal of the invoking process, its parent chain up to and
 including the session leader (at most eight entries, each with pid, start
 identity, session and redacted command), and only allowlisted `PASEO_*`, `NS_*`
 and `EFFIGY_RUN_*` identity markers whose value is a supported identity form. An
-unreadable parent, argument or marker, or a pid whose start identity changed
-while it was read, becomes a bounded unknown reason instead of a guess, and no
-environment value is read unless its name is on that allowlist.
+unreadable parent, argument or marker, or a pid whose start identity changed or
+could not be confirmed by a second read, becomes a bounded unknown reason
+instead of a guess, and no environment value is read unless its name is on that
+allowlist.
 
 Redaction treats the two command lines differently. The invoking process's own
 `argv` is Effigy's grammar, so a credential-named flag keeps its name and loses
 only its value. An ancestor's command is arbitrary third-party text, so no
-positional token in it is treated as safe: only the program the kernel executed,
-recognised flag names and path-shaped arguments are kept. A positional value in
-a direct command line, the same value inside a shell string (read token by
-token), a value after a flag, an attached short-flag value, URL userinfo, a
-`KEY=value`, a JSON body and a long unseparated token are recorded as
-`<redacted>`. A marker value is recorded only when it is a UUID, a decimal id,
+positional token in it is treated as safe: only the file name of the program the
+kernel executed and recognised flag names are kept. A positional value in a
+direct command line, path-shaped text, the same value inside a shell string
+(read token by token), a value after a flag, an attached short-flag value, URL
+userinfo, a `KEY=value`, a JSON body and a long unseparated token are recorded
+as `<redacted>`. A marker value is recorded only when it is a UUID, a decimal id,
 or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
 marker variable is refused by name only. A stop signalled by replacement or
 migration is attributable through the `up` or `setup` action that requested it;
