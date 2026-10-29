@@ -448,6 +448,8 @@ pub enum BunConsumerLinkDisposition {
     Registry,
     Linked,
     Conflict,
+    /// Recovery from an orphaned claim does not read a consumer tree at all.
+    NotInspected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

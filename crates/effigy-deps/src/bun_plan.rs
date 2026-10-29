@@ -417,52 +417,47 @@ pub fn plan_bun_unlink(
         // A claim is evidence about the machine-wide registration, not about a
         // consumer tree. Without the ledger nothing says which consumer link
         // Effigy owns, and the claim can name a nested Bun root rather than the
-        // requested checkout, so observe the claim's own root and leave every
-        // consumer link untouched.
-        let consumer_path = target
-            .reference
-            .consumer_repo
-            .join("node_modules")
-            .join(&target.name);
-        let consumer_observation = observer.observe_path(&consumer_path)?;
-        if desired.is_some() {
+        // requested checkout, so recovery releases the claim and leaves every
+        // consumer link untouched — including an unreadable or malformed
+        // `node_modules`, which must not stop the registration being retired.
+        let consumer_link = if desired.is_some() {
+            let consumer_path = consumer_root.join("node_modules").join(&target.name);
+            let consumer_observation = observer.observe_path(&consumer_path)?;
             physical_preconditions.push(BunPhysicalPrecondition {
                 path: consumer_path.clone(),
                 observation: consumer_observation.clone(),
             });
-        }
-        let consumer_link = match &consumer_observation {
-            BunPathObservation::Missing => BunConsumerLinkDisposition::Missing,
-            BunPathObservation::NonSymlink => BunConsumerLinkDisposition::Registry,
-            BunPathObservation::Symlink {
-                target: link_target,
-            } if same_path(link_target, &target.local_path) => {
-                if desired.is_some() {
+            match &consumer_observation {
+                BunPathObservation::Missing => BunConsumerLinkDisposition::Missing,
+                BunPathObservation::NonSymlink => BunConsumerLinkDisposition::Registry,
+                BunPathObservation::Symlink {
+                    target: link_target,
+                } if same_path(link_target, &target.local_path) => {
                     symlink_intents.push(BunSymlinkIntent {
                         action: BunSymlinkAction::RemoveConsumerLink,
                         package: target.name.clone(),
                         path: consumer_path,
                         expected_target: target.local_path.clone(),
                     });
-                } else {
-                    warnings.push(format!(
-                        "consumer link for `{}` at `{}` is left in place: this recovery releases the registration claim only, because the ledger that would say which consumer link Effigy owns is absent",
-                        target.name,
-                        consumer_path.display()
-                    ));
+                    BunConsumerLinkDisposition::Linked
                 }
-                BunConsumerLinkDisposition::Linked
+                BunPathObservation::Symlink {
+                    target: link_target,
+                } => {
+                    warnings.push(format!(
+                        "consumer link for `{}` points to `{}`; leave the foreign symlink untouched",
+                        target.name,
+                        link_target.display()
+                    ));
+                    BunConsumerLinkDisposition::Conflict
+                }
             }
-            BunPathObservation::Symlink {
-                target: link_target,
-            } => {
-                warnings.push(format!(
-                    "consumer link for `{}` points to `{}`; leave the foreign symlink untouched",
-                    target.name,
-                    link_target.display()
-                ));
-                BunConsumerLinkDisposition::Conflict
-            }
+        } else {
+            warnings.push(format!(
+                "the consumer tree for `{}` is not inspected: this recovery releases the registration claim only, because the ledger that would say which consumer link Effigy owns is absent",
+                target.name
+            ));
+            BunConsumerLinkDisposition::NotInspected
         };
 
         let release = plan_reference_release(

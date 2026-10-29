@@ -397,11 +397,6 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy contracts check-json` reports a payload schema or selection contract
   that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
   `effigy.contracts.check-json.v1`, and stops before any indexed command.
-- Bun `deps unlink` now retires only the named consumer's registration-index
-  references when that checkout is already gone, instead of no-op'ing and
-  leaving the worktree claim behind. `--repo` names the gone checkout and also
-  covers nested Bun roots recorded under it. The owner that created a
-  registration retires only that consumer on completion or interrupt.
 - Bun links no longer leave a machine-wide registration behind. `deps link bun`
   retires the registration it created once the consumer symlink and ledger
   exist, and an interrupt retires the same registrations before the signal stops
@@ -431,7 +426,8 @@ During v0.x, MINOR bumps may include breaking changes.
   claim without that evidence is reported with the root to name. Recovery
   without the ledger releases claims only: it never inspects, removes or verifies
   a consumer `node_modules` link, because a claim names a registration rather
-  than the consumer tree that owns a link.
+  than the consumer tree that owns a link, so an unreadable or malformed
+  consumer path cannot block releasing the claim.
 - Bun `deps status` and `doctor` now verify the consumer's `node_modules`
   symlink, which is the link. An absent machine-wide registration is expected;
   one pointing at another path is still reported as a conflict.

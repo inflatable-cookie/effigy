@@ -114,7 +114,9 @@ Unix.
   under it, and never scavenges an independently nested checkout or an unnamed
   dead path. Recovery without the ledger releases claims only: a claim names a
   registration, not the consumer tree that owns a link, so no consumer
-  `node_modules` link is inspected, removed, or verified.
+  `node_modules` link is inspected, removed, or verified, and an unreadable or
+  malformed consumer path never prevents the claim from being released. Those
+  packages report their consumer link as `not-inspected`.
 - Exact-owned registrations are retired by the owner that created them when it
   completes, and an interrupt retires the same registrations before the signal
   takes its default course. Ownership is the recorded `(consumer root, library)`

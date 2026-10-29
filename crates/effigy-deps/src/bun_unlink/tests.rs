@@ -751,3 +751,55 @@ fn orphaned_nested_claim_recovery_never_touches_a_consumer_link() {
     assert!(remaining_consumers(&first.home).is_empty());
     assert!(report.removed_consumer_links.is_empty());
 }
+
+#[test]
+fn orphaned_claim_recovery_does_not_read_a_malformed_consumer_tree() {
+    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&first.home);
+    fs::create_dir_all(first.repo.join(".git")).unwrap();
+    let studio = first.repo.join("studio");
+    fs::create_dir_all(&studio).unwrap();
+    let studio = fs::canonicalize(&studio).unwrap();
+    // The recorded consumer's `node_modules` is a regular file: reading the
+    // link under it fails with NotADirectory, which must not stop the claim
+    // from being released.
+    write(&studio.join("node_modules"), "not a directory\n");
+    let package = first.packages[0].package_path.clone();
+    BunRegistrationIndexStore::for_home(&first.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                package.clone(),
+                true,
+                BunConsumerReference::claim(studio.clone(), first.library.clone()),
+            )
+        })
+        .unwrap();
+    replace_symlink(&package, &bun_registration_path(&first.home, "underlay"));
+    assert!(!RepoLinkStateStore::for_repo(&first.repo).path().exists());
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &first.repo,
+            &first.library,
+            &first.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &first.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(
+        report.outcome,
+        BunUnlinkOutcome::Unlinked,
+        "{:?}",
+        report.errors
+    );
+    assert!(remaining_consumers(&first.home).is_empty());
+    // Claims-only recovery left the malformed tree exactly as it was.
+    assert!(studio.join("node_modules").is_file());
+}
