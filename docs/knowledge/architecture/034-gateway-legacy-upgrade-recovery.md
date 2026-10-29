@@ -436,7 +436,11 @@ meanwhile is named with its recovery rather than reported as a restore.
 The capability is bound to one install identity: the exact binary setup ran,
 with one link, owner-private mode and the operator (or root) as owner. A
 changed, linked or group/world-writable image is refused before a capability
-or unit names it. Setup verifies the result instead of assuming it: after the
+or unit names it, and so is an image the operator identity cannot execute: the
+owner execute bit when the operator owns it, other-execute when root owns it. An
+execute bit is not enough — an owner-owned mode `0410` image has one and its
+owner still cannot run it — so a unit naming such an image is reported `stale`
+rather than healthy. Setup verifies the result instead of assuming it: after the
 privileged stage, a fresh exec of the installed binary as the operator binds
 the configured low ports and reports `bound`, `in_use` or `denied`, and a
 denial fails setup rather than leaving a gateway that cannot serve 80/443.

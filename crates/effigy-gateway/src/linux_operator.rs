@@ -993,6 +993,24 @@ pub struct ExecutableFacts {
     pub len: u64,
 }
 
+/// Whether the *operator* identity can execute this image.
+///
+/// Any execute bit is not enough: an operator-owned image with mode `0410` has
+/// an execute bit but its owner cannot run it, and status must not call such a
+/// unit healthy when the login would fail with `EACCES`. The owner bit applies
+/// when the operator owns the file. For a root-owned image the operator is not
+/// the owner and its group membership is not resolved here, so the image must be
+/// executable by other users; a root-owned image that is only group-executable
+/// is uncertain and refused.
+fn executable_as_operator(facts: &ExecutableFacts, operator_uid: u32) -> bool {
+    let bit = if facts.uid == operator_uid {
+        0o100
+    } else {
+        0o001
+    };
+    facts.executable && facts.mode & bit != 0
+}
+
 impl ExecutableFacts {
     fn of(metadata: &std::fs::Metadata) -> Self {
         Self {
@@ -1009,7 +1027,7 @@ impl ExecutableFacts {
 /// One file, one executable, owner-private, owned by the operator (or root).
 pub fn validate_executable(facts: &ExecutableFacts, operator_uid: u32) -> io::Result<()> {
     if !facts.regular
-        || !facts.executable
+        || !executable_as_operator(facts, operator_uid)
         || facts.len == 0
         || facts.nlink != 1
         || facts.mode & 0o022 != 0
@@ -1025,7 +1043,7 @@ pub fn validate_executable(facts: &ExecutableFacts, operator_uid: u32) -> io::Re
 pub fn verify_executable(executable: &Path, operator_uid: u32) -> io::Result<()> {
     let refused = || {
         error(format!(
-            "the installed gateway binary {} is not usable for the Linux operator route: it must be one real, owner-only executable file (not a symbolic or hard link) owned by the operator (uid {operator_uid}) or root, and not group- or world-writable. Install it as a real file, then run `effigy gateway setup` again",
+            "the installed gateway binary {} is not usable for the Linux operator route: it must be one real file (not a symbolic or hard link) that the operator (uid {operator_uid}) can execute — owner execute set when the operator owns it, other-execute when root owns it — owned by the operator or root, and not group- or world-writable. Install it so this account can run it, then run `effigy gateway setup` again",
             executable.display()
         ))
     };
@@ -1148,7 +1166,7 @@ fn bound_identity(
 ) -> io::Result<ExecutableIdentity> {
     let identity = host.identity()?;
     validate_executable(&identity.facts(), operator_uid).map_err(|_| {
-        error("the installed gateway binary is unsafe for a low-port capability: it must be one owner-only executable file owned by the operator (or root) and not group- or world-writable; install it owner-only and run `effigy gateway setup` again")
+        error("the installed gateway binary is unsafe for a low-port capability: it must be one real file that the operator can execute, owned by the operator (or root) and not group- or world-writable; install it so this account can run it and run `effigy gateway setup` again")
     })?;
     Ok(identity)
 }
@@ -2195,8 +2213,47 @@ mod tests {
         ] {
             assert!(validate_executable(&refused, 501).is_err(), "{refused:?}");
         }
-        // A root-owned installed binary is the operator's own installation.
+        // A root-owned installed binary is the operator's own installation when
+        // other users can execute it.
         assert!(validate_executable(&ExecutableFacts { uid: 0, ..facts }, 501).is_ok());
+        assert!(
+            validate_executable(
+                &ExecutableFacts {
+                    uid: 0,
+                    mode: 0o100750,
+                    ..facts
+                },
+                501
+            )
+            .is_err(),
+            "a root-owned image that only its group can execute is uncertain"
+        );
+
+        // Any execute bit is not enough: the operator identity must be able to
+        // run the image it is asked to trust.
+        for refused in [
+            // Owner r--, other --x: an execute bit, but the owner cannot run it.
+            ExecutableFacts {
+                mode: 0o100410,
+                ..facts
+            },
+            // Owner rw-, group --x: the owner still cannot run it.
+            ExecutableFacts {
+                mode: 0o100010,
+                ..facts
+            },
+            // Owner rwx against a different owner: the operator is "other".
+            ExecutableFacts {
+                uid: 0,
+                mode: 0o100700,
+                ..facts
+            },
+        ] {
+            assert!(
+                validate_executable(&refused, 501).is_err(),
+                "the operator cannot execute {refused:?}"
+            );
+        }
     }
 
     #[test]
@@ -3520,6 +3577,39 @@ mod tests {
             // the unit file was not deleted.
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
             assert!(paths.unit.exists());
+        });
+    }
+
+    /// An owner-owned image whose owner execute bit is clear is not runnable by
+    /// the operator, so the unit that names it is stale rather than healthy.
+    #[test]
+    fn a_unit_naming_an_image_the_owner_cannot_execute_is_stale() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Installed);
+
+            // Mode 0410: the owner may read, the group may execute. An execute
+            // bit is present, but this account (the owner) cannot run it.
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o410)).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Stale);
+            assert!(verify_executable(&binary, uid).is_err());
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Stale);
+            assert!(status
+                .recovery
+                .first()
+                .is_some_and(|line| line.contains(&binary.display().to_string())));
+
+            // Restoring the owner execute bit makes the unit installed again.
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Installed);
+            assert!(verify_executable(&binary, uid).is_ok());
         });
     }
 

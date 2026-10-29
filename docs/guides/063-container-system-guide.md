@@ -1604,7 +1604,10 @@ touching the unit, so the next login starts it again; remove the unit with
 `effigy gateway setup --remove`.
 
 Beyond trusting mkcert's local CA, the administrator prompt is for the split-DNS
-unit and the file capability. Everything else, including the user unit, runs as
+unit and the file capability. The installed image must also be executable by
+your account — the owner execute bit when you own it, other-execute when root
+owns it — or the launch unit that names it is reported `stale` rather than
+healthy. Everything else, including the user unit, runs as
 your account. Immediately after applying the capability, setup re-execs the
 installed binary as you, checks that the fresh exec carries
 `CAP_NET_BIND_SERVICE`, and binds the configured low ports; a refusal fails
