@@ -1662,37 +1662,34 @@ loaded.
 
 The login activation directory
 (`~/.config/systemd/user/default.target.wants`) must be a real directory owned
-by you and not group- or world-writable, and the entry Effigy uses there must
-be its own link to the owned unit. Effigy binds and verifies both, then reads
-and removes only its own entry — never by reopening the path, and never by
-unlinking a name it checked earlier. Removal records the entry's inode at the
-check, moves the entry aside into a fresh, owner-only removal directory inside
-the verified activation directory, and requires that same inode (and target) in
-there before it unlinks it. The unlink therefore never targets the shared unit
-name: a replacement that appears at that name while the removal runs — the
-manager's own `disable`, a concurrent setup, anything that plays by the
-directory — is never the entry that is deleted, and it is left in place and
-reported by `status`. Both the move and the put-back are exclusive renames
-(`renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS),
-so nothing at either destination is ever replaced, and a put-back refuses —
-naming where Effigy's entry is kept — when the unit name was taken meanwhile.
-An entry replaced inside the private directory is refused and kept aside rather
-than deleted or installed as Effigy's link. This happens *before*
-any `systemctl --user` request that could follow the directory or entry
-(`enable` on a repeated setup, `disable --now` on `setup --remove`), so a
-`default.target.wants` that is a symlink to another directory, or an entry that
-names another target or is not a link, is refused without touching it and
-without stopping or disabling anything; `setup --remove` also refuses before
-the unit file is deleted. A repeated setup whose unit bytes are unchanged keeps
-the existing link and reports `enabled` as it is even when the manager request
-fails — and that failure is still reported with the recovery commands, because
-a link does not prove the manager finished its own request. If writing a
-changed unit file fails after the login activation was dropped, Effigy restores
-that activation and says the installed route still works — but only an
-activation this run dropped, and only when the restored entry verifies as
-Effigy's own link; a unit that was disabled before the failure stays disabled,
-and an entry that appeared meanwhile is named with its recovery instead of
-being called a restore.
+by you and not group- or world-writable, and the entry Effigy uses there must be
+its own link to the owned unit. Effigy verifies both before it asks the manager
+to do anything: a `default.target.wants` that is a symlink to another directory,
+or an entry that names another target or is not a link, is refused without
+touching it and without stopping or disabling anything.
+
+Effigy never deletes an activation entry itself. `systemctl --user disable`
+(and `disable --now` on removal) is what removes it, and Effigy verifies the
+result afterwards: if the entry is still there — the manager could not run, or
+something re-created it — setup refuses with the exact
+`systemctl --user disable effigy-gateway.service` command and deletes nothing.
+The same rule covers an upgrade: a changed unit definition disables the login
+activation first, and the rewrite is refused rather than performed while that
+activation remains. A name-based unlink cannot be bound to the inode Effigy
+verified, so Effigy does not perform one at all: a replacement that appears at
+the entry is preserved and reported, never deleted.
+
+A repeated setup whose unit bytes are unchanged keeps the existing link and
+reports `enabled` as it is even when the manager request fails — and that
+failure is still reported with the recovery commands, because a link does not
+prove the manager finished its own request. An `enable` that reports a failure
+after writing the link is observed as enabled, with its failure and recovery
+kept. If writing a changed unit file fails after the login activation was
+disabled, Effigy restores that activation and says the installed route still
+works — but only an activation this run disabled, and only when the restored
+entry verifies as Effigy's own link; a unit that was disabled before the failure
+stays disabled, and an entry that appeared meanwhile is named with its recovery
+instead of being called a restore.
 
 `effigy gateway setup --remove` stops the gateway, disables and removes the unit
 it owns, removes the split-DNS unit and the file capability, and preserves

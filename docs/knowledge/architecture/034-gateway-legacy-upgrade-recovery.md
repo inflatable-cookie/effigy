@@ -382,64 +382,39 @@ rewrites the owned unit and enables it again.
 
 The login activation directory `~<home>/.config/systemd/user/default.target.wants`
 is treated as an identity of its own. It is opened from the verified unit
-directory with `O_NOFOLLOW | O_DIRECTORY`, verified as a real operator-owned
-directory with no group/other write, and the activation entry is read, unlinked
-and recreated with `readlinkat`/`unlinkat`/`symlinkat` on that descriptor. The
-entry has three states — absent, Effigy's own link, or foreign (a link to
-another target, or something that is not a link) — and a foreign entry is
-refused, never treated as absent, because the manager resolves the same path.
-The entry itself is bound, not only its directory: removal records the entry's
-inode at the check, moves it into a fresh, owner-only removal directory created
-inside the verified activation directory, and requires that same inode and
-target there before unlinking it. The unlink never targets the shared unit name,
-so a replacement arriving at that name while the removal runs — the manager's
-`disable`, a concurrent setup — cannot be the entry that is deleted: it is left
-in place and reported. Both the move and the put-back are exclusive renames
-(`renameat2(RENAME_NOREPLACE)`/`renameatx_np(RENAME_EXCL)`), so nothing at
-either destination is replaced, and a put-back refuses, naming where Effigy's
-entry is kept, when the unit name was taken in the meantime. An entry replaced
-inside the private directory is refused and kept aside, never deleted and never
-installed as Effigy's activation link.
+directory with `O_NOFOLLOW | O_DIRECTORY` and its owner and mode are checked
+before anything else happens, so a `default.target.wants` symlink to a foreign
+directory cannot redirect Effigy, or the manager on Effigy's behalf. The entry
+has three states — absent, Effigy's own link (recorded with its inode and target,
+read with `fstatat(AT_SYMLINK_NOFOLLOW)`), or foreign (a link to another target,
+or something that is not a link) — and a foreign entry is refused, never treated
+as absent.
 
-What the staged removal cannot do is bind the final unlink to the inode. POSIX
-has no inode-conditional unlink, so a same-uid writer that replaces the staged
-name between the last verification and the `unlinkat` inside the private
-directory is deleted. That is an **open product question reported to the
-operator for a ruling** (review 5693581777); it is recorded here as a limit, not
-as accepted or compliant behaviour. The ruling has to choose between:
+Effigy never deletes an activation entry. `unlinkat` is a name operation with no
+inode condition, so a check followed by an unlink can always delete whatever a
+same-uid writer put at that name in between, and no scheme Effigy can build on
+POSIX closes that interval. The removal therefore belongs to the manager:
+`systemctl --user disable` (and `disable --now` on removal) removes the entry,
+and Effigy verifies the result through the bound directory. A remaining entry is
+refused with the exact `systemctl --user disable effigy-gateway.service` command,
+a foreign one is preserved and named, and nothing is deleted by Effigy in either
+case. The same rule governs an upgrade: a changed definition disables the login
+activation before the rewrite and refuses to rewrite while it remains. The cost
+is explicit and deliberate: on a host where the user manager cannot remove the
+entry, Effigy refuses and prints the command instead of performing the unlink
+itself. Because Effigy performs no such unlink, a replacement that appears at
+the entry is preserved and reported rather than deleted.
 
-- accepting the same-uid limit explicitly, on the grounds that such a process
-  can already replace or delete Effigy's own unit file and installed binary;
-- no longer deleting the activation entry in Effigy at all, delegating it to
-  `systemctl --user disable`, verifying the entry is gone afterwards and
-  refusing with the exact command when the manager cannot do it — at the cost
-  that a host without a user manager can no longer remove the link; or
-- staging in a directory the operator account cannot write, which needs an
-  administrator-owned directory and changes the one-admin-action rule.
+A repeated setup whose unit bytes are unchanged keeps the existing link and
+reports the observed `enabled` state together with any manager failure and its
+recovery commands. An `enable` that fails after writing the link is reported as
+enabled *and* as a failed manager request. Removal keeps the rule in the other
+direction: the unit file and the activation are removed, and a `daemon-reload`
+that refuses, cannot be reached or times out is then reported as a failure
+naming the exact `systemctl --user daemon-reload` command, because a removal is
+not finished while the manager still serves the old definition.
 
-Until that ruling, removal keeps the strongest portable behaviour: the shared
-unit name is never unlinked, and a replacement that appears there is preserved
-and reported. That
-validation happens *before* any `systemctl --user` request that could follow
-the directory — `enable` on a repeated setup, `disable --now` on
-`setup --remove` — and before the unit file is deleted. A path-based
-`remove_file` would resolve every parent component, so a `default.target.wants`
-symlink to a foreign directory could delete that directory's entry (and a
-manager following the same path could stop the service); instead it is refused
-with the exact `systemctl --user disable`/`chmod` recovery, on upgrade, on
-fresh install, on a repeated setup and in `setup --remove` alike. Status reports
-such a directory or entry as not enabled.
-
-An `enable` that fails after writing the link is reported as enabled *and* as a
-failed manager request with its recovery commands: the link proves filesystem
-activation, not that the manager finished its own request. Removal keeps the
-same rule in the other direction: the unit file and the activation are removed,
-and a `daemon-reload` that refuses, cannot be reached or times out is then
-reported as a failure naming the exact `systemctl --user daemon-reload` command,
-because a removal is not finished while the manager still serves the old
-definition.
-
-A failed rewrite restores only an activation this run actually dropped, so a
+A failed rewrite restores only an activation this run actually disabled, so a
 unit the operator had disabled is never enabled by a recovery path, and the
 restored entry must verify as Effigy's own link: an entry that appeared
 meanwhile is named with its recovery rather than reported as a restore.

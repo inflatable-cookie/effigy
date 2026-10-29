@@ -159,26 +159,18 @@ During v0.x, MINOR bumps may include breaking changes.
   and not enabled and prints the exact `systemctl --user` commands that finish
   the enable; an `enable` that fails after writing the link is observed as
   enabled, because the link is the fact, and a repeated setup whose unit is
-  unchanged reports the link it keeps. The login activation directory is bound
-  and verified before any `systemctl --user` request that could follow it, and
-  its entry is absent, Effigy's own link or foreign: a symlinked
-  `default.target.wants` and an entry naming another target (or not a link) are
-  refused without touching them or stopping anything, and removal refuses
-  before the unit file is deleted. Removal binds the entry itself: its inode is
-  recorded at the check, the entry is moved into a fresh owner-only removal
-  directory and must still be that inode (with that target) there before it is
-  removed, so the unlink never targets the shared unit name and a replacement
-  arriving at that name is left in place. The move and the put-back are
-  exclusive renames that never overwrite an entry Effigy did not write, and an
-  entry replaced inside the private directory is refused and kept aside.
-  `setup --remove` completes the filesystem removal and then reports a
-  `daemon-reload` that refuses, cannot be reached or times out, with the exact
-  `systemctl --user daemon-reload` command, instead of a silent teardown. An
-  `enable` that fails after writing the link is reported as enabled and still
-  carries the manager failure and its recovery commands. A failed unit rewrite
-  restores the previous file's activation and says the installed route still
-  works, never enables a unit the operator had disabled, and only calls a
-  restore successful when the restored entry verifies as Effigy's own link.
+  unchanged reports the link it keeps. Effigy never deletes an activation
+  entry: `systemctl --user disable` removes it and Effigy verifies the result,
+  refusing with the exact command (and deleting nothing) when the entry is still
+  there or is not its own link; a changed definition disables the activation
+  before it rewrites the unit and refuses if it remains. `setup --remove`
+  completes the filesystem removal and then reports a `daemon-reload` that
+  refuses, cannot be reached or times out, with the exact
+  `systemctl --user daemon-reload` command, instead of a silent teardown. A
+  failed unit rewrite restores the previous file's activation and says the
+  installed route still works, never enables a unit the operator had disabled,
+  and only calls a restore successful when the restored entry verifies as
+  Effigy's own link.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
