@@ -1653,6 +1653,7 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
   reservation_id TEXT NOT NULL UNIQUE,
   state TEXT NOT NULL,
   environment_run TEXT,
+  session_owner TEXT,
   session_run TEXT,
   session_generation INTEGER,
   created_at INTEGER NOT NULL,

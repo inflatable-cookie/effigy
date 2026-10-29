@@ -26,16 +26,17 @@
 //! `active(E)` and the session's `Borrow` attachment in one transaction. E and
 //! the session's own owner generation S are always separate fences.
 //!
-//! One kernel rule is not negotiable here and shapes the recovery path: a
-//! workspace session is a Task-owned run, and K5 admits one unresolved run per
-//! owner. While the predecessor session is live it holds `Gate(Task)`, so a
-//! successor session *refuses* rather than being admitted — and it is never
-//! admitted by stopping the predecessor. That predecessor's holders,
-//! attachments, selected bytes and listener are left exactly as they are; a
-//! successor activation preserves them and only its own generation's session is
-//! new. A re-Prepare whose session is still live therefore leaves the
-//! environment's session record revoked by the new generation until the
-//! predecessor ends.
+//! The successor overlap is deliberately narrow, because a workspace session is
+//! Task-owned and K5 admits one unresolved run per owner. `stage_session_binding`
+//! freezes the successor identity (owner, run, S) with no run and no gate on the
+//! workspace owner, so a successor is staged while the predecessor session is
+//! live and nothing about the predecessor — its run, attachment, selected bytes,
+//! listener or holder — is touched. The successor *run* is admitted only when it
+//! can take `Gate(owner)` itself, which means the predecessor must have ended on
+//! its own terms first; it is never admitted by stopping the predecessor. Until
+//! the successor's atomic commit, the predecessor stays authoritative (see
+//! [`SessionRef::resolve`]) and the reservation, its staging and any published
+//! guest bytes remain recoverable.
 
 mod down;
 
@@ -77,7 +78,6 @@ struct SessionRow {
 fn live_session_row(
     conn: &rusqlite::Connection,
     environment: &ResourceId,
-    current_environment_generation: Generation,
 ) -> Result<Option<SessionRow>, RunError> {
     let row = conn
         .query_row(
@@ -103,11 +103,13 @@ fn live_session_row(
         session_generation: Generation::new(session_generation as u64),
         environment_generation: Generation::new(environment_generation as u64),
     };
-    // A new environment generation revokes the session (§8.7): the record is
-    // stale even if its run has not settled yet.
-    if row.environment_generation != current_environment_generation {
-        return Ok(None);
-    }
+    // A newer environment generation does *not* revoke this record by itself.
+    // The predecessor session stays authoritative until a successor activation
+    // commits its mapping, `active(E)` and its attachment in one transaction
+    // (owner ruling, 2026-10-29: never revoke, replace or retarget the
+    // predecessor before the successor's atomic commit succeeds). The record is
+    // therefore validated against its own run and its own attachment only, and
+    // a committed successor mapping is what replaces the row.
     let live = conn
         .query_row(
             "SELECT generation, phase FROM runs WHERE run_id=?1",
@@ -163,11 +165,7 @@ fn record_session(
                 "the environment generation moved before the session was recorded",
             ));
         }
-        if let Some(existing) = live_session_row(
-            txn.conn(),
-            session.environment(),
-            session.environment_generation(),
-        )? {
+        if let Some(existing) = live_session_row(txn.conn(), session.environment())? {
             if existing.run != session.run() {
                 return Err(RunError::refused(
                     "this environment already has a live workspace session",
@@ -330,25 +328,19 @@ impl SessionRef {
     /// A `Borrow` attachment alone does not name the session — a child run or a
     /// host `dev` hold can borrow the same environment — so the mapping is its
     /// own record, and this read validates it before use: the run is at the
-    /// recorded generation and not closed, it still borrows the environment at
-    /// the recorded generation, and the environment has not advanced. A record
-    /// that fails any check resolves as absent, so a stale session is never
-    /// mistaken for a live one and a successor can be admitted.
+    /// recorded generation and not closed, and it still borrows the environment
+    /// at the recorded generation. A record that fails either check resolves as
+    /// absent, so a settled session is never mistaken for a live one.
+    ///
+    /// A newer environment generation does *not* make the record absent. The
+    /// predecessor session stays authoritative while a successor activation
+    /// reserves, stages and publishes, and it is replaced only by that
+    /// successor's atomic commit (owner ruling, 2026-10-29). Until then this
+    /// resolves the predecessor, so a second terminal attaches to the session
+    /// that is actually serving the workspace.
     pub fn resolve(reader: &StoreReader, environment: &ResourceId) -> Observed<Option<SessionRef>> {
         let result = (|| -> Result<Option<SessionRef>, RunError> {
-            let generation: Option<i64> = reader
-                .conn()
-                .query_row(
-                    "SELECT generation FROM resources WHERE name=?1",
-                    [environment.name().to_string()],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let Some(generation) = generation else {
-                return Ok(None);
-            };
-            let current = Generation::new(generation as u64);
-            let Some(row) = live_session_row(reader.conn(), environment, current)? else {
+            let Some(row) = live_session_row(reader.conn(), environment)? else {
                 return Ok(None);
             };
             match Self::of_run(reader, row.run) {
@@ -469,16 +461,24 @@ impl SessionRef {
     }
 
     /// Admits the environment's one workspace session against a reserved
-    /// successor generation E, before the environment activation run exists and
-    /// therefore before `Gate(Env)` is held: the canonical Task-before-Env gate
-    /// order survives, and nothing ever waits on a Task owner gate with Env
-    /// held.
+    /// successor generation E, at the identity the reservation froze.
+    ///
+    /// The session is admitted under `Gate(owner)` alone, so the canonical
+    /// Task-before-Env order survives and nothing waits on a Task owner gate
+    /// with Env held. The generation is the frozen S, adopted and verified in
+    /// the admission transaction: a staging whose owner counter moved refuses
+    /// instead of admitting a different run.
     ///
     /// Nothing is attached and no mapping is recorded here. The environment is
     /// not active at E yet, so the activation commit writes the mapping, the
-    /// `Borrow` attachment and `active(E)` together from the staged binding.
-    /// `E` is the reserved environment generation; the session's own owner
-    /// generation S is `session.generation()`.
+    /// `Borrow` attachment and `active(E)` together. `E` is the reserved
+    /// environment generation; the session's own generation S is
+    /// `session.generation()`.
+    ///
+    /// A live predecessor session holds `Gate(owner)`, so this admission refuses
+    /// (it never stops the predecessor to take its place): the predecessor stays
+    /// authoritative until it ends on its own terms, and the reservation, the
+    /// staging and any publication remain recoverable in the meantime.
     #[allow(clippy::too_many_arguments)]
     pub fn admit_reserved<'a>(
         cx: &EffectContext,
@@ -491,20 +491,39 @@ impl SessionRef {
         placement: Placement,
     ) -> Result<(Run<'a>, SessionRef), RunError> {
         session_placement(&opts, placement)?;
-        reservation.admits_another_session(cx, root)?;
-        let run = Run::begin(cx, root, invocation, opts, cleanup, adapter)?;
+        let id = opts.id;
+        let claim = reservation.claim_session(cx, root)?;
+        if claim.binding.owner != invocation.spec().owner {
+            return Err(RunError::from(ActivationRefusal::WrongSessionOwner));
+        }
+        if claim.binding.run != id {
+            return Err(RunError::refused(
+                "the admitted run is not the successor session the reservation froze",
+            ));
+        }
         let session = SessionRef::new(
-            run.id(),
-            run.fence().clone(),
+            id,
+            Fence {
+                resource: claim.binding.owner.clone(),
+                generation: claim.binding.generation,
+            },
             reservation.environment().clone(),
             reservation.generation(),
         );
-        if let Err(error) = reservation.stage_session_binding(cx, root, &run, session.generation())
-        {
-            // A session the activation cannot name is not a session: settle it
-            // so nothing live is left holding a Task owner gate.
+        let run = Run::begin_claimed(
+            cx,
+            root,
+            invocation,
+            opts,
+            || Ok(cleanup.clone()),
+            adapter,
+            ActivationClaim::Session(claim),
+        )?;
+        if run.fence() != &session.fence {
             run.settle(cleanup, adapter)?;
-            return Err(error);
+            return Err(RunError::broken(
+                "the admitted successor session is not the frozen staging",
+            ));
         }
         Ok((run, session))
     }
@@ -752,10 +771,16 @@ impl ActivationReservationState {
     }
 }
 
-/// The Task-owned session run staged against a reservation: its identity and
-/// its own owner generation S, which is never the environment generation E.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The Task-owned successor session staged against a reservation: the exact
+/// workspace owner that will serve the environment, the run identity that admits
+/// it, and its own owner generation S — never the environment generation E.
+///
+/// It is frozen at staging, so the guest publication that follows can only ever
+/// be validated against these three facts, and a competing Task run cannot swap
+/// the session the activation will publish.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionBinding {
+    pub owner: ResourceId,
     pub run: RunId,
     pub generation: Generation,
 }
@@ -780,14 +805,24 @@ type ReservationRow = (
     String,
     Option<String>,
     Option<String>,
+    Option<String>,
     Option<i64>,
 );
 
 fn decode_reservation(
+    conn: &rusqlite::Connection,
     environment: &ResourceId,
     row: Option<ReservationRow>,
 ) -> Result<Option<ActivationReservationRecord>, RunError> {
-    let Some((generation, id, state, environment_run, session_run, session_generation)) = row
+    let Some((
+        generation,
+        id,
+        state,
+        environment_run,
+        session_owner,
+        session_run,
+        session_generation,
+    )) = row
     else {
         return Ok(None);
     };
@@ -810,16 +845,17 @@ fn decode_reservation(
                     .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))
             })
             .transpose()?,
-        session: match (session_run, session_generation) {
-            (Some(run), Some(generation)) => Some(SessionBinding {
+        session: match (session_owner, session_run, session_generation) {
+            (Some(owner), Some(run), Some(generation)) => Some(SessionBinding {
+                owner: owner_identity(conn, &owner)?,
                 run: run
                     .parse()
                     .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
                 generation: Generation::new(generation as u64),
             }),
-            (None, None) => None,
+            (None, None, None) => None,
             // Half a binding is not a binding: a reader refuses rather than
-            // inventing the run or the generation it is missing.
+            // inventing the owner, the run or the generation it is missing.
             _ => {
                 return Err(RunError::broken(
                     "a stored activation session binding is half recorded",
@@ -845,7 +881,8 @@ fn read_reservation(
     let row = conn
         .query_row(
             "SELECT environment_generation, reservation_id, state, environment_run, \
-             session_run, session_generation FROM workspace_activation_reservations \
+             session_owner, session_run, session_generation \
+             FROM workspace_activation_reservations \
              WHERE environment=?1 AND environment_generation=?2",
             params![environment.name().to_string(), generation.get() as i64],
             |row| {
@@ -855,12 +892,13 @@ fn read_reservation(
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
                 ))
             },
         )
         .optional()?;
-    decode_reservation(environment, row)
+    decode_reservation(conn, environment, row)
 }
 
 /// The most recent reservation for `environment`: a later generation is a new
@@ -872,7 +910,8 @@ fn latest_reservation(
     let row = conn
         .query_row(
             "SELECT environment_generation, reservation_id, state, environment_run, \
-             session_run, session_generation FROM workspace_activation_reservations \
+             session_owner, session_run, session_generation \
+             FROM workspace_activation_reservations \
              WHERE environment=?1 ORDER BY environment_generation DESC LIMIT 1",
             [environment.name().to_string()],
             |row| {
@@ -882,12 +921,13 @@ fn latest_reservation(
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
                 ))
             },
         )
         .optional()?;
-    decode_reservation(environment, row)
+    decode_reservation(conn, environment, row)
 }
 
 fn activation_observe(cx: &EffectContext) -> Result<ObserveContext, RunError> {
@@ -904,6 +944,41 @@ fn activation_reader(cx: &ObserveContext, root: &StateRoot) -> Result<StoreReade
             "the kernel store is not readable: {reason}"
         ))),
     }
+}
+
+/// A stored owner *name* resolved to the identity it names, through the
+/// resource row's canonical bytes. A name is a digest, so it is never decoded on
+/// its own: a stored owner the journal does not hold is broken, not guessed.
+fn owner_identity(conn: &rusqlite::Connection, name: &str) -> Result<ResourceId, RunError> {
+    let canonical: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT canonical FROM resources WHERE name=?1",
+            [name],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let canonical = canonical
+        .ok_or_else(|| RunError::broken("a stored session owner is not in this journal"))?;
+    decode_owner(&canonical)
+}
+
+/// The generation `owner`'s counter would advance to next, read *without* its
+/// gate: a staging is a prediction that the successor's own admission confirms
+/// under `Gate(owner)`, so a staging grants nothing the counter does not.
+fn next_generation(
+    conn: &rusqlite::Connection,
+    owner: &ResourceId,
+) -> Result<Generation, RunError> {
+    let current: Option<i64> = conn
+        .query_row(
+            "SELECT generation FROM resources WHERE name=?1",
+            [owner.name().to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Generation::new(current.unwrap_or(0) as u64)
+        .next()
+        .ok_or_else(|| RunError::refused("the workspace owner generation cannot advance"))
 }
 
 /// Whether a recorded run row is still open. The gate is not read: an
@@ -993,6 +1068,13 @@ pub enum ActivationRefusal {
     ReceiptIncomplete,
     /// The reservation's environment run is still live, so it cannot be cancelled.
     RunStillLive,
+    /// The activation claimed the reservation, so its staged session is frozen.
+    Frozen,
+    /// The activation run cannot act: it is settling, closed or poisoned.
+    ActivationNotReady,
+    /// A required effect of the activation run is not applied, so nothing may
+    /// be published from it.
+    ActivationIncomplete,
 }
 impl ActivationRefusal {
     pub fn as_str(self) -> &'static str {
@@ -1013,6 +1095,9 @@ impl ActivationRefusal {
             Self::ReceiptMismatch => "receipt_mismatch",
             Self::ReceiptIncomplete => "receipt_incomplete",
             Self::RunStillLive => "run_still_live",
+            Self::Frozen => "frozen",
+            Self::ActivationNotReady => "activation_not_ready",
+            Self::ActivationIncomplete => "activation_incomplete",
         }
     }
 }
@@ -1066,6 +1151,15 @@ impl std::fmt::Display for ActivationRefusal {
             }
             Self::RunStillLive => {
                 "the activation run at this generation is still live; settle it before cancelling its reservation"
+            }
+            Self::Frozen => {
+                "the activation claimed this reservation, so its staged workspace session is frozen; cancel the reservation and reserve the environment again"
+            }
+            Self::ActivationNotReady => {
+                "the environment activation run cannot act: it is settling, closed or poisoned, so it publishes nothing"
+            }
+            Self::ActivationIncomplete => {
+                "the environment activation run still has a required effect that is not applied, so it publishes nothing"
             }
         };
         f.write_str(text)
@@ -1233,9 +1327,13 @@ impl WorkspaceActivationReservation {
     /// another one, so a claim can bind exactly one activation run.
     pub fn claim(&self) -> Result<ActivationClaim, RunError> {
         match self.record.state {
-            ActivationReservationState::Reserved => Ok(ActivationClaim {
-                record: self.record.clone(),
-            }),
+            ActivationReservationState::Reserved => {
+                Ok(ActivationClaim::Environment(EnvironmentClaim {
+                    reservation: self.record.id,
+                    environment: self.record.environment.clone(),
+                    generation: self.record.generation,
+                }))
+            }
             ActivationReservationState::Committed => {
                 Err(ActivationRefusal::AlreadyCommitted.into())
             }
@@ -1243,41 +1341,19 @@ impl WorkspaceActivationReservation {
         }
     }
 
-    /// `stage_session_binding(reservation, run, S)`: record that this
-    /// Task-owned session run, at its own generation S, will serve as the
-    /// environment's workspace session once E commits.
+    /// `claim_session(reservation)`: the right to admit the *frozen* successor
+    /// session this reservation staged, at its own generation S.
     ///
-    /// Nothing is attached and no mapping is written: the environment is not
-    /// active at E yet, and the publication receipt is validated against this
-    /// staging before the commit writes anything. A live staged session is
-    /// never displaced — a competing Task admission refuses here — while a
-    /// staged session whose run settled or closed is replaced, which is the
-    /// recovery path.
-    pub fn stage_session_binding(
+    /// The identity it names was frozen by [`Self::stage_session_binding`], so
+    /// only that run can be admitted and only it can be published. Nothing is
+    /// attached and no mapping is written; the successor's admission takes its
+    /// own `Gate(owner)`, which is why the predecessor session may still be
+    /// live and authoritative while this claim is taken.
+    pub fn claim_session(
         &self,
         cx: &EffectContext,
         root: &StateRoot,
-        session_run: &Run<'_>,
-        session_generation: Generation,
-    ) -> Result<(), RunError> {
-        let fence = session_run.fence();
-        if fence.generation != session_generation {
-            return Err(RunError::refused(
-                "the staged generation is not the session run's own owner generation",
-            ));
-        }
-        check_session_owner(&self.record, &fence.resource)?;
-        if matches!(session_run.phase()?, Phase::Stopping | Phase::Closed) {
-            return Err(RunError::from(ActivationRefusal::SessionGone));
-        }
-        let binding = SessionBinding {
-            run: session_run.id(),
-            generation: session_generation,
-        };
-        // A live staged session is never displaced. Liveness is settled before
-        // the write so the write itself carries no gate probe: the caller here
-        // already holds this run's owner gate, so no competing live session can
-        // appear between the probe and the transaction.
+    ) -> Result<SessionClaim, RunError> {
         let observe = activation_observe(cx)?;
         let reader = activation_reader(&observe, root)?;
         let stored = read_reservation(
@@ -1285,27 +1361,83 @@ impl WorkspaceActivationReservation {
             &self.record.environment,
             self.record.generation,
         )?
-        .ok_or_else(|| RunError::broken("the activation reservation vanished before staging"))?;
-        if let Some(existing) = stored.session {
-            if existing != binding {
-                match binding_is_live(&observe, root, &reader, &existing) {
-                    Observed::Verified(false, _) | Observed::Absent(_) => {}
-                    Observed::Verified(true, _) => {
-                        return Err(RunError::from(ActivationRefusal::SessionAlreadyStaged))
-                    }
-                    Observed::Unknown(reason) => {
-                        return Err(RunError::unavailable(format!(
-                            "the staged workspace session could not be observed: {reason}"
-                        )))
-                    }
-                }
+        .ok_or_else(|| {
+            RunError::broken("the activation reservation vanished before its session")
+        })?;
+        if stored.id != self.record.id {
+            return Err(RunError::from(ActivationRefusal::WrongReservation));
+        }
+        match stored.state {
+            ActivationReservationState::Reserved => {}
+            ActivationReservationState::Committed => {
+                return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
+            }
+            ActivationReservationState::Cancelled => {
+                return Err(RunError::from(ActivationRefusal::Cancelled))
             }
         }
+        let Some(binding) = stored.session else {
+            return Err(RunError::from(ActivationRefusal::NotStaged));
+        };
+        Ok(SessionClaim {
+            reservation: stored.id,
+            environment: stored.environment,
+            generation: stored.generation,
+            binding,
+        })
+    }
+
+    /// `stage_session_binding(reservation, run, S)`: freeze the Task-owned
+    /// successor session this activation will publish — the exact workspace
+    /// owner, the run identity that will admit it, and its own owner generation
+    /// S (never the environment generation E).
+    ///
+    /// It takes no gate on the workspace owner and admits no run, so it never
+    /// touches the live predecessor session: the predecessor keeps its run, its
+    /// attachment, its selected bytes and its listener while the successor is
+    /// staged. S is a prediction of the owner's next generation, confirmed by
+    /// the successor's own admission under `Gate(owner)`, so staging grants
+    /// nothing the counter does not. The staging is compare-and-swapped: a
+    /// competing Task run cannot replace a session that is staged or admitted,
+    /// and once the activation claims the reservation the frozen identity can
+    /// never change again.
+    pub fn stage_session_binding(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        owner: &ResourceId,
+        run: RunId,
+    ) -> Result<SessionBinding, RunError> {
+        check_session_owner(&self.record, owner)?;
         crate::fault_point!(SessionStageBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
-        store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
-            let stored = read_reservation(txn.conn(), &self.record.environment, self.record.generation)?
-                .ok_or_else(|| RunError::broken("the activation reservation vanished before staging"))?;
+        let frozen = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+            // The owner's row exists from its first staging, exactly as the
+            // environment's exists from its first reservation, so the frozen
+            // identity can always be read back to the identity it names.
+            txn.resource(owner, "workspace session")?;
+            let generation = next_generation(txn.conn(), owner)?;
+            let binding = SessionBinding {
+                owner: owner.clone(),
+                run,
+                generation,
+            };
+            let borrowed: bool = txn.conn().query_row(
+                "SELECT EXISTS(SELECT 1 FROM attachments WHERE run_id=?1 AND state<>'released' AND environment<>?2)",
+                params![run.to_string(), self.record.environment.name().to_string()],
+                |row| row.get(0),
+            )?;
+            if borrowed {
+                return Err(RunError::refused(
+                    "the staged workspace session already borrows another environment",
+                ));
+            }
+            let stored = read_reservation(
+                txn.conn(),
+                &self.record.environment,
+                self.record.generation,
+            )?
+            .ok_or_else(|| RunError::broken("the activation reservation vanished before staging"))?;
             if stored.id != self.record.id {
                 return Err(RunError::from(ActivationRefusal::WrongReservation));
             }
@@ -1318,41 +1450,62 @@ impl WorkspaceActivationReservation {
                     return Err(RunError::from(ActivationRefusal::Cancelled))
                 }
             }
-            // The liveness that decided the replacement above is a gate
-            // observation, so it is made outside this transaction. Here the
-            // binding either already names this run or replaces a run that is
-            // not live: the recovery path.
-            if stored.session == Some(binding) {
-                return Ok(());
+            // The activation has admitted its environment run: its publication
+            // may already have happened, so the session it will publish is
+            // frozen. This is the replacement-after-publication refusal.
+            if stored.environment_run.is_some() {
+                return Err(RunError::from(ActivationRefusal::Frozen));
             }
-            let borrowed: bool = txn.conn().query_row(
-                "SELECT EXISTS(SELECT 1 FROM attachments WHERE run_id=?1 AND state<>'released' AND environment<>?2)",
-                params![
-                    binding.run.to_string(),
-                    self.record.environment.name().to_string()
-                ],
-                |row| row.get(0),
-            )?;
-            if borrowed {
-                return Err(RunError::refused(
-                    "the staged workspace session already borrows another environment",
-                ));
+            let changed = match stored.session {
+                Some(existing) if existing == binding => 1,
+                Some(existing) if existing.owner != binding.owner => {
+                    return Err(RunError::from(ActivationRefusal::WrongSessionOwner))
+                }
+                // A staged identity that never admitted a run, or whose run
+                // ended, is replaceable: the recovery path. An admitted and
+                // open run is not, and the CAS below refuses it.
+                Some(existing) if run_is_open(txn.conn(), existing.run)? => {
+                    return Err(RunError::from(ActivationRefusal::SessionAlreadyStaged))
+                }
+                Some(existing) => txn.conn().execute(
+                    "UPDATE workspace_activation_reservations \
+                     SET session_owner=?4,session_run=?5,session_generation=?6,updated_at=?7 \
+                     WHERE environment=?1 AND environment_generation=?2 AND state='reserved' \
+                     AND session_run=?3",
+                    params![
+                        self.record.environment.name().to_string(),
+                        self.record.generation.get() as i64,
+                        existing.run.to_string(),
+                        binding.owner.name().to_string(),
+                        binding.run.to_string(),
+                        binding.generation.get() as i64,
+                        txn.now(),
+                    ],
+                )?,
+                None => txn.conn().execute(
+                    "UPDATE workspace_activation_reservations \
+                     SET session_owner=?3,session_run=?4,session_generation=?5,updated_at=?6 \
+                     WHERE environment=?1 AND environment_generation=?2 AND state='reserved' \
+                     AND session_run IS NULL",
+                    params![
+                        self.record.environment.name().to_string(),
+                        self.record.generation.get() as i64,
+                        binding.owner.name().to_string(),
+                        binding.run.to_string(),
+                        binding.generation.get() as i64,
+                        txn.now(),
+                    ],
+                )?,
+            };
+            // Exactly one writer stages this session: a competing Task run's
+            // staging loses here rather than replacing the winner.
+            if changed != 1 {
+                return Err(RunError::from(ActivationRefusal::SessionAlreadyStaged));
             }
-            txn.conn().execute(
-                "UPDATE workspace_activation_reservations SET session_run=?3,session_generation=?4,\
-                 updated_at=?5 WHERE environment=?1 AND environment_generation=?2",
-                params![
-                    self.record.environment.name().to_string(),
-                    self.record.generation.get() as i64,
-                    binding.run.to_string(),
-                    binding.generation.get() as i64,
-                    txn.now()
-                ],
-            )?;
-            Ok::<_, RunError>(())
+            Ok::<_, RunError>(binding)
         })?;
         crate::fault_point!(SessionStageAfter)?;
-        Ok(())
+        Ok(frozen)
     }
 
     /// The staged plan, read and validated without writing anything: the
@@ -1413,13 +1566,10 @@ impl WorkspaceActivationReservation {
         if fence.generation != self.record.generation {
             return Err(RunError::from(ActivationRefusal::WrongGeneration));
         }
-        let receipt = published_receipt(environment_run)?;
-        // The staged session must be live, not merely present: a mapping that
-        // named a run whose gate is free would advertise a session no terminal
-        // can attach to. Liveness is a gate observation, so it is made before
-        // the commit's transaction; the transaction then re-validates the run's
-        // row and generation with the rest of the plan.
-        {
+        // The plan is the frozen staging plus the environment run that claims
+        // it, validated by reading everything the commit will use: the frozen
+        // successor identity, the admitted run, and that run's liveness.
+        let plan = {
             let observe = activation_observe(cx)?;
             let reader = activation_reader(&observe, root)?;
             let stored = read_reservation(
@@ -1430,13 +1580,14 @@ impl WorkspaceActivationReservation {
             .ok_or_else(|| {
                 RunError::broken("the activation reservation vanished before its commit")
             })?;
-            let Some(binding) = stored.session else {
-                return Err(RunError::from(ActivationRefusal::NotStaged));
-            };
-            match binding_is_live(&observe, root, &reader, &binding) {
+            if stored.id != self.record.id {
+                return Err(RunError::from(ActivationRefusal::WrongReservation));
+            }
+            let plan = activation_plan(reader.conn(), &stored)?
+                .ok_or_else(|| RunError::from(ActivationRefusal::NotStaged))?;
+            match binding_is_live(&observe, root, &reader, &plan.session) {
                 Observed::Verified(true, _) => {}
-                Observed::Absent(_) => return Err(RunError::from(ActivationRefusal::SessionGone)),
-                Observed::Verified(false, _) => {
+                Observed::Absent(_) | Observed::Verified(false, _) => {
                     return Err(RunError::from(ActivationRefusal::SessionGone))
                 }
                 Observed::Unknown(reason) => {
@@ -1445,7 +1596,10 @@ impl WorkspaceActivationReservation {
                     )))
                 }
             }
-        }
+            plan
+        };
+        let receipt = plan.validate_publication(environment_run)?;
+        let plan_before = plan.clone();
         crate::fault_point!(ActivationCommitBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let committed = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
@@ -1455,8 +1609,14 @@ impl WorkspaceActivationReservation {
             if stored.id != self.record.id {
                 return Err(RunError::from(ActivationRefusal::WrongReservation));
             }
+            // The frozen staged identity is what the receipt was authenticated
+            // against: the exact owner, run and S the staging froze, never a
+            // session that appeared or changed afterwards.
             let plan = activation_plan(txn.conn(), &stored)?
                 .ok_or_else(|| RunError::from(ActivationRefusal::NotStaged))?;
+            if plan != plan_before {
+                return Err(RunError::from(ActivationRefusal::Frozen));
+            }
             if plan.environment_run != Some(environment_run.id()) {
                 return Err(RunError::from(ActivationRefusal::ClaimedByAnotherRun));
             }
@@ -1496,15 +1656,24 @@ impl WorkspaceActivationReservation {
                 ],
             )?;
             run::holder_attachment(txn, &fence, plan.session.run, AttachMode::Borrow)?;
-            txn.conn().execute(
+            // Exactly one commit publishes this generation: a second writer
+            // (another activation that somehow reached the transaction) loses
+            // here instead of writing a second mapping.
+            let changed = txn.conn().execute(
                 "UPDATE workspace_activation_reservations SET state='committed',updated_at=?3 \
-                 WHERE environment=?1 AND environment_generation=?2",
+                 WHERE environment=?1 AND environment_generation=?2 AND state='reserved' \
+                 AND session_run=?4 AND session_generation=?5",
                 params![
                     self.record.environment.name().to_string(),
                     self.record.generation.get() as i64,
-                    txn.now()
+                    txn.now(),
+                    plan.session.run.to_string(),
+                    plan.session.generation.get() as i64
                 ],
             )?;
+            if changed != 1 {
+                return Err(RunError::from(ActivationRefusal::SessionAlreadyCommitted));
+            }
             Ok(CommittedActivation { plan })
         })?;
         crate::fault_point!(ActivationCommitAfter)?;
@@ -1567,73 +1736,54 @@ impl WorkspaceActivationReservation {
         })?;
         Ok(Self { record })
     }
-
-    /// The check [`SessionRef::admit_reserved`] makes before it admits anything:
-    /// a reservation that is not open, or that already has a live staged
-    /// session, refuses the competing admission instead of settling it.
-    fn admits_another_session(&self, cx: &EffectContext, root: &StateRoot) -> Result<(), RunError> {
-        let observe = activation_observe(cx)?;
-        let reader = activation_reader(&observe, root)?;
-        // Read the durable record, not this handle's snapshot: another attempt
-        // may have staged a session since the reservation was recovered.
-        let Some(stored) = read_reservation(
-            reader.conn(),
-            &self.record.environment,
-            self.record.generation,
-        )?
-        else {
-            return Err(RunError::from(ActivationRefusal::Cancelled));
-        };
-        match stored.state {
-            ActivationReservationState::Reserved => {}
-            ActivationReservationState::Committed => {
-                return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
-            }
-            ActivationReservationState::Cancelled => {
-                return Err(RunError::from(ActivationRefusal::Cancelled))
-            }
-        }
-        let Some(binding) = stored.session else {
-            return Ok(());
-        };
-        match binding_is_live(&observe, root, &reader, &binding) {
-            Observed::Verified(false, _) => Ok(()),
-            Observed::Verified(true, _) => {
-                Err(RunError::from(ActivationRefusal::SessionAlreadyStaged))
-            }
-            Observed::Unknown(reason) => Err(RunError::unavailable(format!(
-                "the staged workspace session could not be observed: {reason}"
-            ))),
-            Observed::Absent(_) => Ok(()),
-        }
-    }
 }
 
-/// The one right to admit an environment activation run at a reserved
-/// generation E. Only [`WorkspaceActivationReservation::claim`] constructs one
-/// and only [`Run::begin_claimed`] consumes it. It is not authority: admission
+/// One right to admit a run at a reserved generation, in one admission
+/// transaction. Only [`WorkspaceActivationReservation::claim`] and
+/// [`WorkspaceActivationReservation::claim_session`] construct one, and only
+/// [`Run::begin_claimed`] consumes it. A claim is not authority: admission
 /// re-checks the durable reservation in its own transaction, so a claim for a
-/// generation the environment no longer offers binds nothing.
+/// generation, a run or a session the journal no longer offers binds nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActivationClaim {
-    record: ActivationReservationRecord,
+pub enum ActivationClaim {
+    /// The environment activation run at the reserved generation E.
+    Environment(EnvironmentClaim),
+    /// The frozen successor workspace session, at its own generation S.
+    Session(SessionClaim),
 }
 
 impl ActivationClaim {
     pub fn reservation_id(&self) -> ActivationReservationId {
-        self.record.id
+        match self {
+            Self::Environment(claim) => claim.reservation,
+            Self::Session(claim) => claim.reservation,
+        }
     }
+    /// The environment this claim belongs to.
     pub fn environment(&self) -> &ResourceId {
-        &self.record.environment
+        match self {
+            Self::Environment(claim) => &claim.environment,
+            Self::Session(claim) => &claim.environment,
+        }
     }
-    /// E: the generation this claim admits at.
+    /// E: the reserved environment generation.
     pub fn generation(&self) -> Generation {
-        self.record.generation
+        match self {
+            Self::Environment(claim) => claim.generation,
+            Self::Session(claim) => claim.generation,
+        }
+    }
+    /// For a session claim: the frozen successor identity it admits.
+    pub fn session_binding(&self) -> Option<&SessionBinding> {
+        match self {
+            Self::Environment(_) => None,
+            Self::Session(claim) => Some(&claim.binding),
+        }
     }
 
-    /// Bind the reservation to the run being admitted, inside the admission
-    /// transaction. The generation is the one the environment counter advanced
-    /// to, so a reservation that another activation consumed refuses here.
+    /// Bind the claim to the run being admitted, inside the admission
+    /// transaction. The generation is the one the owner counter advanced to, so
+    /// a reservation or a staging another admission consumed refuses here.
     pub(crate) fn bind(
         &self,
         txn: &mut Txn<'_>,
@@ -1641,16 +1791,51 @@ impl ActivationClaim {
         generation: Generation,
         run: RunId,
     ) -> Result<(), RunError> {
-        if owner.kind() != ResourceKind::Env || owner != &self.record.environment {
+        match self {
+            Self::Environment(claim) => claim.bind(txn, owner, generation, run),
+            Self::Session(claim) => claim.adopt(txn, owner, generation, run),
+        }
+    }
+}
+
+/// The right to admit the environment activation run at the reserved generation
+/// E.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentClaim {
+    reservation: ActivationReservationId,
+    environment: ResourceId,
+    generation: Generation,
+}
+
+impl EnvironmentClaim {
+    pub fn reservation_id(&self) -> ActivationReservationId {
+        self.reservation
+    }
+    pub fn environment(&self) -> &ResourceId {
+        &self.environment
+    }
+    /// E: the generation this claim admits at.
+    pub fn generation(&self) -> Generation {
+        self.generation
+    }
+
+    fn bind(
+        &self,
+        txn: &mut Txn<'_>,
+        owner: &ResourceId,
+        generation: Generation,
+        run: RunId,
+    ) -> Result<(), RunError> {
+        if owner.kind() != ResourceKind::Env || owner != &self.environment {
             return Err(RunError::from(ActivationRefusal::WrongEnvironment));
         }
-        if generation != self.record.generation {
+        if generation != self.generation {
             return Err(RunError::from(ActivationRefusal::WrongGeneration));
         }
         let stored = read_reservation(txn.conn(), owner, generation)?.ok_or_else(|| {
             RunError::broken("the activation reservation vanished before its run was admitted")
         })?;
-        if stored.id != self.record.id {
+        if stored.id != self.reservation {
             return Err(RunError::from(ActivationRefusal::WrongReservation));
         }
         match stored.state {
@@ -1678,6 +1863,75 @@ impl ActivationClaim {
                 txn.now()
             ],
         )?;
+        Ok(())
+    }
+}
+
+/// The right to admit the frozen successor workspace session at its own
+/// generation S. It is the *same* owner the predecessor session serves, and it
+/// admits one run identity only: the one the staging froze.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionClaim {
+    reservation: ActivationReservationId,
+    environment: ResourceId,
+    generation: Generation,
+    binding: SessionBinding,
+}
+
+impl SessionClaim {
+    pub fn reservation_id(&self) -> ActivationReservationId {
+        self.reservation
+    }
+    pub fn environment(&self) -> &ResourceId {
+        &self.environment
+    }
+    /// E: the reserved environment generation.
+    pub fn generation(&self) -> Generation {
+        self.generation
+    }
+    /// The frozen successor identity: owner, run and S.
+    pub fn binding(&self) -> &SessionBinding {
+        &self.binding
+    }
+
+    /// Adopt the frozen identity in the successor's admission transaction. The
+    /// staged owner, run and generation are compared with what admission is
+    /// about to write, so a stale staging (the owner's counter moved) or a
+    /// different run refuses before any run row exists.
+    fn adopt(
+        &self,
+        txn: &mut Txn<'_>,
+        owner: &ResourceId,
+        generation: Generation,
+        run: RunId,
+    ) -> Result<(), RunError> {
+        if owner.kind() != ResourceKind::Task || owner != &self.binding.owner {
+            return Err(RunError::from(ActivationRefusal::WrongSessionOwner));
+        }
+        if run != self.binding.run || generation != self.binding.generation {
+            return Err(RunError::from(ActivationRefusal::WrongGeneration));
+        }
+        let stored =
+            read_reservation(txn.conn(), &self.environment, self.generation)?.ok_or_else(|| {
+                RunError::broken("the activation reservation vanished before its session")
+            })?;
+        if stored.id != self.reservation {
+            return Err(RunError::from(ActivationRefusal::WrongReservation));
+        }
+        match stored.state {
+            ActivationReservationState::Reserved => {}
+            ActivationReservationState::Committed => {
+                return Err(RunError::from(ActivationRefusal::AlreadyCommitted))
+            }
+            ActivationReservationState::Cancelled => {
+                return Err(RunError::from(ActivationRefusal::Cancelled))
+            }
+        }
+        // The staging is frozen: the identity this claim names is still the one
+        // the reservation holds, or the claim admits nothing.
+        if stored.session.as_ref() != Some(&self.binding) {
+            return Err(RunError::from(ActivationRefusal::Frozen));
+        }
         Ok(())
     }
 }
@@ -1756,7 +2010,6 @@ pub struct ActivationPlan {
     environment_generation: Generation,
     environment_run: Option<RunId>,
     session: SessionBinding,
-    session_owner: ResourceId,
 }
 
 impl ActivationPlan {
@@ -1779,6 +2032,14 @@ impl ActivationPlan {
     pub fn session_run(&self) -> RunId {
         self.session.run
     }
+    /// The exact workspace owner that serves the successor session.
+    pub fn session_owner(&self) -> &ResourceId {
+        &self.session.owner
+    }
+    /// The frozen successor identity this plan publishes.
+    pub fn binding(&self) -> &SessionBinding {
+        &self.session
+    }
     /// S, the session run's own owner generation. Never E.
     pub fn session_generation(&self) -> Generation {
         self.session.generation
@@ -1797,7 +2058,7 @@ impl ActivationPlan {
         SessionRef::new(
             self.session.run,
             Fence {
-                resource: self.session_owner.clone(),
+                resource: self.session.owner.clone(),
                 generation: self.session.generation,
             },
             self.environment.clone(),
@@ -1805,11 +2066,51 @@ impl ActivationPlan {
         )
     }
 
-    /// Validate an observed guest publication receipt against this plan. The
-    /// plan is the staging, not a committed mapping: a receipt is validated
-    /// before anything is published, so a crash after the immutable guest
-    /// pointer but before the commit leaves the workspace unavailable rather
-    /// than advertised.
+    /// Authenticate the guest publication the activation run recorded against
+    /// this frozen plan, before the commit publishes anything.
+    ///
+    /// Three fences are checked together: the receipt must name E (the
+    /// environment at the reserved generation), the run that recorded it must be
+    /// the plan's own environment activation run, and the session this commit
+    /// will publish is the frozen `(owner, run, S)` the staging names — never a
+    /// receipt from another run, generation or session. The run must also be
+    /// able to publish at all, and every required effect it recorded must be
+    /// applied.
+    ///
+    /// This is deliberately a *staging* check, not a committed-mapping check: a
+    /// receipt is validated before anything is published, so a crash after the
+    /// immutable guest pointer but before the commit leaves the workspace
+    /// unavailable rather than advertised.
+    pub fn validate_publication(
+        &self,
+        environment_run: &Run<'_>,
+    ) -> Result<run::GuestPublicationReceipt, RunError> {
+        if self.environment_run != Some(environment_run.id()) {
+            return Err(ActivationRefusal::ClaimedByAnotherRun.into());
+        }
+        if environment_run.fence() != &self.fence() {
+            return Err(ActivationRefusal::WrongGeneration.into());
+        }
+        // A commit publishes the environment's state, so it is an effect of this
+        // run: a run that cannot act (settling, closed or poisoned) and a run
+        // with any required effect still unresolved publishes nothing.
+        environment_run
+            .can_effect()
+            .map_err(|_| RunError::from(ActivationRefusal::ActivationNotReady))?;
+        if environment_run
+            .effects()?
+            .iter()
+            .any(|effect| effect.spec.required && effect.state != run::EffectState::Applied)
+        {
+            return Err(RunError::from(ActivationRefusal::ActivationIncomplete));
+        }
+        let receipt = published_receipt(environment_run)?;
+        self.validate_receipt(&receipt)?;
+        Ok(receipt)
+    }
+
+    /// Validate only the receipt's own fields against this plan's fence. The
+    /// full authentication is [`Self::validate_publication`].
     pub fn validate_receipt(&self, receipt: &run::GuestPublicationReceipt) -> Result<(), RunError> {
         if receipt.environment != self.fence() {
             return Err(ActivationRefusal::ReceiptMismatch.into());
@@ -1846,7 +2147,7 @@ fn activation_plan(
     conn: &rusqlite::Connection,
     record: &ActivationReservationRecord,
 ) -> Result<Option<ActivationPlan>, RunError> {
-    let Some(session) = record.session else {
+    let Some(session) = record.session.clone() else {
         return Ok(None);
     };
     let live: Option<(i64, String, Vec<u8>)> = conn
@@ -1866,7 +2167,12 @@ fn activation_plan(
         return Err(RunError::from(ActivationRefusal::SessionGone));
     }
     let session_owner = decode_owner(&canonical)?;
-    check_session_owner(record, &session_owner)?;
+    // The admitted run is the frozen staging's run, under the frozen owner: a
+    // session that appeared some other way is never published.
+    if session_owner.canonical() != session.owner.canonical() {
+        return Err(RunError::from(ActivationRefusal::WrongSessionOwner));
+    }
+    check_session_owner(record, &session.owner)?;
     let borrowed: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM attachments WHERE run_id=?1 AND state<>'released' AND environment<>?2)",
         params![
@@ -1884,6 +2190,5 @@ fn activation_plan(
         environment_generation: record.generation,
         environment_run: record.environment_run,
         session,
-        session_owner,
     }))
 }

@@ -944,7 +944,9 @@ impl<'a> Run<'a> {
         }
         result
     }
-    fn can_effect(&self) -> Result<(), RunError> {
+    /// Whether this run may still record an effect. The workspace activation
+    /// seam asks it before a commit publishes any state from the run.
+    pub(crate) fn can_effect(&self) -> Result<(), RunError> {
         self.cx.operation().check("effect")?;
         if self.poisoned || matches!(self.phase()?, Phase::Stopping | Phase::Closed) {
             return Err(RunError::broken("run must settle before more effects"));
