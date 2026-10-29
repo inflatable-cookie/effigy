@@ -442,19 +442,16 @@ pub(crate) fn outcome(
         if !effect.state.terminal() {
             // The effect's own intent recorded its redacted label. A settle that
             // stops on this effect has no later one to carry the reason, so the
-            // description has to name both here (effigy#476).
+            // residue has to name both here (effigy#476).
             let label = effect_label(&effect).map(str::to_owned);
             let reason = effect.reason.unwrap_or_else(|| "unresolved effect".into());
-            let detail = match label {
-                Some(label) => format!("{label}: {reason}"),
-                None => reason,
-            };
-            outcome.add_residue(Residue {
-                kind: effect.spec.kind,
-                id: effect.spec.target.resource,
-                observation: Observed::Unknown(UnknownReason::Inconsistent(detail)),
-                next: next.clone(),
-            });
+            outcome.add_residue(Residue::unresolved(
+                &effect.spec.kind,
+                effect.spec.target.resource,
+                label.as_deref(),
+                &reason,
+                next.clone(),
+            ));
         }
     }
     if !complete {

@@ -106,6 +106,29 @@ pub struct Residue {
     pub next: Invocation,
 }
 impl Residue {
+    /// The residue a settle records for an effect it could not release: its
+    /// kind, the resource it was fenced on, the redacted label its own intent
+    /// recorded when it recorded one, and the kernel's reason. Keeping the
+    /// wording here means the settle and a caller that requires complete
+    /// cleanup describe an unresolved effect the same way (effigy#476).
+    pub fn unresolved(
+        kind: &str,
+        id: ResourceId,
+        label: Option<&str>,
+        reason: &str,
+        next: Invocation,
+    ) -> Self {
+        let detail = match label {
+            Some(label) if !label.is_empty() => format!("{label}: {reason}"),
+            _ => reason.to_owned(),
+        };
+        Self {
+            kind: kind.to_owned(),
+            id,
+            observation: Observed::Unknown(UnknownReason::Inconsistent(detail)),
+            next,
+        }
+    }
     /// What stayed unresolved, in the words an operator acts on: the effect
     /// kind, the reason the kernel recorded, and (the kernel keeps it in that
     /// reason) the redacted label the effect's own intent recorded. A settle

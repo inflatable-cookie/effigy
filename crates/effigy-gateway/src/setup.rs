@@ -1108,13 +1108,9 @@ pub(crate) mod tests {
         // The settle can stop on its last open effect (effigy#476), so setup
         // reports the settled outcome itself instead of a bare unresolved
         // cleanup: the effect kind, the label its intent recorded and the
-        // kernel's own custody reason. The recorded reason already is a
+        // kernel's own custody reason. The recorded reason is already a
         // rendered observation, so it must not be wrapped a second time.
-        let recorded =
-            effigy_kernel::observe::UnknownReason::Inconsistent("group anchor unavailable".into());
-        let reason = effigy_kernel::observe::UnknownReason::Inconsistent(format!(
-            "gateway setup adapter: {recorded}"
-        ));
+        let recorded = "could not tell: the evidence contradicts itself (group anchor unavailable); retry, and if it persists run `effigy doctor`";
         let mut settled = effigy_kernel::outcome::Outcome::new(
             Err(effigy_kernel::outcome::ErrorInfo {
                 code: effigy_kernel::outcome::ErrorCode::Incomplete,
@@ -1126,12 +1122,13 @@ pub(crate) mod tests {
             &[],
         )
         .unwrap();
-        settled.add_residue(effigy_kernel::outcome::Residue {
-            kind: "kernel:process".into(),
-            id: ResourceId::store(Scope::Machine, "gateway-setup").unwrap(),
-            observation: Observed::Unknown(reason),
-            next: operator::next(),
-        });
+        settled.add_residue(effigy_kernel::outcome::Residue::unresolved(
+            "kernel:process",
+            ResourceId::store(Scope::Machine, "gateway-setup").unwrap(),
+            Some("gateway setup adapter"),
+            recorded,
+            operator::next(),
+        ));
         let message = unresolved_cleanup(&settled).to_string();
         assert!(message.contains("`kernel:process`"), "{message}");
         assert!(message.contains("gateway setup adapter"), "{message}");
