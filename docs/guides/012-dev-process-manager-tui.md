@@ -396,8 +396,9 @@ only needed its predecessor to start keeps going after that predecessor exits
 non-zero (`fail_on_non_zero = false`), even inside its own scheduled delay. The
 environment phase's own record is terminal on every exit — settled on a
 success, a stop or a nothing-to-await fallback, and attributed with its headline
-and first evidence on a failure or timeout — and a new session resets it before
-probing, without touching the staged host snapshot. The same
+and first evidence on a failure or timeout — and a new session resets it at its
+own boundary, before polling and before composing, so the previous run's counts
+never appear in the new one; the reset never touches the staged host snapshot. The same
 state reaches `--headless` (`[managed] front: waiting for api (starting) (4s)`,
 `[api] [host] waiting for GET / -> 200 (12s)`) and `status`.
 

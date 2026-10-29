@@ -88,6 +88,13 @@ impl HostWaitGraph {
         now: Instant,
     ) -> Self {
         let ledger = WaitLedger::environment(repo_root, &policy.name);
+        // The new session's phase begins settled and count-free *before* the
+        // run polls it: the `up` child resets again when it reaches readiness,
+        // but the run's progress callback reads this record from the moment the
+        // phase starts, and an interrupted prior run's counts must never be
+        // projected into this one (effigy#458). The host snapshot staged below
+        // is a separate record and is untouched.
+        ledger.settle_phase();
         let started = policy
             .host_processes
             .iter()
@@ -1131,9 +1138,10 @@ mod environment_tests {
         let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
         let all = BTreeSet::from(["api".to_owned(), "front".to_owned(), "admin".to_owned()]);
 
-        // 1. The container readiness publisher writes the phase's own record,
-        //    the run's owner reads those counts, and every entry that waits for
-        //    the phase names them.
+        // 1. The run's boundary resets the phase; the container readiness
+        //    publisher then writes its own record, the run's owner reads those
+        //    counts, and every entry that waits for the phase names them.
+        let mut parent = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
         ledger.publish_phase(&EntryState {
             entry: "environment".to_owned(),
             phase: EntryPhase::Waiting,
@@ -1148,7 +1156,6 @@ mod environment_tests {
         let (healthy, total) = ledger
             .read_progress()
             .expect("the phase reports its containers");
-        let mut parent = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
         parent.environment_progress(healthy, total, clock.at());
         let presented = frame(&checkout, &["api", "front", "admin"], "api");
         for entry in ["api", "front", "admin"] {
@@ -1655,6 +1662,70 @@ mod environment_tests {
                 .contains("500"),
             "{json}"
         );
+    }
+
+    /// The new session's boundary resets the phase record *before* the run
+    /// starts polling it, so an interrupted prior run's container counts are
+    /// never projected into this run (effigy#458).
+    #[test]
+    fn a_new_run_never_projects_the_previous_phases_counts() {
+        let (_dir, checkout) = fixture();
+        let policy = four_entry_policy(&checkout);
+        let clock = Clock::new();
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        // A prior run was interrupted with three of four containers healthy.
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(ledger.read_progress(), Some((3, 4)));
+
+        // The run's own boundary publishes the host graph and resets the phase
+        // in one step, before any progress poll can read it.
+        let _graph = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        assert_eq!(
+            ledger.read_progress(),
+            None,
+            "the previous run's counts are not projected into this one"
+        );
+        let published = records(&checkout);
+        for entry in ["api", "front", "admin"] {
+            assert_eq!(
+                state_of(&published, entry).waiting_on,
+                Some(WaitOn::Environment {
+                    healthy: None,
+                    total: None
+                }),
+                "{entry} waits for the phase without inventing counts"
+            );
+            assert!(
+                !state_of(&published, entry)
+                    .status_line()
+                    .contains("containers 3/4"),
+                "{entry} never repeats the prior run's counts"
+            );
+        }
+
+        // Only the readiness publisher's own observation reports counts.
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(1),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(ledger.read_progress(), Some((1, 4)));
     }
 
     /// The environment's own failure is terminal for every host entry: none
