@@ -81,7 +81,16 @@ fn execute_bun_link_inner(
     // The apply retires the registration it created inside its own index
     // transaction, so there is no post-apply window in which an interrupt could
     // leave a registration behind. The owner guard covers that transaction.
-    let report = apply_bun_link_plan_owned(plan, &home, process, &observer)?;
+    let report = apply_bun_link_plan_owned(
+        plan,
+        &home,
+        process,
+        &observer,
+        owner.as_ref().map(crate::bun_owner::BunLinkOwner::started),
+    )?;
+    // Leaving here must not outrun an interrupt cleanup: the watcher retires
+    // the registration this process created, and it can only do that while the
+    // process is still alive.
     drop(owner);
     Ok(report)
 }
@@ -100,6 +109,7 @@ pub fn retire_owned_bun_registrations(
     consumer_repo: impl AsRef<Path>,
     library_path: impl AsRef<Path>,
     registrations: &[(String, PathBuf)],
+    started: bool,
     process: &impl ReadOnlyProcess,
     observer: &impl BunPlanObserver,
 ) -> BunRegistrationRetirement {
@@ -107,18 +117,33 @@ pub fn retire_owned_bun_registrations(
     let consumer_repo = consumer_repo.as_ref();
     let library_path = library_path.as_ref();
     let mut retirement = BunRegistrationRetirement::default();
-    let index_store = BunRegistrationIndexStore::for_home(home);
-    // Only the owner that holds the index lock for its own apply may retire.
-    // Every other link waits on that lock, and a link waiting on it planned
-    // before this owner created anything: its registrations are not in the
-    // index yet, so this owner cannot tell whether a registration belongs to
-    // it or to the link that is still running.
-    if !crate::state::state_lock_held_by_this_process(index_store.lock_path()) {
+    if !started {
+        // This owner never began mutating: a link that only wanted the index
+        // lock planned its registrations before this one created anything, and
+        // they are not in the index yet. Retire nothing.
         retirement
             .retained
             .extend(registrations.iter().map(|(name, _)| name.clone()));
         return retirement;
     }
+    let index_store = BunRegistrationIndexStore::for_home(home);
+    // Take the index lock rather than assuming this process still holds it:
+    // stopping the in-flight `bun link` lets the apply fail and release its own
+    // transaction before the retiral runs. Waiting for the lock also proves no
+    // other link is mid-apply while this retiral decides.
+    let _lock = match crate::state::StateLock::acquire_waiting(
+        index_store.lock_path(),
+        std::time::Duration::from_secs(10),
+    ) {
+        Ok(lock) => lock,
+        Err(error) => {
+            retirement.failures.push(error.to_string());
+            retirement
+                .retained
+                .extend(registrations.iter().map(|(name, _)| name.clone()));
+            return retirement;
+        }
+    };
     let index = match index_store.read() {
         Ok(index) => index,
         Err(error) => {
@@ -396,7 +421,14 @@ pub fn apply_bun_link_plan(
     process: &impl ReadOnlyProcess,
     observer: &impl BunPlanObserver,
 ) -> Result<BunLinkOperationReport, DepsError> {
-    apply_bun_link_plan_inner(plan, home, process, observer, RetireRegistrations::Never)
+    apply_bun_link_plan_inner(
+        plan,
+        home,
+        process,
+        observer,
+        RetireRegistrations::Never,
+        None,
+    )
 }
 
 fn apply_bun_link_plan_owned(
@@ -404,6 +436,7 @@ fn apply_bun_link_plan_owned(
     home: impl AsRef<Path>,
     process: &impl ReadOnlyProcess,
     observer: &impl BunPlanObserver,
+    started: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<BunLinkOperationReport, DepsError> {
     apply_bun_link_plan_inner(
         plan,
@@ -411,6 +444,7 @@ fn apply_bun_link_plan_owned(
         process,
         observer,
         RetireRegistrations::LinkOwned,
+        started,
     )
 }
 
@@ -420,6 +454,7 @@ fn apply_bun_link_plan_inner(
     process: &impl ReadOnlyProcess,
     observer: &impl BunPlanObserver,
     retire: RetireRegistrations,
+    started: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<BunLinkOperationReport, DepsError> {
     if plan.desired.is_none() {
         let errors = plan.operation.warnings.clone();
@@ -485,6 +520,11 @@ fn apply_bun_link_plan_inner(
 
     index_store.update_exact(index_before, |current| {
         validate_physical_preconditions(&plan, observer)?;
+        if let Some(started) = started {
+            // From here the transaction can create a registration, so an
+            // interrupt from here on owns one it has to retire.
+            started.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         for change in &physical_changes {
             if let Err(error) = apply_exact_change(change) {
                 outcome = BunLinkOutcome::ApplyFailed;

@@ -418,7 +418,10 @@ During v0.x, MINOR bumps may include breaking changes.
   owner died. The interrupt handler is installed before the owner can create a
   registration, and a child process reserves its place in the cleanup registry
   before it starts, so neither an interrupt during handler setup nor one during
-  a spawn can leave a registration process running past the cleanup. It also retires nothing unless it holds the Bun index lock for its
+  a spawn can leave a registration process running past the cleanup. Stopping
+  that child lets the apply release its own transaction, so the retiral takes the
+  index lock instead of assuming the process still holds it, and the command
+  waits for a pending cleanup before returning. It also retires nothing unless it holds the Bun index lock for its
   own apply: a link that only wants that lock planned its registrations before
   this owner created anything, so they are not in the index yet and this owner
   cannot see them. While it holds the lock it reads the index instead of waiting
