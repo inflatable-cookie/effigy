@@ -390,7 +390,14 @@ published a failure, that entry and its report stay: the run's generic `up`
 exit never replaces them, and the run's own error names the failing entry and
 what it observed. A prerequisite failure is terminal
 and attributed — `front [not started: api failed]`, and the pane reads
-`not started — api failed (status 500)` — and no dependent starts. The same
+`not started — api failed (status 500)` — and no dependent starts. Only a
+dependent that needs the failed entry's *readiness* loses it: a workload that
+only needed its predecessor to start keeps going after that predecessor exits
+non-zero (`fail_on_non_zero = false`), even inside its own scheduled delay. The
+environment phase's own record is terminal on every exit — settled on a
+success, a stop or a nothing-to-await fallback, and attributed with its headline
+and first evidence on a failure or timeout — and a new session resets it before
+probing, without touching the staged host snapshot. The same
 state reaches `--headless` (`[managed] front: waiting for api (starting) (4s)`,
 `[api] [host] waiting for GET / -> 200 (12s)`) and `status`.
 
