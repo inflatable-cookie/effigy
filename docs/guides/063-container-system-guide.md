@@ -1610,7 +1610,9 @@ owner execute bit when you own it, and for a root-owned image the group bits
 when one of your groups is the image's group, otherwise the other bits. A
 root-owned image whose group you are in but which your group cannot execute is
 refused, and the launch unit that names an image you cannot run is reported
-`stale` rather than healthy. Everything else, including the user unit, runs as
+`stale` rather than healthy. The refusal names the bit that decided it — owner,
+the matched group, or other — and the `chmod` that fixes that bit, instead of
+advising an other-execute bit a matching group would ignore. Everything else, including the user unit, runs as
 your account. Immediately after applying the capability, setup re-execs the
 installed binary as you, checks that the fresh exec carries
 `CAP_NET_BIND_SERVICE`, and binds the configured low ports; a refusal fails

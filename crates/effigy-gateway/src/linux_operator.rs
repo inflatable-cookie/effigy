@@ -1112,14 +1112,28 @@ fn validate_executable_in(
 /// The installed binary a unit may name. A changed, linked, missing or writable
 /// image is refused before a unit or a capability is bound to it.
 pub fn verify_executable(executable: &Path, operator_uid: u32) -> io::Result<()> {
-    let refused = || {
-        error(format!(
-            "the installed gateway binary {} is not usable for the Linux operator route: it must be one real file (not a symbolic or hard link) that the operator (uid {operator_uid}) can execute — owner execute set when the operator owns it, other-execute when root owns it — owned by the operator or root, and not group- or world-writable. Install it so this account can run it, then run `effigy gateway setup` again",
-            executable.display()
-        ))
-    };
-    let facts = image_facts(executable).map_err(|_| refused())?;
-    validate_executable(&facts, operator_uid).map_err(|_| refused())
+    let facts = image_facts(executable)
+        .map_err(|_| executable_refusal("it cannot be opened", executable, operator_uid))?;
+    validate_executable(&facts, operator_uid).map_err(|_| {
+        executable_refusal(
+            "its permissions or identity are not usable",
+            executable,
+            operator_uid,
+        )
+    })
+}
+
+/// Why an image was refused, naming the access rule the account actually has so
+/// the advice can fix the failure. A matched, non-executable group is the common
+/// case: telling the operator to set other-execute would not help, because a
+/// matching group is consulted before other bits.
+fn executable_refusal(reason: &str, executable: &Path, operator_uid: u32) -> io::Error {
+    error(format!(
+        "the installed gateway binary {} is not usable for the Linux operator route ({reason}): it must be one real file (not a symbolic or hard link) that this account (uid {operator_uid}) can execute, owned by the operator or root, and not group- or world-writable. Execution follows this account's own access: the owner execute bit when this account owns the image; otherwise the group execute bit when one of this account's process groups is the image's group; the other execute bit only when no group matches; and when the group memberships cannot be read, both the group and other execute bits must be set. Fix that bit — for example `chmod g+x {}` for a matching group, or `chmod o+x {}` when no group matches — then run `effigy gateway setup` again",
+        executable.display(),
+        executable.display(),
+        executable.display()
+    ))
 }
 
 /// Open exactly the file at `path`, without following a link, and report its
@@ -1240,7 +1254,7 @@ fn bound_identity(
 ) -> io::Result<ExecutableIdentity> {
     let identity = host.identity()?;
     validate_executable(&identity.facts(), operator_uid).map_err(|_| {
-        error("the installed gateway binary is unsafe for a low-port capability: it must be one real file that the operator can execute, owned by the operator (or root) and not group- or world-writable; install it so this account can run it and run `effigy gateway setup` again")
+        error("the installed gateway binary is unsafe for a low-port capability: it must be one real file that this account can execute — owner, group or other execute as this account's access resolves — owned by the operator (or root) and not group- or world-writable; chmod the bit that applies and run `effigy gateway setup` again")
     })?;
     Ok(identity)
 }
@@ -3658,6 +3672,88 @@ mod tests {
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
             assert!(paths.unit.exists());
         });
+    }
+
+    /// The refusal names the access rule that actually decided it, so following
+    /// the advice can fix the failure. The old text said a root-owned image
+    /// needed other-execute, which is already set in the case that fails: a
+    /// matching group that cannot execute.
+    #[test]
+    fn the_executable_refusal_names_the_access_rule_that_decided_it() {
+        let operator = 501;
+        let message = executable_refusal(
+            "its permissions or identity are not usable",
+            Path::new("/home/operator/.local/bin/effigy"),
+            operator,
+        )
+        .to_string();
+        // The real rule, in order.
+        for expected in [
+            "owner execute bit when this account owns the image",
+            "group execute bit when one of this account's process groups is the image's group",
+            "other execute bit only when no group matches",
+            "both the group and other execute bits must be set",
+            "chmod g+x",
+            "chmod o+x",
+        ] {
+            assert!(
+                message.contains(expected),
+                "missing {expected:?}: {message}"
+            );
+        }
+        // The misleading advice is gone: other-execute is not the rule for a
+        // root-owned image whose group this account matches.
+        assert!(
+            !message.contains("other-execute when root owns it"),
+            "{message}"
+        );
+
+        // The fixes the message names really resolve the two refusal cases.
+        let member = GroupSet {
+            groups: vec![20, 77],
+            resolved: true,
+        };
+        let stranger = GroupSet {
+            groups: vec![20],
+            resolved: true,
+        };
+        let group_denies = ExecutableFacts {
+            regular: true,
+            executable: true,
+            nlink: 1,
+            mode: 0o100745,
+            uid: 0,
+            gid: 77,
+            len: 4096,
+        };
+        assert!(validate_executable_in(&group_denies, operator, &member).is_err());
+        // `chmod g+x` — exactly what the message names — fixes it.
+        assert!(validate_executable_in(
+            &ExecutableFacts {
+                mode: 0o100755,
+                ..group_denies
+            },
+            operator,
+            &member
+        )
+        .is_ok());
+
+        let foreign_group = ExecutableFacts {
+            mode: 0o100750,
+            ..group_denies
+        };
+        assert!(validate_executable_in(&foreign_group, operator, &stranger).is_err());
+        // With no matching group the other bit decides, so `chmod o+x` fixes it
+        // and the group bit alone does not.
+        assert!(validate_executable_in(
+            &ExecutableFacts {
+                mode: 0o100751,
+                ..foreign_group
+            },
+            operator,
+            &stranger
+        )
+        .is_ok());
     }
 
     /// POSIX applies the group class before the other class, so a root-owned
