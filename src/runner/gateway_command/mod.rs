@@ -30,6 +30,7 @@ use daemon::{
     spawn_gateway_daemon, stop_gateway_process, stop_gateway_process_for_replacement,
     stop_private_gateway_process, wait_for_private_gateway_ready,
 };
+use effigy_gateway::operator::{StartPhase, StopPhase};
 use effigy_ui::steps::{live_step, ProgressSource};
 use elevation::{gateway_invocation_is_escalated, prepare_gateway_state_for_elevated_run};
 
@@ -549,9 +550,11 @@ fn run_gateway_up_with_config(
         let result = live_progress(
             "starting the gateway process",
             &format!("the gateway to answer on {}", config.proxy.bind_addr),
-            |_| {
-                effigy_gateway::operator::up(config)
-                    .map_err(|e| RunnerError::task_invocation(e.to_string()))
+            |progress| {
+                effigy_gateway::operator::up_observed(config, &|phase| {
+                    observe_start(progress, &config.proxy.bind_addr.to_string(), phase)
+                })
+                .map_err(|e| RunnerError::task_invocation(e.to_string()))
             },
         )?;
         return Ok(if output_json {
@@ -621,9 +624,22 @@ fn run_private_gateway_up(
     )?;
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let route_table = RouteTable::load(&config.route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let tls = gateway_tls_summary(config, &route_table);
+    let tls = live_progress(
+        "checking the published routes",
+        &format!("the route table at {}", config.route_table_path.display()),
+        |progress| {
+            let route_table = RouteTable::load(&config.route_table_path)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let tls = gateway_tls_summary(config, &route_table);
+            record_route_publication(
+                progress,
+                route_table.len(),
+                tls.cert_ready_count,
+                tls.route_count,
+            );
+            Ok(tls)
+        },
+    )?;
     render_gateway_up_result(
         config,
         GatewayUpState::Started(status.status),
@@ -646,9 +662,11 @@ fn run_gateway_down_with_config(
                 "the gateway process to exit and its record at {} to clear",
                 config.pid_file_path.display()
             ),
-            |_| {
-                effigy_gateway::operator::down(config)
-                    .map_err(|e| RunnerError::task_invocation(e.to_string()))
+            |progress| {
+                effigy_gateway::operator::down_observed(config, &|phase| {
+                    observe_stop(progress, phase)
+                })
+                .map_err(|e| RunnerError::task_invocation(e.to_string()))
             },
         )?;
         return Ok(if output_json {
@@ -1861,6 +1879,7 @@ fn probe_low_ports(
     run: &mut effigy_kernel::run::Run<'_>,
     cx: &effigy_kernel::ctx::EffectContext,
     config: &GatewayConfig,
+    progress: &ProgressSource,
 ) -> std::io::Result<()> {
     let addresses = low_port_addresses(config);
     if addresses.is_empty() {
@@ -1873,10 +1892,103 @@ fn probe_low_ports(
     argv.extend(addresses.into_iter().map(OsString::from));
     let output = effigy_gateway::setup::command(run, cx, argv, false)?;
     let report = effigy_gateway::linux_operator::BindProbeReport::parse(&output)?;
+    record_bind_probe(progress, &report);
     match report.refusal() {
         Some(reason) => Err(std::io::Error::other(reason)),
         None => Ok(()),
     }
+}
+
+/// Show one operator start phase: the supervisor admitting the run, then the
+/// daemon's own self-test with the status it last reported.
+fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
+    match phase {
+        StartPhase::Admitting => {
+            progress.set_awaiting("the supervisor to start the gateway daemon");
+            progress.update("admitting the gateway run", None, None);
+        }
+        StartPhase::SelfTest { status } => {
+            progress.set_awaiting(format!("the gateway to answer on {listener}"));
+            progress.update(
+                "checking the gateway self-test",
+                None,
+                Some(format!("gateway status is {status}")),
+            );
+        }
+    }
+}
+
+/// Show one operator stop phase: the stop request, then the daemon winding
+/// down with the status it last reported.
+fn observe_stop(progress: &ProgressSource, phase: StopPhase) {
+    match phase {
+        StopPhase::Requested => {
+            progress.set_awaiting("the supervisor to record the stop");
+            progress.update("requesting the gateway stop", None, None);
+        }
+        StopPhase::Settling { status } => {
+            progress.set_awaiting("the gateway process to exit");
+            progress.update(
+                "waiting for the gateway to stop",
+                None,
+                Some(format!("gateway status is {status}")),
+            );
+        }
+    }
+}
+
+/// Name the route table the gateway serves and how many TLS routes have a
+/// certificate yet.
+fn record_route_publication(
+    progress: &ProgressSource,
+    routes: usize,
+    certificates_ready: usize,
+    tls_routes: usize,
+) {
+    progress.update(
+        "checking the published routes",
+        None,
+        Some(format!(
+            "{routes} routes in the table, {certificates_ready} of {tls_routes} TLS routes have certificates"
+        )),
+    );
+}
+
+/// Name each bind outcome of the low-port probe as its report lands. The probe
+/// is one child process, so every address's outcome arrives together.
+#[cfg(any(target_os = "linux", test))]
+fn record_bind_probe(
+    progress: &ProgressSource,
+    report: &effigy_gateway::linux_operator::BindProbeReport,
+) {
+    use effigy_gateway::linux_operator::BindOutcome;
+    let total = report.addresses.len() as u64;
+    let bound = report
+        .addresses
+        .iter()
+        .filter(|probe| probe.outcome == BindOutcome::Bound)
+        .count() as u64;
+    let event = match report
+        .addresses
+        .iter()
+        .find(|probe| probe.outcome != BindOutcome::Bound)
+    {
+        Some(probe) => {
+            let outcome = match &probe.outcome {
+                BindOutcome::Bound => "bound".to_owned(),
+                BindOutcome::InUse => "already in use".to_owned(),
+                BindOutcome::Denied => "denied".to_owned(),
+                BindOutcome::Failed(reason) => format!("failed: {reason}"),
+            };
+            format!("{} {outcome}", probe.address)
+        }
+        None => format!("all {total} addresses bound"),
+    };
+    progress.update(
+        "probing the low-port capability as the operator",
+        Some((bound, total)),
+        Some(event),
+    );
 }
 
 /// Run one setup stage. `action` names what the stage is doing and `awaiting`
@@ -2008,7 +2120,9 @@ fn run_gateway_setup(
                 setup_step(
                     "stopping the gateway",
                     "the gateway process to exit",
-                    |_| operator::down(&config),
+                    |progress| {
+                        operator::down_observed(&config, &|phase| observe_stop(progress, phase))
+                    },
                 )?;
             }
             // mkcert uses this operator's preserved CA. It is never run by the daemon.
@@ -2038,7 +2152,7 @@ fn run_gateway_setup(
                     "applying platform setup (approve the administrator prompt if it appears)"
                 },
                 &format!(
-                    "the administrator's approval for platform setup for {}",
+                    "the administrator-approved setup child to apply DNS, trust and broker for {}",
                     suffixes.join(", ")
                 ),
                 |_| setup::command(run, cx, argv, true),
@@ -2088,7 +2202,7 @@ fn run_gateway_setup(
                         "the bind probe for {}",
                         low_port_addresses(&config).join(", ")
                     ),
-                    |_| probe_low_ports(run, cx, &config),
+                    |progress| probe_low_ports(run, cx, &config, progress),
                 )?;
             }
             Ok(())
@@ -2113,7 +2227,11 @@ fn run_gateway_setup(
         let result = setup_step(
             "starting the gateway as the operator",
             &format!("the gateway to answer on {}", config.proxy.bind_addr),
-            |_| operator::up(&config),
+            |progress| {
+                operator::up_observed(&config, &|phase| {
+                    observe_start(progress, &config.proxy.bind_addr.to_string(), phase)
+                })
+            },
         )?;
         Ok(if output_json {
             serde_json::to_string(&result).map_err(std::io::Error::other)?

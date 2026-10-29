@@ -1,5 +1,6 @@
 use super::*;
 use chrono::Utc;
+use effigy_gateway::linux_operator::{BindOutcome, BindProbe, BindProbeReport, BIND_PROBE_SCHEMA};
 use effigy_gateway::routes::{Route, RouteSource};
 
 /// A fixture child this test started, stopped by its own recorded PID.
@@ -1833,5 +1834,127 @@ fn listener_readiness_failure_keeps_the_probe_it_refused_on() {
     assert_eq!(
         progress.frame_at(std::time::Duration::from_secs(5)),
         "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; 5s elapsed"
+    );
+}
+
+fn bind_report(addresses: &[(&str, BindOutcome)]) -> BindProbeReport {
+    BindProbeReport {
+        schema: BIND_PROBE_SCHEMA.to_string(),
+        effective_uid: 501,
+        root: false,
+        capability_effective: true,
+        addresses: addresses
+            .iter()
+            .map(|(address, outcome)| BindProbe {
+                address: (*address).to_string(),
+                outcome: outcome.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Fake-clock frames for an operator start: the supervisor admits the run,
+/// then the daemon's own self-test reports the status it is in.
+#[test]
+fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
+    let progress = ProgressSource::waiting_for("the gateway process to start");
+    progress.update("starting the gateway process", None, None);
+    observe_start(&progress, "127.0.0.1:80", StartPhase::Admitting);
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(1)),
+        "admitting the gateway run; waiting for the supervisor to start the gateway daemon; 1s elapsed"
+    );
+    observe_start(
+        &progress,
+        "127.0.0.1:80",
+        StartPhase::SelfTest { status: "starting" },
+    );
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(4)),
+        "checking the gateway self-test; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
+    );
+}
+
+/// Fake-clock frames for an operator stop: the request is recorded, then the
+/// daemon winds down through the status it reports.
+#[test]
+fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
+    let progress = ProgressSource::waiting_for("the gateway process to exit");
+    progress.update("stopping the gateway process", None, None);
+    observe_stop(&progress, StopPhase::Requested);
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(2)),
+        "requesting the gateway stop; waiting for the supervisor to record the stop; 2s elapsed"
+    );
+    observe_stop(&progress, StopPhase::Settling { status: "stopping" });
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(5)),
+        "waiting for the gateway to stop; waiting for the gateway process to exit; last: gateway status is stopping; 5s elapsed"
+    );
+}
+
+/// Fake-clock frames for the low-port probe: one child answers for every
+/// address, so the step waits on it, then names the first address refused.
+#[test]
+fn bind_probe_frames_name_the_address_that_refused() {
+    let awaited = "the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443";
+    let progress = ProgressSource::waiting_for(awaited);
+    progress.update(
+        "probing the low-port capability as the operator",
+        None,
+        None,
+    );
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(3)),
+        format!(
+            "probing the low-port capability as the operator; waiting for {awaited}; 3s elapsed"
+        )
+    );
+    record_bind_probe(
+        &progress,
+        &bind_report(&[
+            ("127.0.0.1:53", BindOutcome::Bound),
+            ("127.0.0.1:80", BindOutcome::InUse),
+            ("127.0.0.1:443", BindOutcome::Denied),
+        ]),
+    );
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(4)),
+        format!("probing the low-port capability as the operator (1/3); waiting for {awaited}; last: 127.0.0.1:80 already in use; 4s elapsed")
+    );
+}
+
+/// When every address binds, the probe frame says so with the full count.
+#[test]
+fn bind_probe_frames_report_every_address_bound() {
+    let progress = ProgressSource::waiting_for("the bind probe for 127.0.0.1:53, 127.0.0.1:80");
+    progress.update(
+        "probing the low-port capability as the operator",
+        None,
+        None,
+    );
+    record_bind_probe(
+        &progress,
+        &bind_report(&[
+            ("127.0.0.1:53", BindOutcome::Bound),
+            ("127.0.0.1:80", BindOutcome::Bound),
+        ]),
+    );
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(2)),
+        "probing the low-port capability as the operator (2/2); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80; last: all 2 addresses bound; 2s elapsed"
+    );
+}
+
+/// Fake-clock frame for the route step: the table's routes and how many TLS
+/// routes already have certificates, named as the step's last event.
+#[test]
+fn route_publication_frames_name_the_table_and_its_certificates() {
+    let progress = ProgressSource::waiting_for("the route table at /state/routes.json");
+    progress.update("checking the published routes", None, None);
+    record_route_publication(&progress, 3, 2, 3);
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(1)),
+        "checking the published routes; waiting for the route table at /state/routes.json; last: 3 routes in the table, 2 of 3 TLS routes have certificates; 1s elapsed"
     );
 }
