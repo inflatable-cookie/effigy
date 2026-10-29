@@ -675,7 +675,21 @@ fn cli_contracts_check_json_rejects_malformed_payload_schema_with_stable_identit
 
 #[test]
 fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
-    let root = temp_workspace("contracts-body-refusal-bytes");
+    // `human.what_failed` is `HumanError`'s 512-byte bound of `error.message`, so
+    // where that bound cuts moves with the repo root's length. Give the fixture
+    // root a fixed absolute length: the cut then lands on the same bytes on every
+    // machine, so the complete output stays pinned and only the path itself is
+    // normalized.
+    const CONTROLLED_ROOT_LEN: usize = 160;
+    let fixture = temp_workspace("contracts-body-refusal-bytes");
+    let fixture_len = fixture.display().to_string().len();
+    assert!(
+        fixture_len + 2 <= CONTROLLED_ROOT_LEN,
+        "fixture root {fixture_len} bytes leaves no room for a {CONTROLLED_ROOT_LEN}-byte repo root"
+    );
+    let root = fixture.join("r".repeat(CONTROLLED_ROOT_LEN - fixture_len - 1));
+    assert_eq!(root.display().to_string().len(), CONTROLLED_ROOT_LEN);
+    fs::create_dir_all(&root).expect("create repo root");
     fs::write(
         root.join("effigy.toml"),
         "[contracts]\nschema_index = \"index.json\"\n",
@@ -689,18 +703,17 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
 
     // The refusal is presented identically in both modes: the human line is the
     // check-json refusal reason, and the JSON envelope carries the check-json
-    // identity as its `error.message` string. Both complete streams are pinned.
+    // identity as its `error.message` string. Both complete streams are pinned,
+    // including the bounded `human.what_failed` view of that message.
     let text = run_cli_command(&root, &["contracts", "check-json"]);
     assert!(!text.status.success());
     let json = run_json_cli_command(&root, &["contracts", "check-json"]);
     assert!(!json.status.success());
 
     // Only values that move with the environment are normalized: the fixture
-    // root (it appears in the refusal), the release version (it moves on every
-    // version bump), the header's border run (its width follows the root path)
-    // and `human.what_failed` (`HumanError`'s 512-byte bound of `error.message`,
-    // so where it is cut follows the root's length; the message it bounds is
-    // pinned byte for byte in the envelope below).
+    // root (it appears in the refusal) and the release version (it moves on
+    // every version bump), plus the header's border run, whose width follows the
+    // root path.
     let repo_root = root.display().to_string();
     let version = env!("CARGO_PKG_VERSION");
     let normalize = |bytes: &[u8]| -> String {
@@ -716,26 +729,7 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
             }
             previous_border = border;
         }
-        let mut normalized = String::with_capacity(collapsed.len());
-        for (index, line) in collapsed.lines().enumerate() {
-            if index > 0 {
-                normalized.push('\n');
-            }
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("\"what_failed\": ") {
-                let value_start = line.len() - trimmed.len() + "\"what_failed\": ".len();
-                let value_end = line.rfind('"').expect("what_failed value closes");
-                normalized.push_str(&line[..value_start]);
-                normalized.push_str("\"<bounded>\"");
-                normalized.push_str(&line[value_end + 1..]);
-            } else {
-                normalized.push_str(line);
-            }
-        }
-        if collapsed.ends_with('\n') {
-            normalized.push('\n');
-        }
-        normalized
+        collapsed
     };
 
     assert_eq!(
@@ -766,7 +760,7 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
     "human": {
       "evidence": [],
       "next_action": null,
-      "what_failed": "<bounded>"
+      "what_failed": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.… (truncated)"
     },
     "kind": "refused",
     "message": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.v1\"}],\"index\":\"<repo>/index.json\",\"ok\":false,\"schema\":\"effigy.contracts.check-json.v1\",\"schema_version\":1,\"selection\":{\"changed_only_base\":null,\"count\":0,\"selected\":[]},\"selection_artifact\":null,\"selection_contract\":null}",
