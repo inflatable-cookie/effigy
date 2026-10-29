@@ -20,7 +20,6 @@ use crate::outcome::{Invocation, WorkloadOutcome};
 use crate::run::{Effect, EffectSpec, Reconciled, RequestAction, Settlement, SettlementAdapter};
 use crate::store::Store;
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 fn evidence() -> Evidence {
@@ -65,8 +64,7 @@ fn checkout() -> CheckoutId {
 }
 
 fn home() -> effigy_test_support::Fixture {
-    effigy_test_support::Fixture::in_parent("effigy-session-", Path::new("/tmp"))
-        .expect("fixture home")
+    effigy_test_support::Fixture::short_home("effigy-session-").expect("fixture home")
 }
 
 fn run_id(byte: u8) -> RunId {

@@ -2336,7 +2336,16 @@ services run in containers, has no guest.
 | Authority | the owning engine | requests over the host authority channel (§8.3) |
 
 The mode boundary is the environment's declared operator workspace, never a
-mode or environment name. Hybrid mode provisions no guest binary, no context,
+mode or environment name. Prepare and entry match the selected container against
+workspace declarations across all systems, including explicitly selected
+non-default systems and workspaces; the default binding is not a mode filter.
+Declarations sharing a named container must have identical effective workspace
+configuration (including mounts, checkout path and identity). Conflicting
+declarations refuse by name even when a task supplies a workspace override;
+use distinct container names for distinct workspaces. A declared workspace
+without a non-empty resolved user and absolute home refuses Prepare and entry
+with configuration and host re-prepare guidance; it never becomes hybrid.
+Hybrid mode provisions no guest binary, no context,
 no channel listener and no enrolment credential. Its service lifecycle uses
 the same host engines.
 
@@ -2363,11 +2372,39 @@ workspace is admitted:
 - Location: `/run/effigy/context/<generation>/` inside the container,
   outside the bind-mounted checkout, owned by root and read-only to the
   workspace user. `/run/effigy/context/current` names the published
-  generation.
+  generation. The document is `context.json`, schema
+  `effigy.workspace-context.v1`; a guest reads the pointer and then one
+  generation, and an unknown schema or field is unprepared rather than a
+  newer version to guess at.
 - Refresh: the host publishes a new complete generation on every Prepare and
   whenever a fact it carries changes on the host, then switches `current`.
   It never edits a published generation. A guest invocation reads one
   generation for its whole run.
+- Sources closure: the pins name the root manifest, the source lock, every
+  bundle and catalog source the host composed from, each composition fragment,
+  and the rendered composed manifest. The rendered document is published once
+  at `/run/effigy/snapshots/<digest>/manifest.toml`, so a bundle- or
+  catalog-provided task is guest-readable without the guest reading a cache the
+  host did not approve. A bundle or catalog pin's snapshot is the rendered
+  result it contributed.
+- The environment fence is the environment record's activation generation,
+  which the activation run advances; `container up`, a task's environment apply
+  and the workspace handoff all publish through the same Prepare, so the
+  recovery a refusal names prepares the workspace rather than repeating it.
+- Entry fences: the host verifies the backend's full container id and targets
+  that exact id for context reads, image/boot probes and publication. The
+  context's container id must match in full; a hostname, cgroup claim or id
+  prefix never proves placement. VM boot id, image platform/libc and environment
+  generation must also match. A replaced container, a reboot that retained the
+  filesystem, or a re-activation with unchanged files refuses and names the
+  host re-prepare. No additional state ledger is needed for this binding.
+- Local reads: version, the pinned task list and the pinned source identities
+  come from the context, the immutable rendered snapshot and the mounted
+  checkout alone. The pins whose snapshot is checkout-visible are
+  digest-checked before anything is parsed, so a checkout that changed since
+  Prepare refuses instead of reading bytes the host never approved. A local
+  reader holds no capability, so a Static or Observe read cannot enrol, and an
+  authority-bearing command refuses rather than enrol.
 - Staleness: the context is input, not liveness proof. Every request carries
   the context generation; the host refuses a stale one (K7) and the client
   rereads `current`. A missing context means the workspace is unprepared:
@@ -2382,6 +2419,37 @@ workspace is admitted:
   its previous generation, key wraps and unlock credentials (§7.3 families
   10–11) with an empty read-only overlay. Vault reads and writes are channel
   requests to the secrets engine.
+- Mount isolation validates the complete effective mount set the primary
+  service will have: injected and retained entries, short and long form, with
+  absolute guest targets checked before comparison. Parent (`..`) traversal
+  refuses; redundant separators and current-directory (`.`) components normalize
+  before private-store overlap, mask ownership and duplicate-target checks.
+  This also applies to checkout destinations and every Compose overlay.
+  Compose interpolation is expanded and a bind-backed named volume is resolved
+  through its local driver options. External volumes, explicit volume-name
+  aliases, unknown volume names and drivers whose host source cannot be
+  established are refused without a backend source inspection receipt.
+  Exact aliases from the host catalog's owned-volume inventory remain usable;
+  their driver and external options still undergo verification.
+  Effigy-generated disposable volumes remain owned by the workspace; a source
+  declaration that collides with one still undergoes the same checks. Volume
+  mappings merge recursively across inputs, preserving inherited external flags
+  and driver options. Mount interpolation accepts `.env` literal assignments,
+  including simple single/double quotes and Compose inline comments. Dotenv
+  expansion, escapes, multiline or alternate assignments, duplicate names,
+  environment-file selection overrides, tilde paths and nested Compose interpolation are
+  refused when their meaning cannot be proven; they are never partially read
+  as a safe host path. Every Compose input file Compose is handed is
+  rewritten and validated, not only the first: an overlay, later or
+  intermediate, replaces an entry at the same guest target, so a state root
+  bound at another target in any overlay is refused and an overlay entry at a
+  masked target is stripped. The
+  workspace mounts are injected into the first file that defines the primary
+  service and the masks are appended to the last one, so they are applied after
+  every source file and own their guest paths. A host state root, an ancestor of
+  one mounted anywhere but the masked checkout mount, a second source for one
+  guest path, an entry whose source cannot be proven, and anything overlapping
+  the guest's `/run/effigy` store are refused by name.
 
 Ordinary source edits and task outputs in the mounted checkout are workspace
 files, not host records. The context's authoritative inputs are host
@@ -2588,11 +2656,41 @@ only, and host access needs a terminal opened through Effigy.
 - Each release publishes version-locked Linux x86_64 and aarch64 artifacts
   with a checksum and provenance manifest naming the version, protocol
   version, target and libc baseline, and catalog schema.
-- Workspace Prepare acquires the artifact on the host, verifies its digest,
-  and installs it into a guest-private executable store, selected per
+- The artifact family is the image's platform **and** its C library, never a
+  host `uname` and never a default: a glibc image takes the `*-gnu` artifact and
+  a musl image the `*-musl` one. The guest reports the loader it can see, and an
+  image whose C library the host cannot prove refuses Prepare rather than
+  guessing. An image with no artifact for its own family refuses with the host
+  re-prepare command and the missing target named.
+- The store is `/run/effigy/bin/<digest>/effigy`, one immutable file per
+  digest, selected by the digest in `/run/effigy/bin/current`. An artifact is
+  authenticated before it is published: its producer receipt names the target
+  and the digest its bytes must have, a release download also matches the
+  checksum published beside the artifact, and the installed executable is
+  re-hashed in the container. A release that publishes no checksum cannot be
+  installed, and an image without a SHA-256 utility refuses Prepare. A local
+  producer builds with the requested Rust `--target` and copies from that
+  target's release directory; unavailable target libraries or linkers fail
+  before publication. Each artifact has its own `<binary>.receipt` containing
+  its target and digest, so producing another target cannot replace its
+  evidence. An aggregate rehearsal receipt is not artifact evidence. The guest
+  authenticates installed executables with bounded digest probes, never by
+  reading the file into a bounded command's output. The stable
+  entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
+  store, so a running invocation keeps the bytes it resolved and only a new
+  invocation sees a new generation. Before handoff, entry verification requires
+  that symlink to point directly to the pinned immutable executable and hashes
+  the bytes reached through the stable entry; missing or retargeted entries
+  refuse with host re-prepare guidance.
+- Workspace Prepare consumes the produced artifact on the host, verifies its
+  digest, and installs it into a guest-private executable store, selected per
   workspace generation by an atomic pointer. The architecture comes from the
   container image's platform, not the host's `uname`. An image whose libc
   has no matching artifact refuses Prepare.
+- No consumer-time build: Prepare consumes bytes a release download or an
+  explicit `effigy workspace:linux:artifact` already produced, and otherwise
+  refuses naming that command. It never discovers a checkout to build from and
+  never writes a host source pointer at consumer runtime.
 - No run-time build or download: task, exec and terminal entry never fetch
   or compile Effigy or look for a sibling checkout. A contributor's explicit
   Prepare may build the artifact and record the same digest receipt.
@@ -2614,6 +2712,28 @@ This is the implementation seam for §8, not a claim that the client or any
 transport is implemented or qualified. The channel is separate from the
 kernel's remote custody protocol: the former requests host authority; the
 latter proves and controls a workload already admitted by the host.
+
+**Prepare publication.** Container-mode activation uses the actual environment
+owner run and `Gate(Env)`. A typed kernel-owned additive publication obligation
+commits before guest staging, immutable file writes or pointer switches. Its
+receipt names the activation fence, full container identity, VM boot identity,
+artifact digest and context generation. Only after that receipt is applied and
+the required obligation is completed may activation publish active and attach
+requesting holders. Container up, task activation and workspace handoff use
+this same boundary; publication never follows settlement as a separate effect.
+
+Existing holders remain attached to their original selections. This narrow
+operation permits only additive immutable binary, snapshot and context objects
+and atomic pointers for future invocations; it grants no stop, reset, runtime
+replacement or generic environment-effect permission. Those transitions still
+require `TransitionPermit` and its holder checks. Guest identity is re-probed
+before publishing the context. An existing object with wrong bytes is refused;
+recovery skips retained orphan context documents instead of overwriting them.
+Partial publication or a missing receipt leaves activation unsuccessful and
+pending. Recovery retains additive bytes without replaying container I/O; a
+fresh activation verifies or publishes a complete generation under the gate.
+No database transaction spans guest I/O. Hybrid activation emits no guest
+publication obligation or artifacts.
 
 **Wire.** TLS pins the server identity from the selected context before the
 client sends a credential. A length-prefixed UTF-8 JSON frame has a four-byte

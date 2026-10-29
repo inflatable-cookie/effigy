@@ -13,6 +13,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Breaking
 
+- Workspace guest mount targets must be absolute and contain no `..` components.
+  Equivalent spellings using repeated separators or `.` share the same private
+  store, state-mask and duplicate-target checks.
+
+- Workspace declarations sharing one container must have identical effective
+  configuration; give workspaces with different paths, mounts or identities
+  distinct container names. Declared workspaces without a usable `user` and
+  absolute `home` now refuse preparation and entry with configuration guidance.
+
 - **Read [guide 085](docs/guides/085-v0.15.0-consumer-migration.md) before
   upgrading.** These entries change what a consumer sees or relies on.
 - **Host ports come from the OS or Compose.** A generated service publishes
@@ -140,6 +149,44 @@ During v0.x, MINOR bumps may include breaking changes.
   documents the proven steps.
 
 ### Added
+
+- **A container-mode workspace is prepared for the workspace client.** Host
+  Prepare publishes an immutable guest context and a version-locked Linux
+  Effigy into the container, outside the bind-mounted checkout. Activation
+  publishes it — `effigy container up`, a task's environment apply and the
+  workspace handoff all go through the same Prepare — so the recovery command
+  the entry refusals name really does repair the state. The context carries:
+  `/run/effigy/context/<generation>/context.json` with the exact host and guest
+  versions, the executable digest, the protocol, and the checkout,
+  environment, container and VM-boot generations it belongs to;
+  `/run/effigy/bin/<digest>/effigy` in a guest-private store that new
+  invocations reach through `/usr/local/bin/effigy`; and, when the session
+  supplies one, a 0600 enrolment credential. The artifact family is the image's
+  platform **and** C library — a glibc image takes the `*-gnu` artifact and a
+  musl image the `*-musl` one — and an image whose libc the host cannot prove,
+  or that has no artifact for its family, refuses Prepare instead of running
+  bytes built against another C library. The digest is verified, not
+  declared: the artifact must carry a producer receipt naming its target and
+  SHA-256, a release download must match the checksum the release publishes
+  beside it, and the executable the guest will run is re-hashed in the
+  container. A guest authenticates it with one digest probe, so a
+  multi-megabyte executable never lands in a bounded command's stdout budget. A published generation and an
+  installed executable are never rewritten, so a run that started on one keeps
+  its exact bytes. Hybrid mode publishes none of this. The context document is
+  `effigy.workspace-context.v1` (contract 052 §8.2, §8.9, §8.11).
+- **Local Static and Observe reads run against the pinned snapshot.** Version,
+  the pinned task list and the pinned source identities are read from the
+  context, an immutable rendered snapshot and the mounted checkout alone: no
+  refresh, no enrolment, no host state write. The context pins the root
+  manifest, the source lock, every bundle and catalog source with its digest
+  and each composition fragment. The composed manifest is published once at
+  `/run/effigy/snapshots/<digest>/manifest.toml`, so bundle- and
+  catalog-provided tasks are readable without the guest reading a cache the
+  host did not approve. The pins whose bytes are checkout-visible are
+  digest-checked first, so a checkout that changed since Prepare refuses
+  instead of reading a snapshot the host never approved, and an
+  authority-bearing command refuses as `HostAuthorityRequired` rather than
+  enrolling.
 
 - Add a live-state progress source and a feedback lint ratchet for migrating legacy spinner construction.
 
@@ -303,6 +350,47 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Workspace guest publication now completes as a journalled obligation under
+  the environment activation gate before publishing active or attaching task
+  holders. Concurrent prepares and stops serialize; interrupted publication
+  keeps immutable generations and cannot report a successful activation.
+
+- Explicitly selected non-default workspace containers receive the same pinned
+  guest preparation and entry identity verification as the default workspace.
+
+- Workspace guest reads and publication target the host-verified full container
+  id; configured hostnames and id prefixes cannot reuse another container's
+  context. Compose mount isolation resolves interpolated long-form named-volume
+  sources before checking their host bind paths, refuses external or unprovable
+  volume sources, and handles `.env` literal comments and quotes without guessing
+  at unsupported dotenv expansion or escape syntax.
+
+- **Workspace entry verifies the prepared guest instead of installing one.**
+  `effigy exec`, `effigy container shell` and a workspace task no longer
+  download, build or copy Effigy into the workspace container. They read the
+  published context and refuse before the command runs when it is missing,
+  pins another version, names an executable that is not installed, or belongs
+  to another container, VM boot or environment generation, naming
+  `effigy container up` to re-prepare. Hybrid mode, which declares no operator
+  workspace, needs none of it. Container-mode Prepare owns acquisition and
+  consumes a produced artifact only: it never builds from a checkout at
+  consumer runtime (contract 052 §8.2, §8.9).
+- **A workspace container no longer sees the checkout's host-only state.** The
+  checkout's `.effigy/state` and `.effigy/secrets` (the local vault, its
+  previous generation and key wraps) are masked with empty read-only volumes
+  applied last, so an entry the source Compose file already declared cannot be
+  mounted over them. Every Compose input file is rewritten and validated, not
+  only the first, because an overlay — later or intermediate — replaces an entry
+  at the same guest target: a state root bound at another target in any overlay
+  is refused, and an overlay entry at a masked target is stripped while the
+  masks are appended to the last file that defines the service. The complete effective mount set —
+  short and long form, injected and retained — is validated with Compose
+  interpolation expanded and bind-backed named volumes resolved through their
+  driver options: a host state root, an ancestor of one (such as
+  `<checkout>/.effigy`) mounted anywhere but the masked checkout mount, a second
+  source for one guest path, an entry whose source cannot be proven, or anything
+  overlapping the guest's own `/run/effigy` store is refused by name (contract
+  052 §7.3 families 1 and 10-11, §8.10 R1).
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as
@@ -490,6 +578,13 @@ During v0.x, MINOR bumps may include breaking changes.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- Linux workspace artifact builds select the requested Rust architecture/libc
+  target and retain a separate receipt beside each target binary. Missing target
+  libraries or linkers refuse the build before it can attest an artifact.
+
+- Workspace entry refuses a missing or retargeted `/usr/local/bin/effigy` link
+  before handoff and authenticates the bytes launched through that entry.
 
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy

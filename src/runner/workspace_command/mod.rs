@@ -40,6 +40,27 @@ pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy(
     provisioning::ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override)
 }
 
+/// Publish the guest context and pinned executable for this environment.
+///
+/// Called by the host's activation paths (`container up`, a task's environment
+/// apply, the workspace handoff): container-mode workspaces get a prepared
+/// guest, and hybrid mode publishes nothing.
+pub(in crate::runner) fn publish_workspace_guest(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    provisioning::publish_workspace_guest(repo_root, policy).map(|_prepared| ())
+}
+
+/// Only the host environment activation owns this publication boundary.
+pub(in crate::runner) fn publish_workspace_guest_in(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    run: &mut effigy_containers::environment::EnvRun<'_>,
+) -> Result<(), RunnerError> {
+    provisioning::publish_workspace_guest_in(repo_root, policy, run).map(|_| ())
+}
+
 pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy_bounded(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

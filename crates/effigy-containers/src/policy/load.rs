@@ -16,8 +16,8 @@ use crate::policy::project::{
 use crate::policy_support::resolve_compose_source;
 use crate::runtime::dns::{materialize_runtime_dns_override, runtime_route_domains};
 use crate::workspace::{
-    materialize_runtime_workspace_mount_rewrite, WorkspaceComposeRewrite,
-    WorkspaceExtraMountDecision,
+    materialize_runtime_workspace_mount_rewrite, resolve_operator_workspace_for_container,
+    WorkspaceComposeRewrite, WorkspaceExtraMountDecision,
 };
 use crate::{
     resolve_catalog_network_contract, DEFAULT_ATTACH_TIMEOUT_SECS, DEFAULT_COLIMA_PROFILE,
@@ -169,8 +169,6 @@ fn load_policy(
     let repo_root = canonical_root.as_path();
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
-    let inferred_workspace =
-        resolve_container_workspace(&loaded.manifest, requested_name, workspace_override)?;
     let containers = loaded.manifest.containers.as_ref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(
             "manifest does not define a `[containers]` registry".to_owned(),
@@ -179,6 +177,8 @@ fn load_policy(
     let default_project_name_base = default_project_name_base(&loaded, repo_root);
     validate_unique_project_names(containers, &default_project_name_base, repo_root)?;
     let name = resolve_container_name(&loaded.manifest, containers, requested_name)?;
+    let inferred_workspace =
+        resolve_container_workspace(&loaded.manifest, Some(&name), workspace_override)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -257,9 +257,10 @@ fn resolve_container_workspace(
     requested_container_name: Option<&str>,
     workspace_override: Option<&ManifestWorkspaceConfig>,
 ) -> Result<Option<ManifestWorkspaceConfig>, ContainerPolicyError> {
-    let mut workspace = workspace_override
-        .cloned()
-        .or_else(|| infer_default_workspace_for_container(manifest, requested_container_name));
+    // Even an explicit override must not bypass conflicting declarations:
+    // Prepare and later entry only retain the selected container identity.
+    let declared = resolve_operator_workspace_for_container(manifest, requested_container_name)?;
+    let mut workspace = workspace_override.cloned().or(declared);
     if let Some(workspace) = workspace.as_mut() {
         if let Some(catalog) = manifest.catalog.as_ref() {
             workspace
@@ -294,14 +295,14 @@ pub fn load_container_exec_target(
 ) -> Result<ContainerExecTarget, ContainerPolicyError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
-    let inferred_workspace =
-        infer_default_workspace_for_container(&loaded.manifest, requested_name);
     let containers = loaded.manifest.containers.as_ref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
     let name = resolve_container_name(&loaded.manifest, containers, requested_name)?;
+    let inferred_workspace =
+        resolve_operator_workspace_for_container(&loaded.manifest, Some(&name))?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -452,6 +453,7 @@ fn build_effective_policy(
                     working_dir: &working_dir,
                     primary_service: &primary_service,
                     library_mounts,
+                    managed_volumes: &managed_volumes,
                 },
                 &mut compose_files,
                 record_optional_extra_mount_decisions,
@@ -815,35 +817,6 @@ fn effective_service_aliases(
         });
     }
     Ok(aliases)
-}
-
-fn infer_default_workspace_for_container(
-    manifest: &effigy_manifest::TaskManifest,
-    requested_container_name: Option<&str>,
-) -> Option<ManifestWorkspaceConfig> {
-    let binding = resolve_task_execution_binding_from_parts(
-        None,
-        manifest.systems.as_ref(),
-        manifest.containers.as_ref(),
-        "container",
-        &ManifestTask::default(),
-    )
-    .ok()?;
-    let ResolvedTaskExecutionBinding::Workspace(binding) = binding? else {
-        return None;
-    };
-    let resolved_name = match binding.container.as_ref() {
-        Some(ResolvedWorkspaceContainer::Named(name)) => name.as_str(),
-        _ => return None,
-    };
-    match binding.container {
-        Some(ResolvedWorkspaceContainer::Named(_))
-            if requested_container_name.is_none_or(|name| name == resolved_name) =>
-        {
-            Some(binding.workspace_config)
-        }
-        _ => None,
-    }
 }
 
 /// The container the default `[systems]` workspace binds, when that binding

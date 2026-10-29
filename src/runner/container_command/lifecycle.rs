@@ -354,7 +354,7 @@ fn run_container_up_inner(
     // The stage keeps its documented name (closed JSON vocabulary).
     operation.stage = Some("persistent_owner");
     let settling = steps::phase("settling the environment");
-    match environment::activate(&bring_up, holders) {
+    match environment::activate(&bring_up, &plan.policy, holders) {
         Ok(()) => settling.succeed("environment settled"),
         Err(error) => {
             settling.fail(error.to_string());
