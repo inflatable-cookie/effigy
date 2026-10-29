@@ -31,13 +31,21 @@ class InventoryTests(unittest.TestCase):
         self.assertIn('migrate to a live progress source', errors[0])
         self.assertIn('src/new.rs:8', errors[1])
 
-    def test_only_the_exact_live_sink_is_exempt(self):
+    def test_only_one_live_sink_is_exempt_after_a_line_shift(self):
         text = 'let bar = self.multi().add(ProgressBar::new_spinner());'
-        original = diagnostic('crates/effigy-ui/src/steps.rs', 424, text)
-        moved = diagnostic('crates/effigy-ui/src/steps.rs', 425, text)
-        original['message']['spans'][0]['column_start'] = 36
+        moved = diagnostic('crates/effigy-ui/src/steps.rs', 455, text)
+        duplicate = diagnostic('crates/effigy-ui/src/steps.rs', 456, text)
         moved['message']['spans'][0]['column_start'] = 36
-        self.assertEqual([entry[2] for entry in lint.entries([original, moved])], [425])
+        duplicate['message']['spans'][0]['column_start'] = 36
+        self.assertEqual(lint.entries([moved]), [])
+        self.assertEqual(len(lint.entries([moved, duplicate])), 2)
+
+    def test_relocated_site_passes_but_an_additional_site_fails(self):
+        relocated = [['src/a.rs', 6, 'step(label)', 1]]
+        observed = [('src/a.rs', 'step(label)', 6, 1)]
+        self.assertEqual(lint.check(observed, relocated, relocated), [])
+        errors = lint.check(observed + [('src/a.rs', 'step(label)', 7, 1)], relocated, relocated)
+        self.assertTrue(any('src/a.rs:7' in error for error in errors), errors)
 
     def test_event_source_emits_no_legacy_diagnostic(self):
         observed = lint.entries([{'reason': 'compiler-artifact'}])

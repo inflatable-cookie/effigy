@@ -35,13 +35,13 @@ def entries(messages):
             text = '\n'.join(line['text'].strip() for line in span.get('text', []))
             result.append((file, text, span['line_start'], span['column_start']))
     result = list(dict.fromkeys(result))
-    # The live source's own sink must create its bar. Only this one exact
-    # infrastructure occurrence is excluded; duplicates are still findings.
-    sink = ('crates/effigy-ui/src/steps.rs', 424, 'let bar = self.multi().add(ProgressBar::new_spinner());', 36)
-    for index, entry in enumerate(result):
-        if key(entry) == sink:
-            result.pop(index)
-            break
+    # Only the unique infrastructure sink is excluded. A duplicate makes
+    # every matching diagnostic visible to the ratchet.
+    sink = ('crates/effigy-ui/src/steps.rs',
+            'let bar = self.multi().add(ProgressBar::new_spinner());', 36)
+    matching = [entry for entry in result if (entry[0], entry[1], entry[3]) == sink]
+    if len(matching) == 1:
+        result.remove(matching[0])
     return result
 
 
