@@ -151,9 +151,62 @@ During v0.x, MINOR bumps may include breaking changes.
   opt-in (undo with `disable-linger`). After the administrator step, setup
   re-execs the installed binary as you and binds the configured low ports to
   prove the `CAP_NET_BIND_SERVICE` capability, refusing a changed, linked or
-  group/world-writable binary. `gateway status --json` reports the observed
+  group/world-writable binary, and refusing an image this account cannot
+  execute (`launcher.unit: "stale"`), because an execute bit alone does not
+  mean the operator can run it: the check follows the account's real access,
+  including POSIX group precedence for a root-owned image. An access refusal
+  names the bit that decided it (owner, matched group or other) and the
+  `chmod` for that bit with the path as a safe POSIX shell word (single-quoted,
+  so `$`, backticks, backslashes and quotes arrive literally), rather than
+  advising an other-execute bit a matching group ignores; an identity refusal (a link, a
+  foreign owner, a writable image) names the install recovery instead, because
+  no permission bit can repair it. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes
-  only unit and capability records Effigy wrote.
+  only unit and capability records Effigy wrote. A replaced binary is reported
+  as a missing capability instead of being trusted, a link at the installed path
+  is refused for the unit and the capability, an upgrade rewrites the owned unit
+  to name the image setup ran, and a rollback that leaves the unit naming a
+  deleted, linked or no-longer-owner-only image is reported as
+  `launcher.unit: "stale"` with the restore and `effigy gateway setup` routes.
+  A changed definition disables the login activation first, so a user manager
+  that cannot be reached, refuses or does not answer keeps the unit installed
+  and not enabled and prints the exact `systemctl --user` commands that finish
+  the enable; an `enable` that fails after writing the link is observed as
+  enabled, because the link is the fact, and a repeated setup whose unit is
+  unchanged reports the link it keeps. Effigy never deletes an activation
+  entry: `systemctl --user disable` removes it and Effigy re-observes the
+  result afterwards — even for a disabled unit or a missing activation
+  directory — refusing with the exact command (and deleting nothing) when an
+  entry is there or is not its own link, and a missing unit directory counts as
+  no activation so a fresh or partially removed installation still tears down;
+  an activation directory that is a symlink, is not a directory or is owned by
+  another account is an identity failure refused with the move-aside recovery
+  (never a `chmod` through the link), a directory refusal's `chmod` is one
+  quoted shell word naming the directory that failed rather than the service
+  entry inside it, and only a mode problem is repaired by that command;
+  `gateway status` keeps a foreign or unsafe activation as its own refusal (it
+  is never reported as merely disabled, so its advice cannot hand the manager a
+  path Effigy refuses), and an unsafe unit file is named as that file rather
+  than as an unrelated directory, the unit file must pass the same owner-and-mode
+  trust the kernel applies (a foreign-owned or foreign-writable file is `unsafe`,
+  never `installed`, and removal refuses it before any `systemctl` request), and
+  a post-request activation that is foreign
+  or unsafe is reported as that refusal rather than as a missing link — after
+  `daemon-reload` as well as after `enable`, and in a failed rewrite's recovery,
+  which also re-observes after a failed restore (typed and neutral, so no nested
+  message carries enable advice), names an unreadable, missing or changed unit
+  file as what it is, and describes the activation it observed
+  instead of claiming it is off — with `enable` offered only for a verified
+  absent activation and a unit file to enable; a changed
+  definition disables the activation
+  before it rewrites the unit and refuses if it remains. `setup --remove`
+  completes the filesystem removal and then reports a `daemon-reload` that
+  refuses, cannot be reached or times out, with the exact
+  `systemctl --user daemon-reload` command, instead of a silent teardown. A
+  failed unit rewrite restores the previous file's activation and says the
+  installed route still works, never enables a unit the operator had disabled,
+  and only calls a restore successful when the restored entry verifies as
+  Effigy's own link.
 - The kernel workspace seam recovers keyed admissions across reconnects and
   gives secondary terminals independent lifetimes and bounded run controls.
   Owner EOF stops the supervised run; acknowledged detach leaves it running.

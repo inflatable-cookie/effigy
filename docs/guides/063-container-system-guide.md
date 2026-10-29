@@ -1586,8 +1586,11 @@ it does not lower the host-wide unprivileged-port threshold. Replacing that
 binary removes its file capability, so run setup again after an executable
 upgrade; `effigy gateway status --json` reports `launcher.low_port` as `missing`
 until then. Foreign unit files and foreign executable capabilities are preserved
-with an error. This adapter requires systemd-resolved, the documented `ip` and
-`resolvectl` tools, and systemd's user manager for the login launch below.
+with an error. The installation path must be one real file: a symbolic or hard
+link at the installed path is refused for both the unit and the capability,
+because a link's target can be retargeted after setup. This adapter requires
+systemd-resolved, the documented `ip` and `resolvectl` tools, and systemd's user
+manager for the login launch below.
 
 Linux setup also installs one launch-only systemd **user** unit,
 `~/.config/systemd/user/effigy-gateway.service`, and enables it for the login
@@ -1601,7 +1604,23 @@ touching the unit, so the next login starts it again; remove the unit with
 `effigy gateway setup --remove`.
 
 Beyond trusting mkcert's local CA, the administrator prompt is for the split-DNS
-unit and the file capability. Everything else, including the user unit, runs as
+unit and the file capability. The installed image must also be executable by
+your account, resolved the way your account's access actually resolves: your
+owner execute bit when you own it, and for a root-owned image the group bits
+when one of your groups is the image's group, otherwise the other bits. A
+root-owned image whose group you are in but which your group cannot execute is
+refused, and the launch unit that names an image you cannot run is reported
+`stale` rather than healthy. The refusal names the bit that decided it — owner,
+the matched group, or other — and the `chmod` that fixes that bit, with the path
+a safe POSIX shell word (single-quoted, with an embedded quote escaped as
+`'\''`), so `$`, backticks, backslashes and quotes in the path all arrive
+literally; instead of advising an other-execute bit a matching group would
+ignore. A path that is not valid UTF-8 cannot be printed as a shell word at all,
+and the refusal says so rather than printing a command for a different file. An identity failure is different: a symbolic or hard link, a
+foreign owner or a group/world-writable image cannot be repaired by a permission
+bit, so that refusal names the install recovery (one real file owned by your
+account, for example `effigy install:local` as yourself) and prescribes no
+`chmod`. Everything else, including the user unit, runs as
 your account. Immediately after applying the capability, setup re-execs the
 installed binary as you, checks that the fresh exec carries
 `CAP_NET_BIND_SERVICE`, and binds the configured low ports; a refusal fails
@@ -1622,7 +1641,102 @@ loginctl disable-linger "$USER"   # undo
 (`unit`, `enabled`, `linger`, `low_port`) and a `recovery` list of exact commands
 for anything that is not ready. Nothing there is inferred: an unobservable linger
 state is omitted, and a foreign unit or capability is reported as `foreign`
-rather than claimed.
+rather than claimed. A login activation Effigy cannot trust — a foreign entry or
+an unsafe activation directory — is kept as its own refusal with the move-aside
+recovery and never becomes "not enabled", so `status` never tells you to enable
+the unit through a path Effigy refuses. An unsafe unit *file* (a link, a
+non-regular or changed file) is named as that file, not as an unrelated
+directory. The unit file also has to pass the same owner and mode trust the
+kernel applies: a file owned by another account or writable by another account
+is reported `unsafe` and named, never `installed`, and `gateway setup --remove`
+refuses it before any `systemctl` request, so the manager cannot stop a unit
+Effigy will not remove.
+
+`unit` is one of `missing`, `installed`, `foreign`, `unsafe` or `stale`. Setup
+writes the unit's own `ExecStart` as quoted `"<installed effigy>" gateway up`
+and `WorkingDirectory=` as the operator home written bare, because that value
+takes one literal path and has no quoting rule.
+
+An executable upgrade replaces the file, so its capability does not carry over:
+run `effigy gateway setup` again, which reports `launcher.low_port: "missing"`
+until it does. Setup then rewrites the owned unit to name the image it ran, and
+the next login runs that command. A rollback that removes the image the unit
+names, or leaves it a link, group- or world-writable, is reported as
+`launcher.unit: "stale"` — never as ready — with the restore path,
+`effigy gateway setup` and a `systemctl --user restart` reconcile request in
+`recovery`. A stale unit is still Effigy's own file, so
+`effigy gateway setup --remove` disables and removes it.
+
+A changed unit definition disables the login activation before it writes the
+new file, because the user manager may keep the definition it already loaded.
+A failed or timed-out `daemon-reload` therefore leaves the unit `installed` and
+not enabled with the recovery commands, rather than a new file whose link still
+claims the old definition is live. The link comes back only from an `enable`
+that setup asked for; an `enable` that reports a failure after writing the link
+is observed as enabled, because the link is the fact and the reply is not.
+
+If the systemd user manager cannot be reached, refuses, or does not answer
+within 20 seconds, setup does not fail after writing the unit: it prints the
+manager's own sentence and the exact `systemctl --user daemon-reload`, `enable`
+and `start` commands that finish the enable, and keeps the installed unit. Those
+`enable` commands are offered only when the activation is genuinely absent: if
+the activation Effigy observes after any manager request — including the
+`daemon-reload` that precedes `enable` — is foreign or unsafe, setup reports that
+refusal instead, because enabling through it would hand the manager the path
+Effigy refuses. The same rule covers a failed unit rewrite: its recovery never
+recommends `enable` through an activation Effigy refuses, re-observes the
+activation after a restore attempt that fails (a replacement during the restore
+is reported as that refusal; the restore failure itself describes only what
+happened and carries no command), reports an unreadable, missing or changed unit
+file as what it is, and describes the activation it observed instead of claiming
+it is off. `enable` appears there only for a verified absent activation with a
+unit file to enable.
+Removal behaves the same way: it disables, removes and unlinks the unit Effigy
+owns, and a `daemon-reload` that refuses, cannot be reached or times out is then
+reported as a failure naming the exact `systemctl --user daemon-reload` command
+— the removal itself is done, but the manager may still serve the definition it
+loaded.
+
+The login activation directory
+(`~/.config/systemd/user/default.target.wants`) must be a real directory owned
+by you and not group- or world-writable, and the entry Effigy uses there must be
+its own link to the owned unit. A missing unit directory is simply no
+activation: a fresh installation, or one whose directory you removed before
+retrying, still tears down cleanly instead of being refused. A directory
+refusal's `chmod` is one quoted shell word and names the directory that actually
+failed — `default.target.wants` itself, never the `effigy-gateway.service` entry
+inside it — so a home containing a space cannot split the command and the mode
+command cannot follow the service link. Only a mode problem gets a `chmod`: a
+symlinked, non-directory or foreign-owned path is an identity failure and is
+refused with the move-aside recovery instead, because a `chmod` through a link
+changes its target and cannot repair an owner. Effigy verifies both before it asks the manager
+to do anything: a `default.target.wants` that is a symlink to another directory,
+or an entry that names another target or is not a link, is refused without
+touching it and without stopping or disabling anything.
+
+Effigy never deletes an activation entry itself. `systemctl --user disable`
+(and `disable --now` on removal) is what removes it, and Effigy re-observes the
+result afterwards — including when the unit started out disabled or had no
+activation directory at all: if an entry is there — the manager could not run,
+or something appeared or re-created it — setup refuses with the exact
+`systemctl --user disable effigy-gateway.service` command and deletes nothing.
+The same rule covers an upgrade: a changed unit definition disables the login
+activation first, and the rewrite is refused rather than performed while that
+activation remains. A name-based unlink cannot be bound to the inode Effigy
+verified, so Effigy does not perform one at all: a replacement that appears at
+the entry is preserved and reported, never deleted.
+
+A repeated setup whose unit bytes are unchanged keeps the existing link and
+reports `enabled` as it is even when the manager request fails — and that
+failure is still reported with the recovery commands, because a link does not
+prove the manager finished its own request. An `enable` that reports a failure
+after writing the link is observed as enabled, with its failure and recovery
+kept. If writing a changed unit file fails after the login activation was
+disabled, Effigy restores that activation and says the installed route still
+works — but only an activation this run disabled, and only when the restored
+entry verifies as Effigy's own link; a unit that was disabled before the failure
+stays disabled, and an entry that appeared meanwhile is named with its recovery
+instead of being called a restore.
 
 `effigy gateway setup --remove` stops the gateway, disables and removes the unit
 it owns, removes the split-DNS unit and the file capability, and preserves
@@ -1716,6 +1830,7 @@ ls -l ~/.config/systemd/user/default.target.wants/effigy-gateway.service
 stat -c '%a %U %n' "$HOME/.effigy/gateway" "$HOME/.effigy/gateway/certs"
 stat -c '%a %U %n' ~/.local/share/mkcert/rootCA-key.pem      # expect 600 dev
 systemctl --user is-enabled effigy-gateway.service           # expect enabled
+systemd-analyze --user verify ~/.config/systemd/user/effigy-gateway.service
 effigy __gateway-bind-probe 127.0.0.1:80 127.0.0.1:443         # capability_effective true
 effigy gateway status --json | jq '.result.launcher'
 
@@ -1733,12 +1848,25 @@ systemctl --user is-active effigy-gateway.service
 effigy gateway status --json | jq '.result.launcher'
 loginctl disable-linger "$USER"
 
-# 5. A replaced binary and a foreign unit must be reported, not hidden.
+# 5. An upgrade, a rollback and a foreign unit must be reported, not hidden.
 effigy install:local
+bin=$(readlink -f "$(command -v effigy)")
 effigy gateway status --json | jq '.result.launcher.low_port' # expect "missing"
 effigy gateway setup                                          # restores it
+systemctl --user is-enabled effigy-gateway.service            # expect enabled
+# A rollback that leaves the unit naming an image that moved away. Status runs
+# from the moved binary itself, and the owned unit is restored afterwards:
+mv "$bin" "$HOME/effigy-moved"
+"$HOME/effigy-moved" gateway status --json | jq '.result.launcher.unit'  # expect "stale"
+mv "$HOME/effigy-moved" "$bin"
+effigy gateway setup                                          # unit names this image again
+# A foreign unit is preserved with an error and its bytes unchanged:
+cp ~/.config/systemd/user/effigy-gateway.service "$HOME/effigy-unit.owned"
 printf '[Unit]\nDescription=foreign\n' > ~/.config/systemd/user/effigy-gateway.service
-effigy gateway setup; echo $?                                 # expect non-zero, file unchanged
+effigy gateway setup; echo $?                                 # expect non-zero
+cat ~/.config/systemd/user/effigy-gateway.service             # expect the foreign bytes
+mv "$HOME/effigy-unit.owned" ~/.config/systemd/user/effigy-gateway.service
+systemctl --user is-enabled effigy-gateway.service            # expect enabled again
 
 # 6. Exact cleanup of everything this proof installed.
 effigy gateway setup --remove

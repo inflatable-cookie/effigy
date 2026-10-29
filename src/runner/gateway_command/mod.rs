@@ -1983,12 +1983,16 @@ fn run_gateway_setup(
         }
         #[cfg(target_os = "linux")]
         if let Some(launcher) = launcher {
-            if !launcher.enabled {
-                for line in &launcher.recovery {
-                    eprintln!(
-                        "[gateway] the systemd user launch unit is installed but not enabled for this login: run `{line}`"
-                    );
-                }
+            if let Some(reason) = &launcher.reason {
+                eprintln!("[gateway] {reason}");
+            }
+            let prefix = if launcher.enabled {
+                "the systemd user launch unit is enabled but the user manager did not confirm it"
+            } else {
+                "the systemd user launch unit is installed but not enabled for this login"
+            };
+            for line in &launcher.recovery {
+                eprintln!("[gateway] {prefix}: run `{line}`");
             }
         }
         let result = setup_step("starting the gateway", |step| {
