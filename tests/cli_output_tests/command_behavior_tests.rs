@@ -689,37 +689,96 @@ fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
 
     // The refusal is presented identically in both modes: the human line is the
     // check-json refusal reason, and the JSON envelope carries the check-json
-    // identity as its `error.message` string.
+    // identity as its `error.message` string. Both complete streams are pinned.
     let text = run_cli_command(&root, &["contracts", "check-json"]);
     assert!(!text.status.success());
     let json = run_json_cli_command(&root, &["contracts", "check-json"]);
     assert!(!json.status.success());
 
+    // Only values that move with the environment are normalized: the fixture
+    // root (it appears in the refusal), the release version (it moves on every
+    // version bump), the header's border run (its width follows the root path)
+    // and `human.what_failed` (`HumanError`'s 512-byte bound of `error.message`,
+    // so where it is cut follows the root's length; the message it bounds is
+    // pinned byte for byte in the envelope below).
     let repo_root = root.display().to_string();
-    let normalize = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace(&repo_root, "<repo>");
+    let version = env!("CARGO_PKG_VERSION");
+    let normalize = |bytes: &[u8]| -> String {
+        let text = String::from_utf8_lossy(bytes).replace(&repo_root, "<repo>");
+        let text = text.replace(&format!("v{version}"), "<version>");
+        let text = text.replace(version, "<version>");
+        let mut collapsed = String::with_capacity(text.len());
+        let mut previous_border = false;
+        for character in text.chars() {
+            let border = character == '─';
+            if !(border && previous_border) {
+                collapsed.push(character);
+            }
+            previous_border = border;
+        }
+        let mut normalized = String::with_capacity(collapsed.len());
+        for (index, line) in collapsed.lines().enumerate() {
+            if index > 0 {
+                normalized.push('\n');
+            }
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("\"what_failed\": ") {
+                let value_start = line.len() - trimmed.len() + "\"what_failed\": ".len();
+                let value_end = line.rfind('"').expect("what_failed value closes");
+                normalized.push_str(&line[..value_start]);
+                normalized.push_str("\"<bounded>\"");
+                normalized.push_str(&line[value_end + 1..]);
+            } else {
+                normalized.push_str(line);
+            }
+        }
+        if collapsed.ends_with('\n') {
+            normalized.push('\n');
+        }
+        normalized
+    };
 
+    assert_eq!(
+        normalize(&text.stdout),
+        "\n╭─╮\n│ EFFIGY  <repo> │\n╰─ <version> ╯\n\n"
+    );
     assert_eq!(
         normalize(&text.stderr),
         "[error] failed to read <repo>/missing.json: No such file or directory (os error 2)\n"
     );
-    let text_stdout = normalize(&text.stdout);
-    assert!(!text_stdout.contains("failed to read"), "{text_stdout}");
 
     assert_eq!(normalize(&json.stderr), "");
-    let parsed = parse_stdout_json(&json);
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], false);
-    assert_eq!(parsed["result"], Value::Null);
-    assert_eq!(parsed["error"]["kind"], "refused");
-    assert_eq!(parsed["error"]["type"], "RunnerError");
-    assert_eq!(parsed["error"]["details"], Value::Null);
-    let message = parsed["error"]["message"]
-        .as_str()
-        .expect("json error message")
-        .replace(&repo_root, "<repo>");
     assert_eq!(
-        message,
-        r#"{"changed_only_base":null,"checks":1,"failures":[{"command":"<repo>/missing.json","reason":"failed to read <repo>/missing.json: No such file or directory (os error 2)","schema":"effigy.json-contract-body.v1"}],"index":"<repo>/index.json","ok":false,"schema":"effigy.contracts.check-json.v1","schema_version":1,"selection":{"changed_only_base":null,"count":0,"selected":[]},"selection_artifact":null,"selection_contract":null}"#
+        normalize(&json.stdout),
+        r#"{
+  "binary": {
+    "active_version": "<version>",
+    "display_version": "<version>",
+    "name": "effigy",
+    "version": "<version>"
+  },
+  "command": {
+    "kind": "contracts",
+    "name": "contracts"
+  },
+  "error": {
+    "details": null,
+    "human": {
+      "evidence": [],
+      "next_action": null,
+      "what_failed": "<bounded>"
+    },
+    "kind": "refused",
+    "message": "{\"changed_only_base\":null,\"checks\":1,\"failures\":[{\"command\":\"<repo>/missing.json\",\"reason\":\"failed to read <repo>/missing.json: No such file or directory (os error 2)\",\"schema\":\"effigy.json-contract-body.v1\"}],\"index\":\"<repo>/index.json\",\"ok\":false,\"schema\":\"effigy.contracts.check-json.v1\",\"schema_version\":1,\"selection\":{\"changed_only_base\":null,\"count\":0,\"selected\":[]},\"selection_artifact\":null,\"selection_contract\":null}",
+    "type": "RunnerError"
+  },
+  "ok": false,
+  "result": null,
+  "schema": "effigy.command.v1",
+  "schema_version": 1,
+  "warnings": []
+}
+"#
     );
 }
 
