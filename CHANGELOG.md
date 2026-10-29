@@ -223,11 +223,13 @@ During v0.x, MINOR bumps may include breaking changes.
   pid's start identity and redacted command, and only allowlisted `PASEO_*`,
   `NS_*` and `EFFIGY_RUN_*` identity markers whose value is a UUID, a decimal
   id or Effigy's own base32 run id. Command text is published from a closed
-  vocabulary: a token is recorded only when it is a word Effigy defines, a known
-  launcher, runtime or task name, or one of Effigy's own flag names, so a value,
-  a path, an unknown flag, a program name, a URL and a `KEY=value` pair are
-  `<redacted>` — in the invoking command, an ancestor's command and inside a
-  shell string alike. An ancestor's program slot names the executable the
+  vocabulary and only in command position: a token is recorded only when it is a
+  word Effigy defines, a known launcher, runtime or task name, or one of Effigy's
+  own flag names, and it is not a value — the argument after a flag and the value
+  half of `--flag=value` are never published, so `gateway setup --suffix down`
+  records `--suffix <redacted>`. A path, an unknown flag, a program name, a URL
+  and a `KEY=value` pair are `<redacted>` too, in the invoking command, an
+  ancestor's command and inside a shell string alike. An ancestor's program slot names the executable the
   operating system reports (never its caller-chosen `argv[0]`) when that name is
   in the vocabulary. The `unknown` list is capped and says how many reasons it
   omitted, so invalid markers never hide a broken chain. Anything unreadable or invalid becomes a

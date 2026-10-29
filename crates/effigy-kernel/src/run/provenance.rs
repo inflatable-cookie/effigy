@@ -225,7 +225,7 @@ pub fn event(
         "event": action.event(),
         "action": action,
         "pid": pid,
-        "argv": command_line(argv),
+        "argv": command_text(argv, argv.first().map(String::as_str)),
         "cwd": cwd,
         "cause": bounded(cause, TEXT_LIMIT),
         "caller": caller,
@@ -350,19 +350,43 @@ const FLAGS: &[&str] = &[
     "-q",
     "-y",
 ];
+/// The flags above that never take a value. Every other published flag is
+/// treated as taking one, so the token after it is never published.
+const BOOLEAN_FLAGS: &[&str] = &[
+    "--json",
+    "--help",
+    "--version",
+    "--verbose",
+    "--quiet",
+    "--force",
+    "--yes",
+    "--all",
+    "--plan",
+    "--detach",
+    "--private",
+    "--listener-handoff",
+    "-h",
+    "-v",
+    "-q",
+    "-y",
+];
 /// Flags whose value is a command line of its own; that value is read token by
 /// token so the words inside it are judged the same way.
 const SHELL_FLAGS: &[&str] = &["-c", "-lc", "-ec", "-ic", "--command"];
 
-/// One bounded command line: a published word or flag keeps its text, and any
-/// other token is a placeholder.
-fn command_line(argv: &[String]) -> Vec<String> {
+/// One bounded command line, published by role and by vocabulary. A token in a
+/// value position — the argument after a flag, or the value half of
+/// `--flag=value` — is never published, even when its spelling is a word this
+/// record knows: `gateway setup --suffix down` must not write `down`.
+fn command_text(argv: &[String], program: Option<&str>) -> Vec<String> {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
-    for argument in argv.iter().take(ARGV_LIMIT) {
+    for (index, argument) in argv.iter().take(ARGV_LIMIT).enumerate() {
         let recorded = match previous {
-            Some(flag) if shell_flag(flag) => shell_command(argument),
-            _ => token(argument),
+            Some(flag) if shell_flag(flag) => shell_text(argument),
+            Some(flag) if flag_shaped(flag) && !takes_no_value(flag) => REDACTED.into(),
+            _ if index == 0 => program.map_or_else(|| REDACTED.into(), program_text),
+            _ => positional(argument),
         };
         rendered.push(recorded);
         previous = Some(argument);
@@ -371,46 +395,67 @@ fn command_line(argv: &[String]) -> Vec<String> {
 }
 
 /// An ancestor's command line. Its program slot names the executable the
-/// operating system reports rather than the caller-chosen `argv[0]`, and that
-/// name is published only when it is one this record may publish.
+/// operating system reports rather than the caller-chosen `argv[0]`.
 fn ancestor_command(argv: &[String], executable: Option<&str>) -> Vec<String> {
+    command_text(argv, executable)
+}
+
+/// The file name of the program, published only when it is a word this record
+/// may publish. A program name is caller-controlled text like any other.
+fn program_text(path: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path).trim();
+    if WORDS.contains(&name) {
+        return bounded(name, TEXT_LIMIT);
+    }
+    REDACTED.into()
+}
+
+/// A shell command string is a command line of its own: the same role rules
+/// apply token by token, and no program slot is claimed for it.
+fn shell_text(script: &str) -> String {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
-    for (index, argument) in argv.iter().take(ARGV_LIMIT).enumerate() {
+    for token in script.split_whitespace().take(ARGV_LIMIT) {
         let recorded = match previous {
-            Some(flag) if shell_flag(flag) => shell_command(argument),
-            _ if index == 0 => executable.map_or_else(|| REDACTED.into(), program),
-            _ => token(argument),
+            Some(flag) if flag_shaped(flag) && !takes_no_value(flag) => REDACTED.into(),
+            _ => positional(token),
         };
         rendered.push(recorded);
-        previous = Some(argument);
+        previous = Some(token);
     }
-    rendered
+    bounded(&rendered.join(" "), TEXT_LIMIT)
 }
 
-/// The file name of the executable, when that name may be published.
-fn program(executable: &str) -> String {
-    token(executable.rsplit('/').next().unwrap_or(executable))
-}
-
-/// Token-wise reading of one shell command string.
-fn shell_command(script: &str) -> String {
-    let rendered = script
-        .split_whitespace()
-        .take(ARGV_LIMIT)
-        .map(token)
-        .collect::<Vec<_>>()
-        .join(" ");
-    bounded(&rendered, TEXT_LIMIT)
-}
-
-/// The published form of one token.
-fn token(argument: &str) -> String {
+/// The published form of one token that is not itself in a value position: a
+/// flag name this record knows, a known word, or the name half of a
+/// `--flag=value` pair whose value is then suppressed.
+fn positional(argument: &str) -> String {
     let argument = argument.trim();
-    if WORDS.contains(&argument) || FLAGS.contains(&argument) || shell_flag(argument) {
+    if let Some((name, _)) = argument.split_once('=') {
+        return if published_flag(name) {
+            bounded(&format!("{name}={REDACTED}"), TEXT_LIMIT)
+        } else {
+            REDACTED.into()
+        };
+    }
+    if published_flag(argument) || WORDS.contains(&argument) {
         return bounded(argument, TEXT_LIMIT);
     }
     REDACTED.into()
+}
+
+fn published_flag(argument: &str) -> bool {
+    FLAGS.contains(&argument) || SHELL_FLAGS.contains(&argument)
+}
+
+/// A flag that never takes a value leaves the next token in command position;
+/// any other flag (and any flag this record does not know) owns it.
+fn takes_no_value(argument: &str) -> bool {
+    BOOLEAN_FLAGS.contains(&argument.trim())
+}
+
+fn flag_shaped(argument: &str) -> bool {
+    argument.starts_with('-') && argument.len() > 1
 }
 
 fn shell_flag(argument: &str) -> bool {
@@ -947,6 +992,47 @@ mod tests {
             assert!(!rendered.contains(exposed), "{rendered}");
         }
         assert!(!unknown.contains("hunter2"), "{unknown}");
+        // A vocabulary word supplied as an option value is still a value: the
+        // CLI accepts `--suffix down`, and the record must not publish it.
+        let word_value = serde_json::to_string(&event(
+            OperatorAction::Setup,
+            "gateway setup command",
+            50,
+            &[
+                "effigy".into(),
+                "gateway".into(),
+                "setup".into(),
+                "--suffix".into(),
+                "down".into(),
+            ],
+            Some(Path::new("/src/effigy")),
+            &record,
+        ))
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&word_value).unwrap();
+        assert_eq!(parsed["argv"][3], "--suffix", "{word_value}");
+        assert_eq!(parsed["argv"][4], REDACTED, "{word_value}");
+        // The same value in `--flag=value` form keeps the flag and loses the value.
+        let assigned = serde_json::to_string(&event(
+            OperatorAction::Setup,
+            "gateway setup command",
+            50,
+            &[
+                "effigy".into(),
+                "gateway".into(),
+                "setup".into(),
+                "--suffix=down".into(),
+            ],
+            Some(Path::new("/src/effigy")),
+            &record,
+        ))
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&assigned).unwrap();
+        assert_eq!(
+            parsed["argv"][3],
+            format!("--suffix={REDACTED}"),
+            "{assigned}"
+        );
         // Attribution survives: Effigy's own words and flags stay, and so does
         // the action the invoking command named.
         assert!(parents.contains("effigy"), "{parents}");
@@ -1034,6 +1120,54 @@ mod tests {
         assert_eq!(
             parent,
             vec!["sh".to_owned(), REDACTED.to_owned(), REDACTED.to_owned()]
+        );
+
+        // A vocabulary word in a value position is a value, not a word: the
+        // token after a flag is never published, whatever its spelling.
+        let word_value = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["helper", "--password", "gateway", "gateway"],
+            );
+        let parent = caller_of(&word_value, 50).parents[0]
+            .command
+            .clone()
+            .unwrap();
+        assert_eq!(
+            parent,
+            vec![
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                "gateway".to_owned(),
+            ]
+        );
+
+        // The same inside a shell string.
+        let shell_word_value = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["/bin/sh", "-c", "helper --password gateway"],
+            );
+        let parent = caller_of(&shell_word_value, 50).parents[0]
+            .command
+            .clone()
+            .unwrap();
+        assert_eq!(
+            parent,
+            vec![
+                "sh".to_owned(),
+                "-c".to_owned(),
+                format!("{REDACTED} {REDACTED} {REDACTED}"),
+            ]
         );
 
         // The same inside a shell string, including a path-shaped secret.

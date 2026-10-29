@@ -389,16 +389,18 @@ Chain failures keep their place in that list, which is capped at eight entries
 and ends with how many reasons it omitted, so a flood of invalid markers can
 never hide a missing or unconfirmed part of the chain.
 
-Command text is published from a closed vocabulary and nothing else. An event
-records a token from a command line only when that token is a word Effigy defines
-itself, a launcher, runtime or task name the record knows, or one of Effigy's own
-flag names; every other token — an argument value, a path, an unknown flag name
-such as `--hunter2`, a program name, a URL, a `KEY=value` pair, a JSON body — is
-recorded as `<redacted>`, because all of it is caller-controlled text and a
-positional password cannot be told from a word. The same rule applies to the
-invoking process's own `argv` (an accepted option value such as
-`gateway setup --suffix <value>` is never written), to an ancestor's `argv`, and
-token by token inside a shell string. An ancestor's program slot names the file
+Command text is published from a closed vocabulary, and only from a command
+position within it. An event records a token only when it is a word Effigy
+defines itself, a launcher, runtime or task name the record knows, or one of
+Effigy's own flag names, *and* the token is not in a value position: the argument
+after a flag, and the value half of `--flag=value`, are never published whatever
+their spelling. `gateway setup --suffix down` records `--suffix <redacted>`, and
+an ancestor's `helper --password gateway` records neither word. Every other token
+— a value, a path, an unknown flag name such as `--hunter2`, a program name, a
+URL, a `KEY=value` pair, a JSON body — is `<redacted>`, because all of it is
+caller-controlled text. The same rule applies to the invoking process's own
+`argv`, to an ancestor's `argv`, and token by token inside a shell string; a flag
+the record does not know is treated as taking a value. An ancestor's program slot names the file
 name of the executable the operating system reports — never its caller-chosen
 `argv[0]`, which `exec -a` can set to anything — and only when that name is in
 the same vocabulary. Attribution therefore rests on the pid, start identity,
