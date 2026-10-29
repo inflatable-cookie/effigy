@@ -58,10 +58,9 @@ pub(super) fn state_home() -> Option<PathBuf> {
     #[cfg(test)]
     {
         static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
-        // Short: a detached run's control socket lives under this home, and
-        // a Unix socket path is bounded (SUN_LEN). `[scratch]` keeps the temp
-        // root on its volume; a nested run path uses a shorter `effigy/`
-        // ancestor for socket-backed fixture state.
+        // Prefer a short home inside this run's scratch root. On macOS and
+        // Linux the kernel also supports deep confined homes by binding and
+        // probing control sockets relative to verified directories.
         Some(
             TEST_HOME
                 .get_or_init(|| {

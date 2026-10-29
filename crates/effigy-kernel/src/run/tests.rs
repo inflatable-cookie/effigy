@@ -1076,7 +1076,16 @@ fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {
             .unwrap()
             .join(".effigy/gateway/runtime")
     ));
-    assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
+    let observe = cx
+        .operation()
+        .child(Duration::from_secs(1))
+        .observe()
+        .unwrap();
+    assert_eq!(
+        connect_control_socket(&observe, &root, &resource, run.id()).verified(),
+        Some(&crate::probe::ProbeIo::UnixOpen)
+    );
+    drop(listener.accept().unwrap());
     drop(listener);
     run.settle(&cleanup(&cx), &mut fake).unwrap();
     assert!(!path.exists());

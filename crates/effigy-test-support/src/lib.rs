@@ -33,9 +33,9 @@ const DEFAULT_RAND_BYTES: usize = 6;
 
 /// The longest temp root that can still hold the shortest socket-safe fixture
 /// name: `SHORT_PATH_MAX` minus the separator, the minimal prefix and its
-/// random characters.
+/// random characters, minus one for the strict `< SHORT_PATH_MAX` bound.
 pub const SHORT_TEMP_ROOT_MAX: usize =
-    SHORT_PATH_MAX - 1 - MINIMAL_PREFIX.len() - MINIMAL_RAND_BYTES;
+    SHORT_PATH_MAX - 2 - MINIMAL_PREFIX.len() - MINIMAL_RAND_BYTES;
 
 /// The configured fixture root: the run's temporary directory, which a
 /// `[scratch]` run places on the configured volume.
@@ -53,19 +53,19 @@ fn fits(parent: &Path, name: &str, rand_bytes: usize) -> bool {
         < SHORT_PATH_MAX
 }
 
-/// Where a short fixture goes: the run's own temp root, with the caller's
-/// prefix when that fits the socket budget and a minimal name when only that
-/// does.
+/// Prefer a short path when one fits inside the assigned root. On macOS and
+/// Linux the kernel binds and probes sockets relative to a verified directory
+/// (`effigy_kernel::socket_at`), so a deeper root needs no pathname workaround.
+/// Other platforms still require a short absolute socket path.
 ///
-/// Nothing outside the run's temp root is ever used - not its parent, not any
-/// other directory - so a fixture stays inside the directory the run was given.
-/// A temp root too deep for even the minimal name (for example a fresh
-/// `mktemp -d` root under a long scratch path, or an `effigy/` directory inside
-/// one) cannot hold a socket-safe home at all: the kernel resolves a state
-/// root's path before it places a socket in it, so a symlink would not shorten
-/// it. Callers then get a typed error naming the limit instead, rather than a
-/// fixture written outside the run's root.
-fn short_location(configured: PathBuf, prefix: &str) -> io::Result<(PathBuf, String, usize)> {
+/// Every fixture stays inside the assigned root, including confined nested
+/// roots. A child cannot shorten an overlong parent, and no ancestor or
+/// symlink outside the root is used to disguise that fact.
+fn short_location(
+    configured: PathBuf,
+    prefix: &str,
+    directory_relative_sockets: bool,
+) -> io::Result<(PathBuf, String, usize)> {
     let canonical = fs::canonicalize(&configured).unwrap_or_else(|_| configured.clone());
     if fits(&canonical, prefix, DEFAULT_RAND_BYTES) {
         return Ok((configured, prefix.to_owned(), DEFAULT_RAND_BYTES));
@@ -73,21 +73,29 @@ fn short_location(configured: PathBuf, prefix: &str) -> io::Result<(PathBuf, Str
     if fits(&canonical, MINIMAL_PREFIX, MINIMAL_RAND_BYTES) {
         return Ok((configured, MINIMAL_PREFIX.to_owned(), MINIMAL_RAND_BYTES));
     }
+    if directory_relative_sockets {
+        return Ok((configured, prefix.to_owned(), DEFAULT_RAND_BYTES));
+    }
     Err(io::Error::other(format!(
-        "temp root `{}` is {} bytes; a socket-safe `{prefix}` fixture needs a root of at most \
-         {SHORT_TEMP_ROOT_MAX} bytes. Set TMPDIR to a shorter directory inside this run's own \
-         scratch root (for example `mktemp -d <scratch root>/xXXXX`); a fixture is never placed \
-         outside it",
-        configured.display(),
-        configured.as_os_str().len(),
+        "temp root `{}` is {} bytes; an absolute socket-safe `{prefix}` fixture needs a root \
+         of at most {SHORT_TEMP_ROOT_MAX} bytes (fixture path strictly <{SHORT_PATH_MAX} bytes). \
+         Choose a shorter run root before starting the selector; a child cannot shorten this \
+         root and a fixture is never placed outside it",
+        canonical.display(),
+        canonical.as_os_str().len(),
     )))
 }
 
-/// A fresh temporary directory whose path stays short enough for a Unix
-/// control socket, for harnesses that need a bare `TempDir` rather than a
-/// [`Fixture`].
+// Keep this in step with the directory-relative socket implementations in the
+// runtime kernel. No platform without that support may accept an overlong path.
+const DIRECTORY_RELATIVE_SOCKETS: bool = cfg!(any(target_os = "macos", target_os = "linux"));
+
+/// A fresh directory for kernel socket fixtures, preferring a short absolute
+/// path and otherwise using the kernel's directory-relative socket support.
+/// For harnesses that need a bare `TempDir` rather than a [`Fixture`].
 pub fn short_tempdir(prefix: &str) -> io::Result<tempfile::TempDir> {
-    let (parent, name, rand_bytes) = short_location(configured_root(), prefix)?;
+    let (parent, name, rand_bytes) =
+        short_location(configured_root(), prefix, DIRECTORY_RELATIVE_SOCKETS)?;
     tempfile::Builder::new()
         .prefix(&name)
         .rand_bytes(rand_bytes)
@@ -105,15 +113,12 @@ impl Fixture {
         Self::in_parent(prefix, &configured_root())
     }
 
-    /// A fixture HOME short enough for a managed run's Unix control socket,
-    /// created inside the run's own temp root.
-    ///
-    /// A temp root too deep for a socket-safe name (a fresh `mktemp -d` under a
-    /// long scratch path, or an `effigy/` directory inside it) fails with a
-    /// typed error naming the limit; the fixture is never placed outside the
-    /// run's root. See [`short_location`].
+    /// A fixture HOME for kernel control sockets, inside the run's own root.
+    /// Short paths are preferred; deeper roots use the kernel's directory-relative
+    /// sockets on macOS and Linux. Other platforms return a typed limit error.
     pub fn short_home(prefix: &str) -> io::Result<Self> {
-        let (parent, name, rand_bytes) = short_location(configured_root(), prefix)?;
+        let (parent, name, rand_bytes) =
+            short_location(configured_root(), prefix, DIRECTORY_RELATIVE_SOCKETS)?;
         Self::adopt_in(&name, rand_bytes, &parent)
     }
 
@@ -265,130 +270,85 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
-    /// Every short fixture is created inside the temp root the run was given,
-    /// or the caller gets a typed error naming the limit. Nothing is ever
-    /// written to the temp root's parent or any other directory.
     #[test]
     fn short_location_confines_every_fixture_to_the_run_temp_root() {
-        // A roomy root keeps the caller's prefix.
-        let roomy = PathBuf::from("/tmp");
-        let (parent, name, rand_bytes) = short_location(roomy.clone(), "ef-te-").unwrap();
-        assert_eq!(parent, roomy);
-        assert_eq!(name, "ef-te-");
-        assert!(
-            roomy
-                .join(format!("{name}{}", "X".repeat(rand_bytes)))
-                .as_os_str()
-                .len()
-                < SHORT_PATH_MAX
-        );
+        for directory_relative in [false, true] {
+            let roomy = PathBuf::from("/tmp");
+            let (parent, name, rand_bytes) =
+                short_location(roomy.clone(), "ef-te-", directory_relative).unwrap();
+            assert_eq!(parent, roomy);
+            assert_eq!(name, "ef-te-");
+            assert!(fits(&parent, &name, rand_bytes));
 
-        // A root that only fits a minimal name keeps the fixture inside itself.
-        let narrow = PathBuf::from("/Volumes/Builds/scratch/effigy/rev-1");
-        assert!(narrow.as_os_str().len() <= SHORT_TEMP_ROOT_MAX);
-        let (parent, name, rand_bytes) = short_location(narrow.clone(), "ef-te-").unwrap();
-        assert_eq!(parent, narrow);
-        assert_eq!(name, MINIMAL_PREFIX);
-        assert!(
-            narrow
-                .join(format!("{name}{}", "X".repeat(rand_bytes)))
-                .as_os_str()
-                .len()
-                < SHORT_PATH_MAX
-        );
+            // The inclusive root limit leaves a fixture strictly below 47 bytes.
+            let boundary = PathBuf::from(format!("/{}", "x".repeat(SHORT_TEMP_ROOT_MAX - 1)));
+            let (parent, name, rand_bytes) =
+                short_location(boundary.clone(), "ef-te-", directory_relative).unwrap();
+            assert_eq!(parent, boundary);
+            assert_eq!(name, MINIMAL_PREFIX);
+            assert_eq!(
+                parent
+                    .join(format!("{name}{}", "X".repeat(rand_bytes)))
+                    .as_os_str()
+                    .len(),
+                SHORT_PATH_MAX - 1
+            );
+            assert!(fits(&parent, &name, rand_bytes));
+        }
 
-        // A confined root too deep for any name - a fresh `mktemp -d` directly
-        // under the scratch namespace, or an `effigy/` directory inside one -
-        // fails closed instead of writing outside the run's root.
-        let flat = PathBuf::from("/Volumes/Builds/scratch/effigy/rev-AbCdEf12");
-        let nested = flat.join("effigy");
-        for run_root in [&flat, &nested] {
-            assert!(run_root.as_os_str().len() > SHORT_TEMP_ROOT_MAX);
-            let error = short_location(run_root.clone(), "ef-te-").unwrap_err();
-            let message = error.to_string();
-            assert!(
-                message.contains(&run_root.display().to_string()),
-                "{message}"
-            );
-            assert!(
-                message.contains(&format!("at most {SHORT_TEMP_ROOT_MAX} bytes")),
-                "{message}"
-            );
-            assert!(
-                !message.contains("no short temp base"),
-                "no outside fallback is offered: {message}"
-            );
+        let too_long = PathBuf::from(format!("/{}", "x".repeat(SHORT_TEMP_ROOT_MAX)));
+        assert!(!fits(&too_long, MINIMAL_PREFIX, MINIMAL_RAND_BYTES));
+        let error = short_location(too_long, "ef-te-", false).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("at most 40 bytes"), "{message}");
+        assert!(message.contains("strictly <47 bytes"), "{message}");
+        assert!(
+            message.contains("a child cannot shorten this root"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn short_location_accepts_normal_and_confined_deep_roots_with_kernel_sockets() {
+        let normal = PathBuf::from("/Volumes/Builds/scratch/effigy/effigy/12345678");
+        let confined = normal.join("confined/effigy");
+        for root in [normal, confined] {
+            assert!(root.as_os_str().len() > SHORT_TEMP_ROOT_MAX);
+            let (parent, name, rand_bytes) = short_location(root.clone(), "ef-te-", true).unwrap();
+            assert_eq!(parent, root);
+            assert_eq!(name, "ef-te-");
+            assert_eq!(rand_bytes, DEFAULT_RAND_BYTES);
+            assert!(!fits(&parent, &name, rand_bytes));
         }
     }
 
     #[test]
-    fn short_tempdir_is_a_fresh_socket_short_directory_inside_the_run_root() {
-        let temp = fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
-        let directory = match short_tempdir("short-") {
-            Ok(directory) => directory,
-            Err(error) => {
-                // A temp root too deep for a socket-safe name fails with the
-                // typed limit error instead of escaping the run's root.
-                assert!(
-                    error.to_string().contains("at most"),
-                    "unexpected short_tempdir error: {error}"
-                );
-                eprintln!(
-                    "short_tempdir: typed error for temp root {}: {error}",
-                    temp.display()
-                );
-                return;
-            }
-        };
-        assert!(
-            directory.path().as_os_str().len() < SHORT_PATH_MAX,
-            "{} is too long for a control socket",
-            directory.path().display()
-        );
-        assert!(
-            directory.path().starts_with(&temp),
-            "{} is outside the run's temp root {}",
-            directory.path().display(),
-            temp.display()
-        );
+    fn short_tempdir_is_a_fresh_directory_inside_the_run_root() {
+        let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let directory = short_tempdir("short-").expect("kernel socket fixture inside run root");
+        assert!(directory.path().starts_with(&temp));
+        assert!(DIRECTORY_RELATIVE_SOCKETS || directory.path().as_os_str().len() < SHORT_PATH_MAX);
+        let path = directory.path().to_owned();
+        directory.close().unwrap();
+        assert!(!path.exists());
     }
 
     #[test]
-    fn short_home_is_a_fresh_socket_short_home_inside_the_run_root() {
-        let temp = fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
-        let home = match Fixture::short_home("ef-te-") {
-            Ok(home) => home,
-            Err(error) => {
-                assert!(
-                    error.to_string().contains("at most"),
-                    "unexpected short_home error: {error}"
-                );
-                eprintln!(
-                    "short_home: typed error for temp root {}: {error}",
-                    temp.display()
-                );
-                return;
-            }
-        };
+    fn short_home_is_a_fresh_home_inside_the_run_root() {
+        let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let home = Fixture::short_home("ef-te-").expect("kernel socket HOME inside run root");
         eprintln!(
             "short_home: temp_root={} fixture={} len={}",
             temp.display(),
             home.path().display(),
             home.path().as_os_str().len()
         );
-        assert!(
-            home.path().as_os_str().len() < SHORT_PATH_MAX,
-            "{} is too long for a control socket",
-            home.path().display()
-        );
         assert!(home.path().is_dir());
-        let path = home.path().canonicalize().expect("canonical fixture path");
-        assert!(
-            path.starts_with(&temp),
-            "{} is outside the run's temp root {}",
-            path.display(),
-            temp.display()
-        );
+        assert!(DIRECTORY_RELATIVE_SOCKETS || home.path().as_os_str().len() < SHORT_PATH_MAX);
+        let path = home.path().canonicalize().unwrap();
+        assert!(path.starts_with(&temp));
+        drop(home);
+        assert!(!path.exists());
     }
 
     #[test]
