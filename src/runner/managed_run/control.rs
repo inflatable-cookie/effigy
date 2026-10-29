@@ -756,6 +756,34 @@ mod tests {
         assert_eq!(only_run[0].state.entry, "jobs");
     }
 
+    /// Status reports every waiting entry, including two names that a lossy
+    /// file name would have merged into one record (effigy#458).
+    #[test]
+    fn status_reports_distinctly_named_entries_separately() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let repo = dir.path();
+        let task = WaitLedger::task(repo, "dev", "default");
+        task.clear();
+        task.publish(&waiting(
+            "api v1",
+            WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            },
+        ));
+        task.publish(&waiting(
+            "api-v1",
+            WaitOn::Delay {
+                remaining_ms: 2_000,
+            },
+        ));
+        let described = wait_views(repo, "dev", "default", None)
+            .into_iter()
+            .map(|view| view.state.entry)
+            .collect::<Vec<_>>();
+        assert_eq!(described, vec!["api v1", "api-v1"]);
+    }
+
     fn target(root: &std::path::Path) -> crate::runner::task_engine::TaskTarget {
         crate::runner::task_engine::TaskTarget {
             root: root.to_path_buf(),

@@ -269,10 +269,13 @@ During v0.x, MINOR bumps may include breaking changes.
   writes only its own record set and readers follow the current claim, so a
   write that races the handoff never replaces the other's state, and a host
   failure the planner published survives the run's generic `up` exit: the run's
-  error names the failing entry and its observed status. A wait is recorded as settled when it
-  ends, and only a changed meaning or a live wait's refresh writes a record, so a
-  settled entry is never rewritten on an owner-loop tick and a tab or a status
-  never keeps a wait the entry has left behind.
+  error names the failing entry and its observed status. A wait is recorded as
+  settled when it ends, and only a changed meaning or a live wait's refresh
+  writes a record, so a settled entry is never rewritten on an owner-loop tick
+  and a tab or a status never keeps a wait the entry has left behind. Record
+  paths encode an accepted entry or scope name injectively, so two distinct
+  names (`api-v1` and `api v1`, or the task/profile pairs `a-b`/`c` and
+  `a`/`b-c`) never share a record and `status` reports each one.
 - **A gateway operator action names its caller, not just its arguments.**
   `gateway up`, `gateway down` and `gateway setup` each append one bounded
   event to `gateway.stderr.log` — when its gateway state directory exists — as

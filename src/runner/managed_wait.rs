@@ -101,16 +101,22 @@ pub(in crate::runner) struct WaitLedger {
 impl WaitLedger {
     /// The waits of one container environment's own phase and host processes.
     pub(in crate::runner) fn environment(repo_root: &Path, environment: &str) -> Self {
-        Self::new(repo_root, "environment", environment)
+        Self::new(repo_root, "environment", &path_component(environment))
     }
 
-    /// The waits of one managed task and profile's workloads.
+    /// The waits of one managed task and profile's workloads. The two are
+    /// separate components, so `a-b`/`c` and `a`/`b-c` never share a scope.
     pub(in crate::runner) fn task(repo_root: &Path, task: &str, profile: &str) -> Self {
-        Self::new(repo_root, "task", &format!("{task}-{profile}"))
+        Self::new(
+            repo_root,
+            "task",
+            &format!("{}+{}", path_component(task), path_component(profile)),
+        )
     }
 
+    /// `name` is already encoded by [`path_component`].
     fn new(repo_root: &Path, kind: &str, name: &str) -> Self {
-        let scope = format!("{kind}-{}", component(name));
+        let scope = format!("{kind}-{name}");
         Self {
             dir: repo_root.join(WAITS_DIR).join(&scope),
             scope,
@@ -237,7 +243,7 @@ impl WaitLedger {
         }
         // One accepted private-record writer: temp file, 0600, rename.
         let _ = write_private_json(
-            &namespace.join(format!("{}.json", component(entry))),
+            &namespace.join(format!("{}.json", path_component(entry))),
             record,
         );
     }
@@ -249,7 +255,8 @@ impl WaitLedger {
         let path = if entry == ENVIRONMENT_ENTRY {
             self.dir.join(format!("{ENVIRONMENT_ENTRY}.json"))
         } else {
-            self.namespace().join(format!("{}.json", component(entry)))
+            self.namespace()
+                .join(format!("{}.json", path_component(entry)))
         };
         let raw = std::fs::read(path).ok()?;
         let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
@@ -307,17 +314,22 @@ pub(in crate::runner) fn failure_attribution(
     )
 }
 
-fn component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
+/// The one injective encoding for a record path component (K1): `+` separates
+/// components and is never left bare, and every byte outside `[A-Za-z0-9_-]` is
+/// escaped as `%XX`. Two distinct accepted entry or scope names therefore never
+/// share a record — a lossy mapping would let one entry's wait replace
+/// another's, so `status` could omit an entry and a late TUI attach could read
+/// the wrong one (effigy#458). The exec markers use the same rule.
+pub(in crate::runner) fn path_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 #[cfg(test)]
@@ -364,6 +376,108 @@ mod tests {
         assert!(ledger.read("admin").is_none());
         ledger.clear();
         assert!(ledger.read("front").is_none());
+    }
+
+    /// Two accepted entry names are two records. A lossy file name would let
+    /// one entry's wait replace another's, so `status` could omit an entry and
+    /// a late TUI attach could read the wrong one (effigy#458).
+    #[test]
+    fn distinct_accepted_names_never_share_a_record() {
+        let (_home, ledger) = fixture();
+        ledger.clear();
+        let states = [
+            (
+                "api-v1",
+                WaitOn::Delay {
+                    remaining_ms: 1_200,
+                },
+            ),
+            (
+                "api v1",
+                WaitOn::Entry {
+                    name: "api".to_owned(),
+                    phase: EntryPhase::Starting,
+                },
+            ),
+            (
+                "api/v1",
+                WaitOn::Probe {
+                    probe: "GET / -> 200".to_owned(),
+                },
+            ),
+            (
+                "api_v1",
+                WaitOn::Environment {
+                    healthy: Some(3),
+                    total: Some(4),
+                },
+            ),
+        ];
+        for (entry, waiting_on) in &states {
+            ledger.publish(&EntryState {
+                entry: (*entry).to_owned(),
+                phase: EntryPhase::Waiting,
+                waiting_on: Some(waiting_on.clone()),
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 0,
+            });
+        }
+        for (entry, waiting_on) in &states {
+            let state = ledger
+                .read(entry)
+                .unwrap_or_else(|| panic!("{entry} keeps its own record"));
+            assert_eq!(&state.entry, entry);
+            assert_eq!(
+                state.waiting_on.as_ref(),
+                Some(waiting_on),
+                "{entry} reads its own wait"
+            );
+        }
+        let published = ledger.read_all();
+        assert_eq!(
+            published
+                .iter()
+                .map(|state| state.entry.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api v1", "api-v1", "api/v1", "api_v1"],
+            "every distinct name is published once"
+        );
+    }
+
+    /// A task and a profile are separate scope components, so two different
+    /// task/profile pairs never share a scope.
+    #[test]
+    fn task_scopes_keep_the_task_and_profile_apart() {
+        let home = tempfile::tempdir().expect("fixture directory");
+        let left = WaitLedger::task(home.path(), "a-b", "c");
+        let right = WaitLedger::task(home.path(), "a", "b-c");
+        left.clear();
+        right.clear();
+        left.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Delay { remaining_ms: 1 }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        right.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::NotStarted,
+            waiting_on: None,
+            not_started_because: Some(Attribution::new("api", "failed (status 500)")),
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(
+            left.read("api").map(|state| state.phase),
+            Some(EntryPhase::Waiting)
+        );
+        assert_eq!(
+            right.read("api").map(|state| state.phase),
+            Some(EntryPhase::NotStarted)
+        );
     }
 
     /// The handoff is atomic because each publisher writes only its own

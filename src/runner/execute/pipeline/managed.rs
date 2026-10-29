@@ -1346,15 +1346,7 @@ fn managed_workloads(
 /// and is never left bare, and every byte outside `[A-Za-z0-9_-]` is
 /// escaped as `%XX`, so distinct names never share a marker.
 fn marker_component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
+    crate::runner::managed_wait::path_component(value)
 }
 
 /// A settle's release of an inline environment the run started: the task's

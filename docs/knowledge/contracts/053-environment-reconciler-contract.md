@@ -275,7 +275,10 @@ entry or failure. A failure the planner published is terminal and is never
 replaced by the run's generic `up` exit; the run's own environment reason
 carries the planner's failing entry and its report. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting
-entry with the scope that published it. Front ends read those records; they are
+entry with the scope that published it. A record's path encodes its accepted
+entry name injectively (K1: every byte outside `[A-Za-z0-9_-]` as `%XX`), and a
+task scope keeps the task and profile as separate components, so two distinct
+entries or task/profile pairs never share a record. Front ends read those records; they are
 a projection, never authority (effigy#458).
 
 ## 9. Not yet

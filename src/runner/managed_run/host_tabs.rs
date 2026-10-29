@@ -549,7 +549,54 @@ mod tests {
         );
     }
 
-    /// A host that is still waiting for the environment (or for a reader) is
+    /// A late TUI attach reads the record named by its own tab, even when two
+    /// accepted names differ only by a character a lossy file name would have
+    /// folded together (effigy#458).
+    #[test]
+    fn a_late_attach_reads_the_entry_its_tab_names() {
+        use effigy_tui::waits::{EntryPhase, EntryState, WaitOn};
+
+        let dir = tempfile::tempdir().expect("wait dir");
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(dir.path(), "app");
+        ledger.clear();
+        for (entry, probe) in [("api v1", "GET / -> 200"), ("api-v1", "GET /health -> 204")] {
+            ledger.publish(&EntryState {
+                entry: entry.to_owned(),
+                phase: EntryPhase::Starting,
+                waiting_on: Some(WaitOn::Probe {
+                    probe: probe.to_owned(),
+                }),
+                not_started_because: None,
+                detail: None,
+                elapsed_ms: 0,
+            });
+        }
+        let mut spaced = tab(HostProcessRestart::Never, None);
+        spaced.name = "api v1".to_owned();
+        spaced.wait_ledger = ledger.clone();
+        let mut dashed = tab(HostProcessRestart::Never, None);
+        dashed.name = "api-v1".to_owned();
+        dashed.wait_ledger = ledger.clone();
+
+        assert_tab_reads_probe(&mut spaced, "GET / -> 200");
+        assert_tab_reads_probe(&mut dashed, "GET /health -> 204");
+    }
+
+    fn assert_tab_reads_probe(tab: &mut HostProcessTab, probe: &str) {
+        let mut follower = HostFollower::new(tab.clone());
+        follower.poll();
+        assert_eq!(
+            follower
+                .wait_state()
+                .and_then(|state| state.waiting_on.clone()),
+            Some(effigy_tui::waits::WaitOn::Probe {
+                probe: probe.to_owned()
+            }),
+            "the tab reads its own entry's wait"
+        );
+    }
+
+    /// A host that is still waiting for the environment (or for a reader) is    /// A host that is still waiting for the environment (or for a reader) is
     /// never announced as started, so its tab cannot claim it ran; a process
     /// with no wait is (effigy#458).
     #[test]
