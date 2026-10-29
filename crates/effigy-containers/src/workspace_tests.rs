@@ -1423,6 +1423,23 @@ mod guest_isolation_tests {
                 assert!(error.to_string().contains("host state root"), "{error}");
             }
         }
+        let definitions = serde_yaml::from_str::<serde_yaml::Value>(
+            "state-bind:\n  driver: local\n  driver_opts:\n    type: none\n    o: bind\n    device: unresolved/relative\n"
+        ).unwrap();
+        let mount = serde_yaml::from_str::<serde_yaml::Value>(
+            "type: volume\nsource: state-bind\ntarget: /workspace/leaked\n",
+        )
+        .unwrap();
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            Some(&definitions),
+            &[mount],
+        )
+        .expect_err("an unprovable bind device must not be treated as a managed volume");
+        assert!(error.to_string().contains("cannot prove"), "{error}");
     }
 
     #[test]

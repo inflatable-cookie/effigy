@@ -566,7 +566,9 @@ fn read_named_volume_bind_sources(
         } else if driver == "local" && device.starts_with('.') {
             NamedVolumeSource::Host(compose_dir.join(device))
         } else {
-            continue;
+            NamedVolumeSource::Unprovable(
+                "bind device has no provable absolute host path".to_owned(),
+            )
         };
         sources.insert(name.to_owned(), resolved);
     }
