@@ -118,7 +118,7 @@ pub fn process_executable(pid: u32) -> std::io::Result<std::path::PathBuf> {
         let value = bytes.strip_suffix(&[0]).unwrap_or(bytes);
         let path = std::str::from_utf8(value)
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
-        return Ok(std::path::PathBuf::from(path));
+        Ok(std::path::PathBuf::from(path))
     }
     #[cfg(target_os = "linux")]
     {
