@@ -167,6 +167,9 @@ struct HostListenerState {
     /// one: a definite refusal, not a transient one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     observed_status: Option<u16>,
+    /// Latest supervisor probe, independent of whether a route was published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    probe: Option<ListenerProbeState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -685,14 +688,42 @@ pub(in crate::runner) fn take_listener_progress() -> Vec<String> {
     LISTENER_PROGRESS.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
 }
 
-/// The console progress line for a listener that is alive and has not opened
-/// its port yet: the phase has no deadline, and the line says what ends it.
-/// It carries the child's own output tail, so a wait that repeats no longer
-/// says nothing about what the child is doing (effigy#455).
-fn listener_start_progress(process_name: &str, elapsed: Duration, log_path: &Path) -> String {
+/// A supervisor's last probe and whether this generation has ever connected.
+/// A later connection failure must not reset the readiness clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct ListenerProbeState {
+    outcome: HttpReadinessOutcome,
+    readiness_started: bool,
+}
+
+fn listener_probe_detail(probe: Option<ListenerProbeState>) -> String {
+    match probe {
+        None => "no readiness probe observation is available".to_owned(),
+        Some(ListenerProbeState { outcome: HttpReadinessOutcome::Ready, .. }) =>
+            "the declared HTTP status was verified; waiting for route publication".to_owned(),
+        Some(probe) if !probe.readiness_started => format!(
+            "the last probe could not connect ({}); its readiness timeout has not started",
+            probe.outcome.as_str()
+        ),
+        Some(probe) => format!(
+            "the port has accepted a connection; waiting for the declared HTTP status (last probe: {}); its readiness timeout is running",
+            probe.outcome.as_str()
+        ),
+    }
+}
+
+/// The caller uses the supervisor's observed probe phase, never inferring a
+/// closed port from an unpublished route. Unknown observations stay unknown.
+fn listener_start_progress(
+    process_name: &str,
+    elapsed: Duration,
+    log_path: &Path,
+    probe: Option<ListenerProbeState>,
+) -> String {
     let mut line = format!(
-        "[host process] listener `{process_name}` is still starting after {}s: the port is closed and the child is running, so its readiness timeout has not started; `effigy container <env> down` stops it",
-        elapsed.as_secs()
+        "[host process] listener `{process_name}` is still starting after {}s: {}; `effigy container <env> down` stops it",
+        elapsed.as_secs(),
+        listener_probe_detail(probe)
     );
     if let Some(tail) = listener_output_tail(log_path) {
         line.push_str(&format!("; last child output: {tail}"));
@@ -703,7 +734,7 @@ fn listener_start_progress(process_name: &str, elapsed: Duration, log_path: &Pat
 /// What a caller's wait for one listener's published state concluded.
 enum ListenerWait {
     /// The listener published this generation's verified state.
-    Ready(HostListenerState),
+    Ready(Box<HostListenerState>),
     /// Nothing verified was published, so only this listener's own route is
     /// withheld. `budget_expired` says the enclosing activation's observation
     /// budget ended the wait rather than the listener's own readiness.
@@ -732,6 +763,7 @@ fn wait_for_listener_state(
     route_table_path: &Path,
     deadline: Option<Instant>,
 ) -> Result<ListenerWait, RunnerError> {
+    let mut last_probe = None;
     let mut next_liveness_check = Instant::now();
     let started = Instant::now();
     let mut next_progress = started + listener_progress_interval();
@@ -757,6 +789,7 @@ fn wait_for_listener_state(
                     "managed host listener state for `{process_name}` belongs to a different checkout/profile owner"
                 )));
             }
+            last_probe = state.probe;
             match state.status.as_str() {
                 "ready" => {
                     let route_owner = state.route_owner.as_ref().ok_or_else(|| {
@@ -785,7 +818,7 @@ fn wait_for_listener_state(
                         )));
                     }
                     if managed_route_matches(route_table_path, &state, owner)? {
-                        return Ok(ListenerWait::Ready(state));
+                        return Ok(ListenerWait::Ready(Box::new(state)));
                     }
                 }
                 "failed" => {
@@ -805,6 +838,7 @@ fn wait_for_listener_state(
                             process_name,
                             started.elapsed(),
                             &path.with_file_name(format!("{}.log", sanitize(process_name))),
+                            last_probe,
                         ));
                     }
                     if Instant::now() >= next_liveness_check {
@@ -829,8 +863,9 @@ fn wait_for_listener_state(
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Ok(ListenerWait::Withheld {
                 diagnostic: format!(
-                    "managed host listener `{process_name}` still had not opened its port after {}s, when the activation's observation budget expired",
-                    started.elapsed().as_secs()
+                    "managed host listener `{process_name}` had not published verified readiness after {}s, when the activation's observation budget expired; {}",
+                    started.elapsed().as_secs(),
+                    listener_probe_detail(last_probe)
                 ),
                 observed_status: None,
                 budget_expired: true,
@@ -1692,6 +1727,7 @@ struct ListenerGeneration<'a> {
     /// The status a listener answered when its readiness declared another
     /// one: the observation that made the refusal terminal.
     observed_status: Option<u16>,
+    probe: Option<ListenerProbeState>,
 }
 
 impl<'a> ListenerGeneration<'a> {
@@ -1705,6 +1741,7 @@ impl<'a> ListenerGeneration<'a> {
             route_owner: None,
             diagnostic: None,
             observed_status: None,
+            probe: None,
         }
     }
 
@@ -1745,6 +1782,7 @@ impl<'a> ListenerGeneration<'a> {
             route_owner: self.route_owner.clone(),
             diagnostic: self.diagnostic.clone(),
             observed_status: self.observed_status,
+            probe: self.probe,
         }
     }
 
@@ -1908,7 +1946,9 @@ fn supervise_managed_host_listener(
 
     let ready = {
         let mut stop = || stop_requested(run, watch) || shutdown.load(Ordering::SeqCst);
-        wait_for_ready_listener(address, listener, &log_path, &mut stop, &mut child)
+        wait_for_ready_listener(
+            address, listener, &log_path, &mut stop, &mut child, &mut state,
+        )
     };
     if let Err(error) = ready {
         let stopped = matches!(error, ListenerStartupFailure::Stopped);
@@ -2145,6 +2185,7 @@ fn wait_for_ready_listener(
     log_path: &Path,
     stop: &mut dyn FnMut() -> bool,
     child: &mut effigy_kernel::custody::OwnedProcess,
+    state: &mut ListenerGeneration<'_>,
 ) -> Result<(), ListenerStartupFailure> {
     let timeout = Duration::from_secs(config.readiness_timeout_secs);
     let started = Instant::now();
@@ -2171,6 +2212,18 @@ fn wait_for_ready_listener(
             .into());
         }
         let probe = probe_http_readiness(address, &config.route_domain, config);
+        let now = Instant::now();
+        if probe.outcome != HttpReadinessOutcome::ConnectFailed {
+            answered_at.get_or_insert(now);
+        }
+        let observed = Some(ListenerProbeState {
+            outcome: probe.outcome,
+            readiness_started: answered_at.is_some(),
+        });
+        if state.probe != observed {
+            state.probe = observed;
+            state.write("starting")?;
+        }
         if probe.outcome == HttpReadinessOutcome::Ready {
             return Ok(());
         }
@@ -2185,20 +2238,18 @@ fn wait_for_ready_listener(
                 status: probe.status,
             });
         }
-        let now = Instant::now();
-        if probe.outcome == HttpReadinessOutcome::ConnectFailed {
-            if now >= next_progress {
-                next_progress = now + listener_progress_interval();
-                append_log_line(
-                    log_path,
-                    &format!(
-                        "[effigy host-process] listener at {address} is still starting after {}s: the port is closed and the child is running, so the {}s readiness timeout has not started",
-                        started.elapsed().as_secs(),
-                        timeout.as_secs()
-                    ),
-                );
-            }
-        } else if now.duration_since(*answered_at.get_or_insert(now)) >= timeout {
+        if now >= next_progress {
+            next_progress = now + listener_progress_interval();
+            append_log_line(
+                log_path,
+                &format!(
+                    "[effigy host-process] listener at {address} is still starting after {}s: {}",
+                    started.elapsed().as_secs(),
+                    listener_probe_detail(state.probe)
+                ),
+            );
+        }
+        if answered_at.is_some_and(|opened| now.duration_since(opened) >= timeout) {
             return Err(listener_readiness_timeout(
                 address,
                 config,
@@ -3615,7 +3666,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             })
             .expect("append the supervisor's own line");
 
-        let progress = listener_start_progress("app", Duration::from_secs(90), &log);
+        let progress = listener_start_progress("app", Duration::from_secs(90), &log, None);
         assert!(progress.contains("still starting after 90s"), "{progress}");
         let tail = progress
             .split("last child output: ")
@@ -3648,6 +3699,7 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             "api",
             Duration::from_secs(30),
             Path::new("/nonexistent/api.log"),
+            None,
         );
         assert!(
             progress.contains("still starting after 30s") && progress.contains("down` stops it"),

@@ -659,7 +659,10 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of the whole activation's readiness and exposure as unverified. A
   definite status mismatch is refused as soon as it is observed rather than
   spending `readiness.timeout_secs`, and a still-closed port's progress line
-  carries the child's own bounded output tail. A port that never opens is
+  carries the child's own bounded output tail. Progress and activation-budget
+  refusals name the supervisor's actual probe phase: an open port with no HTTP
+  status keeps its running readiness clock and is never described as closed.
+  A port that never opens is
   bounded by the bring-up's observation budget instead of holding `up` open,
   and its progress carries that same bounded, redacted tail. The timed-out
   generation is settled before the command returns, so it cannot publish a

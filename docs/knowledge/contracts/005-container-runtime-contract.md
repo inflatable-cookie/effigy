@@ -289,8 +289,13 @@ that listener's route and never holds the activation open. The wait still
 reports what it observed: while the
 port is closed it prints progress at a fixed interval and carries the child's
 own output tail, bounded and with secret-shaped values redacted, so a long
-start is never a silent count. A listener that answers the declared readiness
-request with a different status is refused as soon as that answer is observed.
+start is never a silent count. Progress and activation-budget refusals use the
+supervisor's last probe observation. A socket that accepted a connection but supplied no HTTP status is
+reported as waiting for the declared HTTP status, with its readiness clock
+running. A later connection failure does not reset that clock. A record with no
+probe observation makes no closed-port claim. A listener that answers the
+declared readiness request with a different status is refused as soon as that
+answer is observed.
 The refusal names the status it answered, the status the manifest required and
 the same bounded child-output tail, and the declared budget is not spent on a
 question the child has already answered: a `500` where `200` is required ends

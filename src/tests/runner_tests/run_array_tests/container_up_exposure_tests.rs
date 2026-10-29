@@ -73,6 +73,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 "#;
 
+/// Accepts the readiness connection but closes it without an HTTP status.
+const NO_STATUS_CHILD: &str = r#"
+import socket, os
+host, port = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"].rsplit(":", 1)
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((host, int(port)))
+server.listen(8)
+print("listener: waiting for an HTTP response", flush=True)
+while True:
+    connection, _ = server.accept()
+    connection.recv(4096)
+    connection.close()
+"#;
+
 /// A listener child that never binds its port, and whose output carries a
 /// secret-shaped value behind far more text than a report may keep: the
 /// activation's observation budget must end the command's wait and its progress
@@ -858,6 +873,46 @@ fn detached_up_bounds_a_closed_port_and_reports_redacted_progress() {
         table.lookup(FRONT_DOMAIN).is_none(),
         "the still-closed listener has no route: {table:?}"
     );
+    fixture.down();
+}
+
+/// An open socket without a status is waiting on HTTP readiness, not a build
+/// whose port is still closed. Both progress and budget refusal use the
+/// supervisor's observation, and route state is checked after failed detach.
+#[test]
+fn detached_up_reports_the_observed_open_port_when_the_activation_budget_expires() {
+    let fixture = ExposureFixture::new(
+        "open-no-status",
+        &one_listener(NO_STATUS_CHILD),
+        LISTENER_OBSERVATION_BUDGET_SECS,
+    );
+    let _ = take_listener_progress();
+    let started = Instant::now();
+    let error = fixture
+        .up(false)
+        .expect_err("no HTTP status means no route");
+    assert!(started.elapsed() < Duration::from_secs(60));
+    let text = error.to_string();
+    assert!(text.contains("observation budget expired"), "{text}");
+    assert!(text.contains("no_status_line"), "{text}");
+    assert!(text.contains("readiness timeout is running"), "{text}");
+    assert!(!text.contains("port is closed"), "{text}");
+    assert!(!text.contains("had not opened its port"), "{text}");
+    assert!(!text.contains("timeout has not started"), "{text}");
+
+    let progress = take_listener_progress();
+    let observed_open = progress
+        .iter()
+        .position(|line| line.contains("no_status_line"))
+        .unwrap_or_else(|| panic!("the actual wait reports its observed probe: {progress:?}"));
+    for line in &progress[observed_open..] {
+        assert!(line.contains("readiness timeout is running"), "{line}");
+        assert!(!line.contains("port is closed"), "{line}");
+        assert!(!line.contains("timeout has not started"), "{line}");
+    }
+    let table = fixture.routes();
+    assert!(table.lookup(CONTAINER_DOMAIN).is_some(), "{table:?}");
+    assert!(table.lookup(FRONT_DOMAIN).is_none(), "{table:?}");
     fixture.down();
 }
 
