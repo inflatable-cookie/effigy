@@ -32,6 +32,7 @@ pub mod store;
 #[cfg(feature = "fault-injection")]
 pub mod strict_fake;
 pub mod supervise;
+pub mod workspace_channel;
 
 #[cfg(all(test, feature = "fault-injection"))]
 mod fault;
