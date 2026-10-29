@@ -565,9 +565,12 @@ fn one_listener(child: &'static str) -> [FixtureListener; 1] {
 /// The child-output tail a failure text or progress line carries, bounded and
 /// with the secret-shaped value replaced.
 fn assert_bounded_redacted_tail(where_: &str, text: &str) {
+    // Failure text has a dedicated tail line as well as diagnostic context;
+    // progress carries its tail inline. Measure the actual tail on each front.
     let tail = text
-        .split("last child output: ")
-        .nth(1)
+        .lines()
+        .find_map(|line| line.strip_prefix("  last child output: "))
+        .or_else(|| text.split_once("last child output: ").map(|(_, tail)| tail))
         .unwrap_or_else(|| panic!("{where_} names the child's output tail: {text}"));
     assert!(
         tail.len() <= TAIL_BOUND_BYTES,
