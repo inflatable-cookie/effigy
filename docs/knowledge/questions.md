@@ -665,9 +665,13 @@ Tom selected an explicit pinned lineage boundary, a scan of the current
 tracked tree, and an allowlist restricted to exact known fixture paths and
 content hashes before the candidate selector becomes a release gate. That
 selection followed an empty `git merge-base v0.14.1 HEAD` in a shallow
-checkout. After deepening the checkout on 2026-10-29, the tag resolves to
-commit `20465f1ff690340ee9ef461915ca769da1c76fca` and is an ancestor
-of `main` (`git merge-base --is-ancestor` exits 0). The earlier empty result
-was a shallow-history artifact. The exact boundary SHA is pending Tom's
-review of this corrected evidence; no different root has been pinned and
-the release gate has not been enabled.
+checkout. After fully fetching the history on 2026-10-29, the repository is
+not shallow. The tag resolves to commit
+`20465f1ff690340ee9ef461915ca769da1c76fca` and is an ancestor of
+`main` (`git merge-base --is-ancestor` exits 0); the first mainline commit
+after it is `7b26a1579a4991248014fd3352f9ae3093ae99fa`. The actual Git
+root is `9dae95a45512bf6368009f7f898c04cb07caf6c3` (2026-02-28), before
+v0.14.1. The earlier empty result was a shallow-history artifact, so this
+is a continuous history rather than an unrelated rebuilt lineage. The exact
+audit boundary is pending Tom's review of this corrected evidence; no
+different root has been pinned and the release gate has not been enabled.
