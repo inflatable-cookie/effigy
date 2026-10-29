@@ -2669,11 +2669,14 @@ only, and host access needs a terminal opened through Effigy.
   checksum published beside the artifact, and the installed executable is
   re-hashed in the container. A release that publishes no checksum cannot be
   installed, and an image without a SHA-256 utility refuses Prepare. The guest
-  authenticates an installed executable with one digest probe, never by reading
-  the file into a bounded command's output. The stable
+  authenticates installed executables with bounded digest probes, never by
+  reading the file into a bounded command's output. The stable
   entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
   store, so a running invocation keeps the bytes it resolved and only a new
-  invocation sees a new generation.
+  invocation sees a new generation. Before handoff, entry verification requires
+  that symlink to point directly to the pinned immutable executable and hashes
+  the bytes reached through the stable entry; missing or retargeted entries
+  refuse with host re-prepare guidance.
 - Workspace Prepare consumes the produced artifact on the host, verifies its
   digest, and installs it into a guest-private executable store, selected per
   workspace generation by an atomic pointer. The architecture comes from the

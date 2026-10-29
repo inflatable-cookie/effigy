@@ -244,6 +244,15 @@ struct CountingGuest<'a> {
 }
 
 impl GuestWorkspace for CountingGuest<'_> {
+    fn read_link(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<String>, crate::runner::error::RunnerError> {
+        let target = self.inner.read_link(path)?;
+        self.bytes += target.as_ref().map_or(0, |target| target.len() as u64);
+        Ok(target)
+    }
+
     fn ensure_dir(
         &mut self,
         path: &str,
@@ -755,6 +764,52 @@ fn wrong_installed_bytes_are_refused_at_entry() {
 
     assert!(error.contains("is sha256:"), "{error}");
     assert!(error.contains(HOST_REPREPARE_COMMAND));
+}
+
+#[test]
+fn missing_wrong_and_regular_entry_paths_refuse_before_handoff() {
+    let repo = fixture("entry-path");
+    let _env = EnvGuard::set_many(&[(
+        EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+        Some("download".to_owned()),
+    )]);
+    let guest_root = Fixture::new("effigy-entry-path-").expect("guest root");
+    let mut guest = DiskGuest::new(guest_root.path().to_owned(), container_identity());
+    let artifact = artifact_bytes(&repo, b"\x7fELF\x02\x01\x01pinned entry");
+    let prepared = prepare_disk(
+        &repo,
+        &mut guest,
+        &artifact,
+        Some(operator_workspace()),
+        Some("run-7"),
+    )
+    .expect("prepare entry");
+    let executable = binary_path(&prepared.binary.digest);
+    verify_pinned_guest_binary(&mut guest, &entry()).expect("intact entry");
+    let before = std::fs::read(guest.host_path(&executable).unwrap()).unwrap();
+    let entry_path = guest.host_path(ENTRY_PATH).unwrap();
+    std::fs::remove_file(&entry_path).unwrap();
+    for state in ["missing", "wrong", "regular"] {
+        if state == "wrong" {
+            // Matching bytes at a different object do not authorize retargeting.
+            guest
+                .write_file("/run/effigy/other", &before, 0o555)
+                .unwrap();
+            guest.replace_link(ENTRY_PATH, "/run/effigy/other").unwrap();
+        } else if state == "regular" {
+            std::fs::remove_file(&entry_path).unwrap();
+            guest.write_file(ENTRY_PATH, &before, 0o555).unwrap();
+        }
+        let error = verify_pinned_guest_binary(&mut guest, &entry())
+            .expect_err(state)
+            .to_string();
+        assert!(error.contains(ENTRY_PATH), "{state}: {error}");
+        assert!(error.contains(HOST_REPREPARE_COMMAND), "{error}");
+        assert_eq!(
+            std::fs::read(guest.host_path(&executable).unwrap()).unwrap(),
+            before
+        );
+    }
 }
 
 #[test]

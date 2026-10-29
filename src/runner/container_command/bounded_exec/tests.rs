@@ -214,6 +214,22 @@ case "$args" in
         printf '%s' "$FAKE_BOUNDED_PROBE"
         exit 0
         ;;
+    *"readlink"*"/usr/local/bin/effigy"*)
+        case "$FAKE_BOUNDED_MODE" in
+            entry-missing) exit 3 ;;
+            entry-wrong) printf '/run/effigy/other\n'; exit 0 ;;
+        esac
+        printf '/run/effigy/bin/%s/effigy\n' "$FAKE_DIGEST_HEX"
+        exit 0
+        ;;
+    *"/usr/local/bin/effigy"*)
+        if [ "$FAKE_BOUNDED_MODE" = "entry-wrong-bytes" ]; then
+            printf '%064d\n' 0
+        else
+            printf '%s\n' "$FAKE_DIGEST_HEX"
+        fi
+        exit 0
+        ;;
     *"$FAKE_DIGEST_HEX"*)
         # The entry authenticates the installed executable with a digest probe,
         # never by reading its bytes into the caller's capture budget.
@@ -636,7 +652,11 @@ fn public_guest_preparation_stdout(dir: &Path, mode: &str) -> u64 {
     1 + context
         + public_guest_identity_probe(mode).len() as u64
         + public_guest_digest().len() as u64
+        + 65
+        + "/run/effigy/bin/".len() as u64
         + 64
+        + "/effigy\n".len() as u64
+        + 65
 }
 
 #[cfg(unix)]
@@ -837,9 +857,9 @@ fn guarded_public_entry_child() {
             assert_eq!(value["attempts"], 1);
             // Three owned-service listings plus the published generation, its
             // document, the identity probe, the digest pointer and the pinned
-            // executable.
+            // executable, stable entry target and bytes launched through it.
             assert_eq!(
-                value["preparation"]["captures"], 8,
+                value["preparation"]["captures"], 10,
                 "public command must verify the published guest context and its pinned executable"
             );
             let preparation_stdout = value["preparation"]["retained"]["stdout_bytes"]
@@ -887,6 +907,13 @@ fn guarded_public_entry_child() {
                 "the stale guest must never run the workload"
             );
         }
+        "entry-missing" | "entry-wrong" | "entry-wrong-bytes" => {
+            let error = result.expect_err("untrusted stable entry must refuse");
+            let details = failure_details(&error);
+            assert_eq!(details["failure"], "workspace_preparation_failed");
+            assert_eq!(details["phase"], "workspace_preparation");
+            assert!(!final_marker.exists(), "unverified entry must never launch");
+        }
         "identity-invalid" => {
             let error = result.expect_err("stale workspace identity must require refresh");
             let details = failure_details(&error);
@@ -920,7 +947,7 @@ fn guarded_public_entry_child() {
             assert_eq!(details["phase"], "command_execution");
             assert_eq!(details["attempts"], 2);
             assert_eq!(details["workspace_user_fallback"], true);
-            assert_eq!(details["preparation"]["captures"], 8);
+            assert_eq!(details["preparation"]["captures"], 10);
             assert!(!final_marker.exists());
         }
         "remove-before-command" => {
@@ -1166,6 +1193,16 @@ public_failure_test!(
     public_workspace_identity_invalid_requires_refresh,
     "identity-invalid"
 );
+#[cfg(unix)]
+public_failure_test!(public_missing_entry_refuses_before_command, "entry-missing");
+#[cfg(unix)]
+public_failure_test!(public_wrong_entry_refuses_before_command, "entry-wrong");
+#[cfg(unix)]
+public_failure_test!(
+    public_wrong_entry_bytes_refuse_before_command,
+    "entry-wrong-bytes"
+);
+
 #[cfg(unix)]
 public_failure_test!(
     public_workspace_deadline_refuses_before_command,

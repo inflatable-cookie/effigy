@@ -146,9 +146,10 @@ impl GuestReader for FakeGuest {
     }
 
     fn file_sha256(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        let target = self.link_target(path);
         Ok(self
             .nodes
-            .get(path)
+            .get(target.as_deref().unwrap_or(path))
             .filter(|node| node.kind == FakeNodeKind::File)
             .map(|node| hex_sha256(&node.bytes)))
     }
@@ -165,6 +166,10 @@ pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
 }
 
 impl GuestWorkspace for FakeGuest {
+    fn read_link(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        Ok(self.link_target(path))
+    }
+
     fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError> {
         self.nodes.insert(
             path.to_owned(),
@@ -295,6 +300,31 @@ impl GuestReader for DiskGuest {
 
 #[cfg(test)]
 impl GuestWorkspace for DiskGuest {
+    fn read_link(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        let host = self.host_path(path)?;
+        match std::fs::read_link(&host) {
+            Ok(target) => {
+                // Absolute guest links are rooted at this fixture, never the
+                // host root. Translate back to the guest namespace.
+                let relative = target.strip_prefix(&self.root).map_err(|error| {
+                    RunnerError::task_invocation(format!("entry `{path}` escapes fixture: {error}"))
+                })?;
+                Ok(Some(format!("/{}", relative.display())))
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(RunnerError::task_invocation(format!(
+                "cannot read entry `{path}`: {error}"
+            ))),
+        }
+    }
+
     fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError> {
         let host = self.host_path(path)?;
         std::fs::create_dir_all(&host).map_err(|error| {

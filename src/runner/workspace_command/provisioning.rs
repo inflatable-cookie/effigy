@@ -726,7 +726,29 @@ pub(super) fn verify_pinned_guest_binary(
                 published.generation
             )))
         }
-        Some(_) => Ok(()),
+        Some(_) => {
+            // Handoff launches the stable entry, so authenticating only the
+            // immutable object cannot authorize that invocation.
+            let entry = CONTAINER_WORKSPACE_EFFIGY_ENTRY_PATH;
+            let target = guest.read_link(entry)?;
+            if target.as_deref() != Some(executable.as_str()) {
+                return Err(RunnerError::task_invocation(format!(
+                    "workspace entry `{entry}` does not point to pinned executable `{executable}`; \
+                     run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+                )));
+            }
+            let installed = guest.file_sha256(entry)?;
+            if !installed
+                .as_deref()
+                .is_some_and(|hex| digest_matches(&digest, hex))
+            {
+                return Err(RunnerError::task_invocation(format!(
+                    "workspace entry `{entry}` does not contain pinned executable {digest}; run \
+                     `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
+                )));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1628,6 +1650,26 @@ impl GuestReader for ComposeWorkspaceGuest<'_> {
 }
 
 impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
+    fn read_link(&mut self, path: &str) -> Result<Option<String>, RunnerError> {
+        let script = format!(
+            "[ -L {path} ] || exit 3\nreadlink {path}",
+            path = shell_quote(path)
+        );
+        let output = self.run_script(&script, false)?;
+        match output.status.code() {
+            Some(0) => String::from_utf8(output.stdout)
+                .map(|target| Some(target.trim_end_matches('\n').to_owned()))
+                .map_err(|error| RunnerError::task_invocation(format!(
+                    "cannot decode workspace entry `{path}`: {error}; run `{HOST_REPREPARE_COMMAND}` on the host"
+                ))),
+            Some(3) => Ok(None),
+            _ => Err(RunnerError::task_invocation(format!(
+                "cannot read workspace entry `{path}`: {}; run `{HOST_REPREPARE_COMMAND}` on the host",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))),
+        }
+    }
+
     fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError> {
         let script = format!(
             "mkdir -p {path} && chmod {mode:04o} {path}",

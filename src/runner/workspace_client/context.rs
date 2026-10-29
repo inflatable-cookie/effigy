@@ -729,6 +729,9 @@ pub(crate) fn sha256_text(bytes: &[u8]) -> String {
 /// activation (R2). Its intent precedes guest I/O and its receipt precedes active.
 /// Existing immutable objects may be verified, never replaced.
 pub(crate) trait GuestWorkspace: GuestReader {
+    /// Read a stable entry symlink without following it. A missing path or a
+    /// non-symlink is unprepared, even if another file has matching bytes.
+    fn read_link(&mut self, path: &str) -> Result<Option<String>, RunnerError>;
     /// Create a generation directory with `mode`.
     fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError>;
     /// Publish one immutable file with `mode`.
