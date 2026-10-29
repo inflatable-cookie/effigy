@@ -125,6 +125,15 @@ impl ProgressSource {
         }
     }
 
+    /// Name the exact object or probe now awaited, when the work moves on to
+    /// something other than the one first named.
+    pub fn waiting_on(&self, awaiting: impl Into<String>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .awaiting = awaiting.into();
+    }
+
     /// Update the current object or sub-step, known count and latest event.
     pub fn update(
         &self,
@@ -140,7 +149,10 @@ impl ProgressSource {
         }
     }
 
-    fn frame_at(&self, elapsed: Duration) -> String {
+    /// The frame a live step draws after `elapsed`: the current sub-step, the
+    /// known count, the latest event or the awaited object, then the elapsed
+    /// wait. Public so a test can check frames on a fake clock.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
             .sub_step
@@ -598,6 +610,15 @@ pub fn step(label: &str) -> Step {
 /// Start a top-level step driven by an operation's live state.
 pub fn live_step(source: ProgressSource) -> Step {
     Step::new_live(Arc::clone(global_sink()), None, source)
+}
+
+/// One finished line for an outcome that resolved without a running step.
+pub fn outcome_line(ok: bool, summary: &str) {
+    if capture_finish(ok, summary) {
+        return;
+    }
+    let sink = global_sink();
+    sink.write_finish(sink.mode(), ok, summary);
 }
 
 /// Silence steps while another surface owns the terminal (the managed-run

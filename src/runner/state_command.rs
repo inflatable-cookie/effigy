@@ -21,6 +21,7 @@ use effigy_state::{
     StateStackCaptureTaskStatus, StateStackHistoryReport, StateStackLineageReport,
     StateStackManifest,
 };
+use effigy_ui::steps::ProgressSource;
 use serde_json::Value;
 
 use super::state_command_artifact::run_state_artifact;
@@ -194,15 +195,23 @@ fn run_state_apply(
 
     if execute {
         validate_sql_layers(repo_root, &report.layers)?;
+        let planned = report
+            .layers
+            .iter()
+            .filter(|layer| ApplyAction::from_status(layer.status).is_some())
+            .count();
+        let mut position = 0;
         for layer in &mut report.layers {
             let Some(action) = ApplyAction::from_status(layer.status) else {
                 continue;
             };
-            let step = effigy_ui::steps::step(&action.label(&layer.key));
+            position += 1;
+            let progress = layer_progress(action, &layer.key, &layer.source, position, planned);
+            let step = effigy_ui::steps::live_step(progress.clone());
             match execute_layer_action(action, layer, repo_root) {
                 Ok(()) => {
                     if layer.hook.is_some() {
-                        step.set_label(&apply_hook_label(&layer.key));
+                        show_apply_hook(&progress, &layer.key, position, planned);
                     }
                     if let Err(error) = execute_state_apply_hook(
                         &report.stack_name,
@@ -363,6 +372,15 @@ impl ApplyAction {
         }
     }
 
+    /// The exact object this action waits on, named by its source.
+    fn awaiting(self, source: &str) -> String {
+        match self {
+            Self::Task => format!("task `{source}` to finish"),
+            Self::Artifact => format!("artifact `{source}` to stage"),
+            Self::Sql => format!("SQL import of `{source}` to finish"),
+        }
+    }
+
     fn fail_summary(self, key: &str, error: &RunnerError) -> String {
         let why = human_failure(error);
         match self {
@@ -371,6 +389,33 @@ impl ApplyAction {
             Self::Sql => format!("SQL layer `{key}` failed: {why}"),
         }
     }
+}
+
+/// One apply layer's live step: the layer now running, its place among the
+/// planned layers, and the source the action waits on.
+fn layer_progress(
+    action: ApplyAction,
+    key: &str,
+    source: &str,
+    position: usize,
+    planned: usize,
+) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(action.awaiting(source));
+    progress.update(
+        action.label(key),
+        Some((position as u64, planned as u64)),
+        None,
+    );
+    progress
+}
+
+/// The hook runs after its layer applied; the last event says so.
+fn show_apply_hook(progress: &ProgressSource, key: &str, position: usize, planned: usize) {
+    progress.update(
+        apply_hook_label(key),
+        Some((position as u64, planned as u64)),
+        Some(format!("layer `{key}` applied")),
+    );
 }
 
 fn apply_hook_label(key: &str) -> String {
@@ -399,6 +444,25 @@ fn capture_artifact_label(key: &str, push: bool) -> String {
     } else {
         format!("staging capture artifact `{key}`")
     }
+}
+
+/// A capture task's live step: the first of two phases, waiting on the task.
+fn capture_task_progress(name: &str) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!("task `{name}` to finish"));
+    progress.update(capture_task_label(name), Some((1, 2)), None);
+    progress
+}
+
+/// A capture artifact's live step, waiting on the stage or push it names.
+fn capture_artifact_progress(key: &str, push: bool, destination: Option<&str>) -> ProgressSource {
+    let awaiting = match (push, destination) {
+        (true, Some(destination)) => format!("artifact `{key}` to be pushed to {destination}"),
+        (true, None) => format!("artifact `{key}` to be pushed"),
+        (false, _) => format!("artifact `{key}` to be staged"),
+    };
+    let progress = ProgressSource::waiting_for(awaiting);
+    progress.update(capture_artifact_label(key, push), Some((1, 1)), None);
+    progress
 }
 
 fn captured_layer_summary(key: &str) -> String {
@@ -833,13 +897,13 @@ fn build_state_stack_capture_report(
         })
         .into_iter()
         .collect::<Vec<_>>();
-    let step = request.yes.then(|| {
-        let label = match tasks.first() {
-            Some(task) => capture_task_label(&task.name),
-            None => capture_artifact_label(&key, request.push),
-        };
-        effigy_ui::steps::step(&label)
+    let progress = request.yes.then(|| match tasks.first() {
+        Some(task) => capture_task_progress(&task.name),
+        None => capture_artifact_progress(&key, request.push, request.destination_ref.as_deref()),
     });
+    let step = progress
+        .as_ref()
+        .map(|progress| effigy_ui::steps::live_step(progress.clone()));
     if request.yes {
         let context_path = if tasks.is_empty() {
             None
@@ -943,10 +1007,14 @@ fn build_state_stack_capture_report(
                 }
             }
         }
-        if !tasks.is_empty() {
-            if let Some(step) = step.as_ref() {
-                step.set_label(&capture_artifact_label(&key, request.push));
-            }
+        if let (Some(progress), Some(task)) = (progress.as_ref(), tasks.first()) {
+            // The artifact is the second of two phases; the task that ran is
+            // the last event.
+            progress.update(
+                capture_artifact_label(&key, request.push),
+                Some((2, 2)),
+                Some(format!("capture task `{}` finished", task.name)),
+            );
         }
     }
     let artifact_report = match (
@@ -2079,5 +2147,52 @@ run = "sh -lc 'exit 42'"
                 descriptor,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod live_progress_tests {
+    use std::time::Duration;
+
+    use super::{
+        capture_artifact_progress, capture_task_progress, layer_progress, show_apply_hook,
+        ApplyAction,
+    };
+
+    #[test]
+    fn an_apply_layer_frame_names_its_place_and_the_source_it_waits_on() {
+        let progress = layer_progress(ApplyAction::Task, "seed", "seed-task", 2, 3);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(4)),
+            "running task layer `seed` (2/3); waiting for task `seed-task` to finish; 4s elapsed"
+        );
+    }
+
+    #[test]
+    fn an_apply_hook_frame_names_the_layer_that_applied() {
+        let progress = layer_progress(ApplyAction::Sql, "users", "users.sql", 1, 2);
+        show_apply_hook(&progress, "users", 1, 2);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(9)),
+            "running apply hook `users` (1/2); last: layer `users` applied; 9s elapsed"
+        );
+    }
+
+    #[test]
+    fn a_capture_task_frame_names_the_task_and_its_phase() {
+        let progress = capture_task_progress("snapshot");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(3)),
+            "running capture task `snapshot` (1/2); waiting for task `snapshot` to finish; 3s elapsed"
+        );
+    }
+
+    #[test]
+    fn a_capture_artifact_frame_names_the_destination_it_pushes_to() {
+        let progress = capture_artifact_progress("db-dump", true, Some("oci://registry/dump"));
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(2)),
+            "pushing capture artifact `db-dump` (1/1); waiting for artifact `db-dump` to be pushed to oci://registry/dump; 2s elapsed"
+        );
     }
 }

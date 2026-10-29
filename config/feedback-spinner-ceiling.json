@@ -414,30 +414,6 @@
     22
   ],
   [
-    "src/runner/release_command/ops.rs",
-    117,
-    "let step = effigy_ui::steps::step(&release_run_label(&action, to));",
-    34
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    178,
-    "self.gate = Some(self.root.step(&label));",
-    36
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    329,
-    "self.running = Some(effigy_ui::steps::step(&label));",
-    47
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    338,
-    "let step = effigy_ui::steps::step(&summary);",
-    46
-  ],
-  [
     "src/runner/secrets_command.rs",
     177,
     "let step = effigy_ui::steps::step(\"unlocking vault\");",
@@ -448,18 +424,6 @@
     296,
     "let step = effigy_ui::steps::step(\"running the vault generate hook\");",
     34
-  ],
-  [
-    "src/runner/state_command.rs",
-    201,
-    "let step = effigy_ui::steps::step(&action.label(&layer.key));",
-    42
-  ],
-  [
-    "src/runner/state_command.rs",
-    841,
-    "effigy_ui::steps::step(&label)",
-    27
   ],
   [
     "src/runner/task_engine/admission.rs",

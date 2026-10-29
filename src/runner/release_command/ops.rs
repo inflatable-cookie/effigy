@@ -10,9 +10,12 @@ use effigy_release::{
     ReleaseRunRequest, ReleaseStage, ReleaseStatus, ResolvedGate,
 };
 
-use effigy_ui::steps::Step;
+use effigy_ui::steps::{live_step, outcome_line, ProgressSource, Step};
 
 use super::*;
+
+/// What a release Run waits on between gates and stages.
+pub(super) const NEXT_GATE_OR_STAGE: &str = "the next gate or stage";
 
 pub(super) fn collect_release_status(
     resolved: &ResolvedTarget,
@@ -114,7 +117,9 @@ pub(super) fn release_run_action(
     to: Option<ReleaseStage>,
 ) -> Result<ReleaseRunOutcome, RunnerError> {
     let home = release_home_via_release()?;
-    let step = effigy_ui::steps::step(&release_run_label(&action, to));
+    let progress = ProgressSource::waiting_for(NEXT_GATE_OR_STAGE);
+    progress.update(release_run_label(&action, to), None, None);
+    let step = live_step(progress.clone());
     let action_label = action_name(&action);
     let request = ReleaseRunRequest {
         repo_root: resolved.resolved_root.clone(),
@@ -125,6 +130,7 @@ pub(super) fn release_run_action(
     let mut effects = GitEffects::new(&resolved.resolved_root);
     let mut observer = ReleaseRunSteps {
         root: step.clone(),
+        progress,
         gate: None,
     };
     let result = run_release_with_observer(&request, &mut effects, &mut observer);
@@ -147,10 +153,12 @@ pub(super) fn release_run_action(
     Ok(outcome)
 }
 
-/// Draws a release Run's stages and gates on one live step: the label names the
-/// stage or the gate now running, and each gate leaves its own line.
+/// Draws a release Run's stages and gates on one live step. The root names the
+/// stage, the gate now running and the last gate's outcome; each gate also has
+/// its own live step, which names the exact command it waits on.
 pub(super) struct ReleaseRunSteps {
     pub(super) root: Step,
+    pub(super) progress: ProgressSource,
     pub(super) gate: Option<Step>,
 }
 
@@ -173,9 +181,19 @@ impl GateObserver for ReleaseRunSteps {
         if let Some(previous) = self.gate.take() {
             previous.finish_clear();
         }
-        let label = release_gate_label(position, total, &gate.name, reusing_hosted_evidence);
-        self.root.set_label(&format!("release: {label}"));
-        self.gate = Some(self.root.step(&label));
+        show_gate(
+            &self.progress,
+            position,
+            total,
+            gate,
+            reusing_hosted_evidence,
+        );
+        self.gate = Some(self.root.live_step(gate_progress(
+            position,
+            total,
+            gate,
+            reusing_hosted_evidence,
+        )));
     }
 
     fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
@@ -185,16 +203,23 @@ impl GateObserver for ReleaseRunSteps {
             Some(step) => step.fail(&summary),
             None => {}
         }
-        self.root.set_label("release: continuing");
+        self.progress.update(
+            "checking the next gate or stage",
+            Some((position as u64, total as u64)),
+            Some(summary),
+        );
+        self.progress.waiting_on(NEXT_GATE_OR_STAGE);
     }
 
     fn stage(&mut self, stage: &str) {
-        self.root
-            .set_label(&format!("release: running stage {stage}"));
+        self.progress
+            .update(format!("running stage {stage}"), None, None);
+        self.progress.waiting_on(NEXT_GATE_OR_STAGE);
     }
 
     fn note(&mut self, message: &str) {
-        self.root.set_label(&format!("release: {message}"));
+        self.progress.update(message, None, None);
+        self.progress.waiting_on(NEXT_GATE_OR_STAGE);
     }
 }
 
@@ -232,10 +257,25 @@ fn release_run_summary(outcome: &ReleaseRunOutcome) -> String {
     } else {
         outcome.record.stage.as_str()
     };
-    format!(
-        "release reached stage `{stage}` ({})",
-        outcome.record.status.label()
+    release_run_summary_text(
+        stage,
+        outcome.record.status.label(),
+        outcome.record.waiting_on.as_deref(),
     )
+}
+
+/// The one-line end of a Run, naming what a paused Run waits on.
+pub(super) fn release_run_summary_text(
+    stage: &str,
+    status: &str,
+    waiting_on: Option<&str>,
+) -> String {
+    match waiting_on {
+        Some(waiting) => {
+            format!("release reached stage `{stage}` ({status}); waiting on `{waiting}`")
+        }
+        None => format!("release reached stage `{stage}` ({status})"),
+    }
 }
 
 /// The release receipt for a Run id, or the active Run's receipt.
@@ -325,8 +365,12 @@ impl GateObserver for ReleaseGateSteps {
         reusing_hosted_evidence: bool,
     ) {
         self.clear();
-        let label = release_gate_label(position, total, &gate.name, reusing_hosted_evidence);
-        self.running = Some(effigy_ui::steps::step(&label));
+        self.running = Some(live_step(gate_progress(
+            position,
+            total,
+            gate,
+            reusing_hosted_evidence,
+        )));
     }
 
     fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
@@ -334,14 +378,7 @@ impl GateObserver for ReleaseGateSteps {
         match self.running.take() {
             Some(step) if result.passed => step.succeed(&summary),
             Some(step) => step.fail(&summary),
-            None => {
-                let step = effigy_ui::steps::step(&summary);
-                if result.passed {
-                    step.succeed(&summary);
-                } else {
-                    step.fail(&summary);
-                }
-            }
+            None => outcome_line(result.passed, &summary),
         }
     }
 
@@ -351,19 +388,42 @@ impl GateObserver for ReleaseGateSteps {
     }
 }
 
-/// `running gate cargo test (2/5)` while the gate runs; reusing hosted
-/// evidence says so, because nothing local is running.
-pub(super) fn release_gate_label(
+/// A gate's live step, for example `running gate cargo test (2/5); waiting for
+/// `effigy test` to exit; 3s elapsed`. Reusing hosted evidence names the
+/// evidence it waits on, because nothing local is running.
+pub(super) fn gate_progress(
     position: usize,
     total: usize,
-    name: &str,
+    gate: &ResolvedGate,
     reusing_hosted_evidence: bool,
-) -> String {
-    if reusing_hosted_evidence {
-        format!("reusing hosted evidence for gate {name} ({position}/{total})")
+) -> ProgressSource {
+    let source = ProgressSource::waiting_for(String::new());
+    show_gate(&source, position, total, gate, reusing_hosted_evidence);
+    source
+}
+
+/// Show one gate on a progress source: its sub-step and count, and the exact
+/// command or hosted evidence it is waiting on.
+fn show_gate(
+    source: &ProgressSource,
+    position: usize,
+    total: usize,
+    gate: &ResolvedGate,
+    reusing_hosted_evidence: bool,
+) {
+    let (sub_step, awaiting) = if reusing_hosted_evidence {
+        (
+            format!("reusing hosted evidence for gate {}", gate.name),
+            format!("hosted evidence for gate {}", gate.name),
+        )
     } else {
-        format!("running gate {name} ({position}/{total})")
-    }
+        (
+            format!("running gate {}", gate.name),
+            format!("`{}` to exit", gate.command),
+        )
+    };
+    source.update(sub_step, Some((position as u64, total as u64)), None);
+    source.waiting_on(awaiting);
 }
 
 /// The line a finished gate leaves: the outcome word, the timing, and where
