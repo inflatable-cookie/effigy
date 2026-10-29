@@ -446,8 +446,11 @@ refused conservatively (both the group and other bits must allow execution). An
 execute bit alone is not enough — an owner-owned mode `0410` image has one and
 its owner still cannot run it — so a unit naming such an image is reported
 `stale` rather than healthy. The refusal names the rule that decided it — the
-owner bit, the matched group bit, or the other bit — with the `chmod` for that
-bit, so its advice can actually resolve the failure. Setup verifies the result instead of assuming it: after the
+owner bit, the matched group bit, or the other bit — with the quoted `chmod` for
+that bit, so its advice can actually resolve the failure. Identity failures are
+separate: a link, a foreign owner or a writable image cannot be repaired by a
+permission bit, so they name the install recovery (one real file owned by the
+account) and prescribe no `chmod`. Setup verifies the result instead of assuming it: after the
 privileged stage, a fresh exec of the installed binary as the operator binds
 the configured low ports and reports `bound`, `in_use` or `denied`, and a
 denial fails setup rather than leaving a gateway that cannot serve 80/443.

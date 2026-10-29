@@ -883,7 +883,10 @@ fn restore_activation_link(paths: &LaunchPaths, operator_uid: u32) -> io::Result
 /// explicit opt-in for a login-less boot start with its reversal.
 pub fn recovery_steps(paths: &LaunchPaths) -> Vec<String> {
     vec![
-        format!("systemctl --user daemon-reload  # unit: {}", paths.unit.display()),
+        format!(
+            "systemctl --user daemon-reload  # unit: {}",
+            quoted(&paths.unit)
+        ),
         format!("systemctl --user enable {UNIT_NAME}"),
         format!("systemctl --user start {UNIT_NAME}"),
         "loginctl enable-linger \"$USER\"  # optional: start at boot without a login; undo with `loginctl disable-linger \"$USER\"`".to_owned(),
@@ -1090,6 +1093,119 @@ pub fn validate_executable(facts: &ExecutableFacts, operator_uid: u32) -> io::Re
     validate_executable_in(facts, operator_uid, &GroupSet::current())
 }
 
+/// Which POSIX class decided an access refusal, so the advice names the exact
+/// bit to set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccessClass {
+    Owner,
+    Group,
+    Other,
+    /// The group memberships could not be read; both classes must allow it.
+    Unknown,
+}
+
+impl AccessClass {
+    fn chmod(self) -> &'static str {
+        match self {
+            Self::Owner => "u+x",
+            Self::Group => "g+x",
+            Self::Other => "o+x",
+            Self::Unknown => "go+x",
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            Self::Owner => {
+                "this account owns the image and its owner execute bit is clear"
+            }
+            Self::Group => {
+                "this account's group is the image's group and its group execute bit is clear"
+            }
+            Self::Other => "no group of this account matches and the other execute bit is clear",
+            Self::Unknown => {
+                "this account's group memberships could not be read, so both the group and other execute bits must be set"
+            }
+        }
+    }
+}
+
+/// Why an image was refused. Identity failures name what is wrong and the
+/// bounded recovery to install one real owner-only file; only an access
+/// failure names a `chmod`, and only for the bit that decided it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExecutableRefusal {
+    /// Not one real file: a directory, a hard or symbolic link, an empty file.
+    NotOneFile(&'static str),
+    /// Owned by an account that is neither the operator nor root.
+    ForeignOwner(u32),
+    /// Group- or world-writable.
+    Writable,
+    /// The account's own access denies execution.
+    Access(AccessClass),
+}
+
+impl ExecutableRefusal {
+    fn describe(&self) -> String {
+        match self {
+            Self::NotOneFile(detail) => (*detail).to_owned(),
+            Self::ForeignOwner(uid) => {
+                format!("it is owned by uid {uid}, not this account or root")
+            }
+            Self::Writable => "it is group- or world-writable".to_owned(),
+            Self::Access(class) => class.describe().to_owned(),
+        }
+    }
+}
+
+/// The class that decides execution for this account.
+fn access_class(facts: &ExecutableFacts, operator_uid: u32, groups: &GroupSet) -> AccessClass {
+    if facts.uid == operator_uid {
+        return AccessClass::Owner;
+    }
+    if !groups.resolved {
+        return AccessClass::Unknown;
+    }
+    if groups.contains(facts.gid) {
+        AccessClass::Group
+    } else {
+        AccessClass::Other
+    }
+}
+
+/// Classify one refused image.
+fn executable_refusal_kind(
+    facts: &ExecutableFacts,
+    operator_uid: u32,
+    groups: &GroupSet,
+) -> Result<(), ExecutableRefusal> {
+    if !facts.regular {
+        return Err(ExecutableRefusal::NotOneFile("it is not a regular file"));
+    }
+    if facts.nlink != 1 {
+        return Err(ExecutableRefusal::NotOneFile(
+            "it is a hard link, not one file",
+        ));
+    }
+    if facts.len == 0 {
+        return Err(ExecutableRefusal::NotOneFile("it is empty"));
+    }
+    if facts.mode & 0o022 != 0 {
+        return Err(ExecutableRefusal::Writable);
+    }
+    if facts.uid != operator_uid && facts.uid != 0 {
+        return Err(ExecutableRefusal::ForeignOwner(facts.uid));
+    }
+    if !executable_as_operator(facts, operator_uid, groups) {
+        return Err(ExecutableRefusal::Access(access_class(
+            facts,
+            operator_uid,
+            groups,
+        )));
+    }
+    Ok(())
+}
+
 /// The same rule with an explicit group set, so the group precedence is
 /// provable without changing the test process's own memberships.
 fn validate_executable_in(
@@ -1097,42 +1213,57 @@ fn validate_executable_in(
     operator_uid: u32,
     groups: &GroupSet,
 ) -> io::Result<()> {
-    if !facts.regular
-        || !executable_as_operator(facts, operator_uid, groups)
-        || facts.len == 0
-        || facts.nlink != 1
-        || facts.mode & 0o022 != 0
-        || (facts.uid != operator_uid && facts.uid != 0)
-    {
-        return Err(error("unsafe gateway executable"));
-    }
-    Ok(())
+    executable_refusal_kind(facts, operator_uid, groups)
+        .map_err(|_| error("unsafe gateway executable"))
 }
 
 /// The installed binary a unit may name. A changed, linked, missing or writable
 /// image is refused before a unit or a capability is bound to it.
 pub fn verify_executable(executable: &Path, operator_uid: u32) -> io::Result<()> {
-    let facts = image_facts(executable)
-        .map_err(|_| executable_refusal("it cannot be opened", executable, operator_uid))?;
-    validate_executable(&facts, operator_uid).map_err(|_| {
-        executable_refusal(
-            "its permissions or identity are not usable",
+    let facts = image_facts(executable).map_err(|failure| {
+        image_identity_refusal(
+            &format!("it cannot be opened ({failure})"),
             executable,
             operator_uid,
         )
-    })
+    })?;
+    match executable_refusal_kind(&facts, operator_uid, &GroupSet::current()) {
+        Ok(()) => Ok(()),
+        Err(ExecutableRefusal::Access(class)) => {
+            Err(image_access_refusal(class, executable, operator_uid))
+        }
+        Err(refusal) => Err(image_identity_refusal(
+            &refusal.describe(),
+            executable,
+            operator_uid,
+        )),
+    }
 }
 
-/// Why an image was refused, naming the access rule the account actually has so
-/// the advice can fix the failure. A matched, non-executable group is the common
-/// case: telling the operator to set other-execute would not help, because a
-/// matching group is consulted before other bits.
-fn executable_refusal(reason: &str, executable: &Path, operator_uid: u32) -> io::Error {
+/// A shell-safe quoted path for the recovery commands, the same quoting the
+/// rest of the Linux operator output uses for an executable path.
+fn quoted(path: &Path) -> String {
+    format!("\"{}\"", path.display())
+}
+
+/// An identity refusal: what is wrong and the recovery that can change it.
+/// Identity cannot be repaired by a permission bit, so no `chmod` is named.
+fn image_identity_refusal(detail: &str, executable: &Path, operator_uid: u32) -> io::Error {
     error(format!(
-        "the installed gateway binary {} is not usable for the Linux operator route ({reason}): it must be one real file (not a symbolic or hard link) that this account (uid {operator_uid}) can execute, owned by the operator or root, and not group- or world-writable. Execution follows this account's own access: the owner execute bit when this account owns the image; otherwise the group execute bit when one of this account's process groups is the image's group; the other execute bit only when no group matches; and when the group memberships cannot be read, both the group and other execute bits must be set. Fix that bit — for example `chmod g+x {}` for a matching group, or `chmod o+x {}` when no group matches — then run `effigy gateway setup` again",
-        executable.display(),
-        executable.display(),
-        executable.display()
+        "the installed gateway binary {} is not usable for the Linux operator route ({detail}): it must be one real file (not a symbolic or hard link), owned by the operator (uid {operator_uid}) or root, not group- or world-writable, and not empty. Install it as one real file owned by this account (for example `effigy install:local` as this account) and run `effigy gateway setup` again",
+        quoted(executable)
+    ))
+}
+
+/// An access refusal: the bit that decided it and the `chmod` for that bit,
+/// with the path quoted so the command can be pasted as printed.
+fn image_access_refusal(class: AccessClass, executable: &Path, operator_uid: u32) -> io::Error {
+    error(format!(
+        "the installed gateway binary {} is not usable for the Linux operator route ({detail}): this account (uid {operator_uid}) cannot execute it. Execution follows this account's own access — the owner execute bit when this account owns the image, otherwise the group execute bit when one of this account's process groups is the image's group, and the other execute bit only when no group matches (both when the memberships cannot be read). Set the bit that applies with `chmod {chmod} {path}` and run `effigy gateway setup` again",
+        quoted(executable),
+        detail = class.describe(),
+        chmod = class.chmod(),
+        path = quoted(executable)
     ))
 }
 
@@ -1253,10 +1384,20 @@ fn bound_identity(
     operator_uid: u32,
 ) -> io::Result<ExecutableIdentity> {
     let identity = host.identity()?;
-    validate_executable(&identity.facts(), operator_uid).map_err(|_| {
-        error("the installed gateway binary is unsafe for a low-port capability: it must be one real file that this account can execute — owner, group or other execute as this account's access resolves — owned by the operator (or root) and not group- or world-writable; chmod the bit that applies and run `effigy gateway setup` again")
-    })?;
-    Ok(identity)
+    match executable_refusal_kind(&identity.facts(), operator_uid, &GroupSet::current()) {
+        Ok(()) => Ok(identity),
+        // Identity cannot be repaired by a permission bit, so a capability
+        // refusal only names an access bit for an access failure.
+        Err(ExecutableRefusal::Access(class)) => Err(error(format!(
+            "the installed gateway binary is unsafe for a low-port capability: this account cannot execute it ({}). Set the bit that applies with `chmod {}` and run `effigy gateway setup` again",
+            class.describe(),
+            class.chmod()
+        ))),
+        Err(refusal) => Err(error(format!(
+            "the installed gateway binary is unsafe for a low-port capability ({}): it must be one real file owned by this account (or root) and not group- or world-writable. Install it as one real file owned by this account and run `effigy gateway setup` again",
+            refusal.describe()
+        ))),
+    }
 }
 
 /// Linux vfs_cap_data revision 2, effective flag, permitted bit 10 only.
@@ -3674,35 +3815,33 @@ mod tests {
         });
     }
 
-    /// The refusal names the access rule that actually decided it, so following
-    /// the advice can fix the failure. The old text said a root-owned image
-    /// needed other-execute, which is already set in the case that fails: a
-    /// matching group that cannot execute.
+    /// The refusal names the access rule that decided it and the `chmod` for
+    /// exactly that bit, with the path quoted and pasteable. The old text said a
+    /// root-owned image needed other-execute, which is already set in the case
+    /// that fails: a matching group that cannot execute.
     #[test]
-    fn the_executable_refusal_names_the_access_rule_that_decided_it() {
+    fn the_access_refusal_names_the_bit_that_decided_it_with_a_quoted_path() {
         let operator = 501;
-        let message = executable_refusal(
-            "its permissions or identity are not usable",
-            Path::new("/home/operator/.local/bin/effigy"),
-            operator,
-        )
-        .to_string();
-        // The real rule, in order.
-        for expected in [
-            "owner execute bit when this account owns the image",
-            "group execute bit when one of this account's process groups is the image's group",
-            "other execute bit only when no group matches",
-            "both the group and other execute bits must be set",
-            "chmod g+x",
-            "chmod o+x",
+        let path = Path::new("/home/operator/my bin/effigy");
+        let quoted_path = "\"/home/operator/my bin/effigy\"";
+
+        // Each class names its own bit, and the path is quoted as printed.
+        for (class, bit) in [
+            (AccessClass::Owner, "u+x"),
+            (AccessClass::Group, "g+x"),
+            (AccessClass::Other, "o+x"),
+            (AccessClass::Unknown, "go+x"),
         ] {
+            let message = image_access_refusal(class, path, operator).to_string();
             assert!(
-                message.contains(expected),
-                "missing {expected:?}: {message}"
+                message.contains(&format!("chmod {bit} {quoted_path}")),
+                "{class:?} must name `chmod {bit} {quoted_path}`: {message}"
             );
+            assert!(message.contains(class.describe()), "{class:?}: {message}");
         }
         // The misleading advice is gone: other-execute is not the rule for a
         // root-owned image whose group this account matches.
+        let message = image_access_refusal(AccessClass::Group, path, operator).to_string();
         assert!(
             !message.contains("other-execute when root owns it"),
             "{message}"
@@ -3754,6 +3893,75 @@ mod tests {
             &stranger
         )
         .is_ok());
+    }
+
+    /// Identity failures cannot be repaired by a permission bit, so their
+    /// refusal names the identity problem and the install recovery — never a
+    /// `chmod` — while an access failure still names the matching bit.
+    #[test]
+    fn an_identity_refusal_never_prescribes_a_chmod() {
+        with_run(|_run, _cx| {
+            let home = tempfile::tempdir().unwrap();
+            let uid = nix::unistd::Uid::effective().as_raw();
+            use std::os::unix::fs::PermissionsExt;
+
+            // A hard link: one image, two names, so not one real file.
+            let binary = installed_binary(home.path());
+            let linked = home.path().join("effigy-link");
+            std::fs::hard_link(&binary, &linked).unwrap();
+            let message = verify_executable(&linked, uid).unwrap_err().to_string();
+            assert!(message.contains("hard link"), "{message}");
+            assert!(
+                message.contains("effigy install:local"),
+                "the identity recovery is named: {message}"
+            );
+            assert!(
+                !message.contains("chmod"),
+                "an identity failure must not prescribe a chmod: {message}"
+            );
+            assert!(message.contains(&quoted(&linked)), "{message}");
+            // The second name goes, so the image is one file again.
+            std::fs::remove_file(&linked).unwrap();
+
+            // Group-writable: an identity/ownership problem as well.
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o775)).unwrap();
+            let message = verify_executable(&binary, uid).unwrap_err().to_string();
+            assert!(message.contains("group- or world-writable"), "{message}");
+            assert!(
+                !message.contains("chmod"),
+                "a writable image needs ownership repair, not a chmod: {message}"
+            );
+
+            // An access failure still names the bit that applies, quoted.
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o410)).unwrap();
+            let message = verify_executable(&binary, uid).unwrap_err().to_string();
+            assert!(
+                message.contains(&format!("chmod u+x {}", quoted(&binary))),
+                "{message}"
+            );
+
+            // Restoring the owner execute bit clears the refusal.
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(verify_executable(&binary, uid).is_ok());
+        });
+    }
+
+    /// The recovery commands quote the unit path like the rest of the operator
+    /// output, so they can be pasted as printed.
+    #[test]
+    fn the_recovery_commands_quote_the_paths_they_name() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = LaunchPaths::at(home.path().join("unit dir/systemd/user"), home.path());
+        let quoted_unit = quoted(&paths.unit);
+        let steps = recovery_steps(&paths);
+        assert!(
+            steps[0].contains(&quoted_unit),
+            "the daemon-reload line quotes the unit path: {steps:?}"
+        );
+        assert!(
+            steps[0].starts_with("systemctl --user daemon-reload"),
+            "{steps:?}"
+        );
     }
 
     /// POSIX applies the group class before the other class, so a root-owned

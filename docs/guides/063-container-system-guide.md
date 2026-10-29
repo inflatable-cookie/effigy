@@ -1611,8 +1611,13 @@ when one of your groups is the image's group, otherwise the other bits. A
 root-owned image whose group you are in but which your group cannot execute is
 refused, and the launch unit that names an image you cannot run is reported
 `stale` rather than healthy. The refusal names the bit that decided it — owner,
-the matched group, or other — and the `chmod` that fixes that bit, instead of
-advising an other-execute bit a matching group would ignore. Everything else, including the user unit, runs as
+the matched group, or other — and the `chmod` that fixes that bit, with the path
+quoted as printed, instead of advising an other-execute bit a matching group
+would ignore. An identity failure is different: a symbolic or hard link, a
+foreign owner or a group/world-writable image cannot be repaired by a permission
+bit, so that refusal names the install recovery (one real file owned by your
+account, for example `effigy install:local` as yourself) and prescribes no
+`chmod`. Everything else, including the user unit, runs as
 your account. Immediately after applying the capability, setup re-execs the
 installed binary as you, checks that the fresh exec carries
 `CAP_NET_BIND_SERVICE`, and binds the configured low ports; a refusal fails

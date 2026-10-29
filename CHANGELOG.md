@@ -149,9 +149,12 @@ During v0.x, MINOR bumps may include breaking changes.
   group/world-writable binary, and refusing an image this account cannot
   execute (`launcher.unit: "stale"`), because an execute bit alone does not
   mean the operator can run it: the check follows the account's real access,
-  including POSIX group precedence for a root-owned image. The refusal names
-  the bit that decided it (owner, matched group or other) and the `chmod` for
-  that bit, rather than advising an other-execute bit a matching group ignores. `gateway status --json` reports the observed
+  including POSIX group precedence for a root-owned image. An access refusal
+  names the bit that decided it (owner, matched group or other) and the
+  `chmod` for that bit with the path quoted, rather than advising an
+  other-execute bit a matching group ignores; an identity refusal (a link, a
+  foreign owner, a writable image) names the install recovery instead, because
+  no permission bit can repair it. `gateway status --json` reports the observed
   `launcher` facts and recovery commands, and `gateway setup --remove` removes
   only unit and capability records Effigy wrote. A replaced binary is reported
   as a missing capability instead of being trusted, a link at the installed path
