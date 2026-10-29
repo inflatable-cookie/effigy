@@ -515,7 +515,7 @@ fn refuse_vanished_shared_render(
                     .then(|| (container.container_name.as_str(), directory.to_path_buf()));
             }
             let directory = project_dir?.join(label);
-            (!directory.is_dir()).then(|| (container.container_name.as_str(), directory))
+            (!directory.is_dir()).then_some((container.container_name.as_str(), directory))
         })
         .collect::<Vec<_>>();
     if vanished.is_empty() {
