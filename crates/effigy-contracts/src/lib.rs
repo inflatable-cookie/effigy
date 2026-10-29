@@ -70,11 +70,22 @@ pub enum ContractsError {
     Message(String),
     /// Payload schema or selection contract that is not valid Draft 2020-12.
     /// Prepare returns this before any indexed command or fixture expansion.
-    ContractBody {
-        index: PathBuf,
-        failure: CheckFailure,
-        selection: SelectionPayload,
-    },
+    ///
+    /// The payload is boxed so an `Err` from a prepare step stays small enough
+    /// for callers that pass a `Result<_, ContractsError>` around.
+    ContractBody(Box<ContractBodyFailure>),
+}
+
+/// The payload of a [`ContractsError::ContractBody`] refusal.
+///
+/// The index, the check failure and the selection travel together: a refusal
+/// reports all three in the `check-json` error identity, and none of them is
+/// meaningful on its own.
+#[derive(Debug)]
+pub struct ContractBodyFailure {
+    pub index: PathBuf,
+    pub failure: CheckFailure,
+    pub selection: SelectionPayload,
 }
 
 impl std::fmt::Display for ContractsError {
@@ -85,7 +96,7 @@ impl std::fmt::Display for ContractsError {
                 write!(f, "failed to parse {} as JSON: {error}", path.display())
             }
             Self::Message(message) => write!(f, "{message}"),
-            Self::ContractBody { failure, .. } => write!(f, "{}", failure.reason),
+            Self::ContractBody(body) => write!(f, "{}", body.failure.reason),
         }
     }
 }
@@ -97,21 +108,17 @@ impl ContractsError {
     /// admission refusal. Other variants have no check-json identity.
     pub fn check_json_payload(&self) -> Option<Value> {
         match self {
-            Self::ContractBody {
-                index,
-                failure,
-                selection,
-            } => Some(json!({
+            Self::ContractBody(body) => Some(json!({
                 "schema": "effigy.contracts.check-json.v1",
                 "schema_version": 1,
                 "ok": false,
-                "index": index.display().to_string(),
-                "changed_only_base": selection.changed_only_base,
-                "selection": selection.to_json_value(),
+                "index": body.index.display().to_string(),
+                "changed_only_base": body.selection.changed_only_base,
+                "selection": body.selection.to_json_value(),
                 "selection_contract": Value::Null,
                 "selection_artifact": Value::Null,
                 "checks": 1,
-                "failures": [failure.to_json()],
+                "failures": [body.failure.to_json()],
             })),
             _ => None,
         }
@@ -433,7 +440,7 @@ fn invalid_contract_body(
     reason: String,
     selection: SelectionPayload,
 ) -> ContractsError {
-    ContractsError::ContractBody {
+    ContractsError::ContractBody(Box::new(ContractBodyFailure {
         index: index.to_path_buf(),
         failure: CheckFailure {
             schema: CONTRACT_BODY_SCHEMA.to_owned(),
@@ -441,7 +448,7 @@ fn invalid_contract_body(
             reason,
         },
         selection,
-    }
+    }))
 }
 
 /// Compile every payload schema the index declares, keyed by schema id.

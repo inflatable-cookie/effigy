@@ -674,6 +674,56 @@ fn cli_contracts_check_json_rejects_malformed_payload_schema_with_stable_identit
 }
 
 #[test]
+fn cli_contracts_contract_body_refusal_keeps_its_bytes() {
+    let root = temp_workspace("contracts-body-refusal-bytes");
+    fs::write(
+        root.join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\n",
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("index.json"),
+        "{\n  \"version\": 1,\n  \"payload_schemas\": { \"effigy.command.v1\": \"missing.json\" },\n  \"schemas\": []\n}\n",
+    )
+    .expect("write index");
+
+    // The refusal is presented identically in both modes: the human line is the
+    // check-json refusal reason, and the JSON envelope carries the check-json
+    // identity as its `error.message` string.
+    let text = run_cli_command(&root, &["contracts", "check-json"]);
+    assert!(!text.status.success());
+    let json = run_json_cli_command(&root, &["contracts", "check-json"]);
+    assert!(!json.status.success());
+
+    let repo_root = root.display().to_string();
+    let normalize = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace(&repo_root, "<repo>");
+
+    assert_eq!(
+        normalize(&text.stderr),
+        "[error] failed to read <repo>/missing.json: No such file or directory (os error 2)\n"
+    );
+    let text_stdout = normalize(&text.stdout);
+    assert!(!text_stdout.contains("failed to read"), "{text_stdout}");
+
+    assert_eq!(normalize(&json.stderr), "");
+    let parsed = parse_stdout_json(&json);
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["result"], Value::Null);
+    assert_eq!(parsed["error"]["kind"], "refused");
+    assert_eq!(parsed["error"]["type"], "RunnerError");
+    assert_eq!(parsed["error"]["details"], Value::Null);
+    let message = parsed["error"]["message"]
+        .as_str()
+        .expect("json error message")
+        .replace(&repo_root, "<repo>");
+    assert_eq!(
+        message,
+        r#"{"changed_only_base":null,"checks":1,"failures":[{"command":"<repo>/missing.json","reason":"failed to read <repo>/missing.json: No such file or directory (os error 2)","schema":"effigy.json-contract-body.v1"}],"index":"<repo>/index.json","ok":false,"schema":"effigy.contracts.check-json.v1","schema_version":1,"selection":{"changed_only_base":null,"count":0,"selected":[]},"selection_artifact":null,"selection_contract":null}"#
+    );
+}
+
+#[test]
 fn cli_contracts_validate_selection_names_its_replacement() {
     let root = temp_workspace("contracts-retired-selection");
     let output = run_cli_command(&root, &["contracts", "validate-selection"]);
