@@ -410,8 +410,9 @@ During v0.x, MINOR bumps may include breaking changes.
   retiral runs inside the apply's own index transaction after the ledger
   commits, so the owner never holds a registration while it does not hold the
   Bun index lock, a failed ledger write leaves the claim, registration and
-  ledger untouched, and a re-link over an existing claim always writes the
-  retired claim out. An interrupted
+  ledger untouched, a failed index commit restores any registration it retired
+  and rolls the ledger and consumer links back, and a re-link over an existing
+  claim always writes the retired claim out. An interrupted
   owner stops the `bun link` it is waiting on before retiring anything, since a
   registration process still running would recreate the registration after its
   owner died. It also retires nothing unless it holds the Bun index lock for its

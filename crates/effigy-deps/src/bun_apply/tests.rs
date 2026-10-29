@@ -1104,3 +1104,97 @@ fn a_ledger_write_failure_leaves_the_link_exactly_as_it_was() {
     ));
     assert!(!ledger.exists());
 }
+
+#[test]
+fn an_index_commit_failure_rolls_the_link_back() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    // The transaction takes the index lock and commits under it, so the lock
+    // file has to exist for the injected write failure to be the commit itself.
+    let index_dir = fixture.home.join(".effigy/deps");
+    write(&index_dir.join("bun-registrations.lock"), "");
+    let planned = plan(&fixture, false);
+    fs::set_permissions(&index_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let report =
+        super::apply_bun_link_plan(planned, &fixture.home, &process, &FsBunPlanObserver).unwrap();
+    fs::set_permissions(&index_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(report.outcome, BunLinkOutcome::ApplyFailed);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|error| error.contains("bun-registrations.json")),
+        "{:?}",
+        report.errors
+    );
+    assert!(report.registration_retirement.is_empty());
+    assert!(
+        report.rollback.failures.is_empty(),
+        "{:?}",
+        report.rollback.failures
+    );
+    // The commit failed, so the transaction left no ledger, no consumer link
+    // and no registration behind.
+    assert!(!fixture
+        .repo
+        .join(".effigy/local/dependency-links.json")
+        .exists());
+    assert!(fs::symlink_metadata(fixture.repo.join("node_modules/underlay")).is_err());
+    assert_eq!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Missing
+    );
+    assert!(registration_consumers(&fixture).is_empty());
+}
+
+#[test]
+fn an_index_commit_failure_restores_a_pre_existing_registration() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    // The claimed state a recovery reads: the registration and its claim exist
+    // before this attempt, so a failed commit has to put the registration back
+    // for the claim the index still holds.
+    link(&fixture, &process);
+    let ledger = fixture.repo.join(".effigy/local/dependency-links.json");
+    let index_before = fs::read(BunRegistrationIndexStore::for_home(&fixture.home).path()).unwrap();
+    let planned = plan(&fixture, false);
+    let index_dir = fixture.home.join(".effigy/deps");
+    fs::set_permissions(&index_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let report =
+        super::apply_bun_link_plan_owned(planned, &fixture.home, &process, &FsBunPlanObserver)
+            .unwrap();
+    fs::set_permissions(&index_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(report.outcome, BunLinkOutcome::ApplyFailed);
+    assert!(report.registration_retirement.is_empty());
+    // Nothing committed: the claim the index still holds has its registration.
+    assert_eq!(
+        fs::read(BunRegistrationIndexStore::for_home(&fixture.home).path()).unwrap(),
+        index_before
+    );
+    assert_eq!(registration_consumers(&fixture), [fixture.repo.clone()]);
+    assert!(
+        matches!(
+            FsBunPlanObserver
+                .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+                .unwrap(),
+            BunPathObservation::Symlink { .. }
+        ),
+        "the retired registration was not restored"
+    );
+    assert!(ledger.exists());
+    assert!(
+        report.rollback.failures.is_empty(),
+        "{:?}",
+        report.rollback.failures
+    );
+}

@@ -9,9 +9,9 @@ use crate::{
     BunDependencyPlan, BunImmutableFileEvidence, BunLinkOperationReport, BunLinkOutcome,
     BunLinkRollback, BunPackagePlan, BunPathObservation, BunPeerDiagnostic,
     BunPeerResolutionStatus, BunPlanObserver, BunProcessAction, BunProcessIntent,
-    BunRegistrationIndex, BunRegistrationIndexStore, BunRegistrationRetirement,
-    DependencyVerification, DepsError, FsBunPlanObserver, PlannedChange, ProcessRequest,
-    ReadOnlyProcess, RepoLinkStateStore, VerificationEvidence, VerificationStatus,
+    BunRegistrationDisposition, BunRegistrationIndex, BunRegistrationIndexStore,
+    BunRegistrationRetirement, DependencyVerification, DepsError, FsBunPlanObserver, PlannedChange,
+    ProcessRequest, ReadOnlyProcess, RepoLinkStateStore, VerificationEvidence, VerificationStatus,
 };
 
 pub fn execute_bun_link(
@@ -326,6 +326,44 @@ fn unregister_owned_registration(
     }
 }
 
+/// Put back the registrations a transaction retired but could not commit.
+///
+/// Only a registration that already existed before this attempt has to come
+/// back: one this attempt created is removed by the rollback, and a registration
+/// another consumer shares was never unregistered.
+fn restore_retired_registrations(
+    plan: &BunDependencyPlan,
+    home: &Path,
+    retirement: &BunRegistrationRetirement,
+    process: &impl ReadOnlyProcess,
+    observer: &impl BunPlanObserver,
+    errors: &mut Vec<String>,
+) {
+    for name in &retirement.unregistered {
+        let Some(package) = plan.packages.iter().find(|package| &package.name == name) else {
+            continue;
+        };
+        if package.registration != BunRegistrationDisposition::MatchingOwned {
+            continue;
+        }
+        let request = ProcessRequest {
+            program: "bun".to_owned(),
+            args: vec!["link".to_owned(), "--no-save".to_owned()],
+            cwd: package.local_path.clone(),
+        };
+        if let Err(error) = process.run(&request) {
+            errors.push(format!("restore Bun registration `{name}`: {error}"));
+        }
+        if let Ok(BunPathObservation::Missing) =
+            observer.observe_path(&bun_registration_path(home, name))
+        {
+            errors.push(format!(
+                "restore Bun registration `{name}`: the registration is still missing"
+            ));
+        }
+    }
+}
+
 /// Whether a recorded claim is the one this owner's link wrote.
 ///
 /// A checkout can hold several Bun package roots (`studio/`, `harness/`), and
@@ -628,11 +666,35 @@ fn apply_bun_link_plan_inner(
                 observer,
             );
         }
-        // Retirement changes the index even when the plan itself planned no
-        // index change (a re-link over an existing claim), so the write is
-        // decided by the index this transaction produced.
-        let next = (planned_index != *current).then(|| planned_index.clone());
-        Ok((next, ()))
+        // Commit inside the transaction, while the lock is held. `update_exact`
+        // then has nothing left to write, so a failed commit is handled here
+        // with the same rollback as any other failed step instead of returning
+        // after the ledger, the consumer link and the retiral had landed.
+        if planned_index != *current {
+            if let Err(error) = index_store.commit_planned(&planned_index) {
+                outcome = BunLinkOutcome::ApplyFailed;
+                errors.push(error.to_string());
+                restore_retired_registrations(
+                    &plan,
+                    home,
+                    &registration_retirement,
+                    process,
+                    observer,
+                    &mut errors,
+                );
+                rollback = rollback_bun_link(
+                    &plan,
+                    home,
+                    &attempted_processes,
+                    &backups,
+                    &applied_files,
+                    process,
+                    observer,
+                );
+                return Ok((None, ()));
+            }
+        }
+        Ok((None, ()))
     })?;
 
     if outcome != BunLinkOutcome::Applied {

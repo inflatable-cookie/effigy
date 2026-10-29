@@ -120,9 +120,12 @@ Unix.
   registration while it does not hold the index lock: no interrupt can land
   between the apply and the retiral and leave the registration behind, and a
   failed ledger write leaves the claim, the registration and the ledger as they
-  were instead of restoring a half-retired transaction afterwards. The retiral
-  decides the index write itself, so a re-link over an existing claim still
-  writes the retired claim out even when the plan planned no index change. Ownership is the recorded
+  were instead of restoring a half-retired transaction afterwards. The index
+  commit is part of that transaction too: a failed write restores any
+  registration the transaction retired and rolls the ledger and consumer links
+  back, so a commit failure cannot leave a link half applied. The retiral decides
+  the index write itself, so a re-link over an existing claim still writes the
+  retired claim out even when the plan planned no index change. Ownership is the recorded
   `(consumer root, library)` pair: a checkout can hold several Bun package roots
   (`studio/`, `harness/`), each a consumer with its own claim, so retiral never
   widens to a root that merely shares a checkout. An interrupted owner may

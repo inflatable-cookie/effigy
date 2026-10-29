@@ -187,6 +187,18 @@ impl BunRegistrationIndexStore {
         Ok(result)
     }
 
+    /// Write the index a transaction produced, without taking the lock again.
+    ///
+    /// The caller holds the lock for the whole transaction, so the commit and
+    /// its failure belong to that transaction: a failed write leaves the file
+    /// as it was and the caller rolls its physical and ledger changes back.
+    pub(crate) fn commit_planned(&self, index: &BunRegistrationIndex) -> Result<(), DepsError> {
+        let mut index = index.clone();
+        index.normalize();
+        validate_bun_index(&index, &self.path)?;
+        write_json_atomic(&self.path, &index, true)
+    }
+
     pub(crate) fn replace_exact(
         &self,
         expected_before: Option<&str>,
