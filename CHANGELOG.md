@@ -232,8 +232,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `argv[0]`) and no option token of it; a shell command string publishes nothing
   inside itself. The walk stays inside the invoking process's session, so a
   reparented child ends the chain with an unknown reason instead of naming
-  another session's leader, and the controlling terminal is read from `/dev/tty`
-  so a redirected stdin still names it. The `unknown` list is capped and says how
+  another session's leader, and the controlling terminal is the session's real
+  device (`/dev/ttysNNN`, never the generic `/dev/tty` alias) so a redirected
+  stdin still names it. The `unknown` list is capped and says how
   many reasons it omitted, so invalid markers never hide a broken chain. The
   event is written at the command boundary only: `gateway setup` emits its one
   setup event and no extra up or down event, and a task run that starts the

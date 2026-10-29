@@ -376,8 +376,10 @@ record:
 - the invoking process's start identity (the platform's own process-start
 evidence, so two processes that held one pid stay distinguishable), its
 session and its controlling terminal when it has one. The terminal is the
-process's controlling terminal from `/dev/tty`, so a command with stdin
-redirected or in a pipeline still names it;
+session's controlling terminal, named by its device rather than by the generic
+`/dev/tty` alias — macOS reads it from the kernel's record of the session's
+terminal device, Linux resolves `/dev/tty` through `/proc` — so a command with
+stdin redirected or in a pipeline still names the real device (`/dev/ttysNNN`);
 - the parent chain from the invoking process's parent up to and including its
 session leader, capped at eight entries, each with pid, start identity, session
 and redacted argument boundaries. The walk stays inside the invoking process's

@@ -801,8 +801,9 @@ unreadable parent, argument or marker, a pid whose start identity changed or
 could not be confirmed by a second read, or a parent in another session —
 a reparented child ends the walk instead of naming another session's leader —
 becomes a bounded unknown reason instead of a guess, and no environment value is
-read unless its name is on that allowlist. The controlling terminal is read from
-`/dev/tty`, so a command with stdin redirected still names it. The reason list keeps chain failures ahead of marker failures and
+read unless its name is on that allowlist. The controlling terminal is the
+session's terminal, named by its device and never by the generic `/dev/tty`
+alias, so a command with stdin redirected still names the real device. The reason list keeps chain failures ahead of marker failures and
 ends with how many reasons it omitted, so a full list never hides a missing or
 unconfirmed part of the chain.
 

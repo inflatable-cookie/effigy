@@ -234,27 +234,25 @@ pub fn process_lineage(pid: u32) -> std::io::Result<ProcessLineage> {
 /// The invoking process's controlling terminal, when it has one. The terminal is
 /// a property of the process, not of its stdin: a command run as
 /// `effigy … < /dev/null`, from a pipeline or with a redirected descriptor still
-/// has one, and `/dev/tty` names it whatever the caller redirected.
+/// has one. A standard descriptor that is itself a terminal names it directly;
+/// otherwise the platform reports this session's controlling terminal, which is
+/// named by its device rather than by the generic `/dev/tty` alias.
 pub fn controlling_terminal() -> Option<String> {
-    // SAFETY: a constant NUL-terminated path, read-only flags, no creation and
-    // no control terminal is taken over.
-    let fd = unsafe {
-        libc::open(
-            c"/dev/tty".as_ptr(),
-            libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return None;
+    for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        if let Some(name) = tty_name(fd) {
+            return Some(name);
+        }
     }
-    let name = terminal_name(fd);
-    // SAFETY: fd was opened above and is owned here; it is closed exactly once.
-    unsafe { libc::close(fd) };
-    name
+    platform::controlling_terminal()
 }
 
-/// The name of the terminal behind one descriptor, when that descriptor is one.
-fn terminal_name(fd: libc::c_int) -> Option<String> {
+/// The generic alias a controlling-terminal descriptor can report, which names
+/// no terminal identity of its own.
+const GENERIC_TERMINAL: &str = "/dev/tty";
+
+/// The name of the terminal behind a descriptor, when its tty name is a real
+/// device: an alias is not an identity, and the caller resolves it instead.
+fn tty_name(fd: libc::c_int) -> Option<String> {
     let mut buffer = [0 as libc::c_char; 128];
     // SAFETY: fd is live, and ttyname_r writes at most buffer.len() bytes into
     // the live, writable and correctly typed buffer.
@@ -265,7 +263,18 @@ fn terminal_name(fd: libc::c_int) -> Option<String> {
     let path = unsafe { std::ffi::CStr::from_ptr(buffer.as_ptr()) }
         .to_string_lossy()
         .into_owned();
-    (path.starts_with("/dev/") && path.len() <= 96).then_some(path)
+    let real = path.starts_with("/dev/") && path != GENERIC_TERMINAL && path.len() <= 96;
+    real.then_some(path)
+}
+
+/// Darwin names a pty slave `/dev/ttysNNN` from device major 16 and the minor
+/// number. Another kind of terminal cannot be named from its device.
+#[cfg(target_os = "macos")]
+fn pty_device_path(device: u32) -> Option<String> {
+    let device = u64::from(device);
+    let major = (device >> 24) & 0xff;
+    let minor = device & 0x00ff_ffff;
+    (major == 16 && minor <= 999).then(|| format!("/dev/ttys{minor:03}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -515,6 +524,25 @@ mod platform {
         let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
         parse_linux_lineage(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
     }
+    pub fn controlling_terminal() -> Option<String> {
+        // `/dev/tty` is the calling session's terminal whatever was redirected,
+        // and /proc names the real device behind it.
+        // SAFETY: a constant NUL-terminated path, read-only flags, no creation
+        // and no control terminal is taken over.
+        let fd = unsafe {
+            libc::open(
+                c"/dev/tty".as_ptr(),
+                libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return None;
+        }
+        let name = super::tty_name(fd);
+        // SAFETY: fd was opened above and is owned here; it is closed once.
+        unsafe { libc::close(fd) };
+        name
+    }
     pub fn state(pid: u32) -> io::Result<ProcessState> {
         let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
         parse_linux_state(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
@@ -570,6 +598,13 @@ mod platform {
             seconds: info.pbi_start_tvsec,
             microseconds: info.pbi_start_tvusec,
         })
+    }
+    pub fn controlling_terminal() -> Option<String> {
+        // The controlling-terminal descriptor answers `/dev/tty` and carries the
+        // alias device, so the kernel's own record of this session's terminal is
+        // used: bsdinfo's effective terminal device names the pty slave.
+        let info = bsdinfo(std::process::id()).ok()?;
+        super::pty_device_path(info.e_tdev)
     }
     pub fn lineage(pid: u32) -> io::Result<ProcessLineage> {
         let info = bsdinfo(pid)?;
@@ -711,8 +746,23 @@ mod tests {
             )
         };
         assert_eq!(opened, 0, "a pty is available to the test");
-        let name = terminal_name(slave).expect("a pty slave has a terminal name");
+        let name = tty_name(slave).expect("a pty slave has a terminal name");
         assert!(name.starts_with("/dev/"), "{name}");
+        // The slave's device names the same terminal, which is how the generic
+        // /dev/tty alias is resolved on macOS.
+        #[cfg(target_os = "macos")]
+        {
+            let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: the slave fd is live and stat is aligned writable storage.
+            assert_eq!(unsafe { libc::fstat(slave, stat.as_mut_ptr()) }, 0);
+            // SAFETY: a successful fstat initialized the full structure.
+            let stat = unsafe { stat.assume_init() };
+            assert_eq!(
+                pty_device_path(stat.st_rdev as u32),
+                Some(name.clone()),
+                "the device resolves to the same slave identity"
+            );
+        }
         // SAFETY: both descriptors were opened above and are closed once each.
         unsafe {
             libc::close(slave);
@@ -721,7 +771,7 @@ mod tests {
         let mut pipe = [0 as libc::c_int; 2];
         // SAFETY: pipe writes two descriptors into the live array.
         assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
-        assert!(terminal_name(pipe[0]).is_none(), "a pipe is not a terminal");
+        assert!(tty_name(pipe[0]).is_none(), "a pipe is not a terminal");
         // SAFETY: both descriptors were opened above and are closed once each.
         unsafe {
             libc::close(pipe[0]);
@@ -729,29 +779,113 @@ mod tests {
         }
     }
 
-    /// The controlling terminal does not follow stdin: an interactive command
-    /// with stdin redirected still names its terminal (effigy#450 review).
+    /// A pty session whose child has no standard descriptor on the terminal:
+    /// the controlling-terminal field must still name the slave device, not the
+    /// generic `/dev/tty` alias (effigy#450 review).
+    fn pty_child(master: &mut libc::c_int, name: &mut [libc::c_char; 128]) -> libc::pid_t {
+        #[cfg(target_os = "macos")]
+        // SAFETY: forkpty writes the master and name, and null optional
+        // arguments request the defaults.
+        unsafe {
+            libc::forkpty(
+                master,
+                name.as_mut_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        }
+        #[cfg(target_os = "linux")]
+        // SAFETY: as above; Linux takes const pointers for the optional values.
+        unsafe {
+            libc::forkpty(
+                master,
+                name.as_mut_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        }
+    }
+
     #[test]
-    fn controlling_terminal_does_not_depend_on_stdin() {
-        let before = controlling_terminal();
-        // SAFETY: /dev/null is opened read-only for this process only.
-        let null = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
-        assert!(null >= 0, "open /dev/null");
-        // SAFETY: the test process is its own process; stdin is replaced by the
-        // open /dev/null, as `< /dev/null` would, and null is closed after.
-        assert!(unsafe { libc::dup2(null, libc::STDIN_FILENO) } >= 0, "dup2");
-        // SAFETY: null was opened above and is closed exactly once.
-        unsafe { libc::close(null) };
+    fn controlling_terminal_names_the_pty_itself_with_stdin_redirected() {
+        let mut master: libc::c_int = -1;
+        let mut name = [0 as libc::c_char; 128];
+        let mut pipe = [0 as libc::c_int; 2];
+        // SAFETY: pipe writes two descriptors into the live array.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        let child = pty_child(&mut master, &mut name);
+        assert!(child >= 0, "fork a pty probe process");
+        if child == 0 {
+            // SAFETY: the child of a pty probe runs only libc calls and this
+            // inference, and never returns into the test harness.
+            unsafe {
+                libc::close(pipe[0]);
+                // A session keeps its controlling terminal while any descriptor
+                // still refers to it, exactly as a shell does for the command it
+                // runs; every standard descriptor then leaves the terminal, so
+                // only the controlling terminal can answer.
+                let kept = libc::dup(libc::STDIN_FILENO);
+                if kept < 0 {
+                    libc::_exit(1);
+                }
+                let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+                if null < 0 {
+                    libc::_exit(1);
+                }
+                for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+                    if libc::dup2(null, fd) < 0 {
+                        libc::_exit(2);
+                    }
+                }
+                libc::close(null);
+                for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+                    if libc::isatty(fd) != 0 {
+                        libc::_exit(3);
+                    }
+                }
+                let resolved = super::controlling_terminal();
+                libc::close(kept);
+                let Some(resolved) = resolved else {
+                    libc::_exit(4);
+                };
+                let bytes = resolved.as_bytes();
+                let written = libc::write(pipe[1], bytes.as_ptr().cast(), bytes.len());
+                libc::_exit(if written == bytes.len() as isize {
+                    0
+                } else {
+                    5
+                });
+            }
+        }
+        // SAFETY: the parent reads the child's one message and reaps it.
+        let (status, resolved) = unsafe {
+            libc::close(pipe[1]);
+            let mut buffer = [0u8; 128];
+            let read = libc::read(pipe[0], buffer.as_mut_ptr().cast(), buffer.len());
+            libc::close(pipe[0]);
+            let mut status: libc::c_int = 0;
+            libc::waitpid(child, &mut status, 0);
+            let resolved = if read > 0 {
+                Some(String::from_utf8_lossy(&buffer[..read as usize]).into_owned())
+            } else {
+                None
+            };
+            libc::close(master);
+            (status, resolved)
+        };
         assert_eq!(
-            controlling_terminal(),
-            before,
-            "redirecting stdin must not change the controlling terminal"
+            status, 0,
+            "the probe kept its controlling terminal with every standard descriptor redirected \
+             (status {status})"
         );
-        // SAFETY: isatty only reads the state of one descriptor.
+        let expected = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        assert!(expected.starts_with("/dev/ttys"), "{expected}");
         assert_eq!(
-            unsafe { libc::isatty(libc::STDIN_FILENO) },
-            0,
-            "the test really did redirect stdin"
+            resolved,
+            Some(expected),
+            "the record names the pty, not the /dev/tty alias"
         );
     }
 
