@@ -2813,8 +2813,11 @@ fn an_acknowledgement_needs_its_own_open_frame_and_no_payload() {
 fn a_reconnect_resumes_at_the_retained_position_not_at_zero() {
     let (_fixture, cx, root, session) = journal("effigy-channel-resume");
     let (_run, live) = admitted_run(&cx, &root, session, 74, &[137]);
-    // The log holds offsets 0..80; the client stopped reading at 40.
-    let bytes: Vec<u8> = (0..80u8).map(|n| b'a' + n % 26).collect();
+    // The log holds offsets 0..(40 + one frame + 40); the client stopped at 40,
+    // so the first two frames cross a frame boundary of their own.
+    let bytes: Vec<u8> = (0..(40 + MAX_STREAM_PAYLOAD + 40) as u32)
+        .map(|n| b'a' + (n % 26) as u8)
+        .collect();
     write_segment(&root, live, 1, Stream::Stdout, 0, &bytes);
     let mut host = server(session, &[138]);
     let mut streams = retained_stdout(&root, live);
@@ -2835,15 +2838,24 @@ fn a_reconnect_resumes_at_the_retained_position_not_at_zero() {
         .collect();
     assert_eq!(
         data.len(),
-        1,
+        2,
         "the retained bytes after the cursor are published once: {frames:?}"
     );
+    // Each frame's sequence is its first byte's retained offset, so a chunk
+    // boundary never turns the position into an ordinal.
     assert_eq!(
-        data[0].seq, 40,
+        data.iter().map(|stream| stream.seq).collect::<Vec<_>>(),
+        vec![40, 40 + MAX_STREAM_PAYLOAD as u64],
         "output resumes at the retained position the client asked for"
     );
+    let published: Vec<u8> = data
+        .iter()
+        .flat_map(|stream| {
+            decode_stream_payload(stream.payload.as_deref().expect("payload")).expect("base64")
+        })
+        .collect();
     assert_eq!(
-        decode_stream_payload(data[0].payload.as_deref().expect("payload")).expect("base64"),
+        published,
         bytes[40..],
         "the retained bytes from the cursor are exactly what was not read"
     );
