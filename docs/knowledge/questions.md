@@ -655,10 +655,12 @@ qualification.
 
 ## Q-020: Release secret-audit history boundary
 
-Status: open (ancestry evidence under review)
+Status: answered
 Asked: 2026-10-29
+Answered: 2026-10-29 by Tom
 Owner: [v0.15 roadmap](v015-roadmap.md#sequence-and-gates)
-Decision: `1b111aba-0a64-42ae-834b-02672384ae85`; lead
+Decisions: `1b111aba-0a64-42ae-834b-02672384ae85`,
+`be22a199-227a-49a4-8558-a344f2e61409`; lead
 `56722ba6-ace5-4dba-8a1d-0fb8a233fea9`
 
 Tom selected an explicit pinned lineage boundary, a scan of the current
@@ -672,6 +674,11 @@ not shallow. The tag resolves to commit
 after it is `7b26a1579a4991248014fd3352f9ae3093ae99fa`. The actual Git
 root is `9dae95a45512bf6368009f7f898c04cb07caf6c3` (2026-02-28), before
 v0.14.1. The earlier empty result was a shallow-history artifact, so this
-is a continuous history rather than an unrelated rebuilt lineage. The exact
-audit boundary is pending Tom's review of this corrected evidence; no
-different root has been pinned and the release gate has not been enabled.
+is a continuous history rather than an unrelated rebuilt lineage. Tom
+confirmed `v0.14.1` at `20465f1ff690340ee9ef461915ca769da1c76fca`
+as the explicit audit boundary. The release gate must pin that tag and
+expected commit in its configuration, scan tag-to-candidate history and the
+candidate tracked tree, and refuse a shallow checkout, missing tag or
+unreachable boundary. Only exact known fixture path/content-hash matches may
+be allowed; other findings and their values remain protected. This ruling
+does not authorize a release run, tag or publication.
