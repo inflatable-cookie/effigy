@@ -16,7 +16,6 @@ use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::probe::ProbeCommand;
 use effigy_kernel::run::{EffectSpec, Settlement};
-use effigy_tui::waits::WaitOn;
 
 use super::settlement::{self, Binding, EnvironmentEffect};
 use crate::runner::task_engine::{self, TaskRun};
@@ -327,14 +326,10 @@ fn run_up(
 /// The containers the environment's own `up` reported healthy so far, from
 /// the record it publishes while it waits for readiness.
 fn environment_counts(plan: &EnvironmentPlan) -> Option<(u32, u32)> {
-    let ledger = crate::runner::managed_wait::WaitLedger::environment(&plan.repo, &plan.name);
-    match ledger.read("environment")?.waiting_on? {
-        WaitOn::Environment {
-            healthy: Some(healthy),
-            total: Some(total),
-        } => Some((healthy, total)),
-        _ => None,
-    }
+    // The container readiness publisher writes the phase's own record, not an
+    // entry's, and a host process may legitimately be named `environment`
+    // (effigy#458).
+    crate::runner::managed_wait::WaitLedger::environment(&plan.repo, &plan.name).read_progress()
 }
 
 /// The owned binding of the service exec workloads attach to, observed with
@@ -475,6 +470,7 @@ fn find_program(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_tui::waits::WaitOn;
 
     /// The wait names the request being observed, not the whole URL: the
     /// readiness line a person reads (effigy#458).
@@ -495,25 +491,48 @@ mod tests {
 
     /// The environment phase reads the containers its own `up` reported
     /// healthy from the record that `up` publishes.
+    /// The owner reads the counts from the record the readiness publisher
+    /// writes (`publish_phase`), and a host process an operator named
+    /// `environment` cannot shadow the phase (effigy#458).
     #[test]
     fn the_environment_phase_reads_the_published_container_counts() {
         let repo = tempfile::tempdir().expect("repo");
         let plan = plan(repo.path().to_path_buf());
+        let ledger = crate::runner::managed_wait::WaitLedger::environment(repo.path(), &plan.name);
+        ledger.clear();
         assert_eq!(environment_counts(&plan), None, "nothing is published yet");
-        crate::runner::managed_wait::WaitLedger::environment(repo.path(), &plan.name).publish(
-            &effigy_tui::waits::EntryState {
-                entry: "environment".to_owned(),
-                phase: effigy_tui::waits::EntryPhase::Waiting,
-                waiting_on: Some(WaitOn::Environment {
-                    healthy: Some(3),
-                    total: Some(4),
-                }),
-                not_started_because: None,
-                detail: None,
-                elapsed_ms: 12_000,
-            },
-        );
+
+        // The readiness publisher's own write path.
+        ledger.publish_phase(&effigy_tui::waits::EntryState {
+            entry: "environment".to_owned(),
+            phase: effigy_tui::waits::EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 12_000,
+        });
         assert_eq!(environment_counts(&plan), Some((3, 4)));
+
+        // A host process that happens to be named `environment` is an entry,
+        // not the phase, and never changes the counts.
+        ledger.publish(&effigy_tui::waits::EntryState {
+            entry: "environment".to_owned(),
+            phase: effigy_tui::waits::EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        assert_eq!(environment_counts(&plan), Some((3, 4)));
+
+        // The phase reporting ready ends the counts.
+        ledger.settle_phase();
+        assert_eq!(environment_counts(&plan), None);
     }
 
     fn plan(repo: std::path::PathBuf) -> EnvironmentPlan {

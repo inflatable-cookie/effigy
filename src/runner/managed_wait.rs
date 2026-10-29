@@ -265,6 +265,20 @@ impl WaitLedger {
         });
     }
 
+    /// The containers the environment phase reported healthy, from its own
+    /// record. It is the one handoff the owner polls while the environment
+    /// comes up, and the same counts every entry that waits for the phase
+    /// names (effigy#458).
+    pub(in crate::runner) fn read_progress(&self) -> Option<(u32, u32)> {
+        match self.read_phase()?.waiting_on? {
+            effigy_tui::waits::WaitOn::Environment {
+                healthy: Some(healthy),
+                total: Some(total),
+            } => Some((healthy, total)),
+            _ => None,
+        }
+    }
+
     /// The environment phase's wait, whichever publisher owns the entries.
     pub(in crate::runner) fn read_phase(&self) -> Option<EntryState> {
         let raw = std::fs::read(self.dir.join(PHASE_RECORD)).ok()?;
@@ -314,36 +328,67 @@ impl WaitLedger {
         let _ = write_private_json(&self.dir.join(PHASE_RECORD), &record);
     }
 
-    /// The entry's record from the snapshot readers resolve now.
+    /// The entry's record from the snapshot readers resolve now. A commit that
+    /// retires the snapshot this read resolved re-resolves it, so an in-flight
+    /// reader never observes a broken snapshot (effigy#458).
     pub(in crate::runner) fn read(&self, entry: &str) -> Option<EntryState> {
-        let raw = std::fs::read(
-            self.committed_namespace()
-                .join(format!("{}.json", path_component(entry))),
-        )
-        .ok()?;
-        let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
-        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope).then_some(record.state)
-    }
-
-    /// Every entry record of the snapshot readers resolve now, in entry-name
-    /// order. The environment phase's own record is read with [`Self::read_phase`].
-    pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
-        let Ok(entries) = std::fs::read_dir(self.committed_namespace()) else {
-            return Vec::new();
-        };
-        let mut states = entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-            .filter_map(|entry| {
-                let raw = std::fs::read(entry.path()).ok()?;
+        read_stable(
+            || self.committed_namespace(),
+            |namespace| {
+                let raw = std::fs::read(namespace.join(format!("{}.json", path_component(entry))))
+                    .ok()?;
                 let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
                 (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
                     .then_some(record.state)
-            })
-            .collect::<Vec<_>>();
-        states.sort_by(|left, right| left.entry.cmp(&right.entry));
-        states
+            },
+        )
     }
+
+    /// Every entry record of the snapshot readers resolve now, in entry-name
+    /// order. The environment phase's own record is read with
+    /// [`Self::read_phase`], and a snapshot retired mid-read is re-resolved.
+    pub(in crate::runner) fn read_all(&self) -> Vec<EntryState> {
+        read_stable(
+            || self.committed_namespace(),
+            |namespace| {
+                let entries = std::fs::read_dir(namespace).ok()?;
+                let mut states = entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+                    .filter_map(|entry| {
+                        let raw = std::fs::read(entry.path()).ok()?;
+                        let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
+                        (record.schema == ENTRY_WAIT_SCHEMA && record.scope == self.scope)
+                            .then_some(record.state)
+                    })
+                    .collect::<Vec<_>>();
+                states.sort_by(|left, right| left.entry.cmp(&right.entry));
+                Some(states)
+            },
+        )
+        .unwrap_or_default()
+    }
+}
+
+/// Reads through a snapshot handoff. `resolve` names the snapshot readers
+/// resolve now and `load` reads one; a snapshot that a commit retired between
+/// the two is re-resolved, so an in-flight reader observes a complete snapshot
+/// either side of the switch rather than a missing one (effigy#458).
+fn read_stable<T>(
+    mut resolve: impl FnMut() -> PathBuf,
+    mut load: impl FnMut(&Path) -> Option<T>,
+) -> Option<T> {
+    for _ in 0..4 {
+        let namespace = resolve();
+        if let Some(value) = load(&namespace) {
+            return Some(value);
+        }
+        if resolve() == namespace {
+            // The snapshot did not change under us: the record is really absent.
+            return None;
+        }
+    }
+    None
 }
 
 /// The attribution of an entry that failed: the entry that reported it, and
@@ -433,6 +478,84 @@ mod tests {
         assert!(ledger.read("admin").is_none());
         ledger.clear();
         assert!(ledger.read("front").is_none());
+    }
+
+    /// A commit retires the previous snapshot so it cannot accumulate, and the
+    /// read path re-resolves when the snapshot it resolved was the retired one:
+    /// an in-flight reader still observes a complete snapshot (effigy#458).
+    #[test]
+    fn a_read_that_races_a_commit_resolves_the_visible_snapshot() {
+        let (_home, ledger) = fixture();
+        ledger.clear();
+        let run = ledger.stage(WaitOwner::Run);
+        run.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        ledger.commit(&run);
+        // What an in-flight reader resolved just before the handoff.
+        let resolved_before_commit = ledger.committed_namespace();
+
+        let planner = ledger.stage(WaitOwner::Planner);
+        planner.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        ledger.commit(&planner);
+        assert!(
+            !resolved_before_commit.exists(),
+            "the retired snapshot is cleaned up"
+        );
+
+        // The production read path resolves the visible snapshot.
+        assert_eq!(
+            ledger.read("api").and_then(|state| state.waiting_on),
+            Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned()
+            }),
+            "the committed snapshot is what a read resolves"
+        );
+
+        // A reader that resolved the retired snapshot re-resolves it, so it
+        // still observes a complete snapshot instead of a missing one.
+        let mut attempts = 0;
+        let recovered = read_stable(
+            || {
+                attempts += 1;
+                if attempts == 1 {
+                    resolved_before_commit.clone()
+                } else {
+                    ledger.committed_namespace()
+                }
+            },
+            |namespace| {
+                let raw = std::fs::read(namespace.join(format!("{}.json", path_component("api"))))
+                    .ok()?;
+                let record: WaitRecord = serde_json::from_slice(&raw).ok()?;
+                Some(record.state)
+            },
+        )
+        .expect("a read that raced the commit still resolves the visible snapshot");
+        assert_eq!(
+            recovered.waiting_on,
+            Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned()
+            })
+        );
+        assert!(attempts >= 2, "the reader re-resolved the snapshot");
     }
 
     /// A host process an operator names `environment` is a host, not the

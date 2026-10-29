@@ -273,7 +273,10 @@ own directory and commits it by replacing one record, so a reader always resolve
 a whole snapshot — the previous publisher's until the new one is complete — and a
 write that races the handoff cannot replace an authoritative entry or failure.
 The environment phase keeps its own reserved record, never an entry name, so a
-host process an operator names `environment` keeps its own wait. A failure the planner published is terminal and is never
+host process an operator names `environment` keeps its own wait; the run's owner
+reads that record for the container counts every phase-dependent entry names. A
+read that resolves a snapshot a commit retires re-resolves the visible one, so an
+in-flight front end never observes a missing snapshot across the handoff. A failure the planner published is terminal and is never
 replaced by the run's generic `up` exit; the run's own environment reason
 carries the planner's failing entry and its report. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting

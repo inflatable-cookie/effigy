@@ -1085,9 +1085,25 @@ mod environment_tests {
         let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
         let all = BTreeSet::from(["api".to_owned(), "front".to_owned(), "admin".to_owned()]);
 
-        // 1. The environment reports three of four containers healthy.
+        // 1. The container readiness publisher writes the phase's own record,
+        //    the run's owner reads those counts, and every entry that waits for
+        //    the phase names them.
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        let (healthy, total) = ledger
+            .read_progress()
+            .expect("the phase reports its containers");
         let mut parent = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
-        parent.environment_progress(3, 4, clock.at());
+        parent.environment_progress(healthy, total, clock.at());
         let presented = frame(&checkout, "api");
         for entry in ["api", "front", "admin"] {
             assert!(
@@ -1166,7 +1182,13 @@ mod environment_tests {
                 .iter()
                 .map(|view| (view.scope, view.state.entry.as_str()))
                 .collect::<Vec<_>>(),
-            vec![("host", "admin"), ("host", "api"), ("host", "front")]
+            vec![
+                ("environment", "environment"),
+                ("host", "admin"),
+                ("host", "api"),
+                ("host", "front"),
+            ],
+            "the same phase record the counts were read from is the one status reports"
         );
 
         // 4. The 500 branch: api fails its readiness, no dependent starts, and
