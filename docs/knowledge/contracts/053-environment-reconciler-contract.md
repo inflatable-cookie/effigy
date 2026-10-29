@@ -286,9 +286,15 @@ started `not started` with the plan's own attribution
 (`plan stopped after <entry> <report>`), so no wait outlives the plan. A restart
 publishes only the entries it replaces: a reader another call started stays
 running in the graph, and a selected dependent names the readiness it
-re-confirms (`waiting for api (running)`) while it blocks. A failure the planner published is terminal and is never
-replaced by the run's generic `up` exit; the run's own environment reason
-carries the planner's failing entry and its report. `status --json` reads both scopes — the run's
+re-confirms (`waiting for api (running)`) while it blocks. A failure the planner
+published is terminal and is never replaced by the run's generic `up` exit; the
+run's own environment reason carries the planner's failing entry and its report.
+The environment phase's own record is terminal on every exit — a success, a stop
+or a nothing-to-await fallback settles it, and a failure or timeout publishes its
+headline and first piece of evidence — and a new session resets that record
+before it probes, without touching the staged host snapshot. Only a dependent
+that needs a failed entry's readiness loses its prerequisite; a dependent that
+only needed the entry's start keeps going, including its own scheduled delay. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting
 entry with the scope that published it. A record's path encodes its accepted
 entry name injectively (K1: every byte outside `[A-Za-z0-9_-]` as `%XX`), and a

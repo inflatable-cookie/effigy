@@ -283,7 +283,13 @@ During v0.x, MINOR bumps may include breaking changes.
   launch that aborts the plan marks every entry it never started terminal
   (`not started — plan stopped after api failed: …500…`), so no wait outlives
   the plan, and a restart names the reader readiness it re-confirms
-  (`waiting for api (running)`) while publishing only the entries it replaces. A host
+  (`waiting for api (running)`) while publishing only the entries it replaces.
+  Only a dependent that needs a failed entry's readiness loses it: a workload
+  that only needed its predecessor to start keeps going after that predecessor
+  exits non-zero, even inside its own scheduled delay. The environment phase's
+  record is terminal on every exit (settled on success, stop or
+  nothing-to-await, attributed on failure or timeout), and a new session resets
+  it without touching the staged host snapshot. A host
   failure the planner published
   survives the run's generic `up` exit: the run's error names the failing entry
   and its observed status. A wait is recorded as
