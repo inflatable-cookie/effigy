@@ -326,8 +326,8 @@ fn database_url(checkout: &Path) -> String {
 }
 
 /// A private gateway route table for one fixture. Fixtures themselves live in
-/// the harness's configured root (`EFFIGY_TEST_FIXTURE_ROOT`, which a selector
-/// provisions), so this suite creates nothing outside it.
+/// the harness's configured root (the run's own temporary directory), so this
+/// suite creates nothing outside it.
 fn with_private_gateway<T>(name: &str, run: impl FnOnce() -> T) -> T {
     let home = temp_workspace(&format!("gateway-home-{name}"));
     let guard = set_test_gateway_home(&home);

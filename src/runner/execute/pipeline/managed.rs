@@ -1727,15 +1727,19 @@ working_dir = "/workspace"
                 &preflight.runtime_args_exec,
                 &preflight.catalogs,
                 &root,
+                &[],
+                true,
                 &effigy_routing::resolve_task_selection,
             )
             .unwrap()
             .unwrap();
+            let mut host_aliases = None;
             let context = ManagedContext {
                 preflight: &preflight,
                 selection: &selection,
                 binding_resolution: &binding,
                 container_handoff: false,
+                host_aliases: &mut host_aliases,
             };
             let secret = "plan-proof-task-secret";
             let workloads = managed_workloads(
