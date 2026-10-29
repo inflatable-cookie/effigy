@@ -271,7 +271,11 @@ During v0.x, MINOR bumps may include breaking changes.
   replaces the other's state, and the window before the commit still shows the
   run's environment waits instead of announcing a host as started. The
   environment phase keeps its own reserved record, so a host an operator names
-  `environment` keeps its own wait. A host failure the planner published
+  `environment` keeps its own wait, and the run's owner reads its container
+  counts from that record — the one the container readiness publisher writes. A
+  read that races a snapshot commit re-resolves the visible one, so an in-flight
+  tab or status never observes a missing snapshot across the handoff. A host
+  failure the planner published
   survives the run's generic `up` exit: the run's error names the failing entry
   and its observed status. A wait is recorded as
   settled when it ends, and only a changed meaning or a live wait's refresh
