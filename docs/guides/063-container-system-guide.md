@@ -1680,7 +1680,12 @@ the activation Effigy observes after any manager request — including the
 `daemon-reload` that precedes `enable` — is foreign or unsafe, setup reports that
 refusal instead, because enabling through it would hand the manager the path
 Effigy refuses. The same rule covers a failed unit rewrite: its recovery never
-recommends `enable` through an activation Effigy refuses.
+recommends `enable` through an activation Effigy refuses, re-observes the
+activation after a restore attempt that fails (a replacement during the restore
+is reported as that refusal), reports an unreadable, missing or changed unit
+file as what it is, and describes the activation it observed instead of claiming
+it is off. `enable` appears there only for a verified absent activation with a
+unit file to enable.
 Removal behaves the same way: it disables, removes and unlinks the unit Effigy
 owns, and a `daemon-reload` that refuses, cannot be reached or times out is then
 reported as a failure naming the exact `systemctl --user daemon-reload` command

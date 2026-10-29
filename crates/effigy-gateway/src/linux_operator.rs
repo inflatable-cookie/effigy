@@ -467,13 +467,38 @@ fn refused_activation(paths: &LaunchPaths, activation: &ActivationObservation) -
     }
 }
 
+/// What the owned unit file is after a failed rewrite. Its own reason is kept,
+/// so the report never folds "unreadable" or "absent" into "changed".
+enum UnitAfterFailure {
+    /// The exact previous unit is still on disk.
+    Previous,
+    /// A different unit (a partial or other write) is on disk.
+    Different,
+    /// No unit file is on disk.
+    Missing,
+}
+
+/// The observed activation in words, for a report that must not claim more than
+/// it saw.
+fn activation_label(activation: &ActivationObservation) -> &'static str {
+    match activation {
+        ActivationObservation::Absent => "absent",
+        ActivationObservation::Ours => "Effigy's own link",
+        ActivationObservation::Foreign(_) => "a foreign entry",
+        ActivationObservation::Unsafe(_) => "unsafe",
+        ActivationObservation::Unknown(_) => "unobserved",
+    }
+}
+
 /// A failed unit rewrite, after the login activation was dropped so the manager
 /// could not keep serving a definition the file no longer has.
 ///
 /// The kernel write is atomic, so a failure normally leaves the previous file
 /// on disk. That case puts the login activation back and says the route still
 /// works; anything else names the exact partial state and the commands that
-/// finish it.
+/// finish it. The activation is re-observed after any restore attempt, and
+/// `enable` is advised only for an activation verified safe and absent: a
+/// refused activation gets its own recovery instead.
 fn rewrite_failed(
     paths: &LaunchPaths,
     operator_uid: u32,
@@ -481,40 +506,101 @@ fn rewrite_failed(
     was_linked: bool,
     failure: impl std::fmt::Display,
 ) -> io::Error {
-    // A refused activation must never be handed enable advice: report it with
-    // the recovery that fits it instead.
     let activation = observe_activation(paths, operator_uid);
-    if !activation.is_absent() && !activation.is_ours() {
-        let refusal = activation_recovery(paths, &activation)
-            .unwrap_or_else(|| "the login activation is not Effigy's own link".to_owned());
+    // A refused activation must never be handed enable advice.
+    if let Some(refusal) = activation_recovery(paths, &activation) {
         return error(format!(
             "rewriting the launch unit failed: {failure}; {refusal}"
         ));
     }
-    let retained = read_unit_file(paths)
-        .ok()
-        .flatten()
-        .is_some_and(|bytes| bytes == previous);
-    if !retained {
-        return error(format!(
-            "rewriting the launch unit failed: {failure}; the unit file on disk is no longer the previous one and the user manager has not been asked to reload it, with login activation off. Run `systemctl --user daemon-reload`, then `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again"
-        ));
-    }
-    // A unit that was not enabled must not be enabled by a recovery step: only
-    // restore an activation this run actually dropped.
+    let unit = match read_unit_file_checked(paths) {
+        Ok(Some(bytes)) if bytes == previous => UnitAfterFailure::Previous,
+        Ok(Some(_)) => UnitAfterFailure::Different,
+        Ok(None) => UnitAfterFailure::Missing,
+        // An unreadable unit is its own state, not a changed one: name it and
+        // report the observed activation rather than asserting anything.
+        Err(reason) => {
+            return error(format!(
+                "rewriting the launch unit failed: {failure}; {reason}; the login activation was observed {} ({}). Run `effigy gateway setup` again",
+                activation_label(&activation),
+                path_label(paths.activation_dir())
+            ))
+        }
+    };
+    let unit_text = match unit {
+        UnitAfterFailure::Previous => "the previous unit file is unchanged",
+        UnitAfterFailure::Different => {
+            "the unit file on disk is no longer the previous one and the user manager has not been asked to reload it"
+        }
+        UnitAfterFailure::Missing => {
+            "the unit file on disk is missing and the user manager has not been asked to reload it"
+        }
+    };
     if !was_linked {
+        // Only an activation this run dropped is restored; the observed state is
+        // reported instead of asserting one.
         return error(format!(
-            "rewriting the launch unit failed: {failure}; the previous unit file is unchanged and it was not enabled before this run, so login activation is still off. Nothing was upgraded; run `effigy gateway setup` again"
+            "rewriting the launch unit failed: {failure}; {unit_text} and it was not enabled before this run, so nothing was restored. The login activation is {}. Nothing was upgraded; run `effigy gateway setup` again",
+            activation_label(&activation)
         ));
     }
-    match restore_activation_link(paths, operator_uid) {
-        Ok(()) => error(format!(
-            "rewriting the launch unit failed: {failure}; the previous unit file is unchanged and its login activation is restored, so the installed launch route still works. Run `effigy gateway setup` again"
-        )),
-        Err(restore) => error(format!(
-            "rewriting the launch unit failed: {failure}; the previous unit file is unchanged but its login activation could not be restored ({restore}). Run `systemctl --user daemon-reload`, then `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again"
-        )),
+    if matches!(unit, UnitAfterFailure::Previous) {
+        return match restore_activation_link(paths, operator_uid) {
+            Ok(()) => error(format!(
+                "rewriting the launch unit failed: {failure}; {unit_text} and its login activation is restored, so the installed launch route still works. Run `effigy gateway setup` again"
+            )),
+            // The restore can lose a race of its own, so what it left behind is
+            // observed before any advice is given.
+            Err(restore) => restore_failed(paths, operator_uid, unit_text, failure, restore),
+        };
     }
+    let enable = match (unit, activation.is_absent()) {
+        // No unit file means nothing to enable: setup installs it again.
+        (UnitAfterFailure::Missing, _) => {
+            " Run `effigy gateway setup` again to install the unit file".to_owned()
+        }
+        // Only a verified absent activation gets the enable recovery.
+        (_, true) => format!(
+            " Run `systemctl --user daemon-reload`, then `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again"
+        ),
+        (_, false) => format!(
+            " The login activation is {}; run `effigy gateway setup` again",
+            activation_label(&activation)
+        ),
+    };
+    error(format!(
+        "rewriting the launch unit failed: {failure}; {unit_text}.{enable}"
+    ))
+}
+
+/// A restoration attempt that failed. The activation is observed again: if it
+/// was replaced while the restore ran, that refusal is the report and no enable
+/// advice is offered through it.
+fn restore_failed(
+    paths: &LaunchPaths,
+    operator_uid: u32,
+    unit_text: &str,
+    failure: impl std::fmt::Display,
+    restore: impl std::fmt::Display,
+) -> io::Error {
+    let after = observe_activation(paths, operator_uid);
+    if let Some(refusal) = activation_recovery(paths, &after) {
+        return error(format!(
+            "rewriting the launch unit failed: {failure}; {unit_text}, and its login activation could not be restored ({restore}); {refusal}"
+        ));
+    }
+    let advice = if after.is_absent() {
+        format!(" Run `systemctl --user daemon-reload`, then `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again")
+    } else {
+        format!(
+            " The login activation is {}; run `effigy gateway setup` again",
+            activation_label(&after)
+        )
+    };
+    error(format!(
+        "rewriting the launch unit failed: {failure}; {unit_text} but its login activation could not be restored ({restore}), so the login activation is {} .{advice}",
+        activation_label(&after)
+    ))
 }
 
 /// The manager's own refusal sentence, or `None` when it did what was asked.
@@ -5078,6 +5164,136 @@ mod tests {
             assert!(
                 message.contains("it was not enabled before this run"),
                 "{message}"
+            );
+        });
+    }
+
+    /// A restore attempt that races a replacement is refused without enable
+    /// advice, and only a verified absent activation is offered the enable
+    /// recovery. The fault is the state the restore leaves behind, so it is
+    /// driven directly here.
+    #[test]
+    fn a_restore_failure_that_races_a_replacement_gives_no_enable_advice() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\\n").unwrap();
+
+            // The activation was replaced while the restore ran.
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let message = restore_failed(
+                &paths,
+                uid,
+                "the previous unit file is unchanged",
+                "disk full",
+                "the login activation entry is not a symbolic link Effigy wrote",
+            )
+            .to_string();
+            assert!(message.contains("disk full"), "{message}");
+            assert!(
+                message.to_lowercase().contains("do not enable"),
+                "the refusal replaces enable advice: {message}"
+            );
+            assert!(
+                !message.contains("systemctl --user enable"),
+                "no enable advice through the replacement: {message}"
+            );
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+
+            // An unsafe activation directory is the same.
+            std::fs::remove_file(&paths.wants).unwrap();
+            let activation = paths.activation_dir().to_path_buf();
+            std::fs::remove_dir(&activation).unwrap();
+            std::os::unix::fs::symlink(home.path(), &activation).unwrap();
+            let message = restore_failed(
+                &paths,
+                uid,
+                "the previous unit file is unchanged",
+                "disk full",
+                "not a directory",
+            )
+            .to_string();
+            assert!(!message.contains("systemctl --user enable"), "{message}");
+
+            // Absent activation: the enable recovery is safe and offered.
+            std::fs::remove_file(&activation).unwrap();
+            std::fs::create_dir(&activation).unwrap();
+            let message = restore_failed(
+                &paths,
+                uid,
+                "the previous unit file is unchanged",
+                "disk full",
+                "not a directory",
+            )
+            .to_string();
+            assert!(message.contains("could not be restored"), "{message}");
+            assert!(
+                message.contains("systemctl --user enable effigy-gateway.service"),
+                "the enable recovery is offered only for a verified absent activation: {message}"
+            );
+        });
+    }
+
+    /// A failed rewrite reports an unreadable, absent or changed unit as what it
+    /// is, and describes the observed activation instead of asserting that it is
+    /// off.
+    #[test]
+    fn a_failed_rewrite_reports_the_unit_it_found_and_the_activation_it_observed() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let previous = std::fs::read(&paths.unit).unwrap();
+
+            // An unreadable unit (a symlink) is named, the observed activation is
+            // reported, and no enable advice is offered.
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\\n").unwrap();
+            std::fs::remove_file(&paths.unit).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.unit).unwrap();
+            let message = rewrite_failed(&paths, uid, &previous, true, "disk full").to_string();
+            assert!(message.contains("disk full"), "{message}");
+            assert!(
+                message.contains(&path_label(&paths.unit)) && message.contains("symbolic link"),
+                "the unreadable unit is named with its cause: {message}"
+            );
+            assert!(
+                message.contains("Effigy's own link"),
+                "the observed activation is described: {message}"
+            );
+            assert!(
+                !message.contains("systemctl --user enable"),
+                "no enable advice while the unit is unreadable: {message}"
+            );
+
+            // A missing unit is reported as missing, not as changed, and it is
+            // not offered an enable that would have nothing to enable.
+            std::fs::remove_file(&paths.unit).unwrap();
+            let message = rewrite_failed(&paths, uid, &previous, true, "disk full").to_string();
+            assert!(
+                message.contains("the unit file on disk is missing"),
+                "{message}"
+            );
+            assert!(
+                !message.contains("systemctl --user enable"),
+                "nothing to enable without a unit file: {message}"
+            );
+
+            // With Effigy's link present again, a run that never enabled the
+            // unit does not claim the activation is off.
+            let message = rewrite_failed(&paths, uid, &[], false, "disk full").to_string();
+            assert!(
+                message.contains("The login activation is Effigy's own link"),
+                "the observed activation is not asserted absent: {message}"
             );
         });
     }

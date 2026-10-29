@@ -430,7 +430,10 @@ recovery commands. An `enable` that fails after writing the link is reported as
 enabled *and* as a failed manager request. A post-request activation that is
 foreign or unsafe is reported as that refusal — after `daemon-reload` as well as
 after `enable`, and in a failed rewrite's recovery — and the `enable` recovery is
-offered only for a genuinely absent activation. Removal keeps the rule in the other
+offered only for a genuinely absent activation. A failed rewrite re-observes the
+activation after a failed restore, names an unreadable, missing or changed unit
+file as what it is, and reports the activation it observed rather than asserting
+it is off. Removal keeps the rule in the other
 direction: the unit file and the activation are removed, and a `daemon-reload`
 that refuses, cannot be reached or times out is then reported as a failure
 naming the exact `systemctl --user daemon-reload` command, because a removal is
