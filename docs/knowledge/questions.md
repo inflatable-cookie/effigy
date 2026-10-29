@@ -710,3 +710,15 @@ During #453's inspection, a raw historical grep printed six already-committed
 fixture token values into the private agent tool transcript. Do not copy those
 values into receipts, reviews or documentation; future inspection must emit
 only redacted rule, path, commit and content-hash evidence.
+
+For source-code matches, a literal can be classified as synthetic from its
+construction and use in a named test or fake adapter; external provenance is
+not required for a value written directly as a fixed test input. Record the
+test/function and the use that makes it a fixture, plus the exact path and
+blob hash. A test directory or a credential-shaped string alone is not that
+proof. Current-tree examples include the route-token tests in
+`policy/hosts.rs`, the gate-token tests in `custody.rs` and
+`runtime_routing.rs`, the Rhai secret batch test, and the managed placement
+argument-redaction test. Apply the same source-context check to every
+historical revision; a production literal or a value of unclear origin
+remains a finding. A changed blob gets scanned again.
