@@ -374,12 +374,13 @@ fn start_managed_run(
                 if !(host_placed || process.run_on_host) {
                     continue;
                 }
+                // Only this child's own delivered environment counts: a
+                // `setup` step is a separate statement in the same script, so
+                // its assignment never reaches the workload's environment and
+                // must not hide an inherited value from it (effigy#431 review).
                 let mut delivered = session_delivered.clone();
                 delivered.extend(process.secret_env.keys().cloned());
                 delivered.extend(effigy_managed::declared_env_keys(&process.run));
-                if let Some(setup) = process.setup.as_deref() {
-                    delivered.extend(effigy_managed::declared_env_keys(setup));
-                }
                 for (key, value) in resolver.resolved_inherited_env(&delivered, true)? {
                     if !resolved.iter().any(|(existing, _)| existing == &key) {
                         resolved.push((key, value));

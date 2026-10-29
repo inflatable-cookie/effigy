@@ -2053,11 +2053,14 @@ so host execution could quietly deliver the canonical alias and reach another
 checkout's service. A sensitive value the declaring environment overrides — the
 task's own `env`, or a sequence step's — is dropped rather than delivered, so it
 is neither resolved nor proved: the declared value outranks the secret source.
-A key a run delivers itself — task `env`, an env-schema value, a secret, a
-suite's `env`, a step's `env`, or a rendered command's own assignment — is never
-re-resolved from the caller's environment, so the source that wins still wins,
-and a managed session decides this per host workload so a value no workload
-receives is never proved. A managed session's client makes that
+An inherited value is resolved and proved **at the boundary of the child that
+receives it**. A key that child's own delivered environment carries — task
+`env`, an env-schema value, a secret, a suite's spawn-level `env`, or an
+assignment in the command that child runs — is never re-resolved, so the source
+that wins still wins. A `setup` step is its own statement in the same script, so
+its assignment hides nothing from the workload or the suite command that
+inherits the caller's value, and a managed session decides inherited values per
+host workload so a value no workload receives is never proved. A managed session's client makes that
 proof and hands the resolved values to its supervisor in the supervisor's own
 environment, so the supervisor inherits what was proved.
 

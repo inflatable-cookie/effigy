@@ -93,20 +93,15 @@ pub(super) fn try_run_builtin_test(
         ports.prove_host_suite_aliases(&suite.root, &label, &texts)?;
         // A value the suite would otherwise inherit unchanged names the
         // declared alias just as its own `env` does: resolve and prove it, and
-        // deliver what Effigy resolved (effigy#431 review). Every key the suite
-        // delivers itself keeps its own precedence.
-        let mut delivered = suite
+        // deliver what Effigy resolved (effigy#431 review). Only the suite's own
+        // `env` reaches every invocation; a step's `env` and a command's own
+        // assignment apply to that invocation alone, so they never hide an
+        // inherited value from the primary command.
+        let delivered = suite
             .env
             .keys()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
-        for text in [
-            suite.command.as_str(),
-            suite.setup_command.as_deref().unwrap_or_default(),
-            suite.teardown_command.as_deref().unwrap_or_default(),
-        ] {
-            delivered.extend(effigy_managed::declared_env_keys(text));
-        }
         for (key, value) in
             ports.resolve_host_suite_inherited_env(&suite.root, &label, &delivered)?
         {

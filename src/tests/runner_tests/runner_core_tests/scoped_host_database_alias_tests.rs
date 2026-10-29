@@ -391,8 +391,16 @@ fn each_scoped_host_task_reaches_only_its_own_declared_database_alias() {
 /// delivered through the private resolver, then connects to that host on the
 /// URL's own port and records what it reached.
 fn write_connect_manifest(checkout: &Path, dns_port: u16) {
+    let manifest = connect_task_manifest(checkout, dns_port);
+    fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a connecting task");
+}
+
+/// The connecting task itself: it resolves the host of its delivered URL through
+/// the private resolver, connects on that URL's own port, and records the host,
+/// port, address and token it reached.
+fn connect_task_manifest(checkout: &Path, dns_port: u16) -> String {
     let out = checkout.join("reached.txt");
-    let manifest = format!(
+    format!(
         r#"{MANIFEST}
 [tasks.connect]
 run_in = "host"
@@ -400,8 +408,7 @@ run = "sh -lc 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(p
 env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app", DNS_PORT = "{dns_port}", OUT = "{}" }}
 "#,
         out.display()
-    );
-    fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a connecting task");
+    )
 }
 
 /// Read what a connecting task recorded: the host and port it used, the
@@ -997,6 +1004,165 @@ fn each_scoped_host_task_connects_to_only_its_own_test_database() {
                 assert_ne!(token, sibling, "{name} never reaches a sibling");
             }
         }
+    });
+}
+
+/// The same three-scope proof for a managed session: each scope's `effigy dev
+/// --headless` workload connects with the URL Effigy delivered it, on the
+/// declared port 5432, and reaches only its own backing service.
+#[test]
+fn each_scoped_managed_session_connects_to_only_its_own_test_database() {
+    with_private_gateway("scoped-managed-database-reach", || {
+        let primary = primary_checkout("scoped-managed-database-reach");
+        let one = linked_worktree(&primary, "worktree-one");
+        let two = linked_worktree(&primary, "worktree-two");
+        let primary_alias = "postgres.acme.test".to_owned();
+        let one_alias = effective_alias(&one, "postgres");
+        let two_alias = effective_alias(&two, "postgres");
+        assert_ne!(one_alias, two_alias, "each scope keeps its own apex");
+
+        let addresses = free_alias_addresses(3);
+        let databases = [
+            fake_database("database-primary"),
+            fake_database("database-one"),
+            fake_database("database-two"),
+        ];
+        for (((checkout, alias), address), database) in [
+            (&primary, &primary_alias),
+            (&one, &one_alias),
+            (&two, &two_alias),
+        ]
+        .iter()
+        .zip(addresses.iter())
+        .zip(databases.iter())
+        {
+            publish_alias_route_with_endpoint(checkout, alias, *address, 5432, database.port);
+        }
+        let dns_port = free_udp_port();
+        let gateway = start_private_gateway(dns_port);
+        gateway.wait_until_ready(&addresses);
+        for checkout in [&primary, &one, &two] {
+            write_connect_session_manifest(checkout, dns_port);
+        }
+
+        for (name, checkout, alias, own, siblings) in [
+            (
+                "the primary checkout",
+                &primary,
+                &primary_alias,
+                databases[0].token,
+                [databases[1].token, databases[2].token],
+            ),
+            (
+                "worktree one",
+                &one,
+                &one_alias,
+                databases[1].token,
+                [databases[0].token, databases[2].token],
+            ),
+            (
+                "worktree two",
+                &two,
+                &two_alias,
+                databases[2].token,
+                [databases[0].token, databases[1].token],
+            ),
+        ] {
+            run_task(checkout, "dev", &["--headless"])
+                .unwrap_or_else(|error| panic!("{name}'s session runs: {error}"));
+            let (host, port, _address, token) = reached(checkout);
+            assert_eq!(host, *alias, "{name} connected with its own alias");
+            assert_eq!(
+                port, "5432",
+                "{name} connected on the port its delivered URL declared"
+            );
+            assert_eq!(
+                token, own,
+                "{name}'s managed workload reached its own backing service"
+            );
+            for sibling in siblings {
+                assert_ne!(token, sibling, "{name} never reaches a sibling");
+            }
+        }
+    });
+}
+
+/// A managed session whose only host workload connects: the session carries no
+/// `DATABASE_URL` of its own, so the declared alias comes from the session
+/// manifest's task env exactly as a consumer's configuration would.
+fn write_connect_session_manifest(checkout: &Path, dns_port: u16) {
+    let connect = connect_task_manifest(checkout, dns_port);
+    let manifest = format!(
+        "{connect}\n[tasks.dev]\nmode = \"tui\"\nconcurrent = [\n  {{ name = \"connect\", task = \"connect\", run_in = \"host\", start = 1 }},\n]\n"
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a connecting session");
+}
+
+/// A managed session whose host entry's `setup` sets the URL while its workload
+/// does not: the setup is its own statement, so the workload still inherits the
+/// caller's value and must refuse when that value has no published route
+/// (effigy#431 review).
+#[test]
+fn a_session_setup_override_does_not_hide_the_workloads_inherited_url() {
+    with_private_gateway("scoped-host-alias-setup-override", || {
+        let primary = primary_checkout("scoped-host-alias-setup-override");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let out = checkout.join("setup-override.txt");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [tasks.record]\n\
+             run_in = \"host\"\n\
+             run = \"sh -lc 'echo $DATABASE_URL > {out}'\"\n\
+             \n\
+             [tasks.dev]\n\
+             mode = \"tui\"\n\
+             concurrent = [\n\
+               {{ name = \"record\", task = \"record\", run_in = \"host\", start = 1,\n\
+                 setup = [{{ id = \"seed\", run = \"sh -lc 'echo $DATABASE_URL > /dev/null'\", env = {{ DATABASE_URL = \"postgres://other.example/db\" }} }}] }},\n\
+             ]\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a setup override");
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        let error = run_task(&checkout, "dev", &["--headless"])
+            .expect_err("the workload inherits the caller's value, which has no route");
+        assert_task_invocation_error_contains(error, &["DATABASE_URL", &alias]);
+        assert!(!out.exists());
+    });
+}
+
+/// A configured suite whose `setup` step sets the URL while the suite's own
+/// `env` does not: the suite's command still inherits the caller's value and
+/// must refuse when that value has no published route (effigy#431 review).
+#[test]
+fn a_suite_setup_override_does_not_hide_the_commands_inherited_url() {
+    with_private_gateway("scoped-host-alias-suite-setup", || {
+        let primary = primary_checkout("scoped-host-alias-suite-setup");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let out = checkout.join("suite-setup-override.txt");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [test.suites.unit]\n\
+             run = \"sh -lc 'echo $DATABASE_URL > {out}'\"\n\
+             setup = [{{ id = \"seed\", run = \"sh -lc 'echo $DATABASE_URL > /dev/null'\", env = {{ DATABASE_URL = \"postgres://other.example/db\" }} }}]\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a suite setup");
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        let error = run_task(&checkout, "test", &["unit"])
+            .expect_err("the suite command inherits the caller's value");
+        assert_task_invocation_error_contains(error, &["DATABASE_URL", &alias]);
+        assert!(!out.exists());
     });
 }
 
