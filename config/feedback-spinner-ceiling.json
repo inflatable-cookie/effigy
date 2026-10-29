@@ -42,12 +42,6 @@
     34
   ],
   [
-    "crates/effigy-doctor/src/progress.rs",
-    104,
-    "self.active.push((label, steps::step(label.active)));",
-    41
-  ],
-  [
     "crates/effigy-runtime/src/write.rs",
     77,
     ".then(|| effigy_containers::exec::phase(format!(\"stopping the `{}` stack\", policy.name)));",
@@ -97,49 +91,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    219,
+    218,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    827,
+    826,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1001,
+    1000,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1004,
+    1003,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1006,
+    1005,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1008,
+    1007,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1025,
+    1024,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1027,
+    1026,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -222,14 +216,8 @@
     13
   ],
   [
-    "src/runner/execute/pipeline/standard.rs",
-    827,
-    "let step = effigy_ui::steps::step(\"unlocking vault\");",
-    34
-  ],
-  [
     "src/runner/execute/sequence_run.rs",
-    436,
+    471,
     "let step = effigy_ui::steps::step(&progress);",
     38
   ],
@@ -412,18 +400,6 @@
     338,
     "let step = effigy_ui::steps::step(&summary);",
     46
-  ],
-  [
-    "src/runner/secrets_command.rs",
-    177,
-    "let step = effigy_ui::steps::step(\"unlocking vault\");",
-    34
-  ],
-  [
-    "src/runner/secrets_command.rs",
-    296,
-    "let step = effigy_ui::steps::step(\"running the vault generate hook\");",
-    34
   ],
   [
     "src/runner/state_command.rs",

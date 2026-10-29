@@ -1,5 +1,5 @@
 #[path = "pipeline/command.rs"]
-mod command;
+pub(super) mod command;
 #[path = "pipeline/managed.rs"]
 pub(super) mod managed;
 #[path = "pipeline/standard.rs"]
@@ -156,6 +156,29 @@ fn plan_command_shape(
     selection: &effigy_manifest::TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
     if selection.task.mode.as_deref() == Some("tui") {
+        // The plan must resolve the same environments the run will: the
+        // session's placement is decided by its binding, exactly as
+        // `run_managed_task` decides it (effigy#431 review).
+        let binding = resolve_execution_binding_resolution(
+            selection
+                .catalog
+                .manifest
+                .task_defaults
+                .as_ref()
+                .and_then(|defaults| defaults.run_in),
+            selection.catalog.manifest.systems.as_ref(),
+            selection.catalog.manifest.containers.as_ref(),
+            &preflight.selector.task_name,
+            selection.task,
+            "managed task plan",
+        )?;
+        let host_placed = matches!(
+            binding.binding(),
+            super::api::ContainerExecutionBinding::None
+                | super::api::ContainerExecutionBinding::Host
+        ) || super::workspace_seeded::inside_container_handoff();
+        let host_env_aliases =
+            super::host_alias::session_host_plan_env_aliases(preflight, selection)?;
         let Some(plan) = resolve_managed_task_plan(
             &preflight.selector,
             selection.catalog,
@@ -163,6 +186,8 @@ fn plan_command_shape(
             &preflight.runtime_args_exec,
             &preflight.catalogs,
             &selection.catalog.catalog_root,
+            &host_env_aliases,
+            host_placed,
             &effigy_routing::resolve_task_selection,
         )?
         else {
@@ -178,5 +203,5 @@ fn plan_command_shape(
             .collect::<Vec<_>>()
             .join("; "));
     }
-    command::build_task_command(preflight, selection, &None)
+    command::build_task_command(preflight, selection, &None).map(|built| built.command)
 }

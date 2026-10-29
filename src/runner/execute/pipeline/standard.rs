@@ -10,6 +10,7 @@ use super::super::api::{
     ContainerExecutionBinding, ExecutionBindingResolution,
 };
 use super::super::context::ExecutionTaskContext;
+use super::super::host_alias::{secret_env_slice, HostAliasResolver};
 use super::super::planning::ExecutionPreflight;
 use super::super::routing::{
     route_standard_task_execution, routed_container_target, routed_not_running_container,
@@ -129,11 +130,9 @@ pub(in crate::runner) fn run_standard_task(
                 Some(&exec),
             )?
         };
-        let context = ExecutionTaskContext::new(
-            preflight,
-            selection,
-            command::build_task_command(preflight, selection, &env_schema_resolved)?,
-        );
+        let built = command::build_task_command(preflight, selection, &env_schema_resolved)?;
+        let plain_env_keys = built.plain_env_keys.clone();
+        let context = ExecutionTaskContext::new(preflight, selection, built.command);
         run_standard_task_inner(
             preflight,
             selection,
@@ -141,6 +140,10 @@ pub(in crate::runner) fn run_standard_task(
             &context,
             &env_schema_resolved,
             Some(&task_secret_pairs),
+            RunHostAliases {
+                resolver: built.host_aliases,
+                plain_env_keys: &plain_env_keys,
+            },
             &mut run,
             &mut workload,
         )
@@ -261,6 +264,7 @@ fn run_standard_task_inner(
     context: &ExecutionTaskContext<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
     resolved_task_secrets: Option<&[(String, SecretString)]>,
+    host_aliases: RunHostAliases<'_>,
     run: &mut TaskRun,
     workload: &mut Option<WorkloadOutcome>,
 ) -> Result<String, RunnerError> {
@@ -417,11 +421,47 @@ fn run_standard_task_inner(
         return finish_remote(preflight, context, secret_ref, exit, workload);
     }
 
+    // A host run in a runtime-scoped checkout resolves the canonical declared
+    // backing-service alias in the secret values it delivers too, and refuses
+    // before the child starts when this checkout has no published backing
+    // service for them (contract 005).
+    let mut host_aliases = host_aliases;
+    let resolved_secret_env = match (host_aliases.resolver.as_mut(), secret_ref) {
+        (Some(resolver), Some(pairs)) => {
+            Some(resolver.resolved_secret_env(pairs, host_aliases.plain_env_keys, true)?)
+        }
+        _ => None,
+    };
+    // Values this run would otherwise inherit unchanged are resolved and proved
+    // too: a `DATABASE_URL` in the caller's environment names the declared
+    // alias just as a task's own `env` does (effigy#431 review).
+    let mut delivered_keys = host_aliases.plain_env_keys.clone();
+    delivered_keys.extend(
+        secret_ref
+            .unwrap_or_default()
+            .iter()
+            .map(|(key, _)| (*key).to_owned()),
+    );
+    let inherited_env = match host_aliases.resolver.as_mut() {
+        Some(resolver) => resolver.resolved_inherited_env(&delivered_keys, true)?,
+        None => Vec::new(),
+    };
+    let resolved_secret_refs = resolved_secret_env
+        .as_deref()
+        .map(secret_env_slice)
+        .unwrap_or_default();
+    let secret_ref = if resolved_secret_env.is_some() {
+        Some(resolved_secret_refs.as_slice())
+    } else {
+        secret_ref
+    };
+
     process_run::run_task_process(
         preflight.output_json,
         preflight.runtime_args_raw.verbose_root,
         context,
         secret_ref,
+        &inherited_env,
         run,
         workload,
     )
@@ -823,19 +863,19 @@ fn read_task_secret_vault_payload(
 ) -> Result<VaultPlaintextPayload, RunnerError> {
     // Decrypting the vault is the slowest part of resolving a task's secrets,
     // and a wrong passphrase or an unreadable vault is the failure a person
-    // most needs described.
-    let step = effigy_ui::steps::step("unlocking vault");
+    // most needs described. The vault crate has no intra-decrypt events, so
+    // the live source names that exact wait and elapsed time.
+    let progress = crate::runner::secrets_command::SecretOpProgress::start(
+        crate::runner::secrets_command::PROBE_VAULT_DECRYPT,
+    );
+    progress.update("decrypting vault", None, None);
     match crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase) {
         Ok(payload) => {
-            step.succeed("vault unlocked");
+            progress.succeed("vault unlocked");
             Ok(payload)
         }
         Err(error) => {
-            step.fail(&format!(
-                "could not unlock the vault at {}: {}",
-                vault_path.display(),
-                error.human_error().what_failed()
-            ));
+            progress.fail("could not unlock the vault");
             Err(error)
         }
     }
@@ -1088,6 +1128,14 @@ fn activate_inline_workspace_container_runtime_with(
     )
 }
 
+/// The scoped alias resolution a host run owes, and the env keys its rendered
+/// command already delivers, so a same-named secret is neither delivered twice
+/// nor proved.
+pub(in crate::runner) struct RunHostAliases<'a> {
+    pub(in crate::runner) resolver: Option<HostAliasResolver>,
+    pub(in crate::runner) plain_env_keys: &'a BTreeSet<String>,
+}
+
 pub(in crate::runner) fn resolve_env_schema_if_present(
     catalog_root: &Path,
     runtime_override: Option<&Path>,
@@ -1137,11 +1185,9 @@ pub(in crate::runner) fn run_sequence_container_command(
         evidence: selection.evidence.clone(),
         surface: selection.surface,
     };
-    let context = ExecutionTaskContext::new(
-        preflight,
-        &selected,
-        command::build_task_command(preflight, &selected, &None)?,
-    );
+    let built = command::build_task_command(preflight, &selected, &None)?;
+    let plain_env_keys = built.plain_env_keys.clone();
+    let context = ExecutionTaskContext::new(preflight, &selected, built.command);
     // The canonical selection plan is rebuilt without effects by the resolver.
     let invocation = effigy_cli::TaskInvocation {
         name: effigy_tasks::render_task_selector(&preflight.selector),
@@ -1155,7 +1201,18 @@ pub(in crate::runner) fn run_sequence_container_command(
         ));
     };
     run_standard_task_inner(
-        preflight, &selected, &plan, &context, &None, None, run, &mut None,
+        preflight,
+        &selected,
+        &plan,
+        &context,
+        &None,
+        None,
+        RunHostAliases {
+            resolver: built.host_aliases,
+            plain_env_keys: &plain_env_keys,
+        },
+        run,
+        &mut None,
     )
 }
 

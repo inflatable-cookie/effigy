@@ -11,11 +11,11 @@ use effigy_execution::{
 use super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
 
-pub(super) use result::SelectionResolution;
+pub(in crate::runner) use result::SelectionResolution;
 
 /// Resolves `task` through the one resolver and carries out a non-task
 /// route (built-in, exec alias, deferral) at once.
-pub(super) fn resolve_task_selection<'a>(
+pub(in crate::runner) fn resolve_task_selection<'a>(
     task: &TaskInvocation,
     preflight: &'a ExecutionPreflight,
 ) -> Result<SelectionResolution<'a>, RunnerError> {

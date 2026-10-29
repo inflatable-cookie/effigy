@@ -355,6 +355,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Doctor scan checks and vault lock, unlock and generate-hook waits now draw
+  through the live progress source: the current sub-step, known count, elapsed
+  wait and last event or exact probe, instead of a label fixed for the whole
+  operation. Secret values and credential paths stay out of those labels.
+  JSON, piped and quiet output stay silent. The feedback-spinner inventory
+  dropped the four owned call sites.
+
 - Workspace guest publication now completes as a journalled obligation under
   the environment activation gate before publishing active or attaching task
   holders. Concurrent prepares and stops serialize; interrupted publication
@@ -488,6 +495,47 @@ During v0.x, MINOR bumps may include breaking changes.
   the child is alive the wait has no deadline and reports progress; once the
   port accepts a connection, `readiness.timeout_secs` bounds reaching the
   declared status. A restart binds the address its declaration names.
+- **A host run in a linked worktree reaches that worktree's database.** A
+  scoped checkout answers its backing services on its own apex, and everything
+  Effigy delivers to a host run receives the scoped alias where the
+  declaration carries the canonical one - `[tasks.<name>].env`, an env-schema
+  or `.env` value, a declared secret, a sequence step's environment, a managed
+  session's (`mode = "tui"`) process plan and setup steps, and a configured
+  test suite's own environment, command and `setup`/`teardown` steps - so
+  application configuration keeps `postgres.<apex>` and the run still reaches
+  this checkout's own database. Value precedence is unchanged, a primary
+  checkout keeps its declared name, and a `--plan` render refuses nothing (a
+  task plan shows the aliases it would deliver). Only an endpoint is rewritten
+  - the whole value, a URL authority host, or `host:port` - so text that merely
+  names the alias keeps its bytes, and Effigy never rewrites a command body. URL
+  credentials are never the host: a name that appears in `user:password@`, or a
+  URL naming another server, keeps its bytes and proves nothing.
+  Before the run starts - including every alias a selected test suite would
+  use, before any suite runs - Effigy proves the scope's route belongs to this
+  checkout and publishes an upstream port; otherwise it refuses with the
+  alias, the service and `effigy container up <NAME>`, and the command never
+  runs. The proof reads the endpoints Effigy delivered, so text that merely
+  mentions the alias proves nothing, and a suite this run does not select is
+  never proved. It also asks the recorded upstream to accept a connection, so a
+  route a stopped stack left behind refuses instead of authorizing a run that
+  cannot connect, and a managed session proves only the processes it places on
+  the host. A value the child would otherwise inherit unchanged - an exported
+  `DATABASE_URL`, say - is resolved and proved the same way for a host task, a
+  sequence step, a managed host workload and a selected host suite with its
+  lifecycle, so the caller's own environment cannot reach another checkout's
+  service; each child boundary decides its own precedence, so a `setup` step's
+  assignment — and a key that only appears in a command's text — hides nothing
+  from the workload or suite command that inherits the value, and a managed
+  session decides inherited values per host workload. A worktree's first host run records the
+  checkout's scope token before resolving, so a fresh worktree is scoped rather
+  than canonical; a container registry this scoped checkout declares but Effigy
+  cannot read is refused instead of falling back to the canonical names; and a
+  sensitive value the task's or a sequence step's own environment overrides is
+  dropped rather than delivered, so it is neither resolved nor proved. A
+  container-bound run is untouched: its target's own network already answers
+  both names. A checkout that names no default container environment still
+  resolves. See
+  [contract 005](docs/knowledge/contracts/005-container-runtime-contract.md).
 - **Host processes get resolved facts instead of a wrapper script:**
   `${service.<name>.host}`, `${route.<domain>.public_url}`,
   `${host_process.<name>.internal_url}`, `${apex}`, `${domains}` and

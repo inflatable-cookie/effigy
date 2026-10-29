@@ -1985,9 +1985,89 @@ host-visible HTTP route keeps the scoped apex and application configuration is
 never rewritten. An explicit route for the canonical name keeps its precedence
 over the generated alias.
 
-Host-native execution in a scoped checkout is outside this guarantee: a host
-process resolving the canonical alias reaches the host-visible route, which
-belongs to the scope that published it (normally the primary checkout).
+Host-native execution in a scoped checkout needs the same resolution without
+machine-wide DNS and without another scope's route. A host process cannot be
+given a Compose network alias, and the gateway answers one route per domain, so
+the declared name stays with the checkout that published it. Effigy therefore
+resolves the canonical declared alias in every environment it delivers to a
+host run in a scoped checkout (`crates/effigy-core/src/host_alias.rs` is the one
+rewrite, used by the runner and by the managed session's run specs):
+
+- a task's own `env`
+- an env-schema value, plain or `@sensitive`, including one read from `.env`
+- a declared secret env value
+- a sequence step's environment, including values chained from earlier steps
+- a managed session's process plan (`mode = "tui"`), its entry `env`, its
+  sequence steps, its `setup` steps and the nested task references it renders
+- a configured test suite's own delivered environment, its rendered command,
+  and the step environment of that suite's `setup`/`teardown` commands — proved
+  for the suites the run selects, before any suite starts
+- a value the child would otherwise inherit unchanged from the caller's
+  environment, such as an exported `DATABASE_URL`, for a host task, a sequence
+  step, a managed host workload and a selected host suite with its lifecycle:
+  each naming an endpoint is resolved and proved like a declared value and
+  delivered to the child
+
+Each is delivered with this checkout's effective alias in place of the
+declared one. That env map is the one Effigy already owns: a consumer whose
+configuration carries `postgres.<apex>` reaches its own database with no
+manifest change, because the delivered value wins over the app's own `.env`
+read as it already does for an env-schema value. Value source precedence is
+decided first and is unchanged — a task's `env` still beats an env-schema
+value, which still beats a `.env` value or a schema default — and the winning
+value is then resolved.
+
+Only an endpoint is rewritten: a value that is exactly the host, the host of a
+URL authority (`scheme://host`, `user@host`), or a host carrying its own port
+(`host:5432`). URL credentials are never the host: a name that appears in
+`user:password@`, or a URL naming another server, keeps its exact bytes and
+proves nothing. Text that merely names the alias keeps its exact bytes — a
+search pattern, a JSON blob, a comma-separated list, a note, or a longer host
+such as `postgres.<apex>.example.com`. Effigy rewrites the environment it
+delivers; it never rewrites a command body or configuration text it only passes
+through.
+
+A managed session proves the alias in the processes it places on the host and
+nowhere else: a container-routed session keeps the declared name in its own
+processes, which its target's network answers, and resolves the scope's alias
+only in the entries it runs on the host.
+
+Before the child starts, Effigy proves the alias: the record for the effective
+domain must belong to this checkout's path, must carry a published upstream
+port, and that upstream must accept a connection within the gateway's own short
+deadline. A record left behind by a stopped stack is stale, not published. The proof reads the endpoints Effigy delivered, with the same shape rule
+as the rewrite, so text that merely mentions an effective alias proves nothing
+and refuses nothing. A missing route, a route another checkout owns, or a route with no
+published port refuses the run with the declared alias, the backing service and
+`effigy container up <NAME>`, and the task's command never runs. A primary
+checkout keeps its declared name and resolves nothing, and a container-bound
+run is untouched: its target's own network already answers both names.
+
+A worktree's first host run is scoped: Effigy records the checkout's scope
+token before resolving, exactly as the container path does, so a fresh worktree
+never falls back to the declared names. A checkout that names no default
+container environment still resolves its aliases from all of its environments.
+A container registry this scoped checkout declares but Effigy cannot read is
+refused — without it there is no way to know which names belong to this scope,
+so host execution could quietly deliver the canonical alias and reach another
+checkout's service. A sensitive value the declaring environment overrides — the
+task's own `env`, or a sequence step's — is dropped rather than delivered, so it
+is neither resolved nor proved: the declared value outranks the secret source.
+An inherited value is resolved and proved **at the boundary of the child that
+receives it**. Only that child's own *spawn-level* delivered environment — its
+task `env`, env-schema values, secrets, and a suite's `env` — keeps a key from
+being re-resolved, so the source that wins still wins. A `setup` step is its own
+statement in the same script, and a key that merely appears in a command's text
+(log line, pattern, quoted literal) is no assignment at all: neither hides the
+caller's value from the workload or suite command that inherits it. A managed
+session decides inherited values per host workload so a value no workload
+receives is never proved, its client hands the resolved values to its supervisor
+in the supervisor's own environment, and the supervisor inherits what was
+proved.
+
+A plan (`--plan`) runs nothing, so it refuses nothing: a task plan renders the
+aliases it would deliver, and the built-in `test` plan keeps the declared
+names.
 
 ## Fallback ownership
 
@@ -2068,6 +2148,11 @@ The minimum proof set should cover:
 - runtime activation plans preserving repo root, repo override, policy name,
   container identity, and hold policy across `effigy exec`, workspace, and
   managed surfaces
+- one primary checkout and two marked linked scopes, proving each host run
+  receives only its own scope's declared backing-service alias, that the alias
+  reaches only that scope's own backing service, that an absent backing service
+  refuses before the command runs, and that a primary checkout, a plan render
+  and a container-bound run keep the declared name
 
 ## Drift triggers
 
@@ -2081,6 +2166,8 @@ Update this contract when Effigy changes:
 - runner-facing container manager operation ownership
 - runtime context facts used by container-backed execution
 - runtime activation request/plan/report fields
+- which host runs receive scoped declared-alias resolution, and what proves a
+  scope's backing service before such a run starts
 
 ## Verified local runtime refresh — 2026-10-04
 

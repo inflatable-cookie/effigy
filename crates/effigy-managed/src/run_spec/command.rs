@@ -11,16 +11,18 @@ use effigy_tasks::render_template_args;
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 
 pub fn render_task_command(command: &str, context: RunSpecContext<'_>) -> String {
-    wrap_command_with_task_env(
-        render_command_template(
-            command,
-            context.repo_root,
-            context.bundle_root,
-            &render_template_args(context.args_raw),
-        ),
-        context.task_env,
+    let rendered = render_command_template(
+        command,
         context.repo_root,
-    )
+        context.bundle_root,
+        &render_template_args(context.args_raw),
+    );
+    // A host run in a runtime-scoped checkout receives this checkout's
+    // effective backing-service alias where the declaration carries the
+    // canonical one (effigy#431, contract 005).
+    let mut env = context.task_env.clone();
+    effigy_core::host_alias::resolve_env(&mut env, context.host_env_aliases);
+    wrap_command_with_task_env(rendered, &env, context.repo_root)
 }
 
 pub fn render_step_command(command: &str, context: RunSpecContext<'_>) -> String {
@@ -269,6 +271,7 @@ mod tests {
                 task_scope_cwd: Path::new("/workspace-root/acowtancy/dairy"),
                 invocation_cwd: Path::new("/workspace-root/acowtancy/dairy"),
                 runtime_env_schema_override: None,
+                host_env_aliases: &[],
                 depth: 0,
                 resolver: &|_, _, _| unreachable!("resolver"),
             },

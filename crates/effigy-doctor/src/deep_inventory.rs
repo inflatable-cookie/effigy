@@ -132,9 +132,16 @@ fn start_scan_steps(progress: Option<&mut DoctorProgressReporter>, enabled: &[bo
     let Some(progress) = progress else {
         return;
     };
+    let total = enabled.iter().filter(|on| **on).count() as u64;
+    let mut done = 0u64;
     for (index, label) in SCAN_STEP_LABELS.into_iter().enumerate() {
         if enabled[index] {
-            progress.start_scan(label);
+            done += 1;
+            progress.start_scan_with(
+                label,
+                Some((done, total)),
+                Some("shared scan inventory".to_owned()),
+            );
         }
     }
 }
