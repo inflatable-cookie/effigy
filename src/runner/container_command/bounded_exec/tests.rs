@@ -316,10 +316,18 @@ fn public_fixture(
     name: &str,
     workspace_identity: bool,
 ) -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
-    let shared_parent = cfg!(target_os = "macos").then_some(Path::new("/Users/Shared"));
-    let (dir, bin_dir, repo_root) = fixture_in(name, shared_parent);
+    // The public path needs a checkout path outside the temporary directory
+    // (the Colima host-path guard refuses a repo under it), so the fixture is a
+    // fresh directory in the Effigy scratch namespace. Never a hardcoded shared
+    // directory: the fixture stays under the scratch root the run was given.
+    let parent = effigy_test_support::scratch_parent().expect("public fixture scratch root");
+    let (dir, bin_dir, repo_root) = fixture_in(name, Some(&parent));
     let home = dir.path().join("home");
     fs::create_dir_all(&home).expect("mkdir isolated home");
+    // The child's own temp directory stays inside this fixture, so the repo is
+    // not under it and every temporary file the run makes is confined here.
+    let child_temp = dir.path().join("tmp");
+    fs::create_dir_all(&child_temp).expect("mkdir child temp");
     fs::write(
         repo_root.join("docker-compose.yml"),
         "services:\n  app:\n    image: busybox\n",
@@ -681,6 +689,9 @@ fn run_guarded_public_case(
         .env("FAKE_BOUNDED_DEADLINE_MS", deadline_ms.to_string())
         .env("PATH", path)
         .env("HOME", &home)
+        .env("TMPDIR", dir.path().join("tmp"))
+        .env("TMP", dir.path().join("tmp"))
+        .env("TEMP", dir.path().join("tmp"))
         .env("EFFIGY_TEST_CONTAINERS_HOME", home.join(".effigy"))
         .env("EFFIGY_COMPOSE_BACKEND", backend)
         .env(
@@ -1032,10 +1043,11 @@ fn public_entry_bounds_discovery_preparation_and_fallback_on_the_full_path() {
             stdout_limit: 4096,
         },
     );
-    // The public Colima path guard requires a host-shared repo path. The
-    // macOS fixture lives under /Users/Shared; Linux covers Colima through
-    // the private transport-path case above and keeps public fixtures in its
-    // isolated temp directory.
+    // The public Colima path guard requires a repo path outside the temporary
+    // directory. The fixture is a fresh directory in the Effigy scratch
+    // namespace with its own temp child, so the repo is not under TMPDIR on any
+    // platform; Linux still covers Colima through the private transport-path
+    // case above.
     #[cfg(target_os = "macos")]
     let _valid_colima = run_guarded_public_case(
         &dir,
@@ -1982,9 +1994,8 @@ mod handoff_local_tests {
         std::path::PathBuf,
         std::path::PathBuf,
     ) {
-        let shared_parent =
-            cfg!(target_os = "macos").then_some(std::path::Path::new("/Users/Shared"));
-        let (dir, bin_dir, repo_root) = super::fixture_in(name, shared_parent);
+        let parent = effigy_test_support::scratch_parent().expect("handoff fixture scratch root");
+        let (dir, bin_dir, repo_root) = super::fixture_in(name, Some(&parent));
         let workspace = repo_root.join("workspace");
         fs::create_dir_all(&workspace).expect("mkdir handoff workspace");
         fs::write(
