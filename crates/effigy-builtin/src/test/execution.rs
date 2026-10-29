@@ -20,7 +20,7 @@ use effigy_tui::multiprocess::{
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::sweep::Sweep;
 use super::{BuiltinError, BuiltinTestExecResult};
-use crate::ports::{BuiltinContainerSuiteTarget, BuiltinTestChildEvidence};
+use crate::ports::BuiltinTestChildEvidence;
 use crate::{BuiltinRuntimePorts, HostSuiteCustody};
 #[path = "planning/runnable/cargo_env.rs"]
 mod cargo_env;
@@ -620,7 +620,7 @@ fn render_wrapped_suite_command(suite: &BuiltinTestRunnable) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BuiltinLockGuards, LockScope};
+    use crate::{BuiltinContainerSuiteTarget, BuiltinLockGuards, LockScope};
     use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
     use effigy_manifest::{LoadedCatalog, ManifestCargoEnvMatchMode};
     use std::collections::{BTreeMap, BTreeSet};
