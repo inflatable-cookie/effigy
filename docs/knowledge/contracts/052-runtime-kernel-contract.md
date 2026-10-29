@@ -3025,15 +3025,18 @@ the sequence is then that position: one frame's sequence is its first byte's
 offset, so a cursor, a frame sequence and the retained log are one coordinate
 system across reconnects and chunk boundaries with no replay store or second
 cursor. `RetainedStreams` is the kernel's own
-endpoint over `run::read_log`: it answers `resume(run, stream_id, cursor)` with
-`At { next }` only for a position the log still holds, up to its end, and
-`Refused` for a future cursor, an unknown stream, a stream nothing was captured
-for at a later cursor, or an unreadable log — so a reconnect is refused rather
-than restarted at sequence zero, and a refused cursor opens no attachment. A
-retained position the log rotates past becomes one `gap` frame naming the first
-missing offset, ahead of the data that resumes there, so every emitted frame on
-a stream keeps a strictly increasing sequence and the gap is never presented as
-complete output. The endpoint re-checks the connection's attachment with
+endpoint over `run::read_log`. Negotiation is per stream and pure: `resume(run,
+cursor)` answers the start position of **every** stream the endpoint publishes,
+so a reconnect resumes stdout and stderr at their own retained positions rather
+than replaying one of them from zero, while a future cursor on the primary
+stream, an unreadable log, or a cursor no stream can serve refuses the attach
+and opens none. Nothing moves until `start(attachment, positions)` runs for the
+attachment that actually opened, so a replacement the host then refuses leaves
+the connection's working attachment exactly where it was. A retained position
+the log rotates past becomes one `gap` frame naming the first missing offset,
+ahead of the data that resumes there, so every emitted frame on a stream keeps a
+strictly increasing sequence and the gap is never presented as complete
+output. The endpoint re-checks the connection's attachment with
 `Attachment::attached_observed` on every read, so a released or replaced row
 stops publication. `input` delivers one validated terminal input frame exactly
 once to the terminal owner — `Terminal::input` — and `resize` hands over the
@@ -3059,10 +3062,11 @@ that stream's frames that sit between other streams' frames, so an interleaved
 stream's consumption is never blocked by another stream's order. A host with no
 terminal owner refuses input and resize (`NoTerminal`) instead of reporting a
 delivery it did not make. The kernel has no per-run terminal input/resize
-writer, and no host front end that owns a session terminal exists yet (the
-transport, the guest client and the runner integration are separate tasks), so
-production input/resize delivery is a bounded follow-up on the runner glue task;
-the channel's own delivery contract and fence are complete and proved.
+writer, and no host front end owns a session terminal yet (the transport, the
+guest client and the runner integration are separate tasks), so channel-owned
+delivery stops at the `Terminal` contract: the production runner terminal writer
+and the serving-loop binding are a separately owned follow-up, and nothing here
+claims production terminal delivery.
 `test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map

@@ -1379,20 +1379,12 @@ pub struct StreamChunk {
     pub bytes: Vec<u8>,
 }
 
-/// Where a stream source's retained position meets the cursor a client asked
-/// to resume at (052 §8.11).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StreamResume {
-    /// Output continues at `next`: the client's own cursor inside the retained
-    /// range, or the position it is caught up to. The connection numbers the
-    /// stream there, and a retained position ahead of it is reported as a
-    /// bounded gap before any data.
-    At { next: u64 },
-    /// The source cannot serve this cursor — it is ahead of the retained end,
-    /// names no stream this attachment carries, or the log is unreadable. The
-    /// attach is refused rather than restarted at sequence zero.
-    Refused,
-}
+/// Where every stream a connection carries starts publishing, for the cursor
+/// the client asked to resume from (052 §8.11). Each stream has its own
+/// retained log, so each has its own position; a stream whose log no longer
+/// holds the requested bytes starts where its log starts and reports that
+/// bounded range as a gap before any data.
+pub type StreamStart = BTreeMap<u32, u64>;
 
 /// The attached run's terminal owner, as lane B implements it: the front end
 /// that holds the terminal and hands validated bytes and sizes to it.
@@ -1445,19 +1437,29 @@ pub trait Streams {
     /// passed so the endpoint can re-check its own lifetime before reading.
     fn next_chunk(&mut self, attachment: Option<&Attachment>) -> Option<StreamChunk>;
 
-    /// Where this source meets the client's requested `cursor` for
-    /// `stream_id`, asked before the attachment opens so it writes nothing.
+    /// Where **every** stream this connection carries starts, for the client's
+    /// requested `cursor`: `None` refuses the attach. It is asked before the
+    /// attachment opens and is pure — nothing about the current reader moves —
+    /// so a host that refuses the replacement leaves the connection's working
+    /// attachment exactly where it was.
     ///
-    /// The default is a source with nothing retained: it serves the start of a
-    /// stream and refuses any later cursor, so a reconnect is never presented
-    /// as an uninterrupted sequence from zero.
-    fn resume(&mut self, _run: RunId, _stream_id: u32, cursor: u64) -> StreamResume {
+    /// The default is a source with nothing retained: it serves the start of the
+    /// stream and refuses any later cursor, so a reconnect is never presented as
+    /// an uninterrupted sequence from zero. A source that keeps several retained
+    /// streams answers for each of them, so no stream silently replays consumed
+    /// output.
+    fn resume(&mut self, _run: RunId, cursor: u64) -> Option<StreamStart> {
         if cursor == 0 {
-            StreamResume::At { next: 0 }
+            Some(StreamStart::from([(TERMINAL_STREAM, 0)]))
         } else {
-            StreamResume::Refused
+            None
         }
     }
+
+    /// Commit the negotiated start positions for the attachment that actually
+    /// opened. A host that refused the attach never reaches here, so a refused
+    /// replacement cannot move the reader the connection is still serving.
+    fn start(&mut self, _attachment: &Attachment, _start: &StreamStart) {}
 
     /// Deliver one validated terminal input frame.
     fn input(&mut self, attachment: &Attachment, bytes: &[u8]) -> Result<(), Refusal> {
@@ -1583,28 +1585,46 @@ impl<T: Terminal> Streams for RetainedStreams<T> {
         None
     }
 
-    fn resume(&mut self, run: RunId, stream_id: u32, cursor: u64) -> StreamResume {
+    fn resume(&mut self, run: RunId, cursor: u64) -> Option<StreamStart> {
         if run != self.run {
-            return StreamResume::Refused;
+            return None;
         }
-        let Some(&(sequence, stream)) = self.plan.get(stream_id as usize) else {
-            return StreamResume::Refused;
-        };
-        match run::read_log(&self.observe, &self.root, run, sequence, stream, cursor, 1) {
-            // The log's end is its extent: a cursor at or before it is a
-            // position this attachment continues from. A cursor past it is a
-            // future position, refused rather than clamped or clamped-to-zero.
-            Observed::Verified(read, _) if cursor <= read.end => {
-                self.next[stream_id as usize] = cursor;
-                StreamResume::At { next: cursor }
+        // Every stream this endpoint publishes is negotiated, not just the
+        // primary one: each has its own retained log, and a stream left at zero
+        // would replay output the client already consumed as if uninterrupted.
+        let mut start = StreamStart::new();
+        for (stream_id, &(sequence, stream)) in self.plan.iter().enumerate() {
+            let primary = stream_id as u32 == TERMINAL_STREAM;
+            let retained =
+                run::read_log(&self.observe, &self.root, run, sequence, stream, cursor, 1);
+            let position = match retained {
+                // The log's end is its extent: a cursor at or before it is a
+                // position this stream continues from.
+                Observed::Verified(read, _) if cursor <= read.end => cursor,
+                // A cursor past the primary stream's end is a future position:
+                // the attach is refused rather than clamped or restarted at
+                // zero. A secondary stream is measured by its own log, so a
+                // cursor beyond it means that stream has nothing left to give
+                // and continues at its end.
+                Observed::Verified(read, _) if !primary => read.end,
+                // A stream nothing was captured for has nothing to replay; any
+                // later output is new.
+                Observed::Absent(_) => 0,
+                Observed::Verified(..) | Observed::Unknown(_) => return None,
+            };
+            start.insert(stream_id as u32, position);
+        }
+        Some(start)
+    }
+
+    fn start(&mut self, _attachment: &Attachment, start: &StreamStart) {
+        // Committed only for the attachment that opened: a refused replacement
+        // never reaches here, so the stream the connection is still serving
+        // keeps its position.
+        for (stream_id, position) in start {
+            if let Some(next) = self.next.get_mut(*stream_id as usize) {
+                *next = *position;
             }
-            // A stream with nothing captured yet still serves its start; any
-            // later cursor was not retained here.
-            Observed::Absent(_) if cursor == 0 => {
-                self.next[stream_id as usize] = 0;
-                StreamResume::At { next: 0 }
-            }
-            _ => StreamResume::Refused,
         }
     }
 
@@ -2824,17 +2844,16 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                         }
                     }
                     // The requested cursor meets the retained reader before
-                    // anything opens. A source that cannot serve it refuses the
-                    // attach, so a reconnect never restarts at sequence zero as
-                    // if its output had been uninterrupted (§8.11).
+                    // anything opens, for every stream this connection carries.
+                    // Negotiation is pure: a source that cannot serve the cursor
+                    // refuses the attach, and a replacement the host then
+                    // refuses has moved nothing, so the stream this connection
+                    // is still serving keeps its position (§8.11).
                     let cursor = body.cursor.unwrap_or(0);
-                    let resume = match streams.resume(body.run, TERMINAL_STREAM, cursor) {
-                        StreamResume::At { next } => next,
-                        StreamResume::Refused => {
-                            return Err(Refusal::invalid(
-                                "this attachment cannot resume at the requested cursor",
-                            ))
-                        }
+                    let Some(start) = streams.resume(body.run, cursor) else {
+                        return Err(Refusal::invalid(
+                            "this attachment cannot resume at the requested cursor",
+                        ));
                     };
                     let handle = self
                         .dispatcher
@@ -2866,7 +2885,16 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     self.outbound = Outbound::new();
                     self.carry = None;
                     self.inbound.clear();
-                    self.outbound.resume(TERMINAL_STREAM, resume);
+                    // Every negotiated stream is numbered from its own
+                    // position, so a second retained stream resumes where its
+                    // log does instead of replaying from zero or inventing a
+                    // gap.
+                    for (stream_id, position) in &start {
+                        self.outbound.resume(*stream_id, *position);
+                    }
+                    // The negotiated positions are committed only now, for the
+                    // attachment that actually opened.
+                    streams.start(&handle, &start);
                     self.attach = Some(request.id);
                     *attachment = Some(handle);
                     Ok(ResponseOutcome::Observed(

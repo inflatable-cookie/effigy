@@ -2314,6 +2314,9 @@ impl Terminal for RecordingTerminal {
     }
 }
 impl Streams for RecordingTerminal {
+    fn resume(&mut self, _run: RunId, cursor: u64) -> Option<StreamStart> {
+        (cursor == 0).then(|| StreamStart::from([(TERMINAL_STREAM, 0)]))
+    }
     fn next_chunk(&mut self, _attachment: Option<&Attachment>) -> Option<StreamChunk> {
         self.chunks.pop_front()
     }
@@ -2708,11 +2711,21 @@ fn write_segment(
 /// The kernel's own retained endpoint over `run`'s captured stdout, so a
 /// cursor test reads real segments instead of a fake that returns a number.
 fn retained_stdout(root: &StateRoot, run: RunId) -> RetainedStreams<RecordingTerminal> {
+    retained_plan(root, run, vec![(1, Stream::Stdout)])
+}
+
+/// The kernel's retained endpoint over an explicit plan, so a proof can carry
+/// more than one captured stream on one connection.
+fn retained_plan(
+    root: &StateRoot,
+    run: RunId,
+    plan: Vec<(i64, Stream)>,
+) -> RetainedStreams<RecordingTerminal> {
     RetainedStreams::new(
         observe_context(),
         root.clone(),
         run,
-        vec![(1, Stream::Stdout)],
+        plan,
         RecordingTerminal::default(),
     )
 }
@@ -2959,6 +2972,169 @@ fn replacing_an_attachment_rebinds_its_cursor_and_window() {
         })
         .count();
     assert_eq!(opened, 2, "both attachments opened: {frames:?}");
+}
+
+/// The published data frames of one attach request, in order.
+fn published(root_frames: &[Frame], attach: u8) -> Vec<(u64, Vec<u8>)> {
+    stream_frames(root_frames)
+        .into_iter()
+        .filter(|stream| stream.id == RequestId::new([attach; 16]) && stream.kind.is_data())
+        .map(|stream| {
+            (
+                stream.seq,
+                decode_stream_payload(stream.payload.as_deref().expect("payload")).expect("base64"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_refused_replacement_leaves_the_current_stream_where_it_was() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-refused-replacement");
+    let (_run, live) = admitted_run(&cx, &root, session, 82, &[155]);
+    let bytes: Vec<u8> = (0..80u32).map(|n| b'a' + (n % 26) as u8).collect();
+    write_segment(&root, live, 1, Stream::Stdout, 0, &bytes);
+    // Fill the run's secondary slots so the replacement's new row is refused
+    // after its cursor has been negotiated.
+    let mut held = Vec::new();
+    for index in 0..7u8 {
+        held.push(
+            run::attach_secondary(
+                &cx,
+                &root,
+                session,
+                live,
+                AttachmentId::new([60 + index; 16]),
+            )
+            .expect("secondary"),
+        );
+    }
+    let mut host = server(session, &[156, 157]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], None),
+            // The connection's own row is the eighth, so this replacement is
+            // refused by the kernel after negotiation.
+            attach_frame(session, live, 2, vec![StreamKind::Stdout], Some(40)),
+        ]),
+        peer(),
+    );
+    let served = host
+        .serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("the connection keeps serving its working attachment");
+    assert_eq!(served.responses, 2);
+    assert!(served.closed);
+    let frames = written_frames(&pipe);
+    assert!(
+        frames.iter().any(|frame| matches!(
+            frame,
+            Frame::Response(Response {
+                outcome: ResponseOutcome::Refused(_),
+                ..
+            })
+        )),
+        "the replacement was refused: {frames:?}"
+    );
+    // The working attachment published the retained log once, from 0, and the
+    // refused replacement's cursor never moved its reader back to 40.
+    let first = published(&frames, 1);
+    assert_eq!(
+        first.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+        vec![0]
+    );
+    assert_eq!(first[0].1, bytes);
+    assert!(
+        published(&frames, 2).is_empty(),
+        "the refused replacement published nothing"
+    );
+    assert_eq!(stops(&root, live), 0);
+    drop(held);
+}
+
+#[test]
+fn a_reconnect_resumes_every_retained_stream_not_only_the_first() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-two-streams");
+    let (_run, live) = admitted_run(&cx, &root, session, 83, &[158]);
+    let stdout_bytes: Vec<u8> = (0..40u32).map(|n| b'a' + (n % 26) as u8).collect();
+    let stderr_bytes: Vec<u8> = (0..40u32).map(|n| b'A' + (n % 26) as u8).collect();
+    write_segment(&root, live, 1, Stream::Stdout, 0, &stdout_bytes);
+    write_segment(&root, live, 1, Stream::Stderr, 0, &stderr_bytes);
+    let mut host = server(session, &[159, 160]);
+    let mut streams = retained_plan(&root, live, vec![(1, Stream::Stdout), (1, Stream::Stderr)]);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            // A reconnect at 20 on a fresh endpoint: both retained streams must
+            // resume there, not just stream 0.
+            attach_frame(
+                session,
+                live,
+                1,
+                vec![StreamKind::Stdout, StreamKind::Stderr],
+                Some(20),
+            ),
+            // A replacement at 30 on the same connection moves both streams to
+            // their own retained position at 30.
+            attach_frame(
+                session,
+                live,
+                2,
+                vec![StreamKind::Stdout, StreamKind::Stderr],
+                Some(30),
+            ),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    let frames = written_frames(&pipe);
+    let one = |attach: u8, stream_id: u32| -> Vec<(u64, Vec<u8>)> {
+        stream_frames(&frames)
+            .into_iter()
+            .filter(|stream| {
+                stream.id == RequestId::new([attach; 16])
+                    && stream.stream_id == stream_id
+                    && stream.kind.is_data()
+            })
+            .map(|stream| {
+                (
+                    stream.seq,
+                    decode_stream_payload(stream.payload.as_deref().expect("payload"))
+                        .expect("base64"),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        one(1, 0),
+        vec![(20, stdout_bytes[20..].to_vec())],
+        "stdout resumed at the reconnecting client's position"
+    );
+    assert_eq!(
+        one(1, 1),
+        vec![(20, stderr_bytes[20..].to_vec())],
+        "stderr resumed at its own retained position, not at zero"
+    );
+    assert_eq!(
+        one(2, 0),
+        vec![(30, stdout_bytes[30..].to_vec())],
+        "the replacement moved stdout to its own cursor"
+    );
+    assert_eq!(
+        one(2, 1),
+        vec![(30, stderr_bytes[30..].to_vec())],
+        "the replacement moved stderr to its own cursor"
+    );
+    assert!(
+        !stream_frames(&frames)
+            .iter()
+            .any(|stream| stream.kind.is_data() && stream.seq < 20),
+        "no retained frame restarted at zero: {frames:?}"
+    );
 }
 
 #[test]
