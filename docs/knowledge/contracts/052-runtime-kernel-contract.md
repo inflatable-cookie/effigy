@@ -2790,8 +2790,11 @@ side effects; retries re-observe and may return newer facts. Neither retry
 rule grants authority after capability revocation or generation change.
 
 A `stream` frame names `id`, `stream_id`, monotonically increasing `seq`,
-`kind` and payload. Kinds are `event`, `stdout`, `stderr`, `terminal_output`,
-`terminal_input`, `resize`, `ack`, `end` and `gap`; events carry typed host
+`kind` and payload. `id` is the attach request that opened the connection's
+attachment, `stream_id` 0 is that attachment's terminal, and `seq` is one
+series per stream id shared by every kind on it. Kinds are `event`, `stdout`,
+`stderr`, `terminal_output`, `terminal_input`, `resize`, `ack`, `end` and
+`gap`; events carry typed host
 status or outcome, resize carries positive rows and columns, and `end`
 carries the final sequence and outcome where known. Per stream, the receiver
 acknowledges consumed sequence numbers; the sender permits at most 16
@@ -3010,8 +3013,28 @@ request is answered while data is backpressured; the connection's lifetime is
 its session's, and a closed connection whose frames were malformed releases no
 owner lifetime. Each connection starts and ends with no queued stream state, so
 a server that serves a reconnect publishes nothing from the previous connection
-and never carries an unpublished chunk or a full window into it. The transport, the guest client and the runner integration
-remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
+and never carries an unpublished chunk or a full window into it.
+
+Stream sequences are numbered once per stream id and shared by every kind on
+it, so a stream's stdout and stderr form `0, 1` rather than restarting each
+other, and the acknowledgement window frees frames in that one series. The
+connection's stream endpoint is the `Streams` seam: the attachment's owner
+supplies retained chunks and implements the terminal's inbound side. `resume`
+meets the client's requested `attach` cursor against the retained reader before
+the attachment opens, and answers `At { next }`, a bounded
+`Gap { from, to }` or `Refused`; the connection numbers output from there and
+writes at most one gap frame before any data, so a reconnect is never presented
+as an uninterrupted sequence from zero, and a cursor the reader did not retain
+is refused without opening an attachment. `input` delivers one validated
+terminal input frame exactly once; `resize` records the newest size, with no
+queue behind it. An inbound frame is accepted only for the connection's own
+attach request id, its own terminal stream and the stream's next sequence, and
+only as `terminal_input`, `resize` or `ack` for a frame this connection sent;
+an unknown stream, a foreign request, a repeated or out-of-order sequence, a
+malformed payload or an outbound kind refuses and closes with no host effect —
+no input reaches a terminal, no size is recorded and no frame is freed. The
+transport, the guest client and the runner integration remain separate tasks.
+`test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map
 

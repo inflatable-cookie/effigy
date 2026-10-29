@@ -275,6 +275,20 @@ During v0.x, MINOR bumps may include breaking changes.
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
   No transport, guest client or command surface is wired to it yet.
+- The workspace channel binds one attachment's streams to its terminal
+  (contract 052 §8.11). Output sequence numbers are one series per stream id
+  shared by every kind on it, so a stream's stdout and stderr no longer restart
+  each other. The `Streams` seam is the connection's stream endpoint: `resume`
+  meets an `attach` cursor against the retained reader and answers `At { next }`,
+  a bounded `Gap { from, to }`, or `Refused`, so a reconnect resumes from
+  retained bytes, reports the missing range before any data, or is refused
+  rather than emitting sequence 0 as if uninterrupted. `input` carries one
+  validated terminal input frame exactly once and `resize` records the newest
+  size with no queue behind it; a frame is accepted only for the connection's
+  own attach request, its own terminal stream and the stream's next sequence, so
+  an unknown stream, a foreign request, a repeated or out-of-order frame or a
+  malformed payload refuses and closes with no host effect. The retained reader,
+  front end and transport that implement the seam remain separate tasks.
 - The workspace session layer (contract 052 §8.7): one environment-owned
   `Detached` session run, resolved through its own validated
   environment→session record so a borrowing child or host hold is never mistaken
