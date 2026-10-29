@@ -512,8 +512,9 @@ During v0.x, MINOR bumps may include breaking changes.
   sequence step, a managed host workload and a selected host suite with its
   lifecycle, so the caller's own environment cannot reach another checkout's
   service; each child boundary decides its own precedence, so a `setup` step's
-  assignment hides nothing from the workload or suite command that inherits the
-  value, and a managed session decides inherited values per host workload. A worktree's first host run records the
+  assignment — and a key that only appears in a command's text — hides nothing
+  from the workload or suite command that inherits the value, and a managed
+  session decides inherited values per host workload. A worktree's first host run records the
   checkout's scope token before resolving, so a fresh worktree is scoped rather
   than canonical; a container registry this scoped checkout declares but Effigy
   cannot read is refused instead of falling back to the canonical names; and a

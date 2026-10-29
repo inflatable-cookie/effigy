@@ -1522,8 +1522,9 @@ secret, a sequence step's environment, a managed session's process plan
 inherit unchanged from your own shell — such as an exported `DATABASE_URL` — for
 a host task, a sequence step, a managed host workload and a selected host suite.
 Each child boundary decides its own precedence: a key the run delivers to that
-child wins, while a `setup` step's assignment is its own statement and hides
-nothing from the workload or suite command after it. Every alias a selected suite would use is
+child wins, while a `setup` step's assignment is its own statement, and a key
+that only appears in a command's text assigns nothing — neither hides the
+caller's value from the workload or suite command after it. Every alias a selected suite would use is
 proved before any suite starts, and the proof reads only the endpoints Effigy
 delivered — text that merely mentions the alias proves nothing. Only an endpoint is rewritten - a value
 that is exactly the host, the host of a URL authority, or a host carrying its

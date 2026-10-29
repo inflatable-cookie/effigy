@@ -141,26 +141,46 @@ fn closed_loopback_port() -> u16 {
     port
 }
 
-/// The lowest pool address the fixture's routes do not already answer on for
-/// the declared container port: each published alias needs its own, exactly as
-/// two checkouts do in production.
+/// The lowest pool address this process has not already reserved for port 5432:
+/// each published alias needs its own, exactly as two checkouts do in
+/// production, and concurrent fixtures must never race for the same listener.
 fn next_free_alias_address() -> Ipv4Addr {
-    let table_path = gateway_dir().expect("gateway dir").join("routes.json");
-    let table = EndpointStore::for_routes(&table_path)
-        .snapshot()
-        .and_then(|snapshot| snapshot.routes())
-        .expect("read the published routes");
+    reserve_alias_addresses(1)[0]
+}
+
+/// Reserve `count` distinct loopback pool addresses for the rest of this test
+/// process, so two fixtures that run at the same time cannot claim the same
+/// `address:5432` listener.
+///
+/// A bind probe skips an address something else on this machine already
+/// answers; the reservation then keeps every fixture in this process off it.
+fn reserve_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
+    static RESERVED: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeSet<Ipv4Addr>>> =
+        std::sync::OnceLock::new();
+    let reserved =
+        RESERVED.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
+    let mut reserved = reserved.lock().unwrap_or_else(|poison| poison.into_inner());
+    let mut found = Vec::new();
     for last in 1..=50u8 {
         let address = Ipv4Addr::new(127, 1, 0, last);
-        if !table
-            .all_routes()
-            .iter()
-            .any(|route| route.dns_ip == Some(address) && route.tcp_port == Some(5432))
-        {
-            return address;
+        if reserved.contains(&address) {
+            continue;
+        }
+        if TcpListener::bind((address, 5432)).is_err() {
+            continue;
+        }
+        reserved.insert(address);
+        found.push(address);
+        if found.len() == count {
+            break;
         }
     }
-    panic!("the fixture's alias pool is exhausted");
+    assert_eq!(
+        found.len(),
+        count,
+        "free loopback alias addresses on port 5432: found {found:?}"
+    );
+    found
 }
 
 /// The route `container up` publishes: the checkout's loopback address, the
@@ -287,22 +307,7 @@ impl Drop for PrivateGateway {
 /// container port so no live listener is asked to share it. The highest
 /// addresses are tried first, away from the pool's lowest-first allocation.
 fn free_alias_addresses(count: usize) -> Vec<Ipv4Addr> {
-    let mut found = Vec::new();
-    for last in (1..=50).rev() {
-        let address = Ipv4Addr::new(127, 1, 0, last);
-        if TcpListener::bind((address, 5432)).is_ok() {
-            found.push(address);
-        }
-        if found.len() == count {
-            break;
-        }
-    }
-    assert_eq!(
-        found.len(),
-        count,
-        "three free loopback alias addresses on port 5432: found {found:?}"
-    );
-    found
+    reserve_alias_addresses(count)
 }
 
 /// A free UDP port for the private resolver.
@@ -397,14 +402,16 @@ fn write_connect_manifest(checkout: &Path, dns_port: u16) {
 
 /// The connecting task itself: it resolves the host of its delivered URL through
 /// the private resolver, connects on that URL's own port, and records the host,
-/// port, address and token it reached.
+/// port, address and token it reached. A client retries a momentarily absent
+/// listener: this machine shares its loopback pool with other work, and fixture
+/// timing is not the thing under test.
 fn connect_task_manifest(checkout: &Path, dns_port: u16) -> String {
     let out = checkout.join("reached.txt");
     format!(
         r#"{MANIFEST}
 [tasks.connect]
 run_in = "host"
-run = "sh -lc 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(printf %s $rest | cut -d: -f1); port=$(printf %s $rest | cut -d: -f2 | cut -d/ -f1); ip=$(dig +short +time=2 +tries=3 @127.0.0.1 -p $DNS_PORT $host | head -1); echo $host > $OUT; echo $port >> $OUT; echo $ip >> $OUT; if [ -z $ip ]; then exit 4; fi; exec 3<>/dev/tcp/$ip/$port || exit 5; head -c 128 <&3 >> $OUT'"
+run = "sh -lc 'url=$DATABASE_URL; rest=$(printf %s $url | cut -d@ -f2); host=$(printf %s $rest | cut -d: -f1); port=$(printf %s $rest | cut -d: -f2 | cut -d/ -f1); ip=$(dig +short +time=2 +tries=3 @127.0.0.1 -p $DNS_PORT $host | head -1); echo $host > $OUT; echo $port >> $OUT; echo $ip >> $OUT; if [ -z $ip ]; then exit 4; fi; tries=0; while [ $tries -lt 50 ]; do if exec 3<>/dev/tcp/$ip/$port 2>/dev/null; then head -c 128 <&3 >> $OUT; exit 0; fi; tries=$((tries+1)); sleep 0.1; done; exit 5'"
 env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app", DNS_PORT = "{dns_port}", OUT = "{}" }}
 "#,
         out.display()
@@ -988,6 +995,7 @@ fn each_scoped_host_task_connects_to_only_its_own_test_database() {
                 [databases[0].token, databases[1].token],
             ),
         ] {
+            gateway.wait_until_ready(&addresses);
             run_task(checkout, "connect", &[])
                 .unwrap_or_else(|error| panic!("{name}'s task runs: {error}"));
             let (host, port, _address, token) = reached(checkout);
@@ -1004,6 +1012,70 @@ fn each_scoped_host_task_connects_to_only_its_own_test_database() {
                 assert_ne!(token, sibling, "{name} never reaches a sibling");
             }
         }
+    });
+}
+
+/// A command body that merely mentions a key delivers nothing: it is not an
+/// environment assignment, so the inherited canonical URL still reaches the
+/// workload and must refuse when it has no published route
+/// (effigy#431 review).
+#[test]
+fn a_workload_that_only_mentions_the_key_still_refuses_its_inherited_url() {
+    with_private_gateway("scoped-host-alias-key-mention", || {
+        let primary = primary_checkout("scoped-host-alias-key-mention");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let out = checkout.join("mention.txt");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [tasks.record]\n\
+             run_in = \"host\"\n\
+             run = \"sh -lc 'echo DATABASE_URL=only-a-log; printf %s $DATABASE_URL > {out}'\"\n\
+             \n\
+             [tasks.dev]\n\
+             mode = \"tui\"\n\
+             concurrent = [\n\
+               {{ name = \"record\", task = \"record\", run_in = \"host\", start = 1 }},\n\
+             ]\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a log mention");
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        let error = run_task(&checkout, "dev", &["--headless"])
+            .expect_err("the workload inherits the caller's value");
+        assert_task_invocation_error_contains(error, &["DATABASE_URL", &alias]);
+        assert!(!out.exists(), "the refused session never ran its workload");
+    });
+}
+
+/// A configured suite whose command only mentions the key behaves the same way.
+#[test]
+fn a_suite_that_only_mentions_the_key_still_refuses_its_inherited_url() {
+    with_private_gateway("scoped-host-alias-suite-mention", || {
+        let primary = primary_checkout("scoped-host-alias-suite-mention");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let out = checkout.join("suite-mention.txt");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [test.suites.unit]\n\
+             run = \"sh -lc 'echo DATABASE_URL=only-a-log; printf %s $DATABASE_URL > {out}'\"\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a log mention");
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        let error = run_task(&checkout, "test", &["unit"])
+            .expect_err("the suite command inherits the caller's value");
+        assert_task_invocation_error_contains(error, &["DATABASE_URL", &alias]);
+        assert!(!out.exists(), "the refused suite never ran its command");
     });
 }
 
@@ -1068,6 +1140,7 @@ fn each_scoped_managed_session_connects_to_only_its_own_test_database() {
                 [databases[0].token, databases[1].token],
             ),
         ] {
+            gateway.wait_until_ready(&addresses);
             run_task(checkout, "dev", &["--headless"])
                 .unwrap_or_else(|error| panic!("{name}'s session runs: {error}"));
             let (host, port, _address, token) = reached(checkout);

@@ -2054,15 +2054,16 @@ checkout's service. A sensitive value the declaring environment overrides — th
 task's own `env`, or a sequence step's — is dropped rather than delivered, so it
 is neither resolved nor proved: the declared value outranks the secret source.
 An inherited value is resolved and proved **at the boundary of the child that
-receives it**. A key that child's own delivered environment carries — task
-`env`, an env-schema value, a secret, a suite's spawn-level `env`, or an
-assignment in the command that child runs — is never re-resolved, so the source
-that wins still wins. A `setup` step is its own statement in the same script, so
-its assignment hides nothing from the workload or the suite command that
-inherits the caller's value, and a managed session decides inherited values per
-host workload so a value no workload receives is never proved. A managed session's client makes that
-proof and hands the resolved values to its supervisor in the supervisor's own
-environment, so the supervisor inherits what was proved.
+receives it**. Only that child's own *spawn-level* delivered environment — its
+task `env`, env-schema values, secrets, and a suite's `env` — keeps a key from
+being re-resolved, so the source that wins still wins. A `setup` step is its own
+statement in the same script, and a key that merely appears in a command's text
+(log line, pattern, quoted literal) is no assignment at all: neither hides the
+caller's value from the workload or suite command that inherits it. A managed
+session decides inherited values per host workload so a value no workload
+receives is never proved, its client hands the resolved values to its supervisor
+in the supervisor's own environment, and the supervisor inherits what was
+proved.
 
 A plan (`--plan`) runs nothing, so it refuses nothing: a task plan renders the
 aliases it would deliver, and the built-in `test` plan keeps the declared
