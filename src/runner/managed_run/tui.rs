@@ -521,15 +521,19 @@ pub(in crate::runner) fn attach_tui(
                 .closed
                 .is_some())
     };
+    // Hide existing progress before the TUI draws, then retire it before
+    // shutdown takes ownership of the status area.
+    let terminal = effigy_ui::steps::suspend_terminal();
+    let retire = |_: &dyn SessionProcesses| -> Result<(), String> {
+        terminal.retire_running();
+        Ok(())
+    };
     let none = |_: &dyn SessionProcesses| -> Result<(), String> { Ok(()) };
     let control = MultiProcessTuiControl {
         poll: &poll,
-        before_shutdown: &none,
+        before_shutdown: &retire,
         after_shutdown: &none,
     };
-    // The TUI owns the terminal while it runs: step spinners and finish lines
-    // stay silent so the two never draw over each other.
-    let terminal = effigy_ui::steps::suspend_terminal();
     let rendered = run_multiprocess_tui_with_source(
         repo_root,
         Box::new(source),

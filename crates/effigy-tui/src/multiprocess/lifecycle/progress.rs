@@ -32,14 +32,52 @@ fn shutdown_progress_label(progress: &ShutdownProgress) -> &'static str {
 }
 
 fn draw_shutdown_status(terminal: &mut TuiTerminal, status: &str) -> Result<(), io::Error> {
-    terminal.draw(|frame| {
-        let area = frame.area();
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(area);
-        let footer = Paragraph::new(status.to_owned()).style(Style::default().fg(Color::Yellow));
-        frame.render_widget(footer, chunks[1]);
-    })?;
+    terminal.draw(|frame| render_shutdown_status(frame, status))?;
     Ok(())
+}
+
+fn render_shutdown_status(frame: &mut ratatui::Frame<'_>, status: &str) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area);
+    let footer = Paragraph::new(status.to_owned()).style(Style::default().fg(Color::Yellow));
+    frame.render_widget(footer, chunks[1]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn shutdown_frames_have_one_current_label() {
+        let mut terminal = Terminal::new(TestBackend::new(100, 4)).unwrap();
+        let stages = [
+            ShutdownProgress::SendingTerm,
+            ShutdownProgress::Waiting,
+            ShutdownProgress::ForceKilling,
+            ShutdownProgress::Complete {
+                total: 1,
+                forced: 0,
+            },
+        ];
+        for stage in stages {
+            let label = shutdown_progress_label(&stage);
+            terminal
+                .draw(|frame| render_shutdown_status(frame, label))
+                .unwrap();
+            let frame = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert_eq!(frame.matches("Shutdown:").count(), 1, "{frame}");
+            assert!(frame.contains(label), "{frame}");
+            assert!(!frame.contains("running dev"), "{frame}");
+        }
+    }
 }

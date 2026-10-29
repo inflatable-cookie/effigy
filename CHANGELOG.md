@@ -431,7 +431,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
-- Managed TUI panes now show nested Effigy progress as plain start and finish lines instead of repeated spinner redraws and banners.
+- Managed TUI panes now show nested Effigy progress as plain start and finish lines instead of repeated spinner redraws and banners. Shutdown takes over the progress display cleanly, and sequence labels name useful work instead of generated step numbers.
 
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a

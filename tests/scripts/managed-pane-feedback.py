@@ -72,14 +72,14 @@ run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
                 if b"child-after" in data:
                     pane = data
                     break
-            if pane.count(b"step 1/1 `1` finished") == 2:
+            if pane.count(b" finished") == 2:
                 break
             assert child.poll() is None, (child.returncode, bytes(output[-5000:]), logs)
         assert pane and b"finished" in pane, (bytes(output[-5000:]), pane, logs)
         assert b"EFFIGY" not in pane and b"\x1b" not in pane, pane
         assert b"\r" not in pane.replace(b"\r\n", b""), pane
-        assert pane.count(b"Started: running nested step 1/1") == 1, pane
-        assert pane.count(b"step 1/1 `1` finished") == 2, pane
+        assert pane.count(b"Started: running nested\r\n") == 1, pane
+        assert pane.count(b" finished") == 2, pane
         assert b"child-before\r\n" in pane and b"child-after\r\n" in pane, pane
         assert any(b"adjacent-before\r\n" in log.read_bytes() and b"adjacent-after\r\n" in log.read_bytes() and b"\x1b[31mVite error\x1b[0m" in log.read_bytes() for log in logs)
     finally:
@@ -102,7 +102,7 @@ run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
         assert child.poll() == 0, (child.poll(), bytes(output))
         for _ in range(5):
             drain(master, output)
-        assert b"EFFIGY" in output and b"running nested step" in output and b"\x1b" in output, bytes(output)
+        assert b"EFFIGY" in output and b"running nested" in output and b"\x1b" in output, bytes(output)
     finally:
         if child.poll() is None:
             os.killpg(child.pid, signal.SIGKILL)

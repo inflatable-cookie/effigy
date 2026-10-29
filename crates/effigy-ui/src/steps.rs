@@ -124,8 +124,10 @@ impl std::fmt::Debug for Step {
 
 impl Step {
     fn new(sink: Arc<Sink>, parent: Option<&Step>, label: &str) -> Self {
+        let mut active = sink.active.lock().unwrap_or_else(PoisonError::into_inner);
         let mode = sink.mode();
-        let bar = (mode == StepMode::Spinner && !is_capturing()).then(|| sink.start_bar(label));
+        let bar = (mode == StepMode::Spinner && !is_capturing() && !sink.is_suspended())
+            .then(|| sink.start_bar(label));
         if mode == StepMode::Pane && !is_capturing() && !sink.is_suspended() {
             sink.write_line(&format!("Started: {label}\n"));
         }
@@ -139,6 +141,9 @@ impl Step {
                 children: Mutex::new(Vec::new()),
             }),
         };
+        active.retain(|entry| entry.strong_count() > 0);
+        active.push(Arc::downgrade(&step.inner));
+        drop(active);
         if let Some(parent) = parent {
             parent
                 .inner
@@ -161,6 +166,9 @@ impl Step {
 
     /// What is happening now. Called while the work moves on.
     pub fn set_label(&self, label: &str) {
+        if self.inner.finished.load(Ordering::SeqCst) {
+            return;
+        }
         *self
             .inner
             .label
@@ -254,6 +262,7 @@ struct Sink {
     multi: OnceLock<MultiProgress>,
     lines: Mutex<Box<dyn Write + Send>>,
     suspended: AtomicUsize,
+    active: Mutex<Vec<Weak<StepInner>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -287,6 +296,7 @@ impl Sink {
             multi: OnceLock::new(),
             lines: Mutex::new(Box::new(lines)),
             suspended: AtomicUsize::new(0),
+            active: Mutex::new(Vec::new()),
         })
     }
 
@@ -455,9 +465,12 @@ pub fn step(label: &str) -> Step {
 /// TUI). Dropping the guard restores drawing.
 pub fn suspend_terminal() -> TerminalGuard {
     let sink = Arc::clone(global_sink());
-    sink.suspended.fetch_add(1, Ordering::SeqCst);
-    if let Some(multi) = sink.multi.get() {
-        multi.set_draw_target(ProgressDrawTarget::hidden());
+    {
+        let _active = sink.active.lock().unwrap_or_else(PoisonError::into_inner);
+        sink.suspended.fetch_add(1, Ordering::SeqCst);
+        if let Some(multi) = sink.multi.get() {
+            multi.set_draw_target(ProgressDrawTarget::hidden());
+        }
     }
     TerminalGuard { sink }
 }
@@ -468,8 +481,31 @@ pub struct TerminalGuard {
     sink: Arc<Sink>,
 }
 
+impl TerminalGuard {
+    /// Retire the progress that preceded the TUI before shutdown takes over.
+    pub fn retire_running(&self) {
+        let mut active = self
+            .sink
+            .active
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for inner in active.drain(..).filter_map(|step| step.upgrade()) {
+            if !inner.finished.swap(true, Ordering::SeqCst) {
+                if let Some(bar) = &inner.bar {
+                    bar.finish_and_clear();
+                }
+            }
+        }
+    }
+}
+
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _active = self
+            .sink
+            .active
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if self.sink.suspended.fetch_sub(1, Ordering::SeqCst) == 1 {
             if let Some(multi) = self.sink.multi.get() {
                 multi.set_draw_target(ProgressDrawTarget::stderr());
@@ -684,6 +720,97 @@ mod tests {
         let after = Step::new(sink, None, "starting web");
         after.succeed("web is healthy");
         assert_eq!(buffer.text(), "✓ web is healthy\n");
+    }
+
+    /// A fake terminal records each draw; manual ticks stand in for the clock.
+    #[derive(Debug, Clone, Default)]
+    struct FrameTerminal(Arc<Mutex<(String, Vec<String>)>>);
+
+    impl indicatif::TermLike for FrameTerminal {
+        fn width(&self) -> u16 {
+            120
+        }
+        fn move_cursor_up(&self, _: usize) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn move_cursor_down(&self, _: usize) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn move_cursor_right(&self, _: usize) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn move_cursor_left(&self, _: usize) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn write_line(&self, text: &str) -> std::io::Result<()> {
+            self.write_str(text)
+        }
+        fn write_str(&self, text: &str) -> std::io::Result<()> {
+            self.0.lock().unwrap().0.push_str(text);
+            Ok(())
+        }
+        fn clear_line(&self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn flush(&self) -> std::io::Result<()> {
+            let mut state = self.0.lock().unwrap();
+            let frame = std::mem::take(&mut state.0);
+            state.1.push(frame);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn ctrl_c_retires_running_progress_before_shutdown_frames() {
+        let (sink, _) = sink(StepMode::Spinner);
+        let terminal = FrameTerminal::default();
+        sink.multi()
+            .set_draw_target(ProgressDrawTarget::term_like(Box::new(terminal.clone())));
+        let running = Step::new(sink.clone(), None, "running dev");
+        let bar = running.inner.bar.as_ref().unwrap();
+        bar.disable_steady_tick();
+        for _ in 0..3 {
+            bar.tick();
+            bar.force_draw();
+        }
+        assert!(terminal
+            .0
+            .lock()
+            .unwrap()
+            .1
+            .iter()
+            .any(|frame| frame.contains("running dev")));
+
+        // Ctrl+C transfers ownership while the TUI is on screen.
+        let guard = suspend_terminal_with(&sink);
+        sink.multi().set_draw_target(ProgressDrawTarget::hidden());
+        guard.retire_running();
+        drop(guard);
+        sink.multi()
+            .set_draw_target(ProgressDrawTarget::term_like(Box::new(terminal.clone())));
+        terminal.0.lock().unwrap().1.clear();
+        let stopping = Step::new(sink.clone(), None, "stopping dev");
+        let shutdown_bar = stopping.inner.bar.as_ref().unwrap();
+        shutdown_bar.disable_steady_tick();
+        for _ in 0..3 {
+            bar.tick();
+            shutdown_bar.tick();
+            shutdown_bar.force_draw();
+        }
+        stopping.set_label("stopped dev");
+        shutdown_bar.force_draw();
+        stopping.succeed("stopped dev");
+        running.set_label("running dev");
+        bar.tick();
+        let state = terminal.0.lock().unwrap();
+        assert!(state.1.iter().any(|frame| frame.contains("stopping dev")));
+        assert!(state.1.iter().any(|frame| frame.contains("stopped dev")));
+        assert!(state.1.iter().all(|frame| !frame.contains("running dev")));
+        assert!(state
+            .1
+            .iter()
+            .all(|frame| frame.matches("stopping dev").count() <= 1));
+        assert!(running.inner.finished.load(Ordering::SeqCst));
     }
 
     #[test]
