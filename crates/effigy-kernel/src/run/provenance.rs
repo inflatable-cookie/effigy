@@ -702,13 +702,6 @@ mod tests {
     fn caller_of(fake: &Fake, pid: u32) -> Caller {
         caller(fake, pid, None, |_| None)
     }
-    fn markers(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        let mut map = BTreeMap::new();
-        for (name, value) in pairs {
-            map.insert((*name).to_owned(), (*value).to_owned());
-        }
-        map
-    }
 
     /// Every operator event keeps the existing fields and names its action, so
     /// a stop stays `gateway_stop` and `up`/`setup` are attributable the same way.
@@ -1429,7 +1422,7 @@ mod tests {
             OperatorAction::Up,
             &long,
             50,
-            &[long.clone()],
+            std::slice::from_ref(&long),
             Some(Path::new("/src/effigy")),
             &record,
         );

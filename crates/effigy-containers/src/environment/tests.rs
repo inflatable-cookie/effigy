@@ -195,7 +195,7 @@ pub(super) fn holder<'r>(ctx: &EnvContext<'r>, task: &str, n: u8) -> Run<'r> {
                 .expect("next"),
             custody: None,
         },
-        &settlement(&ctx),
+        &settlement(ctx),
         &mut EnvSettlement,
     )
     .expect("holder admitted")
@@ -1193,7 +1193,7 @@ fn a_transition_names_its_wait_and_its_settlement() {
         "✓ environment `stack` settled".to_owned(),
     ] {
         assert!(
-            lines.iter().any(|line| *line == expected),
+            lines.contains(&expected),
             "missing {expected:?} in {lines:?}"
         );
     }
