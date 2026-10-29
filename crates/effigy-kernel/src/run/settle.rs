@@ -47,6 +47,19 @@ impl Run<'_> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.settle_recovering(cleanup, adapter, None)
+    }
+
+    /// Keyed admission already bound its run and advanced the owner fence.
+    /// Keep its predecessor's escalation and the current successor's mailbox
+    /// serviceable through this owner-gated recovery, without accepting stale
+    /// client requests or borrowing another run's authority.
+    pub(super) fn settle_recovering(
+        &mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        successor: Option<(RunId, Generation)>,
+    ) -> Result<Outcome<Settled>, RunError> {
         let cx = cleanup_effects(cleanup)?;
         if !self.guard.covers(&self.owner.resource) {
             return Err(RunError::broken("a settle without its owner gate"));
@@ -107,6 +120,9 @@ impl Run<'_> {
                 // second interrupt. Read the fenced durable mailbox here too;
                 // no transaction or new writer spans process I/O (K4/K14).
                 let (state, reason) = crate::custody::settle_effect(effect, live, cleanup, || {
+                    if let Some((run, generation)) = successor {
+                        return self.recovery_escalated(run, generation).unwrap_or(false);
+                    }
                     self.requests().is_ok_and(|requests| {
                         requests
                             .iter()

@@ -871,24 +871,56 @@ fn release_attachment(
     let mut store = Store::open_within(cx, root, BusyWait::Context)?;
     crate::fault_point!(RunAttachReleaseBefore)?;
     store.transaction_within(cx, BusyWait::Context, |txn| {
-        let released = txn.conn().execute(
-            "UPDATE run_attachments SET state='released',release=?2,released_at=?3 \
-             WHERE attachment_id=?1 AND state='attached'",
-            params![attachment.id.to_string(), release_name(cause), txn.now()],
-        )?;
-        if released == 1 && attachment.client == Client::Owner && cause == Release::Eof {
-            stop_owner_run(txn, attachment)?;
+        if !attached_row(txn.conn(), attachment.id, attachment)? {
+            return Err(RunError::refused(
+                "this attachment is no longer attached to the run",
+            ));
         }
+        require_live_owner(
+            &cx.operation()
+                .observe()
+                .map_err(|_| RunError::refused("observation required"))?,
+            root,
+            txn.conn(),
+            attachment.run,
+        )?;
+        journal::check_fence(txn.conn(), &attachment.fence)?;
+        release_row(txn, cx, attachment, cause)?;
         Ok::<_, RunError>(())
     })?;
     crate::fault_point!(RunAttachReleaseAfter)?;
     Ok(())
 }
 
+/// The caller has established either the current session grant or the live
+/// Run's owner-gated custody. Keep the exact row check and stop in one commit.
+fn release_row(
+    txn: &Txn<'_>,
+    cx: &EffectContext,
+    attachment: &Attachment,
+    cause: Release,
+) -> Result<(), RunError> {
+    if !attachment_row(txn.conn(), attachment.id, attachment)? {
+        return Ok(());
+    }
+    txn.conn().execute(
+        "UPDATE run_attachments SET state='released',release=?2,released_at=?3 WHERE attachment_id=?1 AND state='attached'",
+        params![attachment.id.to_string(), release_name(cause), txn.now()],
+    )?;
+    if attachment.client == Client::Owner && cause == Release::Eof {
+        stop_owner_run(txn, cx, attachment)?;
+    }
+    Ok(())
+}
+
 /// An owning client's EOF without a detach stops its run (§8.11). The owner
 /// loop already drains these requests before it interprets EOF on its pipe, so
 /// the stop is durable even though the pipe is gone. A detach records none.
-fn stop_owner_run(txn: &Txn<'_>, attachment: &Attachment) -> Result<(), RunError> {
+fn stop_owner_run(
+    txn: &Txn<'_>,
+    cx: &EffectContext,
+    attachment: &Attachment,
+) -> Result<(), RunError> {
     let Some(record) = journal_run(txn.conn(), attachment.run)? else {
         return Ok(());
     };
@@ -916,35 +948,46 @@ fn stop_owner_run(txn: &Txn<'_>, attachment: &Attachment) -> Result<(), RunError
             return Ok(());
         }
     }
-    let id = owner_eof_request(attachment);
-    txn.conn().execute(
-        "INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) \
-         VALUES (?1,?2,?3,?4,'pending',?5)",
-        params![
-            id.to_string(),
-            attachment.run.to_string(),
-            attachment.fence.generation.get() as i64,
-            serde_json::to_string(&Request {
-                id,
-                run: attachment.run,
-                expected: attachment.fence.clone(),
-                action: RequestAction::Stop,
-            })?,
-            txn.now()
-        ],
-    )?;
-    Ok(())
+    // Request ids are store-wide. A foreign or resolved row must never pin
+    // this EOF forever. Distinct timestamp components make these candidates
+    // injective; the same transaction owns every collision check and insert.
+    let mut collision = 0;
+    loop {
+        cx.operation().check("workspace owner EOF stop")?;
+        let id = owner_eof_request(attachment, collision)?;
+        let inserted = txn.conn().execute(
+            "INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) \
+         VALUES (?1,?2,?3,?4,'pending',?5) ON CONFLICT(request_id) DO NOTHING",
+            params![
+                id.to_string(),
+                attachment.run.to_string(),
+                attachment.fence.generation.get() as i64,
+                serde_json::to_string(&Request {
+                    id,
+                    run: attachment.run,
+                    expected: attachment.fence.clone(),
+                    action: RequestAction::Stop,
+                })?,
+                txn.now()
+            ],
+        )?;
+        if inserted == 1 {
+            return Ok(());
+        }
+        collision += 1;
+    }
 }
 
 /// One owning client's EOF names one stop for its attachment, so a repeated
 /// release cannot queue a second one.
-fn owner_eof_request(attachment: &Attachment) -> RunId {
+fn owner_eof_request(attachment: &Attachment, collision: u64) -> Result<RunId, RunError> {
     let mut material = b"effigy.workspace.owner-eof-stop.v1".to_vec();
     material.extend_from_slice(attachment.id.bytes());
     let digest = Digest::of(&material);
     let mut random = [0u8; 10];
     random.copy_from_slice(&digest.0[..10]);
-    RunId::new(0, random).expect("a derived request id fits the identity range")
+    RunId::new(collision, random)
+        .map_err(|error| RunError::broken(format!("owner EOF request identity: {error}")))
 }
 
 fn release_name(cause: Release) -> &'static str {
@@ -964,14 +1007,25 @@ pub(super) fn attached_row(
     if admitted != Some(attachment.session) {
         return Ok(false);
     }
+    attachment_row(conn, id, attachment)
+}
+
+/// Exact terminal identity, usable by the owner-gated custodian after a
+/// session expires. It grants no client authority by itself.
+fn attachment_row(
+    conn: &Connection,
+    id: AttachmentId,
+    attachment: &Attachment,
+) -> Result<bool, RunError> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM run_attachments \
-         WHERE attachment_id=?1 AND run_id=?2 AND session_id=?3 AND session_generation=?4 AND state='attached')",
+         WHERE attachment_id=?1 AND run_id=?2 AND session_id=?3 AND session_generation=?4 AND lifetime=?5 AND state='attached')",
         params![
             id.to_string(),
             attachment.run.to_string(),
             attachment.session.run.to_string(),
-            attachment.session.generation.get() as i64
+            attachment.session.generation.get() as i64,
+            match attachment.client { Client::Owner => "owner", Client::Secondary => "secondary" }
         ],
         |r| r.get(0),
     )?)
@@ -1289,17 +1343,30 @@ impl Run<'_> {
         &self,
         attachment: &Attachment,
     ) -> Result<bool, RunError> {
-        if attachment.run != self.id || attachment.fence != self.owner {
-            return Err(RunError::refused("this attachment belongs to another run"));
+        if !self.workspace_attachment_held(attachment)? {
+            return Ok(false);
         }
         attached_row(self.store.conn(), attachment.id, attachment)
     }
 
-    pub(crate) fn release_workspace_attachment(
+    pub(crate) fn workspace_attachment_held(
         &self,
+        attachment: &Attachment,
+    ) -> Result<bool, RunError> {
+        if attachment.run != self.id || attachment.fence != self.owner {
+            return Err(RunError::refused("this attachment belongs to another run"));
+        }
+        if !self.guard.covers(&self.owner.resource) {
+            return Err(RunError::broken("attachment custody needs the owner gate"));
+        }
+        attachment_row(self.store.conn(), attachment.id, attachment)
+    }
+
+    pub(crate) fn release_workspace_attachment(
+        &mut self,
         attachment: &mut Attachment,
     ) -> Result<(), RunError> {
-        if !self.workspace_attachment_attached(attachment)? {
+        if !self.workspace_attachment_held(attachment)? {
             return Ok(());
         }
         let cleanup = self
@@ -1311,7 +1378,15 @@ impl Run<'_> {
             .operation()
             .effects()
             .map_err(|_| RunError::refused("attachment release needs effects"))?;
-        attachment.release(&cx, self.root, Release::Eof)
+        // This is Run-owned liveness cleanup, not a client grant. An expired
+        // workspace session cannot keep a dead terminal's custody row alive.
+        self.store
+            .transaction_within(&cx, BusyWait::Context, |txn| {
+                journal::check_fence(txn.conn(), &self.owner)?;
+                release_row(txn, &cx, attachment, Release::Eof)
+            })?;
+        attachment.released = true;
+        Ok(())
     }
 
     pub(crate) fn workspace_owner_detached(&self) -> Result<bool, RunError> {

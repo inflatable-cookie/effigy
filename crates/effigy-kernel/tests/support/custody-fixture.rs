@@ -606,8 +606,17 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
             argv: vec![
                 "/bin/sh".into(),
                 "-c".into(),
-                "echo $$ > engine-workload.pid; exec /bin/sleep 40".into(),
+                if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
+                    "trap '' TERM; echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                } else {
+                    "echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                },
             ],
+            grace: if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_millis(25)
+            },
             ..spec(&home)
         },
         &cx,

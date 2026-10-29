@@ -687,6 +687,71 @@ fn workspace_attachment_release_wins_while_control_is_before_its_transaction() {
     assert_eq!(scalar(&cx, &root, "SELECT count(*) FROM requests"), 0);
 }
 
+#[test]
+#[cfg(feature = "fault-injection")]
+fn workspace_session_close_wins_while_release_is_before_its_transaction() {
+    for step in ["release-session-eof", "release-session-detach"] {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let mut fake = Fake::new(fixture.path());
+        let _run = admitted(&cx, &root, admission_key(49), id(1), &mut fake);
+        let owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+        let child = child_command(fixture.path(), step)
+            .env(
+                "EFFIGY_KERNEL_TEST_FAULT",
+                fault::env_spec(Point::RunAttachReleaseBefore, 0, Fault::Stall),
+            )
+            .spawn()
+            .unwrap();
+        let mut child = TestChild(child);
+        let pid = child.0.id() as libc::pid_t;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let mut state = 0;
+            // SAFETY: wait only for the exact child this test spawned.
+            let waited = unsafe { libc::waitpid(pid, &mut state, libc::WNOHANG | libc::WUNTRACED) };
+            if waited == pid {
+                assert!(
+                    libc::WIFSTOPPED(state),
+                    "control child exited instead of stalling"
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "control did not stall"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .transaction(&cx, |txn| {
+                txn.conn().execute(
+                    "UPDATE runs SET phase='closed' WHERE run_id=?1",
+                    [session().run.to_string()],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+        assert!(owner
+            .control(&cx, &root, id(80), RequestAction::Stop)
+            .is_err());
+        // SAFETY: continue only this test's stopped child.
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGCONT) }, 0);
+        assert!(child.0.wait().unwrap().success());
+        assert_eq!(scalar(&cx, &root, "SELECT count(*) FROM requests"), 0);
+        assert_eq!(
+            scalar(
+                &cx,
+                &root,
+                "SELECT count(*) FROM run_attachments WHERE state='attached'"
+            ),
+            1
+        );
+    }
+}
+
 #[cfg(feature = "fault-injection")]
 struct TestChild(std::process::Child);
 #[cfg(feature = "fault-injection")]
@@ -1594,6 +1659,18 @@ fn child_step(home: &std::path::Path, step: &str) -> Result<(), RunError> {
                 ticket,
             )?;
         }
+        "release-session-eof" | "release-session-detach" => {
+            let mut attachment = resume_owner(&cx, &root, session(), id(1))?;
+            let cause = if step == "release-session-eof" {
+                Release::Eof
+            } else {
+                Release::Detach
+            };
+            assert!(
+                attachment.release(&cx, &root, cause).is_err(),
+                "session closed before release commit"
+            );
+        }
         "control-release-race" => {
             let attachment = resume_owner(&cx, &root, session(), id(1))?;
             match attachment.control(&cx, &root, id(80), RequestAction::Stop) {
@@ -1702,7 +1779,7 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
     let key = admission_key(61);
     let mut fake = Fake::new(fixture.path());
     let run = admitted(&cx, &root, key, id(1), &mut fake);
-    let attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let mut attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
     let mut store = Store::open(&cx, &root).unwrap();
     for change in [
         "generation=generation+1",
@@ -1728,6 +1805,21 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
         assert!(attachment
             .control(&cx, &root, id(60), RequestAction::Stop)
             .is_err());
+        for cause in [Release::Eof, Release::Detach] {
+            assert!(
+                attachment.release(&cx, &root, cause).is_err(),
+                "stale release {cause:?}"
+            );
+        }
+        assert_eq!(
+            scalar(
+                &cx,
+                &root,
+                "SELECT count(*) FROM run_attachments WHERE state='attached'"
+            ),
+            1
+        );
+        assert!(run.requests().unwrap().is_empty());
         store
             .transaction(&cx, |txn| {
                 let original = inv(TaskId::new(
@@ -1766,38 +1858,38 @@ fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
 }
 
 #[test]
-fn workspace_owner_eof_request_collision_rolls_back_release() {
+fn workspace_owner_eof_request_collision_chooses_another_id() {
     for foreign in [false, true] {
         let fixture = home();
         let cx = context();
         let root = StateRoot::effects(&cx, fixture.path()).unwrap();
         let mut fake = Fake::new(fixture.path());
-        let run = admitted(&cx, &root, admission_key(63), id(1), &mut fake);
+        let mut run = admitted(&cx, &root, admission_key(63), id(1), &mut fake);
         let mut attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
-        let request = owner_eof_request(&attachment);
+        let request = owner_eof_request(&attachment, 0).unwrap();
         let mut store = Store::open(&cx, &root).unwrap();
         store.transaction(&cx, |txn| {
             txn.conn().execute("INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) VALUES (?1,?2,1,?3,?4,?5)", params![request.to_string(), if foreign { id(202) } else { id(1) }.to_string(), serde_json::to_string(&Request { id:request, run:id(1), expected:run.fence().clone(), action:RequestAction::Stop })?, if foreign {"pending"} else {"resolved"}, txn.now()])?;
             Ok::<_, RunError>(())
         }).unwrap();
-        assert!(attachment.release(&cx, &root, Release::Eof).is_err());
-        assert!(
-            attachment.attached(&cx, &root).unwrap(),
-            "failed stop insertion must roll release back"
-        );
-        store
-            .transaction(&cx, |txn| {
-                txn.conn().execute(
-                    "DELETE FROM requests WHERE request_id=?1",
-                    [request.to_string()],
-                )?;
-                Ok::<_, RunError>(())
-            })
-            .unwrap();
         attachment.release(&cx, &root, Release::Eof).unwrap();
         let pending = run.requests().unwrap();
         assert_eq!(pending.len(), 1);
+        assert_ne!(pending[0].id, request);
+        assert_eq!(scalar(&cx, &root, "SELECT count(*) FROM requests"), 2);
+        attachment.release(&cx, &root, Release::Eof).unwrap();
+        assert_eq!(run.requests().unwrap().len(), 1);
         assert!(matches!(pending[0].action, RequestAction::Stop));
+        run.interrupt(
+            &cleanup(&cx),
+            WorkloadOutcome::Cancelled {
+                signal: None,
+                cause: crate::ctx::StopCause::Requested,
+            },
+        )
+        .unwrap();
+        let outcome = run.settle(&cleanup(&cx), &mut fake).unwrap();
+        assert_eq!(outcome.cleanup(), crate::outcome::CleanupOutcome::Complete);
     }
 }
 
@@ -1951,4 +2043,44 @@ fn workspace_admission_kill_during_predecessor_recovery_keeps_the_binding() {
         matches!(lookup_now(&cx, &root, admission_key(69)), Observed::Verified(Recovered::Completed { run, .. }, _) if run == id(2))
     );
     assert_eq!(runs(&cx, &root), 3);
+}
+
+#[test]
+fn workspace_custodian_releases_a_lost_terminal_after_session_closes() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let mut run = admitted(&cx, &root, admission_key(72), id(1), &mut fake);
+    let mut owner = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let mut secondary =
+        attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([72; 16])).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .transaction(&cx, |txn| {
+            txn.conn().execute(
+                "UPDATE runs SET phase='closed' WHERE run_id=?1",
+                [session().run.to_string()],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .unwrap();
+    assert!(owner.release(&cx, &root, Release::Eof).is_err());
+    assert!(secondary.release(&cx, &root, Release::Detach).is_err());
+    assert!(run.workspace_attachment_attached(&owner).is_err());
+    assert!(run.workspace_attachment_held(&owner).unwrap());
+    run.release_workspace_attachment(&mut secondary).unwrap();
+    assert!(run.requests().unwrap().is_empty());
+    run.release_workspace_attachment(&mut owner).unwrap();
+    let requests = run.requests().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(matches!(requests[0].action, RequestAction::Stop));
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM run_attachments WHERE state='attached'"
+        ),
+        0
+    );
 }

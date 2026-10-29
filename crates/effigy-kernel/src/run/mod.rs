@@ -554,7 +554,11 @@ impl<'a> Run<'a> {
                 ancestor_closure: None,
                 processes: Default::default(),
             };
-            previous.settle_inner(&cleanup, adapter)?;
+            previous.settle_recovering(
+                &cleanup,
+                adapter,
+                admitted_generation.map(|generation| (opts.id, generation)),
+            )?;
             let residue = previous
                 .effects()?
                 .into_iter()
@@ -1120,17 +1124,69 @@ pub(super) fn request_bounded(
     crate::fault_point!(RequestAfter)?;
     Ok(())
 }
+/// Decode only the mailbox's exact run and generation binding, including its
+/// serialized payload. Recovery may read an older generation only under the
+/// live owner's gate and the successor's current fence.
+fn pending_requests(
+    conn: &rusqlite::Connection,
+    run: RunId,
+    fence: &Fence,
+) -> Result<Vec<Request>, RunError> {
+    let mut stmt = conn.prepare("SELECT action FROM requests WHERE run_id=?1 AND state='pending' ORDER BY created_at,request_id")?;
+    let rows = stmt
+        .query_map([run.to_string()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.iter()
+        .map(|value| {
+            let request: Request = serde_json::from_str(value)?;
+            if request.run != run || request.expected != *fence {
+                return Err(RunError::broken("request mailbox binding"));
+            }
+            Ok(request)
+        })
+        .collect()
+}
+
 impl Run<'_> {
     pub fn requests(&self) -> Result<Vec<Request>, RunError> {
         journal::check_fence(self.store.conn(), &self.owner)?;
-        let mut stmt = self.store.conn().prepare("SELECT action FROM requests WHERE run_id=?1 AND state='pending' ORDER BY created_at,request_id")?;
-        let rows = stmt
-            .query_map([self.id.to_string()], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        rows.iter()
-            .map(|value| Ok(serde_json::from_str(value)?))
-            .collect()
+        pending_requests(self.store.conn(), self.id, &self.owner)
     }
+
+    /// The current custodian alone can read a predecessor's already-fenced
+    /// escalation while holding its owner gate. New controls still target the
+    /// admitted successor's current fence; stale public controls stay refused.
+    pub(super) fn recovery_escalated(
+        &self,
+        successor: RunId,
+        generation: Generation,
+    ) -> Result<bool, RunError> {
+        if !self.guard.covers(&self.owner.resource) {
+            return Err(RunError::broken("recovery control needs the owner gate"));
+        }
+        let fence = Fence {
+            resource: self.owner.resource.clone(),
+            generation,
+        };
+        journal::check_fence(self.store.conn(), &fence)?;
+        let current = journal::run(self.store.conn(), successor)?;
+        let previous = journal::run(self.store.conn(), self.id)?;
+        if current.owner != previous.owner
+            || current.owner != self.owner.resource.name().to_string()
+            || current.generation != generation
+            || current.phase != Phase::Admitted
+            || previous.generation != self.owner.generation
+            || previous.generation >= generation
+        {
+            return Err(RunError::broken("recovery control binding"));
+        }
+        let mut requests = pending_requests(self.store.conn(), self.id, &self.owner)?;
+        requests.extend(pending_requests(self.store.conn(), successor, &fence)?);
+        Ok(requests
+            .iter()
+            .any(|request| matches!(request.action, RequestAction::Escalate)))
+    }
+
     pub fn resolve_request(&mut self, request: &Request) -> Result<(), RunError> {
         if request.run != self.id || request.expected != self.owner {
             return Err(RunError::broken("foreign request"));

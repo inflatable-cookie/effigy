@@ -1451,7 +1451,7 @@ impl EngineSession {
         let mut index = 0;
         while index < self.attachments.len() {
             let (attachment, watch) = &mut self.attachments[index];
-            if !run.workspace_attachment_attached(attachment)? {
+            if !run.workspace_attachment_held(attachment)? {
                 self.attachments.remove(index);
             } else if watch.lost() {
                 run.release_workspace_attachment(attachment)?;

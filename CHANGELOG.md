@@ -155,6 +155,8 @@ During v0.x, MINOR bumps may include breaking changes.
   Session identity is checked against the current journal, and orphaned owners
   require custody recovery before reconnect handles are available. Open engine
   lifetimes use bounded phases for admission replay and attachment access.
+  Stale session handles cannot release a run; owner EOF tolerates request-ID
+  collisions, and keyed successor recovery keeps escalation serviceable.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

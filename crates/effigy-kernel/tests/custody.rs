@@ -1365,7 +1365,11 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
 /// including a killed secondary's independent liveness pipe and slot reuse.
 #[test]
 fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
-    for cause in [Release::Eof, Release::Detach] {
+    for (cause, collision) in [
+        (Release::Eof, Some("foreign")),
+        (Release::Eof, Some("resolved")),
+        (Release::Detach, None),
+    ] {
         let home = home();
         eprintln!(
             "workspace lifetime {cause:?}: setup {}",
@@ -1479,6 +1483,23 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             .unwrap();
         }
         let mut owner = resume_owner(&cx, &root, key.session, id(9)).unwrap();
+        if let Some(collision) = collision {
+            let mut material = b"effigy.workspace.owner-eof-stop.v1".to_vec();
+            material.extend_from_slice(owner.id().bytes());
+            let digest = Digest::of(&material);
+            let mut entropy = [0u8; 10];
+            entropy.copy_from_slice(&digest.0[..10]);
+            let request_id = RunId::new(0, entropy).unwrap();
+            let foreign = collision == "foreign";
+            let request = Request {
+                id: request_id,
+                run: if foreign { id(7) } else { id(9) },
+                expected: owner.fence().clone(),
+                action: RequestAction::Stop,
+            };
+            let conn = rusqlite::Connection::open(root.path().join("kernel.db")).unwrap();
+            conn.execute("INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) VALUES (?1,?2,1,?3,?4,0)", rusqlite::params![request_id.to_string(), request.run.to_string(), serde_json::to_string(&request).unwrap(), if foreign {"pending"} else {"resolved"}]).unwrap();
+        }
         eprintln!("workspace lifetime {cause:?}: releasing owner");
         owner.release(&cx, &root, cause).unwrap();
         if cause == Release::Detach {
@@ -2697,4 +2718,183 @@ fn custody_workspace_orphan_refuses_handles_until_journal_recovery() {
     assert!(
         matches!(lookup(&observe, &root, key, digest), Observed::Verified(Recovered::Completed { run, .. }, _) if run == id(9))
     );
+}
+
+/// Both an escalation queued before keyed admission and a new escalation sent
+/// to its current successor remain serviceable during predecessor recovery.
+#[test]
+fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
+    for queued_before in [true, false] {
+        let home = home();
+        eprintln!(
+            "keyed recovery queued_before={queued_before}: {}",
+            home.path().display()
+        );
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        workspace_session(&cx, &root);
+        let mut client = start_engine(
+            &cx,
+            home.path(),
+            EngineLaunch {
+                payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+                cwd: home.path().into(),
+                env: vec![("FIXTURE_ENGINE_LONG_GRACE".into(), "1".into())],
+                handoff: None,
+                admission: None,
+            },
+            &Executable::capture(&fixture()).unwrap(),
+            ClientMode::Owning,
+        )
+        .unwrap();
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        eventually(|| home.path().join("engine-workload.pid").exists());
+        let observe = cx.operation().observe().unwrap();
+        let info = metadata(&observe, &root, id(9));
+        let info = info.verified().unwrap();
+        let supervisor = info.supervisor.as_ref().unwrap();
+        assert_eq!(
+            effigy_kernel::ident::process_identity(supervisor.pid).verified(),
+            Some(supervisor)
+        );
+        // SAFETY: stop only this test's identity-checked supervisor.
+        assert_eq!(
+            unsafe { libc::kill(supervisor.pid as i32, libc::SIGSTOP) },
+            0
+        );
+        eventually(|| {
+            matches!(
+                effigy_kernel::ident::process_state(supervisor.pid),
+                Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
+            )
+        });
+        let old_fence = client.fence.clone();
+        if queued_before {
+            client.escalate(&cx, id(81)).unwrap();
+        }
+        for identity in [info.sentinel.as_ref().unwrap(), supervisor] {
+            assert_eq!(
+                effigy_kernel::ident::process_identity(identity.pid).verified(),
+                Some(identity)
+            );
+            // SAFETY: kill only this fixture's recorded, verified processes.
+            assert_eq!(unsafe { libc::kill(identity.pid as i32, libc::SIGKILL) }, 0);
+        }
+        assert!(client.wait(cx.operation()).is_err());
+        assert!(
+            !workload_gone(home.path()),
+            "predecessor must still need custody recovery"
+        );
+        let key = AdmissionKey {
+            session: Session {
+                run: id(7),
+                generation: Generation::new(1),
+            },
+            request: RequestId::new([81; 16]),
+        };
+        let digest = Digest::of(b"keyed recovery escalation");
+        let ticket = match reserve(&cx, &root, key, digest.clone(), id(10)).unwrap() {
+            Reservation::Fresh(ticket) => ticket,
+            other => panic!("ticket {other:?}"),
+        };
+        let sender = if queued_before {
+            None
+        } else {
+            let root = root.clone();
+            Some(std::thread::spawn(move || {
+                let cx = context();
+                let observe = cx.operation().observe().unwrap();
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    if let Observed::Verified(Recovered::Admitted { run, fence }, _) =
+                        lookup(&observe, &root, key, digest.clone())
+                    {
+                        assert_eq!(run, id(10));
+                        assert!(
+                            request(
+                                &cx,
+                                &root,
+                                &Request {
+                                    id: id(83),
+                                    run: id(9),
+                                    expected: old_fence.clone(),
+                                    action: RequestAction::Escalate
+                                }
+                            )
+                            .is_err(),
+                            "stale public controls stay refused"
+                        );
+                        request(
+                            &cx,
+                            &root,
+                            &Request {
+                                id: id(82),
+                                run,
+                                expected: fence,
+                                action: RequestAction::Escalate,
+                            },
+                        )
+                        .unwrap();
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "successor never became recoverable"
+                    );
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }))
+        };
+        let cx = context();
+        let started = Instant::now();
+        let mut successor = Run::begin_admitted(
+            &cx,
+            &root,
+            &invocation(),
+            BeginOpts {
+                id: id(10),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cx.operation().cleanup(Duration::from_secs(15)).unwrap(),
+            &mut Strict,
+            ticket,
+        )
+        .unwrap();
+        if let Some(sender) = sender {
+            sender.join().unwrap();
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "recovery ignored escalation and waited for the ten-second grace: {:?}",
+            started.elapsed()
+        );
+        assert!(workload_gone(home.path()));
+        if queued_before {
+            successor.finish(WorkloadOutcome::Succeeded).unwrap();
+        } else {
+            assert!(successor
+                .requests()
+                .unwrap()
+                .iter()
+                .any(|r| matches!(r.action, RequestAction::Escalate)));
+            successor
+                .interrupt(
+                    &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+                    WorkloadOutcome::Cancelled {
+                        signal: None,
+                        cause: StopCause::Requested,
+                    },
+                )
+                .unwrap();
+        }
+        successor
+            .settle(
+                &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+                &mut Strict,
+            )
+            .unwrap();
+    }
 }

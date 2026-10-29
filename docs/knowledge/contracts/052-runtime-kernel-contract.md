@@ -2736,9 +2736,20 @@ can be established. An orphan is `Unknown` and cannot acquire handles or be
 readmitted; ordinary custody recovery must settle it before its recorded
 outcome becomes available. The keyed run and consumed ticket commit before
 predecessor cleanup, so interruption during cleanup retains that binding.
-Owner EOF releases its row and queues stop in one transaction; a request-ID
-collision rolls the release back. Control and release deadlines also bound
-schema initialization and additive migration.
+Client release revalidates the current session, owner and exact attachment in
+its write transaction. A registered liveness watch instead releases through
+the live Run's owner-gated custody, so session expiry cannot retain a lost
+terminal. Owner EOF releases its row and queues one matching stop in that same
+transaction; persistent foreign or resolved request-ID collisions select another
+identity without deleting the existing row. Control and release deadlines also
+bound schema initialization and additive migration.
+
+During keyed predecessor recovery, the current owner gate and successor fence
+keep the predecessor's already-fenced escalation serviceable. New controls use
+the admitted successor's current RunId and fence; escalation there also shortens
+predecessor cleanup. Stale public requests remain refused. Reading either
+mailbox checks its exact serialized run and generation binding, and no journal
+transaction spans custody I/O.
 
 **Owners and coverage.** Paths below name the intended owners, including new
 modules; they do not imply those modules already exist. The only integration
