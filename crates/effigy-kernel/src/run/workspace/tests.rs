@@ -11,7 +11,7 @@ use crate::id::*;
 use crate::observe::*;
 use crate::outcome::WorkloadOutcome;
 use crate::root::{Family, StateRoot};
-use crate::run::tests::{cleanup, context, home, id, inv, next, owner, Fake};
+use crate::run::tests::{cleanup, context, id, inv, next, owner, Fake};
 use crate::run::Run;
 use crate::store::{Store, StoreReader};
 use rusqlite::OptionalExtension;
@@ -25,6 +25,33 @@ const CHILD_STEP: &str = "EFFIGY_WORKSPACE_TEST_STEP";
 const CHILD_TICKET: &str = "EFFIGY_WORKSPACE_TEST_TICKET";
 const CHILD: &str = "run::workspace::tests::helper_workspace_child";
 
+/// Real journal sessions; their owners are separate from the workload owner.
+fn home() -> effigy_test_support::Fixture {
+    let fixture = crate::run::tests::home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    for n in [200, 202] {
+        let task = TaskId::new(
+            CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]),
+            "",
+            Surface::Published,
+            &format!("session-{n}"),
+            None,
+        )
+        .unwrap();
+        let run = Run::begin(
+            &cx,
+            &root,
+            &inv(task.resource()),
+            begin_opts(id(n)),
+            &cleanup(&cx),
+            &mut Fake::new(fixture.path()),
+        )
+        .unwrap();
+        drop(run);
+    }
+    fixture
+}
 fn observe() -> ObserveContext {
     context()
         .operation()
@@ -97,7 +124,15 @@ fn scalar(cx: &EffectContext, root: &StateRoot, sql: &str) -> i64 {
         .unwrap_or_else(|error| panic!("{sql}: {error}"))
 }
 fn runs(cx: &EffectContext, root: &StateRoot) -> i64 {
-    scalar(cx, root, "SELECT count(*) FROM runs")
+    scalar(
+        cx,
+        root,
+        &format!(
+            "SELECT count(*) FROM runs WHERE run_id NOT IN ('{}','{}')",
+            id(200),
+            id(202)
+        ),
+    )
 }
 fn state_of(cx: &EffectContext, root: &StateRoot, key: AdmissionKey) -> Option<String> {
     reader(cx, root)
@@ -115,7 +150,7 @@ fn state_of(cx: &EffectContext, root: &StateRoot, key: AdmissionKey) -> Option<S
         .unwrap()
 }
 fn lookup_now(cx: &EffectContext, root: &StateRoot, key: AdmissionKey) -> Observed<Recovered> {
-    lookup(&reader(cx, root), key, digest())
+    lookup(&observe(), root, key, digest())
 }
 fn admitted<'a>(
     cx: &EffectContext,
@@ -499,8 +534,8 @@ fn workspace_admission_close_never_claims_a_reserved_row() {
                 &cx.child(std::time::Duration::from_secs(30)),
                 |txn| {
                     txn.conn().execute(
-                        "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at) \
-                         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6)",
+                        "INSERT INTO workspace_admissions(session_id,session_generation,request_id,digest,run_id,state,created_at,updated_at,session_owner) \
+                         VALUES (?1,?2,?3,?4,?5,'reserved',?6,?6,(SELECT owner FROM runs WHERE run_id=?1))",
                         rusqlite::params![
                             session().run.to_string(),
                             session().generation.get() as i64,
@@ -723,7 +758,7 @@ fn workspace_admission_changed_digest_conflicts_and_never_readmits() {
     let key = admission_key(2);
     settled(&cx, &root, key, id(1), &mut fake);
 
-    match lookup(&reader(&cx, &root), key, other_digest()) {
+    match lookup(&observe(), &root, key, other_digest()) {
         Observed::Verified(Recovered::Conflict { recorded }, _) => assert_eq!(recorded, digest()),
         other => panic!("changed digest lookup {other:?}"),
     }
@@ -735,40 +770,35 @@ fn workspace_admission_changed_digest_conflicts_and_never_readmits() {
 }
 
 #[test]
-fn workspace_admission_reconnect_after_restart_recovers_the_same_run() {
+fn workspace_admission_reconnect_requires_recovered_custody() {
     let fixture = home();
-    let home = fixture.path();
     let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
     let key = admission_key(3);
-    let fence = {
-        let root = StateRoot::effects(&cx, home).expect("root");
-        let mut fake = Fake::new(home);
-        let run = admitted(&cx, &root, key, id(1), &mut fake);
-        run.fence().clone()
-    };
-    // Every handle is gone: a supervisor restart reopens the journal.
-    let root = StateRoot::effects(&cx, home).expect("reopened root");
-    match lookup_now(&cx, &root, key) {
-        Observed::Verified(
-            Recovered::Admitted {
-                run: recovered_run,
-                fence: recovered_fence,
-            },
-            _,
-        ) => {
-            assert_eq!(recovered_run, id(1));
-            assert_eq!(recovered_fence, fence);
-        }
-        other => panic!("reconnected admission {other:?}"),
-    }
-    assert_eq!(
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, key, id(1), &mut fake);
+    assert!(matches!(
+        lookup_now(&cx, &root, key),
+        Observed::Verified(Recovered::Admitted { .. }, _)
+    ));
+    drop(run);
+    assert!(matches!(
+        lookup_now(&cx, &root, key),
+        Observed::Verified(Recovered::Unknown { .. }, _)
+    ));
+    assert!(resume_owner(&cx, &root, session(), id(1)).is_err());
+    assert!(attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([1; 16])).is_err());
+    assert!(matches!(
         recorded(&cx, &root, key, id(2)),
-        Recovered::Admitted { run: id(1), fence }
-    );
-    let owner = resume_owner(&cx, &root, session(), id(1)).expect("owner reconnect");
-    assert_eq!(owner.run(), id(1));
-    assert_eq!(owner.session(), session());
-    assert_eq!(runs(&cx, &root), 1);
+        Recovered::Unknown { .. }
+    ));
+    let successor = admitted(&cx, &root, admission_key(4), id(2), &mut fake);
+    assert!(matches!(
+        lookup_now(&cx, &root, key),
+        Observed::Verified(Recovered::Completed { .. }, _)
+    ));
+    assert_eq!(successor.id(), id(2));
+    assert_eq!(runs(&cx, &root), 2);
 }
 
 /// The reservation the host dispatcher holds is handed to a detached engine
@@ -878,32 +908,23 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
     );
     assert_eq!(runs(&cx, &root), 0, "an unknown reservation launched a run");
 
-    // After the admission commit: the run is recovered, never admitted again.
+    // After the admission commit: the dead owner is Unknown, never admitted again.
     let third = boundary("admit", Point::BeginAdmitted);
     let home = third.path().to_path_buf();
     let root = StateRoot::effects(&cx, &home).expect("root");
     assert_eq!(runs(&cx, &root), 1);
-    let fence = match lookup_now(&cx, &root, key) {
-        Observed::Verified(
-            Recovered::Admitted {
-                run: recovered_run,
-                fence,
-            },
-            _,
-        ) => {
-            assert_eq!(recovered_run, id(1));
-            fence
-        }
-        other => panic!("admission after commit {other:?}"),
-    };
-    assert_eq!(
+    assert!(matches!(
+        lookup_now(&cx, &root, key),
+        Observed::Verified(Recovered::Unknown { .. }, _)
+    ));
+    assert!(matches!(
         recorded(&cx, &root, key, id(2)),
-        Recovered::Admitted { run: id(1), fence }
-    );
+        Recovered::Unknown { .. }
+    ));
     assert_eq!(runs(&cx, &root), 1);
 
-    // Before the outcome: the run is live and unclosed, so the key answers
-    // with its admission until the run's own settle records the outcome.
+    // Before the outcome: the killed owner is Unknown until custody recovery
+    // records its outcome. The committed binding prevents another launch.
     let fourth = boundary("settle", Point::SettleCloseBefore);
     let home = fourth.path().to_path_buf();
     let root = StateRoot::effects(&cx, &home).expect("root");
@@ -912,7 +933,7 @@ fn workspace_admission_kill_boundaries_recover_without_a_second_run() {
     assert_eq!(state_of(&cx, &root, key).as_deref(), Some("admitted"));
     assert!(matches!(
         lookup_now(&cx, &root, key),
-        Observed::Verified(Recovered::Admitted { .. }, _)
+        Observed::Verified(Recovered::Unknown { .. }, _)
     ));
     // The next run on this owner settles the interrupted one, and that
     // recorded outcome is the answer for the key from then on.
@@ -1467,6 +1488,40 @@ fn child_step(home: &std::path::Path, step: &str) -> Result<(), RunError> {
     let mut fake = Fake::new(home);
     let key = admission_key(1);
     match step {
+        "kill-recovery" => {
+            struct KillRecovery<'a>(&'a StateRoot);
+            impl SettlementAdapter for KillRecovery<'_> {
+                fn observe(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Fence> {
+                    let cx = context();
+                    assert_eq!(
+                        state_of(&cx, self.0, admission_key(69)).as_deref(),
+                        Some("admitted")
+                    );
+                    // SAFETY: kill only this explicitly spawned fixture process.
+                    unsafe {
+                        libc::kill(std::process::id() as i32, libc::SIGKILL);
+                    }
+                    panic!("kill returned");
+                }
+                fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+                    panic!("unexpected release")
+                }
+                fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+                    panic!("unexpected reconcile")
+                }
+            }
+            let ticket: AdmissionTicket =
+                serde_json::from_str(&std::env::var(CHILD_TICKET).unwrap()).unwrap();
+            let _ = Run::begin_admitted(
+                &cx,
+                &root,
+                &inv(owner()),
+                begin_opts(id(2)),
+                &cleanup(&cx),
+                &mut KillRecovery(&root),
+                ticket,
+            )?;
+        }
         "control-release-race" => {
             let attachment = resume_owner(&cx, &root, session(), id(1))?;
             match attachment.control(&cx, &root, id(80), RequestAction::Stop) {
@@ -1565,4 +1620,263 @@ fn run_kill_child(home: &std::path::Path, step: &str, point: Point) -> std::proc
         )
         .status()
         .expect("child status")
+}
+
+#[test]
+fn workspace_session_must_be_current_for_reservation_replay_and_handles() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let key = admission_key(61);
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, key, id(1), &mut fake);
+    let attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    for change in [
+        "generation=generation+1",
+        "owner=(SELECT owner FROM runs WHERE run_id=?2)",
+        "phase='closed'",
+    ] {
+        store
+            .transaction(&cx, |txn| {
+                txn.conn().execute(
+                    &format!("UPDATE runs SET {change} WHERE run_id=?1 AND ?2 IS NOT NULL"),
+                    params![session().run.to_string(), id(202).to_string()],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+        assert!(reserve(&cx, &root, admission_key(62), digest(), id(2)).is_err());
+        assert!(reserve(&cx, &root, key, digest(), id(3)).is_err());
+        assert!(matches!(lookup_now(&cx, &root, key), Observed::Unknown(_)));
+        assert!(resume_owner(&cx, &root, session(), id(1)).is_err());
+        assert!(
+            attach_secondary(&cx, &root, session(), id(1), AttachmentId::new([61; 16])).is_err()
+        );
+        assert!(attachment
+            .control(&cx, &root, id(60), RequestAction::Stop)
+            .is_err());
+        store
+            .transaction(&cx, |txn| {
+                let original = inv(TaskId::new(
+                    CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]),
+                    "",
+                    Surface::Published,
+                    "session-200",
+                    None,
+                )
+                .unwrap()
+                .resource());
+                txn.conn().execute(
+                    "UPDATE runs SET generation=1,owner=?2,phase='admitted' WHERE run_id=?1",
+                    params![
+                        session().run.to_string(),
+                        original.spec().owner.name().to_string()
+                    ],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+    }
+    assert!(run.requests().unwrap().is_empty());
+    assert!(matches!(
+        lookup_now(&cx, &root, key),
+        Observed::Verified(Recovered::Admitted { .. }, _)
+    ));
+    let missing = AdmissionKey {
+        session: Session {
+            run: id(199),
+            generation: Generation::new(1),
+        },
+        request: RequestId::new([62; 16]),
+    };
+    assert!(reserve(&cx, &root, missing, digest(), id(2)).is_err());
+}
+
+#[test]
+fn workspace_owner_eof_request_collision_rolls_back_release() {
+    for foreign in [false, true] {
+        let fixture = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let mut fake = Fake::new(fixture.path());
+        let run = admitted(&cx, &root, admission_key(63), id(1), &mut fake);
+        let mut attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
+        let request = owner_eof_request(&attachment);
+        let mut store = Store::open(&cx, &root).unwrap();
+        store.transaction(&cx, |txn| {
+            txn.conn().execute("INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) VALUES (?1,?2,1,?3,?4,?5)", params![request.to_string(), if foreign { id(202) } else { id(1) }.to_string(), serde_json::to_string(&Request { id:request, run:id(1), expected:run.fence().clone(), action:RequestAction::Stop })?, if foreign {"pending"} else {"resolved"}, txn.now()])?;
+            Ok::<_, RunError>(())
+        }).unwrap();
+        assert!(attachment.release(&cx, &root, Release::Eof).is_err());
+        assert!(
+            attachment.attached(&cx, &root).unwrap(),
+            "failed stop insertion must roll release back"
+        );
+        store
+            .transaction(&cx, |txn| {
+                txn.conn().execute(
+                    "DELETE FROM requests WHERE request_id=?1",
+                    [request.to_string()],
+                )?;
+                Ok::<_, RunError>(())
+            })
+            .unwrap();
+        attachment.release(&cx, &root, Release::Eof).unwrap();
+        let pending = run.requests().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(matches!(pending[0].action, RequestAction::Stop));
+    }
+}
+
+#[test]
+fn workspace_control_schema_migration_keeps_the_caller_deadline() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let run = admitted(&cx, &root, admission_key(64), id(1), &mut fake);
+    let attachment = resume_owner(&cx, &root, session(), id(1)).unwrap();
+    // This writer deliberately bypasses the kernel gate, modelling an older
+    // binary which already holds SQLite while a stale-build migration opens.
+    let conn = Connection::open(root.path().join("kernel.db")).unwrap();
+    conn.execute(
+        "UPDATE meta SET value='older-build' WHERE key='last_written_by'",
+        [],
+    )
+    .unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    assert!(attachment
+        .control(
+            &cx.child(std::time::Duration::from_millis(100)),
+            &root,
+            id(65),
+            RequestAction::Stop
+        )
+        .is_err());
+    let elapsed = started.elapsed();
+    conn.execute_batch("ROLLBACK").unwrap();
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "schema migration expanded a control deadline: {elapsed:?}"
+    );
+    attachment
+        .control(&cx, &root, id(66), RequestAction::Stop)
+        .unwrap();
+    assert_eq!(run.requests().unwrap().len(), 1);
+}
+
+#[test]
+fn workspace_invalid_and_replayed_tickets_cannot_settle_predecessors() {
+    struct NoEffects;
+    impl SettlementAdapter for NoEffects {
+        fn observe(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Fence> {
+            panic!("invalid ticket reached predecessor observation")
+        }
+        fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+            panic!("invalid ticket released predecessor")
+        }
+        fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+            panic!("invalid ticket reconciled predecessor")
+        }
+    }
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let ticket = fresh(&cx, &root, admission_key(67), id(1));
+    let mut run = Run::begin_admitted(
+        &cx,
+        &root,
+        &inv(owner()),
+        begin_opts(id(1)),
+        &cleanup(&cx),
+        &mut fake,
+        ticket.clone(),
+    )
+    .unwrap();
+    run.intend(EffectSpec {
+        target: run.fence().clone(),
+        kind: "fake".into(),
+        payload: serde_json::json!("predecessor"),
+        settlement: Settlement::Release(serde_json::Value::Null),
+        required: true,
+    })
+    .unwrap();
+    drop(run);
+    assert!(Run::begin_admitted(
+        &cx,
+        &root,
+        &inv(owner()),
+        begin_opts(id(1)),
+        &cleanup(&cx),
+        &mut NoEffects,
+        ticket
+    )
+    .is_err());
+    let mut invalid = fresh(&cx, &root, admission_key(68), id(2));
+    invalid.digest = other_digest();
+    assert!(Run::begin_admitted(
+        &cx,
+        &root,
+        &inv(owner()),
+        begin_opts(id(2)),
+        &cleanup(&cx),
+        &mut NoEffects,
+        invalid
+    )
+    .is_err());
+    assert_eq!(
+        scalar(
+            &cx,
+            &root,
+            "SELECT count(*) FROM runs WHERE phase='stopping' OR phase='closed'"
+        ),
+        0
+    );
+    assert_eq!(runs(&cx, &root), 1);
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn workspace_admission_kill_during_predecessor_recovery_keeps_the_binding() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let mut fake = Fake::new(fixture.path());
+    let mut predecessor = admitted(&cx, &root, admission_key(68), id(1), &mut fake);
+    predecessor
+        .intend(EffectSpec {
+            target: predecessor.fence().clone(),
+            kind: "fake".into(),
+            payload: serde_json::json!("absent"),
+            settlement: Settlement::Release(serde_json::Value::Null),
+            required: true,
+        })
+        .unwrap();
+    drop(predecessor);
+    let ticket = fresh(&cx, &root, admission_key(69), id(2));
+    let status = child_command(fixture.path(), "kill-recovery")
+        .env(CHILD_TICKET, serde_json::to_string(&ticket).unwrap())
+        .status()
+        .unwrap();
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    assert_eq!(
+        state_of(&cx, &root, admission_key(69)).as_deref(),
+        Some("admitted")
+    );
+    assert!(matches!(
+        lookup_now(&cx, &root, admission_key(69)),
+        Observed::Verified(Recovered::Unknown { .. }, _)
+    ));
+    assert!(matches!(
+        recorded(&cx, &root, admission_key(69), id(4)),
+        Recovered::Unknown { .. }
+    ));
+    let _successor = admitted(&cx, &root, admission_key(70), id(3), &mut fake);
+    assert!(
+        matches!(lookup_now(&cx, &root, admission_key(69)), Observed::Verified(Recovered::Completed { run, .. }, _) if run == id(2))
+    );
+    assert_eq!(runs(&cx, &root), 3);
 }

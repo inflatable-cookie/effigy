@@ -479,10 +479,19 @@ fn engine_supervisor_config_carries_the_workspace_admission() {
     let key = crate::run::AdmissionKey {
         session: crate::run::Session {
             run: RunId::new(1, [2; 10]).unwrap(),
-            generation: Generation::new(3),
+            generation: Generation::new(1),
         },
         request: crate::run::RequestId::new([4; 16]),
     };
+    let _session = Run::begin(
+        &cx,
+        &root,
+        &inv("workspace-session"),
+        opts(2, None),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
     let digest = Digest::of(b"effigy.supervise.admission.v1");
     let run = RunId::new(1, [5; 10]).unwrap();
     let ticket = match crate::run::reserve(&cx, &root, key, digest, run).unwrap() {

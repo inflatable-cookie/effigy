@@ -152,6 +152,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - The kernel workspace seam recovers keyed admissions across reconnects and
   gives secondary terminals independent lifetimes and bounded run controls.
   Owner EOF stops the supervised run; acknowledged detach leaves it running.
+  Session identity is checked against the current journal, and orphaned owners
+  require custody recovery before reconnect handles are available.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

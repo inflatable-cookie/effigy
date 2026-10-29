@@ -2724,6 +2724,22 @@ locally. State and vault mounts remain masked. No failed channel request falls
 back to guest execution. Hybrid provisions no guest binary, context, listener
 or enrolment credential.
 
+The kernel seam is `run::{reserve, lookup, Run::begin_admitted,
+resume_owner, attach_secondary}`. A `Session` must identify an admitted,
+nonclosed session run at its current resource generation. The reservation
+records that session's owner, and admission, replay and attachment operations
+recheck it. A legacy reservation with no recorded session owner is refused;
+it never gains one by inference. `lookup(&ObserveContext, &StateRoot,
+AdmissionKey, Digest)` reads a fresh journal snapshot. An unfinished admission
+is returned only while its current owner process identity and held owner gate
+can be established. An orphan is `Unknown` and cannot acquire handles or be
+readmitted; ordinary custody recovery must settle it before its recorded
+outcome becomes available. The keyed run and consumed ticket commit before
+predecessor cleanup, so interruption during cleanup retains that binding.
+Owner EOF releases its row and queues stop in one transaction; a request-ID
+collision rolls the release back. Control and release deadlines also bound
+schema initialization and additive migration.
+
 **Owners and coverage.** Paths below name the intended owners, including new
 modules; they do not imply those modules already exist. The only integration
 file allowed to join these lanes is `src/runner/workspace_client.rs`.

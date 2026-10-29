@@ -437,7 +437,7 @@ impl Store {
              PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=1000;",
             MAX_DB_BYTES / PAGE_SIZE
         ))?;
-        self.schema(&patient)?;
+        self.schema(&patient, BusyWait::Context)?;
         Ok(())
     }
     /// `journal_mode=WAL` is persistent in the file. A store last written in
@@ -780,7 +780,7 @@ impl Store {
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
     }
-    fn schema(&mut self, cx: &EffectContext) -> Result<(), StoreError> {
+    fn schema(&mut self, cx: &EffectContext, wait: BusyWait) -> Result<(), StoreError> {
         // Pure read first: a current store needs no write transaction, and so
         // never takes the write lock just to be opened (I-S5, §5.5).
         let tables: i64 = self.conn.query_row(
@@ -791,7 +791,7 @@ impl Store {
         if tables == 0 {
             // Incremental auto-vacuum must be chosen before the first table.
             self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
-            return self.txn(cx, |txn| {
+            return self.transaction_within(cx, wait, |txn| {
                 txn.conn.execute_batch(SCHEMA_V1)?;
                 txn.conn.execute(
                     "INSERT INTO meta(key, value) VALUES ('schema_version', ?1), \
@@ -819,6 +819,7 @@ impl Store {
             .any(|(name, _)| !has_table(&self.conn, name).unwrap_or(false));
         if has_backend(&self.conn)?
             && has_column(&self.conn, "engine")?
+            && has_session_owner(&self.conn)?
             && !stale_build
             && !adds_index
             && !adds_table
@@ -827,7 +828,7 @@ impl Store {
         }
         // Schema 1 additive changes: old readers select explicit columns;
         // Observe reads an older store without migrating it.
-        self.txn(cx, |txn| {
+        self.transaction_within(cx, wait, |txn| {
             if !has_backend(txn.conn)? {
                 txn.conn
                     .execute_batch("ALTER TABLE resources ADD COLUMN backend TEXT")?;
@@ -840,6 +841,11 @@ impl Store {
                 if !has_table(txn.conn, name)? {
                     txn.conn.execute_batch(sql)?;
                 }
+            }
+            if !has_session_owner(txn.conn)? {
+                txn.conn.execute_batch(
+                    "ALTER TABLE workspace_admissions ADD COLUMN session_owner TEXT",
+                )?;
             }
             for (name, sql) in ADDITIVE_INDEXES {
                 if !has_index(txn.conn, name)? {
@@ -1463,6 +1469,12 @@ fn read_unknown(error: &StoreError) -> UnknownReason {
         other => UnknownReason::StoreUnreadable(other.to_string()),
     }
 }
+fn has_session_owner(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_admissions') WHERE name='session_owner')",
+        [], |r| r.get(0),
+    )
+}
 fn has_backend(conn: &Connection) -> rusqlite::Result<bool> {
     has_column(conn, "backend")
 }
@@ -1568,6 +1580,7 @@ CREATE INDEX IF NOT EXISTS foreground_terminals_closed
         "CREATE TABLE IF NOT EXISTS workspace_admissions (
   session_id TEXT NOT NULL,
   session_generation INTEGER NOT NULL,
+  session_owner TEXT,
   request_id TEXT NOT NULL,
   digest BLOB NOT NULL,
   run_id TEXT NOT NULL,
@@ -1789,6 +1802,7 @@ CREATE INDEX foreground_terminals_closed ON foreground_terminals(closed_at);
 CREATE TABLE workspace_admissions (
   session_id TEXT NOT NULL,
   session_generation INTEGER NOT NULL,
+  session_owner TEXT,
   request_id TEXT NOT NULL,
   digest BLOB NOT NULL,
   run_id TEXT NOT NULL,

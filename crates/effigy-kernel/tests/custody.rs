@@ -110,6 +110,35 @@ fn begin<'a>(cx: &EffectContext, root: &'a StateRoot) -> Run<'a> {
     )
     .unwrap()
 }
+fn workspace_session(cx: &EffectContext, root: &StateRoot) {
+    let task = TaskId::new(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [4; 16]),
+        "",
+        Surface::Published,
+        "workspace-session",
+        None,
+    )
+    .unwrap();
+    let mut spec = invocation().spec().clone();
+    spec.owner = task.resource();
+    spec.task = task;
+    let run = Run::begin(
+        cx,
+        root,
+        &ResolvedInvocation::new(spec).unwrap(),
+        BeginOpts {
+            id: id(7),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    drop(run);
+}
 fn spec(home: &Path, script: &str) -> ProcessSpec {
     ProcessSpec {
         argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
@@ -1257,6 +1286,7 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
     // 052 §8.11: a host dispatcher reserves the keyed request and hands the
     // ticket to the detached supervisor, whose engine admits under it.
     let root = StateRoot::effects(&cx, home.path()).unwrap();
+    workspace_session(&cx, &root);
     let key = AdmissionKey {
         session: Session {
             run: id(7),
@@ -1285,12 +1315,17 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
     .unwrap();
     assert_eq!(client.run, RunId::new(1, [9; 10]).unwrap());
     // The detached engine's admission bound the key, in its own process.
-    let reader = match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root)
+    let _reader = match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root)
     {
         Observed::Verified(reader, _) => reader,
         other => panic!("store reader {other:?}"),
     };
-    match lookup(&reader, key, digest.clone()) {
+    match lookup(
+        &cx.operation().observe().unwrap(),
+        &root,
+        key,
+        digest.clone(),
+    ) {
         Observed::Verified(Recovered::Admitted { run, .. }, _) => {
             assert_eq!(run, RunId::new(1, [9; 10]).unwrap())
         }
@@ -1334,6 +1369,7 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
         let home = home();
         let cx = context();
         let root = StateRoot::effects(&cx, home.path()).unwrap();
+        workspace_session(&cx, &root);
         let key = AdmissionKey {
             session: Session {
                 run: id(7),
@@ -1425,13 +1461,13 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
         }
         client.wait(cx.operation()).unwrap();
         assert!(workload_gone(home.path()));
-        let reader =
+        let _reader =
             match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
                 Observed::Verified(reader, _) => reader,
                 other => panic!("store {other:?}"),
             };
         assert!(matches!(
-            lookup(&reader, key, digest),
+            lookup(&cx.operation().observe().unwrap(), &root, key, digest),
             Observed::Verified(
                 Recovered::Completed {
                     outcome: RecordedOutcome {
@@ -2524,4 +2560,97 @@ fn custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closu
     );
     assert!(!machine.path().join("machine.db").exists());
     assert!(!machine.path().join("kernel.db").exists());
+}
+
+#[test]
+fn custody_workspace_orphan_refuses_handles_until_journal_recovery() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    workspace_session(&cx, &root);
+    let key = AdmissionKey {
+        session: Session {
+            run: id(7),
+            generation: Generation::new(1),
+        },
+        request: RequestId::new([71; 16]),
+    };
+    let digest = Digest::of(b"workspace-orphan");
+    let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("reservation {other:?}"),
+    };
+    let mut client = start_engine(
+        &cx,
+        home.path(),
+        EngineLaunch {
+            payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+            cwd: home.path().into(),
+            env: vec![],
+            handoff: None,
+            admission: Some(ticket),
+        },
+        &Executable::capture(&fixture()).unwrap(),
+        ClientMode::Owning,
+    )
+    .unwrap();
+    while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+    let observe = cx.operation().observe().unwrap();
+    let info = metadata(&observe, &root, id(9));
+    let info = info.verified().unwrap();
+    let supervisor = info.supervisor.as_ref().unwrap();
+    assert_eq!(
+        effigy_kernel::ident::process_identity(supervisor.pid).verified(),
+        Some(supervisor)
+    );
+    // SAFETY: stop only this fixture's identity-checked supervisor so it
+    // cannot settle between the two deaths we are deliberately exercising.
+    assert_eq!(
+        unsafe { libc::kill(supervisor.pid as i32, libc::SIGSTOP) },
+        0
+    );
+    eventually(|| {
+        matches!(
+            effigy_kernel::ident::process_state(supervisor.pid),
+            Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
+        )
+    });
+    // Both identities belong to this test's start, freshly checked before kill.
+    for identity in [
+        info.sentinel.as_ref().unwrap(),
+        info.supervisor.as_ref().unwrap(),
+    ] {
+        assert_eq!(
+            effigy_kernel::ident::process_identity(identity.pid).verified(),
+            Some(identity)
+        );
+        // SAFETY: kill only an identity-checked fixture process started above.
+        assert_eq!(unsafe { libc::kill(identity.pid as i32, libc::SIGKILL) }, 0);
+    }
+    assert!(client.wait(cx.operation()).is_err());
+    assert!(matches!(
+        lookup(&observe, &root, key, digest.clone()),
+        Observed::Verified(Recovered::Unknown { .. }, _)
+    ));
+    assert!(resume_owner(&cx, &root, key.session, id(9)).is_err());
+    assert!(attach_secondary(&cx, &root, key.session, id(9), AttachmentId::new([71; 16])).is_err());
+    assert!(matches!(
+        reserve(&cx, &root, key, digest.clone(), id(10)).unwrap(),
+        Reservation::Recorded(Recovered::Unknown { .. })
+    ));
+    let outcome = settle_interrupted(
+        &cx,
+        &root,
+        &invocation().spec().owner,
+        id(9),
+        next(),
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert!(workload_gone(home.path()));
+    assert!(
+        matches!(lookup(&observe, &root, key, digest), Observed::Verified(Recovered::Completed { run, .. }, _) if run == id(9))
+    );
 }

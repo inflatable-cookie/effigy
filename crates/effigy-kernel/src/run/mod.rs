@@ -486,6 +486,53 @@ impl<'a> Run<'a> {
                     .map(|record| (owner.clone(), record)),
             );
         }
+        let admit = |txn: &mut crate::store::Txn<'_>| {
+            if admission.is_none() {
+                // A keyed workspace reservation keeps its run identity until it
+                // is admitted or its session generation ends.
+                workspace::refuse_unkeyed(txn, opts.id)?;
+            }
+            let identity = if admission.is_some() {
+                Some(serde_json::to_string(
+                    &crate::ident::process_identity(std::process::id())
+                        .verified()
+                        .ok_or_else(|| RunError::unavailable("owner identity unavailable"))?,
+                )?)
+            } else {
+                None
+            };
+            txn.resource(&inv.spec().owner, "run")?;
+            let generation = txn.next_generation(&inv.spec().owner)?;
+            txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome,parent_run,owner_identity) \
+                VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9,?10)", params![opts.id.to_string(),
+                inv.spec().owner.name().to_string(), generation.get() as i64,
+                if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string()), identity])?;
+            if let Some(ticket) = &admission {
+                workspace::bind(txn, ticket)?;
+            }
+            if let Some(planned) = &planned {
+                let fence = Fence {
+                    resource: inv.spec().owner.clone(),
+                    generation,
+                };
+                journal::insert_effect(txn, opts.id, &socket::intent(fence.clone()))?;
+                let mut planned = planned.clone();
+                planned.target = fence;
+                journal::insert_effect(txn, opts.id, &planned)?;
+            }
+            Ok::<_, RunError>(generation)
+        };
+        // A keyed run and its consumed ticket commit before predecessor effects.
+        // A crash during recovery leaves one admitted run to recover, never a
+        // reservation that could be handed off again after effects occurred.
+        let admitted_generation = if admission.is_some() {
+            let generation =
+                store.transaction(&cx.child(std::time::Duration::from_secs(30)), admit)?;
+            guard.set_run(&opts.id);
+            Some(generation)
+        } else {
+            None
+        };
         for (owner, predecessor) in predecessors {
             let mut previous = Self {
                 root,
@@ -536,30 +583,10 @@ impl<'a> Run<'a> {
             guard = previous.guard;
         }
         crate::fault_point!(BeginRecovered)?;
-        let generation = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
-            if admission.is_none() {
-                // A keyed workspace reservation keeps its run identity until it
-                // is admitted or its session generation ends.
-                workspace::refuse_unkeyed(txn, opts.id)?;
-            }
-            txn.resource(&inv.spec().owner, "run")?;
-            let generation = txn.next_generation(&inv.spec().owner)?;
-            txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome,parent_run) \
-                VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9)", params![opts.id.to_string(),
-                inv.spec().owner.name().to_string(), generation.get() as i64,
-                if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string())])?;
-            if let Some(ticket) = &admission {
-                workspace::bind(txn, ticket)?;
-            }
-            if let Some(planned) = &planned {
-                let fence = Fence { resource: inv.spec().owner.clone(), generation };
-                journal::insert_effect(txn, opts.id, &socket::intent(fence.clone()))?;
-                let mut planned = planned.clone();
-                planned.target = fence;
-                journal::insert_effect(txn, opts.id, &planned)?;
-            }
-            Ok::<_, RunError>(generation)
-        })?;
+        let generation = match admitted_generation {
+            Some(generation) => generation,
+            None => store.transaction(&cx.child(std::time::Duration::from_secs(30)), admit)?,
+        };
         crate::fault_point!(BeginAdmitted)?;
         guard.set_run(&opts.id); // Diagnostics never affect outcome (K10).
         let mut run = Self {
@@ -1066,6 +1093,7 @@ pub(super) fn request_bounded(
             return Err(RunError::refused("request run is not current"));
         }
         if let Some(attachment) = attached {
+            workspace::require_live_owner(&cx.operation().observe().map_err(|_| RunError::refused("observation required"))?, root, txn.conn(), request.run)?;
             if !workspace::attached_row(txn.conn(), attachment.id(), attachment)? {
                 return Err(RunError::refused(
                     "this attachment is no longer attached to the run",
