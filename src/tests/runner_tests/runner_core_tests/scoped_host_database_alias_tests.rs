@@ -419,6 +419,140 @@ fn reached(checkout: &Path) -> (String, String, String, String) {
     )
 }
 
+/// A container-bound session's `run_in = "host"` entry runs on the host, so it
+/// resolves this checkout's alias and is proved like any other host entry —
+/// through the public `effigy dev` path, before any container work starts
+/// (effigy#431 review).
+#[test]
+fn a_container_bound_session_proves_its_host_entry() {
+    with_private_gateway("scoped-host-alias-container-session", || {
+        let primary = primary_checkout("scoped-host-alias-container-session");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        write_container_bound_session(&checkout);
+
+        let error = run_task(&checkout, "dev", &["--headless"])
+            .expect_err("the session refuses before its container work starts");
+        assert_task_invocation_error_contains(
+            error,
+            &["postgres.acme.test", &alias, "effigy container up web"],
+        );
+        assert!(
+            !checkout.join("session-database-url.txt").exists(),
+            "the refused session never ran its host entry"
+        );
+    });
+}
+
+/// A container-bound session's `--plan` shows the alias its host entry will
+/// receive, and keeps the declared name in the entry its container runs.
+#[test]
+fn a_container_bound_session_plan_scopes_only_its_host_entry() {
+    with_private_gateway("scoped-host-alias-container-plan", || {
+        let primary = primary_checkout("scoped-host-alias-container-plan");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        write_container_bound_session(&checkout);
+
+        let plan = run_task(&checkout, "dev", &["--plan"]).expect("the session plan renders");
+        let host_entry = plan_entry(&plan, "host-entry");
+        assert!(host_entry.contains(&alias), "{host_entry}");
+        let container_entry = plan_entry(&plan, "box-entry");
+        assert!(!container_entry.contains(&alias), "{container_entry}");
+        assert!(
+            container_entry.contains("postgres.acme.test"),
+            "{container_entry}"
+        );
+    });
+}
+
+/// A host-bound session's `--plan` resolves the entry that inherits the
+/// session's placement, exactly as the run does (effigy#431 review).
+#[test]
+fn a_host_bound_session_plan_resolves_an_inherited_entry() {
+    with_private_gateway("scoped-host-alias-host-plan", || {
+        let primary = primary_checkout("scoped-host-alias-host-plan");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [tasks.record-db-url]\n\
+             run_in = \"host\"\n\
+             run = \"sh -lc 'echo $DATABASE_URL > $OUT'\"\n\
+             env = {{ DATABASE_URL = \"postgres://app:secret@postgres.acme.test:5432/app\", OUT = \"{out}\" }}\n\
+             \n\
+             [tasks.dev]\n\
+             mode = \"tui\"\n\
+             concurrent = [\n\
+               {{ name = \"inherited\", task = \"record-db-url\", start = 1 }},\n\
+             ]\n",
+            out = checkout.join("session-database-url.txt").display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a host session");
+
+        let plan = run_task(&checkout, "dev", &["--plan"]).expect("the session plan renders");
+        let inherited = plan_entry(&plan, "inherited");
+        assert!(
+            inherited.contains(&alias),
+            "an entry that inherits host placement resolves the alias: {inherited}"
+        );
+    });
+}
+
+/// One entry of a rendered session plan: the plan's `Command:` line lists each
+/// process as `<name>: <command>`, separated by `; `.
+fn plan_entry<'a>(plan: &'a str, name: &str) -> &'a str {
+    plan.split("; ")
+        .find(|entry| entry.contains(&format!("{name}: ")))
+        .unwrap_or_else(|| panic!("the `{name}` entry renders: {plan}"))
+}
+
+/// The container-bound session fixture: the task binds to a workspace, one
+/// entry opts out to the host, and one keeps the container's placement.
+fn write_container_bound_session(checkout: &Path) {
+    let out = checkout.join("session-database-url.txt");
+    let manifest = format!(
+        r#"[containers]
+default = "web"
+
+[containers.web]
+project_name = "app-dev"
+primary_service = "postgres"
+
+[containers.web.dns]
+base_domain = "acme.test"
+
+[containers.web.services.postgres]
+catalog = "postgres"
+
+[systems]
+default = "web"
+
+[systems.web]
+default_workspace = "app"
+
+[systems.web.workspaces.app]
+container = "web"
+working_dir = "/workspace"
+
+[tasks.record-db-url]
+run_in = "host"
+run = "sh -lc 'echo $DATABASE_URL > $OUT'"
+env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app", OUT = "{}" }}
+
+[tasks.dev]
+mode = "tui"
+workspace = "app"
+concurrent = [
+  {{ name = "host-entry", task = "record-db-url", run_in = "host", start = 1 }},
+  {{ name = "box-entry", run = "printf %s postgres.acme.test", start = 2 }},
+]
+"#,
+        out.display()
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a container session");
+}
+
 /// A worktree's first host run has no scope token yet. Effigy records it before
 /// resolving, so that run is scoped: the declared alias resolves to this
 /// worktree's own service and refuses when nothing is published, instead of
