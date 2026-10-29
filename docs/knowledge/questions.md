@@ -683,13 +683,16 @@ unreachable boundary. Only exact known fixture path/content-hash matches may
 be allowed; other findings and their values remain protected. This ruling
 does not authorize a release run, tag or publication.
 
-The #453 baseline scan found a managed-run stop token in the historical
-fixture output `crates/effigy-parent-fixtures-gateway-DLjHcA/case-0-false/owner.out`
-at `4b0aafe9f`. This is a run-scoped settle identity, not a durable machine
-credential: the stop path matches it to that run's live gate and session, and
-the retained output records the run as stopped. On 2026-10-29 the recorded
-PID was absent and the recorded session directory no longer existed. That
-specific run has no remaining authority to stop. #453 may classify this
-historical fixture value by exact path and content hash; this does not exempt
-other tokens, private keys or credential-shaped strings. Every other match
-needs its own fixture proof or remediation before the gate can pass.
+The #453 baseline scan found six distinct managed-run stop identities in
+`owner.out` and `restart.out` under the two historical
+`crates/effigy-parent-fixtures-gateway-*` fixture roots at `4b0aafe9f`.
+These are run-scoped settle identities, not durable machine credentials: the
+stop path matches a token to that run's live gate and session. On 2026-10-29
+both fixture roots and all recorded session directories were absent; four
+recorded PIDs were absent and the fifth live PID belonged to a different
+process. Two logs explicitly record a stopped session. None of those six
+identities can authorize a stop of a current run. #453 may classify only the
+six historical fixture values by exact path and content hash. Their values
+must never appear in audit output, review text or documentation. This does
+not exempt other tokens, private keys or credential-shaped strings; every
+other match needs its own fixture proof or remediation before the gate passes.
