@@ -635,3 +635,39 @@ shut the VM down cleanly before removing the drive. Do not run Linux proofs
 unattended without confirming the drive is present. Rosetta may run an x86_64
 smoke test inside the arm64 guest, but that is not native x86_64 qualification;
 a separate x86_64 machine would be needed for that optional coverage.
+
+## Q-019: Linux operator gateway removal and same-user interference
+
+Status: answered
+Asked: 2026-10-29
+Answered: 2026-10-29 by Tom
+Owner: [Gateway upgrade and recovery](architecture/034-gateway-legacy-upgrade-recovery.md)
+Decision: `663f311f-4f55-4df3-96ac-af6c597f6b1c`
+
+Tom accepted the same-UID staged-entry deletion limit found during Effigy
+#448's review. A process running as the operator can already replace the
+operator's unit file or installed binary. This is a same-user trust limit, not
+a privilege boundary. Keep the one-administrator-action removal route and
+its exact-identity protections: never unlink the shared unit name, and
+preserve and report a replacement that appears there. The accepted limit
+does not waive the separate daemon-reload failure handling or native Linux
+qualification.
+
+## Q-020: Release secret-audit history boundary
+
+Status: open (ancestry evidence under review)
+Asked: 2026-10-29
+Owner: [v0.15 roadmap](v015-roadmap.md#sequence-and-gates)
+Decision: `1b111aba-0a64-42ae-834b-02672384ae85`; lead
+`56722ba6-ace5-4dba-8a1d-0fb8a233fea9`
+
+Tom selected an explicit pinned lineage boundary, a scan of the current
+tracked tree, and an allowlist restricted to exact known fixture paths and
+content hashes before the candidate selector becomes a release gate. That
+selection followed an empty `git merge-base v0.14.1 HEAD` in a shallow
+checkout. After deepening the checkout on 2026-10-29, the tag resolves to
+commit `20465f1ff690340ee9ef461915ca769da1c76fca` and is an ancestor
+of `main` (`git merge-base --is-ancestor` exits 0). The earlier empty result
+was a shallow-history artifact. The exact boundary SHA is pending Tom's
+review of this corrected evidence; no different root has been pinned and
+the release gate has not been enabled.
