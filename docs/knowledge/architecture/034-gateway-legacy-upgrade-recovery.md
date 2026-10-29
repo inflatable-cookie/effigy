@@ -21,12 +21,18 @@ historical transition receipts.
 
 A gateway directory that is verified absent is no legacy state: first-ever
 setup has nothing to migrate and proceeds to the platform action (effigy#473,
-2026-10-29). Absence is proven by a no-follow stat of
-`~/.effigy/gateway` alone; it is never inferred from an error. A symlinked or
-permissive `.effigy` ancestor, a symlinked or unsafe gateway directory, a
-partial identity (a version or identity sidecar without its PID) and a home
-the caller cannot search all keep their earlier refusal, and an unreadable
-state directory reports its path and the repair.
+2026-10-29). Absence is proven by a no-follow stat of `~/.effigy/gateway`
+and is never inferred from an error. The elevated setup child runs as root and
+root can stat a path its owner cannot read, so that stat is not the whole
+answer: the operator home and an existing `.effigy` must also be the owner's
+own directories with owner read and search, read from their metadata rather
+than from root's access. A symlinked or permissive `.effigy`, a gateway
+directory that is a symlink or otherwise unsafe, a partial identity (a version
+or identity sidecar without its PID), a `.effigy` owned by root or another
+account, and a home or state directory the operator cannot read or search all
+refuse instead, and the refusal names the path and the repair. The v0.14.1
+legacy path is unaffected: it has a gateway directory, so migration reads that
+state rather than classifying absence.
 
 ## Unprovable status and the headless precondition
 

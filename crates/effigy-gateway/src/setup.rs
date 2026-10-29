@@ -914,7 +914,14 @@ fn migrate_root_with(
     inspect: impl FnOnce(&crate::identity::GatewayRecordSnapshot) -> io::Result<Option<u32>>,
     stop: impl FnOnce(&crate::identity::GatewayRecordSnapshot) -> io::Result<()>,
 ) -> io::Result<()> {
-    if let Some(snapshot) = read_migration_record(config)? {
+    // A gateway directory absent for *the operator*, not merely for this
+    // caller, holds no legacy state to classify.
+    let snapshot = if gateway_directory_verified_absent(config, uid)? {
+        None
+    } else {
+        read_migration_record(config)?
+    };
+    if let Some(snapshot) = snapshot {
         match inspect(&snapshot)? {
             Some(0) => {
                 if !recorded_v0141(config)? {
@@ -949,12 +956,85 @@ fn migrate_root_with(
     )
 }
 
+/// Whether the gateway directory is verified absent *for the operator*.
+///
+/// Only a `NotFound` stat of that directory is absence; an unreadable path and
+/// the existing record rules still refuse. The stat alone is not the whole
+/// answer: the elevated setup child runs as root, and root can stat a path its
+/// owner cannot read, so setup also proves the operator's own ownership and
+/// read/search access on the path down to the missing directory. Setup must not
+/// change a machine's platform while the state it skipped is merely unreadable
+/// by the account that will use it.
+fn gateway_directory_verified_absent(config: &GatewayConfig, uid: u32) -> io::Result<bool> {
+    let gateway = config
+        .pid_file_path
+        .parent()
+        .ok_or_else(|| error("invalid gateway directory"))?;
+    match std::fs::symlink_metadata(gateway) {
+        Ok(_) => return Ok(false),
+        Err(cause) if cause.kind() == io::ErrorKind::NotFound => {}
+        Err(cause) => return Err(unreadable_state(gateway, &cause)),
+    }
+    operator_owns_state_path(config, uid)?;
+    Ok(true)
+}
+
+/// Prove the operator can itself read and search the state path below its own
+/// home: the operator home and, when it exists, the `.effigy` directory.
+///
+/// This reads the recorded metadata instead of this caller's own access, so the
+/// same answer holds inside the elevated root child. A `.effigy` owned by root
+/// or another account is a refusal here even though root can enter it and the
+/// operator cannot: that is unclassifiable state, not an empty home. The
+/// v0.14.1 legacy path never reaches this proof, because it has a gateway
+/// directory and migration reads that state instead.
+fn operator_owns_state_path(config: &GatewayConfig, uid: u32) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let gateway = config
+        .pid_file_path
+        .parent()
+        .ok_or_else(|| error("invalid gateway directory"))?;
+    let state = gateway
+        .parent()
+        .ok_or_else(|| error("invalid gateway directory"))?;
+    let home = state
+        .parent()
+        .ok_or_else(|| error("invalid gateway directory"))?;
+    for path in [home, state] {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink()
+                    || !metadata.is_dir()
+                    || metadata.uid() != uid
+                    || metadata.mode() & 0o500 != 0o500
+                {
+                    return Err(error(format!(
+                        "gateway setup will not treat {} as absent gateway state: the operator cannot read and search {}. Make it the operator's own directory with owner read and search, then run `effigy gateway setup` again",
+                        gateway.display(),
+                        path.display()
+                    )));
+                }
+            }
+            Err(cause) if cause.kind() == io::ErrorKind::NotFound => continue,
+            Err(cause) => return Err(unreadable_state(path, &cause)),
+        }
+    }
+    Ok(())
+}
+
+/// The refusal for a state path this caller cannot read: it names the path and
+/// the repair, because the operator is the one who can act on it.
+fn unreadable_state(path: &Path, cause: impl std::fmt::Display) -> io::Error {
+    error(format!(
+        "gateway setup cannot read the gateway state at {}: {cause}; make the operator the owner of that directory and grant it owner read, write and search access, then run `effigy gateway setup` again",
+        path.display()
+    ))
+}
+
 /// The operator's persisted record, or none.
 ///
-/// A gateway directory verified absent is a first-ever setup: there is no
-/// legacy state to classify, so setup continues to the platform action. A
-/// state directory this caller cannot read is not absence. It refuses with the
-/// path and the repair, because the operator is the one who can act on it.
+/// A state directory this caller cannot read is not absence. It refuses with
+/// the path and the repair, because the operator is the one who can act on it.
 fn read_migration_record(
     config: &GatewayConfig,
 ) -> io::Result<Option<crate::identity::GatewayRecordSnapshot>> {
@@ -968,15 +1048,11 @@ fn read_migration_record(
             if !unreadable {
                 return Err(error(cause.to_string()));
             }
-            Err(error(format!(
-                "gateway setup cannot read the gateway state at {}: {cause}; make the operator the owner of that directory and grant it owner read, write and search access, then run `effigy gateway setup` again",
-                config
-                    .pid_file_path
-                    .parent()
-                    .map_or_else(|| config.pid_file_path.display().to_string(), |dir| dir
-                        .display()
-                        .to_string())
-            )))
+            let gateway = config
+                .pid_file_path
+                .parent()
+                .unwrap_or(&config.pid_file_path);
+            Err(unreadable_state(gateway, &cause))
         }
     }
 }
@@ -1734,10 +1810,6 @@ pub(crate) mod tests {
 
     #[test]
     fn an_unreadable_gateway_home_refuses_with_the_path_and_the_repair() {
-        // A root reader would read the fixture anyway and prove nothing.
-        if nix::unistd::Uid::effective().is_root() {
-            return;
-        }
         let root = tempfile::tempdir().unwrap();
         let (home, config) = empty_operator_home(root.path());
         let state = home.join(".effigy");
@@ -1750,15 +1822,59 @@ pub(crate) mod tests {
         .expect_err("an unreadable home is never read as an empty one");
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
         let message = error.to_string();
-        assert!(
-            message.contains("cannot read the gateway state at"),
-            "{message}"
-        );
-        assert!(message.contains("operator"), "{message}");
+        // The refusal names the state path and the repair whether setup sees a
+        // permission error itself or refuses the operator's own access.
+        assert!(message.contains(&state.display().to_string()), "{message}");
+        assert!(message.contains("the operator"), "{message}");
         assert!(
             message.contains("`effigy gateway setup` again"),
             "{message}"
         );
+        assert!(!home.join(".effigy/gateway").exists());
+    }
+
+    /// The elevated child runs as root, and root can stat a path its owner
+    /// cannot read. Absence therefore has to be the *operator's* answer, proven
+    /// from the recorded metadata, or setup changes a machine's platform while
+    /// skipping state the operator cannot even reach.
+    #[test]
+    fn the_operator_own_access_decides_absence_and_never_the_caller_privilege() {
+        let root = tempfile::tempdir().unwrap();
+        let (home, config) = empty_operator_home(root.path());
+        let uid = nix::unistd::Uid::effective().as_raw();
+        operator_owns_state_path(&config, uid).expect("a fresh home is absent for its operator");
+
+        let state = home.join(".effigy");
+        std::fs::create_dir(&state).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        operator_owns_state_path(&config, uid).expect("the operator's own .effigy is reachable");
+
+        // Read without search, then search without read: neither reaches the
+        // state its owner would have to classify.
+        for (mode, why) in [
+            (0o400, "read without search"),
+            (0o100, "search without read"),
+        ] {
+            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(
+                operator_owns_state_path(&config, uid).is_err(),
+                "{why} is unreachable state"
+            );
+        }
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        // A home the operator cannot search is refused and named, and setup
+        // creates nothing below it.
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let error = operator_owns_state_path(&config, uid)
+            .expect_err("a home the operator cannot search is not an empty home");
+        assert!(
+            error.to_string().contains(&home.display().to_string()),
+            "{error}"
+        );
+        assert!(migrate_root(&config, uid, |_| panic!("no verified process")).is_err());
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(!home.join(".effigy/gateway").exists());
     }
 
     #[test]
