@@ -7,26 +7,52 @@ use crate::supervise::Placement;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-/// Log command and custody stops to the same existing gateway log. Logging is
-/// best effort so an unavailable log never prevents settlement.
-pub fn record_gateway_stop(directory: &std::path::Path, cause: &str) {
+use super::provenance::{self, OperatorAction};
+
+/// Log one operator event to the existing gateway log. Logging is best effort
+/// so an unavailable log never prevents settlement, and the record is the same
+/// shape for `up`, `down` and `setup`: the invoking pid, redacted argv, cwd,
+/// cause and the bounded caller provenance behind them.
+pub fn record_gateway_operator(directory: &std::path::Path, action: OperatorAction, cause: &str) {
     use std::io::Write;
-    let line = serde_json::json!({
-        "event": "gateway_stop", "pid": std::process::id(),
-        "argv": std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),
-        "cwd": std::env::current_dir().ok(), "cause": cause,
-    });
+    use std::os::unix::fs::OpenOptionsExt;
+    // The event appends to the log the gateway already keeps. Recording never
+    // creates the directory, so an `up` or `setup` before any gateway state
+    // exists stays read-only and a diagnostic adds no state tree of its own.
+    if !directory.is_dir() {
+        return;
+    }
+    let pid = std::process::id();
+    let caller = provenance::caller(
+        &provenance::Platform,
+        pid,
+        crate::ident::controlling_terminal(),
+        |name: &str| std::env::var_os(name),
+    );
+    let argv = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let cwd = std::env::current_dir().ok();
+    let line = provenance::event(action, cause, pid, &argv, cwd.as_deref(), &caller);
     if let Ok(mut log) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
+        // An operator log is private to its owner, in the shared gateway state
+        // directory and in a private root the fixture policy validates.
+        .mode(0o600)
         .open(directory.join("gateway.stderr.log"))
     {
         if let Err(error) = writeln!(log, "{line}") {
-            eprintln!("[gateway] cannot log stop: {error}");
+            eprintln!("[gateway] cannot log operator event: {error}");
         }
     } else {
-        eprintln!("[gateway] stop log unavailable: {line}");
+        eprintln!("[gateway] operator event log unavailable: {line}");
     }
+}
+
+/// The stop event keeps its name and fields; it additionally names its caller.
+pub fn record_gateway_stop(directory: &std::path::Path, cause: &str) {
+    record_gateway_operator(directory, OperatorAction::Down, cause)
 }
 
 /// One shared owner's current, positively closed operation. This replaces

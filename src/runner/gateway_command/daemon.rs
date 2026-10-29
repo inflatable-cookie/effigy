@@ -187,9 +187,8 @@ fn stop_gateway_process_with_probe(
             "gateway identity is missing; refusing to signal",
         ));
     };
-    if let Some(directory) = snapshot.pid_path().parent() {
-        effigy_kernel::run::record_gateway_stop(directory, "gateway command signal or replacement");
-    }
+    // The action that asked for this stop recorded itself when it started, so
+    // this helper only signals; it never adds a second event for one action.
     let pid = snapshot.pid();
     #[cfg(unix)]
     {

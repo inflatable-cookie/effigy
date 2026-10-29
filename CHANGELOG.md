@@ -213,6 +213,38 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **A gateway operator action names its caller, not just its arguments.**
+  `gateway up`, `gateway down` and `gateway setup` each append one bounded
+  event to `gateway.stderr.log` — when its gateway state directory exists — as
+  they start, so a refused action or one with nothing to do is attributable
+  too. The existing `event`, `pid`, `argv`, `cwd` and `cause` fields stay, and a
+  `caller` record adds the invoking process's start identity, session and
+  controlling terminal, its parent chain up to the session leader with each
+  pid's start identity and redacted command, and only allowlisted `PASEO_*`,
+  `NS_*` and `EFFIGY_RUN_*` identity markers whose value is a UUID, a decimal
+  id or Effigy's own base32 run id, recorded as that form plus a SHA-256
+  fingerprint rather than the value. Command text is published by role, not by
+  spelling: an event records only the program's file name and one of Effigy's own
+  flag names, so a positional argument (whatever its spelling), a path, an
+  unknown flag, a URL, a `KEY=value` pair and the value of any flag in
+  `--flag value` or `--flag=value` form are `<redacted>` — `gateway setup
+  --suffix down` records `--suffix <redacted>`. An ancestor's command publishes
+  only its program name (the executable the operating system reports, never
+  `argv[0]`) and no option token of it; a shell command string publishes nothing
+  inside itself. The walk stays inside the invoking process's session, so a
+  reparented child ends the chain with an unknown reason instead of naming
+  another session's leader, and the controlling terminal is the session's real
+  device (`/dev/ttysNNN` on macOS, `/dev/pts/N` on Linux), resolved from the
+  kernel's own record of it rather than from a standard descriptor, and never the
+  generic `/dev/tty` alias. The `unknown` list is capped and says how
+  many reasons it omitted, so invalid markers never hide a broken chain. The
+  event is written at the command boundary only: `gateway setup` emits its one
+  setup event and no extra up or down event, and a task run that starts the
+  gateway records `managed gateway start`. Anything unreadable or invalid becomes
+  a bounded `unknown` reason, no other environment value is read, and logging
+  still never authorizes, refuses or delays the action. The 2026-10-28
+  15:26:25Z Mac gateway stop could not have been traced to a terminal, session,
+  agent or task from the old record.
 - **Manual `[manifest].include` `optional`/`override` and kebab-case aliases
   still load through v0.15, with one deprecation notice.** `optional` is
   replaced by omitting a missing include or auto-discovered

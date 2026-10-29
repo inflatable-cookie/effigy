@@ -788,6 +788,52 @@ a durable stop request, cancellation or interrupted-run recovery, even when no
 `gateway down` command ran. This identifies possible causes of the 2026-10-26
 clean exits, without attributing an unobserved incident to one of them.
 
+The 2026-10-28 15:26:25Z stop of the installed Mac gateway showed what those
+fields could not answer: which terminal, session, agent or task asked for it.
+The same event now carries a bounded `caller` record for `up`, `down` and
+`setup`, and each action names itself when it starts, so a refusal or an action
+with nothing to do is attributable as well: the start identity, session and
+controlling terminal of the invoking process, its parent chain up to and
+including the session leader (at most eight entries, each with pid, start
+identity, session and redacted command), and only allowlisted `PASEO_*`, `NS_*`
+and `EFFIGY_RUN_*` identity markers whose value is a supported identity form. An
+unreadable parent, argument or marker, a pid whose start identity changed or
+could not be confirmed by a second read, or a parent in another session —
+a reparented child ends the walk instead of naming another session's leader —
+becomes a bounded unknown reason instead of a guess, and no environment value is
+read unless its name is on that allowlist. The controlling terminal is the
+session's terminal, resolved from the kernel's record of it by device on each
+platform (`bsdinfo` on macOS, the `/proc/<pid>/stat` line on Linux) and never
+taken from a standard descriptor or named by the generic `/dev/tty` alias, so a
+redirected descriptor or one attached to another terminal never misattributes the
+action. The reason list keeps chain failures ahead of marker failures and
+ends with how many reasons it omitted, so a full list never hides a missing or
+unconfirmed part of the chain.
+
+Command text is published by role, not by spelling. The invoking process's own
+`argv` records the program's file name and one of Effigy's own flag names; every
+other token is `<redacted>` — a positional argument whatever its spelling, a
+path, an unknown flag, a URL, a `KEY=value` pair, a JSON body, and the value of
+any flag in `--flag value` or `--flag=value` form, so `gateway setup --suffix
+down` records `--suffix <redacted>`. An ancestor's command is another program's
+text, so only its program is published — the executable the operating system
+reports, never its caller-chosen `argv[0]` — and no option token of it is, even
+one that spells an Effigy flag; a shell command string is foreign text too and
+publishes nothing inside itself. A marker is read only when its value is a UUID, a decimal
+id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, and it is recorded as that
+form plus a SHA-256 fingerprint, never as the value: an ID-shaped value can still
+be a credential, and a password pasted into a marker variable is refused by name
+only. A stop signalled by replacement or
+migration is attributable through the `up` or `setup` action that requested it;
+no lower-level helper writes a second record for one action. The event is written
+at the command boundary only, so a `setup` step that starts or stops the gateway
+emits its single `gateway_setup` event, and a task run that starts the gateway
+in-process is recorded as `managed gateway start`, never as an operator
+`gateway up`. Logging
+stays best effort and never authorizes, refuses or delays an action; the
+elevated child of `gateway setup` writes nothing, because the file would become
+root-owned in the operator's directory.
+
 ### Gateway process identity ruling
 
 Tom ruled on 2026-10-06: "Approved, but you need to fix this so other users
