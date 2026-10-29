@@ -272,7 +272,7 @@ fn device_of(fd: libc::c_int) -> Option<u64> {
     }
     // SAFETY: a successful fstat initialized the full output structure.
     let stat = unsafe { stat.assume_init() };
-    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then(|| stat.st_rdev as u64)
+    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR).then_some(stat.st_rdev as u64)
 }
 
 /// Darwin names a pty slave `/dev/ttysNNN` from device major 16 and the minor
