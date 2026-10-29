@@ -432,6 +432,34 @@ impl<'r> EnvRun<'r> {
         op: Operation,
         wait: Wait,
     ) -> Result<Self, EnvError> {
+        Self::admit(ctx, env, op, wait, None)
+    }
+
+    /// Admits the operation at the generation a workspace activation reserved
+    /// (§8.7). The reservation is bound to this run in the admission
+    /// transaction, so this is the only admission that may take a generation a
+    /// workspace activation reserved; a competing activation is refused by name
+    /// instead of taking it.
+    pub fn begin_claimed(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<Self, EnvError> {
+        let claim = reservation
+            .claim()
+            .map_err(|error| EnvError::from_run(&env.name, error))?;
+        Self::admit(ctx, env, op, wait, Some(claim))
+    }
+
+    fn admit(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
+    ) -> Result<Self, EnvError> {
         if ctx.cx.operation().placement() != Placement::Host {
             return Err(EnvError::HostAuthorityRequired);
         }
@@ -462,23 +490,43 @@ impl<'r> EnvRun<'r> {
         // Admission settles an interrupted predecessor under a window this
         // call makes once the gate is held, so the wait above (up to ten
         // minutes) cannot spend it (effigy#447).
-        let admitted = Run::begin_with_fresh_cleanup(
-            &ctx.cx,
-            ctx.root,
-            &invocation,
-            effigy_kernel::run::BeginOpts {
-                id: new_run_id()?,
-                wait,
-                acknowledge: vec![],
-                next: op.next(&env.name)?,
-                custody: None,
-            },
-            || {
-                ctx.cleanup()
-                    .map_err(|error| RunError::broken(error.to_string()))
-            },
-            &mut EnvSettlement,
-        )
+        let admitted = match claim {
+            Some(claim) => Run::begin_claimed(
+                &ctx.cx,
+                ctx.root,
+                &invocation,
+                effigy_kernel::run::BeginOpts {
+                    id: new_run_id()?,
+                    wait,
+                    acknowledge: vec![],
+                    next: op.next(&env.name)?,
+                    custody: None,
+                },
+                || {
+                    ctx.cleanup()
+                        .map_err(|error| RunError::broken(error.to_string()))
+                },
+                &mut EnvSettlement,
+                claim,
+            ),
+            None => Run::begin_with_fresh_cleanup(
+                &ctx.cx,
+                ctx.root,
+                &invocation,
+                effigy_kernel::run::BeginOpts {
+                    id: new_run_id()?,
+                    wait,
+                    acknowledge: vec![],
+                    next: op.next(&env.name)?,
+                    custody: None,
+                },
+                || {
+                    ctx.cleanup()
+                        .map_err(|error| RunError::broken(error.to_string()))
+                },
+                &mut EnvSettlement,
+            ),
+        }
         .map_err(|error| admission_error(env, wait, started, error));
         let run = match admitted {
             Ok(run) => {
@@ -798,6 +846,22 @@ impl<'r> EnvRun<'r> {
         self.kernel(result)?;
         self.published = true;
         Ok(())
+    }
+
+    /// Commits a staged workspace activation under this run's held `Gate(Env)`:
+    /// the guest publication this run recorded is validated against the staged
+    /// plan, and then `active(E)`, the environment's session mapping and the
+    /// session's `Borrow` attachment commit in one transaction (§8.7, §8.11).
+    /// The live holders of a predecessor generation are left attached: a
+    /// successor never stops a predecessor or rebinds its listener.
+    pub fn commit_activation(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<effigy_kernel::workspace_session::SessionRef, EnvError> {
+        let result = reservation.commit(&self.cx, self.root, &self.run);
+        let committed = self.kernel(result)?;
+        self.published = true;
+        Ok(committed.session())
     }
 
     /// Ends the run. A run that changed nothing republishes the state it

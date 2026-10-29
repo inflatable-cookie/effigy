@@ -35,7 +35,7 @@ pub const GUEST_PUBLICATION_KIND: &str = "kernel:workspace-guest-publication";
 pub struct GuestPublicationTicket(EffectTicket);
 
 /// Verified publication facts recorded before the environment becomes active.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuestPublicationReceipt {
     pub environment: Fence,
     pub container_id: String,
@@ -46,6 +46,84 @@ pub struct GuestPublicationReceipt {
 
 #[derive(Debug)]
 pub struct Attachments;
+
+/// The one `active` publication every environment activation writes: the
+/// resource is active at its own run's generation, and `last_applied` names
+/// that generation so a holder's `attach` can prove it.
+pub(crate) fn publish_active_state(
+    txn: &mut crate::store::Txn<'_>,
+    owner: &Fence,
+) -> Result<(), RunError> {
+    txn.conn().execute(
+        "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
+        params![
+            owner.resource.name().to_string(),
+            owner.generation.get().to_string(),
+            txn.now()
+        ],
+    )?;
+    Ok(())
+}
+
+/// The activation commit's fence check, so the reservation seam verifies the
+/// environment generation with the kernel's own rule rather than a copy.
+pub(crate) fn check_activation_fence(
+    conn: &rusqlite::Connection,
+    owner: &Fence,
+) -> Result<(), RunError> {
+    journal::check_fence(conn, owner)
+}
+
+/// One holder's `Borrow` attachment, written as an `Applied` effect of that
+/// holder's own journal in the caller's transaction. The environment activation
+/// run is the only writer: `publish_active_for` and the workspace activation
+/// commit both install a holder this way, so the holder's settle releases it by
+/// exactly the rule it would have used had it attached itself.
+pub(crate) fn holder_attachment(
+    txn: &mut crate::store::Txn<'_>,
+    env: &Fence,
+    holder: RunId,
+    mode: AttachMode,
+) -> Result<(), RunError> {
+    let record = journal::run(txn.conn(), holder)?;
+    let owner: Vec<u8> = txn.conn().query_row(
+        "SELECT canonical FROM resources WHERE name=?1",
+        [&record.owner],
+        |r| r.get(0),
+    )?;
+    if matches!(record.phase, Phase::Stopping | Phase::Closed) || owner >= env.resource.canonical()
+    {
+        return Err(RunError::refused(
+            "requesting holder is settling or out of gate order",
+        ));
+    }
+    let spec = EffectSpec {
+        target: env.clone(),
+        kind: KIND.into(),
+        payload: serde_json::to_value(mode)?,
+        settlement: Settlement::Reconcile(Value::Null),
+        required: true,
+    };
+    let sequence = journal::insert_effect(txn, holder, &spec)?;
+    txn.conn().execute(
+        "INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached') \
+         ON CONFLICT(environment,run_id) DO UPDATE SET env_generation=excluded.env_generation,mode=excluded.mode,state='attached'",
+        params![
+            env.resource.name().to_string(),
+            holder.to_string(),
+            env.generation.get() as i64,
+            serde_json::to_string(&mode)?
+        ],
+    )?;
+    journal::write_effect(
+        txn,
+        holder,
+        sequence,
+        EffectState::Applied,
+        Some(&Value::Bool(true)),
+        None,
+    )
+}
 /// Borrows the gated environment run exclusively. No caller can release the
 /// gate or advance its generation while using the permit.
 #[derive(Debug)]
@@ -219,15 +297,7 @@ impl Attachments {
         run.store
             .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                 journal::check_fence(txn.conn(), &run.owner)?;
-                txn.conn().execute(
-                "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
-                params![
-                    run.owner.resource.name().to_string(),
-                    run.owner.generation.get().to_string(),
-                    txn.now()
-                ],
-            )?;
-                Ok::<_, RunError>(())
+                publish_active_state(txn, &run.owner)
             })
     }
     pub fn attach(
@@ -350,45 +420,17 @@ impl Attachments {
             run.store
                 .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                     journal::check_fence(txn.conn(), &run.owner)?;
-                    let env = run.owner.resource.name().to_string();
-                    txn.conn().execute(
-                        "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
-                        params![env, run.owner.generation.get().to_string(), txn.now()],
-                    )?;
+                    publish_active_state(txn, &run.owner)?;
                     for (holder, mode) in holders {
-                        let record = journal::run(txn.conn(), *holder)?;
-                        let owner: Vec<u8> = txn.conn().query_row(
-                            "SELECT canonical FROM resources WHERE name=?1",
-                            [&record.owner],
-                            |r| r.get(0),
-                        )?;
-                        if matches!(record.phase, Phase::Stopping | Phase::Closed)
-                            || owner >= run.owner.resource.canonical()
-                        {
-                            return Err(RunError::refused("requesting holder is settling or out of gate order"));
-                        }
                         let exists: bool = txn.conn().query_row(
                             "SELECT EXISTS(SELECT 1 FROM attachments WHERE environment=?1 AND run_id=?2 AND state<>'released')",
-                            params![env, holder.to_string()],
+                            params![run.owner.resource.name().to_string(), holder.to_string()],
                             |r| r.get(0),
                         )?;
                         if exists {
                             continue;
                         }
-                        let spec = EffectSpec {
-                            target: run.owner.clone(),
-                            kind: KIND.into(),
-                            payload: serde_json::to_value(mode)?,
-                            settlement: Settlement::Reconcile(Value::Null),
-                            required: true,
-                        };
-                        let sequence = journal::insert_effect(txn, *holder, &spec)?;
-                        txn.conn().execute(
-                            "INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached') \
-                             ON CONFLICT(environment,run_id) DO UPDATE SET env_generation=excluded.env_generation,mode=excluded.mode,state='attached'",
-                            params![env, holder.to_string(), run.owner.generation.get() as i64, serde_json::to_string(mode)?],
-                        )?;
-                        journal::write_effect(txn, *holder, sequence, EffectState::Applied, Some(&Value::Bool(true)), None)?;
+                        holder_attachment(txn, &run.owner, *holder, *mode)?;
                     }
                     Ok::<_, RunError>(())
                 })?;

@@ -790,9 +790,19 @@ impl Store {
         )?;
         if tables == 0 {
             // Incremental auto-vacuum must be chosen before the first table.
+            // A fresh store gets the additive tables and indexes too: the
+            // constants describe one complete schema, and the very first write
+            // may already be a newer primitive (a workspace activation
+            // reservation, for instance).
             self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
             return self.transaction_within(cx, wait, |txn| {
                 txn.conn.execute_batch(SCHEMA_V1)?;
+                for (_, sql) in ADDITIVE_TABLES {
+                    txn.conn.execute_batch(sql)?;
+                }
+                for (_, sql) in ADDITIVE_INDEXES {
+                    txn.conn.execute_batch(sql)?;
+                }
                 txn.conn.execute(
                     "INSERT INTO meta(key, value) VALUES ('schema_version', ?1), \
                      ('created_by', ?2), ('last_written_by', ?2), \
@@ -1552,7 +1562,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 4] = [
+const ADDITIVE_TABLES: [(&str, &str); 5] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1626,6 +1636,31 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 ) STRICT;",
+    ),
+    // 052 §8.7/§8.11: the successor environment generation a workspace
+    // activation reserved, plus the two runs it binds — the environment
+    // activation run admitted at E and the Task-owned session staged against
+    // it at its own generation S. One row per (environment, generation): a
+    // later generation is a new activation, and the earlier row is kept as the
+    // evidence a recovery reads. `state` is text without a CHECK on purpose, so
+    // a reader that meets a state it does not know refuses instead of guessing.
+    // No foreign key: a pruned run must not take its reservation with it.
+    (
+        "workspace_activation_reservations",
+        "CREATE TABLE IF NOT EXISTS workspace_activation_reservations (
+  environment TEXT NOT NULL,
+  environment_generation INTEGER NOT NULL,
+  reservation_id TEXT NOT NULL UNIQUE,
+  state TEXT NOT NULL,
+  environment_run TEXT,
+  session_run TEXT,
+  session_generation INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (environment, environment_generation)
+) STRICT;
+CREATE INDEX IF NOT EXISTS workspace_activation_reservations_session
+  ON workspace_activation_reservations(session_run)",
     ),
 ];
 
