@@ -341,7 +341,7 @@ pub fn install(
     // refused here rather than after the manager has already followed them.
     let activation = ActivationDir::open(paths, operator_uid)?;
     let entry = checked_entry(&activation, paths)?;
-    let linked = entry == ActivationEntry::Ours;
+    let linked = matches!(entry, ActivationEntry::Ours(_));
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     let name = FileName::new(UNIT_NAME).map_err(error)?;
     let replace = ReplaceOpts {
@@ -356,7 +356,7 @@ pub fn install(
         Observed::Verified(existing, _) if owned_unit(&existing.0) => {
             let previous = existing.0;
             if linked {
-                drop_verified_entry(&activation)?;
+                drop_verified_entry(&activation, entry)?;
             }
             if let Err(failure) = run.replace_file(&dir, &name, &bytes, replace) {
                 return Err(rewrite_failed(paths, operator_uid, &previous, linked, failure));
@@ -370,7 +370,7 @@ pub fn install(
         }
         Observed::Absent(_) => {
             if linked {
-                drop_verified_entry(&activation)?;
+                drop_verified_entry(&activation, entry)?;
             }
             run.replace_file(&dir, &name, &bytes, replace).map_err(error)?;
         }
@@ -492,14 +492,14 @@ pub fn remove(
             // before the manager is asked to do anything, and a foreign entry
             // is refused rather than skipped.
             let activation = ActivationDir::open(paths, operator_uid)?;
-            let linked = checked_entry(&activation, paths)? == ActivationEntry::Ours;
-            if linked {
+            let entry = checked_entry(&activation, paths)?;
+            if matches!(entry, ActivationEntry::Ours(_)) {
                 if let Some(reason) = manager_refusal(systemd.run(&["disable", UNIT_NAME])) {
                     return Err(error(format!(
                         "the login activation link for {UNIT_NAME} is still present ({reason}); run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup --remove`"
                     )));
                 }
-                drop_verified_entry(&activation)?;
+                drop_verified_entry(&activation, entry)?;
             }
             return Ok(());
         }
@@ -520,7 +520,8 @@ pub fn remove(
     // different target or something that is not a link — is refused, not
     // treated as absent.
     let activation = ActivationDir::open(paths, operator_uid)?;
-    let linked = checked_entry(&activation, paths)? == ActivationEntry::Ours;
+    let entry = checked_entry(&activation, paths)?;
+    let linked = matches!(entry, ActivationEntry::Ours(_));
     // `disable --now` runs the unit's ExecStop, which is the ordinary
     // kernel-owned `gateway down`. systemd requests the stop; the gateway
     // engine performs and records it.
@@ -530,9 +531,10 @@ pub fn remove(
         )));
     }
     // The manager's own disable may already have removed the entry; the bound
-    // descriptor keeps this unlink to the directory that was verified.
+    // descriptor keeps this unlink to the directory that was verified, and the
+    // observed identity catches a replacement the manager left behind.
     if linked {
-        drop_verified_entry(&activation)?;
+        drop_verified_entry(&activation, entry)?;
     }
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     crate::setup::remove_managed_with(cx, &dir, UNIT_NAME, |path| std::fs::remove_file(path))?;
@@ -558,17 +560,40 @@ struct ActivationDir {
     entry: PathBuf,
 }
 
+/// One observed activation entry: the inode the name holds (never followed) and
+/// the target a symlink names. Identity is the inode, so a link that was
+/// replaced with an identical target is still a different entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EntryIdentity {
+    dev: u64,
+    ino: u64,
+    target: PathBuf,
+}
+
 /// What Effigy's activation entry is inside the verified directory. A foreign
 /// entry is refused before any manager request, because the manager resolves
 /// the same path Effigy refuses to touch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ActivationEntry {
     /// No entry at Effigy's name.
     Absent,
-    /// A symlink naming Effigy's own unit path.
-    Ours,
+    /// A symlink naming Effigy's own unit path, with the identity observed.
+    Ours(EntryIdentity),
     /// A symlink to another target, or something that is not a link at all.
     Foreign,
+}
+
+impl ActivationEntry {
+    fn describe(&self) -> String {
+        match self {
+            Self::Absent => "it vanished".to_owned(),
+            Self::Ours(identity) => format!(
+                "it is now a different entry naming {}",
+                identity.target.display()
+            ),
+            Self::Foreign => "it is no longer Effigy's link".to_owned(),
+        }
+    }
 }
 
 impl ActivationDir {
@@ -608,19 +633,55 @@ impl ActivationDir {
         }))
     }
 
-    /// What Effigy's entry is: absent, Effigy's own link, or foreign. A foreign
-    /// entry is never removed, replaced or handed to the manager.
+    /// What Effigy's entry is: absent, Effigy's own link with its observed
+    /// identity, or foreign. A foreign entry is never removed, replaced or
+    /// handed to the manager.
     fn entry(&self) -> io::Result<ActivationEntry> {
-        match self.target_of(UNIT_NAME) {
-            Ok(None) => Ok(ActivationEntry::Absent),
-            Ok(Some(target)) if target == self.unit => Ok(ActivationEntry::Ours),
+        self.entry_of(UNIT_NAME)
+    }
+
+    /// One entry's state inside the bound directory.
+    fn entry_of(&self, name: &str) -> io::Result<ActivationEntry> {
+        let Some((dev, ino)) = self.identity_of(name)? else {
+            return Ok(ActivationEntry::Absent);
+        };
+        match self.target_of(name) {
+            Ok(Some(target)) if target == self.unit => {
+                Ok(ActivationEntry::Ours(EntryIdentity { dev, ino, target }))
+            }
             Ok(Some(_)) => Ok(ActivationEntry::Foreign),
+            Ok(None) => Ok(ActivationEntry::Absent),
             // A non-link entry is not Effigy's link either.
             Err(failure) if failure.raw_os_error() == Some(libc::EINVAL) => {
                 Ok(ActivationEntry::Foreign)
             }
             Err(failure) => Err(failure),
         }
+    }
+
+    /// The inode of one entry, without following it.
+    fn identity_of(&self, name: &str) -> io::Result<Option<(u64, u64)>> {
+        use std::os::fd::AsRawFd;
+        let name = cstring(name)?;
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: live directory descriptor, NUL-terminated name and a writable
+        // stat buffer; AT_SYMLINK_NOFOLLOW keeps the link itself.
+        if unsafe {
+            libc::fstatat(
+                self.dir.as_raw_fd(),
+                name.as_ptr(),
+                &mut stat,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            let failure = io::Error::last_os_error();
+            return match failure.raw_os_error() {
+                Some(libc::ENOENT) => Ok(None),
+                _ => Err(failure),
+            };
+        }
+        Ok(Some((stat.st_dev as u64, stat.st_ino as u64)))
     }
 
     /// The target of one entry inside the bound directory. `None` means the
@@ -670,37 +731,89 @@ impl ActivationDir {
     /// final component), verified under a name the manager does not use, and
     /// only then removed. Anything that is not Effigy's own link is put back
     /// exactly as it was found and refused.
-    fn unlink_entry(&self) -> io::Result<()> {
-        let staged = self.staging_name();
-        if let Err(failure) = self.rename_named(UNIT_NAME, &staged) {
-            return match failure.raw_os_error() {
-                // The entry is already gone; there is nothing to remove.
-                Some(libc::ENOENT) => Ok(()),
-                _ => Err(error(format!(
+    fn unlink_entry(&self, expected: &EntryIdentity) -> io::Result<()> {
+        self.unlink_entry_staged(expected, &self.staging_name())
+    }
+
+    /// The staged removal for one expected entry. The caller observed this
+    /// exact inode; anything else at the name is a replacement and is refused.
+    fn unlink_entry_staged(&self, expected: &EntryIdentity, staged: &str) -> io::Result<()> {
+        // Move the entry aside without replacing anything already at the
+        // temporary name, so a leftover or a squatter is never overwritten.
+        match self.rename_named_exclusive(UNIT_NAME, staged) {
+            Ok(()) => {}
+            // The entry is already gone; there is nothing to remove.
+            Err(failure) if failure.raw_os_error() == Some(libc::ENOENT) => return Ok(()),
+            Err(failure) if failure.raw_os_error() == Some(libc::EEXIST) => {
+                return Err(error(format!(
+                    "the login activation entry {} was not removed: the temporary name {} is already in use, and Effigy does not replace an entry it did not write. Move it aside, then run `effigy gateway setup` again",
+                    self.entry.display(),
+                    self.staged_path(staged).display()
+                )))
+            }
+            Err(failure) => {
+                return Err(error(format!(
                     "moving the login activation entry {} aside failed: {failure}; run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again",
                     self.entry.display()
-                ))),
-            };
-        }
-        match self.target_of(&staged) {
-            Ok(Some(target)) if target == self.unit => self.unlink_named(&staged),
-            other => {
-                let found = match other {
-                    Ok(Some(target)) => format!("it names {}", target.display()),
-                    Ok(None) => "it vanished".to_owned(),
-                    Err(failure) => failure.to_string(),
-                };
-                let put_back = self.rename_named(&staged, UNIT_NAME);
-                Err(error(format!(
-                    "the login activation entry {} changed while it was being removed ({found}); {}. It is preserved, not deleted. Move it aside, then run `effigy gateway setup` again",
-                    self.entry.display(),
-                    match put_back {
-                        Ok(()) => "it was put back",
-                        Err(_) => "it could not be put back automatically, so it is at the temporary name next to Effigy's unit entry",
-                    }
                 )))
             }
         }
+        // The entry that moved has to be the exact one that was observed: a
+        // different inode is a replacement even when it names the same unit.
+        match self.entry_of(staged) {
+            Ok(ActivationEntry::Ours(observed)) if &observed == expected => {}
+            Ok(other) => return Err(self.changed_entry(&other, staged)),
+            Err(failure) => {
+                return Err(error(format!(
+                    "inspecting the login activation entry {} failed: {failure}; run `effigy gateway setup` again",
+                    self.staged_path(staged).display()
+                )))
+            }
+        }
+        // The name is never unlinked on the strength of an older observation:
+        // the same identity is required again immediately before the unlink.
+        match self.entry_of(staged) {
+            Ok(ActivationEntry::Ours(observed)) if &observed == expected => {
+                self.unlink_named(staged)
+            }
+            Ok(other) => Err(self.changed_entry(&other, staged)),
+            Err(failure) => Err(error(format!(
+                "inspecting the login activation entry {} failed: {failure}; run `effigy gateway setup` again",
+                self.staged_path(staged).display()
+            ))),
+        }
+    }
+
+    /// Refuse a staged entry that is not the one that was observed, putting it
+    /// back only when its own name is still free.
+    fn changed_entry(&self, observed: &ActivationEntry, staged: &str) -> io::Error {
+        let detail = match observed {
+            ActivationEntry::Ours(identity) => format!(
+                "it is now a different entry naming {}",
+                identity.target.display()
+            ),
+            other => other.describe(),
+        };
+        let kept = match self.rename_named_exclusive(staged, UNIT_NAME) {
+            Ok(()) => "it was put back".to_owned(),
+            Err(failure) if failure.raw_os_error() == Some(libc::EEXIST) => format!(
+                "its name is now occupied by another entry, so the entry Effigy moved is kept at {}",
+                self.staged_path(staged).display()
+            ),
+            Err(failure) => format!(
+                "it could not be put back automatically ({failure}) and is kept at {}",
+                self.staged_path(staged).display()
+            ),
+        };
+        error(format!(
+            "the login activation entry {} changed while it was being removed ({detail}); {kept}. It is preserved, not deleted. Move it aside, then run `effigy gateway setup` again",
+            self.entry.display()
+        ))
+    }
+
+    /// The full path of a temporary name, for the messages only.
+    fn staged_path(&self, staged: &str) -> PathBuf {
+        self.entry.with_file_name(staged)
     }
 
     /// A temporary name for the staged removal. It is inside the verified
@@ -714,22 +827,20 @@ impl ActivationDir {
         format!(".{UNIT_NAME}.removal-{}-{nanos}", std::process::id())
     }
 
-    /// `renameat` inside this directory: it renames the entry itself, never the
-    /// file it points at.
-    fn rename_named(&self, from: &str, to: &str) -> io::Result<()> {
+    /// Rename one entry to another name in this directory without replacing
+    /// anything already there: `renameat2(RENAME_NOREPLACE)` on Linux and
+    /// `renameatx_np(RENAME_EXCL)` on macOS. Ordinary `renameat` would silently
+    /// overwrite the destination, which is exactly what must not happen to an
+    /// entry Effigy did not write.
+    fn rename_named_exclusive(&self, from: &str, to: &str) -> io::Result<()> {
         use std::os::fd::AsRawFd;
         let from = cstring(from)?;
         let to = cstring(to)?;
-        // SAFETY: live directory descriptor and two NUL-terminated names.
-        if unsafe {
-            libc::renameat(
-                self.dir.as_raw_fd(),
-                from.as_ptr(),
-                self.dir.as_raw_fd(),
-                to.as_ptr(),
-            )
-        } != 0
-        {
+        let dir = self.dir.as_raw_fd();
+        // SAFETY: live directory descriptor and two NUL-terminated names; the
+        // flags only add "do not replace an existing destination".
+        let result = rename_exclusive(dir, &from, dir, &to);
+        if result != 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(())
@@ -772,7 +883,7 @@ impl ActivationDir {
                 )));
             }
             return match self.entry()? {
-                ActivationEntry::Ours => Ok(()),
+                ActivationEntry::Ours(_) => Ok(()),
                 ActivationEntry::Foreign => Err(error(format!(
                     "the login activation entry {} appeared while the launch unit was being restored and is not Effigy's link to {}; move it aside, then run `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again",
                     self.entry.display(),
@@ -786,6 +897,61 @@ impl ActivationDir {
         }
         Ok(())
     }
+}
+
+/// `rename` without replacing an existing destination, on the platforms the
+/// Linux launch adapter runs on. A platform without the primitive refuses
+/// (the caller reports it) rather than falling back to a replacing rename.
+#[cfg(target_os = "linux")]
+fn rename_exclusive(
+    from_dir: std::os::fd::RawFd,
+    from: &std::ffi::CStr,
+    to_dir: std::os::fd::RawFd,
+    to: &std::ffi::CStr,
+) -> libc::c_int {
+    // SAFETY: two live directory descriptors and NUL-terminated names;
+    // RENAME_NOREPLACE only adds "fail if the destination exists".
+    unsafe {
+        libc::renameat2(
+            from_dir,
+            from.as_ptr(),
+            to_dir,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_exclusive(
+    from_dir: std::os::fd::RawFd,
+    from: &std::ffi::CStr,
+    to_dir: std::os::fd::RawFd,
+    to: &std::ffi::CStr,
+) -> libc::c_int {
+    // SAFETY: two live directory descriptors and NUL-terminated names;
+    // RENAME_EXCL only adds "fail if the destination exists".
+    unsafe {
+        libc::renameatx_np(
+            from_dir,
+            from.as_ptr(),
+            to_dir,
+            to.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn rename_exclusive(
+    _from_dir: std::os::fd::RawFd,
+    _from: &std::ffi::CStr,
+    _to_dir: std::os::fd::RawFd,
+    _to: &std::ffi::CStr,
+) -> libc::c_int {
+    // No exclusive rename here, so nothing is renamed at all.
+    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    -1
 }
 
 /// Open a directory without following a final link.
@@ -833,7 +999,7 @@ fn checked_entry(
         Some(dir) => dir.entry()?,
         None => ActivationEntry::Absent,
     };
-    if entry == ActivationEntry::Foreign {
+    if matches!(entry, ActivationEntry::Foreign) {
         return Err(error(format!(
             "preserving the foreign login activation entry {}: it is not Effigy's link to {}. Move it aside, then run `effigy gateway setup` again",
             paths.wants.display(),
@@ -843,13 +1009,17 @@ fn checked_entry(
     Ok(entry)
 }
 
-/// Validate the activation directory, then drop Effigy's own entry through it.
-/// The handle is the one `install` and `remove` opened and verified *before*
-/// any manager request, so the unlink cannot be redirected afterwards.
-fn drop_verified_entry(activation: &Option<ActivationDir>) -> io::Result<()> {
-    match activation {
-        Some(dir) => dir.unlink_entry(),
-        None => Ok(()),
+/// Validate the activation directory, then drop the *exact* entry that was
+/// observed there. The handle and the identity both come from the check that
+/// ran before any manager request, so neither a redirected directory nor a
+/// replaced entry can be removed afterwards.
+fn drop_verified_entry(
+    activation: &Option<ActivationDir>,
+    entry: ActivationEntry,
+) -> io::Result<()> {
+    match (activation, entry) {
+        (Some(dir), ActivationEntry::Ours(identity)) => dir.unlink_entry(&identity),
+        _ => Ok(()),
     }
 }
 
@@ -1565,7 +1735,7 @@ fn activation_linked(paths: &LaunchPaths, operator_uid: u32) -> bool {
         .ok()
         .flatten()
         .and_then(|dir| dir.entry().ok())
-        == Some(ActivationEntry::Ours)
+        .is_some_and(|entry| matches!(entry, ActivationEntry::Ours(_)))
 }
 
 /// Whether a login-less boot start is opted in. `None` is unobservable.
@@ -1844,6 +2014,14 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    /// The identity of Effigy's observed activation entry.
+    fn observed_entry(activation: &ActivationDir) -> EntryIdentity {
+        match activation.entry().unwrap() {
+            ActivationEntry::Ours(identity) => identity,
+            other => panic!("expected Effigy's link, got {other:?}"),
+        }
     }
 
     /// Every command the image at `name` was asked to run, one per line.
@@ -3211,6 +3389,25 @@ mod tests {
     }
 
     /// A manager whose `disable --now` removes Effigy's activation link and
+    /// recreates it with the same target — a new inode, so a different entry.
+    struct RecreateLinkOnDisable {
+        paths: LaunchPaths,
+    }
+
+    impl SystemdUser for RecreateLinkOnDisable {
+        fn run(&mut self, args: &[&str]) -> io::Result<SystemdOutcome> {
+            if args == ["disable", "--now", UNIT_NAME] {
+                let _ = std::fs::remove_file(&self.paths.wants);
+                std::os::unix::fs::symlink(&self.paths.unit, &self.paths.wants).unwrap();
+            }
+            Ok(SystemdOutcome {
+                code: 0,
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    /// A manager whose `disable --now` removes Effigy's activation link and
     /// leaves a foreign entry under the same name before Effigy removes it.
     struct ReplaceEntryOnDisable {
         paths: LaunchPaths,
@@ -3370,8 +3567,38 @@ mod tests {
         });
     }
 
+    /// A same-target replacement is a different inode, so removal refuses it
+    /// even when the link still names Effigy's unit.
+    #[test]
+    fn a_manager_that_recreates_the_activation_link_with_the_same_target_is_refused() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(activation_linked(&paths, uid));
+
+            let mut recreating = RecreateLinkOnDisable {
+                paths: paths.clone(),
+            };
+            let error = remove(cx, &paths, uid, &mut recreating).unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains("changed while it was being removed"),
+                "{message}"
+            );
+            // The replacement is still there, still naming Effigy's unit, and
+            // the unit file was not deleted.
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
+            assert!(paths.unit.exists());
+        });
+    }
+
     /// Removing an entry Effigy did not write is refused at the entry, not just
-    /// at the directory: the name is moved aside, verified, and put back.
+    /// at the directory: the name is moved aside, verified, and put back. A
+    /// replaced entry is a different inode even when it names the same unit.
     #[test]
     fn removing_an_activation_entry_refuses_one_that_changed_first() {
         with_run(|run, cx| {
@@ -3383,17 +3610,33 @@ mod tests {
             install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
             let activation = ActivationDir::open(&paths, uid).unwrap().unwrap();
 
-            // Effigy's own link is removed.
-            activation.unlink_entry().unwrap();
+            // Effigy's own observed link is removed.
+            let observed = observed_entry(&activation);
+            activation.unlink_entry(&observed).unwrap();
             assert!(!activation_linked(&paths, uid));
-            // Nothing is left to remove, and that is not an error.
-            activation.unlink_entry().unwrap();
+
+            // Nothing is left to remove, and that is not an error even with the
+            // identity of the entry that is gone.
+            activation.unlink_entry(&observed).unwrap();
+
+            // The same target through a different inode is a replacement.
+            std::os::unix::fs::symlink(&paths.unit, &paths.wants).unwrap();
+            let error = activation.unlink_entry(&observed).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("changed while it was being removed"),
+                "{error}"
+            );
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
 
             // A foreign entry is refused and preserved.
             let elsewhere = home.path().join("elsewhere.service");
             std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+            let current = observed_entry(&activation);
+            std::fs::remove_file(&paths.wants).unwrap();
             std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
-            let error = activation.unlink_entry().unwrap_err();
+            let error = activation.unlink_entry(&current).unwrap_err();
             assert!(
                 error
                     .to_string()
@@ -3405,7 +3648,7 @@ mod tests {
             // A regular file is treated the same way.
             std::fs::remove_file(&paths.wants).unwrap();
             std::fs::write(&paths.wants, b"not a link\n").unwrap();
-            let error = activation.unlink_entry().unwrap_err();
+            let error = activation.unlink_entry(&current).unwrap_err();
             assert!(
                 error
                     .to_string()
@@ -3413,6 +3656,63 @@ mod tests {
                 "{error}"
             );
             assert_eq!(std::fs::read(&paths.wants).unwrap(), b"not a link\n");
+        });
+    }
+
+    /// The staged name is never overwritten, and a put-back never replaces an
+    /// entry that appeared while the replacement was staged.
+    #[test]
+    fn a_staged_removal_never_replaces_an_entry_it_did_not_write() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let activation = ActivationDir::open(&paths, uid).unwrap().unwrap();
+            let observed = observed_entry(&activation);
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+
+            // A foreign entry already sits at the temporary name.
+            let staged = ".effigy-gateway.service.removal-fixture";
+            std::os::unix::fs::symlink(&elsewhere, paths.wants.with_file_name(staged)).unwrap();
+            let error = activation
+                .unlink_entry_staged(&observed, staged)
+                .unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("is already in use"), "{message}");
+            assert!(message.contains("does not replace an entry"), "{message}");
+            // Nothing was moved, replaced or deleted.
+            assert_eq!(
+                std::fs::read_link(paths.wants.with_file_name(staged)).unwrap(),
+                elsewhere
+            );
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
+            std::fs::remove_file(paths.wants.with_file_name(staged)).unwrap();
+
+            // Effigy's entry is staged, then a foreign entry appears at its
+            // name: the put-back refuses and keeps both entries.
+            activation
+                .rename_named_exclusive(UNIT_NAME, staged)
+                .unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let error = activation.changed_entry(&ActivationEntry::Foreign, staged);
+            let message = error.to_string();
+            assert!(
+                message.contains("changed while it was being removed"),
+                "{message}"
+            );
+            assert!(message.contains("preserved, not deleted"), "{message}");
+            assert!(message.contains("its name is now occupied"), "{message}");
+            // The foreign entry survived, and Effigy's own entry is kept aside
+            // rather than replacing it.
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+            assert_eq!(
+                std::fs::read_link(paths.wants.with_file_name(staged)).unwrap(),
+                paths.unit
+            );
         });
     }
 

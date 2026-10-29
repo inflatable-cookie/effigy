@@ -1663,12 +1663,17 @@ The login activation directory
 by you and not group- or world-writable, and the entry Effigy uses there must
 be its own link to the owned unit. Effigy binds and verifies both, then reads
 and removes only its own entry — never by reopening the path, and never by
-unlinking a name it checked earlier. Removal moves the entry aside atomically
-(`renameat` never follows the final component) and verifies it under that
-private name before unlinking it, so an entry the manager replaced in between
-is put back and refused instead of deleted. This happens *before* any
-`systemctl --user` request that could follow the directory or entry (`enable`
-on a repeated setup, `disable --now` on `setup --remove`), so a
+unlinking a name it checked earlier. Removal records the entry's inode at the
+check, moves the entry aside atomically into a temporary name inside the
+verified directory, and requires that same inode (and target) again after the
+move and immediately before the unlink, so a link replaced with an identical
+target is refused as a different entry. Both the move aside and the put-back
+are exclusive renames (`renameat2(RENAME_NOREPLACE)` on Linux,
+`renameatx_np(RENAME_EXCL)` on macOS): an entry already at the temporary name
+is never overwritten, and a put-back refuses — naming where Effigy's entry is
+kept — when something appeared at the unit name instead. This happens *before*
+any `systemctl --user` request that could follow the directory or entry
+(`enable` on a repeated setup, `disable --now` on `setup --remove`), so a
 `default.target.wants` that is a symlink to another directory, or an entry that
 names another target or is not a link, is refused without touching it and
 without stopping or disabling anything; `setup --remove` also refuses before

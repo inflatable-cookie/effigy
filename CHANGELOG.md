@@ -164,14 +164,16 @@ During v0.x, MINOR bumps may include breaking changes.
   its entry is absent, Effigy's own link or foreign: a symlinked
   `default.target.wants` and an entry naming another target (or not a link) are
   refused without touching them or stopping anything, and removal refuses
-  before the unit file is deleted. Removal binds the entry itself: it is moved
-  aside, verified and only then unlinked, so an entry the manager replaced in
-  between is put back and refused. An `enable` that fails after writing the link
-  is reported as enabled and still carries the manager failure and its recovery
-  commands. A failed unit rewrite restores the previous file's activation and
-  says the installed route still works, never enables a unit the operator had
-  disabled, and only calls a restore successful when the restored entry verifies
-  as Effigy's own link.
+  before the unit file is deleted. Removal binds the entry itself: its inode is
+  recorded at the check, the entry is moved aside and must still be that inode
+  (with that target) after the move and immediately before the unlink, and both
+  the move and the put-back are exclusive renames that never overwrite an entry
+  Effigy did not write — a collision is refused and both entries are kept. An
+  `enable` that fails after writing the link is reported as enabled and still
+  carries the manager failure and its recovery commands. A failed unit rewrite
+  restores the previous file's activation and says the installed route still
+  works, never enables a unit the operator had disabled, and only calls a
+  restore successful when the restored entry verifies as Effigy's own link.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
