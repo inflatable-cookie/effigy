@@ -159,6 +159,15 @@ During v0.x, MINOR bumps may include breaking changes.
   collisions, and keyed successor recovery keeps escalation serviceable.
   Secondary handles recover lost creation responses without allocating another
   slot, and conflicting replays refuse stale sessions before returning a digest.
+- The workspace host authority channel's protocol is implemented in the kernel
+  (`crates/effigy-kernel/src/workspace_channel.rs`): §8.11's length-prefixed v1
+  frames and limits, a server-pin check that runs before any credential
+  crosses, hello/version/digest negotiation, session-bound capabilities and
+  enrolment, and typed `observe`/`invoke`/`attach`/`cancel`/`detach` dispatch.
+  A request id is looked up and reserved before any engine is asked to admit
+  it, so a retry returns the recorded admission, its recorded outcome, or
+  `unknown` — never a second run — across a reconnect or supervisor restart.
+  No transport, guest client or command surface is wired to it yet.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer

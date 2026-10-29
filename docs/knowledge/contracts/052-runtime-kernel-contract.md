@@ -2826,6 +2826,33 @@ the owning client's handle and no other. Both refuse a run this session did not
 admit and grant nothing: the dispatcher's grant check remains the authority.
 `test:kernel:workspace` owns these proofs.
 
+**Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
+v1 wire, its framing and limits, the server pin check, negotiation, grants,
+enrolment and the typed entry points. It reads the key with `run::lookup`
+before it calls `run::reserve`, so a retry spends no entropy and reaches no
+engine, and an unreadable record is answered `unknown` rather than admitted
+again. Resolution, admission and observation stay with the owning host engines
+through four small seams — `Resolver`, `Admission`, `Observer` and `RunIds` —
+and `Admission` receives the reservation's `AdmissionTicket`, which the engine
+hands to `EngineLaunch::admission`, so the run an engine admits is the run the
+record names. `observe` reserves nothing and attaches nothing; a capability is
+memory-only, checked before every effect, and its operation and target scope is
+the host's, never the client's. Every request is checked against the grant's
+server-side binding as well as its own claims, and enrolment issues a capability
+for the session the host recorded, never the one an `enrol` frame names.
+Revoking a generation ends the enrolment credential with the capabilities it
+issued, so re-enrolment cannot mint a live capability for a dead generation.
+A connection owns at most one attachment: attaching to another run refuses,
+replacing this connection's own secondary releases the replaced row, and only
+the connection that admitted a run holds its owner handle. Captured output is
+published through a pump bounded by the acknowledgement window, so a control
+request is answered while data is backpressured; the connection's lifetime is
+its session's, and a closed connection whose frames were malformed releases no
+owner lifetime. Each connection starts and ends with no queued stream state, so
+a server that serves a reconnect publishes nothing from the previous connection
+and never carries an unpublished chunk or a full window into it. The transport, the guest client and the runner integration
+remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |
