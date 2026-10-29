@@ -489,6 +489,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- `effigy gateway setup` works on a machine where the operator home has never
+  held Effigy state. A gateway directory that is verified absent is no legacy
+  state to migrate, so first-ever setup reaches the platform step instead of
+  failing with `I/O error: No such file or directory`. Absence is never
+  inferred from an error, and it is the operator's own answer rather than the
+  root setup child's: a symlinked, unsafe or unreadable `.effigy` or gateway
+  directory, a `.effigy` owned by root or another account, a home the operator
+  cannot read or search, and a partial existing identity all still refuse and
+  change nothing, naming the path and the repair. The refusal for an executable
+  past setup's 512 MiB staging bound names the bound and points at a release
+  build.
+
 - Let completed machine gateway setup runs close their sentinel promptly,
   avoiding a setup failure caused by a sentinel-close timeout.
 
