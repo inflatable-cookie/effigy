@@ -102,10 +102,9 @@ pub fn declared_env_keys(command: &str) -> std::collections::BTreeSet<String> {
 /// a backslash escape. `None` at the end of the text.
 fn shell_word(text: &str) -> Option<(String, &str)> {
     let mut word = String::new();
-    let mut characters = text.char_indices();
     let mut quote: Option<char> = None;
     let mut escaped = false;
-    while let Some((index, character)) = characters.next() {
+    for (index, character) in text.char_indices() {
         if escaped {
             word.push(character);
             escaped = false;
