@@ -1664,15 +1664,14 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         !delayed.status.success(),
         "a listener that never becomes ready must fail startup"
     );
-    // The caller's readiness budget starts at the supervisor's own activation
-    // record, so a slow publication is supervision admission, not readiness.
-    // The failure the caller reports is therefore the supervisor's typed
-    // readiness observation, never the caller's own deadline (b1bf877f).
+    // A slow activation publication is supervision admission, not readiness.
+    // The partial-exposure failure must carry the supervisor's observed HTTP
+    // refusal, rather than substituting the caller's publication deadline.
     let delayed_stdout = String::from_utf8_lossy(&delayed.stdout);
     let delayed_stderr = String::from_utf8_lossy(&delayed.stderr);
     let delayed_report = format!("{delayed_stdout}{delayed_stderr}");
     assert!(
-        delayed_report.contains("failed before readiness"),
+        delayed_report.contains("partial") && delayed_report.contains("status_mismatch"),
         "the caller must report the supervisor's own terminal readiness failure: {delayed_report}"
     );
     assert!(
@@ -1680,8 +1679,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "the caller substituted its own readiness deadline for the supervisor's terminal record: {delayed_report}"
     );
     assert!(
-        delayed_report.contains("waiting for the managed listener at"),
-        "the failure names the reserved address the supervisor waited on: {delayed_report}"
+        delayed_report.contains("503") && delayed_report.contains("/health"),
+        "the failure names the observed status and readiness path: {delayed_report}"
     );
     let delayed_state_path = listener_state_path(primary_checkout, primary_profile, "app");
     // The detached `up` returns only after the losing scope is settled, so the

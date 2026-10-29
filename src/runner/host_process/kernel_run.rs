@@ -906,31 +906,22 @@ fn start_host_processes_inner(
                         budget_expired,
                     }) => {
                         activation_budget_spent = budget_expired;
-                        let diagnostic = if budget_expired {
-                            // The command has stopped waiting, so this
-                            // generation must not publish a route after the
-                            // activation reports it withheld: settle it now,
-                            // under the same fenced kernel stop `down` uses,
-                            // and release its owning pipe (effigy#455).
-                            settle_listener_generation(
-                                repo_root,
-                                policy,
-                                &hp.name,
-                                "activation budget",
-                            )?;
-                            debug_assert_eq!(
-                                started.last().map(|(name, _)| name.as_str()),
-                                Some(hp.name.as_str()),
-                                "the settled generation is the one this activation started"
-                            );
-                            started.pop();
-                            format!(
-                                "{diagnostic}; its generation was settled before this activation returned, so it cannot publish that route later — `effigy container {} restart {}` starts it again",
-                                policy.name, hp.name
-                            )
-                        } else {
-                            diagnostic
-                        };
+                        // No withheld start may detach: a failure before the
+                        // first child never emits Active, and a retrying
+                        // supervisor could publish after this report. Settle
+                        // it under the fenced stop and release its owning pipe
+                        // before reporting partial exposure (effigy#455).
+                        settle_listener_generation(repo_root, policy, &hp.name, "withheld start")?;
+                        debug_assert_eq!(
+                            started.last().map(|(name, _)| name.as_str()),
+                            Some(hp.name.as_str()),
+                            "the settled generation is the one this activation started"
+                        );
+                        started.pop();
+                        let diagnostic = format!(
+                            "{diagnostic}; its generation was settled before this activation returned, so it cannot publish that route later — `effigy container {} restart {}` starts it again",
+                            policy.name, hp.name
+                        );
                         withheld.insert(hp.name.clone(), (diagnostic.clone(), observed_status));
                         listener_failures.push(listener_failure(
                             hp,
@@ -1098,16 +1089,16 @@ fn withdraw_listener(
     withheld: &mut BTreeMap<String, (String, Option<u16>)>,
     listener_failures: &mut Vec<ManagedHostListenerFailure>,
 ) -> Result<(), RunnerError> {
+    settle_listener_generation(repo_root, policy, &hp.name, purpose)?;
     let Some(listener) = listener else {
         // A process without a listener serves no route, so there is no exposure
-        // to withhold; it stays unstarted and the console says why instead of
-        // waiting on it. Its own dependents still learn about it from
-        // `withheld`.
+        // to withhold; its previous generation is stopped and the console says
+        // why it was not restarted. Its own dependents still learn about it
+        // from `withheld`.
         withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
         eprintln!("[host process] `{}` was not started: {detail}", hp.name);
         return Ok(());
     };
-    settle_listener_generation(repo_root, policy, &hp.name, purpose)?;
     let detail = format!(
         "{detail}; any generation it ran before was settled so it no longer serves a route this activation does not expose"
     );
@@ -1245,8 +1236,15 @@ fn settle_listener_generation(
     name: &str,
     purpose: &str,
 ) -> Result<(), RunnerError> {
-    let resource = host_process_resource(policy, name)?;
-    stop_resource_run(repo_root, policy, &resource, name, purpose).map(|_| ())
+    let selection = BTreeSet::from([name.to_owned()]);
+    let report = stop_host_processes(repo_root, policy, Some(&selection));
+    if !report.complete() {
+        return Err(RunnerError::task_invocation(format!(
+            "host process `{name}` could not settle its generation ({purpose}):\n{}",
+            report.lines().join("\n")
+        )));
+    }
+    Ok(())
 }
 
 /// What one listener's failure contributes to the caller's per-route report:

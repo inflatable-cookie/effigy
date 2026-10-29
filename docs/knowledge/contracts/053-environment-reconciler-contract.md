@@ -260,10 +260,16 @@ order, stopped by `down`, `reset` and session settle with a
 when it fails, its own route stays withheld while the environment's published
 routes and the other sidecars' routes remain, and a `depends_on` sidecar of a
 withheld listener withholds its route too, through the whole chain (effigy#455).
+The current dependency decision precedes reconciliation of any previous
+generation. A withheld dependent's old run is settled before the report,
+including a process without a listener; an incomplete stop remains a refusal.
 Sidecar startup shares the bring-up's one runtime-observation budget: a listener
 still starting when it is spent withholds its route and ends the command's wait
 rather than holding the activation open, while the supervisor keeps its own
 readiness semantics.
+Every withheld listener start is settled before the command returns, including
+a retrying failure before its first child. Only successful starts are detached;
+the withheld supervisor cannot publish a late route.
 
 ## 9. Not yet
 

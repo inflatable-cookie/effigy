@@ -669,7 +669,12 @@ During v0.x, MINOR bumps may include breaking changes.
   TLS, bind, live readiness), so only a generation that still serves the
   declared target keeps its route; a generation that fails that check is
   settled and its route withdrawn, and a withheld listener's `depends_on`
-  chain withholds every dependent route. A log line whose `key=` marker falls
+  chain withholds every dependent route, settling previously running dependents
+  under the current declaration even after the activation budget expires.
+  Retrying listener failures are settled too, including failures before the
+  first child, so detach cannot hang waiting for them to become active or let
+  them publish a late route. An incomplete settlement remains a refusal.
+  A log line whose `key=` marker falls
   outside the bounded read window is dropped rather than printed unredacted
   (effigy#455).
 - An environment transition settles on a budget that starts when settlement

@@ -327,6 +327,14 @@ owner, so a retry never duplicates another target's route. An uncertain
 container identity still publishes no route at all, because the readiness wait
 refuses before any route write.
 
+The current dependency declaration takes precedence over reconciliation of a
+previous generation, including after the activation budget expires. If this
+activation withholds a dependency, it settles the dependent's exact owned run
+before reporting its route withheld, even when that run started without the
+dependency. A dependent without a listener also has its previous run stopped.
+An incomplete stop remains a settlement refusal; it cannot become a claim that
+the route was withheld.
+
 The wait itself is bounded by the activation, not by the child's build. Host
 listener startup shares the bring-up's one runtime-observation budget
 (effigy#411). A listener still starting when that budget is spent withholds its
@@ -337,6 +345,12 @@ uses, so no route can be published after the activation reported that route
 withheld. `effigy container <NAME> restart <process>` starts it again, and
 `readiness.timeout_secs` still bounds only the wait after a listener's port
 first opens.
+
+This settlement also applies to definite listener failures with a restart
+policy. A supervisor that failed before spawning its first child cannot be
+detached while waiting for an `Active` event it never emitted. A withheld
+supervisor is stopped, so a retry cannot publish after the partial-exposure
+report; an explicit restart or a later `up` retries that listener.
 
 A listener that a later activation does not start is never taken on trust
 either: it is reconciled against its own published generation and route first,

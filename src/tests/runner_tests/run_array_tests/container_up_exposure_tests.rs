@@ -710,6 +710,78 @@ fn detached_up_json_names_partial_exposure_and_the_withheld_listener() {
     fixture.down();
 }
 
+/// A retry policy cannot keep a withheld start alive. In particular, a port
+/// collision fails before the first child emits Active, so trying to detach
+/// that supervisor would wait indefinitely for an event it never publishes.
+#[test]
+fn detached_up_settles_retrying_failures_before_detaching_healthy_listeners() {
+    for collision in [true, false] {
+        let fixture = ExposureFixture::new(
+            "retrying-failure",
+            &[
+                FixtureListener {
+                    name: "front",
+                    domain: FRONT_DOMAIN,
+                    child: REFUSING_CHILD,
+                },
+                FixtureListener {
+                    name: "api",
+                    domain: API_DOMAIN,
+                    child: READY_CHILD,
+                },
+            ],
+            30,
+        );
+        let manifest_path = fixture.repo().join("effigy.toml");
+        let manifest = std::fs::read_to_string(&manifest_path).expect("fixture manifest");
+        std::fs::write(
+            &manifest_path,
+            manifest.replace("restart = \"never\"", "restart = \"on-failure\""),
+        )
+        .expect("declare retrying listeners");
+        let foreign = collision.then(|| {
+            TcpListener::bind((Ipv4Addr::LOCALHOST, fixture.declared[0].2))
+                .expect("foreign listener on the declared port")
+        });
+        let started = Instant::now();
+        let error = fixture.up(true).expect_err("front is withheld");
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "a failed pre-child start must not wait for Active at detach"
+        );
+        let document: serde_json::Value =
+            serde_json::from_str(error.json_error_details().expect("partial exposure JSON"))
+                .expect("JSON document");
+        assert_eq!(document["withheld_routes"][0]["listener"], "front");
+        let detail = document["withheld_routes"][0]["detail"].as_str().unwrap();
+        assert!(
+            detail.contains(if collision {
+                "already answers"
+            } else {
+                "status_mismatch"
+            }),
+            "the original refusal is retained: {document}"
+        );
+        let state: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                fixture
+                    .repo()
+                    .join(".effigy/runtime/host-processes/e2e/effigy/front.listener.json"),
+            )
+            .expect("terminal listener record"),
+        )
+        .expect("listener state JSON");
+        assert_eq!(state["status"], "failed");
+        assert!(state["child_pid"].is_null() && state["route_owner"].is_null());
+        let table = fixture.routes();
+        assert!(table.lookup(FRONT_DOMAIN).is_none(), "{table:?}");
+        assert!(table.lookup(API_DOMAIN).is_some(), "{table:?}");
+        assert!(table.lookup(CONTAINER_DOMAIN).is_some(), "{table:?}");
+        drop(foreign);
+        fixture.down();
+    }
+}
+
 /// A closed port does not hold the activation open: the command returns at the
 /// bring-up's observation budget, its actual progress carries the child's own
 /// bounded, redacted output, and the listener's route stays withheld.
@@ -1140,6 +1212,66 @@ fn detached_up_withholds_a_dependent_whose_dependency_is_withheld() {
         table.lookup(CONTAINER_DOMAIN).is_some(),
         "the container's verified route stays published: {table:?}"
     );
+    fixture.down();
+}
+
+#[test]
+fn detached_up_stops_a_previous_process_when_its_new_dependency_is_withheld() {
+    let mut fixture = ExposureFixture::new(
+        "plain-dependent",
+        &[
+            FixtureListener {
+                name: "front",
+                domain: FRONT_DOMAIN,
+                child: READY_CHILD,
+            },
+            FixtureListener {
+                name: "api",
+                domain: API_DOMAIN,
+                child: READY_CHILD,
+            },
+        ],
+        30,
+    );
+    // Start api as a plain process, independently of front.
+    let declare_plain_api = |fixture: &ExposureFixture| {
+        let path = fixture.repo().join("effigy.toml");
+        let mut manifest: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let api = manifest["containers"]["e2e"]["host_processes"][1]
+            .as_table_mut()
+            .unwrap();
+        api.remove("listener");
+        api.insert("run".into(), toml::Value::String(
+            "exec python3 -c 'import os, time; open(\"api.pid\", \"w\").write(str(os.getpid())); time.sleep(300)'".into(),
+        ));
+        std::fs::write(path, toml::to_string(&manifest).unwrap()).unwrap();
+    };
+    declare_plain_api(&fixture);
+    fixture.up(false).expect("independent processes start");
+    let pid_file = fixture.repo().join("api.pid");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let pid: u32 = loop {
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "plain process wrote its PID");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(effigy_gateway::identity::read_live_process_identity(pid).is_ok());
+    // Give the existing process a dependency it never recorded before.
+    fixture.set_listener_dependency("api", &["front"]);
+    declare_plain_api(&fixture);
+    fixture.set_listener_child("front", REFUSING_CHILD);
+    fixture.up(false).expect_err("front is withheld");
+    assert!(
+        effigy_gateway::identity::read_live_process_identity(pid).is_err(),
+        "the plain dependent's previous generation must stop too"
+    );
+    assert!(fixture.routes().lookup(CONTAINER_DOMAIN).is_some());
     fixture.down();
 }
 
