@@ -597,11 +597,17 @@ impl ActivationDir {
     const NAME: &'static str = "default.target.wants";
 
     /// The activation directory, or `None` when the operator has none yet. A
-    /// linked, foreign-owned or group/world-writable directory is refused.
+    /// missing unit directory is *no activation* — a fresh install, or a user
+    /// who removed it before retrying teardown, has nothing to preserve — while
+    /// a linked, foreign-owned, non-directory or group/world-writable one is
+    /// still refused.
     fn open(paths: &LaunchPaths, operator_uid: u32) -> io::Result<Option<Self>> {
         use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-        let unit_dir = open_no_follow(&paths.user_dir, libc::O_DIRECTORY)
-            .map_err(|failure| refusal(paths, operator_uid, failure))?;
+        let unit_dir = match open_no_follow(&paths.user_dir, libc::O_DIRECTORY) {
+            Ok(dir) => dir,
+            Err(failure) if failure.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(failure) => return Err(refusal(paths, operator_uid, failure)),
+        };
         verify_directory(&unit_dir, &paths.user_dir, operator_uid)?;
         let name = cstring(Self::NAME)?;
         // SAFETY: live directory descriptor and a NUL-terminated single
@@ -1851,6 +1857,14 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    /// The activation entry's state for this operator, as Effigy observes it.
+    fn activation_entry(paths: &LaunchPaths, uid: u32) -> ActivationEntry {
+        match ActivationDir::open(paths, uid).unwrap() {
+            Some(dir) => dir.entry().unwrap(),
+            None => ActivationEntry::Absent,
+        }
     }
 
     /// Every command the image at `name` was asked to run, one per line.
@@ -3540,6 +3554,58 @@ mod tests {
             // The unit and the link are both untouched.
             assert!(paths.unit.exists());
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
+        });
+    }
+
+    /// A teardown on a fresh or partially removed installation has no unit
+    /// directory at all: that is no activation, not a refusal, so cleanup can
+    /// still run. Unsafe or uncertain identities are still refused.
+    #[test]
+    fn an_absent_unit_directory_is_no_activation_for_teardown() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            // Fresh installation: nothing exists yet.
+            assert!(!paths.user_dir.exists());
+            assert_eq!(activation_entry(&paths, uid), ActivationEntry::Absent);
+            let mut manager = FakeManager::for_paths(&paths);
+            remove(cx, &paths, uid, &mut manager).unwrap();
+            assert!(
+                !paths.user_dir.exists(),
+                "teardown does not create the missing directory"
+            );
+
+            // A partial removal: the unit went first, then the directory.
+            let binary = installed_binary(home.path());
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(activation_linked(&paths, uid));
+            std::fs::remove_dir_all(&paths.user_dir).unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Missing);
+            let calls = manager.calls.len();
+            remove(cx, &paths, uid, &mut manager).unwrap();
+            assert_eq!(
+                manager.calls.len(),
+                calls,
+                "nothing was asked of the manager with no activation to remove"
+            );
+
+            // An unsafe or uncertain path is still refused, never skipped: a
+            // non-directory at the unit path is not "absent".
+            std::fs::write(&paths.user_dir, b"not a directory\n").unwrap();
+            assert_eq!(observe_unit(&paths, uid), UnitState::Unsafe);
+            assert!(ActivationDir::open(&paths, uid).is_err());
+            let mut manager = FakeManager::for_paths(&paths);
+            let error = remove(cx, &paths, uid, &mut manager).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("preserving foreign or unsafe systemd unit")
+                    || error
+                        .to_string()
+                        .contains("refusing the login activation directory"),
+                "{error}"
+            );
         });
     }
 

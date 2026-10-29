@@ -394,7 +394,11 @@ The login activation directory `~<home>/.config/systemd/user/default.target.want
 is treated as an identity of its own. It is opened from the verified unit
 directory with `O_NOFOLLOW | O_DIRECTORY` and its owner and mode are checked
 before anything else happens, so a `default.target.wants` symlink to a foreign
-directory cannot redirect Effigy, or the manager on Effigy's behalf. The entry
+directory cannot redirect Effigy, or the manager on Effigy's behalf. A missing
+unit directory is treated as no activation at all — a fresh installation, or one
+whose directory was removed before a retry, has nothing to preserve and still
+tears down cleanly — while a linked, foreign-owned, non-directory or
+group/world-writable one is refused. The entry
 has three states — absent, Effigy's own link (recorded with its inode and target,
 read with `fstatat(AT_SYMLINK_NOFOLLOW)`), or foreign (a link to another target,
 or something that is not a link) — and a foreign entry is refused, never treated

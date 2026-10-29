@@ -1663,7 +1663,9 @@ loaded.
 The login activation directory
 (`~/.config/systemd/user/default.target.wants`) must be a real directory owned
 by you and not group- or world-writable, and the entry Effigy uses there must be
-its own link to the owned unit. Effigy verifies both before it asks the manager
+its own link to the owned unit. A missing unit directory is simply no
+activation: a fresh installation, or one whose directory you removed before
+retrying, still tears down cleanly instead of being refused. Effigy verifies both before it asks the manager
 to do anything: a `default.target.wants` that is a symlink to another directory,
 or an entry that names another target or is not a link, is refused without
 touching it and without stopping or disabling anything.
