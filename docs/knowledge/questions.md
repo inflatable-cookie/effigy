@@ -696,3 +696,17 @@ six historical fixture values by exact path and content hash. Their values
 must never appear in audit output, review text or documentation. This does
 not exempt other tokens, private keys or credential-shaped strings; every
 other match needs its own fixture proof or remediation before the gate passes.
+
+The same historical fixture roots contain two generated private gateway CAs
+and their localhost leaf keys. The fixture's mkcert shim creates them under
+its private `CAROOT` and explicitly rejects `-install`; on 2026-10-29 neither
+fixture CA was present in this Mac's default, system or system-root trust
+stores. The fixture roots are gone. The release audit may exempt only those
+exact historical fixture key paths and content hashes, never a general PEM
+pattern or a key from the active tree. If evidence later shows either CA was
+trusted elsewhere, revoke that trust and reopen this disposition.
+
+During #453's inspection, a raw historical grep printed six already-committed
+fixture token values into the private agent tool transcript. Do not copy those
+values into receipts, reviews or documentation; future inspection must emit
+only redacted rule, path, commit and content-hash evidence.
