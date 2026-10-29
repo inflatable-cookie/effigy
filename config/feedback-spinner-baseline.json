@@ -7,7 +7,7 @@
   ],
   [
     "crates/effigy-containers/src/environment/reconcile.rs",
-    797,
+    828,
     "let settling = effigy_ui::steps::step(&format!(\"settling environment `{env}`\"));",
     42
   ],
@@ -97,49 +97,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    217,
+    219,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    815,
+    827,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    989,
+    1001,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    992,
+    1004,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    994,
+    1006,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    996,
+    1008,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1013,
+    1025,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1015,
+    1027,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -148,24 +148,6 @@
     261,
     ".then(|| effigy_ui::steps::step(transient_spinner_label(&command)));",
     36
-  ],
-  [
-    "src/runner/bootstrap_command/mod.rs",
-    242,
-    "self.running = Some(effigy_ui::steps::step(&label));",
-    47
-  ],
-  [
-    "src/runner/bootstrap_command/mod.rs",
-    257,
-    "let step = effigy_ui::steps::step(&summary);",
-    46
-  ],
-  [
-    "src/runner/bundle_command.rs",
-    380,
-    "let step = effigy_ui::steps::step(&label);",
-    42
   ],
   [
     "src/runner/container_command/lifecycle.rs",
@@ -238,12 +220,6 @@
     41,
     "during(\"registering routes\", \"routes registered\", || {",
     13
-  ],
-  [
-    "src/runner/deploy_command/provider_package.rs",
-    251,
-    "let step = effigy_ui::steps::step(&resolving_provider_label(provider_name, fetch));",
-    34
   ],
   [
     "src/runner/execute/pipeline/standard.rs",
@@ -481,7 +457,7 @@
   ],
   [
     "src/runner/workspace_command/mod.rs",
-    544,
+    565,
     "let spinner = renderer.spinner(label).ok();",
     32
   ]

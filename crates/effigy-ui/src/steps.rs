@@ -140,7 +140,9 @@ impl ProgressSource {
         }
     }
 
-    fn frame_at(&self, elapsed: Duration) -> String {
+    /// The label a live step shows once `elapsed` has passed. Public so a
+    /// command plane can prove its frames with a fake clock.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
             .sub_step
@@ -583,6 +585,16 @@ fn print_line_to(sink: &Sink, json: bool, line: &str) {
         return;
     }
     sink.write_above_bars(&format!("{line}\n"));
+}
+
+/// End an outcome that was immediate: one ✓/✗ line, no spinner. Use it where a
+/// step would start and succeed in the same breath.
+pub fn finish_line(ok: bool, summary: &str) {
+    if capture_finish(ok, summary) {
+        return;
+    }
+    let sink = global_sink();
+    sink.write_finish(sink.mode(), ok, summary);
 }
 
 /// Start a top-level step. The label is short, present tense and names its

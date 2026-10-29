@@ -3,7 +3,7 @@ use effigy_manifest::{
     inspect_bundle_source, sync_bundle_source, BundleSourceType, SourceProgress,
     SourceProgressEvent, TASK_MANIFEST_FILE,
 };
-use effigy_ui::steps::Step;
+use effigy_ui::steps::{ProgressSource, Step};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -376,8 +376,8 @@ fn draw_source_event(running: &mut BTreeMap<String, RunningSource>, event: Sourc
             revision,
             local,
         } => {
-            let label = fetching_label(&source, &subject, &revision, local);
-            let step = effigy_ui::steps::step(&label);
+            let progress = source_progress(&source, &subject, &revision, local);
+            let step = effigy_ui::steps::live_step(progress);
             running.insert(source, RunningSource { step, local });
         }
         SourceProgressEvent::Finished {
@@ -408,10 +408,21 @@ fn draw_source_event(running: &mut BTreeMap<String, RunningSource>, event: Sourc
     }
 }
 
-/// A fetch's spinner label: `fetching bundle decodelabs main`. Short, present
-/// tense, and it names the source handle, the subject and the revision. A
-/// local path is a snapshot: `snapshotting local bundle decodelabs`.
-pub(in crate::runner) fn fetching_label(
+/// The live state of one source acquisition. The engine reports only a start
+/// and a finish, so the step waits on the exact source and revision it was
+/// handed and shows the elapsed wait until the finish event arrives.
+pub(in crate::runner) fn source_progress(
+    source: &str,
+    subject: &str,
+    revision: &str,
+    local: bool,
+) -> ProgressSource {
+    ProgressSource::waiting_for(source_awaiting(source, subject, revision, local))
+}
+
+/// What a source acquisition waits on, named as the operator would name it:
+/// `bundle `decodelabs` at main`, or the snapshot of a local path.
+pub(in crate::runner) fn source_awaiting(
     source: &str,
     subject: &str,
     revision: &str,
@@ -423,9 +434,9 @@ pub(in crate::runner) fn fetching_label(
         "catalog"
     };
     if local {
-        return format!("snapshotting local {noun} {subject}");
+        return format!("the local snapshot of {noun} `{subject}`");
     }
-    format!("fetching {noun} {subject} {revision}")
+    format!("{noun} `{subject}` at {revision}")
 }
 
 /// The one line a finished acquisition leaves: what was fetched or snapshotted,
@@ -726,14 +737,38 @@ mod tests {
     }
 
     #[test]
-    fn source_steps_name_the_bundle_its_revision_and_the_outcome() {
+    fn source_frames_name_each_source_and_its_elapsed_wait() {
+        let bundle = source_progress("bundle", "decodelabs", "main", false);
+        let catalog = source_progress("catalog:acme", "acme", "main", false);
+        let snapshot = source_progress("bundle", "decodelabs", "path", true);
+        let seconds = std::time::Duration::from_secs;
         assert_eq!(
-            fetching_label("bundle", "decodelabs", "main", false),
-            "fetching bundle decodelabs main"
+            bundle.frame_at(seconds(0)),
+            "waiting for bundle `decodelabs` at main; 0s elapsed"
         );
         assert_eq!(
-            fetching_label("catalog:acme", "acme", "main", false),
-            "fetching catalog acme main"
+            catalog.frame_at(seconds(3)),
+            "waiting for catalog `acme` at main; 3s elapsed"
+        );
+        assert_eq!(
+            bundle.frame_at(seconds(9)),
+            "waiting for bundle `decodelabs` at main; 9s elapsed"
+        );
+        assert_eq!(
+            snapshot.frame_at(seconds(7)),
+            "waiting for the local snapshot of bundle `decodelabs`; 7s elapsed"
+        );
+    }
+
+    #[test]
+    fn source_steps_name_the_bundle_its_revision_and_the_outcome() {
+        assert_eq!(
+            source_awaiting("bundle", "decodelabs", "main", false),
+            "bundle `decodelabs` at main"
+        );
+        assert_eq!(
+            source_awaiting("catalog:acme", "acme", "main", false),
+            "catalog `acme` at main"
         );
         assert_eq!(
             finished_summary("bundle", "decodelabs", None, None, false),
@@ -758,8 +793,8 @@ mod tests {
     #[test]
     fn a_local_path_source_is_a_snapshot_not_a_fetch() {
         assert_eq!(
-            fetching_label("bundle", "decodelabs", "path", true),
-            "snapshotting local bundle decodelabs"
+            source_awaiting("bundle", "decodelabs", "path", true),
+            "the local snapshot of bundle `decodelabs`"
         );
         assert_eq!(
             finished_summary("bundle", "decodelabs", None, None, true),
