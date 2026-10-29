@@ -242,9 +242,11 @@ pub fn controlling_terminal() -> Option<String> {
 
 /// The generic alias a controlling-terminal descriptor can report, which names
 /// no terminal identity of its own.
+#[cfg(test)]
 const GENERIC_TERMINAL: &str = "/dev/tty";
 
 /// A tty name that identifies a device, never the generic alias.
+#[cfg(test)]
 fn tty_name(fd: libc::c_int) -> Option<String> {
     let mut buffer = [0 as libc::c_char; 128];
     // SAFETY: fd is live, and ttyname_r writes at most buffer.len() bytes into
@@ -261,6 +263,7 @@ fn tty_name(fd: libc::c_int) -> Option<String> {
 }
 
 /// The device number a character-device descriptor refers to.
+#[cfg(test)]
 fn device_of(fd: libc::c_int) -> Option<u64> {
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     // SAFETY: fd is live and stat points to aligned writable full storage.
@@ -449,6 +452,22 @@ fn parse_linux_lineage(stat: &str, expected_pid: u32) -> Option<ProcessLineage> 
     })
 }
 
+/// Field 7 of `/proc/<pid>/stat` is the session's controlling terminal device;
+/// zero means the process has none.
+#[cfg(any(target_os = "linux", test))]
+fn parse_linux_tty(stat: &str, expected_pid: u32) -> Option<u64> {
+    let (pid, _) = stat.split_once(" (")?;
+    if pid.parse::<u32>().ok()? != expected_pid {
+        return None;
+    }
+    let (_, rest) = stat.rsplit_once(')')?;
+    let mut fields = rest.split_whitespace();
+    // Field 3 is state, so ppid, pgrp and session follow it, then tty_nr.
+    fields.next()?;
+    let device = fields.nth(3)?.parse::<i64>().ok()?;
+    (device > 0).then_some(device as u64)
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn parse_linux_state(stat: &str, expected_pid: u32) -> Option<ProcessState> {
     let (pid, _) = stat.split_once(" (")?;
@@ -544,49 +563,12 @@ mod platform {
         parse_linux_lineage(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
     }
     pub fn controlling_terminal() -> Option<String> {
-        // `/dev/tty` opens only when the session has a controlling terminal, and
-        // the descriptor's device is that terminal. `ttyname` on it can answer
-        // the `/dev/tty` alias, so the device number names it instead.
-        // SAFETY: a constant NUL-terminated path, read-only flags, no creation
-        // and no control terminal is taken over.
-        let fd = unsafe {
-            libc::open(
-                c"/dev/tty".as_ptr(),
-                libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return None;
-        }
-        let name = super::device_of(fd)
-            .and_then(super::linux_device_path)
-            .or_else(|| super::tty_name(fd));
-        // SAFETY: fd was opened above and is owned here; it is closed once.
-        unsafe { libc::close(fd) };
-        name
-    }
-    pub fn lineage(pid: u32) -> io::Result<ProcessLineage> {
-        let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
-        parse_linux_lineage(&stat, pid).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))
-    }
-    pub fn controlling_terminal() -> Option<String> {
-        // `/dev/tty` is the calling session's terminal whatever was redirected,
-        // and /proc names the real device behind it.
-        // SAFETY: a constant NUL-terminated path, read-only flags, no creation
-        // and no control terminal is taken over.
-        let fd = unsafe {
-            libc::open(
-                c"/dev/tty".as_ptr(),
-                libc::O_RDONLY | libc::O_NOCTTY | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return None;
-        }
-        let name = super::tty_name(fd);
-        // SAFETY: fd was opened above and is owned here; it is closed once.
-        unsafe { libc::close(fd) };
-        name
+        // The kernel's stat line records the session's controlling terminal as a
+        // device number; an open `/dev/tty` would report the alias device, so the
+        // session evidence names the terminal instead.
+        let pid = std::process::id();
+        let stat = read_proc(&[&pid.to_string(), "stat"], 8192, false).ok()?;
+        super::linux_device_path(parse_linux_tty(&stat, pid)?)
     }
     pub fn state(pid: u32) -> io::Result<ProcessState> {
         let stat = read_proc(&[&pid.to_string(), "stat"], 8192, true)?;
@@ -776,6 +758,21 @@ mod tests {
         assert!(process_lineage(0).is_err());
         assert!(process_lineage(i32::MAX as u32 + 1).is_err());
     }
+    #[test]
+    fn linux_stat_tty_names_the_controlling_device() {
+        // Field 7 carries the controlling terminal's device; 34816 is
+        // major 136, minor 0, the first pty slave.
+        let stat = "42 (n) S 7 8 9 34816 0 0 0";
+        assert_eq!(parse_linux_tty(stat, 42), Some(34816));
+        assert_eq!(parse_linux_tty("42 (n) S 7 8 9 0 0 0", 42), None);
+        assert_eq!(parse_linux_tty(stat, 41), None);
+        assert_eq!(parse_linux_tty("42 (short) S 7 8", 42), None);
+        assert_eq!(
+            parse_linux_tty(stat, 42).and_then(linux_device_path),
+            Some("/dev/pts/0".to_owned())
+        );
+    }
+
     #[test]
     fn linux_device_numbers_name_their_terminal() {
         // glibc's encoding: major from bits 8-19 and 32+, minor from bits 0-7
@@ -983,7 +980,12 @@ mod tests {
         let expected = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }
             .to_string_lossy()
             .into_owned();
-        assert!(expected.starts_with("/dev/ttys"), "{expected}");
+        let prefix = if cfg!(target_os = "macos") {
+            "/dev/ttys"
+        } else {
+            "/dev/pts/"
+        };
+        assert!(expected.starts_with(prefix), "{expected}");
         assert_eq!(
             resolved,
             Some(expected),

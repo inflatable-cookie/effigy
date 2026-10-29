@@ -802,9 +802,11 @@ could not be confirmed by a second read, or a parent in another session —
 a reparented child ends the walk instead of naming another session's leader —
 becomes a bounded unknown reason instead of a guess, and no environment value is
 read unless its name is on that allowlist. The controlling terminal is the
-session's terminal, resolved by its device on each platform and never taken from
-a standard descriptor or named by the generic `/dev/tty` alias, so a redirected
-descriptor or one attached to another terminal never misattributes the action. The reason list keeps chain failures ahead of marker failures and
+session's terminal, resolved from the kernel's record of it by device on each
+platform (`bsdinfo` on macOS, the `/proc/<pid>/stat` line on Linux) and never
+taken from a standard descriptor or named by the generic `/dev/tty` alias, so a
+redirected descriptor or one attached to another terminal never misattributes the
+action. The reason list keeps chain failures ahead of marker failures and
 ends with how many reasons it omitted, so a full list never hides a missing or
 unconfirmed part of the chain.
 

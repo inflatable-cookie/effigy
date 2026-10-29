@@ -376,12 +376,13 @@ record:
 - the invoking process's start identity (the platform's own process-start
 evidence, so two processes that held one pid stay distinguishable), its
 session and its controlling terminal when it has one. The terminal is the
-session's controlling terminal, resolved by its device: macOS reads the kernel's
-record of the session's terminal device and names the pty slave
-(`/dev/ttysNNN`), and Linux opens `/dev/tty` and names the device it refers to
-(`/dev/pts/N`, `/dev/ttyN`). A standard descriptor is never taken as the
-terminal, so a redirected descriptor or one attached to another terminal cannot
-misattribute the action, and the generic `/dev/tty` alias is never recorded;
+session's controlling terminal, resolved from the kernel's own record of it by
+device: macOS reads `bsdinfo`'s terminal device and names the pty slave
+(`/dev/ttysNNN`), and Linux reads the controlling-terminal device from the
+process's `/proc/<pid>/stat` line and names it (`/dev/pts/N`, `/dev/ttyN`). A
+standard descriptor is never taken as the terminal, so a redirected descriptor or
+one attached to another terminal cannot misattribute the action, and the generic
+`/dev/tty` alias is never recorded;
 - the parent chain from the invoking process's parent up to and including its
 session leader, capped at eight entries, each with pid, start identity, session
 and redacted argument boundaries. The walk stays inside the invoking process's
