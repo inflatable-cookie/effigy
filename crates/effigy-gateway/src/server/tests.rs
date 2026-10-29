@@ -3,7 +3,8 @@ use crate::dns::DnsCache;
 #[cfg(test)]
 use crate::route_table_fixture::RouteTableFixture;
 use crate::routes::{Route, RouteSource, RouteTable};
-use std::sync::{Arc, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::time::Duration;
 use tokio::sync::watch;
 
 #[test]
@@ -844,10 +845,13 @@ fn demo_route_table() -> RouteTable {
 fn apply_reloaded_route_table_noops_when_already_empty() {
     let table = Arc::new(RwLock::new(RouteTable::new()));
     let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+    let generation = AtomicU64::new(0);
 
-    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true);
+    let action =
+        apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true, &generation);
 
     assert_eq!(action, IdleShutdownAction::None);
+    assert_eq!(generation.load(Ordering::SeqCst), 0);
     assert!(table.read().unwrap().is_empty());
 }
 
@@ -855,10 +859,13 @@ fn apply_reloaded_route_table_noops_when_already_empty() {
 fn apply_reloaded_route_table_arms_idle_shutdown_when_last_route_removed() {
     let table = Arc::new(RwLock::new(demo_route_table()));
     let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+    let generation = AtomicU64::new(0);
 
-    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true);
+    let action =
+        apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, true, &generation);
 
-    assert_eq!(action, IdleShutdownAction::Arm);
+    assert_eq!(action, IdleShutdownAction::Arm(1));
+    assert_eq!(generation.load(Ordering::SeqCst), 1);
     assert!(table.read().unwrap().is_empty());
 }
 
@@ -868,10 +875,13 @@ fn apply_reloaded_route_table_arms_idle_shutdown_when_last_route_removed() {
 fn machine_gateway_never_arms_idle_shutdown_when_last_route_removed() {
     let table = Arc::new(RwLock::new(demo_route_table()));
     let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+    let generation = AtomicU64::new(0);
 
-    let action = apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, false);
+    let action =
+        apply_reloaded_route_table(&table, RouteTable::new(), &dns_cache, false, &generation);
 
     assert_eq!(action, IdleShutdownAction::None);
+    assert_eq!(generation.load(Ordering::SeqCst), 0);
     assert!(table.read().unwrap().is_empty());
 }
 
@@ -879,10 +889,13 @@ fn machine_gateway_never_arms_idle_shutdown_when_last_route_removed() {
 fn apply_reloaded_route_table_cancels_idle_shutdown_when_route_returns() {
     let table = Arc::new(RwLock::new(RouteTable::new()));
     let dns_cache = Arc::new(DnsCache::new(std::time::Duration::from_secs(2)));
+    let generation = AtomicU64::new(4);
 
-    let action = apply_reloaded_route_table(&table, demo_route_table(), &dns_cache, true);
+    let action =
+        apply_reloaded_route_table(&table, demo_route_table(), &dns_cache, true, &generation);
 
     assert_eq!(action, IdleShutdownAction::Cancel);
+    assert_eq!(generation.load(Ordering::SeqCst), 5);
     assert_eq!(table.read().unwrap().len(), 1);
 }
 
@@ -958,72 +971,215 @@ fn route_published_after_startup_reaches_a_watcher_installed_on_a_fresh_store() 
     }
 }
 
-#[test]
-fn scheduled_idle_shutdown_stops_gateway_when_table_stays_empty() {
-    let state = gateway_dir();
-    let table = Arc::new(RwLock::new(RouteTable::new()));
-    let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    let shutdown = schedule_idle_shutdown(
-        Arc::clone(&table),
-        generation,
-        shutdown_tx,
-        1,
-        std::time::Duration::from_millis(10),
-        state.path().to_path_buf(),
-    );
-    shutdown.join().expect("idle shutdown completed");
-
-    assert!(*shutdown_rx.borrow());
+/// A clock the test holds. Each idle wait is recorded, then returns only when
+/// the test releases it, so the 300 s delay and every cancellation point are
+/// driven by the test rather than slept.
+struct HeldClock {
+    waits: Arc<Mutex<Vec<Duration>>>,
+    release: mpsc::Sender<()>,
+    wait: IdleWait,
 }
 
-/// The stop names its cause in the gateway's operator log before the shutdown
-/// signal, so the record outlives the clean exit (effigy#480).
-#[test]
-fn scheduled_idle_shutdown_records_the_route_table_cause_before_stopping() {
-    let state = gateway_dir();
-    let table = Arc::new(RwLock::new(RouteTable::new()));
-    let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    let shutdown = schedule_idle_shutdown(
-        Arc::clone(&table),
-        generation,
-        shutdown_tx,
-        1,
-        std::time::Duration::from_secs(1),
-        state.path().to_path_buf(),
-    );
-    shutdown.join().expect("idle shutdown completed");
-
-    assert!(*shutdown_rx.borrow());
-    let log = std::fs::read_to_string(state.path().join("gateway.stderr.log"))
-        .expect("the idle stop is recorded beside the gateway log");
-    let record: serde_json::Value = serde_json::from_str(log.trim()).expect("one stop record");
-    assert_eq!(record["event"], "gateway_stop");
-    assert_eq!(record["cause"], "route table empty for 1 s");
+fn held_clock() -> HeldClock {
+    let (release, gate) = mpsc::channel::<()>();
+    let gate = Mutex::new(gate);
+    let waits = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&waits);
+    let wait: IdleWait = Arc::new(move |delay| {
+        recorded.lock().unwrap().push(delay);
+        let _ = gate.lock().unwrap().recv();
+    });
+    HeldClock {
+        waits,
+        release,
+        wait,
+    }
 }
 
+/// A gateway state root laid out as a real gateway's: the routes file sits in
+/// its `gateway` directory, where the endpoint store and operator log live.
+fn gateway_state() -> (tempfile::TempDir, PathBuf) {
+    let fixture = gateway_dir();
+    let routes = fixture.path().join(".effigy/gateway/routes.json");
+    crate::private_state::create_owner_only_directory(routes.parent().unwrap())
+        .expect("gateway directory");
+    (fixture, routes)
+}
+
+fn idle_shutdown(routes: &Path, clock: &HeldClock) -> (IdleShutdown, watch::Receiver<bool>) {
+    let (shutdown, stopped) = watch::channel(false);
+    let idle = IdleShutdown {
+        generation: Arc::new(AtomicU64::new(0)),
+        shutdown,
+        wait: Arc::clone(&clock.wait),
+        state_dir: routes.parent().unwrap().to_path_buf(),
+    };
+    (idle, stopped)
+}
+
+fn publish_route(routes: &Path, domain: &str) {
+    crate::endpoint_store::EndpointStore::for_routes(routes)
+        .routes(|table| {
+            table.upsert(Route {
+                domain: domain.to_owned(),
+                target: Some("127.0.0.1:41004".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                source: RouteSource::Container,
+                project: "/checkout".to_owned(),
+                managed_listener: None,
+                registered: chrono::Utc::now(),
+            });
+            Ok::<_, GatewayError>(())
+        })
+        .expect("publish route");
+}
+
+fn withdraw_route(routes: &Path, domain: &str) {
+    crate::endpoint_store::EndpointStore::for_routes(routes)
+        .routes(|table| {
+            table.deregister(domain)?;
+            Ok::<_, GatewayError>(())
+        })
+        .expect("withdraw route");
+}
+
+/// One reload through the same function the route watcher calls.
+fn reload(
+    routes: &Path,
+    table: &Arc<RwLock<RouteTable>>,
+    idle: &IdleShutdown,
+    private: bool,
+) -> Option<std::thread::JoinHandle<()>> {
+    let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(2)));
+    reload_route_table_and_maybe_schedule_shutdown(routes, table, &dns_cache, idle, private)
+        .expect("route table reload")
+}
+
+fn stop_records(routes: &Path) -> Vec<serde_json::Value> {
+    let log = std::fs::read_to_string(routes.parent().unwrap().join("gateway.stderr.log"))
+        .unwrap_or_default();
+    log.lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON record per line"))
+        .collect()
+}
+
+/// The machine gateway observes its last route withdrawal and stays up: no idle
+/// timer is armed, so no 300 s clock starts and nothing can stop it.
 #[test]
-fn scheduled_idle_shutdown_is_cancelled_when_generation_changes() {
-    let state = gateway_dir();
+fn scheduled_idle_shutdown_leaves_the_machine_gateway_running_after_its_last_route() {
+    let (_fixture, routes) = gateway_state();
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
     let table = Arc::new(RwLock::new(RouteTable::new()));
-    let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    let shutdown = schedule_idle_shutdown(
-        Arc::clone(&table),
-        Arc::clone(&generation),
-        shutdown_tx,
-        1,
-        std::time::Duration::from_millis(20),
-        state.path().to_path_buf(),
+    publish_route(&routes, "app.test");
+    assert!(reload(&routes, &table, &idle, false).is_none());
+    withdraw_route(&routes, "app.test");
+    assert!(
+        reload(&routes, &table, &idle, false).is_none(),
+        "the machine gateway arms no idle stop"
     );
-    generation.store(2, std::sync::atomic::Ordering::SeqCst);
-    shutdown.join().expect("cancelled idle shutdown completed");
+    assert!(table.read().unwrap().is_empty());
+    assert!(
+        clock.waits.lock().unwrap().is_empty(),
+        "no idle clock starts"
+    );
+    assert_eq!(idle.generation.load(Ordering::SeqCst), 0);
+    assert!(!*stopped.borrow());
+}
 
-    assert!(!*shutdown_rx.borrow());
+/// A private gateway whose route table stays empty for the idle delay stops,
+/// and its operator log names the cause before the clean exit.
+#[test]
+fn scheduled_idle_shutdown_stops_a_private_gateway_with_its_cause_after_the_delay() {
+    let (_fixture, routes) = gateway_state();
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    publish_route(&routes, "app.test");
+    assert!(reload(&routes, &table, &idle, true).is_none());
+    withdraw_route(&routes, "app.test");
+    let timer = reload(&routes, &table, &idle, true).expect("the withdrawal arms the idle stop");
+    clock.release.send(()).unwrap();
+    timer.join().expect("idle stop completed");
+    assert_eq!(*clock.waits.lock().unwrap(), vec![IDLE_SHUTDOWN_DELAY]);
+    assert!(*stopped.borrow());
+    let records = stop_records(&routes);
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0]["event"], "gateway_stop");
+    assert_eq!(records[0]["cause"], "route table empty for 300 s");
+}
+
+/// A route that returns before the delay cancels the pending private stop: the
+/// released timer sees a moved generation and stops nothing.
+#[test]
+fn scheduled_idle_shutdown_is_cancelled_when_a_route_returns_before_the_delay() {
+    let (_fixture, routes) = gateway_state();
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    publish_route(&routes, "app.test");
+    assert!(reload(&routes, &table, &idle, true).is_none());
+    withdraw_route(&routes, "app.test");
+    let timer = reload(&routes, &table, &idle, true).expect("the withdrawal arms the idle stop");
+    publish_route(&routes, "app.test");
+    assert!(
+        reload(&routes, &table, &idle, true).is_none(),
+        "a returning route cancels without arming a timer"
+    );
+    clock.release.send(()).unwrap();
+    timer.join().expect("cancelled timer completed");
+    assert!(!*stopped.borrow());
+    assert!(stop_records(&routes).is_empty(), "no stop was recorded");
+}
+
+/// A timer armed before a return, and superseded by a second withdrawal, must
+/// not stop the gateway: only the current generation may. The fresh timer does,
+/// once, with its cause recorded.
+#[test]
+fn scheduled_idle_shutdown_ignores_a_stale_timer_after_return_and_second_withdrawal() {
+    let (_fixture, routes) = gateway_state();
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    publish_route(&routes, "app.test");
+    assert!(reload(&routes, &table, &idle, true).is_none());
+    withdraw_route(&routes, "app.test");
+    let stale = reload(&routes, &table, &idle, true).expect("first withdrawal arms");
+    publish_route(&routes, "app.test");
+    assert!(reload(&routes, &table, &idle, true).is_none());
+    withdraw_route(&routes, "app.test");
+    let fresh = reload(&routes, &table, &idle, true).expect("second withdrawal arms");
+    clock.release.send(()).unwrap();
+    clock.release.send(()).unwrap();
+    stale.join().expect("stale timer completed");
+    fresh.join().expect("fresh timer completed");
+    assert!(*stopped.borrow());
+    let records = stop_records(&routes);
+    assert_eq!(records.len(), 1, "exactly one stop: {records:?}");
+    assert_eq!(records[0]["cause"], "route table empty for 300 s");
+}
+
+/// A stop whose record cannot be written does not happen. The operator log path
+/// is a directory, so the append fails, and the gateway stays up rather than
+/// stopping unrecorded.
+#[test]
+fn scheduled_idle_shutdown_keeps_a_private_gateway_up_when_its_stop_cannot_be_recorded() {
+    let (_fixture, routes) = gateway_state();
+    std::fs::create_dir(routes.parent().unwrap().join("gateway.stderr.log"))
+        .expect("block the operator log");
+    let clock = held_clock();
+    let (idle, stopped) = idle_shutdown(&routes, &clock);
+    let table = Arc::new(RwLock::new(RouteTable::new()));
+    publish_route(&routes, "app.test");
+    assert!(reload(&routes, &table, &idle, true).is_none());
+    withdraw_route(&routes, "app.test");
+    let timer = reload(&routes, &table, &idle, true).expect("the withdrawal arms the idle stop");
+    clock.release.send(()).unwrap();
+    timer.join().expect("idle stop finished without stopping");
+    assert!(!*stopped.borrow(), "an unrecorded stop must not happen");
 }
 
 /// Permission-reuse boundary: a deterministic permission-denied identity read

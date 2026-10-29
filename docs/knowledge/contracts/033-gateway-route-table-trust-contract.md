@@ -54,7 +54,13 @@ State what a route claim is and why there is no separate trust verdict.
    that window cancels the pending stop.
 3. **Every idle stop is recorded.** The stop writes one `gateway_stop` event to
    the gateway's operator log before the clean exit, with the cause
-   `route table empty for 300 s`.
+   `route table empty for 300 s`. If that event cannot be written, the stop does
+   not happen: the gateway stays up, the failure is logged, and nothing stops
+   unrecorded.
+4. **The stop decision is atomic.** The idle timer checks its generation and
+   the empty table under the table's read lock. A reload that returns a route
+   takes the write lock and moves the generation, so it either cancels the stop
+   or lands after the gateway has begun stopping.
 
 ## What changed from v0.14
 
