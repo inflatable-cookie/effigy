@@ -210,8 +210,9 @@ pub fn caller(
     }
 }
 
-/// The one bounded operator event. `argv` and `cwd` are the invoking process's
-/// own, and `caller` carries the chain that explains it.
+/// The one bounded operator event. `argv` is the invoking process's own command
+/// line, published through the same vocabulary as an ancestor's, and `cwd` is
+/// its directory; `caller` carries the chain that explains it.
 pub fn event(
     action: OperatorAction,
     cause: &str,
@@ -224,7 +225,7 @@ pub fn event(
         "event": action.event(),
         "action": action,
         "pid": pid,
-        "argv": command(argv),
+        "argv": command_line(argv),
         "cwd": cwd,
         "cause": bounded(cause, TEXT_LIMIT),
         "caller": caller,
@@ -261,71 +262,107 @@ impl Tree for Platform {
     }
 }
 
-/// Redacted, bounded argument boundaries for the invoking process. Effigy's own
-/// command grammar is known, so a recognised credential name keeps its flag and
-/// loses only the value beside it.
-fn command(argv: &[String]) -> Vec<String> {
-    argv.iter()
-        .take(ARGV_LIMIT)
-        .enumerate()
-        .map(|(index, argument)| {
-            redact(
-                argument,
-                index
-                    .checked_sub(1)
-                    .and_then(|previous| argv.get(previous))
-                    .map(String::as_str),
-            )
-        })
-        .collect()
-}
+/// The only command text an event publishes: words Effigy defines itself and the
+/// launchers, runtimes and task names an operator or agent wraps them in. Every
+/// other token in a command line — a flag name, an argument value, a path or a
+/// program name — is caller-controlled text, so it is recorded as a placeholder
+/// instead of being risked in the gateway log (effigy#450 review).
+const WORDS: &[&str] = &[
+    // Effigy's own command surface.
+    "effigy",
+    "gateway",
+    "up",
+    "down",
+    "setup",
+    "status",
+    "setup-tls",
+    "install",
+    "internal",
+    "private",
+    "remove",
+    "json",
+    "help",
+    "version",
+    "run",
+    "test",
+    "build",
+    "check",
+    "release",
+    "deploy",
+    "container",
+    "dev",
+    // The launchers and runtimes an operator or agent wraps it in.
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "fish",
+    "env",
+    "exec",
+    "command",
+    "sudo",
+    "doas",
+    "nice",
+    "timeout",
+    "xargs",
+    "open",
+    "launchctl",
+    "systemctl",
+    "osascript",
+    "node",
+    "bun",
+    "deno",
+    "python",
+    "python3",
+    "uv",
+    "cargo",
+    "git",
+    "make",
+    "just",
+    "paseo",
+    "claude",
+];
+/// Flags and short options Effigy defines or that only select a behaviour. A
+/// flag's value is never published: only its name can be.
+const FLAGS: &[&str] = &[
+    "--json",
+    "--help",
+    "--version",
+    "--verbose",
+    "--quiet",
+    "--force",
+    "--yes",
+    "--all",
+    "--plan",
+    "--detach",
+    "--private",
+    "--suffix",
+    "--private-state-root",
+    "--dns-addr",
+    "--proxy-addr",
+    "--https-addr",
+    "--listener-handoff",
+    "--repo",
+    "--lock-wait-ms",
+    "--env-schema",
+    "-h",
+    "-v",
+    "-q",
+    "-y",
+];
+/// Flags whose value is a command line of its own; that value is read token by
+/// token so the words inside it are judged the same way.
+const SHELL_FLAGS: &[&str] = &["-c", "-lc", "-ec", "-ic", "--command"];
 
-/// One argument with any credential value replaced, never the whole argv.
-fn redact(argument: &str, previous: Option<&str>) -> String {
-    if previous.is_some_and(secret_flag) || secret_value(argument) {
-        return REDACTED.into();
-    }
-    if let Some(redacted) = redacted_url(argument) {
-        return redacted;
-    }
-    // `KEY=value`: the name says whether the value is a credential.
-    if let Some((key, value)) = argument.split_once('=') {
-        if secret_name(key) || secret_value(value) {
-            return bounded(
-                &format!("{}={REDACTED}", bounded(key, TEXT_LIMIT / 2)),
-                TEXT_LIMIT,
-            );
-        }
-    }
-    // `Authorization: Bearer …` in one argument, as a client sends it.
-    if let Some((header, value)) = argument.split_once(':') {
-        if secret_name(header) || secret_value(value.trim()) {
-            return bounded(
-                &format!("{}: {REDACTED}", bounded(header, TEXT_LIMIT / 2)),
-                TEXT_LIMIT,
-            );
-        }
-    }
-    bounded(argument, TEXT_LIMIT)
-}
-
-/// Bounded, redacted argument boundaries for an *ancestor's* command. An
-/// ancestor's command line is arbitrary third-party text, so no credential name
-/// is trusted to describe its values: only recognised flag names and plain
-/// word/path shapes are recorded, and anything else is redacted.
-fn ancestor_command(argv: &[String], executable: Option<&str>) -> Vec<String> {
+/// One bounded command line: a published word or flag keeps its text, and any
+/// other token is a placeholder.
+fn command_line(argv: &[String]) -> Vec<String> {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
-    for (index, argument) in argv.iter().take(ARGV_LIMIT).enumerate() {
+    for argument in argv.iter().take(ARGV_LIMIT) {
         let recorded = match previous {
-            // A shell string is a command line of its own: read it token by
-            // token so `sh -c 'psql --password ...'` loses that value too.
             Some(flag) if shell_flag(flag) => shell_command(argument),
-            Some(flag) if flag_shaped(flag) => REDACTED.into(),
-            // The program slot is the operating system's executable, never the
-            // caller-chosen `argv[0]`.
-            _ if index == 0 => ancestor_program(executable),
-            _ => ancestor_token(argument),
+            _ => token(argument),
         };
         rendered.push(recorded);
         previous = Some(argument);
@@ -333,196 +370,51 @@ fn ancestor_command(argv: &[String], executable: Option<&str>) -> Vec<String> {
     rendered
 }
 
-/// Token-wise redaction of one shell command string. The string is arbitrary
-/// text, so no token in it is taken as a program: only recognised flag names are
-/// recorded, and every other positional token is a value that may be secret.
-fn shell_command(script: &str) -> String {
+/// An ancestor's command line. Its program slot names the executable the
+/// operating system reports rather than the caller-chosen `argv[0]`, and that
+/// name is published only when it is one this record may publish.
+fn ancestor_command(argv: &[String], executable: Option<&str>) -> Vec<String> {
     let mut rendered = Vec::new();
     let mut previous: Option<&str> = None;
-    for token in script.split_whitespace().take(ARGV_LIMIT) {
+    for (index, argument) in argv.iter().take(ARGV_LIMIT).enumerate() {
         let recorded = match previous {
-            Some(flag) if flag_shaped(flag) => REDACTED.into(),
-            _ => ancestor_token(token),
+            Some(flag) if shell_flag(flag) => shell_command(argument),
+            _ if index == 0 => executable.map_or_else(|| REDACTED.into(), program),
+            _ => token(argument),
         };
         rendered.push(recorded);
-        previous = Some(token);
+        previous = Some(argument);
     }
-    bounded(&rendered.join(" "), TEXT_LIMIT)
+    rendered
 }
 
-/// The program this process was started as, named from the executable the
-/// operating system reports. Only its file name is recorded, and an unreadable
-/// executable records nothing: `argv[0]` is caller-chosen (`exec -a`), and the
-/// directory a program lives in is arbitrary text that can carry a secret.
-fn ancestor_program(executable: Option<&str>) -> String {
-    let Some(executable) = executable else {
-        return REDACTED.into();
-    };
-    let name = executable.rsplit('/').next().unwrap_or(executable).trim();
-    if program_name(name) {
-        return bounded(name, TEXT_LIMIT);
-    }
-    REDACTED.into()
+/// The file name of the executable, when that name may be published.
+fn program(executable: &str) -> String {
+    token(executable.rsplit('/').next().unwrap_or(executable))
 }
 
-/// A program name: bounded letters, digits and a few separators, and never a
-/// credential shape.
-fn program_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with('-')
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '+' | '-'))
-        && name.chars().any(|c| c.is_ascii_alphabetic())
-        && !secret(name)
+/// Token-wise reading of one shell command string.
+fn shell_command(script: &str) -> String {
+    let rendered = script
+        .split_whitespace()
+        .take(ARGV_LIMIT)
+        .map(token)
+        .collect::<Vec<_>>()
+        .join(" ");
+    bounded(&rendered, TEXT_LIMIT)
 }
 
-/// Any other ancestor argument: a recognised flag name, and nothing else.
-/// Arbitrary positional text and path-shaped text are where a positional secret
-/// lives, so neither is ever recorded (effigy#450 review).
-fn ancestor_token(argument: &str) -> String {
+/// The published form of one token.
+fn token(argument: &str) -> String {
     let argument = argument.trim();
-    if flag_shaped(argument) && flag_name(argument) {
+    if WORDS.contains(&argument) || FLAGS.contains(&argument) || shell_flag(argument) {
         return bounded(argument, TEXT_LIMIT);
     }
     REDACTED.into()
 }
 
-/// A recognised flag name: `--words` or one of the short flags above. A token
-/// that carries an attached or `=`-joined value is not a flag name.
-fn flag_name(argument: &str) -> bool {
-    if let Some(long) = argument.strip_prefix("--") {
-        return !long.is_empty()
-            && long.len() <= 32
-            && long
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    }
-    SHORT_FLAGS.contains(&argument)
-}
-
-/// Whether a token looks like a flag, whether or not its name is recognised:
-/// the argument after it is its value and is never recorded as it is.
-fn flag_shaped(argument: &str) -> bool {
-    argument.starts_with('-') && argument.len() > 1
-}
-
-/// A value that is a credential however it is spelled.
-fn secret(value: &str) -> bool {
-    secret_value(value) || opaque(value)
-}
-
-/// A long unseparated run of letters and digits is a token, not a word.
-fn opaque(value: &str) -> bool {
-    value.len() >= 24
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/'))
-        && value.chars().any(|c| c.is_ascii_digit())
-        && value.chars().any(|c| c.is_ascii_alphabetic())
-}
-
 fn shell_flag(argument: &str) -> bool {
     SHELL_FLAGS.contains(&argument.trim())
-}
-
-/// `scheme://user:password@host` keeps its shape and loses the userinfo.
-fn redacted_url(argument: &str) -> Option<String> {
-    let (scheme, rest) = argument.split_once("://")?;
-    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let (_, host) = authority.rsplit_once('@')?;
-    Some(bounded(
-        &format!("{scheme}://{REDACTED}@{host}/{path}"),
-        TEXT_LIMIT,
-    ))
-}
-
-/// Names after `--` or before `=` that mark the following value as a credential.
-const SECRET_NAMES: &[&str] = &[
-    "TOKEN",
-    "SECRET",
-    "PASSWORD",
-    "PASSWD",
-    "APIKEY",
-    "API_KEY",
-    "ACCESS_KEY",
-    "PRIVATE_KEY",
-    "CREDENTIAL",
-    "COOKIE",
-    "AUTHORIZATION",
-    "AUTH_TOKEN",
-    "SIGNATURE",
-    "BEARER",
-];
-/// Flags whose *next* argument is the credential.
-const SECRET_FLAGS: &[&str] = &[
-    "--token",
-    "--password",
-    "--passwd",
-    "--secret",
-    "--api-key",
-    "--apikey",
-    "--access-key",
-    "--private-key",
-    "--auth",
-    "--authorization",
-    "--bearer",
-];
-/// Flags that carry a command line as their value; it is read token by token.
-const SHELL_FLAGS: &[&str] = &["-c", "-lc", "-ec", "-ic", "--command"];
-/// Short flag names recorded as they are. A short token that is not one of
-/// these may carry an attached value (`-pHunter2`) and is redacted whole.
-const SHORT_FLAGS: &[&str] = &[
-    "-c", "-lc", "-ec", "-ic", "-il", "-li", "-i", "-l", "-e", "-x", "-n", "-v", "-q", "-h", "-s",
-    "-u", "-p", "-a", "-d", "-f", "-o", "-H", "-m", "-r", "-t", "-w", "-k", "-j",
-];
-/// Shapes that are a credential whatever their name says.
-const SECRET_PREFIXES: &[&str] = &[
-    "sk-",
-    "sk_live_",
-    "sk_test_",
-    "rk_live_",
-    "ghp_",
-    "gho_",
-    "ghs_",
-    "ghu_",
-    "github_pat_",
-    "glpat-",
-    "xoxa-",
-    "xoxb-",
-    "xoxp-",
-    "xoxr-",
-    "xoxs-",
-    "npm_",
-    "pypi-",
-    "AIza",
-    "AKIA",
-    "ASIA",
-    "eyJ",
-    "Bearer ",
-    "Basic ",
-];
-
-fn secret_flag(argument: &str) -> bool {
-    SECRET_FLAGS
-        .iter()
-        .any(|flag| argument.trim().eq_ignore_ascii_case(flag))
-}
-
-fn secret_name(name: &str) -> bool {
-    let name = name
-        .trim_start_matches('-')
-        .replace('-', "_")
-        .to_ascii_uppercase();
-    SECRET_NAMES.iter().any(|marker| name.contains(marker))
-}
-
-fn secret_value(value: &str) -> bool {
-    let value = value.trim();
-    SECRET_PREFIXES
-        .iter()
-        .any(|prefix| value.starts_with(prefix))
 }
 
 /// A marker value must be one of the identity forms Effigy and its agents
@@ -1002,12 +894,13 @@ mod tests {
     }
 
     /// No secret survives in an argument, a marker-like variable or an
-    /// unlisted environment value.
+    /// unlisted environment value: a command line publishes only Effigy's own
+    /// vocabulary, so an arbitrary flag name or value is never written.
     #[test]
     fn gateway_caller_record_never_exposes_a_secret() {
         const SECRET: &str = "hunter2-not-a-real-secret";
         let fake = Fake::default()
-            .facts(50, 40, 40, "macos:1.000050", &["/bin/sh", "-c", "deploy"])
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
                 40,
                 30,
@@ -1017,15 +910,12 @@ mod tests {
                     "effigy",
                     "--token",
                     SECRET,
-                    "--api-key=abc123",
+                    "--suffix",
+                    SECRET,
+                    "--hunter2",
                     "https://user:hunter2@example.test/hook",
-                    "Authorization: Bearer abcdef",
-                    "--password",
-                    "letmein",
-                    "sk_live_abcdef",
-                    "--author",
-                    "someone",
-                    "build",
+                    "gateway",
+                    "setup",
                 ],
             );
         let record = caller(&fake, 50, Some("/dev/ttys003".into()), |name| match name {
@@ -1035,39 +925,35 @@ mod tests {
         });
         let parents = serde_json::to_string(&record.parents).unwrap();
         let unknown = record.unknown.join("\n");
+        // The invoking command is caller-controlled too: a value supplied to an
+        // option the CLI accepts is not published.
         let rendered = serde_json::to_string(&event(
-            OperatorAction::Down,
-            "gateway down command",
+            OperatorAction::Setup,
+            "gateway setup command",
             50,
             &[
-                "effigy".into(),
+                "/opt/effigy".into(),
                 "gateway".into(),
-                "down".into(),
-                "--token=hunter2-not-a-real-secret".into(),
-                "sk-live-abcdef".into(),
+                "setup".into(),
+                "--suffix".into(),
+                SECRET.into(),
             ],
             Some(Path::new("/src/effigy")),
             &record,
         ))
         .unwrap();
-        for exposed in [
-            SECRET,
-            "letmein",
-            "abc123",
-            "abcdef",
-            "hunter2",
-            "not-a-run",
-        ] {
+        for exposed in [SECRET, "hunter2", "not-a-run", "abc123"] {
             assert!(!parents.contains(exposed), "{parents}");
             assert!(!rendered.contains(exposed), "{rendered}");
         }
         assert!(!unknown.contains("hunter2"), "{unknown}");
-        // Attribution survives redaction: the program and the flag names stay.
+        // Attribution survives: Effigy's own words and flags stay, and so does
+        // the action the invoking command named.
         assert!(parents.contains("effigy"), "{parents}");
-        assert!(parents.contains("--token"), "{parents}");
-        assert!(parents.contains("--author"), "{parents}");
+        assert!(parents.contains("gateway"), "{parents}");
+        assert!(parents.contains("setup"), "{parents}");
+        assert!(rendered.contains("gateway"), "{rendered}");
         assert!(parents.contains("<redacted>"), "{parents}");
-        assert!(rendered.contains("<redacted>"), "{rendered}");
         // A plain marker and the terminal are still recorded.
         assert!(
             rendered.contains("\"terminal\":\"/dev/ttys003\""),
@@ -1075,12 +961,12 @@ mod tests {
         );
     }
 
-    /// An ancestor's command is arbitrary third-party text. Only the program's
-    /// file name and recognised flag names are recorded; every positional token
-    /// is redacted, in a direct command line and inside a shell string alike,
-    /// because a positional password can be shaped like a word or a path.
+    /// An ancestor's command publishes only Effigy's own vocabulary. Its flag
+    /// names, values, paths and program name are all caller-controlled text, so
+    /// anything outside that vocabulary is a placeholder — in a direct command
+    /// line and inside a shell string alike.
     #[test]
-    fn gateway_ancestor_commands_keep_only_the_program_and_flag_names() {
+    fn gateway_ancestor_commands_publish_only_effigy_vocabulary() {
         let direct = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -1101,17 +987,56 @@ mod tests {
         assert_eq!(
             parent,
             vec![
-                "helper".to_owned(),
-                "<redacted>".to_owned(),
-                "<redacted>".to_owned(),
-                "<redacted>".to_owned(),
-                "<redacted>".to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
                 "--verbose".to_owned(),
             ]
         );
 
-        // The same positional secrets inside a shell string, including a
-        // path-shaped one.
+        // A wrapper around Effigy stays attributable: its shell, the Effigy
+        // words and the flags are all published.
+        let wrapper = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["/bin/zsh", "-lc", "effigy gateway down --json"],
+            );
+        let parent = caller_of(&wrapper, 50).parents[0].command.clone().unwrap();
+        assert_eq!(
+            parent,
+            vec![
+                "zsh".to_owned(),
+                "-lc".to_owned(),
+                "effigy gateway down --json".to_owned(),
+            ]
+        );
+
+        // A flag name is caller-controlled text too: `--hunter2` is not ours.
+        let arbitrary_flag = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .facts(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["sh", "--hunter2", "hunter2"],
+            );
+        let parent = caller_of(&arbitrary_flag, 50).parents[0]
+            .command
+            .clone()
+            .unwrap();
+        assert_eq!(
+            parent,
+            vec!["sh".to_owned(), REDACTED.to_owned(), REDACTED.to_owned()]
+        );
+
+        // The same inside a shell string, including a path-shaped secret.
         let shell = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &["effigy"])
             .facts(
@@ -1122,50 +1047,22 @@ mod tests {
                 &[
                     "/bin/sh",
                     "-c",
-                    "helper login hunter2 /etc/passwd --verbose",
+                    "psql --password hunter2 /etc/passwd --verbose",
                 ],
             );
         let parent = caller_of(&shell, 50).parents[0].command.clone().unwrap();
         let rendered = parent.join(" ");
         assert_eq!(parent[0], "sh", "{rendered}");
         assert_eq!(parent[1], "-c", "{rendered}");
-        for exposed in ["helper", "hunter2", "login", "passwd", "etc"] {
+        for exposed in ["psql", "password", "hunter2", "passwd", "etc"] {
             assert!(!rendered.contains(exposed), "{rendered}");
         }
         assert!(rendered.contains("--verbose"), "{rendered}");
-
-        // A flag whose value is a credential, an attached short-flag value, URL
-        // userinfo and a JSON body all lose their value.
-        let plain = Fake::default()
-            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
-            .facts(
-                40,
-                30,
-                40,
-                "macos:1.000040",
-                &[
-                    "curl",
-                    "-u",
-                    "admin:hunter2",
-                    "https://api.test/?token=abc123",
-                    "--data",
-                    r#"{"password":"hunter2"}"#,
-                    "https://user:pass@example.test/hook",
-                    "-pS3cret",
-                ],
-            );
-        let parent = caller_of(&plain, 50).parents[0].command.clone().unwrap();
-        let rendered = parent.join(" ");
-        for exposed in ["hunter2", "abc123", "admin", "S3cret", "pass@", "?token"] {
-            assert!(!rendered.contains(exposed), "{rendered}");
-        }
-        for kept in ["curl", "-u", "--data"] {
-            assert!(rendered.contains(kept), "{kept} missing from {rendered}");
-        }
     }
 
-    /// The program slot comes from the executable the operating system reports,
-    /// never from `argv[0]`, which `exec -a` lets a caller set to anything.
+    /// The program slot names the executable the operating system reports rather
+    /// than the caller-chosen `argv[0]`, and only when it is a name this record
+    /// may publish.
     #[test]
     fn gateway_ancestor_program_comes_from_the_executable_not_argv0() {
         let renamed = Fake::default()
@@ -1176,10 +1073,26 @@ mod tests {
                 40,
                 "macos:1.000040",
                 &["hunter2", "login"],
-                Some("/usr/bin/helper"),
+                Some("/bin/zsh"),
             );
         let parent = caller_of(&renamed, 50).parents[0].command.clone().unwrap();
-        assert_eq!(parent[0], "helper", "{parent:?}");
+        assert_eq!(parent[0], "zsh", "{parent:?}");
+        assert!(!parent.join(" ").contains("hunter2"), "{parent:?}");
+
+        // An executable whose own file name is not our vocabulary is not
+        // published either, and neither is the caller-chosen `argv[0]`.
+        let foreign = Fake::default()
+            .facts(50, 40, 40, "macos:1.000050", &["effigy"])
+            .renamed(
+                40,
+                30,
+                40,
+                "macos:1.000040",
+                &["hunter2", "login"],
+                Some("/usr/bin/hunter2"),
+            );
+        let parent = caller_of(&foreign, 50).parents[0].command.clone().unwrap();
+        assert_eq!(parent[0], REDACTED, "{parent:?}");
         assert!(!parent.join(" ").contains("hunter2"), "{parent:?}");
 
         // With no executable fact, no program name is claimed either.
@@ -1225,10 +1138,10 @@ mod tests {
         assert!(!record.unknown.join("\n").contains("hunter2"));
     }
 
-    /// A program is attributable by its file name, and a positional identity or
-    /// opaque token is not: neither can be told from a credential.
+    /// A vocabulary word is published; a positional identity, an opaque token,
+    /// an unknown short flag and its value are not.
     #[test]
-    fn gateway_ancestor_tokens_keep_only_a_plain_command_shape() {
+    fn gateway_ancestor_tokens_publish_only_vocabulary_words() {
         let token = "a8f5f167f44f4964e6c998dee827110cf2d4c1f7";
         let fake = Fake::default()
             .facts(50, 40, 40, "macos:1.000050", &[])
@@ -1251,11 +1164,11 @@ mod tests {
             parent,
             vec![
                 "paseo".to_owned(),
-                "<redacted>".to_owned(),
-                "<redacted>".to_owned(),
-                "<redacted>".to_owned(),
-                "-m".to_owned(),
-                "<redacted>".to_owned(),
+                "run".to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
+                REDACTED.to_owned(),
             ]
         );
     }
@@ -1284,8 +1197,8 @@ mod tests {
                 .map(Iterator::count),
             Some(TEXT_LIMIT)
         );
-        // The invoking process's own command line and its cause are truncated,
-        // visibly, rather than being written whole.
+        // A long token outside the published vocabulary is a value, so it is
+        // never written; the cause and the terminal are truncated visibly.
         let event = event(
             OperatorAction::Up,
             &long,
@@ -1294,10 +1207,10 @@ mod tests {
             Some(Path::new("/src/effigy")),
             &record,
         );
-        let argv = event["argv"][0].as_str().unwrap();
-        assert_eq!(argv.chars().count(), TEXT_LIMIT);
-        assert!(argv.ends_with('…'), "{argv}");
-        assert_eq!(event["cause"].as_str().unwrap().chars().count(), TEXT_LIMIT);
+        assert_eq!(event["argv"][0], REDACTED, "{event}");
+        let cause = event["cause"].as_str().unwrap();
+        assert_eq!(cause.chars().count(), TEXT_LIMIT);
+        assert!(cause.ends_with('…'), "{cause}");
         assert!(record.unknown.len() <= UNKNOWN_LIMIT);
     }
 }

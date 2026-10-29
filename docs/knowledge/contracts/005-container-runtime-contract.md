@@ -389,20 +389,21 @@ Chain failures keep their place in that list, which is capped at eight entries
 and ends with how many reasons it omitted, so a flood of invalid markers can
 never hide a missing or unconfirmed part of the chain.
 
-Redaction has two policies, because the two command lines are different kinds
-of text. The invoking process's own `argv` is Effigy's own command grammar, so a
-credential-named flag (`--token`, `--api-key`, `--password`, `Authorization:`…)
-keeps its name and loses only the value beside it, as does a URL's userinfo and
-a known token prefix. An ancestor's command line is arbitrary third-party text,
-so no positional token in it is treated as safe: only the file name of the
-executable the operating system reports for the process — never its
-caller-chosen `argv[0]`, which `exec -a` can set to anything — and recognised
-flag names are recorded. The rest —
-a positional value in a direct command line, path-shaped text, the same value
-inside a shell string (which is read token by token), a value after a flag, an
-attached short-flag value such as `-pHunter2`, URL userinfo, a `KEY=value`, a
-JSON body and a long unseparated token — is `<redacted>`, because a positional
-password cannot be told from a word or a path.
+Command text is published from a closed vocabulary and nothing else. An event
+records a token from a command line only when that token is a word Effigy defines
+itself, a launcher, runtime or task name the record knows, or one of Effigy's own
+flag names; every other token — an argument value, a path, an unknown flag name
+such as `--hunter2`, a program name, a URL, a `KEY=value` pair, a JSON body — is
+recorded as `<redacted>`, because all of it is caller-controlled text and a
+positional password cannot be told from a word. The same rule applies to the
+invoking process's own `argv` (an accepted option value such as
+`gateway setup --suffix <value>` is never written), to an ancestor's `argv`, and
+token by token inside a shell string. An ancestor's program slot names the file
+name of the executable the operating system reports — never its caller-chosen
+`argv[0]`, which `exec -a` can set to anything — and only when that name is in
+the same vocabulary. Attribution therefore rests on the pid, start identity,
+session, controlling terminal, markers, `cause` and Effigy's own command words,
+not on arbitrary text from a command line.
 
 This record is diagnostic evidence only. It never authorizes, refuses or
 delays an operator action, and an unavailable log never fails one. The

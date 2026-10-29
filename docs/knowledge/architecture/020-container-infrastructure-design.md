@@ -804,17 +804,17 @@ allowlist. The reason list keeps chain failures ahead of marker failures and
 ends with how many reasons it omitted, so a full list never hides a missing or
 unconfirmed part of the chain.
 
-Redaction treats the two command lines differently. The invoking process's own
-`argv` is Effigy's grammar, so a credential-named flag keeps its name and loses
-only its value. An ancestor's command is arbitrary third-party text, so no
-positional token in it is treated as safe: only the file name of the executable
-the operating system reports for the process (never its caller-chosen
-`argv[0]`) and recognised flag names are kept. A positional value in a
-direct command line, path-shaped text, the same value inside a shell string
-(read token by token), a value after a flag, an attached short-flag value, URL
-userinfo, a `KEY=value`, a JSON body and a long unseparated token are recorded
-as `<redacted>`. A marker value is recorded only when it is a UUID, a decimal id,
-or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
+Command text is published from a closed vocabulary. A token from a command line
+is recorded only when it is a word Effigy defines, a known launcher, runtime or
+task name, or one of Effigy's own flag names; every other token — a value, a
+path, an unknown flag such as `--hunter2`, a program name, a URL, a `KEY=value`
+pair or a JSON body — is `<redacted>`, because all of it is caller-controlled
+text. The rule covers the invoking process's own `argv` (an accepted option value
+is never written), an ancestor's `argv`, and the tokens of a shell string. An
+ancestor's program slot names the file name of the executable the operating
+system reports, never the caller-chosen `argv[0]`, and only when that name is in
+the same vocabulary. A marker value is recorded only when it is a UUID, a decimal
+id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
 marker variable is refused by name only. A stop signalled by replacement or
 migration is attributable through the `up` or `setup` action that requested it;
 no lower-level signal helper writes a second record for one action. Logging
