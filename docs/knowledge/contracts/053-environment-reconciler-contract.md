@@ -278,9 +278,12 @@ reads that record for the container counts every phase-dependent entry names. A
 read accepts a snapshot only while it is still the visible one — a listing a
 commit retires mid-read is re-resolved — so an in-flight front end never observes
 a missing or partial snapshot across the handoff. The host plan launches entries
-one at a time, so each later entry names that scheduler hold as its own wait
-(`launch`), distinct from a declared `depends_on` edge and never attributed as
-one. A failure the planner published is terminal and is never
+one at a time in its resolved dependency order, so each queued entry names the
+launch the plan is performing now, with that entry's actual phase, as its own
+wait (`launch`) — distinct from a declared `depends_on` edge and never
+attributed as one. A launch that aborts the plan marks every entry it never
+started `not started` with the plan's own attribution
+(`plan stopped after <entry> <report>`), so no wait outlives the plan. A failure the planner published is terminal and is never
 replaced by the run's generic `up` exit; the run's own environment reason
 carries the planner's failing entry and its report. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting

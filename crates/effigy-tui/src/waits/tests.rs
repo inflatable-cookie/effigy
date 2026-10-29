@@ -32,21 +32,18 @@ fn four_entry_order() -> SessionOrder {
             waits_for: Vec::new(),
             waits_for_readiness: false,
             after_environment: true,
-            held_by: None,
         },
         OrderEntry {
             name: "front".to_owned(),
             waits_for: vec!["api".to_owned()],
             waits_for_readiness: true,
             after_environment: false,
-            held_by: Some("api".to_owned()),
         },
         OrderEntry {
             name: "admin".to_owned(),
             waits_for: vec!["api".to_owned()],
             waits_for_readiness: true,
             after_environment: false,
-            held_by: Some("front".to_owned()),
         },
     ])
 }
@@ -145,18 +142,8 @@ fn the_four_entry_graph_names_each_entry_s_own_wait_frame_by_frame() {
     assert_eq!(api.waiting_on, None);
     assert!(waits.may_start("front"), "front may start");
     assert!(
-        !waits.may_start("admin"),
-        "admin waits for the plan to finish launching front"
-    );
-    assert_eq!(
-        waits
-            .state("admin", clock.at(21.0))
-            .expect("admin's state")
-            .waiting_on,
-        Some(WaitOn::Launch {
-            name: "front".to_owned(),
-            phase: EntryPhase::Waiting
-        })
+        waits.may_start("admin"),
+        "this graph has no scheduler, so admin's own prerequisites decide"
     );
     waits.started("front", clock.at(21.0));
     waits.started("admin", clock.at(21.0));
@@ -324,7 +311,7 @@ fn an_independent_host_names_the_scheduler_hold() {
         jobs.status_line(),
         "waiting for api's launch (starting) (1s)"
     );
-    assert_eq!(jobs.tab_label(), "jobs [waiting: api launching]");
+    assert_eq!(jobs.tab_label(), "jobs [waiting: api starting]");
     assert!(!waits.may_start("jobs"));
 
     // The plan moved past api: jobs launches without any dependency edge.

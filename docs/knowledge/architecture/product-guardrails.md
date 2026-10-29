@@ -70,9 +70,11 @@ when the real cause was two named services failing their health checks.
   terminal and attributed (`front: not started — api failed (status 500)`), and
   no dependent starts, and a host tab is never announced as started while its
   published wait still holds it (a missing record is never evidence of a start),
-  the scheduler's own hold is named as such rather than invented as a
-  dependency, and each publisher of the environment's entries stages a complete
-  snapshot and commits it atomically. The same state reaches the tab, the
+  the scheduler's own hold names the launch being performed now and that
+  entry's actual phase (never a queued neighbour, never an invented dependency),
+  an aborted plan leaves every unstarted entry terminal with the plan's own
+  attribution, and each publisher of the environment's entries stages a
+  complete snapshot and commits it atomically. The same state reaches the tab, the
   `--headless` text and `status --json` (`waiting_on`, and a `waits` list scoped
   `workload`, `host` or `environment`), published before the environment phase
   can block; nothing derives a label from screen or tab order, and no wait

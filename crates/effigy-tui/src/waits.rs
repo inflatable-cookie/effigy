@@ -149,7 +149,7 @@ impl WaitOn {
         match self {
             Self::Environment { .. } => "environment".to_owned(),
             Self::Entry { name, phase } => format!("{name} {}", phase.as_str()),
-            Self::Launch { name, .. } => format!("{name} launching"),
+            Self::Launch { name, phase } => format!("{name} {}", phase.as_str()),
             Self::Probe { probe } => probe.clone(),
             Self::Delay { remaining_ms } => format!("{}s delay", whole_seconds(*remaining_ms)),
         }
@@ -333,10 +333,6 @@ pub struct OrderEntry {
     pub waits_for_readiness: bool,
     /// Whether this entry starts only after the run's environment phase.
     pub after_environment: bool,
-    /// The entry whose launch holds this one: the session launches its entries
-    /// one at a time, so every later entry waits for the one before it even
-    /// when it declares no dependency of its own (effigy#458).
-    pub held_by: Option<String>,
 }
 
 /// One workload's ordering inputs, as the resolved managed plan states them.
@@ -362,11 +358,19 @@ pub struct HostOrder<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionOrder {
     entries: Vec<OrderEntry>,
+    /// Whether one process launches these entries one at a time, so a queued
+    /// entry names the launch the plan is performing now. The run's supervisor
+    /// sequences workloads itself and names their waits, so their graph has no
+    /// scheduler hold (effigy#458).
+    scheduler: bool,
 }
 
 impl SessionOrder {
     pub fn new(entries: Vec<OrderEntry>) -> Self {
-        Self { entries }
+        Self {
+            entries,
+            scheduler: false,
+        }
     }
 
     /// The workload graph: the supervisor starts workloads one at a time in
@@ -389,12 +393,12 @@ impl SessionOrder {
                 // entry's `after = ["environment"]` states that relationship
                 // rather than changing the order.
                 after_environment: true,
-                // The run's supervisor sequences workloads itself and names
-                // that wait, so the graph adds no second hold.
-                held_by: None,
             })
             .collect();
-        Self { entries }
+        Self {
+            entries,
+            scheduler: false,
+        }
     }
 
     /// The environment's host-process graph: each process waits first for the
@@ -408,21 +412,17 @@ impl SessionOrder {
     pub fn hosts(entries: &[HostOrder<'_>]) -> Self {
         let entries = entries
             .iter()
-            .enumerate()
-            .map(|(index, entry)| OrderEntry {
+            .map(|entry| OrderEntry {
                 name: entry.name.to_owned(),
                 waits_for: entry.depends_on.to_vec(),
                 waits_for_readiness: true,
                 after_environment: true,
-                // The plan launches one entry at a time: each one is held by
-                // the entry before it until that entry's launch and readiness
-                // observation are over.
-                held_by: index
-                    .checked_sub(1)
-                    .map(|previous| entries[previous].name.to_owned()),
             })
             .collect();
-        Self { entries }
+        Self {
+            entries,
+            scheduler: true,
+        }
     }
 
     pub fn entries(&self) -> &[OrderEntry] {
@@ -487,6 +487,9 @@ pub struct EntryWaits {
     order: SessionOrder,
     environment: Option<Environment>,
     records: BTreeMap<String, Record>,
+    /// The entry whose launch the plan is performing now: the one real
+    /// scheduler hold every queued entry names (effigy#458).
+    launching: Option<String>,
 }
 
 impl EntryWaits {
@@ -509,6 +512,7 @@ impl EntryWaits {
             order,
             environment,
             records,
+            launching: None,
         }
     }
 
@@ -558,6 +562,11 @@ impl EntryWaits {
     /// The entry's process was launched.
     pub fn started(&mut self, entry: &str, now: Instant) {
         self.transition(entry, EntryPhase::Starting, now);
+        // Only a graph one process launches in order has a scheduler hold; the
+        // run's supervisor names a workload's own wait itself (effigy#458).
+        if self.order.scheduler {
+            self.launching = Some(entry.to_owned());
+        }
     }
 
     /// The entry's process is running.
@@ -568,6 +577,15 @@ impl EntryWaits {
     /// A listener reported ready; a plain process reached its running state.
     pub fn ready(&mut self, entry: &str, now: Instant) {
         self.transition(entry, EntryPhase::Ready, now);
+        self.end_launch(entry);
+    }
+
+    /// The plan has finished with `entry`'s launch, or the entry can never
+    /// start: nothing is held by it any more.
+    fn end_launch(&mut self, entry: &str) {
+        if self.launching.as_deref() == Some(entry) {
+            self.launching = None;
+        }
     }
 
     /// The entry's own start failed, with what it reported.
@@ -579,7 +597,29 @@ impl EntryWaits {
             record.explicit = None;
             record.detail = Some(detail.clone());
         }
+        self.end_launch(entry);
         self.fail_dependents(entry, Attribution::new(entry, detail), now);
+    }
+
+    /// The plan aborted. Every entry it never started is terminal and names
+    /// what ended the plan — not an invented dependency, and not a wait that
+    /// outlives the plan (effigy#458).
+    pub fn abandon_unstarted(&mut self, failed: &str, detail: &str, now: Instant) {
+        let cause = Attribution::new("plan", format!("stopped after {failed} {detail}"));
+        let unstarted = self
+            .order
+            .names()
+            .filter(|name| {
+                self.records
+                    .get(*name)
+                    .is_some_and(|record| record.phase == EntryPhase::Waiting)
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        for entry in unstarted {
+            self.mark_not_started(&entry, cause.clone(), now);
+        }
+        self.launching = None;
     }
 
     /// The entry's process exited with `code`.
@@ -590,6 +630,7 @@ impl EntryWaits {
             record.explicit = None;
             record.detail = Some(format!("({code})"));
         }
+        self.end_launch(entry);
         if code != 0 {
             // A dependent that needed this entry only started cannot be
             // stopped by a later exit; a dependent that needed its readiness
@@ -753,12 +794,12 @@ impl EntryWaits {
                 unmet.push(dependency.clone());
             }
         }
-        if let Some(holder) = order.held_by.as_deref() {
-            if let Some(record) = self.records.get(holder) {
-                // The plan proceeds past the holder only once its own launch
-                // and readiness observation are over.
+        if let Some(launching) = self.launching.as_deref() {
+            if let Some(record) = self.records.get(launching) {
+                // The plan is performing this launch now: nothing else starts
+                // until it is over.
                 if !plan_moved_past(record.phase) {
-                    unmet.push(holder.to_owned());
+                    unmet.push(launching.to_owned());
                 }
             }
         }
@@ -794,20 +835,16 @@ impl EntryWaits {
                 });
             }
         }
-        if let Some(holder) = order.held_by.as_deref() {
-            // The scheduler held this entry while the entries before it are
-            // launched one at a time: that is its own wait, never a declared
-            // dependency.
-            if let Some(record) = self.records.get(holder) {
-                if !plan_moved_past(record.phase) {
-                    return Some(WaitOn::Launch {
-                        name: holder.to_owned(),
-                        phase: record.phase,
-                    });
-                }
-            }
-        }
-        None
+        // The plan launches one entry at a time. Every entry still waiting is
+        // held by the one launch the plan is performing now — its actual
+        // position in the resolved order, with its actual phase — and that is
+        // its own wait, never a declared dependency.
+        let launching = self.launching.as_deref()?;
+        let record = self.records.get(launching)?;
+        (!plan_moved_past(record.phase)).then(|| WaitOn::Launch {
+            name: launching.to_owned(),
+            phase: record.phase,
+        })
     }
 
     /// The entry's state now.

@@ -363,7 +363,7 @@ fn managed_host_process_owner(
     Ok(format!("{project_path}|{}|{}", policy.name, process.name))
 }
 
-fn order_host_processes(
+pub(in crate::runner) fn order_host_processes(
     processes: &[EffectiveHostProcess],
 ) -> Result<Vec<&EffectiveHostProcess>, RunnerError> {
     let by_name = processes

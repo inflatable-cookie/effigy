@@ -276,9 +276,13 @@ During v0.x, MINOR bumps may include breaking changes.
   read accepts a snapshot only while it is still the visible one, re-resolving
   one a commit retires mid-read, so an in-flight tab or status never observes a
   missing or partial snapshot across the handoff. A host process that declares
-  no dependency of its own still names its real wait while the plan launches the
-  entries before it one at a time (`jobs [waiting: admin launching]`), reported
-  as its own `launch` identity in JSON and never attributed as a dependency. A host
+  no dependency of its own still names its real wait while the plan launches
+  entries one at a time in its resolved order — the launch being performed now
+  and that entry's actual phase, `jobs [waiting: api starting]` — reported as
+  its own `launch` identity in JSON and never attributed as a dependency. A
+  launch that aborts the plan marks every entry it never started terminal
+  (`not started — plan stopped after api failed: …500…`), so no wait outlives
+  the plan. A host
   failure the planner published
   survives the run's generic `up` exit: the run's error names the failing entry
   and its observed status. A wait is recorded as

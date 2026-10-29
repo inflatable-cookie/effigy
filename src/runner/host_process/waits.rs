@@ -305,6 +305,10 @@ impl HostWaitGraph {
         now: Instant,
     ) -> Vec<String> {
         self.waits.failed(entry, detail, now);
+        // The plan stops here: every entry it never started is terminal and
+        // names what ended the plan, so an independent host is never left
+        // waiting after the plan itself is over (effigy#458).
+        self.waits.abandon_unstarted(entry, detail, now);
         self.publish_all(now);
         self.waits
             .not_started()
@@ -460,7 +464,11 @@ mod tests {
         }
     }
 
-    fn process(name: &str, depends_on: &[&str], declares_listener: bool) -> EffectiveHostProcess {
+    pub(super) fn process(
+        name: &str,
+        depends_on: &[&str],
+        declares_listener: bool,
+    ) -> EffectiveHostProcess {
         EffectiveHostProcess {
             name: name.to_owned(),
             run: format!("run-{name}"),
@@ -743,8 +751,8 @@ mod environment_tests {
     use effigy_tui::waits::{EntryPhase, WaitOn};
 
     use super::tests::{
-        four_entry_policy, policy_with_an_independent_host, records, state_of, Clock, FakeLauncher,
-        ENVIRONMENT,
+        four_entry_policy, policy_with_an_independent_host, process, records, state_of, Clock,
+        FakeLauncher, ENVIRONMENT,
     };
     use super::*;
     use crate::runner::managed_run::wait_views;
@@ -1261,11 +1269,12 @@ mod environment_tests {
     }
 
     /// A host that declares no dependency of its own is still held while the
-    /// plan launches the entries before it one at a time. It names that hold —
-    /// not an invented dependency — in its record, its frame, the headless text
-    /// and the status JSON (effigy#458).
+    /// plan launches entries one at a time. It names the launch the plan is
+    /// performing now — the real scheduler position, with its actual phase, in
+    /// the resolved order — not an invented dependency and not a queued
+    /// neighbour (effigy#458).
     #[test]
-    fn an_independent_host_names_the_schedulers_hold() {
+    fn an_independent_host_names_the_schedulers_active_launch() {
         let (_dir, checkout) = fixture();
         let policy = policy_with_an_independent_host(&checkout);
         let clock = Clock::new();
@@ -1298,20 +1307,23 @@ mod environment_tests {
             spawns: Vec::new(),
             frames: Vec::new(),
         };
-        let ordered = policy.host_processes.iter().collect::<Vec<_>>();
+        let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
+            .expect("the plan order resolves");
         run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
             .expect("the plan finishes");
 
+        // While `api` probes, `jobs` names that active launch — several
+        // positions ahead of it — not the queued `admin` behind it.
         let during_api = &launcher.frames[0];
         let jobs = state_of(during_api, "jobs");
         assert_eq!(jobs.phase, EntryPhase::Waiting);
         assert_eq!(
             jobs.waiting_on,
             Some(WaitOn::Launch {
-                name: "admin".to_owned(),
-                phase: EntryPhase::Waiting
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting
             }),
-            "the hold names the entry before it, never a declared dependency"
+            "the hold names the active launch in the resolved order"
         );
         assert_eq!(
             jobs.waiting_on.as_ref().and_then(WaitOn::dependency),
@@ -1320,16 +1332,16 @@ mod environment_tests {
         );
         let presented = frame_of(&["api", "front", "admin", "jobs"], "jobs", during_api);
         assert!(
-            presented.contains("jobs [waiting: admin launching]"),
+            presented.contains("jobs [waiting: api starting]"),
             "{presented}"
         );
         assert!(
-            presented.contains("waiting for admin's launch (waiting)"),
+            presented.contains("waiting for api's launch (starting)"),
             "{presented}"
         );
         assert_eq!(
             jobs.headless_line().as_deref(),
-            Some("[managed] jobs: waiting for admin's launch (waiting) (0s)")
+            Some("[managed] jobs: waiting for api's launch (starting) (0s)")
         );
         // The same record carries the machine-readable identity and state; the
         // status projection reads exactly these records (the plan has finished
@@ -1337,9 +1349,203 @@ mod environment_tests {
         let json = serde_json::to_value(jobs).expect("record json");
         assert_eq!(json["phase"], "waiting");
         assert_eq!(json["waiting_on"]["kind"], "launch");
-        assert_eq!(json["waiting_on"]["name"], "admin");
-        assert_eq!(json["waiting_on"]["phase"], "waiting");
+        assert_eq!(json["waiting_on"]["name"], "api");
+        assert_eq!(json["waiting_on"]["phase"], "starting");
         assert_eq!(launcher.spawns, vec!["api", "front", "admin", "jobs"]);
+    }
+
+    /// Declaration order is not launch order: a host declared before its
+    /// reader still waits for the reader's readiness, and a host declared first
+    /// is not held by anything. The scheduler hold names the active launch out
+    /// of the resolved plan (effigy#458).
+    #[test]
+    fn the_hold_follows_the_resolved_launch_order_not_the_declaration_order() {
+        let (_dir, checkout) = fixture();
+        let mut policy = four_entry_policy(&checkout);
+        // Declared before the reader it depends on, and with an independent
+        // host last.
+        policy.host_processes = vec![
+            process("front", &["api"], false),
+            process("api", &[], true),
+            process("jobs", &[], false),
+        ];
+        let clock = Clock::new();
+        WaitLedger::task(&checkout, "dev", "default").publish_environment_identity(ENVIRONMENT);
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(4),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        let (healthy, total) = ledger
+            .read_progress()
+            .expect("the phase reports its containers");
+        let mut graph = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        graph.environment_progress(healthy, total, clock.at());
+        graph.environment_ready(clock.at());
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            failure: None,
+            spawns: Vec::new(),
+            frames: Vec::new(),
+        };
+        let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
+            .expect("the plan order resolves");
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|process| process.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api", "front", "jobs"],
+            "the plan launches the reader first"
+        );
+        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+            .expect("the plan finishes");
+
+        // While api probes, `front` names its declared dependency and `jobs`
+        // names the active launch; nothing names a queued entry.
+        let during_api = &launcher.frames[0];
+        assert_eq!(
+            state_of(during_api, "front").waiting_on,
+            Some(WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting
+            })
+        );
+        assert_eq!(
+            state_of(during_api, "jobs").waiting_on,
+            Some(WaitOn::Launch {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting
+            })
+        );
+        assert_eq!(
+            state_of(during_api, "front").tab_label(),
+            "front [waiting: api starting]"
+        );
+        assert_eq!(
+            state_of(during_api, "jobs").tab_label(),
+            "jobs [waiting: api starting]"
+        );
+        assert_eq!(launcher.spawns, vec!["api", "front", "jobs"]);
+    }
+
+    /// When a launch aborts the plan, every entry it never started is terminal
+    /// and names what ended the plan — including a host with no declared
+    /// dependency, which must not be left waiting (effigy#458).
+    #[test]
+    fn an_independent_host_is_settled_when_the_plan_aborts() {
+        let (_dir, checkout) = fixture();
+        let policy = policy_with_an_independent_host(&checkout);
+        let clock = Clock::new();
+        WaitLedger::task(&checkout, "dev", "default").publish_environment_identity(ENVIRONMENT);
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        ledger.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(4),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        let (healthy, total) = ledger
+            .read_progress()
+            .expect("the phase reports its containers");
+        let mut graph = HostWaitGraph::for_environment_phase(&checkout, &policy, clock.at());
+        graph.environment_progress(healthy, total, clock.at());
+        graph.environment_ready(clock.at());
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            failure: Some(RunnerError::ManagedHostReadiness {
+                process: "api".to_owned(),
+                diagnostic: "readiness probe GET / returned 500; the listener never became ready"
+                    .to_owned(),
+            }),
+            spawns: Vec::new(),
+            frames: Vec::new(),
+        };
+        let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
+            .expect("the plan order resolves");
+        run_host_plan(&ordered, None, &mut graph, &mut launcher, &|| clock.at())
+            .expect_err("api never became ready");
+        assert_eq!(
+            launcher.spawns,
+            vec!["api"],
+            "no dependent or queued host spawned"
+        );
+
+        let published = records(&checkout);
+        for dependent in ["front", "admin"] {
+            assert_eq!(
+                state_of(&published, dependent).phase,
+                EntryPhase::NotStarted,
+                "{dependent}"
+            );
+            assert_eq!(
+                state_of(&published, dependent)
+                    .not_started_because
+                    .as_ref()
+                    .map(|cause| cause.name.as_str()),
+                Some("api"),
+                "{dependent} names the failing prerequisite"
+            );
+        }
+        let jobs = state_of(&published, "jobs");
+        assert_eq!(
+            jobs.phase,
+            EntryPhase::NotStarted,
+            "the queued host is terminal"
+        );
+        assert_eq!(
+            jobs.not_started_because,
+            Some(effigy_tui::waits::Attribution::new(
+                "plan",
+                "stopped after api failed: readiness probe GET / returned 500; the listener never became ready"
+            )),
+            "the independent host names the plan, not an invented dependency"
+        );
+        assert_eq!(jobs.waiting_on, None, "no wait outlives the plan");
+        let presented = frame_of(&["api", "front", "admin", "jobs"], "jobs", &published);
+        assert!(
+            presented.contains("jobs [not started: plan failed]"),
+            "{presented}"
+        );
+        assert!(
+            presented.contains(
+                "not started — plan stopped after api failed: readiness probe GET / returned 500"
+            ),
+            "{presented}"
+        );
+        assert!(jobs
+            .headless_line()
+            .unwrap_or_default()
+            .contains("plan stopped after api failed: readiness probe GET / returned 500"));
+        let views = wait_views(&checkout, "dev", "default", Some(ENVIRONMENT));
+        let jobs = views
+            .iter()
+            .find(|view| view.state.entry == "jobs")
+            .expect("jobs is reported");
+        let json = serde_json::to_value(jobs).expect("view json");
+        assert_eq!(json["phase"], "not_started");
+        assert_eq!(json["not_started_because"]["name"], "plan");
+        assert!(
+            json["not_started_because"]["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("500"),
+            "{json}"
+        );
     }
 
     /// The environment's own failure is terminal for every host entry: none

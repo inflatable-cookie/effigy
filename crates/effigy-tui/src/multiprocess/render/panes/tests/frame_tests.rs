@@ -301,7 +301,6 @@ fn a_legacy_delay_tab_names_the_delay() {
         waits_for: Vec::new(),
         waits_for_readiness: false,
         after_environment: false,
-        held_by: None,
     }]);
     let mut waits = EntryWaits::new(order, None, now);
     waits.delaying("jobs", Duration::from_millis(1_200), now);
@@ -414,7 +413,7 @@ fn host_depends_on_frames_name_the_reader_and_its_own_probe() {
     waits.ready("api", now + Duration::from_secs(20));
     assert!(waits.may_start("front"), "front starts once api is ready");
     assert!(
-        !waits.may_start("admin"),
-        "admin is held by the plan launching front"
+        waits.may_start("admin"),
+        "admin's own prerequisites are satisfied; the plan orders its launch"
     );
 }
