@@ -34,8 +34,9 @@ use serde::{Deserialize, Serialize};
 use super::{
     host_process_dir_for_policy, host_process_state_path, listener_gateway_root,
     managed_host_process_owner, order_host_processes, read_private_json, HostListenerState,
-    HostProcessRestartReport, HostProcessRuntimeSpec, ManagedHostListenerResult,
-    RestartedHostProcess, HOST_LISTENER_STATE_SCHEMA,
+    HostProcessListenerReport, HostProcessRestartReport, HostProcessRuntimeSpec,
+    ManagedHostListenerFailure, ManagedHostListenerResult, RestartedHostProcess,
+    HOST_LISTENER_STATE_SCHEMA,
 };
 use crate::runner::error::RunnerError;
 
@@ -325,14 +326,31 @@ pub(super) fn invocation(
 /// stops short never leaves a running sidecar: the failing path drops the
 /// owning pipes, which is the kernel's owner-loss stop, and settles what it
 /// started.
+///
+/// A listener that fails its own readiness keeps only its own route withheld:
+/// the report carries that failure and the listeners that did publish, so the
+/// caller can report exposure per declared route target (effigy#455). A
+/// failure that is not the listener's own - a start, a state record or a stop
+/// request - still ends the whole start.
+///
+/// `deadline` is the enclosing activation's observation budget. A listener
+/// still starting when it is spent withholds its own route; a caller with no
+/// enclosing budget passes `None` (a restart waits on its own readiness).
 pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-) -> Result<Vec<ManagedHostListenerResult>, RunnerError> {
-    let HostProcessStart { started, listeners } =
-        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
+    deadline: Option<Instant>,
+) -> Result<HostProcessListenerReport, RunnerError> {
+    let HostProcessStart {
+        started,
+        listeners,
+        failures,
+    } = start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, deadline)?;
     detach_started(repo_root, policy, started, None)?;
-    Ok(listeners)
+    Ok(HostProcessListenerReport {
+        ready: listeners,
+        failures,
+    })
 }
 
 /// Restarts only the named host processes, and every process that depends on
@@ -358,12 +376,25 @@ pub(in crate::runner) fn restart_host_processes_for_container(
 ) -> Result<HostProcessRestartReport, RunnerError> {
     let selection = restart_selection(policy, requested)?;
     let selected = selection.ordered.iter().cloned().collect::<BTreeSet<_>>();
-    let HostProcessStart { started, listeners } = start_host_processes_inner(
+    let HostProcessStart {
+        started,
+        listeners,
+        failures,
+    } = start_host_processes_inner(
         repo_root,
         policy,
         Some(&selected),
         ReplaceGate::HeldForReplace,
+        None,
     )?;
+    // A restart names the processes it replaces, so a listener that did not
+    // publish is this restart's failure, not a partial environment: the
+    // processes that did publish stay running and the refusal names them.
+    let refusal = HostProcessListenerReport {
+        ready: listeners.clone(),
+        failures,
+    }
+    .refusal();
     let runs = detach_started(repo_root, policy, started, Some(&selected))?
         .into_iter()
         .collect::<BTreeMap<_, _>>();
@@ -371,6 +402,11 @@ pub(in crate::runner) fn restart_host_processes_for_container(
         .into_iter()
         .map(|listener| (listener.name.clone(), listener))
         .collect::<BTreeMap<_, _>>();
+    if let Some(refusal) = refusal {
+        // The named processes were replaced and settled; only the route the
+        // listener would have served is absent. Report it as the refusal it is.
+        return Err(refusal);
+    }
     Ok(HostProcessRestartReport {
         environment: policy.name.clone(),
         processes: selection
@@ -510,15 +546,17 @@ pub(super) fn start_host_processes_owning(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
     let HostProcessStart { started, .. } =
-        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld)?;
+        start_host_processes_inner(repo_root, policy, None, ReplaceGate::Unheld, None)?;
     Ok(started)
 }
 
 /// One successful bring-up: the supervisors still held by their owning
-/// clients, and the listener results the caller reports.
+/// clients, the listener results the caller reports, and the listeners that
+/// kept their own route withheld.
 struct HostProcessStart {
     started: Vec<(String, effigy_kernel::supervise::SupervisorClient)>,
     listeners: Vec<ManagedHostListenerResult>,
+    failures: Vec<ManagedHostListenerFailure>,
 }
 
 /// Whether the replace step (stop plus spawn) holds `Gate(Env)`.
@@ -538,11 +576,13 @@ fn start_host_processes_inner(
     policy: &EffectiveContainerPolicy,
     selection: Option<&BTreeSet<String>>,
     gate: ReplaceGate,
+    deadline: Option<Instant>,
 ) -> Result<HostProcessStart, RunnerError> {
     if policy.host_processes.is_empty() {
         return Ok(HostProcessStart {
             started: Vec::new(),
             listeners: Vec::new(),
+            failures: Vec::new(),
         });
     }
     super::validate_host_process_preflight(repo_root, policy)?;
@@ -580,6 +620,13 @@ fn start_host_processes_inner(
         .collect::<std::collections::HashMap<_, _>>();
     let mut started: Vec<(String, effigy_kernel::supervise::SupervisorClient)> = Vec::new();
     let mut listener_results = Vec::new();
+    let mut listener_failures: Vec<ManagedHostListenerFailure> = Vec::new();
+    // This activation's own decisions about processes it withheld (a listener
+    // that failed, or a process whose dependency was withheld). Dependents read
+    // them before any state file, so a chain A -> B -> C settles instead of
+    // waiting on a record that a skipped process never publishes (effigy#455).
+    let mut withheld: BTreeMap<String, (String, Option<u16>)> = BTreeMap::new();
+    let mut activation_budget_spent = false;
     let start_result = (|| -> Result<(), RunnerError> {
         for hp in ordered {
             // `up` starts every declared process; a restart names the ones it
@@ -590,7 +637,96 @@ fn start_host_processes_inner(
             let resource = host_process_resource(policy, &hp.name)?;
             let env = resolved_host_process_environment(hp, &facts)?;
             let listener = resolved_host_process_listener(hp, &listener_binds);
+            let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
+            // The activation's observation budget is spent: nothing further is
+            // started. The declared dependency chain decides first - a
+            // dependency this activation withheld withholds this process,
+            // however healthy the generation it used to run was - and only then
+            // is a listener the previous activation published reconciled
+            // against its own generation and route (effigy#455).
+            if activation_budget_spent {
+                if let Some((dependency, detail, observed_status)) =
+                    withheld_dependency(&hp.depends_on, &withheld)
+                {
+                    withdraw_listener(
+                        repo_root,
+                        policy,
+                        hp,
+                        listener.as_ref(),
+                        &log_file,
+                        format!("its dependency `{dependency}` was withheld by this activation: {detail}"),
+                        observed_status,
+                        "withheld dependency",
+                        &mut withheld,
+                        &mut listener_failures,
+                    )?;
+                    continue;
+                }
+                let Some(listener) = listener.as_ref() else {
+                    continue;
+                };
+                let state_path = host_process_state_path(&dir, &hp.name);
+                let owner = managed_host_process_owner(&project_path, policy, hp)?;
+                match reconcile_published_listener(
+                    &state_path,
+                    &hp.name,
+                    &owner,
+                    route_table.as_deref(),
+                    listener,
+                ) {
+                    super::ListenerWait::Ready(state) => {
+                        listener_results.push(listener_result(
+                            &hp.name,
+                            listener,
+                            &state,
+                            &state_path,
+                        ));
+                    }
+                    super::ListenerWait::Withheld {
+                        diagnostic,
+                        observed_status,
+                        budget_expired,
+                    } => {
+                        // Nothing verified is exposed for this listener, so a
+                        // generation that still owns a route for it must not
+                        // keep serving it: settle the exact owned generation
+                        // under the same fenced stop a withheld start uses, so
+                        // the reported route and the store agree (effigy#455).
+                        let stale_generation = !budget_expired;
+                        let detail = if budget_expired {
+                            "not started: the activation's observation budget expired before this listener was reached, and no generation from a previous activation is published".to_owned()
+                        } else {
+                            format!(
+                                "not started: the activation's observation budget expired before this listener was reached, and its published generation is not verified now ({diagnostic})"
+                            )
+                        };
+                        let detail = if stale_generation {
+                            settle_listener_generation(
+                                repo_root,
+                                policy,
+                                &hp.name,
+                                "reconciliation",
+                            )?;
+                            format!(
+                                "{detail}; that generation was settled so it no longer serves a route this activation does not expose"
+                            )
+                        } else {
+                            detail
+                        };
+                        withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
+                        listener_failures.push(listener_failure(
+                            hp,
+                            listener,
+                            &log_file,
+                            detail,
+                            observed_status,
+                        ));
+                    }
+                }
+                continue;
+            }
             let mut dependencies = Vec::new();
+            let mut dependency_refusal = None;
             for dependency in &hp.depends_on {
                 let dependency_process = by_name.get(dependency.as_str()).ok_or_else(|| {
                     RunnerError::task_invocation(format!(
@@ -598,8 +734,19 @@ fn start_host_processes_inner(
                         hp.name
                     ))
                 })?;
+                // A dependency this activation already withheld (whether it has
+                // a listener or not) withholds this process's route too, without
+                // reading a state file the skipped process never wrote.
+                if let Some((diagnostic, observed_status)) = withheld.get(dependency.as_str()) {
+                    dependency_refusal = Some((
+                        dependency.clone(),
+                        format!("its dependency was withheld by this activation: {diagnostic}"),
+                        *observed_status,
+                    ));
+                    break;
+                }
                 let state_path = host_process_state_path(&dir, &dependency_process.name);
-                let state = super::wait_for_listener_state(
+                let state = match super::wait_for_listener_state(
                     &state_path,
                     dependency,
                     &managed_host_process_owner(&project_path, policy, dependency_process)?,
@@ -608,7 +755,24 @@ fn start_host_processes_inner(
                             "managed host listener dependency has no gateway route table",
                         )
                     })?,
-                )?;
+                    deadline,
+                ) {
+                    Ok(super::ListenerWait::Ready(state)) => state,
+                    // A dependency that failed its own readiness withholds this
+                    // process's route too, and nothing else: the rest of the
+                    // environment is still started (effigy#455).
+                    Ok(super::ListenerWait::Withheld {
+                        diagnostic,
+                        observed_status,
+                        budget_expired,
+                    }) => {
+                        activation_budget_spent = budget_expired;
+                        dependency_refusal =
+                            Some((dependency.clone(), diagnostic, observed_status));
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
                 if state.internal_url.is_none() || state.public_url.is_none() {
                     return Err(RunnerError::task_invocation(format!(
                         "managed host listener `{dependency}` is ready without current endpoint URLs"
@@ -620,7 +784,21 @@ fn start_host_processes_inner(
                     state_file: state_path,
                 });
             }
-            let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
+            if let Some((dependency, diagnostic, observed_status)) = dependency_refusal {
+                withdraw_listener(
+                    repo_root,
+                    policy,
+                    hp,
+                    listener.as_ref(),
+                    &log_file,
+                    format!("its dependency `{dependency}` did not become ready: {diagnostic}"),
+                    observed_status,
+                    "withheld dependency",
+                    &mut withheld,
+                    &mut listener_failures,
+                )?;
+                continue;
+            }
             let spec = HostProcessRuntimeSpec {
                 schema: super::HOST_PROCESS_SPEC_SCHEMA.to_owned(),
                 project_path: project_path.clone(),
@@ -698,35 +876,63 @@ fn start_host_processes_inner(
             if let Some(listener) = &hp.listener {
                 let owner = managed_host_process_owner(&project_path, policy, hp)?;
                 let state_path = host_process_state_path(&dir, &hp.name);
-                super::wait_for_listener_activation(
-                    &state_path,
-                    &hp.name,
-                    &spec.runtime_generation,
-                    super::SUPERVISOR_ACTIVATION_PUBLICATION_BOUND,
-                )?;
-                let state = super::wait_for_listener_state(
-                    &state_path,
-                    &hp.name,
-                    &owner,
-                    route_table.as_deref().ok_or_else(|| {
-                        RunnerError::task_invocation(
-                            "managed host listener has no gateway route table",
-                        )
-                    })?,
-                )?;
-                listener_results.push(ManagedHostListenerResult {
-                    name: hp.name.clone(),
-                    status: state.status,
-                    runtime_generation: state.runtime_generation,
-                    generation: state.generation,
-                    address: state.address.unwrap_or_default(),
-                    internal_url: state.internal_url.unwrap_or_default(),
-                    public_url: state.public_url.unwrap_or_default(),
-                    declared_route_domain: listener.declared_route_domain.clone(),
-                    route_domain: state.route_domain.unwrap_or_default(),
-                    route_tls: listener.route_tls,
-                    state_file: state_path.display().to_string(),
-                });
+                let waited = (|| -> Result<super::ListenerWait, RunnerError> {
+                    super::wait_for_listener_activation(
+                        &state_path,
+                        &hp.name,
+                        &spec.runtime_generation,
+                        super::SUPERVISOR_ACTIVATION_PUBLICATION_BOUND,
+                    )?;
+                    super::wait_for_listener_state(
+                        &state_path,
+                        &hp.name,
+                        &owner,
+                        route_table.as_deref().ok_or_else(|| {
+                            RunnerError::task_invocation(
+                                "managed host listener has no gateway route table",
+                            )
+                        })?,
+                        deadline,
+                    )
+                })();
+                match waited {
+                    Ok(super::ListenerWait::Ready(state)) => listener_results
+                        .push(listener_result(&hp.name, listener, &state, &state_path)),
+                    // This listener never published its own route, so only its
+                    // own route is withheld.
+                    Ok(super::ListenerWait::Withheld {
+                        diagnostic,
+                        observed_status,
+                        budget_expired,
+                    }) => {
+                        activation_budget_spent = budget_expired;
+                        // No withheld start may detach: a failure before the
+                        // first child never emits Active, and a retrying
+                        // supervisor could publish after this report. Settle
+                        // it under the fenced stop and release its owning pipe
+                        // before reporting partial exposure (effigy#455).
+                        settle_listener_generation(repo_root, policy, &hp.name, "withheld start")?;
+                        debug_assert_eq!(
+                            started.last().map(|(name, _)| name.as_str()),
+                            Some(hp.name.as_str()),
+                            "the settled generation is the one this activation started"
+                        );
+                        started.pop();
+                        let diagnostic = format!(
+                            "{diagnostic}; its generation was settled before this activation returned, so it cannot publish that route later — `effigy container {} restart {}` starts it again",
+                            policy.name, hp.name
+                        );
+                        withheld.insert(hp.name.clone(), (diagnostic.clone(), observed_status));
+                        listener_failures.push(listener_failure(
+                            hp,
+                            listener,
+                            &log_file,
+                            diagnostic,
+                            observed_status,
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
             }
         }
         Ok(())
@@ -754,12 +960,14 @@ fn start_host_processes_inner(
             residue.join("\n")
         )));
     }
-    // Every declared process is ready. The caller releases the owning pipes
-    // after a successful detach; a dropped client is the kernel's owner-loss
-    // stop.
+    // Every declared process started and every listener that was waited for
+    // published its own verified route (or was reported withheld). The caller
+    // releases the owning pipes after a successful detach; a dropped client is
+    // the kernel's owner-loss stop.
     Ok(HostProcessStart {
         started,
         listeners: listener_results,
+        failures: listener_failures,
     })
 }
 
@@ -847,6 +1055,218 @@ fn resolved_host_process_listener(
         listener.bind = bind.clone();
     }
     Some(listener)
+}
+
+/// This activation's own decision about a withheld dependency, if any of this
+/// process's declared dependencies is one.
+fn withheld_dependency(
+    dependencies: &[String],
+    withheld: &BTreeMap<String, (String, Option<u16>)>,
+) -> Option<(String, String, Option<u16>)> {
+    for dependency in dependencies {
+        if let Some((diagnostic, observed_status)) = withheld.get(dependency.as_str()) {
+            return Some((dependency.clone(), diagnostic.clone(), *observed_status));
+        }
+    }
+    None
+}
+
+/// Report one process this activation withheld, and - when it has a listener -
+/// settle the generation that may still be serving the route it used to
+/// publish. A dependent whose dependency is withheld must not keep serving an
+/// unrelated route, and a route the report withholds must not stay in the store
+/// (effigy#455).
+#[allow(clippy::too_many_arguments)]
+fn withdraw_listener(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    hp: &effigy_containers::EffectiveHostProcess,
+    listener: Option<&EffectiveManagedHostListener>,
+    log_file: &Path,
+    detail: String,
+    observed_status: Option<u16>,
+    purpose: &str,
+    withheld: &mut BTreeMap<String, (String, Option<u16>)>,
+    listener_failures: &mut Vec<ManagedHostListenerFailure>,
+) -> Result<(), RunnerError> {
+    settle_listener_generation(repo_root, policy, &hp.name, purpose)?;
+    let Some(listener) = listener else {
+        // A process without a listener serves no route, so there is no exposure
+        // to withhold; its previous generation is stopped and the console says
+        // why it was not restarted. Its own dependents still learn about it
+        // from `withheld`.
+        withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
+        eprintln!("[host process] `{}` was not started: {detail}", hp.name);
+        return Ok(());
+    };
+    let detail = format!(
+        "{detail}; any generation it ran before was settled so it no longer serves a route this activation does not expose"
+    );
+    withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
+    listener_failures.push(listener_failure(
+        hp,
+        listener,
+        log_file,
+        detail,
+        observed_status,
+    ));
+    Ok(())
+}
+
+/// What one verified listener publishes, as the report names it.
+fn listener_result(
+    name: &str,
+    listener: &EffectiveManagedHostListener,
+    state: &super::HostListenerState,
+    state_path: &Path,
+) -> ManagedHostListenerResult {
+    ManagedHostListenerResult {
+        name: name.to_owned(),
+        status: state.status.clone(),
+        runtime_generation: state.runtime_generation.clone(),
+        generation: state.generation.clone(),
+        address: state.address.clone().unwrap_or_default(),
+        internal_url: state.internal_url.clone().unwrap_or_default(),
+        public_url: state.public_url.clone().unwrap_or_default(),
+        declared_route_domain: listener.declared_route_domain.clone(),
+        route_domain: state.route_domain.clone().unwrap_or_default(),
+        route_tls: listener.route_tls,
+        state_file: state_path.display().to_string(),
+    }
+}
+
+/// One observation of whatever generation a previous activation published for
+/// this listener, without starting a replacement. `Ready` only when that exact
+/// generation is ready and its route is published now; anything else is
+/// withheld with the reason, because the spent budget cannot be spent again on
+/// a start.
+fn reconcile_published_listener(
+    state_path: &Path,
+    name: &str,
+    owner: &str,
+    route_table: Option<&Path>,
+    listener: &EffectiveManagedHostListener,
+) -> super::ListenerWait {
+    let withheld =
+        |diagnostic: String, observed_status: Option<u16>| super::ListenerWait::Withheld {
+            diagnostic,
+            observed_status,
+            budget_expired: false,
+        };
+    let Some(route_table) = route_table else {
+        return withheld(
+            "the environment has no gateway route table".to_owned(),
+            None,
+        );
+    };
+    let state = match super::wait_for_listener_state(
+        state_path,
+        name,
+        owner,
+        route_table,
+        Some(Instant::now()),
+    ) {
+        Ok(super::ListenerWait::Ready(state)) => state,
+        Ok(super::ListenerWait::Withheld {
+            diagnostic,
+            observed_status,
+            ..
+        }) => return withheld(diagnostic, observed_status),
+        Err(error) => {
+            return withheld(
+                format!("no verified generation is published: {error}"),
+                None,
+            )
+        }
+    };
+    // The published generation must serve *this* declaration: a route domain,
+    // TLS mode or bind that changed since that generation started is a
+    // different declared target, and the activation has no verified route for
+    // it (effigy#455).
+    let declared_target = state.route_domain.as_deref() == Some(listener.route_domain.as_str())
+        && state.address.as_deref() == Some(listener.bind.as_str())
+        && state
+            .route_owner
+            .as_ref()
+            .is_some_and(|route| route.route_tls == listener.route_tls);
+    if !declared_target {
+        return withheld(
+            format!(
+                "its published generation serves {}, {}, which is not the current declaration ({}); the current route stays withheld",
+                state.route_domain.as_deref().unwrap_or("<no route>"),
+                state.address.as_deref().unwrap_or("<no address>"),
+                listener.route_domain
+            ),
+            None,
+        );
+    }
+    // Readiness is a live fact: the published generation counts as exposed only
+    // while it still answers the current declared readiness request.
+    let Ok(address) = listener.bind.parse::<std::net::SocketAddr>() else {
+        return withheld(
+            format!(
+                "its declared bind `{}` is not an address to probe",
+                listener.bind
+            ),
+            None,
+        );
+    };
+    let probe = super::probe_http_readiness(address, &listener.route_domain, listener);
+    if probe.outcome != super::HttpReadinessOutcome::Ready {
+        return withheld(
+            format!(
+                "its published generation no longer answers {} with {} ({})",
+                listener.readiness_path,
+                listener.readiness_status,
+                probe.outcome.as_str()
+            ),
+            probe.status,
+        );
+    }
+    super::ListenerWait::Ready(state)
+}
+
+/// Settle one listener's generation under the fenced kernel stop, before the
+/// activation reports that listener's route withheld: a generation the command
+/// no longer waits for must not publish (or keep serving) a route the report
+/// does not expose (effigy#455).
+fn settle_listener_generation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    name: &str,
+    purpose: &str,
+) -> Result<(), RunnerError> {
+    let selection = BTreeSet::from([name.to_owned()]);
+    let report = stop_host_processes(repo_root, policy, Some(&selection));
+    if !report.complete() {
+        return Err(RunnerError::task_invocation(format!(
+            "host process `{name}` could not settle its generation ({purpose}):\n{}",
+            report.lines().join("\n")
+        )));
+    }
+    Ok(())
+}
+
+/// What one listener's failure contributes to the caller's per-route report:
+/// the process, the route it withheld, and the bounded evidence its child
+/// left behind.
+fn listener_failure(
+    process: &effigy_containers::EffectiveHostProcess,
+    listener: &EffectiveManagedHostListener,
+    log_path: &Path,
+    detail: String,
+    observed_status: Option<u16>,
+) -> ManagedHostListenerFailure {
+    ManagedHostListenerFailure {
+        name: process.name.clone(),
+        status: "failed".to_owned(),
+        declared_route_domain: listener.declared_route_domain.clone(),
+        route_domain: Some(listener.route_domain.clone()),
+        observed_status,
+        detail: effigy_ui::human::bound_text(&detail, super::MAX_LISTENER_FAILURE_DETAIL_BYTES),
+        output_tail: super::listener_output_tail(log_path),
+        log: log_path.display().to_string(),
+    }
 }
 
 /// `127.0.0.1:0` asks Effigy for a concrete port; any other port is the
