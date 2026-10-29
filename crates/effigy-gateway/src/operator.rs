@@ -552,11 +552,9 @@ pub fn up_with_executable_within(
 ) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
-    // An `up` is attributable even when it then refuses or fails: one bounded
-    // event names its caller before the first effect, in the same log as a stop.
-    if let Some(directory) = config.pid_file_path.parent() {
-        run::record_gateway_operator(directory, run::OperatorAction::Up, "gateway up command");
-    }
+    // This shared lifecycle writes no event: the explicit operator command that
+    // asked for it records the action, so a `setup` step or a managed task start
+    // never appears here as a `gateway up command` (effigy#450 review).
     let before = status(config)?;
     if before.ready {
         note_reused_gateway_build(&before);
@@ -717,11 +715,9 @@ fn note_reused_gateway_build(status: &Status) {
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
-    // A `down` is attributable whether it stops a gateway, finds none, or
-    // refuses: one bounded event names its caller before the first read.
-    if let Some(directory) = config.pid_file_path.parent() {
-        run::record_gateway_operator(directory, run::OperatorAction::Down, "gateway down command");
-    }
+    // As `up`: no event here. The command boundary records the stop request, so
+    // `gateway setup --remove` and a managed start are not mistaken for a
+    // `gateway down command`.
     let current = status(config)?;
     if current.status == "setup_required" {
         return Err(error(
@@ -963,30 +959,24 @@ mod tests {
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), before);
     }
 
-    /// A `down` that finds nothing to stop is still attributable: the request
-    /// is recorded before the first read, so a refused or no-op stop names its
-    /// caller too (effigy#450).
+    /// The shared operator lifecycle writes no event of its own: the explicit
+    /// command that asked for the action records it, so an internal caller — a
+    /// `setup` step, a managed task start — is never recorded as a gateway
+    /// command (effigy#450 review).
     #[test]
-    fn a_down_with_nothing_to_stop_still_records_its_caller() {
+    fn shared_operator_lifecycle_records_no_event_of_its_own() {
         let home = tempfile::tempdir().unwrap();
         let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
-        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
-        // Whether the read reports `stopped` or `setup_required`, the request is
-        // recorded before that read.
+        let directory = config.pid_file_path.parent().unwrap();
+        std::fs::create_dir_all(directory).unwrap();
+        let _ = up(&config);
         let _ = down(&config);
-        let log = std::fs::read_to_string(
-            config
-                .pid_file_path
-                .parent()
-                .unwrap()
-                .join("gateway.stderr.log"),
-        )
-        .expect("the down request is recorded beside the gateway records");
-        let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
-        assert_eq!(record["event"], "gateway_stop");
-        assert_eq!(record["cause"], "gateway down command");
-        assert_eq!(record["caller"]["pid"], std::process::id());
+        assert!(
+            !directory.join("gateway.stderr.log").exists(),
+            "the shared lifecycle must not write an operator event"
+        );
     }
+
     #[test]
     fn completion_does_not_hide_a_new_owner_before_admission() {
         let home = tempfile::tempdir().unwrap();

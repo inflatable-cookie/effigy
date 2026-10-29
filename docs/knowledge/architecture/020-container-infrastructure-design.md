@@ -817,7 +817,11 @@ slot names the executable the operating system reports, never the caller-chosen
 id, or Effigy's own base32 run id for `EFFIGY_RUN_*`, so a password pasted into a
 marker variable is refused by name only. A stop signalled by replacement or
 migration is attributable through the `up` or `setup` action that requested it;
-no lower-level signal helper writes a second record for one action. Logging
+no lower-level helper writes a second record for one action. The event is written
+at the command boundary only, so a `setup` step that starts or stops the gateway
+emits its single `gateway_setup` event, and a task run that starts the gateway
+in-process is recorded as `managed gateway start`, never as an operator
+`gateway up`. Logging
 stays best effort and never authorizes, refuses or delays an action; the
 elevated child of `gateway setup` writes nothing, because the file would become
 root-owned in the operator's directory.

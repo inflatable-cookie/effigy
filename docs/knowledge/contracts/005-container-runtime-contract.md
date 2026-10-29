@@ -362,10 +362,14 @@ targets, when it starts, so an action that then refuses, finds nothing to do or
 fails is attributable too. Recording appends to the log the gateway already
 keeps and never creates its directory, so an `up` or `setup` on a machine
 without gateway state stays read-only. Kernel custody settlement appends the
-same record for a machine gateway stop it performs. No lower-level signal
-helper appends its own event: one action is one record, and a replacement or a
-migration stop stays attributable through the `up` or `setup` action that
-requested it. An event keeps the existing `event`, `pid`, `argv`, `cwd` and
+same record for a machine gateway stop it performs. The event is written at the
+command boundary and nowhere else: the shared gateway lifecycle (`operator::up`,
+`operator::down`, the signal helpers) appends none, so a `setup` step that starts
+or stops the gateway emits its single `gateway_setup` event and nothing more, and
+a task run that starts the gateway in-process is recorded with the cause
+`managed gateway start` rather than as an operator `gateway up`. One action is
+one record, and a replacement or a migration stop stays attributable through the
+`up` or `setup` action that requested it. An event keeps the existing `event`, `pid`, `argv`, `cwd` and
 `cause` fields, redacts credential-shaped argument values, and adds a `caller`
 record:
 

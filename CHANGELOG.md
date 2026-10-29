@@ -232,7 +232,9 @@ During v0.x, MINOR bumps may include breaking changes.
   program slot names the executable the operating system reports (never its
   caller-chosen `argv[0]`) when that name is in the program vocabulary. The
   `unknown` list is capped and says how many reasons it omitted, so invalid
-  markers never hide a broken chain. Anything unreadable or invalid becomes a
+  markers never hide a broken chain. The event is written at the command boundary
+  only: `gateway setup` emits its one setup event and no extra up or down event,
+  and a task run that starts the gateway records `managed gateway start`. Anything unreadable or invalid becomes a
   bounded `unknown` reason, no other environment value is read, and logging
   still never authorizes, refuses or delays the action. The 2026-10-28
   15:26:25Z Mac gateway stop could not have been traced to a terminal, session,

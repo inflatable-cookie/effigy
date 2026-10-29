@@ -117,11 +117,67 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
     let config = gateway_config()?;
     refuse_a_fixtures_operator_gateway_mutation(&config)?;
     if !config.is_private() && effigy_core::executable_override::current().is_none() {
+        // A task run, not an operator command: name it as what it is.
+        record_managed_gateway_start(&config);
         effigy_gateway::operator::up(&config)
             .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
         return Ok(());
     }
     gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
+}
+
+/// One bounded event names an operator action at the command boundary, before
+/// its first effect. The shared gateway lifecycle helpers write no event, so an
+/// internal caller — a `setup` step or a managed task start — can never appear
+/// as an explicit gateway command (effigy#450 review).
+fn record_operator_action(
+    config: &GatewayConfig,
+    action: effigy_kernel::run::OperatorAction,
+    cause: &str,
+) {
+    if let Some(directory) = config.pid_file_path.parent() {
+        effigy_kernel::run::record_gateway_operator(directory, action, cause);
+    }
+}
+
+/// `gateway up` from a command line.
+fn record_gateway_up_command(config: &GatewayConfig) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Up,
+        "gateway up command",
+    );
+}
+
+/// `gateway down` from a command line.
+fn record_gateway_down_command(config: &GatewayConfig) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Down,
+        "gateway down command",
+    );
+}
+
+/// A task run asking Effigy to start the gateway on its behalf.
+fn record_managed_gateway_start(config: &GatewayConfig) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Up,
+        "managed gateway start",
+    );
+}
+
+/// `gateway setup`, applied or removed. It is one action, so it is one event.
+fn record_gateway_setup(config: &GatewayConfig, remove: bool) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Setup,
+        if remove {
+            "gateway setup remove command"
+        } else {
+            "gateway setup command"
+        },
+    );
 }
 
 /// A test harness or fixture never starts, stops or replaces the machine
@@ -487,6 +543,7 @@ fn run_gateway_up_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     refuse_a_fixtures_operator_gateway_mutation(config)?;
+    record_gateway_up_command(config);
     if !config.is_private() {
         let result = live("starting the gateway", |step| {
             step.set_label("starting the gateway process and waiting for it to answer");
@@ -511,15 +568,6 @@ fn run_private_gateway_up(
     config: &GatewayConfig,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    // The shared `up` records its own event; a private root keeps the same
-    // attribution in its own gateway log, before the first effect.
-    if let Some(directory) = config.pid_file_path.parent() {
-        effigy_kernel::run::record_gateway_operator(
-            directory,
-            effigy_kernel::run::OperatorAction::Up,
-            "gateway up command",
-        );
-    }
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
@@ -572,6 +620,7 @@ fn run_gateway_down_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     refuse_a_fixtures_operator_gateway_mutation(config)?;
+    record_gateway_down_command(config);
     if !config.is_private() {
         let result = live("stopping the gateway", |step| {
             step.set_label("stopping the gateway process and removing its record");
@@ -588,17 +637,6 @@ fn run_gateway_down_with_config(
                 result.reason.map(|r| format!(": {r}")).unwrap_or_default()
             )
         });
-    }
-    // The shared `down` records its own request in the operator's log; a
-    // private root records the same request in its own gateway log before the
-    // first read, so a refusal or a gateway that is already stopped is
-    // attributable too.
-    if let Some(directory) = config.pid_file_path.parent() {
-        effigy_kernel::run::record_gateway_operator(
-            directory,
-            effigy_kernel::run::OperatorAction::Down,
-            "gateway down command",
-        );
     }
     let _lock =
         effigy_gateway::transition_lock::GatewayTransitionLock::try_acquire(&config.pid_file_path)
@@ -1808,18 +1846,7 @@ fn run_gateway_setup(
     // command as root; it does not write a root-owned record into the
     // operator's log, and the chain already names this process.
     if !nix::unistd::Uid::effective().is_root() {
-        let config = GatewayConfig::standard(standard_gateway_dir()?);
-        if let Some(directory) = config.pid_file_path.parent() {
-            effigy_kernel::run::record_gateway_operator(
-                directory,
-                effigy_kernel::run::OperatorAction::Setup,
-                if remove {
-                    "gateway setup remove command"
-                } else {
-                    "gateway setup command"
-                },
-            );
-        }
+        record_gateway_setup(&GatewayConfig::standard(standard_gateway_dir()?), remove);
     }
     let execute = || -> std::io::Result<String> {
         if nix::unistd::Uid::effective().is_root() {
