@@ -152,6 +152,7 @@ pub(in crate::runner) fn bootstrap_runtime_session_context(phase: &str) -> Runti
         } else {
             PublicWorkspaceCleanupOverride::Default
         },
+        leave_shared_services_alone: false,
     }
 }
 

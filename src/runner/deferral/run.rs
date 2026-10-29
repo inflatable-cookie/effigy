@@ -284,6 +284,7 @@ fn run_deferred_request_with_binding(
                     repo_override: plan.request.repo_override.clone(),
                     route: plan.route,
                     session_context,
+                    reconcile_shared_services: !session_context.leave_shared_services_alone,
                 },
             )?;
             let policy = activation.policy;

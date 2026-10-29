@@ -1424,10 +1424,15 @@ or environments that declare the same service with different shared identities
 all refuse with the exact project and the recovery command.
 
 A data step never publishes a render, starts or replaces a shared service, or
-falls back to a local service of the same name. `data seed` therefore does not
-activate its environment when any selected target is shared: the shared service
-must already be running, and a local target in a mixed selection needs its
-environment already up. `data dump` stays read-only and starts nothing.
+falls back to a local service of the same name, including an unrelated shared
+service the target does not use. `data seed` therefore does not activate its
+environment when any selected target is shared, and a seed's environment
+activation never reconciles shared services: an unshared target still seeds
+through the checkout-local route while any shared service of that environment is
+left untouched. Because bringing a stopped environment up would reconcile those
+services, a data seed for a target whose environment is stopped refuses and
+names `effigy container up <NAME>` instead of starting anything. `data dump`
+stays read-only and starts nothing.
 
 Credentials travel by variable name only. The exec forwards the database
 client's variable (`MYSQL_PWD` or `PGPASSWORD`) with `compose exec -e NAME`, and

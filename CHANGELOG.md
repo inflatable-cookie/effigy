@@ -503,9 +503,12 @@ During v0.x, MINOR bumps may include breaking changes.
   containers, an unreadable runtime or environments that declare the same
   service with different shared identities refuse and name the project and
   recovery command. A data step never publishes a render, starts or replaces a
-  shared service, or falls back to a local service of the same name; a seed that
-  selects a shared target therefore skips its environment activation, and a
-  mixed selection needs the local environment already running. The exec forwards
+  shared service — its own or an unrelated one — or falls back to a local
+  service of the same name; a seed that selects a shared target skips its
+  environment activation, and every activation a data seed performs (including a
+  routed app-defined `data:seed` task) leaves shared services alone. A seed
+  whose environment is stopped refuses and names `effigy container up <NAME>`
+  instead of bringing it up, because that would reconcile them. The exec forwards
   the client credential by name only: each call creates its own private 0600 file
   that the Compose client sources before it runs, on the host or through the
   Colima VM transport, and removes it afterwards, so concurrent data commands

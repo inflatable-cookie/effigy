@@ -61,6 +61,11 @@ pub(in crate::runner) struct ActivationRequest<'a> {
     pub(in crate::runner) repo_override: Option<PathBuf>,
     pub(in crate::runner) route: RuntimeActivationRoute,
     pub(in crate::runner) session_context: RuntimeSessionContext,
+    /// Whether this activation may reconcile the environment's shared services.
+    /// A data command that proves its own target sets this false, so its
+    /// activation never publishes, starts or replaces a shared service it does
+    /// not target.
+    pub(in crate::runner) reconcile_shared_services: bool,
 }
 
 pub(in crate::runner) fn ensure_container_runtime_prepared(
@@ -78,6 +83,16 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
         });
     }
     let system_was_running = check_runtime_running_state_stage(repo_root, policy)?;
+    if !system_was_running && !start.reconcile_shared_services {
+        // Bringing the environment up runs the ordinary apply, which reconciles
+        // every shared service. A command that must not touch them asks the
+        // user for the environment command instead.
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` is not running, and this command must not start it because bringing it up would reconcile its shared services. Run `effigy container up {}` first, then re-run.",
+            container_name.unwrap_or(policy.name.as_str()),
+            container_name.unwrap_or(policy.name.as_str()),
+        )));
+    }
     ensure_runtime_running_stage(
         system_was_running,
         container_name.map(str::to_owned),
@@ -107,6 +122,8 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
 pub(in crate::runner) struct StartPolicy<'a> {
     pub(in crate::runner) retention: Retention,
     pub(in crate::runner) holders: &'a [RunId],
+    /// Whether this apply reconciles the environment's shared services.
+    pub(in crate::runner) reconcile_shared_services: bool,
 }
 
 fn ensure_exec_container_running_with(
@@ -129,10 +146,12 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
 ) -> Result<ContainerTaskActivation, RunnerError> {
     let prepared = effigy_containers::policy::render::prepare_resolved(policy)?;
     let policy = &prepared;
+    let reconcile_shared_services = request.reconcile_shared_services;
     let plan = runtime_activation_plan_from_request(repo_root, policy, request);
     activate_container_runtime_plan_for_task_using(
         &plan,
         policy,
+        reconcile_shared_services,
         ensure_container_runtime_prepared,
         crate::runner::workspace_command::ensure_workspace_permissions_ready,
         ensure_runtime_gateway_readiness_stage,
@@ -195,6 +214,7 @@ pub(in crate::runner) fn activate_routed_container_runtime_with(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
+            reconcile_shared_services: !session_context.leave_shared_services_alone,
         },
         &plan,
     )
@@ -244,6 +264,7 @@ fn runtime_lease_policy(session_context: RuntimeSessionContext) -> RuntimeLeaseP
 fn activate_container_runtime_plan_for_task_using(
     plan: &RuntimeActivationPlan,
     policy: &EffectiveContainerPolicy,
+    reconcile_shared_services: bool,
     ensure_runtime_prepared: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
@@ -284,6 +305,7 @@ fn activate_container_runtime_plan_for_task_using(
         StartPolicy {
             retention,
             holders: &holders,
+            reconcile_shared_services,
         },
     )?;
     ensure_workspace_permissions(
@@ -353,6 +375,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                 run_task_apply(
                     repo_root,
                     policy,
+                    start.reconcile_shared_services,
                     crate::runner::container_command::support::ensure_shared_services_running,
                     crate::runner::container_command::secret_env::compose_secret_env_for_apply,
                     |repo_root, policy, args, label, env| {
@@ -400,6 +423,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
 fn run_task_apply(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    reconcile_shared_services: bool,
     ensure_shared: impl FnOnce(&EffectiveContainerPolicy) -> Result<Vec<String>, RunnerError>,
     secret_env: impl FnOnce(
         &Path,
@@ -413,11 +437,26 @@ fn run_task_apply(
         &[(String, OsString)],
     ) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
+    apply_shared_services(policy, reconcile_shared_services, ensure_shared)?;
+    let env = secret_env(repo_root, policy)?;
+    run_runtime_compose_up_stage(repo_root, policy, &env, run_compose)
+}
+
+/// Start the environment's shared services, unless this apply must leave them
+/// alone. A data command that proved its own target passes `false`, so its
+/// activation can never publish, start or replace an unrelated shared service.
+fn apply_shared_services(
+    policy: &EffectiveContainerPolicy,
+    reconcile_shared_services: bool,
+    ensure_shared: impl FnOnce(&EffectiveContainerPolicy) -> Result<Vec<String>, RunnerError>,
+) -> Result<(), RunnerError> {
+    if !reconcile_shared_services {
+        return Ok(());
+    }
     for note in ensure_shared(policy)? {
         eprintln!("[info] shared service ready: {note}");
     }
-    let env = secret_env(repo_root, policy)?;
-    run_runtime_compose_up_stage(repo_root, policy, &env, run_compose)
+    Ok(())
 }
 
 fn run_verified_prep_capture(

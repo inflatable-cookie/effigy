@@ -266,6 +266,8 @@ fn activate_exec_surface(
                 repo_override: plan.request.repo_override.clone(),
                 route: plan.route,
                 session_context: current_runtime_session_context(),
+                reconcile_shared_services: !current_runtime_session_context()
+                    .leave_shared_services_alone,
             },
         )
     })

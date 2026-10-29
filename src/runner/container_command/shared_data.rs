@@ -1340,6 +1340,149 @@ shared = true
         );
     }
 
+    const UNSHARED_TARGET_MANIFEST: &str = r#"
+[data.targets.acowtancy]
+service = "postgres"
+database = "acowtancy"
+
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "app"
+
+[containers.stack.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+database = "acowtancy"
+
+[containers.stack.services.mysql]
+catalog = "mariadb"
+version = "10.11"
+database = "acowtancy"
+password = "secret"
+shared = true
+"#;
+
+    fn assert_no_shared_activity(
+        case: &str,
+        repo: &FixtureRepo,
+        shared: &SharedServiceBinding,
+        render_before: &[u8],
+    ) {
+        let calls = repo.calls();
+        for forbidden in [" up ", " start ", " stop ", " rm "] {
+            assert!(
+                !calls.contains(forbidden),
+                "{case}: the seed must not {forbidden:?} anything: {calls}"
+            );
+        }
+        assert!(
+            !calls.contains(&shared.project_name),
+            "{case}: the unrelated shared project must not be touched: {calls}"
+        );
+        assert_eq!(
+            fs::read(&shared.compose_file).expect("shared render"),
+            render_before,
+            "{case}: the shared render must not be republished"
+        );
+    }
+
+    /// A public seed for an unshared target must never start, publish or
+    /// replace an unrelated shared service during its activation (effigy#477
+    /// review). The environment is stopped, so the seed refuses before any
+    /// bring-up; the unrelated shared container stays stopped and its published
+    /// render stays byte-identical.
+    #[test]
+    fn public_unshared_seed_never_touches_an_unrelated_shared_service() {
+        let _lock = lock_test();
+        let repo = FixtureRepo::new(
+            "effigy-shared-data-unshared-builtin-",
+            UNSHARED_TARGET_MANIFEST,
+        );
+        repo.install_fake_runtime();
+        let _env = repo.env();
+        let stack = repo.policy("stack");
+        let shared = stack
+            .shared_services
+            .first()
+            .expect("the unrelated shared service")
+            .clone();
+        repo.publish_shared_render(&stack);
+        let render_before = fs::read(&shared.compose_file).expect("published shared render");
+        repo.set_inventory_row(
+            &shared.project_name,
+            &shared.service_name,
+            &shared.render_digest,
+            "Exited (0) 2 minutes ago",
+        );
+        repo.clear_calls();
+        let source = repo.seed_source();
+
+        let error = run_container_data_seed(
+            &repo.root,
+            None,
+            &[effigy_cli::BootstrapDbSeedInput {
+                target: Some("acowtancy".to_owned()),
+                path: source,
+            }],
+            true,
+            false,
+            true,
+        )
+        .expect_err("a stopped environment must refuse instead of reconciling shared services");
+        let message = error.to_string();
+        assert!(message.contains("is not running"), "{message}");
+        assert!(message.contains("effigy container up stack"), "{message}");
+        assert_no_shared_activity("builtin", &repo, &shared, &render_before);
+    }
+
+    /// An app-defined `data:seed` task likewise never touches the unrelated
+    /// shared service. Its activation runs through the data-seed session
+    /// context, which refuses shared reconciliation.
+    #[test]
+    fn public_app_defined_seed_never_touches_an_unrelated_shared_service() {
+        let _lock = lock_test();
+        let manifest =
+            format!("{UNSHARED_TARGET_MANIFEST}\n[tasks.\"data:seed\"]\nrun = \"true\"\n");
+        let repo = FixtureRepo::new("effigy-shared-data-unshared-app-task-", &manifest);
+        repo.install_fake_runtime();
+        let _env = repo.env();
+        let stack = repo.policy("stack");
+        let shared = stack
+            .shared_services
+            .first()
+            .expect("the unrelated shared service")
+            .clone();
+        repo.publish_shared_render(&stack);
+        let render_before = fs::read(&shared.compose_file).expect("published shared render");
+        repo.set_inventory_row(
+            &shared.project_name,
+            &shared.service_name,
+            &shared.render_digest,
+            "Exited (0) 2 minutes ago",
+        );
+        repo.clear_calls();
+        let source = repo.seed_source();
+
+        run_container_data_seed(
+            &repo.root,
+            None,
+            &[effigy_cli::BootstrapDbSeedInput {
+                target: Some("acowtancy".to_owned()),
+                path: source,
+            }],
+            true,
+            false,
+            true,
+        )
+        .expect("the app-defined seed task runs without shared reconciliation");
+        assert_no_shared_activity("app-task", &repo, &shared, &render_before);
+    }
+
     /// Two concurrent data commands never share a credential file, so neither
     /// can source a partially written value (effigy#477 review).
     #[test]

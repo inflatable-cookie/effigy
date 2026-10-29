@@ -286,7 +286,7 @@
     },
     "src/runner/container_command/shared_credentials.rs": {
       "std.fs.OpenOptions.write": 2,
-      "std::fs::remove_file": 1
+      "std::fs::remove_file": 2
     },
     "src/runner/container_command/support.rs": {
       "std.process.Command.new": 4,

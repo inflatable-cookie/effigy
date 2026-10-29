@@ -29,6 +29,7 @@ use effigy_core::shell::shell_quote;
 use super::RunnerError;
 
 /// One private file holding `export NAME=value` lines for one shared exec.
+#[derive(Debug)]
 struct SharedCredentialFile {
     path: PathBuf,
     names: Vec<String>,
@@ -38,6 +39,16 @@ impl SharedCredentialFile {
     fn write(
         service: &SharedServiceBinding,
         env: &BTreeMap<String, String>,
+    ) -> Result<Self, RunnerError> {
+        Self::write_with(service, env, |file, body| file.write_all(body))
+    }
+
+    /// The write step is injected so a failed or partial write can be proven to
+    /// remove the exact file it created (effigy#477 review).
+    fn write_with(
+        service: &SharedServiceBinding,
+        env: &BTreeMap<String, String>,
+        write_body: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
     ) -> Result<Self, RunnerError> {
         static OPERATION: AtomicU64 = AtomicU64::new(0);
         for name in env.keys() {
@@ -72,12 +83,16 @@ impl SharedCredentialFile {
                 .open(&path)
             {
                 Ok(mut file) => {
-                    file.write_all(body.as_bytes()).map_err(|error| {
-                        RunnerError::task_invocation(format!(
+                    if let Err(error) = write_body(&mut file, body.as_bytes()) {
+                        // The file is this operation's own and holds no
+                        // complete credential; remove it rather than leave a
+                        // partial private file behind.
+                        let _ = std::fs::remove_file(&path);
+                        return Err(RunnerError::task_invocation(format!(
                             "cannot write the private shared data credential file {}: {error}",
                             path.display()
-                        ))
-                    })?;
+                        )));
+                    }
                     return Ok(Self {
                         path,
                         names: env.keys().cloned().collect(),
@@ -343,6 +358,41 @@ shared = true
 
     fn env() -> BTreeMap<String, String> {
         BTreeMap::from([("MYSQL_PWD".to_owned(), "secret".to_owned())])
+    }
+
+    /// A failed or partial write must remove the exact file it created: no
+    /// partial private file survives (effigy#477 review).
+    #[test]
+    fn a_failed_credential_write_removes_its_partial_file() {
+        let fixture = fixture_home("effigy-shared-credential-partial-");
+        let binding = binding(&fixture.root);
+        let _env = EnvGuard::set_many(&[("HOME", Some(fixture.home.display().to_string()))]);
+        let error = match SharedCredentialFile::write_with(&binding, &env(), |file, body| {
+            use std::io::Write;
+            file.write_all(&body[..8])?;
+            Err(std::io::Error::other("injected partial write"))
+        }) {
+            Ok(_) => panic!("a partial write must fail the credential handoff"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("cannot write the private shared data credential file"),
+            "{error}"
+        );
+        assert!(
+            !error.to_string().contains("secret"),
+            "no value in the error: {error}"
+        );
+        let leftovers = fs::read_dir(fixture.home.join(".effigy/data-credentials"))
+            .expect("credentials directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("credential entries");
+        assert!(
+            leftovers.is_empty(),
+            "a partial credential file must not survive its failed write"
+        );
     }
 
     #[test]

@@ -1104,11 +1104,14 @@ render file, a stopped or absent container, a container created from another
 render, more than one running container for the service, an unreadable
 inventory, or environments that declare the same service name with different
 shared identities all refuse and name the project and recovery command. The
-data step never publishes a render, starts or replaces a shared service, and
-never falls back to a checkout-local service of the same name. A seed that
-selects a shared target therefore skips its environment activation (the
-ordinary apply would reconcile the shared service); a local target in a mixed
-selection needs its environment already running. `data dump` starts nothing.
+data step never publishes a render, starts or replaces a shared service — its
+own or an unrelated one — and never falls back to a checkout-local service of
+the same name. A seed that selects a shared target therefore skips its
+environment activation, and every activation a data seed performs (including an
+app-defined `data:seed` task's routed activation, through the data-seed runtime
+session) leaves shared services alone. Because bringing a stopped environment
+up would reconcile them, such a seed refuses and names `effigy container up
+<env>` instead of starting anything. `data dump` starts nothing.
 
 A credential travels by name only. The exec forwards the client variable
 (`MYSQL_PWD`, `PGPASSWORD`) with `compose exec -e NAME`; its value lives in a

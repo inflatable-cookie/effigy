@@ -70,7 +70,12 @@ struct SeedMetadataEntry {
 }
 
 pub(in crate::runner) fn data_seed_runtime_session_context() -> RuntimeSessionContext {
-    RuntimeSessionContext::default()
+    RuntimeSessionContext {
+        // A data command proves and serves its own target; every activation it
+        // performs must leave unrelated shared services untouched (effigy#477).
+        leave_shared_services_alone: true,
+        ..RuntimeSessionContext::default()
+    }
 }
 
 /// One database dump staged into the repository for the seed task.
@@ -692,6 +697,7 @@ fn prepare_db_seed_runtime(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
+            reconcile_shared_services: false,
         },
     )?;
     Ok(())
@@ -710,6 +716,7 @@ fn prepare_builtin_db_seed_runtime(
             repo_override: Some(repo_root.to_path_buf()),
             route: RuntimeActivationRoute::DataSeed,
             session_context,
+            reconcile_shared_services: false,
         },
     )?;
     Ok(())

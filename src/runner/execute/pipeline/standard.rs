@@ -1083,6 +1083,7 @@ fn activate_inline_workspace_container_runtime_with(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
+            reconcile_shared_services: !session_context.leave_shared_services_alone,
         },
         &plan,
     )
