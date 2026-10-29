@@ -2826,6 +2826,21 @@ the owning client's handle and no other. Both refuse a run this session did not
 admit and grant nothing: the dispatcher's grant check remains the authority.
 `test:kernel:workspace` owns these proofs.
 
+**Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
+v1 wire, its framing and limits, the server pin check, negotiation, grants,
+enrolment and the typed entry points. It reads the key with `run::lookup`
+before it calls `run::reserve`, so a retry spends no entropy and reaches no
+engine, and an unreadable record is answered `unknown` rather than admitted
+again. Resolution, admission and observation stay with the owning host engines
+through four small seams — `Resolver`, `Admission`, `Observer` and `RunIds` —
+and `Admission` receives the reservation's `AdmissionTicket`, which the engine
+hands to `EngineLaunch::admission`, so the run an engine admits is the run the
+record names. `observe` reserves nothing and attaches nothing; a capability is
+memory-only, checked before every effect, and its operation and target scope is
+the host's, never the client's. The transport, the guest client and the runner
+integration remain separate tasks. `test:kernel:workspace-channel` owns these
+proofs.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |
