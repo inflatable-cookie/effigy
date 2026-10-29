@@ -649,7 +649,6 @@ During v0.x, MINOR bumps may include breaking changes.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
-
 - A failing managed host listener withholds only its own route. `container up`
   now decides exposure per declared route target: a listener that answers its
   readiness request with the wrong status, or never opens its port, keeps its
