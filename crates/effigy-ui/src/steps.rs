@@ -140,7 +140,8 @@ impl ProgressSource {
         }
     }
 
-    fn frame_at(&self, elapsed: Duration) -> String {
+    /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
             .sub_step

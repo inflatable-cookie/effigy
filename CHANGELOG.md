@@ -350,6 +350,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- Doctor scan checks and vault lock, unlock and generate-hook waits now draw
+  through the live progress source: the current sub-step, known count, elapsed
+  wait and last event or exact probe, instead of a label fixed for the whole
+  operation. Secret values and credential paths stay out of those labels.
+  JSON, piped and quiet output stay silent. The feedback-spinner inventory
+  dropped the four owned call sites.
+
 - Workspace guest publication now completes as a journalled obligation under
   the environment activation gate before publishing active or attaching task
   holders. Concurrent prepares and stops serialize; interrupted publication
