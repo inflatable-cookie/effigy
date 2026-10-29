@@ -212,10 +212,7 @@ fn run_real_fixture(root_only: bool) {
                         package.name.clone(),
                         package.package_path.clone(),
                         false,
-                        BunConsumerReference {
-                            consumer_repo: other_consumer.clone(),
-                            library_path: library.clone(),
-                        },
+                        BunConsumerReference::claim(other_consumer.clone(), library.clone()),
                     )?;
                 }
                 Ok(())

@@ -108,7 +108,7 @@ pub fn inspect_dependency_status(
             LinkMechanism::CargoPatch => {
                 inspect_cargo_link(repo_root, desired, &cargo_guard_packages, process)?
             }
-            LinkMechanism::BunLink => inspect_bun_link(desired, bun_home, &bun_index)?,
+            LinkMechanism::BunLink => inspect_bun_link(desired, bun_home)?,
         });
     }
     append_orphan_cargo_blocks(repo_root, &state, &mut links)?;
@@ -316,7 +316,6 @@ fn inspect_cargo_link(
 fn inspect_bun_link(
     desired: &DesiredDependencyLink,
     bun_home: &Path,
-    bun_index: &BunRegistrationIndex,
 ) -> Result<DependencyLinkReport, crate::DepsError> {
     if !desired.key.library_path.exists() {
         return Ok(problem_report(
@@ -343,26 +342,25 @@ fn inspect_bun_link(
             .join(".bun/install/global/node_modules")
             .join(&package.name);
         let registration_target = symlink_target(&registration_path);
-        let indexed = bun_index.registrations.iter().find(|registration| {
-            registration.package_name == package.name
-                && canonical_or_original(&registration.package_path) == expected
-                && registration.consumers.iter().any(|consumer| {
-                    consumer.consumer_repo == desired.key.consumer_repo
-                        && consumer.library_path == desired.key.library_path
-                })
-        });
-        if registration_target.as_ref() != Some(&expected) || indexed.is_none() {
-            conflicts.push(error_reason(
-                "bun-registration-conflict",
-                format!(
-                    "Bun registration/index for `{}` does not point to `{}`",
-                    package.name,
-                    expected.display()
-                ),
-                Some(package.name.clone()),
-                vec![registration_path.display().to_string()],
-                Some("repair the conflicting registration, then re-run `effigy deps link bun <library-path>`"),
-            ));
+        // The link itself is the consumer's `node_modules` symlink. A link
+        // retires the machine-wide registration it created, so an absent
+        // registration is the expected state; only one that points elsewhere
+        // is a conflict another consumer caused.
+        if let Some(observed_target) = &registration_target {
+            if observed_target != &expected {
+                conflicts.push(error_reason(
+                    "bun-registration-conflict",
+                    format!(
+                        "Bun registration for `{}` points to `{}` rather than `{}`",
+                        package.name,
+                        observed_target.display(),
+                        expected.display()
+                    ),
+                    Some(package.name.clone()),
+                    vec![registration_path.display().to_string()],
+                    Some("remove the conflicting global registration, then re-run `effigy deps link bun <library-path>`"),
+                ));
+            }
         }
 
         let mut package_links = 0;
@@ -808,7 +806,7 @@ fn append_orphan_bun_registrations(
                 ObservedState::Conflict,
                 "bun-registration-without-ledger",
                 format!(
-                    "Bun registration `{}` references this repo but desired link state is absent",
+                    "Bun registration `{}` references this repo but desired link state is absent; an interrupted link owner left its claim",
                     registration.package_name
                 ),
                 Some(registration.package_name.clone()),
@@ -1336,7 +1334,7 @@ fn status_remediation(code: &str) -> Option<&'static str> {
             "remove the orphaned Effigy-managed block after verifying no desired link should own it",
         ),
         "bun-registration-without-ledger" => Some(
-            "verify the registration is unused, then unregister it from the local package directory",
+            "re-run `effigy deps unlink bun <library-path>` for this checkout to retire the claim left by an interrupted link",
         ),
         _ => None,
     }
@@ -1719,10 +1717,10 @@ mod tests {
             package_name: package_name.to_owned(),
             package_path: package_path.to_path_buf(),
             effigy_created: true,
-            consumers: vec![BunConsumerReference {
-                consumer_repo: consumer_repo.to_path_buf(),
-                library_path: package_path.to_path_buf(),
-            }],
+            consumers: vec![BunConsumerReference::claim(
+                consumer_repo.to_path_buf(),
+                package_path.to_path_buf(),
+            )],
         }
     }
 
@@ -1886,10 +1884,10 @@ mod tests {
                         package_name: package.name.clone(),
                         package_path: package.local_path.clone(),
                         effigy_created: true,
-                        consumers: vec![BunConsumerReference {
-                            consumer_repo: consumer.path().to_path_buf(),
-                            library_path: library.path().to_path_buf(),
-                        }],
+                        consumers: vec![BunConsumerReference::claim(
+                            consumer.path().to_path_buf(),
+                            library.path().to_path_buf(),
+                        )],
                     });
                 }
                 Self {

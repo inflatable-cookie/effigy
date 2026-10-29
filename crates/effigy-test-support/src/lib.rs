@@ -313,6 +313,63 @@ mod tests {
     }
 
     #[test]
+    fn in_parent_refuses_the_checkout_and_its_crates_root() {
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("test-support workspace location");
+        let checkout = fs::canonicalize(checkout).unwrap();
+        let error = Fixture::in_parent("checkout-", &checkout).unwrap_err();
+        assert!(error.to_string().contains("inside checkout"), "{error}");
+
+        let crates = checkout.join("crates");
+        let error = Fixture::in_parent("crates-", &crates).unwrap_err();
+        assert!(error.to_string().contains("inside checkout"), "{error}");
+    }
+
+    #[test]
+    fn workspace_and_new_stay_in_the_temp_root_not_the_checkout() {
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("test-support workspace location");
+        let checkout = fs::canonicalize(checkout).unwrap();
+        let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let namespaces: Vec<PathBuf> = temp
+            .ancestors()
+            .filter(|ancestor| is_effigy_scratch_namespace(ancestor))
+            .map(|namespace| {
+                fs::canonicalize(namespace).unwrap_or_else(|_| namespace.to_path_buf())
+            })
+            .collect();
+        let workspace = Fixture::workspace("effigy-ws-proof-").unwrap();
+        let created = Fixture::new("effigy-new-proof-").unwrap();
+        for fixture in [&workspace, &created] {
+            assert!(
+                fixture.path().starts_with(&temp),
+                "{} escaped the temp root {}",
+                fixture.path().display(),
+                temp.display()
+            );
+            assert!(
+                !fixture.path().starts_with(&checkout),
+                "{} landed in the checkout {}",
+                fixture.path().display(),
+                checkout.display()
+            );
+            if !namespaces.is_empty() {
+                assert!(
+                    namespaces
+                        .iter()
+                        .any(|namespace| fixture.path().starts_with(namespace)),
+                    "fixture escaped the Effigy scratch namespace: {}",
+                    fixture.path().display()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cleanup_accepts_an_already_removed_fixture() {
         let fixture = Fixture::new("effigy-already-removed-").unwrap();
         fs::remove_dir_all(fixture.path()).unwrap();

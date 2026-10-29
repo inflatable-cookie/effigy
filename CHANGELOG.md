@@ -397,6 +397,40 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy contracts check-json` reports a payload schema or selection contract
   that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
   `effigy.contracts.check-json.v1`, and stops before any indexed command.
+- Bun links no longer leave a machine-wide registration behind. `deps link bun`
+  retires the registration it created once the consumer symlink and ledger
+  exist, and an interrupt retires the same registrations before the signal stops
+  the command. Retiral is the exact `(consumer root, library)` claim, so a
+  sibling Bun root in the same checkout keeps its own claim.
+
+  The completion retiral runs inside the apply's own index transaction after the
+  ledger commits: a failed ledger write leaves the claim, registration and ledger
+  untouched, a failed index commit restores any registration it retired and
+  rolls the ledger and consumer links back, and a re-link over an existing claim
+  always writes the retired claim out.
+
+  An interrupted owner retires only what its own apply started. The transaction
+  marks the moment it becomes able to create a registration, so a link that
+  merely wanted the index lock retires nothing; the watcher then takes the index
+  lock itself with a bounded wait and retains any registration another consumer
+  claims, or one it cannot verify. It stops the whole `bun` process tree first —
+  handler installed before the owner can create anything, spawns reserved and
+  published, children in their own process group — and the command waits for the
+  pending cleanup before returning. A shared or foreign registration is never
+  removed. This is what stopped registrations pointing at deleted worktrees
+  accumulating.
+- Bun `deps unlink` now retires only the named consumer's claims when that
+  checkout is already gone, instead of no-op'ing and leaving the worktree claim
+  behind. Each claim records the checkout that wrote it, so `--repo` recovers a
+  nested Bun root without reaching into an independently nested checkout, and a
+  claim without that evidence is reported with the root to name. Recovery
+  without the ledger releases claims only: it never inspects, removes or verifies
+  a consumer `node_modules` link, because a claim names a registration rather
+  than the consumer tree that owns a link, so an unreadable or malformed
+  consumer path cannot block releasing the claim.
+- Bun `deps status` and `doctor` now verify the consumer's `node_modules`
+  symlink, which is the link. An absent machine-wide registration is expected;
+  one pointing at another path is still reported as a conflict.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.
