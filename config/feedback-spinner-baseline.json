@@ -30,12 +30,6 @@
     34
   ],
   [
-    "crates/effigy-doctor/src/progress.rs",
-    104,
-    "self.active.push((label, steps::step(label.active)));",
-    41
-  ],
-  [
     "crates/effigy-runtime/src/write.rs",
     77,
     ".then(|| effigy_containers::exec::phase(format!(\"stopping the `{}` stack\", policy.name)));",
@@ -85,49 +79,49 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    231,
+    235,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    844,
+    848,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1018,
+    1022,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1021,
+    1025,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1023,
+    1027,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1025,
+    1029,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1042,
+    1046,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1044,
+    1048,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],
@@ -157,37 +151,37 @@
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    339,
+    397,
     "let integrations = steps::during(",
     31
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    356,
+    414,
     "let settling = steps::phase(\"settling the environment\");",
     27
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    409,
+    481,
     "let ports_step = steps::phase(\"preparing ports and loopback\");",
     29
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    424,
+    496,
     "let rendering_step = steps::phase(\"rendering the stack\");",
     33
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    449,
+    521,
     "steps::during(\"starting shared services\", \"shared services ready\", || {",
     16
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    491,
+    563,
     "let whole_stack = steps::phase(format!(\"starting the `{}` stack\", plan.policy.name));",
     30
   ],
@@ -228,14 +222,8 @@
     34
   ],
   [
-    "src/runner/execute/pipeline/standard.rs",
-    827,
-    "let step = effigy_ui::steps::step(\"unlocking vault\");",
-    34
-  ],
-  [
     "src/runner/execute/sequence_run.rs",
-    436,
+    471,
     "let step = effigy_ui::steps::step(&progress);",
     38
   ],
@@ -420,18 +408,6 @@
     46
   ],
   [
-    "src/runner/secrets_command.rs",
-    177,
-    "let step = effigy_ui::steps::step(\"unlocking vault\");",
-    34
-  ],
-  [
-    "src/runner/secrets_command.rs",
-    296,
-    "let step = effigy_ui::steps::step(\"running the vault generate hook\");",
-    34
-  ],
-  [
     "src/runner/state_command.rs",
     201,
     "let step = effigy_ui::steps::step(&action.label(&layer.key));",
@@ -463,7 +439,7 @@
   ],
   [
     "src/runner/workspace_command/mod.rs",
-    544,
+    565,
     "let spinner = renderer.spinner(label).ok();",
     32
   ]

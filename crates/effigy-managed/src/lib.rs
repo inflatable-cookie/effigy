@@ -40,9 +40,9 @@ pub use profiles::{
     select_concurrent_profile, ResolvedConcurrentProfile, DEFAULT_MANAGED_PROFILE,
 };
 pub use run_spec::{
-    render_builtin_reference_invocation, render_run_step_sequence, render_step_command_template,
-    render_task_run_spec, resolve_run_step_env, wrap_command_with_env,
-    wrap_reference_command_in_cwd, RunSpecContext, StepEnvAccumulator,
+    declared_env_keys, render_builtin_reference_invocation, render_run_step_sequence,
+    render_step_command_template, render_task_run_spec, resolve_run_step_env,
+    wrap_command_with_env, wrap_reference_command_in_cwd, RunSpecContext, StepEnvAccumulator,
 };
 
 /// Pure-data plan shapes moved in from `runner::model::managed`.

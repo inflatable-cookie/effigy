@@ -26,6 +26,7 @@ pub(in crate::runner) use closeout::maybe_confirm_container_shell_exit_cleanup;
 pub(in crate::runner) use gateway_registration::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container,
 };
+pub(in crate::runner) use hosts::scoped_host_map;
 pub(in crate::runner) use lifecycle::{
     release_managed_environment, run_container_exec_capture_with_options,
     run_container_exec_operation_capture, run_container_exec_stream,

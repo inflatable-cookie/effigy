@@ -74,6 +74,7 @@ fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
 
 mod adapters;
 mod faults;
+mod guest_publication;
 
 const PROJECT: &str = "acme-stack";
 

@@ -994,6 +994,37 @@ impl<'r> EnvRun<'r> {
         })
     }
 
+    /// One required, additive guest publication under this activation's owner
+    /// gate. The intent commits before I/O; its receipt commits before active.
+    pub fn publish_guest_with(
+        &mut self,
+        publish: impl FnOnce(
+            &effigy_kernel::run::Fence,
+        )
+            -> Result<effigy_kernel::run::GuestPublicationReceipt, BackendError>,
+    ) -> Result<(), EnvError> {
+        let intent = Attachments::intend_guest_publication(&mut self.run);
+        let ticket = self.kernel(intent)?;
+        self.transitioned = true;
+        let fence = self.run.fence().clone();
+        match publish(&fence) {
+            Ok(receipt) => {
+                let recorded = Attachments::guest_published(&mut self.run, &ticket, receipt);
+                self.kernel(recorded)
+            }
+            Err(error) => {
+                self.failed = true;
+                let recorded = Attachments::guest_publication_unknown(
+                    &mut self.run,
+                    &ticket,
+                    UnknownReason::Inconsistent(error.to_string()),
+                );
+                self.kernel(recorded)?;
+                Err(EnvError::Backend(error))
+            }
+        }
+    }
+
     /// Publishes `active` and attaches requesting holders.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
         self.phase_with_count("activating the environment", (0, holders.len() as u64));
@@ -1164,7 +1195,7 @@ mod tests {
             &stack.name,
             &observe_gate(&state, &stack.resource),
         );
-        let frame = waiting.label_at(Duration::from_secs(4));
+        let frame = waiting.frame_at(Duration::from_secs(4));
         for needle in [
             "waiting for Gate(Env) on `stack`".to_owned(),
             format!("run {}", run.id()),
@@ -1177,7 +1208,7 @@ mod tests {
 
         // The reconcile advances: the render is published, then the record.
         run.publish_desired(&closure("two")).expect("publish");
-        let frame = run.progress.label_at(Duration::from_secs(9));
+        let frame = run.progress.frame_at(Duration::from_secs(9));
         assert!(
             frame.starts_with("publishing the desired render"),
             "{frame}"
@@ -1191,7 +1222,7 @@ mod tests {
             .unwrap_or_else(|| EngineRecord::new(Retention::Held, "acme-stack"));
         record.retention = Retention::Persistent;
         run.write_record(&record).expect("record");
-        let frame = run.progress.label_at(Duration::from_secs(11));
+        let frame = run.progress.frame_at(Duration::from_secs(11));
         assert!(
             frame.starts_with("writing the environment record"),
             "{frame}"
@@ -1213,7 +1244,7 @@ mod tests {
             matches!(refused, Err(EnvError::HeldBy { .. })),
             "{refused:?}"
         );
-        let frame = run.progress.label_at(Duration::from_secs(12));
+        let frame = run.progress.frame_at(Duration::from_secs(12));
         assert!(
             frame.starts_with("checking the runs attached to environment `stack`"),
             "{frame}"

@@ -147,14 +147,18 @@ impl ProgressSource {
         state.event = Some(event.into());
     }
 
-    /// The label this source renders after `elapsed`. The CLI passes the wall
-    /// clock; a proof passes the elapsed time it means to show, so a frame is
-    /// asserted without waiting for it.
-    pub fn label_at(&self, elapsed: Duration) -> String {
-        self.frame_at(elapsed)
+    /// Name a new object or probe after the previous wait ended. Clears
+    /// sub-step, count and event so frames name this wait until `update`.
+    pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.awaiting = awaiting.into();
+        state.sub_step = None;
+        state.count = None;
+        state.event = None;
     }
 
-    fn frame_at(&self, elapsed: Duration) -> String {
+    /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
             .sub_step
@@ -742,13 +746,13 @@ mod tests {
     fn an_event_lands_without_moving_the_sub_step() {
         let source = ProgressSource::waiting_for("the environment gate for `stack`");
         assert_eq!(
-            source.label_at(Duration::from_secs(1)),
+            source.frame_at(Duration::from_secs(1)),
             "waiting for the environment gate for `stack`; 1s elapsed"
         );
         source.update("reconciling the backend", Some((1, 3)), None);
         source.event("run agq holds it (pid 9012, task `dev`)");
         assert_eq!(
-            source.label_at(Duration::from_secs(3)),
+            source.frame_at(Duration::from_secs(3)),
             "reconciling the backend (1/3); last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
         );
     }

@@ -28,7 +28,9 @@ pub fn test_run_requirement(
     if flags.plan_mode {
         return Ok(TestRunRequirement::Observe);
     }
-    let targets = planning::resolve_builtin_test_targets(selector, root, catalogs)?;
+    // Classification only: nothing runs here, so no scoped alias resolution or
+    // refusal belongs to this pass (effigy#431).
+    let targets = planning::resolve_builtin_test_targets(selector, root, catalogs, None)?;
     let runnable = planning::collect_builtin_test_runnable_targets(&targets.targets);
     let selected = match suite_selection::select_builtin_test_suite(runnable, passthrough) {
         Ok(selected) => selected.runnable,

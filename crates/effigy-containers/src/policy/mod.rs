@@ -1,5 +1,6 @@
 pub mod compose_file;
 pub mod data_from;
+pub mod host_alias;
 pub mod host_process_env;
 pub mod hosts;
 pub mod inline_workspace;

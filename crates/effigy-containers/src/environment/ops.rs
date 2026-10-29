@@ -119,13 +119,24 @@ pub fn activate(
     env: &EnvRef,
     holders: &[(RunId, AttachMode)],
 ) -> Result<(), EnvError> {
+    activate_with(ctx, env, holders, |_| Ok(()))
+}
+
+/// Activate after the caller's required publication has completed, all under
+/// the same environment owner gate. No transaction spans the callback's I/O.
+pub fn activate_with(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    holders: &[(RunId, AttachMode)],
+    prepare: impl FnOnce(&mut EnvRun<'_>) -> Result<(), EnvError>,
+) -> Result<(), EnvError> {
     let mut run = EnvRun::begin(
         ctx,
         env,
         Operation::Up,
         Wait::Until(Instant::now() + GATE_WAIT),
     )?;
-    let result = run.activate(holders);
+    let result = prepare(&mut run).and_then(|()| run.activate(holders));
     let ok = result.is_ok();
     run.finish(ok)?;
     result

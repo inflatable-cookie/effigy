@@ -291,11 +291,11 @@ impl ProfileProgress {
     /// The frame this progress renders after `elapsed`. Production passes the
     /// wall clock through its steps; a proof passes the time it means to show.
     #[cfg(test)]
-    fn label_at(&self, elapsed: std::time::Duration) -> String {
+    fn frame_at(&self, elapsed: std::time::Duration) -> String {
         self.source
             .as_ref()
             .expect("a drawn progress has a source")
-            .label_at(elapsed)
+            .frame_at(elapsed)
     }
 }
 
@@ -1223,12 +1223,12 @@ mod progress_tests {
             "repairing the Colima runtime of profile `effigy`".to_owned(),
         );
         assert_eq!(
-            progress.label_at(Duration::from_secs(3)),
+            progress.frame_at(Duration::from_secs(3)),
             "repairing the Colima runtime of profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; 3s elapsed"
         );
 
         progress.observe(&running_profile(100));
-        let frame = progress.label_at(Duration::from_secs(42));
+        let frame = progress.frame_at(Duration::from_secs(42));
         assert_eq!(
             frame,
             "repairing the Colima runtime of profile `effigy`; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
@@ -1238,7 +1238,7 @@ mod progress_tests {
             "starting Colima profile `effigy` with the managed sizing",
             Some((2, 2)),
         );
-        let frame = progress.label_at(Duration::from_secs(57));
+        let frame = progress.frame_at(Duration::from_secs(57));
         assert!(
             frame.starts_with("starting Colima profile `effigy` with the managed sizing (2/2)"),
             "{frame}"
@@ -1247,7 +1247,7 @@ mod progress_tests {
         assert!(frame.ends_with("; 57s elapsed"), "{frame}");
 
         progress.observe(&running_profile(300));
-        let frame = progress.label_at(Duration::from_secs(61));
+        let frame = progress.frame_at(Duration::from_secs(61));
         assert!(frame.contains("300GiB disk (target=300GiB)"), "{frame}");
         progress.succeed("recovered the Colima runtime of profile `effigy`");
     }
@@ -1269,7 +1269,7 @@ mod progress_tests {
         );
         progress.observe(&absent);
         assert_eq!(
-            progress.label_at(Duration::from_secs(1)),
+            progress.frame_at(Duration::from_secs(1)),
             "reading the state Colima reports for profile `effigy`; last: profile `effigy` is not listed by `colima list --json`; 1s elapsed"
         );
 
