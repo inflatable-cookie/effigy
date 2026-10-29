@@ -63,7 +63,7 @@ fn short_parent(configured: PathBuf, prefix: &str) -> io::Result<PathBuf> {
     let namespace = effigy_scratch_namespace(&canonical);
     if let Some(parent) = configured.parent() {
         let canonical_parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-        if namespace.map_or(true, |namespace| canonical_parent.starts_with(namespace))
+        if namespace.is_none_or(|namespace| canonical_parent.starts_with(namespace))
             && fits(&canonical_parent)
         {
             return Ok(parent.to_path_buf());
