@@ -173,6 +173,36 @@ During v0.x, MINOR bumps may include breaking changes.
   installed route still works, never enables a unit the operator had disabled,
   and only calls a restore successful when the restored entry verifies as
   Effigy's own link.
+- The kernel workspace seam recovers keyed admissions across reconnects and
+  gives secondary terminals independent lifetimes and bounded run controls.
+  Owner EOF stops the supervised run; acknowledged detach leaves it running.
+  Session identity is checked against the current journal, and orphaned owners
+  require custody recovery before reconnect handles are available. Open engine
+  lifetimes use bounded phases for admission replay and attachment access.
+  Stale session handles cannot release a run; owner EOF tolerates request-ID
+  collisions, and keyed successor recovery keeps escalation serviceable.
+  Secondary handles recover lost creation responses without allocating another
+  slot, and conflicting replays refuse stale sessions before returning a digest.
+- The workspace host authority channel's protocol is implemented in the kernel
+  (`crates/effigy-kernel/src/workspace_channel.rs`): §8.11's length-prefixed v1
+  frames and limits, a server-pin check that runs before any credential
+  crosses, hello/version/digest negotiation, session-bound capabilities and
+  enrolment, and typed `observe`/`invoke`/`attach`/`cancel`/`detach` dispatch.
+  A request id is looked up and reserved before any engine is asked to admit
+  it, so a retry returns the recorded admission, its recorded outcome, or
+  `unknown` — never a second run — across a reconnect or supervisor restart.
+  No transport, guest client or command surface is wired to it yet.
+- The workspace session layer (contract 052 §8.7): one environment-owned
+  `Detached` session run, resolved through its own validated
+  environment→session record so a borrowing child or host hold is never mistaken
+  for it, for TUI, text and headless front ends,
+  `OwnerLoss` mapping EOF/disconnect/TERM/HUP onto the kernel's owner release and
+  stop cause, and a down that refuses every foreign live or unknown holder,
+  stops only the session's own children and re-checks the gate with just the
+  settling session exempt. It consumes the kernel workspace seam's admission and
+  attachment records rather than keeping a second set. Nothing user-facing
+  invokes it yet; the client, transport and supervisor serving loop are later
+  tasks.
 - `effigy state apply` and `state capture` show a live step per executed
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
@@ -237,6 +267,38 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **A gateway operator action names its caller, not just its arguments.**
+  `gateway up`, `gateway down` and `gateway setup` each append one bounded
+  event to `gateway.stderr.log` — when its gateway state directory exists — as
+  they start, so a refused action or one with nothing to do is attributable
+  too. The existing `event`, `pid`, `argv`, `cwd` and `cause` fields stay, and a
+  `caller` record adds the invoking process's start identity, session and
+  controlling terminal, its parent chain up to the session leader with each
+  pid's start identity and redacted command, and only allowlisted `PASEO_*`,
+  `NS_*` and `EFFIGY_RUN_*` identity markers whose value is a UUID, a decimal
+  id or Effigy's own base32 run id, recorded as that form plus a SHA-256
+  fingerprint rather than the value. Command text is published by role, not by
+  spelling: an event records only the program's file name and one of Effigy's own
+  flag names, so a positional argument (whatever its spelling), a path, an
+  unknown flag, a URL, a `KEY=value` pair and the value of any flag in
+  `--flag value` or `--flag=value` form are `<redacted>` — `gateway setup
+  --suffix down` records `--suffix <redacted>`. An ancestor's command publishes
+  only its program name (the executable the operating system reports, never
+  `argv[0]`) and no option token of it; a shell command string publishes nothing
+  inside itself. The walk stays inside the invoking process's session, so a
+  reparented child ends the chain with an unknown reason instead of naming
+  another session's leader, and the controlling terminal is the session's real
+  device (`/dev/ttysNNN` on macOS, `/dev/pts/N` on Linux), resolved from the
+  kernel's own record of it rather than from a standard descriptor, and never the
+  generic `/dev/tty` alias. The `unknown` list is capped and says how
+  many reasons it omitted, so invalid markers never hide a broken chain. The
+  event is written at the command boundary only: `gateway setup` emits its one
+  setup event and no extra up or down event, and a task run that starts the
+  gateway records `managed gateway start`. Anything unreadable or invalid becomes
+  a bounded `unknown` reason, no other environment value is read, and logging
+  still never authorizes, refuses or delays the action. The 2026-10-28
+  15:26:25Z Mac gateway stop could not have been traced to a terminal, session,
+  agent or task from the old record.
 - **Manual `[manifest].include` `optional`/`override` and kebab-case aliases
   still load through v0.15, with one deprecation notice.** `optional` is
   replaced by omitting a missing include or auto-discovered
@@ -393,6 +455,17 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- An environment transition settles on a budget that starts when settlement
+  does. The cleanup context used to be made when the transition opened, so a
+  cold stack whose activation ran past 60 seconds left its settlement already
+  expired and the command failed with `environment record ... timed out ...
+  waiting for the environment to settle` after an apply that had succeeded.
+  Each settlement now takes a fresh bounded 60-second budget: admission makes
+  its own once `Gate(Env)` is held, so a transition that queued behind another
+  one settles an interrupted predecessor on a whole budget, and the run's own
+  settle and every settling holder make theirs when they start.
+  `container up` and `container down` show the gate wait and the settlement as
+  steps.
 - A container workload's spawn environment drops every session vault access
   key, exactly as a host workload's does. A `.env` or task `env` entry named
   `EFFIGY_SECRET_PASSPHRASE`, `EFFIGY_INTERNAL_SECRET_PASSPHRASE`,
@@ -410,6 +483,40 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy contracts check-json` reports a payload schema or selection contract
   that is not valid Draft 2020-12 as `effigy.json-contract-body.v1` inside
   `effigy.contracts.check-json.v1`, and stops before any indexed command.
+- Bun links no longer leave a machine-wide registration behind. `deps link bun`
+  retires the registration it created once the consumer symlink and ledger
+  exist, and an interrupt retires the same registrations before the signal stops
+  the command. Retiral is the exact `(consumer root, library)` claim, so a
+  sibling Bun root in the same checkout keeps its own claim.
+
+  The completion retiral runs inside the apply's own index transaction after the
+  ledger commits: a failed ledger write leaves the claim, registration and ledger
+  untouched, a failed index commit restores any registration it retired and
+  rolls the ledger and consumer links back, and a re-link over an existing claim
+  always writes the retired claim out.
+
+  An interrupted owner retires only what its own apply started. The transaction
+  marks the moment it becomes able to create a registration, so a link that
+  merely wanted the index lock retires nothing; the watcher then takes the index
+  lock itself with a bounded wait and retains any registration another consumer
+  claims, or one it cannot verify. It stops the whole `bun` process tree first —
+  handler installed before the owner can create anything, spawns reserved and
+  published, children in their own process group — and the command waits for the
+  pending cleanup before returning. A shared or foreign registration is never
+  removed. This is what stopped registrations pointing at deleted worktrees
+  accumulating.
+- Bun `deps unlink` now retires only the named consumer's claims when that
+  checkout is already gone, instead of no-op'ing and leaving the worktree claim
+  behind. Each claim records the checkout that wrote it, so `--repo` recovers a
+  nested Bun root without reaching into an independently nested checkout, and a
+  claim without that evidence is reported with the root to name. Recovery
+  without the ledger releases claims only: it never inspects, removes or verifies
+  a consumer `node_modules` link, because a claim names a registration rather
+  than the consumer tree that owns a link, so an unreadable or malformed
+  consumer path cannot block releasing the claim.
+- Bun `deps status` and `doctor` now verify the consumer's `node_modules`
+  symlink, which is the link. An absent machine-wide registration is expected;
+  one pointing at another path is still reported as a conflict.
 - Keep managed task secret values out of host and container process arguments,
   using stdin bootstrap or a private, acknowledged environment file for
   interactive container exec.

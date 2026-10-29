@@ -94,11 +94,70 @@ Unix.
 - Never claim a registration that already existed, even when it points at the
   requested path.
 - Never replace a registration that points at another path.
+- A registration is transient. `deps link bun` registers each package to
+  materialise the consumer's save-less link, then the owner that created the
+  registration retires it: `bun link` leaves the consumer's
+  `node_modules` symlink, and the ledger records the desired link. Nothing keeps
+  a registration between commands, which is what stopped registrations
+  accumulating for deleted worktrees.
 - Remove a registration only when Effigy created it, its observed target still
-  matches, and no desired consumer reference remains.
+  matches, and no desired consumer reference remains. A shared, foreign, stale,
+  or unverifiable registration is retained and reported.
+- Claims record the checkout boundary that owned the consumer when Effigy wrote
+  them. A deleted checkout no longer carries the `.git` boundaries that tell a
+  nested Bun package root (`<checkout>/studio`) from an independently nested
+  checkout, so recovery releases a nested claim only when the claim recorded
+  that checkout. Claims recorded without that evidence are retained and named.
+- `effigy deps unlink bun --repo <CHECKOUT>` recovers a leftover named checkout
+  after an owner did not finish. Unlink of an absent checkout still releases
+  that checkout's index references, including nested Bun package roots recorded
+  under it, and never scavenges an independently nested checkout or an unnamed
+  dead path. Recovery without the ledger releases claims only: a claim names a
+  registration, not the consumer tree that owns a link, so no consumer
+  `node_modules` link is inspected, removed, or verified, and an unreadable or
+  malformed consumer path never prevents the claim from being released. Those
+  packages report their consumer link as `not-inspected`.
+- Exact-owned registrations are retired by the owner that created them when it
+  completes, and an interrupt retires the same registrations before the signal
+  takes its default course. Ownership is the recorded `(consumer root, library)`
+  pair: a checkout can hold several Bun package roots (`studio/`, `harness/`),
+  each a consumer with its own claim, so retiral never widens to a root that
+  merely shares a checkout.
+- The completion retiral runs inside the apply's own index transaction, after the
+  ledger commits, so the owner never holds a registration while it does not hold
+  the index lock. A failed ledger write leaves the claim, the registration and
+  the ledger as they were; a failed index commit restores any registration the
+  transaction retired and rolls the ledger and consumer links back; and a re-link
+  over an existing claim writes the retired claim out even when the plan planned
+  no index change.
+- An interrupted owner retires only what its own apply started. The transaction
+  marks the moment it becomes able to create a registration, and an owner that
+  never reached it — a link that only wanted the index lock — retires nothing,
+  because its registrations are not in the index yet. The watcher takes the index
+  lock itself with a bounded wait, since the interrupted apply may already have
+  released its transaction, and waits for in-flight child spawns; taking the lock
+  also proves no other link is mid-apply while it decides. Under that lock it
+  reads the index and retains any registration another consumer claims. When the
+  index cannot be read, the lock cannot be taken in time, or the registration's
+  target is unverifiable, it retires nothing: it cannot prove a registration is
+  its own. The command waits for a pending interrupt cleanup before it returns,
+  so the process cannot exit with the registration still owned.
+- Every owned child runs in its own process group, and its PID is published
+  through a spawn reservation, so the cleanup stops the whole tree: a wrapper's
+  descendant — the `bun` a shim or script actually runs — would otherwise
+  recreate the registration after the cleanup and could keep the ancestor's pipes
+  open while the caller still held the index lock. The interrupt handler is
+  installed synchronously before an owner can create anything, so no window
+  exists in which a signal kills the process outright while a `bun link` child
+  keeps running.
+- A leftover claim means an owner died between writing the claim and retiring it;
+  status reports `bun-registration-without-ledger` and `deps unlink bun` or the
+  next link retires it.
 - Validate other repo references before removal. Retain and report stale or
   unverifiable references rather than risk breaking another consumer.
-- Status and doctor report index/registry disagreement as drift.
+- Status and doctor verify the consumer's `node_modules` symlink, which is the
+  link. An absent machine-wide registration is expected; one that points at
+  another path is `bun-registration-conflict` drift.
 
 ## Cargo Rules
 
@@ -214,6 +273,10 @@ Unix.
 
 - Register matched packages by running `bun link --no-save` in their package
   directories.
+- Retire the registrations this operation created as soon as the consumer link
+  exists and the ledger records it. The owner that created them does this; an
+  interrupt does the same for the registrations the plan recorded, then lets the
+  signal take its default course.
 - Link the complete matched closure into the consumer in one invocation:
   `bun link <PACKAGE_1> ... <PACKAGE_N> --no-save`. Per-package consumer
   invocations are unsafe because Bun may re-resolve or replace an earlier
@@ -221,7 +284,9 @@ Unix.
 - Snapshot `package.json` and Bun lockfile state before and after. Any mutation
   is a failed operation and must be reported.
 - Track whether a global Bun registration was created by Effigy, already
-  existed for the same path, or conflicts with a different path.
+  existed for the same path, or conflicts with a different path. A registration
+  Effigy created is retired by the owner that created it; a foreign or shared
+  one is never removed.
 - Never replace a foreign registration silently.
 - Bun has no consumer-side `unlink <PACKAGE>` command. Unlink consumer
   symlinks directly only after exact path/target revalidation; never remove a

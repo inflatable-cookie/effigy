@@ -1082,6 +1082,46 @@ fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {
     assert!(!path.exists());
 }
 #[test]
+fn gateway_operator_events_write_one_private_record_per_action() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = effigy_test_support::Fixture::new("gateway-provenance-").unwrap();
+    let directory = fixture.path().join("gateway");
+    // No gateway state yet: recording is read-only and creates nothing.
+    record_gateway_operator(&directory, OperatorAction::Up, "gateway up command");
+    assert!(!directory.exists());
+    std::fs::create_dir(&directory).unwrap();
+    for (action, cause) in [
+        (OperatorAction::Up, "gateway up command"),
+        (OperatorAction::Down, "gateway down command"),
+        (OperatorAction::Setup, "gateway setup command"),
+    ] {
+        record_gateway_operator(&directory, action, cause);
+    }
+    let path = directory.join("gateway.stderr.log");
+    let log = std::fs::read_to_string(&path).unwrap();
+    let events = log
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 3, "{log}");
+    for (event, (name, cause)) in events.iter().zip([
+        ("gateway_up", "gateway up command"),
+        ("gateway_stop", "gateway down command"),
+        ("gateway_setup", "gateway setup command"),
+    ]) {
+        assert_eq!(event["event"], name, "{log}");
+        assert_eq!(event["cause"], cause, "{log}");
+        assert_eq!(event["pid"], std::process::id(), "{log}");
+        assert_eq!(event["caller"]["pid"], std::process::id(), "{log}");
+        assert!(event["caller"]["markers"].is_object(), "{log}");
+    }
+    // A stop keeps the event name earlier records already use.
+    assert_eq!(events[1]["action"], "down", "{log}");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "an operator log stays private");
+}
+
+#[test]
 fn gateway_custody_settlement_logs_caller_and_owner_loss() {
     let home = effigy_test_support::Fixture::new("g382-").unwrap();
     let cx = context();

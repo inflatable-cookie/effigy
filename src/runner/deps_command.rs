@@ -1,9 +1,11 @@
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{DepsArgs, DepsManager, DepsSubcommand};
 use effigy_deps::{
-    detect_repo_package_managers, execute_bun_link, execute_bun_unlink, execute_cargo_link,
-    execute_cargo_unlink, inspect_dependency_status, BunLinkOperationReport, BunLinkOutcome,
+    detect_repo_package_managers, execute_bun_unlink, execute_cargo_link, execute_cargo_unlink,
+    execute_owned_bun_link, inspect_dependency_status, BunLinkOperationReport, BunLinkOutcome,
     BunRegistrationIndexStore, BunUnlinkOperationReport, CargoLinkOperationReport,
     CargoUnlinkOperationReport, CommittedSource, DependencyHealthSeverity, DependencyLinkReport,
     DependencyStatusReport, ObservedState, PackageManager, ReadOnlyProcess, RepoLinkStateStore,
@@ -11,7 +13,7 @@ use effigy_deps::{
 };
 use serde_json::json;
 
-use super::command_context::resolve_active_repo_root;
+use super::command_context::{current_working_dir, resolve_active_repo_root};
 use super::RunnerError;
 
 mod pin;
@@ -130,7 +132,9 @@ fn run_bun_link(
     let resolved = resolve_active_repo_root(repo_override)?;
     let repo_root = resolved.resolved_root;
     let library_path = resolve_link_library_path(&repo_root, library_path);
-    let report = execute_bun_link(&repo_root, &library_path, home, dry_run, process)
+    // The owner retires the registration it creates when it completes, and an
+    // interrupt retires it before the signal takes its default course.
+    let report = execute_owned_bun_link(&repo_root, &library_path, home, dry_run, process)
         .map_err(map_deps_error)?;
     let rendered = render_bun_link(&repo_root, &report, output_json);
     finish_deps_operation(
@@ -249,6 +253,29 @@ fn render_bun_link(repo_root: &Path, report: &BunLinkOperationReport, output_jso
             }
         }
     }
+    if !report.registration_retirement.is_empty() {
+        let retirement = &report.registration_retirement;
+        lines.push(String::new());
+        lines.push("Registration retirement".to_owned());
+        for name in &retirement.unregistered {
+            lines.push(format!(
+                "- {name}: unregistered; the consumer link is the link"
+            ));
+        }
+        for name in &retirement.released_shared {
+            lines.push(format!(
+                "- {name}: claim released; another consumer keeps the registration"
+            ));
+        }
+        for name in &retirement.retained {
+            lines.push(format!(
+                "- {name}: retained; the registration is foreign or its target is unverifiable"
+            ));
+        }
+        for failure in &retirement.failures {
+            lines.push(format!("- failure: {failure}"));
+        }
+    }
     if !report.plan.operation.warnings.is_empty() {
         lines.push(String::new());
         lines.push(format!(
@@ -290,8 +317,7 @@ fn run_bun_unlink(
     output_json: bool,
     process: &impl ReadOnlyProcess,
 ) -> Result<String, RunnerError> {
-    let resolved = resolve_active_repo_root(repo_override)?;
-    let repo_root = resolved.resolved_root;
+    let repo_root = bun_unlink_repo_root(repo_override)?;
     let report = execute_bun_unlink(&repo_root, library_path, home, dry_run, process)
         .map_err(map_deps_error)?;
     let rendered = render_bun_unlink(&repo_root, &report, output_json);
@@ -1008,12 +1034,37 @@ fn resolve_link_library_path(repo_root: &Path, library_path: &Path) -> PathBuf {
     }
 }
 
+/// Bun unlink may name a deleted checkout with `--repo`.
+/// Other deps commands still require a live root.
+fn bun_unlink_repo_root(repo_override: Option<PathBuf>) -> Result<PathBuf, RunnerError> {
+    if let Some(explicit) = repo_override.as_ref() {
+        let candidate = if explicit.is_absolute() {
+            explicit.clone()
+        } else {
+            current_working_dir()?.join(explicit)
+        };
+        if bun_unlink_path_is_missing(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Ok(resolve_active_repo_root(repo_override)?.resolved_root)
+}
+
+fn bun_unlink_path_is_missing(path: &Path) -> bool {
+    matches!(
+        fs::symlink_metadata(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
     use std::fs;
     use std::process::Command;
 
+    #[cfg(unix)]
+    use effigy_deps::{bun_registration_path, BunConsumerReference};
     use effigy_deps::{
         BunLinkOutcome, BunPeerDiagnostic, BunPeerResolutionStatus, BunUnlinkOutcome,
         CargoLinkOutcome, CargoLinkOwnership, CargoUnlinkOutcome, ConsumerRoot, DependencyLinkKey,
@@ -1536,10 +1587,10 @@ mod tests {
                     "underlay",
                     library_root.clone(),
                     true,
-                    effigy_deps::BunConsumerReference {
-                        consumer_repo: repo_root.clone(),
-                        library_path: library_root.clone(),
-                    },
+                    effigy_deps::BunConsumerReference::claim(
+                        repo_root.clone(),
+                        library_root.clone(),
+                    ),
                 )
             })
             .unwrap();
@@ -1588,6 +1639,117 @@ mod tests {
             index_before
         );
         assert_eq!(fs::canonicalize(consumer_link).unwrap(), library_root);
+    }
+
+    fn bun_unlink_args(repo: PathBuf, library: PathBuf) -> DepsArgs {
+        DepsArgs {
+            subcommand: DepsSubcommand::Unlink {
+                manager: DepsManager::Bun,
+                library_path: library,
+                dry_run: false,
+            },
+            repo_override: Some(repo),
+            output_json: true,
+        }
+    }
+
+    #[cfg(unix)]
+    fn remaining_bun_consumers(home: &Path) -> Vec<PathBuf> {
+        BunRegistrationIndexStore::for_home(home)
+            .read()
+            .unwrap()
+            .registrations
+            .into_iter()
+            .flat_map(|registration| registration.consumers)
+            .map(|consumer| consumer.consumer_repo)
+            .collect()
+    }
+
+    #[test]
+    fn bun_unlink_cli_accepts_a_missing_repo_that_cargo_unlink_still_rejects() {
+        let parent = TempDir::new().unwrap();
+        let missing = parent.path().join("gone-consumer");
+        let library = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        let cargo_error =
+            run_cargo_unlink(Some(missing.clone()), library.path(), true, false).unwrap_err();
+        assert!(
+            cargo_error
+                .to_string()
+                .contains("explicit --repo path is not a directory"),
+            "{cargo_error}"
+        );
+
+        let rendered = run_deps_with_home(
+            bun_unlink_args(missing, library.path().to_path_buf()),
+            home.path(),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(json["schema"], "effigy.deps.unlink.v1");
+        assert_eq!(json["report"]["outcome"], "no-op");
+        assert!(!BunRegistrationIndexStore::for_home(home.path())
+            .path()
+            .exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bun_unlink_cli_gone_checkout_releases_nested_bun_root_registration() {
+        use std::os::unix::fs::symlink;
+
+        let checkout = repo();
+        let second = repo();
+        let library = TempDir::new().unwrap();
+        write(
+            &library.path().join("package.json"),
+            "{\"name\":\"underlay\",\"version\":\"0.1.0\"}\n",
+        );
+        let home = TempDir::new().unwrap();
+        let checkout_root = fs::canonicalize(checkout.path()).unwrap();
+        // The claim records the checkout boundary it was written under.
+        fs::create_dir_all(checkout_root.join(".git")).unwrap();
+        let studio = checkout_root.join("studio");
+        fs::create_dir_all(&studio).unwrap();
+        let studio = fs::canonicalize(&studio).unwrap();
+        let second_root = fs::canonicalize(second.path()).unwrap();
+        let library_root = fs::canonicalize(library.path()).unwrap();
+        BunRegistrationIndexStore::for_home(home.path())
+            .update(|index| {
+                index.add_reference(
+                    "underlay",
+                    library_root.clone(),
+                    true,
+                    BunConsumerReference::claim(studio, library_root.clone()),
+                )?;
+                index.add_reference(
+                    "underlay",
+                    library_root.clone(),
+                    true,
+                    BunConsumerReference::claim(second_root.clone(), library_root.clone()),
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let registration = bun_registration_path(home.path(), "underlay");
+        fs::create_dir_all(registration.parent().unwrap()).unwrap();
+        symlink(&library_root, &registration).unwrap();
+        fs::remove_dir_all(&checkout_root).unwrap();
+
+        let rendered = run_deps_with_home(
+            bun_unlink_args(checkout_root, library_root.clone()),
+            home.path(),
+        )
+        .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(json["report"]["outcome"], "unlinked");
+        assert_eq!(remaining_bun_consumers(home.path()), vec![second_root]);
+        assert_eq!(
+            fs::canonicalize(bun_registration_path(home.path(), "underlay")).unwrap(),
+            library_root
+        );
     }
 
     struct BunInventoryProcess {

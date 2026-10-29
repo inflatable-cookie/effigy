@@ -159,6 +159,12 @@ pub(super) fn policy(root: &Path) -> crate::EffectiveContainerPolicy {
     }
 }
 
+/// The bounded cleanup context a test's own run settlement uses; production
+/// makes a fresh one per settlement (effigy#447).
+pub(super) fn settlement(ctx: &EnvContext<'_>) -> effigy_kernel::ctx::CleanupContext {
+    ctx.cleanup().expect("cleanup budget")
+}
+
 /// A holder: one task run of the same checkout, owned by its own gate.
 pub(super) fn holder<'r>(ctx: &EnvContext<'r>, task: &str, n: u8) -> Run<'r> {
     let task = TaskId::new(checkout(), "", Surface::Published, task, None).expect("task id");
@@ -189,7 +195,7 @@ pub(super) fn holder<'r>(ctx: &EnvContext<'r>, task: &str, n: u8) -> Run<'r> {
                 .expect("next"),
             custody: None,
         },
-        &ctx.cleanup,
+        &settlement(&ctx),
         &mut EnvSettlement,
     )
     .expect("holder admitted")
@@ -547,7 +553,7 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                         .unwrap();
                     task.finish(WorkloadOutcome::Succeeded).unwrap();
                     assert_eq!(
-                        task.settle(&ctx.cleanup, &mut EnvSettlement)
+                        task.settle(&settlement(&ctx), &mut EnvSettlement)
                             .unwrap()
                             .cleanup(),
                         CleanupOutcome::Incomplete
@@ -676,7 +682,7 @@ fn a_holder_s_own_stop_is_exempt_only_once_it_is_settling() {
     assert_eq!(fake.calls(), ["apply", "stop"]);
     assert_eq!(record(&ctx, &stack).state, EnvState::Stopped);
     assert_eq!(
-        task.settle(&ctx.cleanup, &mut EnvSettlement)
+        task.settle(&settlement(&ctx), &mut EnvSettlement)
             .unwrap()
             .cleanup(),
         CleanupOutcome::Complete
@@ -710,10 +716,12 @@ fn idle_stop_is_holder_based() {
     let mut second = holder(&ctx, "lint", 2);
     hold(&mut second, &ctx, &stack, Wait::FailFast, true).unwrap();
     first.finish(WorkloadOutcome::Succeeded).unwrap();
-    first.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    first.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
     assert_eq!(reap(&fake), Idle::Kept("holders remain"));
     second.finish(WorkloadOutcome::Succeeded).unwrap();
-    second.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    second
+        .settle(&settlement(&ctx), &mut EnvSettlement)
+        .unwrap();
     assert_eq!(reap(&fake), Idle::Stopped);
     assert_eq!(fake.calls(), ["apply", "stop"]);
     assert_eq!(reap(&fake), Idle::Kept("not active"));
@@ -733,7 +741,9 @@ fn idle_stop_is_holder_based() {
     let held = hold(&mut borrower, &ctx, &other, Wait::FailFast, true).unwrap();
     assert!(matches!(held.mode, AttachMode::Borrow));
     borrower.finish(WorkloadOutcome::Succeeded).unwrap();
-    borrower.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    borrower
+        .settle(&settlement(&ctx), &mut EnvSettlement)
+        .unwrap();
     assert_eq!(
         reap_if_idle(&ctx, &other, |_| panic!("persistent stack stopped")).unwrap(),
         Idle::Kept("persistent")
@@ -760,7 +770,7 @@ fn a_stopped_or_unrecorded_environment_cannot_be_held() {
         hold(&mut task, &ctx, &stack, Wait::FailFast, true),
         Err(HoldError::NotActive)
     ));
-    task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
     assert_store_sound(&ctx);
 }
 
@@ -814,7 +824,7 @@ fn a_stalled_transition_excludes_a_concurrent_attach() {
             true,
         );
         assert!(matches!(waited, Err(HoldError::NotActive)), "{waited:?}");
-        task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+        task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
     });
     down(
         &ctx,
@@ -852,7 +862,9 @@ fn a_transition_settles_an_interrupted_holder_before_acting() {
     // A live successor of the same task settles its predecessor itself.
     let successor = holder(&ctx, "dev", 2);
     assert!(!record(&ctx, &stack).protected());
-    successor.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    successor
+        .settle(&settlement(&ctx), &mut EnvSettlement)
+        .unwrap();
     // A dead session with no successor is settled by the next transition.
     let mut session = Session::begin(&ctx, &stack, "exec").unwrap();
     hold(session.run_mut(), &ctx, &stack, Wait::FailFast, true).unwrap();
@@ -972,7 +984,7 @@ fn a_hold_reports_not_active_when_the_runtime_reports_nothing_running() {
     );
     assert!(record(&ctx, &stack).protected());
     task.finish(WorkloadOutcome::Succeeded).unwrap();
-    task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
     assert_store_sound(&ctx);
 }
 
@@ -1042,6 +1054,237 @@ fn a_bring_up_after_an_earlier_stop_activates() {
     assert_store_sound(&ctx);
 }
 
+/// The settlement budget is the settlement's own: a context opened long
+/// before a settlement still hands that settlement the whole of it, and the
+/// next settlement gets another (effigy#447).
+#[test]
+fn a_settlement_gets_the_full_budget_when_it_starts() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    // Activation time passes before settlement begins.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    for attempt in 0..2 {
+        let remaining = ctx
+            .cleanup()
+            .unwrap()
+            .operation()
+            .remaining()
+            .expect("a finite settlement budget");
+        assert!(
+            remaining >= CLEANUP_BUDGET - std::time::Duration::from_millis(50),
+            "settlement {attempt} got {remaining:?} of {CLEANUP_BUDGET:?}"
+        );
+    }
+}
+
+/// effigy#447: settlement used to run on the cleanup context made when the
+/// environment context opened, so an activation slower than that budget left
+/// its settlement already expired and the record timed out. Each settlement
+/// now starts its own bounded budget: the activation below spends all of the
+/// budget it was given, and both of its runs still settle afterwards. On the
+/// one-shot context this returned `Err` from the apply run's settle.
+#[test]
+fn a_bring_up_that_outlives_its_budget_still_settles() {
+    let home = home();
+    let root = root(home.path());
+    // The settlement budget the activation spends entirely.
+    let ctx = EnvContext::with_cleanup_budget(
+        &root,
+        CancelToken::default(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let render = closure("one");
+    let applied = reconcile(
+        &ctx,
+        &stack,
+        Up {
+            render: Some(&render),
+            project: PROJECT,
+            backend: &selection(),
+            retention: Retention::Held,
+        },
+        || {
+            // A cold stack's bring-up, longer than the settlement budget.
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            fake.apply()
+        },
+    )
+    .unwrap();
+    assert_eq!(applied, Applied::Reconciled);
+    // The activation run that follows the slow apply also settles on a budget
+    // of its own, and publishes `active`.
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    activate(&ctx, &stack, &[]).unwrap();
+    assert!(record(&ctx, &stack).active());
+    assert_eq!(fake.calls(), ["apply"]);
+    assert_store_sound(&ctx);
+}
+
+/// The boundary at production size: an activation that spends more than the
+/// real 60-second settlement budget still settles, and the activation run that
+/// follows it settles too. The shortened-budget proofs above show the ordering;
+/// this one spends the production budget itself, the shape the I1 cold stack
+/// hit when its first build ran past a minute.
+#[test]
+fn an_activation_past_the_sixty_second_budget_still_settles() {
+    const ACTIVATION: std::time::Duration = std::time::Duration::from_secs(61);
+    assert!(
+        ACTIVATION > CLEANUP_BUDGET,
+        "the activation must outlive the production settlement budget"
+    );
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let render = closure("one");
+    let started = std::time::Instant::now();
+    assert_eq!(
+        reconcile(
+            &ctx,
+            &stack,
+            Up {
+                render: Some(&render),
+                project: PROJECT,
+                backend: &selection(),
+                retention: Retention::Held,
+            },
+            || {
+                std::thread::sleep(ACTIVATION);
+                fake.apply()
+            },
+        )
+        .unwrap(),
+        Applied::Reconciled
+    );
+    assert!(
+        started.elapsed() > CLEANUP_BUDGET,
+        "the activation did not outlive the budget: {:?}",
+        started.elapsed()
+    );
+    // Its own settlement had a whole window, and the activation run that
+    // follows publishes `active` from its own.
+    activate(&ctx, &stack, &[]).unwrap();
+    assert!(record(&ctx, &stack).active());
+    assert_eq!(fake.calls(), ["apply"]);
+    assert_store_sound(&ctx);
+}
+
+/// The operator sees which phase a transition is in: the gate wait and the
+/// settlement each report themselves, so a slow activation never looks like a
+/// hang and an expired settle is named where it happened (effigy#447).
+#[test]
+fn a_transition_names_its_wait_and_its_settlement() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let (applied, lines) = effigy_ui::steps::capture_lines(|| {
+        bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[])
+    });
+    assert_eq!(applied.unwrap(), Applied::Reconciled);
+    for expected in [
+        "✓ environment `stack` is free".to_owned(),
+        "✓ environment `stack` settled".to_owned(),
+    ] {
+        assert!(
+            lines.iter().any(|line| *line == expected),
+            "missing {expected:?} in {lines:?}"
+        );
+    }
+    // Two runs, so the apply run and the activation each report their own
+    // admission and settlement.
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.ends_with("` settled"))
+            .count(),
+        2,
+        "{lines:?}"
+    );
+}
+
+/// An activation stopped after its backend effect settles without dispatching
+/// another one, and without an expired budget: the settle's context starts
+/// when the settle starts (effigy#447).
+#[test]
+fn an_interrupted_activation_settles_without_another_effect() {
+    let home = home();
+    let root = root(home.path());
+    let cancel = CancelToken::default();
+    let ctx = EnvContext::with_cleanup_budget(
+        &root,
+        cancel.clone(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let mut run = EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).unwrap();
+    run.publish_desired(&closure("one")).unwrap();
+    run.apply_with(&selection(), PROJECT, || fake.apply())
+        .unwrap();
+    // The operator stops the activation after the backend acted.
+    cancel.cancel(effigy_kernel::ctx::StopCause::Signal(2));
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    assert_eq!(run.finish(false).unwrap(), CleanupOutcome::Complete);
+    assert_eq!(
+        fake.calls(),
+        ["apply"],
+        "settlement dispatched a backend effect after the stop"
+    );
+    // The cancelled token stays on that invocation's reads; the record the
+    // settle left behind is read from a fresh context.
+    let settled = EnvContext::new(&root, CancelToken::default()).unwrap();
+    assert!(!record(&settled, &stack).active());
+    assert_store_sound(&settled);
+}
+
+/// A failed activation settles on its own budget too, so the record is left
+/// settled and the next up reconciles it from what is running (effigy#447).
+#[test]
+fn a_failed_activation_settles_on_its_own_budget() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::with_cleanup_budget(
+        &root,
+        CancelToken::default(),
+        std::time::Duration::from_millis(700),
+    )
+    .unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    fake.queue(Err(BackendError::NotStarted("runtime refused".into())));
+    let render = closure("one");
+    let failed = reconcile(
+        &ctx,
+        &stack,
+        Up {
+            render: Some(&render),
+            project: PROJECT,
+            backend: &selection(),
+            retention: Retention::Held,
+        },
+        || {
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            fake.apply()
+        },
+    );
+    assert!(matches!(failed, Err(EnvError::Backend(_))), "{failed:?}");
+    assert!(!record(&ctx, &stack).active());
+    assert_store_sound(&ctx);
+    // The run settled: the retry applies once, with no predecessor residue.
+    bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]).unwrap();
+    assert!(record(&ctx, &stack).active());
+    assert_eq!(fake.calls(), ["apply"]);
+    assert_store_sound(&ctx);
+}
+
 #[test]
 fn checkout_state_routing_keeps_environment_holders_and_objects_local() {
     let machine = home();
@@ -1088,6 +1331,6 @@ fn checkout_state_routing_keeps_environment_holders_and_objects_local() {
             .starts_with(checkout.path().join(".effigy/state/objects")));
         assert!(!machine.path().join(".effigy/state").exists());
         task.finish(WorkloadOutcome::Succeeded).unwrap();
-        task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+        task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
     });
 }

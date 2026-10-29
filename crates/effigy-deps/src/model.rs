@@ -373,7 +373,47 @@ pub struct BunLinkOperationReport {
     pub verification: DependencyVerification,
     pub peer_diagnostics: Vec<BunPeerDiagnostic>,
     pub rollback: BunLinkRollback,
+    #[serde(default, skip_serializing_if = "BunRegistrationRetirement::is_empty")]
+    pub registration_retirement: BunRegistrationRetirement,
     pub errors: Vec<String>,
+}
+
+/// What a completed link did to the machine-wide registrations it created.
+///
+/// `bun link` registers a package in the machine-wide Bun install so the
+/// consumer's save-less `bun link` can resolve it. The consumer's
+/// `node_modules` symlink is the link itself, so the registration is retired
+/// once the owner that created it finishes; keeping it is what left
+/// registrations pointing at deleted checkouts. Retirement only ever touches
+/// Effigy's own claim, and a claim another consumer still holds is released
+/// rather than unregistered.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BunRegistrationRetirement {
+    /// Packages unregistered because this consumer held the last claim and
+    /// Effigy had created the registration.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unregistered: Vec<String>,
+    /// Packages whose claim was released while another consumer's claim keeps
+    /// the registration.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub released_shared: Vec<String>,
+    /// Packages whose registration Effigy left in place because it is foreign,
+    /// shared, or unverifiable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<String>,
+    /// Retirement failures. The claim stays recorded so `deps unlink` can
+    /// retire it later.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failures: Vec<String>,
+}
+
+impl BunRegistrationRetirement {
+    pub fn is_empty(&self) -> bool {
+        self.unregistered.is_empty()
+            && self.released_shared.is_empty()
+            && self.retained.is_empty()
+            && self.failures.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,6 +448,8 @@ pub enum BunConsumerLinkDisposition {
     Registry,
     Linked,
     Conflict,
+    /// Recovery from an orphaned claim does not read a consumer tree at all.
+    NotInspected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -778,6 +820,38 @@ pub struct DependencyStatusReport {
 pub struct BunConsumerReference {
     pub consumer_repo: PathBuf,
     pub library_path: PathBuf,
+    /// The checkout that owned `consumer_repo` when Effigy recorded the claim.
+    ///
+    /// A deleted checkout no longer carries the `.git` boundaries that tell a
+    /// nested Bun package root (`<checkout>/studio`) from an independently
+    /// nested checkout, so the claim has to remember which one it belonged to.
+    /// Claims recorded before this evidence existed leave it absent, and
+    /// recovery retains those rather than guessing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout_root: Option<PathBuf>,
+}
+
+impl BunConsumerReference {
+    /// A claim that records the checkout owning `consumer_repo` right now.
+    ///
+    /// The evidence is the observed `.git` boundary, absent when the project
+    /// outside a checkout boundary would resolve to itself.
+    pub fn claim(consumer_repo: PathBuf, library_path: PathBuf) -> Self {
+        let checkout_root = crate::state::checkout_boundary(&consumer_repo);
+        Self {
+            consumer_repo,
+            library_path,
+            checkout_root,
+        }
+    }
+
+    /// Whether both claims name the same consumer and library.
+    ///
+    /// Ownership evidence differs between claims recorded at different times,
+    /// so identity is the repo/library pair rather than struct equality.
+    pub fn same_claim(&self, other: &Self) -> bool {
+        self.consumer_repo == other.consumer_repo && self.library_path == other.library_path
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -863,7 +937,9 @@ impl BunRegistrationIndex {
         };
         let registration = &mut self.registrations[index];
         let original_len = registration.consumers.len();
-        registration.consumers.retain(|item| item != consumer);
+        registration
+            .consumers
+            .retain(|item| !item.same_claim(consumer));
         if registration.consumers.len() == original_len {
             return BunReferenceRelease::Missing;
         }

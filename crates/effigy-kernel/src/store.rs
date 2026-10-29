@@ -421,6 +421,11 @@ impl Store {
         let patient = cx.patience(window);
         let started = Instant::now();
         let _gate = self.writer_gate(&patient, window)?;
+        // Configuration PRAGMAs can wait on another connection even when this
+        // process already holds the writer gate. Set their SQLite wait before
+        // the first statement, rather than inheriting SQLite's five seconds.
+        self.conn
+            .busy_timeout(window.saturating_sub(started.elapsed()))?;
         // Incremental auto-vacuum must be chosen while the store is empty, and
         // before write-ahead logging materialises its header. On an existing
         // store this is only pending until retention's one-time `VACUUM`.
@@ -432,7 +437,7 @@ impl Store {
              PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=1000;",
             MAX_DB_BYTES / PAGE_SIZE
         ))?;
-        self.schema(&patient)?;
+        self.schema(&patient, BusyWait::Context)?;
         Ok(())
     }
     /// `journal_mode=WAL` is persistent in the file. A store last written in
@@ -775,7 +780,7 @@ impl Store {
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
     }
-    fn schema(&mut self, cx: &EffectContext) -> Result<(), StoreError> {
+    fn schema(&mut self, cx: &EffectContext, wait: BusyWait) -> Result<(), StoreError> {
         // Pure read first: a current store needs no write transaction, and so
         // never takes the write lock just to be opened (I-S5, §5.5).
         let tables: i64 = self.conn.query_row(
@@ -786,7 +791,7 @@ impl Store {
         if tables == 0 {
             // Incremental auto-vacuum must be chosen before the first table.
             self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
-            return self.txn(cx, |txn| {
+            return self.transaction_within(cx, wait, |txn| {
                 txn.conn.execute_batch(SCHEMA_V1)?;
                 txn.conn.execute(
                     "INSERT INTO meta(key, value) VALUES ('schema_version', ?1), \
@@ -814,6 +819,7 @@ impl Store {
             .any(|(name, _)| !has_table(&self.conn, name).unwrap_or(false));
         if has_backend(&self.conn)?
             && has_column(&self.conn, "engine")?
+            && has_session_owner(&self.conn)?
             && !stale_build
             && !adds_index
             && !adds_table
@@ -822,7 +828,7 @@ impl Store {
         }
         // Schema 1 additive changes: old readers select explicit columns;
         // Observe reads an older store without migrating it.
-        self.txn(cx, |txn| {
+        self.transaction_within(cx, wait, |txn| {
             if !has_backend(txn.conn)? {
                 txn.conn
                     .execute_batch("ALTER TABLE resources ADD COLUMN backend TEXT")?;
@@ -835,6 +841,11 @@ impl Store {
                 if !has_table(txn.conn, name)? {
                     txn.conn.execute_batch(sql)?;
                 }
+            }
+            if !has_session_owner(txn.conn)? {
+                txn.conn.execute_batch(
+                    "ALTER TABLE workspace_admissions ADD COLUMN session_owner TEXT",
+                )?;
             }
             for (name, sql) in ADDITIVE_INDEXES {
                 if !has_index(txn.conn, name)? {
@@ -1458,6 +1469,12 @@ fn read_unknown(error: &StoreError) -> UnknownReason {
         other => UnknownReason::StoreUnreadable(other.to_string()),
     }
 }
+fn has_session_owner(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_admissions') WHERE name='session_owner')",
+        [], |r| r.get(0),
+    )
+}
 fn has_backend(conn: &Connection) -> rusqlite::Result<bool> {
     has_column(conn, "backend")
 }
@@ -1535,9 +1552,10 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 1] = [(
-    "foreground_terminals",
-    "CREATE TABLE IF NOT EXISTS foreground_terminals (
+const ADDITIVE_TABLES: [(&str, &str); 4] = [
+    (
+        "foreground_terminals",
+        "CREATE TABLE IF NOT EXISTS foreground_terminals (
   run_id TEXT PRIMARY KEY,
   checkout TEXT NOT NULL,
   boot TEXT NOT NULL,
@@ -1551,12 +1569,70 @@ const ADDITIVE_TABLES: [(&str, &str); 1] = [(
 ) STRICT;
 CREATE INDEX IF NOT EXISTS foreground_terminals_closed
   ON foreground_terminals(closed_at)",
-)];
+    ),
+    // 052 §8.11: one keyed workspace request per session generation, holding
+    // the canonical digest, the one run it reserved and that run's recorded
+    // outcome. It has no foreign key on purpose: a pruned run must not take
+    // the recorded answer with it, because replaying the key must never admit
+    // a second run.
+    (
+        "workspace_admissions",
+        "CREATE TABLE IF NOT EXISTS workspace_admissions (
+  session_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  session_owner TEXT,
+  request_id TEXT NOT NULL,
+  digest BLOB NOT NULL,
+  run_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('reserved','admitted','closed')),
+  outcome TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, session_generation, request_id)
+) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_admissions_run_identity
+  ON workspace_admissions(run_id)",
+    ),
+    // A client's lifetime on a run, separate from environment resource holds
+    // (`attachments`) and from remote workload custody. Rows end with the run.
+    (
+        "run_attachments",
+        "CREATE TABLE IF NOT EXISTS run_attachments (
+  attachment_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  lifetime TEXT NOT NULL CHECK (lifetime IN ('owner','secondary')),
+  state TEXT NOT NULL CHECK (state IN ('attached','released')),
+  release TEXT CHECK (release IN ('eof','detach')),
+  created_at INTEGER NOT NULL,
+  released_at INTEGER
+) STRICT;
+CREATE INDEX IF NOT EXISTS run_attachments_run
+  ON run_attachments(run_id, state)",
+    ),
+    // 052 §8.7: which run is an environment's workspace session. A Borrow
+    // attachment alone cannot say it — a child run or a host `dev` hold can
+    // borrow the same environment — so the session's own journal records the
+    // mapping, and every read validates it against the run row and the
+    // generation before it is used.
+    (
+        "workspace_sessions",
+        "CREATE TABLE IF NOT EXISTS workspace_sessions (
+  environment TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  environment_generation INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+) STRICT;",
+    ),
+];
 
 /// Indexes §7.4 retention needs, as additive schema-1 changes. Retention's
 /// candidates and deletes are index-driven, so a sweep costs the same on a
 /// small store and a hundred-thousand-run store.
-const ADDITIVE_INDEXES: [(&str, &str); 10] = [
+const ADDITIVE_INDEXES: [(&str, &str); 11] = [
     (
         "runs_settled",
         "CREATE INDEX IF NOT EXISTS runs_settled ON runs(created_at)",
@@ -1584,6 +1660,17 @@ const ADDITIVE_INDEXES: [(&str, &str); 10] = [
     (
         "attachments_run",
         "CREATE INDEX IF NOT EXISTS attachments_run ON attachments(run_id)",
+    ),
+    // 052 §8.11: one run identity belongs to at most one keyed request, so a
+    // run can never be attributed to another session's key. The admission
+    // transaction refuses a collision by name; this index holds the same line
+    // for any writer that reaches the table another way. The earlier draft
+    // carried a non-unique index under the old name.
+    (
+        "workspace_admissions_run_identity",
+        "DROP INDEX IF EXISTS workspace_admissions_run; \
+         CREATE UNIQUE INDEX IF NOT EXISTS workspace_admissions_run_identity \
+         ON workspace_admissions(run_id)",
     ),
     (
         "object_refs_resource",
@@ -1728,6 +1815,30 @@ CREATE TABLE foreground_terminals (
   closed_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX foreground_terminals_closed ON foreground_terminals(closed_at);
+CREATE TABLE workspace_admissions (
+  session_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  session_owner TEXT,
+  request_id TEXT NOT NULL,
+  digest BLOB NOT NULL,
+  run_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('reserved','admitted','closed')),
+  outcome TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, session_generation, request_id)
+) STRICT;
+CREATE TABLE run_attachments (
+  attachment_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  session_generation INTEGER NOT NULL,
+  lifetime TEXT NOT NULL CHECK (lifetime IN ('owner','secondary')),
+  state TEXT NOT NULL CHECK (state IN ('attached','released')),
+  release TEXT CHECK (release IN ('eof','detach')),
+  created_at INTEGER NOT NULL,
+  released_at INTEGER
+) STRICT;
 CREATE TABLE logs (
   run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   stream TEXT NOT NULL,
@@ -1743,6 +1854,8 @@ CREATE INDEX claims_run ON claims(run_id);
 CREATE INDEX runs_parent ON runs(parent_run);
 CREATE INDEX requests_run ON requests(run_id);
 CREATE INDEX attachments_run ON attachments(run_id);
+CREATE UNIQUE INDEX workspace_admissions_run_identity ON workspace_admissions(run_id);
+CREATE INDEX run_attachments_run ON run_attachments(run_id, state);
 CREATE INDEX object_refs_resource ON object_refs(resource);
 CREATE INDEX checkouts_live_seen ON checkouts(state, last_seen);
 CREATE INDEX checkouts_tombstoned ON checkouts(state, unreferenced_since);

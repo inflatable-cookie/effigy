@@ -8,6 +8,66 @@ use crate::runner::runtime_session_context::{
     RuntimeSessionContext,
 };
 
+/// The workspace entry's front ends (contract 052 §8.11). The TUI, a plain text
+/// client and a headless one are front ends of one managed session: they differ
+/// only in how they render it, never in which run they talk to. The
+/// workspace-client glue task drives them; until it lands they are proven by
+/// `effigy_kernel::workspace_session::tests` and this file's own tests.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the workspace-client glue task drives these front ends"
+    )
+)]
+pub(super) mod front_end {
+    use effigy_kernel::workspace_session::{SessionHandle, SessionRef, TerminalKind};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum WorkspaceFrontEnd {
+        Tui,
+        Text,
+        Headless,
+    }
+
+    impl WorkspaceFrontEnd {
+        pub(super) fn terminal_kind(self) -> TerminalKind {
+            match self {
+                Self::Tui => TerminalKind::Tui,
+                Self::Text => TerminalKind::Text,
+                Self::Headless => TerminalKind::Headless,
+            }
+        }
+
+        /// The one line a front end prints for the session it entered. Every
+        /// kind prints the same session identity, so a UI and a text log agree.
+        pub(super) fn session_line(self, session: &SessionRef) -> String {
+            format!("{}: {}", self.terminal_kind().as_str(), session.label())
+        }
+    }
+
+    /// An interactive terminal with no initial command is the TUI; an
+    /// interactive terminal running a command is a text client; a workspace
+    /// entry with no terminal at all is headless.
+    pub(super) fn workspace_front_end(
+        interactive: bool,
+        initial_command: Option<&str>,
+    ) -> WorkspaceFrontEnd {
+        match (interactive, initial_command) {
+            (false, _) => WorkspaceFrontEnd::Headless,
+            (true, Some(_)) => WorkspaceFrontEnd::Text,
+            (true, None) => WorkspaceFrontEnd::Tui,
+        }
+    }
+
+    /// The handle a front end drives: durable session identity and journalled
+    /// requests only, never the supervisor's owning pipe. A front end can close
+    /// at any time without settling the session.
+    pub(super) fn workspace_session_handle(session: SessionRef) -> SessionHandle {
+        SessionHandle::new(session)
+    }
+}
+
 use super::RunnerError;
 
 pub(super) fn run_workspace_container_session(
@@ -124,7 +184,73 @@ fn combine_workspace_session_results(
 #[cfg(test)]
 mod tests {
     use super::combine_workspace_session_results;
+    use super::front_end::{workspace_front_end, workspace_session_handle, WorkspaceFrontEnd};
     use crate::runner::error::RunnerError;
+    use effigy_kernel::id::{CheckoutId, CheckoutKind, Generation, ResourceId, RunId};
+    use effigy_kernel::run::Fence;
+    use effigy_kernel::workspace_session::{SessionRef, TerminalKind};
+
+    fn session() -> SessionRef {
+        let checkout = CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]);
+        let environment = ResourceId::environment(checkout, "stack").expect("environment");
+        let run = RunId::new(1, [3; 10]).expect("run id");
+        SessionRef::new(
+            run,
+            Fence {
+                resource: environment.clone(),
+                generation: Generation::new(7),
+            },
+            environment,
+            Generation::new(4),
+        )
+    }
+
+    #[test]
+    fn front_ends_map_to_their_terminal_kind() {
+        assert_eq!(
+            workspace_front_end(true, None).terminal_kind(),
+            TerminalKind::Tui
+        );
+        assert_eq!(
+            workspace_front_end(true, Some("effigy test")).terminal_kind(),
+            TerminalKind::Text
+        );
+        assert_eq!(
+            workspace_front_end(false, None).terminal_kind(),
+            TerminalKind::Headless
+        );
+    }
+
+    #[test]
+    fn every_front_end_reports_one_managed_session_identity() {
+        let session = session();
+        let lines: Vec<String> = [
+            WorkspaceFrontEnd::Tui,
+            WorkspaceFrontEnd::Text,
+            WorkspaceFrontEnd::Headless,
+        ]
+        .iter()
+        .map(|front_end| front_end.session_line(&session))
+        .collect();
+        for line in &lines {
+            assert!(
+                line.ends_with(&session.label()),
+                "`{line}` names the same session"
+            );
+        }
+        let identities: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.split_once(": ")
+                    .expect("kind and identity")
+                    .1
+                    .to_owned()
+            })
+            .collect();
+        assert!(identities.iter().all(|identity| identity == &identities[0]));
+        let handle = workspace_session_handle(session.clone());
+        assert_eq!(handle.identity(), &session);
+    }
 
     #[test]
     fn combine_workspace_session_results_uses_typed_cleanup_variant() {

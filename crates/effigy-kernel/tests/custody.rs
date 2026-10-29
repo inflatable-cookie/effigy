@@ -30,8 +30,11 @@ impl Drop for ChildGuard {
     }
 }
 fn home() -> tempfile::TempDir {
-    // Short: the run's control socket path is bounded (`sun_path`).
-    effigy_test_support::short_tempdir("kcustody-").unwrap()
+    // Three characters at most: the fixture path plus a run id and `.sock`
+    // must fit `sun_path`, and an Effigy run scratch root spends most of that
+    // budget before the fixture name. A longer prefix fails the harness with
+    // "cannot hold a ... fixture and its control socket".
+    effigy_test_support::short_tempdir("kc-").unwrap()
 }
 fn fixture() -> PathBuf {
     std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
@@ -106,6 +109,35 @@ fn begin<'a>(cx: &EffectContext, root: &'a StateRoot) -> Run<'a> {
         &mut Strict,
     )
     .unwrap()
+}
+fn workspace_session(cx: &EffectContext, root: &StateRoot) {
+    let task = TaskId::new(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [4; 16]),
+        "",
+        Surface::Published,
+        "workspace-session",
+        None,
+    )
+    .unwrap();
+    let mut spec = invocation().spec().clone();
+    spec.owner = task.resource();
+    spec.task = task;
+    let run = Run::begin(
+        cx,
+        root,
+        &ResolvedInvocation::new(spec).unwrap(),
+        BeginOpts {
+            id: id(7),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    drop(run);
 }
 fn spec(home: &Path, script: &str) -> ProcessSpec {
     ProcessSpec {
@@ -1251,6 +1283,22 @@ fn custody_engine_detached_client_exit_keeps_the_run_until_stop() {
 fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
     let home = home();
     let cx = context();
+    // 052 §8.11: a host dispatcher reserves the keyed request and hands the
+    // ticket to the detached supervisor, whose engine admits under it.
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    workspace_session(&cx, &root);
+    let key = AdmissionKey {
+        session: Session {
+            run: id(7),
+            generation: Generation::new(1),
+        },
+        request: RequestId::new([3; 16]),
+    };
+    let digest = Digest::of(b"effigy.custody.engine.fixture.v1");
+    let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("expected the one reservation, saw {other:?}"),
+    };
     let mut client = start_engine(
         &cx,
         home.path(),
@@ -1259,12 +1307,30 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             cwd: home.path().into(),
             env: vec![],
             handoff: None,
+            admission: Some(ticket),
         },
         &Executable::capture(&fixture()).unwrap(),
         ClientMode::Owning,
     )
     .unwrap();
     assert_eq!(client.run, RunId::new(1, [9; 10]).unwrap());
+    // The detached engine's admission bound the key, in its own process.
+    let _reader = match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root)
+    {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("store reader {other:?}"),
+    };
+    match lookup(
+        &cx.operation().observe().unwrap(),
+        &root,
+        key,
+        digest.clone(),
+    ) {
+        Observed::Verified(Recovered::Admitted { run, .. }, _) => {
+            assert_eq!(run, RunId::new(1, [9; 10]).unwrap())
+        }
+        other => panic!("detached engine admission {other:?}"),
+    }
     while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
     client.send_frame(b"hello engine").unwrap();
     loop {
@@ -1281,6 +1347,7 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             cwd: home.path().into(),
             env: vec![],
             handoff: None,
+            admission: None,
         },
         &Executable::capture(&fixture()).unwrap(),
         ClientMode::Owning,
@@ -1292,6 +1359,272 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
         engine_status(home.path()),
         Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
     ));
+}
+
+/// Attaching caller dies after row commit, before returning its response to
+/// the parent or registering a supervisor watch. The unit fault proof kills
+/// at RunAttachAfter, before even the handle is returned.
+#[test]
+#[ignore = "helper process"]
+fn helper_workspace_secondary_creation_loss() {
+    let home = std::env::var_os("EFFIGY_CUSTODY_ATTACHMENT_HOME").expect("private fixture root");
+    let cx = context();
+    let root = StateRoot::effects(&cx, Path::new(&home)).unwrap();
+    let _ = attach_secondary(
+        &cx,
+        &root,
+        Session {
+            run: id(7),
+            generation: Generation::new(1),
+        },
+        id(9),
+        AttachmentId::new([8; 16]),
+    )
+    .expect("secondary commit");
+    // SAFETY: kill only this explicitly spawned helper, before handing the
+    // committed attachment back to the parent or to any liveness watcher.
+    assert_eq!(
+        unsafe { libc::kill(std::process::id() as libc::pid_t, libc::SIGKILL) },
+        0
+    );
+    panic!("self SIGKILL returned");
+}
+
+/// Handle EOF and acknowledged detach drive the real detached engine's custody,
+/// including a killed secondary's independent liveness pipe and slot reuse.
+#[test]
+fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
+    for (cause, collision) in [
+        (Release::Eof, Some("foreign")),
+        (Release::Eof, Some("resolved")),
+        (Release::Detach, None),
+    ] {
+        let home = home();
+        eprintln!(
+            "workspace lifetime {cause:?}: setup {}",
+            home.path().display()
+        );
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        workspace_session(&cx, &root);
+        let key = AdmissionKey {
+            session: Session {
+                run: id(7),
+                generation: Generation::new(1),
+            },
+            request: RequestId::new([4; 16]),
+        };
+        let digest = Digest::of(b"workspace-lifetimes");
+        let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
+            Reservation::Fresh(ticket) => ticket,
+            other => panic!("reservation {other:?}"),
+        };
+        let mut client = start_engine(
+            &cx,
+            home.path(),
+            EngineLaunch {
+                payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+                cwd: home.path().into(),
+                env: vec![],
+                handoff: None,
+                admission: Some(ticket),
+            },
+            &Executable::capture(&fixture()).unwrap(),
+            ClientMode::Owning,
+        )
+        .unwrap();
+        eprintln!("workspace lifetime {cause:?}: waiting for Active");
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        let cx = context();
+
+        eprintln!("workspace lifetime {cause:?}: losing secondary creation response");
+        let mut attaching = ChildGuard(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "helper_workspace_secondary_creation_loss",
+                    "--exact",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("EFFIGY_CUSTODY_ATTACHMENT_HOME", home.path())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+        );
+        eventually(|| match attaching.0.try_wait().unwrap() {
+            Some(status) => {
+                use std::os::unix::process::ExitStatusExt;
+                assert_eq!(status.signal(), Some(libc::SIGKILL));
+                true
+            }
+            None => false,
+        });
+        let secondary_id = AttachmentId::new([8; 16]);
+        // Creation committed, but the owner has never seen a handle or watch.
+        assert!(attach_secondary(&cx, &root, key.session, id(9), secondary_id).is_err());
+        assert!(
+            resume_secondary(&cx, &root, key.session, id(9), secondary_id)
+                .unwrap()
+                .attached(&cx, &root)
+                .unwrap()
+        );
+        assert!(matches!(
+            engine_status(home.path()),
+            Observed::Verified(RunStatus::Live(_), _)
+        ));
+        let listener = std::os::unix::net::UnixListener::bind(home.path().join("a.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        eprintln!("workspace lifetime {cause:?}: requesting secondary watch");
+        client.send_frame(b"resume-secondary").unwrap();
+        loop {
+            if let Event::Engine(bytes) = client.event(cx.operation()).unwrap() {
+                assert_eq!(
+                    String::from_utf8(bytes).unwrap(),
+                    "resume-secondary",
+                    "recovered secondary watch acknowledgement"
+                );
+                break;
+            }
+        }
+        eprintln!("workspace lifetime {cause:?}: accepting secondary socket");
+        let accept_deadline = Instant::now() + Duration::from_secs(10);
+        let socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < accept_deadline,
+                        "secondary socket deadline"
+                    );
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("secondary socket: {error}"),
+            }
+        };
+        let mut terminal = ChildGuard(
+            Command::new("/bin/sleep")
+                .arg("40")
+                .stdin(Stdio::from(std::os::fd::OwnedFd::from(socket)))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        eprintln!("workspace lifetime {cause:?}: killing secondary terminal");
+        terminal.0.kill().unwrap();
+        eventually(|| match terminal.0.try_wait().unwrap() {
+            Some(status) => {
+                assert!(!status.success());
+                true
+            }
+            None => false,
+        });
+        eprintln!("workspace lifetime {cause:?}: waiting for secondary release");
+        eventually(|| {
+            // The supervisor records only the secondary's EOF; the owner lives.
+            match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
+                Observed::Verified(_reader, _) => rusqlite::Connection::open_with_flags(root.path().join("kernel.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap().query_row(
+                    "SELECT count(*) FROM run_attachments WHERE lifetime='secondary' AND state='attached'", [], |r| r.get::<_, i64>(0)
+                ).unwrap() == 0,
+                _ => false,
+            }
+        });
+        assert!(matches!(
+            engine_status(home.path()),
+            Observed::Verified(RunStatus::Live(_), _)
+        ));
+        eprintln!("workspace lifetime {cause:?}: refilling secondary slots");
+        let cx = context();
+        // All eight slots can be filled after the killed terminal is released.
+        for n in 0..SECONDARY_MAX {
+            attach_secondary(
+                &cx,
+                &root,
+                key.session,
+                id(9),
+                AttachmentId::new([20 + n as u8; 16]),
+            )
+            .unwrap();
+        }
+        let mut owner = resume_owner(&cx, &root, key.session, id(9)).unwrap();
+        if let Some(collision) = collision {
+            let mut material = b"effigy.workspace.owner-eof-stop.v1".to_vec();
+            material.extend_from_slice(owner.id().bytes());
+            let digest = Digest::of(&material);
+            let mut entropy = [0u8; 10];
+            entropy.copy_from_slice(&digest.0[..10]);
+            let request_id = RunId::new(0, entropy).unwrap();
+            let foreign = collision == "foreign";
+            let request = Request {
+                id: request_id,
+                run: if foreign { id(7) } else { id(9) },
+                expected: owner.fence().clone(),
+                action: RequestAction::Stop,
+            };
+            let conn = rusqlite::Connection::open(root.path().join("kernel.db")).unwrap();
+            conn.execute("INSERT INTO requests(request_id,run_id,expected_generation,action,state,created_at) VALUES (?1,?2,1,?3,?4,0)", rusqlite::params![request_id.to_string(), request.run.to_string(), serde_json::to_string(&request).unwrap(), if foreign {"pending"} else {"resolved"}]).unwrap();
+        }
+        eprintln!("workspace lifetime {cause:?}: releasing owner");
+        owner.release(&cx, &root, cause).unwrap();
+        if cause == Release::Detach {
+            // A round trip proves the supervisor consumed the handle's detach
+            // before EOF; a delayed control turn cannot make this proof pass.
+            client.send_frame(b"confirm-detached").unwrap();
+            loop {
+                if let Event::Engine(bytes) = client.event(cx.operation()).unwrap() {
+                    assert_eq!(bytes, [1]);
+                    break;
+                }
+            }
+            // Closing the original owning pipe must respect handle detach.
+            // Keep the Child handle so this test still reaps its own supervisor.
+            client.close_input();
+            std::thread::sleep(Duration::from_millis(150));
+            assert!(matches!(
+                engine_status(home.path()),
+                Observed::Verified(RunStatus::Live(_), _)
+            ));
+            client.stop(&cx, id(8)).unwrap();
+        }
+        eprintln!("workspace lifetime {cause:?}: waiting for supervisor settlement");
+        client.wait(cx.operation()).unwrap();
+        eprintln!("workspace lifetime {cause:?}: verifying settlement");
+        assert!(workload_gone(home.path()));
+        let _reader =
+            match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
+                Observed::Verified(reader, _) => reader,
+                other => panic!("store {other:?}"),
+            };
+        assert!(matches!(
+            lookup(&cx.operation().observe().unwrap(), &root, key, digest),
+            Observed::Verified(
+                Recovered::Completed {
+                    outcome: RecordedOutcome {
+                        workload: WorkloadOutcome::Cancelled {
+                            cause: StopCause::Requested,
+                            ..
+                        },
+                        cleanup_complete: true
+                    },
+                    ..
+                },
+                _
+            )
+        ));
+        assert_eq!(
+            rusqlite::Connection::open_with_flags(
+                root.path().join("kernel.db"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            )
+            .unwrap()
+            .query_row("SELECT count(*) FROM run_attachments", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+            0
+        );
+    }
 }
 
 fn foreground_begin(cx: &EffectContext, root: &StateRoot) -> ForegroundRun {
@@ -2358,4 +2691,276 @@ fn custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closu
     );
     assert!(!machine.path().join("machine.db").exists());
     assert!(!machine.path().join("kernel.db").exists());
+}
+
+#[test]
+fn custody_workspace_orphan_refuses_handles_until_journal_recovery() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    workspace_session(&cx, &root);
+    let key = AdmissionKey {
+        session: Session {
+            run: id(7),
+            generation: Generation::new(1),
+        },
+        request: RequestId::new([71; 16]),
+    };
+    let digest = Digest::of(b"workspace-orphan");
+    let ticket = match reserve(&cx, &root, key, digest.clone(), id(9)).unwrap() {
+        Reservation::Fresh(ticket) => ticket,
+        other => panic!("reservation {other:?}"),
+    };
+    let mut client = start_engine(
+        &cx,
+        home.path(),
+        EngineLaunch {
+            payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+            cwd: home.path().into(),
+            env: vec![],
+            handoff: None,
+            admission: Some(ticket),
+        },
+        &Executable::capture(&fixture()).unwrap(),
+        ClientMode::Owning,
+    )
+    .unwrap();
+    while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+    let observe = cx.operation().observe().unwrap();
+    let info = metadata(&observe, &root, id(9));
+    let info = info.verified().unwrap();
+    let supervisor = info.supervisor.as_ref().unwrap();
+    assert_eq!(
+        effigy_kernel::ident::process_identity(supervisor.pid).verified(),
+        Some(supervisor)
+    );
+    // SAFETY: stop only this fixture's identity-checked supervisor so it
+    // cannot settle between the two deaths we are deliberately exercising.
+    assert_eq!(
+        unsafe { libc::kill(supervisor.pid as i32, libc::SIGSTOP) },
+        0
+    );
+    eventually(|| {
+        matches!(
+            effigy_kernel::ident::process_state(supervisor.pid),
+            Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
+        )
+    });
+    // Both identities belong to this test's start, freshly checked before kill.
+    for identity in [
+        info.sentinel.as_ref().unwrap(),
+        info.supervisor.as_ref().unwrap(),
+    ] {
+        assert_eq!(
+            effigy_kernel::ident::process_identity(identity.pid).verified(),
+            Some(identity)
+        );
+        // SAFETY: kill only an identity-checked fixture process started above.
+        assert_eq!(unsafe { libc::kill(identity.pid as i32, libc::SIGKILL) }, 0);
+    }
+    assert!(client.wait(cx.operation()).is_err());
+    assert!(matches!(
+        lookup(&observe, &root, key, digest.clone()),
+        Observed::Verified(Recovered::Unknown { .. }, _)
+    ));
+    assert!(resume_owner(&cx, &root, key.session, id(9)).is_err());
+    assert!(attach_secondary(&cx, &root, key.session, id(9), AttachmentId::new([71; 16])).is_err());
+    assert!(matches!(
+        reserve(&cx, &root, key, digest.clone(), id(10)).unwrap(),
+        Reservation::Recorded(Recovered::Unknown { .. })
+    ));
+    let outcome = settle_interrupted(
+        &cx,
+        &root,
+        &invocation().spec().owner,
+        id(9),
+        next(),
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert!(workload_gone(home.path()));
+    assert!(
+        matches!(lookup(&observe, &root, key, digest), Observed::Verified(Recovered::Completed { run, .. }, _) if run == id(9))
+    );
+}
+
+/// Both an escalation queued before keyed admission and a new escalation sent
+/// to its current successor remain serviceable during predecessor recovery.
+#[test]
+fn custody_keyed_successor_services_escalation_during_predecessor_recovery() {
+    for queued_before in [true, false] {
+        let home = home();
+        eprintln!(
+            "keyed recovery queued_before={queued_before}: {}",
+            home.path().display()
+        );
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        workspace_session(&cx, &root);
+        let mut client = start_engine(
+            &cx,
+            home.path(),
+            EngineLaunch {
+                payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
+                cwd: home.path().into(),
+                env: vec![("FIXTURE_ENGINE_LONG_GRACE".into(), "1".into())],
+                handoff: None,
+                admission: None,
+            },
+            &Executable::capture(&fixture()).unwrap(),
+            ClientMode::Owning,
+        )
+        .unwrap();
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        eventually(|| home.path().join("engine-workload.pid").exists());
+        let observe = cx.operation().observe().unwrap();
+        let info = metadata(&observe, &root, id(9));
+        let info = info.verified().unwrap();
+        let supervisor = info.supervisor.as_ref().unwrap();
+        assert_eq!(
+            effigy_kernel::ident::process_identity(supervisor.pid).verified(),
+            Some(supervisor)
+        );
+        // SAFETY: stop only this test's identity-checked supervisor.
+        assert_eq!(
+            unsafe { libc::kill(supervisor.pid as i32, libc::SIGSTOP) },
+            0
+        );
+        eventually(|| {
+            matches!(
+                effigy_kernel::ident::process_state(supervisor.pid),
+                Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
+            )
+        });
+        let old_fence = client.fence.clone();
+        if queued_before {
+            client.escalate(&cx, id(81)).unwrap();
+        }
+        for identity in [info.sentinel.as_ref().unwrap(), supervisor] {
+            assert_eq!(
+                effigy_kernel::ident::process_identity(identity.pid).verified(),
+                Some(identity)
+            );
+            // SAFETY: kill only this fixture's recorded, verified processes.
+            assert_eq!(unsafe { libc::kill(identity.pid as i32, libc::SIGKILL) }, 0);
+        }
+        assert!(client.wait(cx.operation()).is_err());
+        assert!(
+            !workload_gone(home.path()),
+            "predecessor must still need custody recovery"
+        );
+        let key = AdmissionKey {
+            session: Session {
+                run: id(7),
+                generation: Generation::new(1),
+            },
+            request: RequestId::new([81; 16]),
+        };
+        let digest = Digest::of(b"keyed recovery escalation");
+        let ticket = match reserve(&cx, &root, key, digest.clone(), id(10)).unwrap() {
+            Reservation::Fresh(ticket) => ticket,
+            other => panic!("ticket {other:?}"),
+        };
+        let sender = if queued_before {
+            None
+        } else {
+            let root = root.clone();
+            Some(std::thread::spawn(move || {
+                let cx = context();
+                let observe = cx.operation().observe().unwrap();
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    if let Observed::Verified(Recovered::Admitted { run, fence }, _) =
+                        lookup(&observe, &root, key, digest.clone())
+                    {
+                        assert_eq!(run, id(10));
+                        assert!(
+                            request(
+                                &cx,
+                                &root,
+                                &Request {
+                                    id: id(83),
+                                    run: id(9),
+                                    expected: old_fence.clone(),
+                                    action: RequestAction::Escalate
+                                }
+                            )
+                            .is_err(),
+                            "stale public controls stay refused"
+                        );
+                        request(
+                            &cx,
+                            &root,
+                            &Request {
+                                id: id(82),
+                                run,
+                                expected: fence,
+                                action: RequestAction::Escalate,
+                            },
+                        )
+                        .unwrap();
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "successor never became recoverable"
+                    );
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }))
+        };
+        let cx = context();
+        let started = Instant::now();
+        let mut successor = Run::begin_admitted(
+            &cx,
+            &root,
+            &invocation(),
+            BeginOpts {
+                id: id(10),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cx.operation().cleanup(Duration::from_secs(15)).unwrap(),
+            &mut Strict,
+            ticket,
+        )
+        .unwrap();
+        if let Some(sender) = sender {
+            sender.join().unwrap();
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "recovery ignored escalation and waited for the ten-second grace: {:?}",
+            started.elapsed()
+        );
+        assert!(workload_gone(home.path()));
+        if queued_before {
+            successor.finish(WorkloadOutcome::Succeeded).unwrap();
+        } else {
+            assert!(successor
+                .requests()
+                .unwrap()
+                .iter()
+                .any(|r| matches!(r.action, RequestAction::Escalate)));
+            successor
+                .interrupt(
+                    &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+                    WorkloadOutcome::Cancelled {
+                        signal: None,
+                        cause: StopCause::Requested,
+                    },
+                )
+                .unwrap();
+        }
+        successor
+            .settle(
+                &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+                &mut Strict,
+            )
+            .unwrap();
+    }
 }

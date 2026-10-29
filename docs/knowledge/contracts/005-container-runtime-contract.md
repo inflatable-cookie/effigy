@@ -354,8 +354,83 @@ without gating on daemon identity. Managed startup reuses a running daemon and
 warns when its build differs; only positive absence starts one. An unavailable
 observation warns and proceeds without starting a second daemon. Replacement
 belongs to explicit `gateway down` / `gateway up`. Fixture commands require a
-private root, including stops. Command stops and custody settlement log the
-caller's pid, argv, cwd and cause in `gateway.stderr.log`.
+private root, including stops.
+
+Every operative `gateway up`, `gateway down` and `gateway setup` action appends
+one bounded event to `gateway.stderr.log` in the gateway state directory it
+targets, when it starts, so an action that then refuses, finds nothing to do or
+fails is attributable too. Recording appends to the log the gateway already
+keeps and never creates its directory, so an `up` or `setup` on a machine
+without gateway state stays read-only. Kernel custody settlement appends the
+same record for a machine gateway stop it performs. The event is written at the
+command boundary and nowhere else: the shared gateway lifecycle (`operator::up`,
+`operator::down`, the signal helpers) appends none, so a `setup` step that starts
+or stops the gateway emits its single `gateway_setup` event and nothing more, and
+a task run that starts the gateway in-process is recorded with the cause
+`managed gateway start` rather than as an operator `gateway up`. One action is
+one record, and a replacement or a migration stop stays attributable through the
+`up` or `setup` action that requested it. An event keeps the existing `event`, `pid`, `argv`, `cwd` and
+`cause` fields, redacts credential-shaped argument values, and adds a `caller`
+record:
+
+- the invoking process's start identity (the platform's own process-start
+evidence, so two processes that held one pid stay distinguishable), its
+session and its controlling terminal when it has one. The terminal is the
+session's controlling terminal, resolved from the kernel's own record of it by
+device: macOS reads `bsdinfo`'s terminal device and names the pty slave
+(`/dev/ttysNNN`), and Linux reads the controlling-terminal device from the
+process's `/proc/<pid>/stat` line and names it (`/dev/pts/N`, `/dev/ttyN`). A
+standard descriptor is never taken as the terminal, so a redirected descriptor or
+one attached to another terminal cannot misattribute the action, and the generic
+`/dev/tty` alias is never recorded;
+- the parent chain from the invoking process's parent up to and including its
+session leader, capped at eight entries, each with pid, start identity, session
+and redacted argument boundaries. The walk stays inside the invoking process's
+session: a parent in another session — a reparented child, or a leader the walk
+cannot reach — ends the chain with a bounded unknown reason instead of naming
+another session's leader;
+- only allowlisted agent/task/run identity markers, read by name from
+`PASEO_*`, `NS_*` and `EFFIGY_RUN_*`, and only when the value is one of the
+supported identity forms: a `8-4-4-4-12` hexadecimal UUID, a decimal id, or —
+for `EFFIGY_RUN_*` — Effigy's own 26-character base32 run id. A marker is
+recorded as its recognised form and a SHA-256 fingerprint, never its value,
+because an ID-shaped value can still be a credential: two events from the same
+agent, task or run correlate through the fingerprint and no raw marker value is
+written. Every other environment value is never read;
+- a bounded `unknown` list naming what could not be read: an unreadable or
+vanished parent, unreadable arguments, a pid whose start identity changed or
+could not be confirmed by a second read, a truncated chain, or a marker whose
+value is not a supported identity form. No reason ever quotes the value it
+rejected, so a password pasted into a marker variable is refused by name only.
+Chain failures keep their place in that list, which is capped at eight entries
+and ends with how many reasons it omitted, so a flood of invalid markers can
+never hide a missing or unconfirmed part of the chain.
+
+Command text is published by role, not by spelling. The invoking process's own
+`argv` is Effigy's grammar, so it records the program's file name and one of
+Effigy's own flag names; every other token is `<redacted>` — a positional
+argument (whatever its spelling, because a positional password cannot be told
+from a command word), a path, an unknown flag such as `--hunter2` or `--token`, a
+URL, a `KEY=value` pair, a JSON body, and the value of any flag in `--flag value`
+or `--flag=value` form, so `gateway setup --suffix down` records
+`--suffix <redacted>`. A flag this record does not define is treated as taking a
+value.
+
+An ancestor's command is another program's text, so only its program is
+published: the file name of the executable the operating system reports — never
+its caller-chosen `argv[0]` — and only when that name is in the published program
+vocabulary. No option token of an ancestor is published, not even one that spells
+an Effigy flag, because that program's flags and their values are its own and a
+token that matches can be a value. A shell command string is read as foreign text
+for the same reason, so nothing inside it is published. Attribution therefore rests on the
+pid, start identity, session, controlling terminal, markers, `cause` and the
+`action`, not on arbitrary text from a command line.
+
+This record is diagnostic evidence only. It never authorizes, refuses or
+delays an operator action, and an unavailable log never fails one. The
+elevated child of `gateway setup` writes no record, because root would own the
+operator's log file; the operator's own invocation records the action and its
+chain already names that child.
 
 
 Dependencies use `depends_on` and must name a declared managed listener. They

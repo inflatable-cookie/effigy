@@ -3,6 +3,7 @@ use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,179 @@ pub trait ReadOnlyProcess {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StdReadOnlyProcess;
+
+/// Children this process is running, plus the spawns that have not published a
+/// PID yet.
+///
+/// A `bun link` still running when its owner is interrupted would recreate the
+/// registration the owner is retiring, leaving residue no owner holds. The
+/// interrupt cleanup therefore stops these children before it retires anything.
+/// Publishing the PID only after `spawn` returns leaves a window in which a
+/// started child is invisible, so a spawn reserves its place here *before* it
+/// starts and publishes its PID after: cleanup waits for outstanding spawns and
+/// refuses new ones, so no started child can escape it.
+#[derive(Debug, Default)]
+struct OwnedChildren {
+    spawning: usize,
+    terminating: bool,
+    pids: Vec<u32>,
+}
+
+static OWNED_CHILDREN: OnceLock<Mutex<OwnedChildren>> = OnceLock::new();
+
+fn owned_children() -> &'static Mutex<OwnedChildren> {
+    OWNED_CHILDREN.get_or_init(|| Mutex::new(OwnedChildren::default()))
+}
+
+thread_local! {
+    /// Spawns made by the interrupt cleanup itself while it retires.
+    static CLEANUP_SPAWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A reserved spawn. It is published as a tracked child once the OS gives it a
+/// PID, and released without one when the spawn fails.
+pub(crate) struct SpawnSlot {
+    published: bool,
+}
+
+impl SpawnSlot {
+    fn publish(mut self, pid: u32) -> TrackedChild {
+        self.published = true;
+        let mut state = owned_children()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.spawning = state.spawning.saturating_sub(1);
+        state.pids.push(pid);
+        drop(state);
+        TrackedChild { pid }
+    }
+}
+
+impl Drop for SpawnSlot {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        let mut state = owned_children()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.spawning = state.spawning.saturating_sub(1);
+    }
+}
+
+struct TrackedChild {
+    pid: u32,
+}
+
+impl Drop for TrackedChild {
+    fn drop(&mut self) {
+        owned_children()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .pids
+            .retain(|pid| *pid != self.pid);
+    }
+}
+
+/// Reserve the right to start a child process.
+///
+/// This returns `None` once an interrupt cleanup has begun: starting another
+/// `bun` process after that point would let it create a registration the
+/// cleanup already passed over.
+fn begin_spawn() -> Option<SpawnSlot> {
+    let in_cleanup = CLEANUP_SPAWN.with(std::cell::Cell::get);
+    let mut state = owned_children()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if state.terminating && !in_cleanup {
+        return None;
+    }
+    state.spawning += 1;
+    Some(SpawnSlot { published: false })
+}
+
+/// Stop the child and everything it started.
+///
+/// Each owned child runs in its own process group, so a wrapper's descendant —
+/// the `bun` a shim or a script actually runs — dies with it. Killing only the
+/// direct child would let a descendant outlive the cleanup, recreate the
+/// registration, and keep the ancestor's pipes open so the caller stays blocked
+/// while it holds the index lock.
+/// A child command that leads its own process group.
+///
+/// The group is what makes the whole owned tree addressable: terminating it
+/// stops the child and everything the child started.
+fn owned_command(request: &ProcessRequest) -> Command {
+    let mut command = Command::new(&request.program);
+    command
+        .args(&request.args)
+        .current_dir(&request.cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    // SAFETY: `pre_exec` runs in the forked child before `exec`, where only
+    // async-signal-safe work is allowed. `setpgid` is async-signal-safe and
+    // makes the child the leader of its own group, so terminating the tree is
+    // `kill(-pid, ...)` for every descendant it starts.
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                .map_err(std::io::Error::from)
+        });
+    }
+    command
+}
+
+#[cfg(unix)]
+fn terminate_owned_tree(pid: u32) {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+    let _ = kill(Pid::from_raw(-(pid as i32)), Signal::SIGKILL);
+}
+
+#[cfg(not(unix))]
+fn terminate_owned_tree(_pid: u32) {}
+
+/// Run the interrupted owner's cleanup with no child process left running.
+///
+/// In-flight spawns are waited for (bounded) and any child they publish is
+/// stopped, new spawns are refused, and the cleanup's own retiral work is
+/// allowed to run — then anything it started and left behind is stopped too.
+pub fn interrupt_cleanup<T>(cleanup: impl FnOnce() -> T) -> T {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let (pids, spawning) = {
+            let mut state = owned_children()
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            state.terminating = true;
+            (state.pids.clone(), state.spawning)
+        };
+        for pid in pids {
+            terminate_owned_tree(pid);
+        }
+        if spawning == 0 || Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let result = CLEANUP_SPAWN.with(|in_cleanup| {
+        in_cleanup.set(true);
+        let result = cleanup();
+        in_cleanup.set(false);
+        result
+    });
+    let leftover = owned_children()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .pids
+        .clone();
+    for pid in leftover {
+        terminate_owned_tree(pid);
+    }
+    result
+}
 
 /// A [`ReadOnlyProcess`] that shares the doctor's remaining monotonic deadline.
 ///
@@ -232,15 +406,35 @@ fn terminate_child_tree_forced(child: &mut std::process::Child) {
 
 impl ReadOnlyProcess for StdReadOnlyProcess {
     fn run(&self, request: &ProcessRequest) -> Result<ProcessOutput, DepsError> {
-        let output = Command::new(&request.program)
-            .args(&request.args)
-            .current_dir(&request.cwd)
-            .output()
+        // `output()` gives no handle on the running child, and the Bun link
+        // owner has to be able to stop one before it retires a registration
+        // that child is still creating.
+        let Some(slot) = begin_spawn() else {
+            return Err(DepsError::ProcessFailed {
+                program: request.program.clone(),
+                cwd: request.cwd.clone(),
+                status: None,
+                stderr:
+                    "an interrupted Effigy run stopped dependency processes; no new one was started"
+                        .to_owned(),
+            });
+        };
+        let child = owned_command(request)
+            .spawn()
             .map_err(|source| DepsError::ProcessSpawn {
                 program: request.program.clone(),
                 cwd: request.cwd.clone(),
                 source,
             })?;
+        let tracked = slot.publish(child.id());
+        let output = child
+            .wait_with_output()
+            .map_err(|source| DepsError::ProcessSpawn {
+                program: request.program.clone(),
+                cwd: request.cwd.clone(),
+                source,
+            })?;
+        drop(tracked);
         let result = ProcessOutput {
             status: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -355,6 +549,52 @@ mod tests {
         assert!(
             !marker.exists(),
             "timed-out dependency child tree survived the deadline"
+        );
+    }
+
+    #[test]
+    fn a_spawn_that_has_not_published_its_pid_is_still_stopped_by_cleanup() {
+        // The window this covers: `spawn` returned, so the child is running,
+        // but its PID has not reached the registry that cleanup reads. The
+        // child is started the way the owned path starts one, in its own
+        // process group, so cleanup can stop its whole tree.
+        let mut child = owned_command(&ProcessRequest {
+            program: "sleep".to_owned(),
+            args: vec!["10".to_owned()],
+            cwd: std::env::temp_dir(),
+        })
+        .spawn()
+        .unwrap();
+        let slot = begin_spawn().expect("a spawn is allowed before cleanup");
+        let cleanup = thread::spawn(|| crate::process::interrupt_cleanup(|| ()));
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            !owned_children()
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .pids
+                .contains(&child.id()),
+            "the child must still be unpublished when cleanup starts"
+        );
+        let tracked = slot.publish(child.id());
+        let status = child.wait().expect("cleanup stops the published child");
+        drop(tracked);
+        cleanup.join().unwrap();
+
+        assert!(
+            !status.success(),
+            "a child published after cleanup began escaped it"
+        );
+    }
+
+    #[test]
+    fn no_child_can_start_after_interrupt_cleanup_begins() {
+        let slot = begin_spawn().expect("a spawn is allowed before cleanup");
+        drop(slot);
+        crate::process::interrupt_cleanup(|| ());
+        assert!(
+            begin_spawn().is_none(),
+            "a spawn started after interrupt cleanup would escape it"
         );
     }
 }

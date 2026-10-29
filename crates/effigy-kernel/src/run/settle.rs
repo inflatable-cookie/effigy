@@ -47,6 +47,19 @@ impl Run<'_> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.settle_recovering(cleanup, adapter, None)
+    }
+
+    /// Keyed admission already bound its run and advanced the owner fence.
+    /// Keep its predecessor's escalation and the current successor's mailbox
+    /// serviceable through this owner-gated recovery, without accepting stale
+    /// client requests or borrowing another run's authority.
+    pub(super) fn settle_recovering(
+        &mut self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+        successor: Option<(RunId, Generation)>,
+    ) -> Result<Outcome<Settled>, RunError> {
         let cx = cleanup_effects(cleanup)?;
         if !self.guard.covers(&self.owner.resource) {
             return Err(RunError::broken("a settle without its owner gate"));
@@ -107,6 +120,9 @@ impl Run<'_> {
                 // second interrupt. Read the fenced durable mailbox here too;
                 // no transaction or new writer spans process I/O (K4/K14).
                 let (state, reason) = crate::custody::settle_effect(effect, live, cleanup, || {
+                    if let Some((run, generation)) = successor {
+                        return self.recovery_escalated(run, generation).unwrap_or(false);
+                    }
                     self.requests().is_ok_and(|requests| {
                         requests
                             .iter()
@@ -214,6 +230,9 @@ impl Run<'_> {
                     }
                     txn.conn().execute("UPDATE runs SET phase='closed',cleanup_outcome=?2,updated_at=?3,closed_at=coalesce(closed_at,?3) WHERE run_id=?1",
                         params![self.id.to_string(),if complete { "complete" } else { "incomplete" },txn.now()])?;
+                    // A keyed workspace request's final answer and every
+                    // client attachment end in this same commit (§8.11).
+                    workspace::closed(txn, self.id, &workload, complete)?;
                     if machine && complete {
                         if self.owner.resource.kind() == crate::id::ResourceKind::Gateway {
                             let completion = MachineCompletion { run: self.id, generation: self.owner.generation, workload: workload.clone(), stderr_tail: stderr_tail.clone() };
