@@ -423,6 +423,7 @@ pub struct Pipe {
     pub read: usize,
     pub output: Vec<u8>,
     pub peer: Option<ServerIdentity>,
+    pub on_response: Option<Box<dyn FnMut(&Response)>>,
 }
 impl Pipe {
     pub fn new(frames: &[Frame]) -> Self {
@@ -431,6 +432,7 @@ impl Pipe {
             read: 0,
             output: vec![],
             peer: Some(ServerIdentity { digest: pin() }),
+            on_response: None,
         };
         for frame in frames {
             pipe.raw(&encode_frame(frame).expect("fixture wire frame"));
@@ -448,6 +450,7 @@ impl Pipe {
             read: 0,
             output: vec![],
             peer: None,
+            on_response: None,
         };
         let mut frames = vec![];
         while let Some(bytes) = read_frame(&mut pipe).expect("complete response prefix/body") {
@@ -465,6 +468,13 @@ impl Transport for Pipe {
     }
     fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.output.extend_from_slice(bytes);
+        if let Some(observer) = &mut self.on_response {
+            let frame = decode_frame(bytes.get(4..).expect("framed host write"))
+                .expect("host wrote a valid frame");
+            if let Frame::Response(response) = frame {
+                observer(&response);
+            }
+        }
         Ok(())
     }
     fn verified_peer(&self) -> Option<ServerIdentity> {

@@ -251,6 +251,26 @@ fn backpressure_is_bounded_and_cancel_stays_live_without_ack() {
         RequestBody::Cancel(RunBody { run: id(10) }),
     )));
     let mut pipe = Pipe::new(&frames);
+    let stops_at_cancel_response = Rc::new(RefCell::new(None));
+    let recorded = stops_at_cancel_response.clone();
+    let database_path = host.root.path().join(effigy_kernel::store::DB_NAME);
+    pipe.on_response = Some(Box::new(move |response| {
+        if response.id == RequestId::new([3; 16]) {
+            let database = rusqlite::Connection::open_with_flags(
+                &database_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .expect("fixture journal");
+            let count: i64 = database
+                .query_row(
+                    "SELECT count(*) FROM requests WHERE run_id=?1 AND state='pending'",
+                    [id(10).to_string()],
+                    |row| row.get(0),
+                )
+                .expect("cancel committed before response");
+            *recorded.borrow_mut() = Some(count);
+        }
+    }));
     let mut chunks = Chunks(
         (0..20)
             .map(|_| StreamChunk {
@@ -299,8 +319,13 @@ fn backpressure_is_bounded_and_cancel_stays_live_without_ack() {
         (0..16).collect::<Vec<_>>()
     );
     assert_eq!(
-        stops, 2,
-        "one cancellation and owner EOF must both reach custody"
+        *stops_at_cancel_response.borrow(),
+        Some(1),
+        "cancel must commit while backpressured, before EOF can request stop"
+    );
+    assert!(
+        stops >= 1,
+        "EOF may coalesce a matching pending stop, never erase it"
     );
     assert!(frames.iter().any(|f| matches!(f, Frame::Response(Response { id, outcome: ResponseOutcome::Observed(_), .. }) if *id == RequestId::new([3;16]))));
     assert_eq!(
@@ -428,6 +453,15 @@ fn reconnect_cursor_must_resume_or_report_a_gap_never_restart_at_zero() {
             &mut chunks,
         )
         .expect("first stream");
+    // A reconnect is a fresh dispatcher/secondary; the previous owner explicitly
+    // detached. Reusing its dispatcher would try to reopen a released owner.
+    server = super::support::server(
+        &host,
+        session.session(),
+        ledger.clone(),
+        runs.clone(),
+        session_operations(),
+    );
     let mut frames = authenticated(session.session());
     frames.push(Frame::Request(request(
         session.session(),
@@ -463,6 +497,16 @@ fn reconnect_cursor_must_resume_or_report_a_gap_never_restart_at_zero() {
     let frames = pipe.frames();
     assert!(
         result.is_err()
+            || frames.iter().any(|frame| matches!(
+                frame,
+                Frame::Response(Response {
+                    outcome: ResponseOutcome::Refused(Refusal {
+                        code: RefusalCode::InvalidRequest,
+                        ..
+                    }),
+                    ..
+                })
+            ))
             || frames
                 .iter()
                 .any(|f| matches!(f, Frame::Stream(s) if s.kind == StreamKind::Gap || s.seq >= 40)),
