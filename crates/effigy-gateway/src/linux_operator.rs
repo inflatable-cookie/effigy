@@ -337,13 +337,11 @@ pub fn install(
     create_user_unit_dir(paths, operator_uid)?;
     // The login activation directory is validated before any manager request:
     // `systemctl --user enable` resolves `default.target.wants` itself, so a
-    // linked or foreign directory must be refused here rather than after the
-    // manager has already followed it.
+    // linked or foreign directory, and an entry Effigy does not own, must be
+    // refused here rather than after the manager has already followed them.
     let activation = ActivationDir::open(paths, operator_uid)?;
-    let linked = match &activation {
-        Some(dir) => dir.is_ours(&paths.unit)?,
-        None => false,
-    };
+    let entry = checked_entry(&activation, paths)?;
+    let linked = entry == ActivationEntry::Ours;
     let dir = DirFd::open(&paths.user_dir).map_err(error)?;
     let name = FileName::new(UNIT_NAME).map_err(error)?;
     let replace = ReplaceOpts {
@@ -488,12 +486,10 @@ pub fn remove(
         UnitState::Missing => {
             // A dangling activation link is residue from a removed unit file.
             // It is Effigy's only when it names Effigy's unit path, verified
-            // before the manager is asked to do anything.
+            // before the manager is asked to do anything, and a foreign entry
+            // is refused rather than skipped.
             let activation = ActivationDir::open(paths, operator_uid)?;
-            let linked = match &activation {
-                Some(dir) => dir.is_ours(&paths.unit)?,
-                None => false,
-            };
+            let linked = checked_entry(&activation, paths)? == ActivationEntry::Ours;
             if linked {
                 if let Some(reason) = manager_refusal(systemd.run(&["disable", UNIT_NAME])) {
                     return Err(error(format!(
@@ -517,12 +513,11 @@ pub fn remove(
     // `systemctl --user disable --now` resolves `default.target.wants` itself,
     // so the directory and the entry are verified *before* the manager is
     // asked: a linked or foreign directory must not be followed by the manager
-    // on Effigy's behalf, and a non-link entry is not Effigy's to remove.
+    // on Effigy's behalf, and an entry that is not Effigy's own link — a
+    // different target or something that is not a link — is refused, not
+    // treated as absent.
     let activation = ActivationDir::open(paths, operator_uid)?;
-    let linked = match &activation {
-        Some(dir) => dir.is_ours(&paths.unit)?,
-        None => false,
-    };
+    let linked = checked_entry(&activation, paths)? == ActivationEntry::Ours;
     // `disable --now` runs the unit's ExecStop, which is the ordinary
     // kernel-owned `gateway down`. systemd requests the stop; the gateway
     // engine performs and records it.
@@ -554,8 +549,23 @@ pub fn remove(
 /// descriptor, and an entry that is not Effigy's own link is never touched.
 struct ActivationDir {
     dir: std::fs::File,
+    /// The unit the entry must name.
+    unit: PathBuf,
     /// Effigy's activation entry path, for the messages only.
     entry: PathBuf,
+}
+
+/// What Effigy's activation entry is inside the verified directory. A foreign
+/// entry is refused before any manager request, because the manager resolves
+/// the same path Effigy refuses to touch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivationEntry {
+    /// No entry at Effigy's name.
+    Absent,
+    /// A symlink naming Effigy's own unit path.
+    Ours,
+    /// A symlink to another target, or something that is not a link at all.
+    Foreign,
 }
 
 impl ActivationDir {
@@ -590,19 +600,29 @@ impl ActivationDir {
         verify_directory(&dir, &paths.wants, operator_uid)?;
         Ok(Some(Self {
             dir,
+            unit: paths.unit.clone(),
             entry: paths.wants.clone(),
         }))
     }
 
-    /// Whether the entry is Effigy's own link to `unit`. A non-link entry is
-    /// refused: it is not Effigy's, and the manager would resolve it.
-    fn is_ours(&self, unit: &Path) -> io::Result<bool> {
-        Ok(self.entry_target()?.is_some_and(|target| target == unit))
+    /// What Effigy's entry is: absent, Effigy's own link, or foreign. A foreign
+    /// entry is never removed, replaced or handed to the manager.
+    fn entry(&self) -> io::Result<ActivationEntry> {
+        match self.entry_target() {
+            Ok(None) => Ok(ActivationEntry::Absent),
+            Ok(Some(target)) if target == self.unit => Ok(ActivationEntry::Ours),
+            Ok(Some(_)) => Ok(ActivationEntry::Foreign),
+            // A non-link entry is not Effigy's link either.
+            Err(failure) if failure.raw_os_error() == Some(libc::EINVAL) => {
+                Ok(ActivationEntry::Foreign)
+            }
+            Err(failure) => Err(failure),
+        }
     }
 
     /// The target of Effigy's activation entry, read inside the bound
-    /// directory. `None` means the entry does not exist; an entry that is not a
-    /// symbolic link is not Effigy's and is refused, never removed.
+    /// directory. `None` means the entry does not exist; anything that is not
+    /// a symbolic link is a non-link (`EINVAL`) the caller classifies.
     fn entry_target(&self) -> io::Result<Option<PathBuf>> {
         use std::os::fd::AsRawFd;
         use std::os::unix::ffi::OsStringExt;
@@ -622,10 +642,6 @@ impl ActivationDir {
             let failure = io::Error::last_os_error();
             return match failure.raw_os_error() {
                 Some(libc::ENOENT) => Ok(None),
-                Some(libc::EINVAL) => Err(error(format!(
-                    "the login activation entry {} is not a symbolic link Effigy wrote; move it aside, then run `effigy gateway setup` again",
-                    self.entry.display()
-                ))),
                 _ => Err(failure),
             };
         }
@@ -660,11 +676,13 @@ impl ActivationDir {
         Ok(())
     }
 
-    /// Put Effigy's activation entry back inside the bound directory.
-    fn link_entry(&self, unit: &Path) -> io::Result<()> {
+    /// Put Effigy's activation entry back inside the bound directory. An entry
+    /// that appeared in the meantime is only a successful restore when it is
+    /// verified as Effigy's own link, never merely because it exists.
+    fn link_entry(&self) -> io::Result<()> {
         use std::os::fd::AsRawFd;
         use std::os::unix::ffi::OsStrExt;
-        let target = std::ffi::CString::new(unit.as_os_str().as_bytes())
+        let target = std::ffi::CString::new(self.unit.as_os_str().as_bytes())
             .map_err(|_| error("the unit path cannot be a link target"))?;
         let name = cstring(UNIT_NAME)?;
         // SAFETY: live directory descriptor and two NUL-terminated strings.
@@ -676,6 +694,18 @@ impl ActivationDir {
                     self.entry.display()
                 )));
             }
+            return match self.entry()? {
+                ActivationEntry::Ours => Ok(()),
+                ActivationEntry::Foreign => Err(error(format!(
+                    "the login activation entry {} appeared while the launch unit was being restored and is not Effigy's link to {}; move it aside, then run `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again",
+                    self.entry.display(),
+                    self.unit.display()
+                ))),
+                ActivationEntry::Absent => Err(error(format!(
+                    "the login activation entry {} vanished while it was being restored; run `systemctl --user enable {UNIT_NAME}`, then `effigy gateway setup` again",
+                    self.entry.display()
+                ))),
+            };
         }
         Ok(())
     }
@@ -716,6 +746,26 @@ fn refusal(paths: &LaunchPaths, operator_uid: u32, failure: impl std::fmt::Displ
     ))
 }
 
+/// The activation entry's state, refusing a foreign one before any manager
+/// request can resolve it. `Absent` and `Ours` are the only usable states.
+fn checked_entry(
+    activation: &Option<ActivationDir>,
+    paths: &LaunchPaths,
+) -> io::Result<ActivationEntry> {
+    let entry = match activation {
+        Some(dir) => dir.entry()?,
+        None => ActivationEntry::Absent,
+    };
+    if entry == ActivationEntry::Foreign {
+        return Err(error(format!(
+            "preserving the foreign login activation entry {}: it is not Effigy's link to {}. Move it aside, then run `effigy gateway setup` again",
+            paths.wants.display(),
+            paths.unit.display()
+        )));
+    }
+    Ok(entry)
+}
+
 /// Validate the activation directory, then drop Effigy's own entry through it.
 /// The handle is the one `install` and `remove` opened and verified *before*
 /// any manager request, so the unlink cannot be redirected afterwards.
@@ -727,7 +777,8 @@ fn drop_verified_entry(activation: &Option<ActivationDir>) -> io::Result<()> {
 }
 
 /// Put the login activation link back after a failed rewrite, so the route the
-/// installation already had keeps working.
+/// installation already had keeps working. An entry that appeared meanwhile is
+/// restored only when it verifies as Effigy's own link.
 fn restore_activation_link(paths: &LaunchPaths, operator_uid: u32) -> io::Result<()> {
     let Some(dir) = ActivationDir::open(paths, operator_uid)? else {
         return Err(error(format!(
@@ -735,7 +786,7 @@ fn restore_activation_link(paths: &LaunchPaths, operator_uid: u32) -> io::Result
             paths.wants.display()
         )));
     };
-    dir.link_entry(&paths.unit)
+    dir.link_entry()
 }
 
 /// Exact commands that finish an enable the user manager could not do, and the
@@ -1430,13 +1481,14 @@ fn read_unit_file(paths: &LaunchPaths) -> io::Result<Option<Vec<u8>>> {
 
 /// True only when Effigy's activation entry names its own unit path, read
 /// through a verified, bound activation directory. A linked or foreign
-/// activation directory is reported as not enabled, never guessed.
+/// activation directory, and a foreign entry, are reported as not enabled,
+/// never guessed.
 fn activation_linked(paths: &LaunchPaths, operator_uid: u32) -> bool {
     ActivationDir::open(paths, operator_uid)
         .ok()
         .flatten()
-        .and_then(|dir| dir.entry_target().ok().flatten())
-        .is_some_and(|target| target == paths.unit)
+        .and_then(|dir| dir.entry().ok())
+        == Some(ActivationEntry::Ours)
 }
 
 /// Whether a login-less boot start is opted in. `None` is unobservable.
@@ -3536,6 +3588,115 @@ mod tests {
                 invocations(home.path(), "effigy").len(),
                 2,
                 "the installed image never ran"
+            );
+        });
+    }
+
+    /// An owned unit with a foreign activation entry is refused before the
+    /// manager can resolve that entry: `enable` and `disable` would replace or
+    /// remove it on Effigy's behalf.
+    #[test]
+    fn a_foreign_activation_entry_is_refused_before_any_manager_request() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(activation_linked(&paths, uid));
+
+            // The entry names somebody else's unit, in Effigy's own name.
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\nDescription=elsewhere\n").unwrap();
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let calls = manager.calls.len();
+
+            // Status never claims it, and a repeated setup refuses it.
+            assert!(!activation_linked(&paths, uid));
+            let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains("preserving the foreign login activation entry"),
+                "{message}"
+            );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+
+            // Removal refuses it too, before stopping or disabling anything.
+            let error = remove(cx, &paths, uid, &mut manager).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("preserving the foreign login activation entry"),
+                "{error}"
+            );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
+            assert!(paths.unit.exists());
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+
+            // An entry that is not a link at all is foreign as well.
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::fs::write(&paths.wants, b"not a link\n").unwrap();
+            let error = install(run, cx, &paths, uid, &binary, &mut manager).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("preserving the foreign login activation entry"),
+                "{error}"
+            );
+            assert_eq!(manager.calls.len(), calls, "no manager request was made");
+            assert_eq!(std::fs::read(&paths.wants).unwrap(), b"not a link\n");
+        });
+    }
+
+    /// Restoring an activation link reports success only for an entry it can
+    /// verify as Effigy's own link; anything else is named with its recovery.
+    #[test]
+    fn restoring_an_activation_link_refuses_an_entry_it_did_not_write() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+
+            // The link this run would restore was dropped...
+            std::fs::remove_file(&paths.wants).unwrap();
+            // ...and something else appeared in its place.
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let error = restore_activation_link(&paths, uid).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("is not Effigy's link to"), "{message}");
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+
+            // A regular file is not a link Effigy wrote either.
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::fs::write(&paths.wants, b"not a link\n").unwrap();
+            let error = restore_activation_link(&paths, uid).unwrap_err();
+            assert!(
+                error.to_string().contains("is not Effigy's link to"),
+                "{error}"
+            );
+            assert_eq!(std::fs::read(&paths.wants).unwrap(), b"not a link\n");
+
+            // Effigy's own link already being there is a real restore.
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::os::unix::fs::symlink(&paths.unit, &paths.wants).unwrap();
+            restore_activation_link(&paths, uid).unwrap();
+            assert!(activation_linked(&paths, uid));
+
+            // A missing activation directory is named, not claimed.
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::fs::remove_dir(paths.wants.parent().unwrap()).unwrap();
+            let error = restore_activation_link(&paths, uid).unwrap_err();
+            assert!(
+                error.to_string().contains("activation directory"),
+                "{error}"
             );
         });
     }
