@@ -6,6 +6,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Security
+
+- Require the release secret audit to scan the committed candidate tree and
+  history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
+
 ### Breaking
 
 - **Read [guide 085](docs/guides/085-v0.15.0-consumer-migration.md) before

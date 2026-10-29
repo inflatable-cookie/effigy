@@ -173,6 +173,96 @@ expect_contains "$tmp_root/missing-tag.err" 'release tag not found: v9.9.9'
 run_scan "$clean" bad-budget --budget soon --cache-dir "$clean_cache"
 expect_status bad-budget 2
 
+# A release gate pins both tag name and commit and refuses incomplete lineage.
+base_sha=$(git_fx -C "$clean" rev-parse 'v0.1.0^{commit}')
+run_scan "$clean" pinned --base v0.1.0 --base-sha "$base_sha" --budget 60 --cache-dir "$clean_cache"
+expect_status pinned 0
+run_scan "$clean" mismatch --base v0.1.0 --base-sha 0000000000000000000000000000000000000000 --budget 60 --cache-dir "$clean_cache"
+expect_status mismatch 2
+expect_contains "$tmp_root/mismatch.err" 'not expected commit'
+git_fx -C "$clean" checkout -q --orphan other
+git_fx -C "$clean" rm -qrf .
+write_file "$clean/unrelated" 'other history'
+commit_all "$clean" 'unrelated history'
+run_scan "$clean" unreachable --base v0.1.0 --base-sha "$base_sha" --budget 60 --cache-dir "$clean_cache"
+expect_status unreachable 2
+expect_contains "$tmp_root/unreachable.err" 'not an ancestor'
+git_fx -C "$clean" checkout -q main
+git_fx clone -q --depth 1 "file://$clean" "$tmp_root/shallow"
+run_scan "$tmp_root/shallow" shallow --base v0.1.0 --base-sha "$base_sha" --budget 60 --cache-dir "$tmp_root/shallow-cache"
+expect_status shallow 2
+expect_contains "$tmp_root/shallow.err" 'checkout is shallow'
+
+# The fixture exemption binds the whole blob and path, including history sides.
+# Copy the scanner so this test changes only its own disposable allowlist.
+scanner_dir="$tmp_root/scanner"
+mkdir -p "$scanner_dir"
+cp "$scanner" "$scanner_dir/secret-audit.sh"
+scanner="$scanner_dir/secret-audit.sh"
+fixture="$(new_repo fixture)"
+write_file "$fixture/README.md" 'release notes'
+commit_all "$fixture" 'release'
+git_fx -C "$fixture" tag v0.1.0
+fixture_base=$(git_fx -C "$fixture" rev-parse HEAD)
+write_file "$fixture/tests/known.env" "AWS_ACCESS_KEY_ID=$secret_value"
+commit_all "$fixture" 'add fixture'
+if command -v sha256sum >/dev/null 2>&1; then
+  fixture_hash=$(sha256sum "$fixture/tests/known.env" | cut -d ' ' -f 1)
+else
+  fixture_hash=$(shasum -a 256 "$fixture/tests/known.env" | cut -d ' ' -f 1)
+fi
+printf '%s\t%s\n' "$fixture_hash" 'tests/known.env' > "$scanner_dir/secret-audit-allowlist.tsv"
+fixture_cache="$tmp_root/fixture-cache"
+run_scan "$fixture" fixture-exempt --base v0.1.0 --base-sha "$fixture_base" --budget 60 --cache-dir "$fixture_cache"
+expect_status fixture-exempt 0
+expect_redacted fixture-exempt "$fixture_cache"
+printf '# revision\n' >> "$scanner_dir/secret-audit-allowlist.tsv"
+run_scan "$fixture" fixture-revision --base v0.1.0 --base-sha "$fixture_base" --budget 60 --cache-dir "$fixture_cache"
+expect_status fixture-revision 0
+[ "$(cache_count "$fixture_cache")" = 2 ] || fail 'allowlist change must invalidate the cache'
+write_file "$fixture/tests/known.env" "AWS_ACCESS_KEY_ID=$secret_value changed"
+commit_all "$fixture" 'change fixture'
+run_scan "$fixture" fixture-changed --base v0.1.0 --base-sha "$fixture_base" --budget 60 --cache-dir "$fixture_cache"
+expect_status fixture-changed 1
+expect_contains "$tmp_root/fixture-changed.out" $'finding\ttracked\taws-access-key\ttests/known.env'
+expect_redacted fixture-changed "$fixture_cache"
+git_fx -C "$fixture" rm -q tests/known.env
+commit_all "$fixture" 'delete changed fixture'
+run_scan "$fixture" fixture-history --base v0.1.0 --base-sha "$fixture_base" --budget 60 --cache-dir "$fixture_cache"
+expect_status fixture-history 1
+expect_contains "$tmp_root/fixture-history.out" $'finding\thistory\taws-access-key'
+expect_redacted fixture-history "$fixture_cache"
+write_file "$fixture/tests/other.env" "AWS_ACCESS_KEY_ID=$secret_value"
+commit_all "$fixture" 'same blob at another path'
+run_scan "$fixture" fixture-other-path --base v0.1.0 --base-sha "$fixture_base" --budget 60 --cache-dir "$fixture_cache"
+expect_status fixture-other-path 1
+expect_contains "$tmp_root/fixture-other-path.out" $'finding\ttracked\taws-access-key\ttests/other.env'
+expect_redacted fixture-other-path "$fixture_cache"
+
+# A secret introduced only by a merge resolution must not disappear from the
+# history scan even after its deletion from the candidate tree.
+merge_repo="$(new_repo merge)"
+write_file "$merge_repo/README.md" 'release notes'
+commit_all "$merge_repo" 'release'
+git_fx -C "$merge_repo" tag v0.1.0
+merge_base=$(git_fx -C "$merge_repo" rev-parse HEAD)
+git_fx -C "$merge_repo" checkout -qb side
+commit_all "$merge_repo" 'side commit'
+merge_side=$(git_fx -C "$merge_repo" rev-parse HEAD)
+git_fx -C "$merge_repo" checkout -q main
+write_file "$merge_repo/config/merge.env" "AWS_ACCESS_KEY_ID=$secret_value"
+git_fx -C "$merge_repo" add -A
+merge_tree=$(git_fx -C "$merge_repo" write-tree)
+merge_commit=$(git_fx -C "$merge_repo" commit-tree "$merge_tree" -p "$merge_base" -p "$merge_side" -m 'merge resolution')
+git_fx -C "$merge_repo" reset -q --hard "$merge_commit"
+git_fx -C "$merge_repo" rm -q config/merge.env
+commit_all "$merge_repo" 'remove merge secret'
+merge_cache="$tmp_root/merge-cache"
+run_scan "$merge_repo" merge-history --base v0.1.0 --base-sha "$merge_base" --budget 60 --cache-dir "$merge_cache"
+expect_status merge-history 1
+expect_contains "$tmp_root/merge-history.out" $'finding\thistory\taws-access-key\t'"$merge_commit"$'\tconfig/merge.env'
+expect_redacted merge-history "$merge_cache"
+
 # Timeout: a git stand-in that never finishes its grep or log. The audit must
 # stop at its budget, name the timeout, and cache nothing.
 bin_dir="$tmp_root/bin"
