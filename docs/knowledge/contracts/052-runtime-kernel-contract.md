@@ -2382,12 +2382,13 @@ workspace is admitted:
   which the activation run advances; `container up`, a task's environment apply
   and the workspace handoff all publish through the same Prepare, so the
   recovery a refusal names prepares the workspace rather than repeating it.
-- Entry fences: before a command runs, the guest compares the context's full
-  container id (a 12-hex short id matches its full id as a prefix), VM boot id,
-  image platform and environment generation to the live values. A replaced
-  container, a reboot that retained the filesystem, or a re-activation with
-  unchanged files refuses and names the host re-prepare. The host checks that
-  the probe and the backend binding name the same instance before publishing.
+- Entry fences: the host verifies the backend's full container id and targets
+  that exact id for context reads, image/boot probes and publication. The
+  context's container id must match in full; a hostname, cgroup claim or id
+  prefix never proves placement. VM boot id, image platform/libc and environment
+  generation must also match. A replaced container, a reboot that retained the
+  filesystem, or a re-activation with unchanged files refuses and names the
+  host re-prepare. No additional state ledger is needed for this binding.
 - Local reads: version, the pinned task list and the pinned source identities
   come from the context, the immutable rendered snapshot and the mounted
   checkout alone. The pins whose snapshot is checkout-visible are

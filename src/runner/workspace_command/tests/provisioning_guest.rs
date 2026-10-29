@@ -21,10 +21,10 @@ use crate::runner::workspace_client::context::{
 };
 use crate::runner::workspace_client::guest_fake::{hex_sha256, DiskGuest, FakeGuest};
 use crate::runner::workspace_command::provisioning::{
-    cgroup_container_id, environment_generation, manifest_fragment_digest,
-    operator_workspace_for_policy, parse_container_identity, prepare_workspace_guest,
-    stage_host_bytes, verify_pinned_guest_binary, workspace_effigy_active_version_file,
-    LiveWorkspaceEntry, OperatorWorkspace, PreparedWorkspaceGuest, WorkspacePrepareFacts,
+    environment_generation, manifest_fragment_digest, operator_workspace_for_policy,
+    parse_container_identity, prepare_workspace_guest, stage_host_bytes,
+    verify_pinned_guest_binary, workspace_effigy_active_version_file, LiveWorkspaceEntry,
+    OperatorWorkspace, PreparedWorkspaceGuest, WorkspacePrepareFacts,
     EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, WORKSPACE_ARTIFACT_RECEIPT_FILE,
 };
 
@@ -63,7 +63,7 @@ fn operator_workspace() -> OperatorWorkspace {
 }
 
 /// The guest's own view of a container with the given id. Publication records
-/// the host-verified full id; the guest may only see the short form.
+/// the host-verified full id; a hostname or prefix cannot replace it.
 fn observed_identity(container_id: &str) -> WorkspaceContainerIdentity {
     WorkspaceContainerIdentity {
         container_id: container_id.to_owned(),
@@ -850,7 +850,7 @@ fn a_replaced_container_refuses_the_context_and_names_the_reprepare() {
 }
 
 #[test]
-fn a_guest_that_sees_only_the_short_container_id_still_matches() {
+fn a_short_id_never_proves_the_full_backend_identity() {
     let repo = fixture("short-id");
     let _env = EnvGuard::set_many(&[(
         EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
@@ -864,9 +864,10 @@ fn a_guest_that_sees_only_the_short_container_id_still_matches() {
     short.binary = published.binary.clone();
     short.container.container_id = HOST_CONTAINER_ID[..12].to_owned();
 
-    published
+    let refusal = published
         .verify(&short)
-        .expect("a short id is its full id's prefix");
+        .expect_err("a prefix is not placement proof");
+    assert_eq!(refusal.code, ContextRefusalCode::IdentityMismatch);
 
     let mut unrelated = short.clone();
     unrelated.container.container_id = "0123456789ab".to_owned();
@@ -1241,45 +1242,26 @@ fn container_mode_entry_refuses_without_an_activation_before_touching_the_guest(
 // ------------------------------------------------- identity probe parsing
 
 #[test]
-fn the_identity_probe_reads_the_full_container_id_the_backend_exposes() {
-    // Docker on cgroup v1 and containerd/systemd on cgroup v2 both carry the
-    // full id in the cgroup path; the probe prefers it over the hostname.
-    let docker = format!(
-        "boot=boot-a\nhostname={short}\nplatform=aarch64\ncontainer={full}\n",
-        short = &HOST_CONTAINER_ID[..12],
-        full = HOST_CONTAINER_ID
+fn the_identity_probe_uses_only_the_verified_backend_container_id() {
+    // The backend binds this exact exec target even when a cgroup namespace
+    // hides its id or a configured hostname claims another container's id.
+    let rendered = format!(
+        "cgroup=0::/\nboot=boot-a\nhostname={}\ncontainer={}\nplatform=x86_64\nlibc=gnu\n",
+        &HOST_CONTAINER_ID[..12],
+        HOST_CONTAINER_ID,
     );
-    let parsed = parse_container_identity(&docker).expect("identity");
-    assert_eq!(parsed.container_id, HOST_CONTAINER_ID);
-    assert_eq!(parsed.vm_boot_id, "boot-a");
-    assert_eq!(parsed.platform, "aarch64");
-
-    // A guest that can only read its hostname publishes the short id, which
-    // still matches its full id.
-    let short_only = format!(
-        "boot=boot-a\nhostname={short}\nplatform=x86_64\ncontainer={short}\n\
-         libc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6\n",
-        short = &HOST_CONTAINER_ID[..12]
-    );
-    let parsed = parse_container_identity(&short_only).expect("identity");
-    let mut published = container_identity();
-    published.vm_boot_id = "boot-a".to_owned();
-    published.platform = "x86_64".to_owned();
-    assert!(
-        published.container_matches(&parsed),
-        "the short id matches its full id"
-    );
-    assert!(published.boot_matches(&parsed));
-
-    // A guest on another boot or image does not.
-    let mut other_boot = parsed.clone();
-    other_boot.vm_boot_id = "boot-b".to_owned();
-    assert!(!published.boot_matches(&other_boot));
+    let replacement = "a1".repeat(32);
+    let parsed = parse_container_identity(&rendered, &replacement).expect("verified binding");
+    assert_eq!(parsed.container_id, replacement);
+    assert!(!container_identity().container_matches(&parsed));
+    for unverified in ["", &HOST_CONTAINER_ID[..12], "app"] {
+        assert!(parse_container_identity(&rendered, unverified).is_err());
+    }
 }
 
 #[test]
 fn a_guest_that_reports_nothing_is_not_a_container_identity() {
-    let error = parse_container_identity("boot=\nhostname=\nplatform=\n")
+    let error = parse_container_identity("boot=\nhostname=\nplatform=\n", HOST_CONTAINER_ID)
         .expect_err("no identity")
         .to_string();
     assert!(error.contains("identity probe"), "{error}");
@@ -1632,43 +1614,21 @@ fn entry_refuses_a_replaced_container_a_new_vm_boot_and_a_new_activation() {
 }
 
 #[test]
-fn an_identity_probe_carries_the_full_id_a_cgroup_path_exposes() {
-    let short = &HOST_CONTAINER_ID[..12];
-    // Docker on cgroup v1.
-    let docker = format!(
-        "cgroup=12:devices:/docker/{full} 0::/docker/{full} \nboot=boot-a\nhostname={short}\n\
-         platform=x86_64\n",
-        full = HOST_CONTAINER_ID
+fn entry_refuses_a_replacement_that_spoofs_the_old_hostname_and_cgroup() {
+    let repo = fixture("spoofed-identity");
+    let mut guest = guest();
+    published(&repo, &mut guest);
+    let rendered = format!(
+        "cgroup=0::/docker/{HOST_CONTAINER_ID}\nboot={}\nhostname={}\nplatform=x86_64\nlibc=gnu\n",
+        container_identity().vm_boot_id,
+        &HOST_CONTAINER_ID[..12],
     );
-    let parsed = parse_container_identity(&docker).expect("docker identity");
-    assert_eq!(parsed.container_id, HOST_CONTAINER_ID);
-    assert!(container_identity().container_matches(&parsed));
-
-    // containerd/systemd on cgroup v2.
-    let systemd = format!(
-        "cgroup=0::/user.slice/user-1000.slice/session-1.scope/cri-containerd-{full}.scope \n\
-         boot=boot-a\nhostname={short}\nplatform=x86_64\n",
-        full = HOST_CONTAINER_ID
-    );
-    assert_eq!(
-        parse_container_identity(&systemd)
-            .expect("systemd identity")
-            .container_id,
-        HOST_CONTAINER_ID
-    );
-
-    // A guest that cannot read its cgroup falls back to its 12-hex hostname,
-    // which is still the published full id's prefix.
-    let hostname_only = format!("cgroup=0::/ \nboot=boot-a\nhostname={short}\nplatform=x86_64\n");
-    let parsed = parse_container_identity(&hostname_only).expect("hostname identity");
-    assert_eq!(parsed.container_id, short);
-    assert!(container_identity().container_matches(&parsed));
-
-    // A configured hostname is not a full id and never matches one.
-    assert_eq!(cgroup_container_id("/docker/app"), None);
-    let configured = format!("cgroup=0::/ \nboot=boot-a\nhostname=app\nplatform=x86_64\n");
-    let parsed = parse_container_identity(&configured).expect("configured hostname");
-    assert!(!container_identity().container_matches(&parsed));
+    let replacement = parse_container_identity(&rendered, &"a1".repeat(32)).unwrap();
+    guest = guest.with_container(replacement);
+    let before = guest.tree_digest();
+    let error = verify_pinned_guest_binary(&mut guest, &entry()).expect_err("replaced backend id");
+    assert!(error.to_string().contains(HOST_REPREPARE_COMMAND));
+    assert_eq!(before, guest.tree_digest(), "verification is read-only");
 }
 
 // ------------------------------------------------------- pinned closure
@@ -1857,14 +1817,16 @@ fn the_identity_probe_reports_the_image_c_library() {
          libc_musl=/lib/ld-musl-x86_64.so.1\nlibc_glibc=\n"
     );
     assert_eq!(
-        parse_container_identity(&musl).expect("musl identity").libc,
+        parse_container_identity(&musl, HOST_CONTAINER_ID)
+            .expect("musl identity")
+            .libc,
         "musl"
     );
 
     let glibc = "cgroup=0::/\nboot=boot-a\nhostname=app\nplatform=aarch64\n\
                  libc_musl=\nlibc_glibc=/lib/aarch64-linux-gnu/libc.so.6\n";
     assert_eq!(
-        parse_container_identity(glibc)
+        parse_container_identity(glibc, HOST_CONTAINER_ID)
             .expect("glibc identity")
             .libc,
         "gnu"
@@ -1874,7 +1836,7 @@ fn the_identity_probe_reports_the_image_c_library() {
     // rather than guessing glibc.
     let unknown = "cgroup=0::/\nboot=boot-a\nhostname=app\nplatform=x86_64\n\
                    libc_musl=\nlibc_glibc=\n";
-    let identity = parse_container_identity(unknown).expect("identity");
+    let identity = parse_container_identity(unknown, HOST_CONTAINER_ID).expect("identity");
     assert_eq!(identity.libc, "");
     let error = crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::from_image(
         &identity.platform,

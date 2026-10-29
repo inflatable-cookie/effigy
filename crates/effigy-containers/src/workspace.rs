@@ -528,24 +528,45 @@ fn read_named_volume_bind_sources(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         };
-        let bind = option("o").is_some_and(|value| value.split(',').any(|part| part == "bind"))
-            || option("type") == Some("bind")
-            || option("type") == Some("none");
-        let Some(device) = option("device") else {
+        // Compose expands every scalar value before the driver interprets it.
+        // Classifying raw driver/options text could hide a bind just as a raw
+        // service source can hide the named volume that supplies it.
+        let expand_option = |name| {
+            option(name)
+                .map(|value| expand_compose_interpolation(value, env))
+                .transpose()
+        };
+        let expanded = (|| {
+            Ok::<_, String>((
+                expand_compose_interpolation(driver, env)?,
+                expand_option("o")?,
+                expand_option("type")?,
+                expand_option("device")?,
+            ))
+        })();
+        let (driver, flags, volume_type, device) = match expanded {
+            Ok(values) => values,
+            Err(reason) => {
+                sources.insert(name.to_owned(), NamedVolumeSource::Unprovable(reason));
+                continue;
+            }
+        };
+        let bind = flags
+            .as_deref()
+            .is_some_and(|value| value.split(',').any(|part| part == "bind"))
+            || matches!(volume_type.as_deref(), Some("bind" | "none"));
+        let Some(device) = device.as_deref() else {
             continue;
         };
         if !bind {
             continue;
         }
-        let resolved = match expand_compose_interpolation(device, env) {
-            Ok(device) if Path::new(&device).is_absolute() => {
-                NamedVolumeSource::Host(PathBuf::from(device))
-            }
-            Ok(device) if driver == "local" && device.starts_with('.') => {
-                NamedVolumeSource::Host(compose_dir.join(device))
-            }
-            Ok(_) => continue,
-            Err(reason) => NamedVolumeSource::Unprovable(reason),
+        let resolved = if Path::new(device).is_absolute() {
+            NamedVolumeSource::Host(PathBuf::from(device))
+        } else if driver == "local" && device.starts_with('.') {
+            NamedVolumeSource::Host(compose_dir.join(device))
+        } else {
+            continue;
         };
         sources.insert(name.to_owned(), resolved);
     }
@@ -796,7 +817,9 @@ fn effective_volume_mount(
             .map(str::trim)
             .filter(|value| !value.is_empty())
     };
-    let kind = field("type").unwrap_or("volume");
+    let kind = context
+        .expand(field("type").unwrap_or("volume"))
+        .map_err(unprovable)?;
     let described = format!(
         "a long-form {kind} mount from `{}`",
         field("source").unwrap_or("no source")
@@ -805,10 +828,13 @@ fn effective_volume_mount(
         .ok_or_else(|| unprovable(described.clone()))?
         .to_owned();
     let target = context.expand(&target).map_err(unprovable)?;
-    let source = field("source");
-    let host_source = match kind {
+    let source = field("source")
+        .map(|source| context.expand(source))
+        .transpose()
+        .map_err(unprovable)?;
+    let host_source = match kind.as_str() {
         "tmpfs" => None,
-        "volume" => match source {
+        "volume" => match source.as_deref() {
             Some(source) if Path::new(source).is_absolute() => Some(PathBuf::from(source)),
             Some(source) if source.starts_with('.') || source.contains('/') => {
                 Some(compose_dir.join(source))
@@ -818,14 +844,17 @@ fn effective_volume_mount(
         },
         "bind" => {
             let source = source.ok_or_else(|| unprovable(described.clone()))?;
-            let expanded = context.expand(source).map_err(unprovable)?;
-            Some(if Path::new(&expanded).is_absolute() {
-                PathBuf::from(expanded)
+            Some(if Path::new(&source).is_absolute() {
+                PathBuf::from(source)
             } else {
-                compose_dir.join(expanded)
+                compose_dir.join(source)
             })
         }
-        _ => None,
+        _ => {
+            return Err(unprovable(format!(
+                "{described} has an unsupported mount type"
+            )))
+        }
     };
     Ok(EffectiveMount {
         target,

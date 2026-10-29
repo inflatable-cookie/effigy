@@ -482,13 +482,19 @@ fn public_guest_digest() -> String {
     format!("sha256:{}", "ab".repeat(32))
 }
 
-/// The identity the fixture's guest reports: the published short container id
-/// as its full id's prefix, the context's boot and platform, and a glibc image.
-fn public_guest_identity_probe() -> String {
-    let full_id = "0123456789abcdef".repeat(4);
+/// Guest image facts; the full container id comes from the verified exec target.
+fn public_guest_identity_probe(mode: &str) -> String {
+    // The spoofed guest claims the old context's id, but the verified runtime
+    // target still names the replacement. Both full and short claims are false.
+    let full_id = if mode == "hostname-spoof" {
+        "ab".repeat(32)
+    } else {
+        "0123456789abcdef".repeat(4)
+    };
     format!(
-        "cgroup=0::/docker/{full_id} \nboot=boot\nhostname={full_id}\nplatform=x86_64\n\
-         libc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6\n"
+        "cgroup=0::/docker/{full_id} \nboot=boot\nhostname={short_id}\nplatform=x86_64\n\
+         libc_musl=\nlibc_glibc=/lib/x86_64-linux-gnu/libc.so.6\n",
+        short_id = &full_id[..12],
     )
 }
 
@@ -582,7 +588,11 @@ fn write_public_guest_context(dir: &Path, repo_root: &Path, mode: &str) -> PathB
             checkout_id: "0:00".to_owned(),
             environment,
             container: WorkspaceContainerIdentity {
-                container_id: "0123456789abcdef".to_owned(),
+                container_id: if mode == "hostname-spoof" {
+                    "ab".repeat(32)
+                } else {
+                    "0123456789abcdef".repeat(4)
+                },
                 vm_boot_id: "boot".to_owned(),
                 platform: "x86_64".to_owned(),
                 libc: "gnu".to_owned(),
@@ -624,7 +634,7 @@ fn public_guest_preparation_stdout(dir: &Path, mode: &str) -> u64 {
     // digest pointer and the digest probe's one line: never the executable's
     // own bytes.
     1 + context
-        + public_guest_identity_probe().len() as u64
+        + public_guest_identity_probe(mode).len() as u64
         + public_guest_digest().len() as u64
         + 64
 }
@@ -703,7 +713,7 @@ fn run_guarded_public_case(
             write_public_guest_context(dir.path(), repo_root, mode),
         )
         .env("FAKE_BOUNDED_DIGEST", public_guest_digest())
-        .env("FAKE_BOUNDED_PROBE", public_guest_identity_probe())
+        .env("FAKE_BOUNDED_PROBE", public_guest_identity_probe(mode))
         .env("FAKE_BOUNDED_BIN_DIR", bin_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::from(child_stdout))
@@ -866,6 +876,16 @@ fn guarded_public_entry_child() {
             assert_eq!(details["failure"], "runtime_identity_mismatch");
             assert_eq!(details["phase"], "runtime_discovery");
             assert!(!final_marker.exists());
+        }
+        "hostname-spoof" => {
+            let error = result.expect_err("guest claims cannot override the verified backend id");
+            let details = failure_details(&error);
+            assert_eq!(details["failure"], "workspace_preparation_failed");
+            assert_eq!(details["phase"], "workspace_preparation");
+            assert!(
+                !final_marker.exists(),
+                "the stale guest must never run the workload"
+            );
         }
         "identity-invalid" => {
             let error = result.expect_err("stale workspace identity must require refresh");
@@ -1135,6 +1155,11 @@ public_failure_test!(public_runtime_flood_refuses_before_command, "runtime-flood
 public_failure_test!(
     public_runtime_identity_mismatch_refuses_before_command,
     "runtime-mismatch"
+);
+#[cfg(unix)]
+public_failure_test!(
+    public_spoofed_hostname_cannot_reuse_an_old_context,
+    "hostname-spoof"
 );
 #[cfg(unix)]
 public_failure_test!(

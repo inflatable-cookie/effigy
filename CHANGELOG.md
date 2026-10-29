@@ -385,6 +385,11 @@ During v0.x, MINOR bumps may include breaking changes.
   path-only includes stay silent. `--json` carries the notice in
   `warnings`, never stdout.
 
+- Workspace guest reads and publication target the host-verified full container
+  id; configured hostnames and id prefixes cannot reuse another container's
+  context. Compose mount isolation resolves interpolated long-form named-volume
+  sources before checking their host bind paths.
+
 - **Workspace entry verifies the prepared guest instead of installing one.**
   `effigy exec`, `effigy container shell` and a workspace task no longer
   download, build or copy Effigy into the workspace container. They read the

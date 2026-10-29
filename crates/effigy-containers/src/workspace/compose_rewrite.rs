@@ -316,14 +316,13 @@ fn describe_compose_entry(entry: &serde_yaml::Value) -> String {
             .and_then(|mapping| mapping.get(serde_yaml::Value::String(name.to_owned())))
             .and_then(serde_yaml::Value::as_str)
     };
-    match (field("type"), field("source"), field("target")) {
-        (kind, source, target) => format!(
-            "type={kind} source={source} target={target}",
-            kind = kind.unwrap_or("volume"),
-            source = source.unwrap_or("none"),
-            target = target.unwrap_or("none"),
-        ),
-    }
+    let (kind, source, target) = (field("type"), field("source"), field("target"));
+    format!(
+        "type={kind} source={source} target={target}",
+        kind = kind.unwrap_or("volume"),
+        source = source.unwrap_or("none"),
+        target = target.unwrap_or("none"),
+    )
 }
 
 /// The guest target one Compose `volumes` entry names, in either form.

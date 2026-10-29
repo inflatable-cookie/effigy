@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::runner::command_context::current_working_dir;
 use crate::runner::container_command::{bounded_failure_error, bounded_phase_error};
 use crate::runner::exec_command::{
-    copy_file_into_service, copy_file_into_service_bounded, BoundedCapture, BoundedCommandBudget,
-    BoundedCommandPhase,
+    copy_file_into_service, copy_file_into_service_bounded, run_command_capture_until,
+    BoundedCapture, BoundedCommandBudget, BoundedCommandPhase,
 };
 use crate::runner::workspace_client::context::{
     binary_dir, binary_path, context_dir, context_path, read_published_context,
@@ -434,37 +434,11 @@ pub(super) fn publish_workspace_guest(
     let Some(operator_workspace) = operator_workspace_for_policy(repo_root, policy)? else {
         return Ok(None);
     };
-    let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy);
-    let observed = guest.probe_container_identity()?;
-    // The artifact must match the image's C library as well as its platform.
-    let target = LinuxWorkspaceTarget::from_image(&observed.platform, &observed.libc)?;
-    // The container fence is the backend's full id, verified on the host before
-    // anything is published; the guest compares its own view to it. The probe
-    // and the binding are taken through different paths, so they are checked
-    // against each other before either becomes a fence: a published id that the
-    // running guest does not name would never match again.
-    let binding = crate::runner::container_runtime_prep::verify_service_binding(
-        repo_root,
-        policy,
-        policy.primary_service.as_str(),
-        None,
-    )?;
-    let bound = WorkspaceContainerIdentity {
-        container_id: binding.id().to_owned(),
-        vm_boot_id: observed.vm_boot_id.clone(),
-        platform: observed.platform.clone(),
-        libc: observed.libc.clone(),
-    };
-    if !bound.container_matches(&observed) {
-        return Err(RunnerError::task_invocation(format!(
-            "workspace container `{}` reports id `{}`, but the backend binding inspected `{}`; \
-             the probe and the binding do not name the same instance, so nothing is published. \
-             Run `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
-            policy.name,
-            observed.container_id,
-            binding.id()
-        )));
-    }
+    let mut guest = ComposeWorkspaceGuest::unbounded(repo_root, policy)?;
+    // The host verified the backend's full id when it bound this guest. Every
+    // read, probe and publication below targets that exact id, never an alias.
+    let bound = guest.probe_container_identity()?;
+    let target = LinuxWorkspaceTarget::from_image(&bound.platform, &bound.libc)?;
     let (artifact, artifact_install_identity) =
         produced_linux_workspace_effigy_artifact(repo_root, target)?;
     prepare_workspace_guest(
@@ -536,7 +510,7 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     let live = LiveWorkspaceEntry {
         environment: environment_generation(policy)?,
     };
-    let mut guest = ComposeWorkspaceGuest::unbounded(workspace_repo_root, policy);
+    let mut guest = ComposeWorkspaceGuest::unbounded(workspace_repo_root, policy)?;
     verify_pinned_guest_binary(&mut guest, &live)
 }
 
@@ -1355,7 +1329,9 @@ fn run_workspace_compose_capture_bounded(
 
 /// The container-mode guest filesystem, reached through Compose exec and copy.
 enum GuestCommand<'a> {
-    Service,
+    Unbounded {
+        target_id: String,
+    },
     Target {
         target_id: &'a str,
         budget: &'a mut BoundedCommandBudget,
@@ -1369,11 +1345,29 @@ struct ComposeWorkspaceGuest<'a> {
 }
 
 impl<'a> ComposeWorkspaceGuest<'a> {
-    fn unbounded(repo_root: &'a Path, policy: &'a EffectiveContainerPolicy) -> Self {
-        Self {
+    fn unbounded(
+        repo_root: &'a Path,
+        policy: &'a EffectiveContainerPolicy,
+    ) -> Result<Self, RunnerError> {
+        let binding = crate::runner::container_runtime_prep::verify_service_binding(
             repo_root,
             policy,
-            command: GuestCommand::Service,
+            policy.primary_service.as_str(),
+            None,
+        )?;
+        Ok(Self {
+            repo_root,
+            policy,
+            command: GuestCommand::Unbounded {
+                target_id: binding.id().to_owned(),
+            },
+        })
+    }
+
+    fn target_id(&self) -> &str {
+        match &self.command {
+            GuestCommand::Unbounded { target_id } => target_id,
+            GuestCommand::Target { target_id, .. } => target_id,
         }
     }
 
@@ -1403,13 +1397,32 @@ impl<'a> ComposeWorkspaceGuest<'a> {
             OsString::from(script),
         ]);
         match &mut self.command {
-            GuestCommand::Service => {
-                let output = crate::runner::exec_command::run_compose_exec(
+            GuestCommand::Unbounded { target_id } => {
+                let compose = effigy_runtime::container_manager::compose_invocation_plan_from_args(
                     self.repo_root,
                     self.policy,
-                    &compose_args,
-                    true,
+                    compose_args,
+                    effigy_containers::ContainerAction::Exec,
                     "workspace guest command",
+                )
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                let args =
+                    crate::runner::exec_command::verified_target_exec_args(&compose, target_id)?;
+                let plan = effigy_runtime::container_manager::runtime_invocation_plan(
+                    self.repo_root,
+                    self.policy,
+                    "docker",
+                    &args,
+                    effigy_containers::ContainerAction::Exec,
+                    "workspace guest command",
+                )
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                let output = run_command_capture_until(
+                    &plan.repo_root,
+                    plan.program.as_os_str(),
+                    &plan.args,
+                    None,
+                    None,
                 )?;
                 Ok(BoundedCapture {
                     status: output.status,
@@ -1429,10 +1442,10 @@ impl<'a> ComposeWorkspaceGuest<'a> {
 
     fn stage(&mut self, host_path: &Path, guest_path: &str) -> Result<(), RunnerError> {
         match &mut self.command {
-            GuestCommand::Service => copy_file_into_service(
+            GuestCommand::Unbounded { target_id } => copy_file_into_service(
                 self.repo_root,
                 self.policy,
-                self.policy.primary_service.as_str(),
+                target_id,
                 host_path,
                 guest_path,
             ),
@@ -1576,15 +1589,11 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
     }
 
     fn probe_container_identity(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError> {
-        // The guest reports what it can read: the cgroup path (which carries the
-        // full id under Docker on cgroup v1 and containerd/systemd on cgroup v2),
-        // its VM boot, its hostname (the 12-hex short id) and its platform. The
-        // host parses the id, so the extraction is a tested pure function rather
-        // than shell quoting in a container.
+        // Placement comes from the host's verified backend binding, and this
+        // probe executes against that exact id. Hostnames and cgroup text are
+        // guest-controlled claims, never a substitute for the binding.
         let output = self.run_script(
-            "printf 'cgroup=%s\\n' \"$(cat /proc/self/cgroup 2>/dev/null | tr '\\n' ' ')\"\n\
-             printf 'boot=%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\"\n\
-             printf 'hostname=%s\\n' \"$(hostname)\"\n\
+            "printf 'boot=%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\"\n\
              printf 'platform=%s\\n' \"$(uname -m)\"\n\
              printf 'libc_musl=%s\\n' \"$(ls /lib/ld-musl-*.so.1 2>/dev/null | head -n1)\"\n\
              printf 'libc_glibc=%s\\n' \"$(ls /lib/*-linux-gnu*/libc.so.6 /lib/libc.so.6 /lib64/libc.so.6 2>/dev/null | head -n1)\"",
@@ -1597,13 +1606,14 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
                 String::from_utf8_lossy(&output.stderr).trim()
             )));
         }
-        parse_container_identity(&String::from_utf8_lossy(&output.stdout)).map_err(|_| {
-            RunnerError::task_invocation(format!(
-                "workspace container `{}` did not report its identity; run \
+        parse_container_identity(&String::from_utf8_lossy(&output.stdout), self.target_id())
+            .map_err(|_| {
+                RunnerError::task_invocation(format!(
+                    "workspace container `{}` did not report its identity; run \
                  `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
-                self.policy.name
-            ))
-        })
+                    self.policy.name
+                ))
+            })
     }
 }
 
@@ -1621,27 +1631,12 @@ impl ComposeWorkspaceGuest<'_> {
     }
 }
 
-/// The full container id a guest's cgroup path names, when one is present.
-///
-/// Docker on cgroup v1 writes `/docker/<64 hex id>`, containerd and systemd on
-/// cgroup v2 write `.../<64 hex id>.scope` or `.../docker-<64 hex id>.scope`.
-/// The backend's configured hostname is not identity: it can repeat across
-/// replacements, so it is only a fallback when no path carries an id.
-pub(super) fn cgroup_container_id(raw: &str) -> Option<String> {
-    raw.split(|character: char| !character.is_ascii_hexdigit())
-        .filter(|token| token.len() == 64)
-        .map(|token| token.to_ascii_lowercase())
-        .next()
-}
-
-/// Parse the guest's identity probe: the VM boot, the image platform and the
-/// container id it can prove for itself.
-///
-/// The id comes from the cgroup path when the backend exposes the full id
-/// there, and falls back to `hostname=` (the 12-hex short id). The host records
-/// the full id it verified, and the fence accepts a short id as its prefix.
+/// Combine a probe taken through an exact target exec with the host-verified
+/// full backend id it targeted. Neither a hostname nor cgroup text grants
+/// placement, even when it looks like a full or short container id.
 pub(super) fn parse_container_identity(
     rendered: &str,
+    verified_target_id: &str,
 ) -> Result<WorkspaceContainerIdentity, RunnerError> {
     let field = |name: &str| {
         rendered
@@ -1651,9 +1646,11 @@ pub(super) fn parse_container_identity(
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     };
-    let container_id = field("container")
-        .or_else(|| field("cgroup").and_then(|raw| cgroup_container_id(&raw)))
-        .or_else(|| field("hostname"));
+    let container_id = (verified_target_id.len() == 64
+        && verified_target_id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit()))
+    .then(|| verified_target_id.to_ascii_lowercase());
     let vm_boot_id = field("boot");
     let platform = field("platform");
     // The loader a guest can see tells the host which C library the image has,
@@ -1676,7 +1673,7 @@ pub(super) fn parse_container_identity(
             libc,
         }),
         _ => Err(RunnerError::task_invocation(
-            "the container identity probe returned no id, boot id or platform",
+            "the container identity probe requires a verified full backend id, boot id and platform",
         )),
     }
 }
@@ -2846,4 +2843,69 @@ fn run_linux_workspace_effigy_artifact_build_bounded(
         );
     }
     Ok(output.status.success())
+}
+
+#[cfg(test)]
+mod verified_target_tests {
+    use super::*;
+    use crate::contract_test_support::EnvGuard;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn unbounded_guest_probes_and_copies_keep_the_verified_target() {
+        let fixture = effigy_test_support::Fixture::new("workspace-verified-target-").unwrap();
+        let bin = fixture.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let capture = fixture.path().join("args");
+        let backend = bin.join("docker");
+        std::fs::write(
+            &backend,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\nprintf 'boot=boot-a\\nplatform=x86_64\\nlibc=gnu\\nhostname=spoofed\\n'\n",
+                shell_quote(&capture.display().to_string()),
+            ),
+        ).unwrap();
+        std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _env = EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ]);
+        let mut policy = crate::runner::test_support::effective_container_policy(
+            "dev",
+            "dev",
+            "app",
+            fixture.path().join("compose.yml"),
+        );
+        policy.repo_root = fixture.path().to_owned();
+        let target = "a1".repeat(32);
+        let mut guest = ComposeWorkspaceGuest {
+            repo_root: fixture.path(),
+            policy: &policy,
+            command: GuestCommand::Unbounded {
+                target_id: target.clone(),
+            },
+        };
+        assert_eq!(
+            guest.probe_container_identity().unwrap().container_id,
+            target
+        );
+        let args = std::fs::read_to_string(&capture).unwrap();
+        assert!(args.lines().any(|arg| arg == target));
+        assert!(!args.lines().any(|arg| arg == "app"));
+        let source = fixture.path().join("artifact");
+        std::fs::write(&source, "pinned bytes").unwrap();
+        guest.stage(&source, "/run/effigy/staged").unwrap();
+        let args = std::fs::read_to_string(&capture).unwrap();
+        assert!(args
+            .lines()
+            .any(|arg| arg == format!("{target}:/run/effigy/staged")));
+        assert!(!args.contains("app:/run/effigy/staged"));
+    }
 }

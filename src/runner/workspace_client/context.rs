@@ -127,7 +127,8 @@ pub(crate) struct WorkspaceEnvironmentIdentity {
 
 /// What a guest can observe about itself and what the host recorded for it.
 ///
-/// The values are the ones both sides read from inside the container, so a
+/// The host binds the full backend id to an exact-target probe of the boot and
+/// image facts. Guest-provided hostnames never establish placement, so a
 /// replaced container, a different VM boot or another platform cannot match by
 /// accident. [`Self::matches`] is the whole fence: no heuristic, address or
 /// marker file grants placement (§8.1).
@@ -154,36 +155,19 @@ impl WorkspaceContainerIdentity {
     }
 
     /// The boot, platform and image-libc half of the fence. The container id is
-    /// checked by [`Self::container_matches`] so a short guest id can match its
-    /// full id.
+    /// checked separately by [`Self::container_matches`] against the full id.
     pub(crate) fn boot_matches(&self, live: &Self) -> bool {
         self.vm_boot_id == live.vm_boot_id
             && self.platform == live.platform
             && self.libc == live.libc
     }
 
-    /// The container half of the fence: equal, or one id is the other's
-    /// prefix of at least 12 hex digits. Docker and containerd expose a 12-hex
-    /// short id as the container hostname, so a guest that cannot read its
-    /// cgroup still names the same container; a replacement changes the id
-    /// whatever the container's configured hostname is.
+    /// Container identities must agree in full. A prefix or a configured
+    /// hostname cannot establish the backend instance a context belongs to.
     pub(crate) fn container_matches(&self, live: &Self) -> bool {
-        let published = self.container_id.trim().to_ascii_lowercase();
-        let live_id = live.container_id.trim().to_ascii_lowercase();
-        if published.is_empty() || live_id.is_empty() {
-            return false;
-        }
-        if published == live_id {
-            return true;
-        }
-        let (shorter, longer) = if published.len() <= live_id.len() {
-            (&published, &live_id)
-        } else {
-            (&live_id, &published)
-        };
-        shorter.len() >= 12
-            && shorter.bytes().all(|byte| byte.is_ascii_hexdigit())
-            && longer.starts_with(shorter.as_str())
+        let published = self.container_id.trim();
+        let live_id = live.container_id.trim();
+        !published.is_empty() && published.eq_ignore_ascii_case(live_id)
     }
 }
 

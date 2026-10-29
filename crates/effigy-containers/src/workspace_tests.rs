@@ -1367,6 +1367,65 @@ mod guest_isolation_tests {
     }
 
     #[test]
+    fn a_long_form_interpolated_named_bind_cannot_expose_host_state() {
+        let repo_root = temp_dir("interpolated-named-bind");
+        let canonical = repo_root.canonicalize().unwrap();
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).unwrap();
+        fs::write(
+            canonical.join(".env"),
+            "EFFIGY_TEST_STATE_VOLUME=state-bind\n",
+        )
+        .unwrap();
+        for (kind, driver, volume_type, flags, device) in [
+            (
+                "volume",
+                "local",
+                "none",
+                "bind",
+                state.display().to_string(),
+            ),
+            (
+                "${EFFIGY_TEST_KIND:-volume}",
+                "local",
+                "none",
+                "bind",
+                state.display().to_string(),
+            ),
+            (
+                "volume",
+                "${EFFIGY_TEST_DRIVER:-local}",
+                "${EFFIGY_TEST_TYPE:-none}",
+                "${EFFIGY_TEST_FLAGS:-bind}",
+                "./.effigy/state".to_owned(),
+            ),
+        ] {
+            let definitions = serde_yaml::from_str::<serde_yaml::Value>(&format!(
+                "state-bind:\n  driver: '{driver}'\n  driver_opts:\n    type: '{volume_type}'\n    o: '{flags}'\n    device: '{device}'\n"
+            )).unwrap();
+            for source in [
+                "${EFFIGY_TEST_STATE_VOLUME}",
+                "${EFFIGY_TEST_UNSET_VOLUME:-state-bind}",
+            ] {
+                let mount = serde_yaml::from_str::<serde_yaml::Value>(&format!(
+                    "type: '{kind}'\nsource: '{source}'\ntarget: /workspace/leaked\n"
+                ))
+                .unwrap();
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    Some(&definitions),
+                    &[mount],
+                )
+                .expect_err("interpolation must resolve the bind before isolation checks");
+                assert!(error.to_string().contains("host state root"), "{error}");
+            }
+        }
+    }
+
+    #[test]
     fn two_sources_for_one_guest_path_are_refused() {
         let repo_root = temp_dir("duplicate-target");
         let canonical = repo_root.canonicalize().expect("canonical root");
