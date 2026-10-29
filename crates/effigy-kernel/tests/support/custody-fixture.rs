@@ -539,6 +539,7 @@ fn engine_launch(home: &Path) -> EngineLaunch {
         env: vec![("FIXTURE_ENGINE_ENV".into(), "present".into())],
 
         handoff: None,
+        admission: None,
     }
 }
 
@@ -558,23 +559,32 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
     let cx = op.effects().unwrap();
     let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
     let root = StateRoot::effects(&cx, &home).unwrap();
-    let mut run = match Run::begin(
-        &cx,
-        &root,
-        &invocation(),
-        BeginOpts {
-            id: RunId::new(1, [9; 10]).unwrap(),
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next: next(),
-            custody: Some(LifecyclePlan {
-                executable: Executable::current().unwrap(),
-                placement: effigy_kernel::supervise::Placement::Detached,
-            }),
-        },
-        &cleanup,
-        &mut Strict,
-    ) {
+    let opts = BeginOpts {
+        id: RunId::new(1, [9; 10]).unwrap(),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: Some(LifecyclePlan {
+            executable: Executable::current().unwrap(),
+            placement: effigy_kernel::supervise::Placement::Detached,
+        }),
+    };
+    // A dispatcher that reserved a keyed workspace request hands the ticket to
+    // this detached supervisor; admitting under it is the same `begin` with the
+    // binding committed in its one admission transaction (052 §8.11).
+    let begun = match session.admission().cloned() {
+        Some(ticket) => Run::begin_admitted(
+            &cx,
+            &root,
+            &invocation(),
+            opts,
+            &cleanup,
+            &mut Strict,
+            ticket,
+        ),
+        None => Run::begin(&cx, &root, &invocation(), opts, &cleanup, &mut Strict),
+    };
+    let mut run = match begun {
         Ok(run) => run,
         Err(error) => {
             session.refused_message(error.category(), error.to_string());
@@ -596,8 +606,17 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
             argv: vec![
                 "/bin/sh".into(),
                 "-c".into(),
-                "echo $$ > engine-workload.pid; exec /bin/sleep 40".into(),
+                if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
+                    "trap '' TERM; echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                } else {
+                    "echo $$ > engine-workload.pid; exec /bin/sleep 40".into()
+                },
             ],
+            grace: if std::env::var_os("FIXTURE_ENGINE_LONG_GRACE").is_some() {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_millis(25)
+            },
             ..spec(&home)
         },
         &cx,
@@ -612,6 +631,33 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
             child.forward(*signal);
         }
         for frame in control.frames {
+            if frame == b"confirm-detached" {
+                session.event(vec![u8::from(session.detached())]);
+                continue;
+            }
+            if frame == b"resume-secondary" {
+                let key = session.admission().expect("workspace ticket").key();
+                let attachment = resume_secondary(
+                    &cx,
+                    &root,
+                    key.session,
+                    run.id(),
+                    AttachmentId::new([8; 16]),
+                )
+                .inspect_err(|error| {
+                    session.event(format!("secondary attach: {error}").into_bytes())
+                })?;
+                let socket = std::os::unix::net::UnixStream::connect(home.join("a.sock"))
+                    .inspect_err(|error| {
+                        session.event(format!("secondary socket: {error}").into_bytes())
+                    })?;
+                let input = std::fs::File::from(std::os::fd::OwnedFd::from(socket));
+                session
+                    .watch_attachment(&run, &attachment, &input)
+                    .inspect_err(|error| {
+                        session.event(format!("secondary watch: {error}").into_bytes())
+                    })?;
+            }
             session.event(frame);
         }
         if let Some(cause) = control.stop {

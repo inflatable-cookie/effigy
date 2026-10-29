@@ -51,8 +51,10 @@ values refuse the index.
 - Values are JSON Schema documents, resolved relative to the index file.
 - A row whose resolved payload schema id has an entry is validated against that
   document. Rows without one keep the schema/schema_version identity check.
-- A payload schema that does not compile stops the run. It never passes
-  silently.
+- A payload schema that does not compile, or that is not valid JSON, stops the
+  run before any indexed command. The JSON failure is
+  `effigy.contracts.check-json.v1` with a `failures[]` row whose schema is
+  `effigy.json-contract-body.v1`. It never passes silently.
 
 ## One engine
 
@@ -92,6 +94,10 @@ schema id is checked.
   `effigy.json-contract-selection.v1` inside the unchanged
   `effigy.contracts.check-json.v1` envelope; the envelope also reports
   `selection_contract` and `selection_artifact`.
+- A selection contract that does not compile, or that is not valid JSON, is the
+  same admission refusal as a payload schema body:
+  `effigy.json-contract-body.v1` inside `effigy.contracts.check-json.v1`, and no
+  command is run.
 - `effigy contracts validate-selection` fails with an error naming the new form.
 
 JSON Schema cannot compare a property with an array length, so `count` is a

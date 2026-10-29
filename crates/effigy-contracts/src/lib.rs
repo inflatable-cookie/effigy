@@ -11,6 +11,10 @@ use serde_json::{json, Value};
 /// a contract violation from a command-payload violation.
 pub const SELECTION_PAYLOAD_SCHEMA: &str = "effigy.json-contract-selection.v1";
 
+/// The schema id reported when a payload schema or selection contract document
+/// cannot be compiled. Admission stops before any indexed command runs.
+pub const CONTRACT_BODY_SCHEMA: &str = "effigy.json-contract-body.v1";
+
 /// The project's own JSON contract paths, from `[contracts]` in `effigy.toml`.
 ///
 /// There is no built-in default: a project that has not declared its schema
@@ -64,6 +68,13 @@ pub enum ContractsError {
         error: serde_json::Error,
     },
     Message(String),
+    /// Payload schema or selection contract that is not valid Draft 2020-12.
+    /// Prepare returns this before any indexed command or fixture expansion.
+    ContractBody {
+        index: PathBuf,
+        failure: CheckFailure,
+        selection: SelectionPayload,
+    },
 }
 
 impl std::fmt::Display for ContractsError {
@@ -74,11 +85,38 @@ impl std::fmt::Display for ContractsError {
                 write!(f, "failed to parse {} as JSON: {error}", path.display())
             }
             Self::Message(message) => write!(f, "{message}"),
+            Self::ContractBody { failure, .. } => write!(f, "{}", failure.reason),
         }
     }
 }
 
 impl std::error::Error for ContractsError {}
+
+impl ContractsError {
+    /// Structured `effigy.contracts.check-json.v1` payload for a contract-body
+    /// admission refusal. Other variants have no check-json identity.
+    pub fn check_json_payload(&self) -> Option<Value> {
+        match self {
+            Self::ContractBody {
+                index,
+                failure,
+                selection,
+            } => Some(json!({
+                "schema": "effigy.contracts.check-json.v1",
+                "schema_version": 1,
+                "ok": false,
+                "index": index.display().to_string(),
+                "changed_only_base": selection.changed_only_base,
+                "selection": selection.to_json_value(),
+                "selection_contract": Value::Null,
+                "selection_artifact": Value::Null,
+                "checks": 1,
+                "failures": [failure.to_json()],
+            })),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionPayload {
@@ -326,7 +364,7 @@ pub fn prepare_check_json(
             .ok_or_else(no_schema_index_configured)?,
     );
     let index = read_json_file(&index_path)?;
-    let payload_schemas = compile_payload_schemas(&index, &index_path)?;
+    let payload_schemas = compile_payload_schemas(&index, &index_path, changed_only_base)?;
     let active_rows = load_active_contract_rows(&index)?;
     let selected_rows =
         select_contract_rows(repo_root, &index_path, &active_rows, changed_only_base)?;
@@ -342,6 +380,7 @@ pub fn prepare_check_json(
         config,
         selection_validation,
         contract_override,
+        &index_path,
         &selection,
     )?;
 
@@ -381,6 +420,30 @@ fn read_json_file(path: &Path) -> Result<Value, ContractsError> {
     })
 }
 
+fn admission_selection(changed_only_base: Option<&str>) -> SelectionPayload {
+    SelectionPayload {
+        selected: Vec::new(),
+        changed_only_base: changed_only_base.map(ToOwned::to_owned),
+    }
+}
+
+fn invalid_contract_body(
+    index: &Path,
+    command: impl Into<String>,
+    reason: String,
+    selection: SelectionPayload,
+) -> ContractsError {
+    ContractsError::ContractBody {
+        index: index.to_path_buf(),
+        failure: CheckFailure {
+            schema: CONTRACT_BODY_SCHEMA.to_owned(),
+            command: command.into(),
+            reason,
+        },
+        selection,
+    }
+}
+
 /// Compile every payload schema the index declares, keyed by schema id.
 ///
 /// Paths in `payload_schemas` are relative to the index file. A schema that
@@ -388,6 +451,7 @@ fn read_json_file(path: &Path) -> Result<Value, ContractsError> {
 fn compile_payload_schemas(
     index: &Value,
     index_path: &Path,
+    changed_only_base: Option<&str>,
 ) -> Result<BTreeMap<String, CompiledSchema>, ContractsError> {
     let Some(entries) = index.get("payload_schemas") else {
         return Ok(BTreeMap::new());
@@ -408,12 +472,27 @@ fn compile_payload_schemas(
             )));
         };
         let schema_path = resolve_repo_input(base, PathBuf::from(relative));
-        let document = read_json_file(&schema_path)?;
+        let document = match read_json_file(&schema_path) {
+            Ok(document) => document,
+            Err(error) => {
+                return Err(invalid_contract_body(
+                    index_path,
+                    schema_path.display().to_string(),
+                    error.to_string(),
+                    admission_selection(changed_only_base),
+                ));
+            }
+        };
         let validator = CompiledSchema::compile(&document).map_err(|error| {
-            ContractsError::Message(format!(
-                "payload schema {} is not valid Draft 2020-12 JSON Schema: {error}",
-                schema_path.display()
-            ))
+            invalid_contract_body(
+                index_path,
+                schema_path.display().to_string(),
+                format!(
+                    "payload schema {} is not valid Draft 2020-12 JSON Schema: {error}",
+                    schema_path.display()
+                ),
+                admission_selection(changed_only_base),
+            )
         })?;
         compiled.insert(schema.clone(), validator);
     }
@@ -486,6 +565,7 @@ fn prepare_selection_check(
     config: &ContractsConfig,
     selection_validation: &SelectionValidation,
     contract_override: Option<&PathBuf>,
+    index_path: &Path,
     selection: &SelectionPayload,
 ) -> Result<Option<SelectionCheck>, ContractsError> {
     let artifact = match selection_validation {
@@ -504,12 +584,28 @@ fn prepare_selection_check(
                     .to_owned(),
             )
         })?;
-    let contract = read_json_file(&resolve_repo_input(repo_root, contract_path.clone()))?;
+    let resolved_contract = resolve_repo_input(repo_root, contract_path.clone());
+    let contract = match read_json_file(&resolved_contract) {
+        Ok(contract) => contract,
+        Err(error) => {
+            return Err(invalid_contract_body(
+                index_path,
+                resolved_contract.display().to_string(),
+                error.to_string(),
+                selection.clone(),
+            ));
+        }
+    };
     let contract_schema = CompiledSchema::compile(&contract).map_err(|error| {
-        ContractsError::Message(format!(
-            "selection contract {} is not valid Draft 2020-12 JSON Schema: {error}",
-            contract_path.display()
-        ))
+        invalid_contract_body(
+            index_path,
+            resolved_contract.display().to_string(),
+            format!(
+                "selection contract {} is not valid Draft 2020-12 JSON Schema: {error}",
+                contract_path.display()
+            ),
+            selection.clone(),
+        )
     })?;
 
     let instance = match artifact.as_ref() {

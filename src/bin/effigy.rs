@@ -18,6 +18,31 @@ fn main() {
         }
         return;
     }
+    if raw_args
+        .first()
+        .is_some_and(|arg| arg == effigy_gateway::linux_operator::BIND_PROBE_ENTRY)
+    {
+        // A hidden setup child: it must be a fresh exec of the installed
+        // binary so the file capability is effective, and it binds nothing
+        // after its bounded probe.
+        let addresses = raw_args[1..]
+            .iter()
+            .map(|value| value.parse())
+            .collect::<Result<Vec<std::net::SocketAddr>, _>>();
+        let result = match addresses {
+            Ok(addresses) if !addresses.is_empty() => {
+                effigy_gateway::linux_operator::probe_entry(&addresses)
+            }
+            _ => Err(std::io::Error::other(
+                "expected one or more loopback socket addresses",
+            )),
+        };
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if raw_args == ["__gateway-run"]
         || raw_args
             .first()

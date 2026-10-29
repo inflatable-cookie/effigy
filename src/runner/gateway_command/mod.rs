@@ -117,11 +117,67 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
     let config = gateway_config()?;
     refuse_a_fixtures_operator_gateway_mutation(&config)?;
     if !config.is_private() && effigy_core::executable_override::current().is_none() {
+        // A task run, not an operator command: name it as what it is.
+        record_managed_gateway_start(&config);
         effigy_gateway::operator::up(&config)
             .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
         return Ok(());
     }
     gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
+}
+
+/// One bounded event names an operator action at the command boundary, before
+/// its first effect. The shared gateway lifecycle helpers write no event, so an
+/// internal caller — a `setup` step or a managed task start — can never appear
+/// as an explicit gateway command (effigy#450 review).
+fn record_operator_action(
+    config: &GatewayConfig,
+    action: effigy_kernel::run::OperatorAction,
+    cause: &str,
+) {
+    if let Some(directory) = config.pid_file_path.parent() {
+        effigy_kernel::run::record_gateway_operator(directory, action, cause);
+    }
+}
+
+/// `gateway up` from a command line.
+fn record_gateway_up_command(config: &GatewayConfig) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Up,
+        "gateway up command",
+    );
+}
+
+/// `gateway down` from a command line.
+fn record_gateway_down_command(config: &GatewayConfig) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Down,
+        "gateway down command",
+    );
+}
+
+/// A task run asking Effigy to start the gateway on its behalf.
+fn record_managed_gateway_start(config: &GatewayConfig) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Up,
+        "managed gateway start",
+    );
+}
+
+/// `gateway setup`, applied or removed. It is one action, so it is one event.
+fn record_gateway_setup(config: &GatewayConfig, remove: bool) {
+    record_operator_action(
+        config,
+        effigy_kernel::run::OperatorAction::Setup,
+        if remove {
+            "gateway setup remove command"
+        } else {
+            "gateway setup command"
+        },
+    );
 }
 
 /// A test harness or fixture never starts, stops or replaces the machine
@@ -487,6 +543,7 @@ fn run_gateway_up_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     refuse_a_fixtures_operator_gateway_mutation(config)?;
+    record_gateway_up_command(config);
     if !config.is_private() {
         let result = live("starting the gateway", |step| {
             step.set_label("starting the gateway process and waiting for it to answer");
@@ -563,6 +620,7 @@ fn run_gateway_down_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     refuse_a_fixtures_operator_gateway_mutation(config)?;
+    record_gateway_down_command(config);
     if !config.is_private() {
         let result = live("stopping the gateway", |step| {
             step.set_label("stopping the gateway process and removing its record");
@@ -1721,6 +1779,42 @@ fn mkcert_install_argv() -> std::io::Result<Vec<OsString>> {
     Ok(vec![mkcert.into(), "-install".into()])
 }
 
+/// Prove the freshly installed capability on the exact endpoints the daemon
+/// serves, from a fresh exec of the installed binary. The setup process began
+/// before the capability existed, so only a new exec can observe it.
+#[cfg(target_os = "linux")]
+fn probe_low_ports(
+    run: &mut effigy_kernel::run::Run<'_>,
+    cx: &effigy_kernel::ctx::EffectContext,
+    config: &GatewayConfig,
+) -> std::io::Result<()> {
+    let addresses: Vec<String> = [
+        Some(config.dns.bind_addr),
+        Some(config.proxy.bind_addr),
+        config.proxy.tls_bind_addr,
+    ]
+    .into_iter()
+    .flatten()
+    // A port at or above 1024 is not what the capability is for.
+    .filter(|address| address.port() < 1024)
+    .map(|address| address.to_string())
+    .collect();
+    if addresses.is_empty() {
+        return Ok(());
+    }
+    let mut argv: Vec<OsString> = vec![
+        std::env::current_exe()?.into_os_string(),
+        effigy_gateway::linux_operator::BIND_PROBE_ENTRY.into(),
+    ];
+    argv.extend(addresses.into_iter().map(OsString::from));
+    let output = effigy_gateway::setup::command(run, cx, argv, false)?;
+    let report = effigy_gateway::linux_operator::BindProbeReport::parse(&output)?;
+    match report.refusal() {
+        Some(reason) => Err(std::io::Error::other(reason)),
+        None => Ok(()),
+    }
+}
+
 /// Run one setup stage. The label names the step while it runs, and the stage
 /// ends with one line: what now holds, or the failure's own sentence.
 fn setup_step<T>(
@@ -1747,6 +1841,13 @@ fn run_gateway_setup(
 ) -> Result<String, RunnerError> {
     use effigy_gateway::{operator, setup};
     refuse_a_fixtures_operator_gateway_mutation(&GatewayConfig::standard(standard_gateway_dir()?))?;
+    // The operator's own invocation records one bounded setup event in the same
+    // gateway log, before the platform steps. The escalated child repeats the
+    // command as root; it does not write a root-owned record into the
+    // operator's log, and the chain already names this process.
+    if !nix::unistd::Uid::effective().is_root() {
+        record_gateway_setup(&GatewayConfig::standard(standard_gateway_dir()?), remove);
+    }
     let execute = || -> std::io::Result<String> {
         if nix::unistd::Uid::effective().is_root() {
             let (uid, home) = setup_step("verifying the operator account", |_| {
@@ -1772,7 +1873,7 @@ fn run_gateway_setup(
                 })?;
                 setup_step(
                     "applying platform setup (DNS, certificate trust, broker)",
-                    |_| setup::apply_platform(run, cx, &config, &suffixes),
+                    |_| setup::apply_platform(run, cx, &config, &suffixes, uid),
                 )
             })?;
             return Ok("Gateway platform setup applied".into());
@@ -1791,8 +1892,26 @@ fn run_gateway_setup(
         suffixes.extend(extra.iter().cloned());
         suffixes.sort();
         suffixes.dedup();
+        let operator_uid = nix::unistd::Uid::current();
+        let operator_home = nix::unistd::User::from_uid(operator_uid)
+            .map_err(std::io::Error::other)?
+            .ok_or_else(|| std::io::Error::other("operator account is missing"))?
+            .dir;
+        #[cfg(target_os = "linux")]
+        let mut launcher = None;
         setup::session(&home, false, |run, cx| {
             if remove {
+                // The login launch unit goes first: nothing may start the
+                // gateway at the next login once its capability is gone.
+                #[cfg(target_os = "linux")]
+                setup_step("removing the systemd user launch unit", |_| {
+                    effigy_gateway::linux_operator::remove(
+                        cx,
+                        &effigy_gateway::linux_operator::LaunchPaths::standard(&home),
+                        operator_uid.as_raw(),
+                        &mut effigy_gateway::linux_operator::Systemctl::default(),
+                    )
+                })?;
                 setup_step("stopping the gateway", |_| operator::down(&config))?;
             }
             // mkcert uses this operator's preserved CA. It is never run by the daemon.
@@ -1807,11 +1926,6 @@ fn run_gateway_setup(
                     |_| setup::command(run, cx, mkcert_install_argv()?, true),
                 )?;
             }
-            let operator_uid = nix::unistd::Uid::current();
-            let operator_home = nix::unistd::User::from_uid(operator_uid)
-                .map_err(std::io::Error::other)?
-                .ok_or_else(|| std::io::Error::other("operator account is missing"))?
-                .dir;
             let argv = setup_elevation_argv(
                 &std::env::current_exe()?,
                 operator_uid.as_raw(),
@@ -1836,10 +1950,46 @@ fn run_gateway_setup(
             suffixes.dedup();
             setup_step("recording the setup receipt", |_| {
                 setup::save_receipt(run, cx, &home, suffixes)
-            })
+            })?;
+            #[cfg(target_os = "linux")]
+            {
+                // The unit is written by the operator so systemd owns it as
+                // this account's own unit; only the capability needed the
+                // administrator step above.
+                launcher = Some(setup_step(
+                    "installing the systemd user launch unit",
+                    |_| {
+                        effigy_gateway::linux_operator::install(
+                            run,
+                            cx,
+                            &effigy_gateway::linux_operator::LaunchPaths::standard(&home),
+                            operator_uid.as_raw(),
+                            &std::env::current_exe()?,
+                            &mut effigy_gateway::linux_operator::Systemctl::default(),
+                        )
+                    },
+                )?);
+                // A fresh exec of the installed binary proves the capability
+                // on the exact endpoints the daemon serves. The setup process
+                // itself started before the capability existed.
+                setup_step("probing the low-port capability as the operator", |_| {
+                    probe_low_ports(run, cx, &config)
+                })?;
+            }
+            Ok(())
         })?;
         if remove {
             return Ok("Gateway setup removed; certificates preserved.".into());
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(launcher) = launcher {
+            if !launcher.enabled {
+                for line in &launcher.recovery {
+                    eprintln!(
+                        "[gateway] the systemd user launch unit is installed but not enabled for this login: run `{line}`"
+                    );
+                }
+            }
         }
         let result = setup_step("starting the gateway", |step| {
             step.set_label("starting the gateway as the operator");

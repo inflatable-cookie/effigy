@@ -2724,6 +2724,33 @@ locally. State and vault mounts remain masked. No failed channel request falls
 back to guest execution. Hybrid provisions no guest binary, context, listener
 or enrolment credential.
 
+The kernel seam is `run::{reserve, lookup, Run::begin_admitted,
+resume_owner, attach_secondary}`. A `Session` must identify an admitted,
+nonclosed session run at its current resource generation. The reservation
+records that session's owner, and admission, replay and attachment operations
+recheck it. A legacy reservation with no recorded session owner is refused;
+it never gains one by inference. `lookup(&ObserveContext, &StateRoot,
+AdmissionKey, Digest)` reads a fresh journal snapshot. An unfinished admission
+is returned only while its current owner process identity and held owner gate
+can be established. An orphan is `Unknown` and cannot acquire handles or be
+readmitted; ordinary custody recovery must settle it before its recorded
+outcome becomes available. The keyed run and consumed ticket commit before
+predecessor cleanup, so interruption during cleanup retains that binding.
+Client release revalidates the current session, owner and exact attachment in
+its write transaction. A registered liveness watch instead releases through
+the live Run's owner-gated custody, so session expiry cannot retain a lost
+terminal. Owner EOF releases its row and queues one matching stop in that same
+transaction; persistent foreign or resolved request-ID collisions select another
+identity without deleting the existing row. Control and release deadlines also
+bound schema initialization and additive migration.
+
+During keyed predecessor recovery, the current owner gate and successor fence
+keep the predecessor's already-fenced escalation serviceable. New controls use
+the admitted successor's current RunId and fence; escalation there also shortens
+predecessor cleanup. Stale public requests remain refused. Reading either
+mailbox checks its exact serialized run and generation binding, and no journal
+transaction spans custody I/O.
+
 **Owners and coverage.** Paths below name the intended owners, including new
 modules; they do not imply those modules already exist. The only integration
 file allowed to join these lanes is `src/runner/workspace_client.rs`.
@@ -2816,6 +2843,82 @@ and the client glue (`src/runner/workspace_client.rs`). The runner entry
 identity. Proofs are the fake-owner, fake-runtime tests under
 `workspace_session::tests::`; they exercise no engine, container, gateway or
 live supervisor.
+
+**Kernel seam.** `crates/effigy-kernel/src/run/workspace.rs` implements that half.
+A session is its run and its generation, so two sessions at one generation stay
+distinct. `reserve` records `(session, request ID, canonical request digest)`
+with the one run it reserved, and `Run::begin_admitted` commits that binding, the
+run row and the owning client's attachment in one transaction. One run identity
+belongs to exactly one key: a second key proposing the same run id is refused in
+that transaction and by a unique index, and an ordinary run may not take a
+reserved id, so a reservation is never swapped for another workload. A key with
+a record is classified before any proposed id is judged, so a same-key retry
+recovers its admission or reports its digest conflict whatever entropy it
+offers. Both replay outcomes first validate the recorded session owner and
+current generation; a conflicting digest never bypasses that fence. Only the
+binding that actually admitted a run answers for attachment and
+records its outcome; a reservation that never committed keeps answering
+`Unknown`. `lookup` answers a reconnect from the same records, `Unknown`
+included, and never admits again. A
+reservation whose admission cannot be established is `Unknown` and names no run:
+an id the client offered is not evidence that the request produced it. The run's
+close transaction records the keyed request's outcome and ends its client
+attachments in the same commit that closes it. The ticket is transferable — a
+dispatcher hands it to a detached engine supervisor through
+`supervise::EngineLaunch::admission`, and the engine reads it as
+`EngineSession::admission` — but admission re-checks the durable reservation, so
+the ticket alone binds nothing. `attach_secondary` gives a second terminal its
+own attachment row, a bounded stream cursor that reports a rotation gap, and
+stop/escalate control bounded at four waiting requests, counted in the same
+transaction that records one; every read re-checks the attachment row, and a
+control re-checks it in the transaction that records the request, so a release
+cannot be overtaken and a released attachment or a closed run stops both. An
+owning client's EOF records its run's stop in the same commit as the release,
+while an acknowledged detach records none and leaves the run going, including
+when its original owning pipe closes. `EngineSession::watch_attachment` binds an
+attachment to a separate client liveness pipe; the supervisor's control turn
+releases a killed secondary's row without stopping the owner, and reclaims its
+slot. If the attaching caller loses the creation response or dies before watch
+registration, `resume_secondary` reopens the exact still-attached secondary ID
+under the current recorded session and live workload fence. It allocates no
+slot and revives no released row; the authorised dispatcher can register the
+recovered handle or release it to reclaim the slot without stopping the owner.
+Watches are bounded to eight secondaries and one owner. Reservation replay,
+attachment opening and attachment status derive finite observation phases even
+when the engine's workload lifetime is open, preserving any shorter caller
+deadline. Workspace controls respect the caller's remaining budget, capped at
+one second, including a busy store; a timeout records no control and the caller may retry. Output reads do
+not hold the writer or share the liveness pipe. `resume_owner` reopens
+the owning client's handle and no other. Both refuse a run this session did not
+admit and grant nothing: the dispatcher's grant check remains the authority.
+`test:kernel:workspace` owns these proofs.
+
+**Lane A dispatcher.** `crates/effigy-kernel/src/workspace_channel.rs` owns the
+v1 wire, its framing and limits, the server pin check, negotiation, grants,
+enrolment and the typed entry points. It reads the key with `run::lookup`
+before it calls `run::reserve`, so a retry spends no entropy and reaches no
+engine, and an unreadable record is answered `unknown` rather than admitted
+again. Resolution, admission and observation stay with the owning host engines
+through four small seams — `Resolver`, `Admission`, `Observer` and `RunIds` —
+and `Admission` receives the reservation's `AdmissionTicket`, which the engine
+hands to `EngineLaunch::admission`, so the run an engine admits is the run the
+record names. `observe` reserves nothing and attaches nothing; a capability is
+memory-only, checked before every effect, and its operation and target scope is
+the host's, never the client's. Every request is checked against the grant's
+server-side binding as well as its own claims, and enrolment issues a capability
+for the session the host recorded, never the one an `enrol` frame names.
+Revoking a generation ends the enrolment credential with the capabilities it
+issued, so re-enrolment cannot mint a live capability for a dead generation.
+A connection owns at most one attachment: attaching to another run refuses,
+replacing this connection's own secondary releases the replaced row, and only
+the connection that admitted a run holds its owner handle. Captured output is
+published through a pump bounded by the acknowledgement window, so a control
+request is answered while data is backpressured; the connection's lifetime is
+its session's, and a closed connection whose frames were malformed releases no
+owner lifetime. Each connection starts and ends with no queued stream state, so
+a server that serves a reconnect publishes nothing from the previous connection
+and never carries an unpublished chunk or a full window into it. The transport, the guest client and the runner integration
+remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map
 

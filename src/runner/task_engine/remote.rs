@@ -368,6 +368,12 @@ fn client_env() -> BTreeMap<OsString, EnvValue> {
         .collect()
 }
 
+/// The guest workload's environment from this run's spawned entries.
+///
+/// A container workload is a workload: the same rule the host spawn helper
+/// applies holds here, so no entry - ambient, task env or declared secret -
+/// hands session vault access to the guest (contract 032; effigy#338,
+/// effigy#445).
 fn container_env(
     entries: Vec<(String, EnvOverride)>,
 ) -> Result<BTreeMap<OsString, EnvValue>, RunnerError> {
@@ -384,6 +390,7 @@ fn container_env(
         };
         env.insert(OsString::from(key), value);
     }
+    env.retain(|key, _| !crate::runner::secret_session::is_session_access_key(key));
     Ok(env)
 }
 

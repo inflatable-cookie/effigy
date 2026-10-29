@@ -42,12 +42,21 @@ docker run --rm --init --cpus 2 --memory 3g --sysctl net.ipv4.ip_unprivileged_po
         fi
         "$fixture" install
         getcap "$fixture"
+        test "$("$fixture" report)" = '"installed"'
+        # The production unit definition is a pure function; this container has
+        # no user manager, so the launch proof is the unit's own content.
+        "$fixture" unit | grep -qx 'ExecStart=".*" gateway up'
+        "$fixture" unit | grep -qx 'ExecStop=".*" gateway down'
+        if "$fixture" unit | grep -q 'Restart'; then
+            echo "the launch unit declares a second lifecycle authority" >&2; exit 1
+        fi
         setpriv --reuid=501 --regid=501 --clear-groups "$fixture" probe
         "$fixture" remove
+        test "$("$fixture" report)" = '"missing"'
         if setpriv --reuid=501 --regid=501 --clear-groups "$fixture" probe; then
             echo "removed capability still permits low-port binds" >&2; exit 1
         fi
         cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none \
-            -p effigy-gateway --lib -E "test(setup::tests::native_boot_jobs) | test(setup::tests::managed_setup) | test(setup::tests::setup_symlink)" \
+            -p effigy-gateway --lib -E "test(setup::tests::native_boot_jobs) | test(setup::tests::managed_setup) | test(setup::tests::setup_symlink) | test(linux_operator::tests::)" \
             --no-fail-fast --retries 0 --no-tests fail
     '

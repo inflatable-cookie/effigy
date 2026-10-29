@@ -10,7 +10,8 @@ use tempfile::TempDir;
 use super::*;
 use crate::{
     apply_bun_link_plan, plan_bun_link, BunConsumerInventory, BunConsumerReference,
-    BunPackageInventory, DependencyDepth, ProcessOutput, RepoLinkStateStore,
+    BunPackageInventory, BunReferenceRelease, BunRegistrationIndexStore, DependencyDepth,
+    ProcessOutput, RepoLinkStateStore,
 };
 
 struct FixtureProcess {
@@ -93,6 +94,17 @@ impl ReadOnlyProcess for FixtureProcess {
             stderr: String::new(),
         })
     }
+}
+
+fn remaining_consumers(home: &Path) -> Vec<PathBuf> {
+    BunRegistrationIndexStore::for_home(home)
+        .read()
+        .unwrap()
+        .registrations
+        .into_iter()
+        .flat_map(|registration| registration.consumers)
+        .map(|consumer| consumer.consumer_repo)
+        .collect()
 }
 
 fn package_name(root: &Path) -> Option<String> {
@@ -323,10 +335,10 @@ fn shared_and_foreign_registrations_are_retained() {
                 "underlay",
                 shared.packages[0].package_path.clone(),
                 false,
-                BunConsumerReference {
-                    consumer_repo: fs::canonicalize(&other_repo).unwrap(),
-                    library_path: shared.library.clone(),
-                },
+                BunConsumerReference::claim(
+                    fs::canonicalize(&other_repo).unwrap(),
+                    shared.library.clone(),
+                ),
             )
         })
         .unwrap();
@@ -453,4 +465,341 @@ fn unregister_failure_restores_registrations_and_consumer_links() {
             package.package_path
         );
     }
+}
+
+#[test]
+fn unlink_of_a_deleted_consumer_retires_only_its_own_registration() {
+    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&first.home);
+    link(&first, &process);
+    let other_temp = TempDir::new().unwrap();
+    let other = fs::canonicalize(other_temp.path()).unwrap();
+    write(&other.join("package.json"), "{\"name\":\"other\"}\n");
+    replace_symlink(
+        &first.packages[0].package_path,
+        &other.join("node_modules").join("underlay"),
+    );
+    BunRegistrationIndexStore::for_home(&first.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                first.packages[0].package_path.clone(),
+                true,
+                BunConsumerReference::claim(other.clone(), first.library.clone()),
+            )
+        })
+        .unwrap();
+    let missing = first.repo.clone();
+    fs::remove_dir_all(&missing).unwrap();
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &missing,
+            &first.library,
+            &first.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &first.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunUnlinkOutcome::Unlinked);
+    assert!(report.applied_processes.is_empty());
+    assert!(matches!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&first.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Symlink { .. }
+    ));
+    let index = BunRegistrationIndexStore::for_home(&first.home)
+        .read()
+        .unwrap();
+    assert_eq!(index.registrations[0].consumers.len(), 1);
+    assert_eq!(index.registrations[0].consumers[0].consumer_repo, other);
+    assert_eq!(
+        fs::canonicalize(other.join("node_modules").join("underlay")).unwrap(),
+        first.packages[0].package_path
+    );
+}
+
+#[test]
+fn unlink_of_a_deleted_last_owned_consumer_unregisters() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &process);
+    let missing = fixture.repo.clone();
+    fs::remove_dir_all(&missing).unwrap();
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &missing,
+            &fixture.library,
+            &fixture.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunUnlinkOutcome::Unlinked);
+    assert_eq!(report.applied_processes.len(), 1);
+    assert!(BunRegistrationIndexStore::for_home(&fixture.home)
+        .read()
+        .unwrap()
+        .registrations
+        .is_empty());
+    assert_eq!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Missing
+    );
+}
+
+#[test]
+fn unlink_of_a_deleted_consumer_rolls_back_an_unregister_failure() {
+    let fixture = fixture(&[
+        ("@signal/core", DependencyDepth::Direct),
+        ("@signal/protocol", DependencyDepth::Transitive),
+    ]);
+    let link_process = FixtureProcess::new(&fixture.home);
+    link(&fixture, &link_process);
+    let index_before = fs::read(BunRegistrationIndexStore::for_home(&fixture.home).path()).unwrap();
+    let missing = fixture.repo.clone();
+    fs::remove_dir_all(&missing).unwrap();
+    let process = FixtureProcess::fail_unregister_once(&fixture.home, "@signal/protocol");
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &missing,
+            &fixture.library,
+            &fixture.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunUnlinkOutcome::ApplyFailed);
+    assert!(report.rollback.attempted);
+    assert!(
+        report.rollback.failures.is_empty(),
+        "{:?}",
+        report.rollback.failures
+    );
+    assert_eq!(report.rollback.restored_registrations, ["@signal/core"]);
+    assert_eq!(
+        fs::read(BunRegistrationIndexStore::for_home(&fixture.home).path()).unwrap(),
+        index_before
+    );
+    for package in &fixture.packages {
+        assert_eq!(
+            fs::canonicalize(bun_registration_path(&fixture.home, &package.name)).unwrap(),
+            package.package_path
+        );
+        assert_eq!(
+            report
+                .plan
+                .packages
+                .iter()
+                .find(|planned| planned.name == package.name)
+                .unwrap()
+                .reference_release,
+            Some(BunReferenceRelease::RemoveOwned)
+        );
+    }
+}
+
+fn share_with_sibling(fixture: &Fixture) -> (TempDir, PathBuf) {
+    let other_temp = TempDir::new().unwrap();
+    let other = fs::canonicalize(other_temp.path()).unwrap();
+    write(&other.join("package.json"), "{\"name\":\"other\"}\n");
+    replace_symlink(
+        &fixture.packages[0].package_path,
+        &other.join("node_modules").join("underlay"),
+    );
+    BunRegistrationIndexStore::for_home(&fixture.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                fixture.packages[0].package_path.clone(),
+                true,
+                BunConsumerReference::claim(other.clone(), fixture.library.clone()),
+            )
+        })
+        .unwrap();
+    (other_temp, other)
+}
+
+#[test]
+fn unlink_of_a_deleted_checkout_retires_nested_bun_root_registration() {
+    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&first.home);
+    // The claim records the checkout boundary it was written under, which is
+    // what a deleted tree can no longer show by itself.
+    fs::create_dir_all(first.repo.join(".git")).unwrap();
+    let studio = first.repo.join("studio");
+    fs::create_dir_all(&studio).unwrap();
+    let studio = fs::canonicalize(&studio).unwrap();
+    let (_other_temp, other) = share_with_sibling(&first);
+    BunRegistrationIndexStore::for_home(&first.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                first.packages[0].package_path.clone(),
+                true,
+                BunConsumerReference::claim(studio, first.library.clone()),
+            )
+        })
+        .unwrap();
+    let registration = bun_registration_path(&first.home, "underlay");
+    fs::create_dir_all(registration.parent().unwrap()).unwrap();
+    replace_symlink(&first.packages[0].package_path, &registration);
+    let missing = first.repo.clone();
+    fs::remove_dir_all(&missing).unwrap();
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &missing,
+            &first.library,
+            &first.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &first.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunUnlinkOutcome::Unlinked);
+    assert_eq!(remaining_consumers(&first.home), vec![other]);
+}
+
+#[test]
+fn orphaned_nested_claim_recovery_never_touches_a_consumer_link() {
+    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&first.home);
+    // A live checkout holding a parent Bun root and a nested one, each with its
+    // own link to the same package, and a claim recorded only for the nested
+    // root. The ledger that would say which link Effigy owns is gone.
+    fs::create_dir_all(first.repo.join(".git")).unwrap();
+    let studio = first.repo.join("studio");
+    fs::create_dir_all(&studio).unwrap();
+    let studio = fs::canonicalize(&studio).unwrap();
+    let package = first.packages[0].package_path.clone();
+    replace_symlink(&package, &first.repo.join("node_modules/underlay"));
+    replace_symlink(&package, &studio.join("node_modules/underlay"));
+    BunRegistrationIndexStore::for_home(&first.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                package.clone(),
+                true,
+                BunConsumerReference::claim(studio.clone(), first.library.clone()),
+            )
+        })
+        .unwrap();
+    replace_symlink(&package, &bun_registration_path(&first.home, "underlay"));
+    assert!(!RepoLinkStateStore::for_repo(&first.repo).path().exists());
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &first.repo,
+            &first.library,
+            &first.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &first.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(
+        report.outcome,
+        BunUnlinkOutcome::Unlinked,
+        "{:?}",
+        report.errors
+    );
+    // Recovery released the nested root's claim and nothing else: the parent
+    // root is a different consumer, and its link is not Effigy's to remove.
+    assert!(report.plan.symlink_intents.is_empty());
+    assert_eq!(
+        fs::canonicalize(first.repo.join("node_modules/underlay")).unwrap(),
+        package
+    );
+    assert_eq!(
+        fs::canonicalize(studio.join("node_modules/underlay")).unwrap(),
+        package
+    );
+    assert!(remaining_consumers(&first.home).is_empty());
+    assert!(report.removed_consumer_links.is_empty());
+}
+
+#[test]
+fn orphaned_claim_recovery_does_not_read_a_malformed_consumer_tree() {
+    let first = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&first.home);
+    fs::create_dir_all(first.repo.join(".git")).unwrap();
+    let studio = first.repo.join("studio");
+    fs::create_dir_all(&studio).unwrap();
+    let studio = fs::canonicalize(&studio).unwrap();
+    // The recorded consumer's `node_modules` is a regular file: reading the
+    // link under it fails with NotADirectory, which must not stop the claim
+    // from being released.
+    write(&studio.join("node_modules"), "not a directory\n");
+    let package = first.packages[0].package_path.clone();
+    BunRegistrationIndexStore::for_home(&first.home)
+        .update(|index| {
+            index.add_reference(
+                "underlay",
+                package.clone(),
+                true,
+                BunConsumerReference::claim(studio.clone(), first.library.clone()),
+            )
+        })
+        .unwrap();
+    replace_symlink(&package, &bun_registration_path(&first.home, "underlay"));
+    assert!(!RepoLinkStateStore::for_repo(&first.repo).path().exists());
+
+    let report = apply_bun_unlink_plan(
+        plan_bun_unlink(
+            &first.repo,
+            &first.library,
+            &first.home,
+            false,
+            &FsBunPlanObserver,
+        )
+        .unwrap(),
+        &first.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(
+        report.outcome,
+        BunUnlinkOutcome::Unlinked,
+        "{:?}",
+        report.errors
+    );
+    assert!(remaining_consumers(&first.home).is_empty());
+    // Claims-only recovery left the malformed tree exactly as it was.
+    assert!(studio.join("node_modules").is_file());
 }

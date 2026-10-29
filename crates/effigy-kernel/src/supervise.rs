@@ -398,6 +398,7 @@ fn sentinel_attempt(
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
         env: std::env::vars_os().collect(),
         handoff: None,
+        admission: None,
     });
     let mut child = spawn_helper(executable, SENTINEL, &log, inherited.as_ref())?;
     // The fault driver waits for every helper, registered or not (§12.1).
@@ -596,8 +597,8 @@ pub fn engine_entry(
         "__kernel-anchor" => anchor::entry(),
         SENTINEL => sentinel(adapter, validate_next),
         SUPERVISOR => read_supervisor_config().and_then(|config| match config.work {
-            Work::Engine { payload } => {
-                EngineSession::open(payload).and_then(|session| engine(session, router))
+            Work::Engine { payload, admission } => {
+                EngineSession::open(payload, admission).and_then(|session| engine(session, router))
             }
             work => supervisor(
                 &mut router,
@@ -846,6 +847,9 @@ enum Work {
     },
     Engine {
         payload: Vec<u8>,
+        /// The engine's own admission, if its dispatcher reserved one.
+        #[serde(default)]
+        admission: Option<crate::run::AdmissionTicket>,
     },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -885,6 +889,11 @@ pub struct SupervisorClient {
     closed: bool,
 }
 impl SupervisorClient {
+    /// Close this client's owning pipe. Without an acknowledged durable detach,
+    /// the supervisor stops the run; callers can still receive events and reap it.
+    pub fn close_input(&mut self) {
+        self.writer.take();
+    }
     pub fn event(&mut self, cx: &OperationContext) -> io::Result<Event> {
         loop {
             if self.buffer.len() >= 4 {
@@ -1064,10 +1073,16 @@ pub struct EngineLaunch {
     /// It is the only route a session secret takes to an engine supervisor: it
     /// is never in this environment, argv, or any later child's spawn spec.
     pub handoff: Option<std::sync::Arc<std::os::fd::OwnedFd>>,
+    /// A keyed workspace request's reservation, so an engine that admits its
+    /// own run in another process can bind it (052 §8.11). It travels in the
+    /// supervisor's private config frame and reaches the engine as
+    /// [`EngineSession::admission`]; admission re-checks the durable
+    /// reservation, so the ticket alone binds nothing.
+    pub admission: Option<crate::run::AdmissionTicket>,
 }
 impl std::fmt::Debug for EngineLaunch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("EngineLaunch { payload/cwd/env/handoff: [REDACTED] }")
+        f.write_str("EngineLaunch { payload/cwd/env/handoff/admission: [REDACTED] }")
     }
 }
 /// One detached engine supervisor per run, in its own session. The returned
@@ -1094,6 +1109,7 @@ pub fn start_engine_at(
 ) -> Result<SupervisorClient, RunError> {
     let work = Work::Engine {
         payload: launch_spec.payload.clone(),
+        admission: launch_spec.admission.clone(),
     };
     // Placeholder identity until the engine's `Admitted` names its run.
     let pending = (
@@ -1306,6 +1322,7 @@ impl OwningChannel {
                 }
             }
         }
+        self.detached |= run.workspace_owner_detached()?;
         if eof && !self.detached {
             control.stop.get_or_insert(StopCause::OwnerLost);
         }
@@ -1335,9 +1352,11 @@ impl OwningChannel {
 /// `Run::begin`, then calls `admitted` before its first workload effect.
 pub struct EngineSession {
     payload: Vec<u8>,
+    admission: Option<crate::run::AdmissionTicket>,
     events: std::os::fd::OwnedFd,
     channel: OwningChannel,
     output: Option<OutputCapture>,
+    attachments: Vec<(run::Attachment, OwnerWatch)>,
 }
 impl std::fmt::Debug for EngineSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1349,13 +1368,17 @@ impl std::fmt::Debug for EngineSession {
 impl EngineSession {
     /// Moves the owning pipe and the event pipe off descriptors 0 and 1, so
     /// nothing the engine runs can read a client frame or write an event.
-    fn open(payload: Vec<u8>) -> Result<Self, RunError> {
+    fn open(
+        payload: Vec<u8>,
+        admission: Option<crate::run::AdmissionTicket>,
+    ) -> Result<Self, RunError> {
         let input = private_dup(libc::STDIN_FILENO)?;
         let events = private_dup(libc::STDOUT_FILENO)?;
         null_onto(libc::STDIN_FILENO)?;
         null_onto(libc::STDOUT_FILENO)?;
         Ok(Self {
             payload,
+            admission,
             events,
             channel: OwningChannel {
                 input: std::fs::File::from(input),
@@ -1364,10 +1387,17 @@ impl EngineSession {
                 detached: false,
             },
             output: None,
+            attachments: Vec::new(),
         })
     }
     pub fn payload(&self) -> &[u8] {
         &self.payload
+    }
+    /// The workspace request this engine must admit under, when its dispatcher
+    /// reserved one: pass it to `Run::begin_admitted` (052 §8.11). `None` is an
+    /// ordinary engine admission with no keyed request.
+    pub fn admission(&self) -> Option<&crate::run::AdmissionTicket> {
+        self.admission.as_ref()
     }
     fn emit(&self, event: &Event) {
         emit_to(self.events.as_raw_fd(), event);
@@ -1417,7 +1447,49 @@ impl EngineSession {
         run: &mut Run<'_>,
         routed: &[crate::signal::RoutedSignal],
     ) -> Result<Control, RunError> {
+        // Observe client loss independently of stream reads and backpressure.
+        let mut index = 0;
+        while index < self.attachments.len() {
+            let (attachment, watch) = &mut self.attachments[index];
+            if !run.workspace_attachment_held(attachment)? {
+                self.attachments.remove(index);
+            } else if watch.lost() {
+                run.release_workspace_attachment(attachment)?;
+                self.attachments.remove(index);
+            } else {
+                index += 1;
+            }
+        }
         self.channel.turn(run, routed)
+    }
+    /// Watch an authenticated client's liveness pipe in the existing supervisor.
+    /// EOF releases this attachment on the next control turn, even when its
+    /// terminal process is killed. Only owner loss requests stop. The caller
+    /// must retain the sole write end in that client, independently of data flow.
+    /// Registration borrows the handle, so a failed watch leaves it available
+    /// for explicit release or retry.
+    pub fn watch_attachment(
+        &mut self,
+        run: &Run<'_>,
+        attachment: &run::Attachment,
+        input: &std::fs::File,
+    ) -> Result<(), RunError> {
+        if !run.workspace_attachment_attached(attachment)? {
+            return Err(RunError::refused("this attachment was released"));
+        }
+        if self.attachments.len() > run::SECONDARY_MAX
+            || self
+                .attachments
+                .iter()
+                .any(|(held, _)| held.id() == attachment.id())
+        {
+            return Err(RunError::refused(
+                "this supervisor already watches this attachment or is full",
+            ));
+        }
+        self.attachments
+            .push((attachment.lifetime_handle(), OwnerWatch::start(input)?));
+        Ok(())
     }
     /// Whether the owning client detached: its death no longer stops the run.
     pub fn detached(&self) -> bool {

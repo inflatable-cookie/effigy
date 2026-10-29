@@ -85,8 +85,9 @@ Machine-local state lives in:
 | --- | --- |
 | `.effigy/local/dependency-links.json` | desired links for this consumer |
 | `.cargo/config.toml` | Effigy-managed Cargo patch blocks |
-| `~/.effigy/deps/bun-registrations.json` | Bun registration ownership and consumer references |
-| Bun global link registry and consumer symlinks | ephemeral Bun resolution mechanism |
+| `~/.effigy/deps/bun-registrations.json` | Bun registration ownership while a link is in flight |
+| Bun global link registry | transient; retired by the link that created it |
+| Bun consumer symlinks | what the link is: `node_modules/<package>` -> local package |
 
 Effigy ensures `.effigy/` and an Effigy-created `.cargo/config.toml` are
 ignored. It refuses a tracked Cargo config rather than hiding committed state.
@@ -318,6 +319,14 @@ errors — status and doctor report both paths and versions. Align the library
 peer (or remove the mismatched local copy) so both resolve to one compatible
 version.
 
+A Bun link is the consumer's `node_modules/<package>` symlink plus the ledger
+entry that records the desired state. The machine-wide registration that Bun
+needs to create that symlink is transient: `deps link bun` retires the
+registration it created as soon as the link exists, so a worktree does not leave
+a global registration pointing at a deleted path. A shared or foreign
+registration is never removed; an interrupt retires the registration that link
+created before the signal stops the command.
+
 Unlink removes only consumer symlinks that still target the expected library.
 It unregisters a package only when Effigy created the registration, the target
 still matches, and no other desired consumer remains:
@@ -330,6 +339,18 @@ bun install
 
 The final install rematerializes the consumer's published dependency tree. A
 foreign, shared, stale, or unverifiable registration is retained and reported.
+
+If the consumer checkout is already gone, name it with `--repo`:
+
+```sh
+effigy deps unlink bun ../poodle --repo /path/to/gone-consumer
+```
+
+That retires the claims that checkout recorded, including a nested Bun root such
+as `studio/`: each claim remembers the checkout that wrote it, so recovery
+cannot reach into an independently nested checkout that once sat under the same
+path. A claim written before that evidence existed is reported with the root to
+name instead of being guessed at. Shared consumers stay.
 
 ## Status And Doctor
 
@@ -402,6 +423,7 @@ Key states:
 | library checkout missing | error | restore the checkout or unlink using the recorded path |
 | compatible pre-Effigy Cargo patch | migration | link to adopt it, or unlink to remove it directly |
 | mixed/mismatched Cargo patch or foreign Bun registration | error | resolve ownership manually; Effigy will not overwrite it |
+| global Bun registration points at another path | error | remove the foreign registration, then re-link |
 
 Status, doctor, and `--dry-run` never mutate manager state or lockfiles.
 

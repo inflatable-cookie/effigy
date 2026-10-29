@@ -78,6 +78,7 @@ pub(crate) struct InlineManagedExecRequest<'a> {
     pub command: &'a str,
     /// Container-side marker path and run nonce; `None` records no group.
     pub exec_group: Option<(&'a Path, &'a str)>,
+    pub env_names: &'a [String],
 }
 
 /// An inline workspace's exec workload: Compose exec once the run has
@@ -91,6 +92,7 @@ pub(crate) fn render_inline_managed_exec_command(request: InlineManagedExecReque
         setup_command,
         command,
         exec_group,
+        env_names,
     } = request;
     let cwd = shell_quote(&process_cwd.display().to_string());
     let rewritten = container_exec_command(command, repo_root, process_cwd, container_repo_root);
@@ -100,21 +102,27 @@ pub(crate) fn render_inline_managed_exec_command(request: InlineManagedExecReque
         }
         None => rewritten,
     };
-    let attach = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(
-            policy,
-            [
-                "exec",
-                "-T",
-                policy.primary_service.as_str(),
-                "sh",
-                "-lc",
-                tracked.as_str(),
-            ],
-        ),
+    let mut tail = vec!["exec".into(), "-T".into()];
+    for name in env_names {
+        tail.extend([std::ffi::OsString::from("-e"), name.into()]);
+    }
+    tail.extend(
+        [
+            policy.primary_service.as_str(),
+            "sh",
+            "-lc",
+            tracked.as_str(),
+        ]
+        .map(std::ffi::OsString::from),
     );
+    let args = effigy_containers::compose::normalize_compose_command_args(policy, &tail);
+    let (program, args) = compose_invocation_for_repo(repo_root, policy, &args);
+    let attach = if env_names.is_empty() {
+        render_inline_compose_command(repo_root, policy, &args)
+    } else {
+        let program = resolve_host_cli_program(program);
+        crate::runner::managed_secrets::relay(&program, &args, env_names)
+    };
     let setup_sequence = setup_command
         .map(|setup_command| {
             let rewritten =
@@ -137,7 +145,7 @@ pub(crate) fn render_inline_managed_exec_command(request: InlineManagedExecReque
             format!("{setup} && ")
         })
         .unwrap_or_default();
-    format!("cd {cwd} && {setup_sequence}{attach}")
+    format!("cd {cwd} && {setup_sequence}{{ {attach}\n}}")
 }
 
 fn format_os_args(args: &[std::ffi::OsString]) -> String {

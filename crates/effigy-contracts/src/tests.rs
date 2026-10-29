@@ -1,6 +1,7 @@
 use super::{
     prepare_check_json, resolve_schema_payload, run_prepared_check_json, split_shell_like_args,
-    ContractsConfig, SelectionPayload, SelectionValidation, SELECTION_PAYLOAD_SCHEMA,
+    ContractsConfig, SelectionPayload, SelectionValidation, CONTRACT_BODY_SCHEMA,
+    SELECTION_PAYLOAD_SCHEMA,
 };
 use serde_json::{json, Value};
 use std::path::Path;
@@ -409,6 +410,77 @@ fn invalid_payload_schema_is_reported_as_an_error() {
             .contains("not valid Draft 2020-12 JSON Schema"),
         "{error}"
     );
+    let payload = error
+        .check_json_payload()
+        .expect("contract-body refusal carries check-json identity");
+    assert_eq!(payload["schema"], "effigy.contracts.check-json.v1");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["failures"][0]["schema"], CONTRACT_BODY_SCHEMA);
+}
+
+#[test]
+fn malformed_payload_schema_is_refused_before_fixture_effects() {
+    let repo = tempfile::tempdir().expect("repo");
+    std::fs::write(
+        repo.path().join("broken.json"),
+        json!({ "type": "object", "required": 7 }).to_string(),
+    )
+    .expect("write payload schema");
+    std::fs::write(
+        repo.path().join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(
+        repo.path().join("index.json"),
+        json!({
+            "version": 1,
+            "payload_schemas": { "effigy.command.v1": "broken.json" },
+            "schemas": [{
+                "schema": "effigy.command.v1",
+                "schema_version": 1,
+                "command": "effigy --json doctor --repo <fixture_task_success>",
+                "status": "active"
+            }]
+        })
+        .to_string(),
+    )
+    .expect("write index");
+
+    let error = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        None,
+        &SelectionValidation::Skip,
+        None,
+    )
+    .expect_err("malformed payload schema must fail before commands run");
+
+    assert!(
+        error
+            .to_string()
+            .contains("not valid Draft 2020-12 JSON Schema"),
+        "{error}"
+    );
+    let payload = error
+        .check_json_payload()
+        .expect("contract-body refusal carries check-json identity");
+    assert_eq!(payload["schema"], "effigy.contracts.check-json.v1");
+    assert_eq!(payload["schema_version"], 1);
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["checks"], 1);
+    assert_eq!(payload["failures"].as_array().map(Vec::len), Some(1));
+    assert_eq!(payload["failures"][0]["schema"], CONTRACT_BODY_SCHEMA);
+    assert!(
+        payload["failures"][0]["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("not valid Draft 2020-12 JSON Schema"),
+        "{}",
+        payload["failures"][0]["reason"]
+    );
+    assert!(!repo.path().join(".effigy/tmp/contract-fixtures").exists());
 }
 
 #[test]

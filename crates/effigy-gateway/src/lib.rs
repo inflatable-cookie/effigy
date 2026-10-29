@@ -33,6 +33,7 @@ pub mod dns;
 pub mod endpoint_store;
 pub mod error;
 pub mod identity;
+pub mod linux_operator;
 pub mod listener_handoff;
 pub mod loopback;
 pub mod operator;

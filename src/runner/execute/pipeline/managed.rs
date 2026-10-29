@@ -33,8 +33,8 @@ use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{
-    managed_execution_mode, parse_managed_invocation, render_managed_plan, wrap_command_with_env,
-    ManagedExecutionMode, ManagedInvocation,
+    managed_execution_mode, parse_managed_invocation, render_managed_plan, ManagedExecutionMode,
+    ManagedInvocation,
 };
 use effigy_manifest::ManifestTaskSecretsMode;
 use effigy_manifest::TaskSelection;
@@ -1175,16 +1175,48 @@ fn managed_workloads(
             };
             (command, None, None)
         } else {
-            plain.clear();
-            let wrapped = |command: String| {
-                wrap_with_managed_secret_env(
-                    wrap_command_with_run_token(command, Some(token), repo),
-                    secrets,
-                    repo,
-                )
+            secret.extend(
+                secrets
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.expose().to_owned())),
+            );
+            secret.extend(process.secret_env.clone());
+            let (run, setup, names) = if secret.is_empty() {
+                // No task values need a private delivery. The settle token is
+                // public and retains the existing lightweight wrapper.
+                plain.clear();
+                let wrap = |command| {
+                    effigy_managed::wrap_command_with_env(
+                        command,
+                        &BTreeMap::from([(
+                            effigy_managed::RUN_TOKEN_ENV.to_owned(),
+                            token.to_owned(),
+                        )]),
+                        repo,
+                    )
+                };
+                (wrap(run), setup.map(wrap), Vec::new())
+            } else {
+                let names = plain
+                    .keys()
+                    .chain(secret.keys())
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                plain.insert(
+                    crate::runner::managed_secrets::NAMES.to_owned(),
+                    names.join(" "),
+                );
+                if inline.is_none() {
+                    // `container shell --command` captures output with no input.
+                    plain.insert(
+                        crate::runner::managed_secrets::STDIN_FREE.to_owned(),
+                        "1".to_owned(),
+                    );
+                }
+                (run, setup, names)
             };
-            let run = wrapped(run);
-            let setup = setup.map(wrapped);
             let relative = std::path::Path::new(EXEC_MARKER_DIR).join(format!(
                 "{}+{}",
                 marker_component(&context.preflight.selector.task_name),
@@ -1213,6 +1245,7 @@ fn managed_workloads(
                     setup_command: None,
                     command,
                     exec_group,
+                    env_names: &names,
                 }),
                 None => managed_exec_command(ManagedExecRequest {
                     repo_root: repo,
@@ -1343,24 +1376,6 @@ pub(in crate::runner) fn inline_managed_policy(
     resolution.effective_policy(&selection.catalog.catalog_root)
 }
 
-/// Carry the managed run's settle token into a command that runs on the far
-/// side of the exec surface, where the host environment cannot follow.
-/// Host children inherit the variable from the run itself instead.
-fn wrap_command_with_run_token(
-    command: String,
-    managed_run_token: Option<&str>,
-    repo_root: &std::path::Path,
-) -> String {
-    let Some(token) = managed_run_token else {
-        return command;
-    };
-    effigy_managed::wrap_command_with_env(
-        command,
-        &BTreeMap::from([(effigy_managed::RUN_TOKEN_ENV.to_owned(), token.to_owned())]),
-        repo_root,
-    )
-}
-
 /// One unique token identifying this managed run's settle.
 fn generate_managed_run_token() -> String {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1373,21 +1388,6 @@ fn generate_managed_run_token() -> String {
             .as_millis(),
         COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
-}
-
-fn wrap_with_managed_secret_env(
-    command: String,
-    managed_task_secret_pairs: &[(String, SecretString)],
-    repo_root: &std::path::Path,
-) -> String {
-    if managed_task_secret_pairs.is_empty() {
-        return command;
-    }
-    let env = managed_task_secret_pairs
-        .iter()
-        .map(|(key, value)| (key.clone(), value.expose().to_owned()))
-        .collect::<BTreeMap<String, String>>();
-    wrap_command_with_env(command, &env, repo_root)
 }
 
 /// Resolves the catalog env schema plain env for shell/lifecycle role
@@ -1524,6 +1524,132 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
+
+    #[test]
+    fn managed_placements_keep_task_values_out_of_commands_and_public_plans() {
+        use super::*;
+        for placement in ["host", "inline", "named"] {
+            let fixture =
+                effigy_test_support::Fixture::workspace("managed-delivery-plan-").unwrap();
+            let root = fixture.path().canonicalize().unwrap();
+            let workspace = if placement == "host" {
+                "run_in = \"host\"\n"
+            } else {
+                "workspace = \"app\"\n"
+            };
+            let container = if placement == "inline" {
+                "container = { image = \"alpine\", mount = \"./:/workspace\" }"
+            } else {
+                "container = \"web\""
+            };
+            let manifest = format!(
+                r#"[tasks.dev]
+mode = "tui"
+{workspace}concurrent = [{{ name = "api", run = "printf '%s' \"$DATABASE_URL\"", start = 1 }}]
+[systems]
+default = "dev"
+[systems.dev]
+default_workspace = "app"
+[systems.dev.workspaces.app]
+{container}
+[containers]
+default = "web"
+[containers.web]
+compose_file = "compose.yaml"
+project_name = "private-proof"
+primary_service = "app"
+working_dir = "/workspace"
+"#
+            );
+            fs::write(root.join("effigy.toml"), manifest).unwrap();
+            fs::write(
+                root.join("compose.yaml"),
+                "services:\n  app:\n    image: alpine\n",
+            )
+            .unwrap();
+            let invocation = effigy_cli::TaskInvocation {
+                name: "dev".into(),
+                args: vec![],
+            };
+            let preflight = crate::runner::execute::preflight::build_execution_preflight(
+                &invocation,
+                root.clone(),
+            )
+            .unwrap();
+            let selection = match crate::runner::execute::selection::resolve_task_selection(
+                &invocation,
+                &preflight,
+            )
+            .unwrap()
+            {
+                crate::runner::execute::selection::SelectionResolution::Selected {
+                    selection,
+                    ..
+                } => selection,
+                _ => panic!("expected task selection"),
+            };
+            let binding = resolve_execution_binding_resolution(
+                None,
+                selection.catalog.manifest.systems.as_ref(),
+                selection.catalog.manifest.containers.as_ref(),
+                "dev",
+                selection.task,
+                "secret proof",
+            )
+            .unwrap();
+            let plan = resolve_managed_task_plan(
+                &preflight.selector,
+                selection.catalog,
+                selection.task,
+                &preflight.runtime_args_exec,
+                &preflight.catalogs,
+                &root,
+                &effigy_routing::resolve_task_selection,
+            )
+            .unwrap()
+            .unwrap();
+            let context = ManagedContext {
+                preflight: &preflight,
+                selection: &selection,
+                binding_resolution: &binding,
+                container_handoff: false,
+            };
+            let secret = "plan-proof-task-secret";
+            let workloads = managed_workloads(
+                &context,
+                &plan,
+                &[("DATABASE_URL".into(), SecretString::new(secret.into()))],
+                "run-proof",
+                Some(Path::new("/workspace")),
+            )
+            .unwrap();
+            assert_eq!(workloads.len(), 1);
+            let workload = &workloads[0];
+            assert!(!workload.command.contains(secret));
+            assert!(!workload
+                .setup
+                .as_deref()
+                .unwrap_or_default()
+                .contains(secret));
+            assert!(workload.env.iter().any(|(key, value)| key == "DATABASE_URL" && matches!(value, crate::runner::task_engine::EnvOverride::Secret(value) if value == secret)));
+            if placement != "host" {
+                assert!(workload
+                    .env
+                    .iter()
+                    .any(|(key, _)| key == crate::runner::managed_secrets::NAMES));
+                assert!(
+                    workload.exec_group.is_some(),
+                    "remote process custody must remain registered"
+                );
+            }
+            // Display resolution reads no secret and serializes no private delivery paths.
+            let public = displayed_plan(&context, plan).unwrap();
+            let rendered =
+                render_managed_plan("dev", &root, &root.join("effigy.toml"), public).unwrap();
+            assert!(!rendered.contains(secret));
+            assert!(!rendered.contains("managed-secrets"));
+        }
+    }
 
     #[test]
     fn a_managed_task_honours_its_scratch_opt_out() {

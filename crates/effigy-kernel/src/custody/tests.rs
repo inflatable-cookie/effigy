@@ -71,8 +71,11 @@ impl SettlementAdapter for Strict {
     }
 }
 fn home() -> tempfile::TempDir {
-    // Short: the run's control socket path is bounded (`sun_path`).
-    effigy_test_support::short_tempdir("kfault-").unwrap()
+    // Three characters at most: the fixture path plus a run id and `.sock`
+    // must fit `sun_path`, and an Effigy run scratch root spends most of that
+    // budget before the fixture name. A longer prefix fails the harness with
+    // "cannot hold a ... fixture and its control socket".
+    effigy_test_support::short_tempdir("kf-").unwrap()
 }
 fn executable_path() -> PathBuf {
     crate::fixture::custody_fixture()
@@ -1239,5 +1242,22 @@ fn exit_of(pid: u32) -> i32 {
         }
         assert!(Instant::now() < end, "workload {pid} did not exit");
         std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn redaction_covers_multiline_pty_newlines_without_exposing_split_prefixes() {
+    let secret = b"pty-private-first\npty-private-last\n".to_vec();
+    for input in [
+        secret.clone(),
+        b"pty-private-first\r\npty-private-last\r\n".to_vec(),
+    ] {
+        let mut redactor = Redactor::new(vec![secret.clone()]);
+        let mut captured = Vec::new();
+        for byte in input {
+            captured.extend(redactor.push(&[byte], false));
+        }
+        captured.extend(redactor.push(&[], true));
+        assert_eq!(captured, b"[REDACTED]");
     }
 }

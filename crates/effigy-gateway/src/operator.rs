@@ -190,6 +190,10 @@ pub struct Status {
     /// Build identity of the running daemon, from its own version record.
     pub binary_version: Option<String>,
     pub reason: Option<String>,
+    /// Linux launch route: the login unit and the low-port capability. Omitted
+    /// on a platform with its own adapter, and absent facts are never guessed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<crate::linux_operator::LaunchStatus>,
 }
 impl Status {
     fn simple(status: &'static str, reason: Option<String>) -> Self {
@@ -200,6 +204,7 @@ impl Status {
             control_socket: None,
             binary_version: None,
             reason,
+            launcher: None,
         }
     }
 }
@@ -248,6 +253,23 @@ fn legacy_status(config: &GatewayConfig) -> io::Result<Status> {
 }
 /// Pure, bounded observation: no repair, privilege request or exclusive gate.
 pub fn status(config: &GatewayConfig) -> io::Result<Status> {
+    let mut result = observed_status(config)?;
+    result.launcher = operator_home(config)
+        .ok()
+        .and_then(crate::linux_operator::current);
+    Ok(result)
+}
+/// The operator account home, which owns the Linux launch unit and is the
+/// `$HOME` `gateway setup` wrote it under. A private gateway is a disposable
+/// instance under its own state root: it has no machine unit, and its state
+/// path is not an operator home.
+fn operator_home(config: &GatewayConfig) -> io::Result<&Path> {
+    if config.private_state_root().is_some() {
+        return Err(error("a private gateway has no operator launch unit"));
+    }
+    home(config)
+}
+fn observed_status(config: &GatewayConfig) -> io::Result<Status> {
     let op = context(Duration::from_secs(3), EffectClass::Observe);
     loop {
         match status_once(config, &op) {
@@ -288,6 +310,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
                 control_socket: Some(run::control_socket_path(&root, &owner(), completion.run)),
                 binary_version: None,
                 reason: completion_reason(&completion.workload, &completion.stderr_tail),
+                launcher: None,
             })),
             None => Ok(None),
         };
@@ -306,6 +329,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
             .ok()
             .flatten(),
         reason: None,
+        launcher: None,
     };
     match state {
         RunStatus::Closed {
@@ -528,6 +552,9 @@ pub fn up_with_executable_within(
 ) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
+    // This shared lifecycle writes no event: the explicit operator command that
+    // asked for it records the action, so a `setup` step or a managed task start
+    // never appears here as a `gateway up command` (effigy#450 review).
     let before = status(config)?;
     if before.ready {
         note_reused_gateway_build(&before);
@@ -688,6 +715,9 @@ fn note_reused_gateway_build(status: &Status) {
 pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     require_operator()?;
     require_fixture_isolation(config)?;
+    // As `up`: no event here. The command boundary records the stop request, so
+    // `gateway setup --remove` and a managed start are not mistaken for a
+    // `gateway down command`.
     let current = status(config)?;
     if current.status == "setup_required" {
         return Err(error(
@@ -696,9 +726,6 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     }
     if current.status == "stopped" {
         return Ok(current);
-    }
-    if let Some(directory) = config.pid_file_path.parent() {
-        run::record_gateway_stop(directory, "gateway down command");
     }
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
@@ -822,6 +849,37 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    /// A private gateway's state path is not an operator home, so it must never
+    /// acquire the machine launch unit. The operator layout still derives the
+    /// account home from its gateway directory.
+    #[test]
+    fn only_an_operator_gateway_has_a_launch_unit_home() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("private");
+        std::fs::create_dir_all(&state).unwrap();
+        let private = GatewayConfig::private(state.clone());
+        let error = operator_home(&private).unwrap_err();
+        assert!(error.to_string().contains("private gateway"), "{error}");
+
+        let home = tempfile::tempdir().unwrap();
+        let operator = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        assert_eq!(operator_home(&operator).unwrap(), home.path());
+    }
+
+    /// Status of a private gateway omits the launcher block entirely: there is
+    /// no machine unit to observe, and its state path must not be read as one.
+    #[test]
+    fn private_status_never_reports_an_operator_launcher() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("private");
+        std::fs::create_dir_all(&state).unwrap();
+        let config = GatewayConfig::private(state);
+        let status = status(&config).unwrap();
+        assert!(status.launcher.is_none(), "{status:?}");
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(!json.contains("launcher"), "{json}");
+    }
+
     /// A finished daemon is described in words: what ended it, the phase it
     /// was in and the observed tail, and never a `Debug` rendering of the
     /// outcome.
@@ -900,6 +958,25 @@ mod tests {
         assert!(down(&config).is_err());
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), before);
     }
+
+    /// The shared operator lifecycle writes no event of its own: the explicit
+    /// command that asked for the action records it, so an internal caller — a
+    /// `setup` step, a managed task start — is never recorded as a gateway
+    /// command (effigy#450 review).
+    #[test]
+    fn shared_operator_lifecycle_records_no_event_of_its_own() {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        let directory = config.pid_file_path.parent().unwrap();
+        std::fs::create_dir_all(directory).unwrap();
+        let _ = up(&config);
+        let _ = down(&config);
+        assert!(
+            !directory.join("gateway.stderr.log").exists(),
+            "the shared lifecycle must not write an operator event"
+        );
+    }
+
     #[test]
     fn completion_does_not_hide_a_new_owner_before_admission() {
         let home = tempfile::tempdir().unwrap();
@@ -940,7 +1017,8 @@ mod tests {
         );
     }
     /// A stop is never silent: the gateway's log names the pid, argv and cwd of
-    /// the process that asked for it (papercut 06d1cd9e).
+    /// the process that asked for it (papercut 06d1cd9e), and the bounded caller
+    /// provenance that tells two hosts or agents apart (effigy#450).
     #[test]
     fn a_stop_request_is_recorded_in_the_gateway_log_with_its_caller() {
         let home = tempfile::tempdir().unwrap();
@@ -959,6 +1037,8 @@ mod tests {
         )
         .expect("the stop record is written beside the gateway records");
         let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(record["event"], "gateway_stop");
+        assert_eq!(record["action"], "down");
         assert_eq!(record["pid"], std::process::id());
         assert_eq!(record["cause"], "gateway down command");
         assert!(
@@ -971,6 +1051,28 @@ mod tests {
                 .is_some_and(|args| !args.is_empty()),
             "{log}"
         );
+        let caller = &record["caller"];
+        assert_eq!(caller["pid"], std::process::id());
+        assert!(caller["start"].is_string(), "{log}");
+        assert!(caller["markers"].is_object(), "{log}");
+        assert!(caller["unknown"].is_array(), "{log}");
+        // The chain reaches the parent this harness was started from, with the
+        // parent's own start identity so a reused pid stays distinguishable.
+        let parents = caller["parents"].as_array().expect("a caller chain");
+        assert!(
+            parents.iter().all(|link| link["start"].is_string()),
+            "{log}"
+        );
+        let parent = std::os::unix::process::parent_id();
+        let first = parents.first().and_then(|link| link["pid"].as_u64());
+        let parent_unreadable = caller["unknown"].as_array().is_some_and(|reasons| {
+            reasons.iter().any(|reason| {
+                reason
+                    .as_str()
+                    .is_some_and(|reason| reason.contains(&format!("parent {parent}")))
+            })
+        });
+        assert!(first == Some(parent as u64) || parent_unreadable, "{log}");
     }
 
     #[test]

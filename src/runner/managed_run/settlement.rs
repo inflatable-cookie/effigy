@@ -75,7 +75,7 @@ pub(in crate::runner) fn observe(effect: &Effect, _cx: &CleanupContext) -> Obser
             Ok(Observed::Absent(proof)) => Observed::Absent(proof),
             Ok(Observed::Unknown(reason)) | Err(reason) => Observed::Unknown(reason),
         },
-        GATEWAY => verified_own(effect),
+        GATEWAY | crate::runner::managed_secrets::EFFECT => verified_own(effect),
         other => unknown(format!("unknown managed effect `{other}`")),
     }
 }
@@ -86,6 +86,8 @@ pub(in crate::runner) fn release(effect: &Effect, cx: &CleanupContext) -> Observ
             payload::<EnvironmentEffect>(effect).and_then(|env| release_environment(&env))
         }
         EXEC_GROUP => payload::<ExecGroupEffect>(effect).and_then(|group| end_exec_group(&group)),
+        crate::runner::managed_secrets::EFFECT => crate::runner::managed_secrets::release(effect)
+            .map_err(|_| UnknownReason::Inconsistent("managed secret cleanup failed".into())),
         other => Err(UnknownReason::Inconsistent(format!(
             "managed effect `{other}` has no release"
         ))),

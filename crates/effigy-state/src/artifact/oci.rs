@@ -281,7 +281,23 @@ pub fn parse_oras_descriptor(
     if let Some(size) = value.get("size").and_then(Value::as_u64) {
         descriptor = descriptor.with_size(size);
     }
-    Ok(descriptor)
+    bind_pinned_digest(reference, descriptor)
+}
+
+pub(crate) fn bind_pinned_digest(
+    reference: &OciArtifactRef,
+    descriptor: OciArtifactDescriptor,
+) -> Result<OciArtifactDescriptor, String> {
+    let Some(pinned) = digest_from_ref(reference.reference()) else {
+        return Ok(descriptor);
+    };
+    match descriptor.digest.as_deref() {
+        Some(observed) if observed != pinned => Err(format!(
+            "OCI digest `{observed}` does not match digest-pinned reference `{pinned}`"
+        )),
+        Some(_) => Ok(descriptor),
+        None => Ok(descriptor.with_digest(pinned)),
+    }
 }
 
 pub fn parse_oras_pull_files(pulled_root: &Path, stdout: &[u8]) -> Option<Vec<PathBuf>> {

@@ -6,6 +6,7 @@
 
 mod bun;
 mod bun_apply;
+mod bun_owner;
 mod bun_pin;
 mod bun_plan;
 mod bun_unlink;
@@ -24,7 +25,10 @@ pub use bun::{
     inspect_bun_peer_resolutions, inventory_bun_consumer, inventory_bun_library,
     parse_bun_dependency_tree,
 };
-pub use bun_apply::{apply_bun_link_plan, execute_bun_link};
+pub use bun_apply::{
+    apply_bun_link_plan, execute_bun_link, execute_owned_bun_link, retire_bun_registration_claims,
+    retire_owned_bun_registrations,
+};
 pub use bun_pin::{
     apply_bun_pin_plan, plan_bun_pin, plan_bun_unpin, BunPinImmutableFileEvidence, BunPinOperation,
     BunPinOperationReport, BunPinOutcome, BunPinPackageAction, BunPinPackagePlan, BunPinPlan,
@@ -51,13 +55,13 @@ pub use model::{
     BunLinkRollback, BunPackageInventory, BunPackagePlan, BunPathObservation, BunPeerDiagnostic,
     BunPeerResolutionStatus, BunPhysicalPrecondition, BunProcessAction, BunProcessIntent,
     BunReferenceRelease, BunRegistration, BunRegistrationDisposition, BunRegistrationIndex,
-    BunStateFileSnapshot, BunSymlinkAction, BunSymlinkIntent, BunUnlinkOperationReport,
-    BunUnlinkOutcome, BunUnlinkRollback, CargoDependencyPlan, CargoExpectedResolution,
-    CargoLibraryInventory, CargoLinkOperationReport, CargoLinkOutcome, CargoLinkOwnership,
-    CargoLinkRollback, CargoLockfileEvidence, CargoLockfileState, CargoPackageInventory,
-    CargoPackageMatch, CargoUnlinkOperationReport, CargoUnlinkOutcome, CargoVersionTransition,
-    CargoWorkspaceInventory, CommittedLocalLink, CommittedLocalMechanism, CommittedSource,
-    CommittedSourceKind, ConsumerRoot, DependencyDepth, DependencyHealthSeverity,
+    BunRegistrationRetirement, BunStateFileSnapshot, BunSymlinkAction, BunSymlinkIntent,
+    BunUnlinkOperationReport, BunUnlinkOutcome, BunUnlinkRollback, CargoDependencyPlan,
+    CargoExpectedResolution, CargoLibraryInventory, CargoLinkOperationReport, CargoLinkOutcome,
+    CargoLinkOwnership, CargoLinkRollback, CargoLockfileEvidence, CargoLockfileState,
+    CargoPackageInventory, CargoPackageMatch, CargoUnlinkOperationReport, CargoUnlinkOutcome,
+    CargoVersionTransition, CargoWorkspaceInventory, CommittedLocalLink, CommittedLocalMechanism,
+    CommittedSource, CommittedSourceKind, ConsumerRoot, DependencyDepth, DependencyHealthSeverity,
     DependencyLinkKey, DependencyLinkPlan, DependencyLinkReport, DependencyPackage,
     DependencyStatusReport, DependencyVerification, DesiredDependencyLink, DriftReason,
     LinkMechanism, MatchDisposition, ObservedDependencyLink, ObservedState, PackageManager,

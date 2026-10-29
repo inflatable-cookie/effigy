@@ -1,8 +1,8 @@
 # 067 - Catalog Services Reference
 
 Use this guide when you want to know exactly which shipped service fragments
-Effigy can compose into a `[systems.<name>]` or `[containers.<name>]`
-manifest, what each one accepts, and what it exposes by default.
+Effigy can compose into a `[containers.<name>]` manifest, what each one
+accepts, and what it exposes by default.
 
 These fragments are what make `services.<svc> catalog = "<name>"` work. Each
 one is a small pinned compose fragment with a narrow parameter surface and
@@ -25,15 +25,10 @@ database = "my_app"
 catalog = "redis"
 ```
 
-Or under a system:
-
-```toml
-[systems.dev.services.db]
-catalog = "postgres"
-
-[systems.dev.services.cache]
-catalog = "redis"
-```
+Systems don't declare services: a `[systems.<name>.workspaces.<ws>]` binds to
+a container with `container = "<env>"`, and the catalog services live under
+that `[containers.<env>.services.*]`. (`ManifestSystemConfig` rejects a
+`services` key; only `ManifestContainerConfig` owns one.)
 
 Inspect the active repo bundle source directly:
 

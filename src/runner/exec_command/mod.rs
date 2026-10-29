@@ -39,7 +39,8 @@ pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, copy_file_into_service_bounded,
     probe_container_capabilities, run_command_capture_until, run_compose_exec,
     run_compose_exec_plan_with_deadline, run_compose_exec_plan_with_options,
-    run_verified_compose_exec_plan, runtime_backend_is_running_bounded, verified_target_exec_args,
+    run_managed_compose_exec_plan, run_verified_compose_exec_plan,
+    runtime_backend_is_running_bounded, verified_target_exec_args,
 };
 #[cfg(not(test))]
 pub(in crate::runner) use transport::{capture_command_until, CommandCaptureError};

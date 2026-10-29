@@ -121,6 +121,9 @@ task.
 
 Operational notes:
 - suite `env` / `env_file` resolve before setup, run, and teardown
+- a catalog with a named-container runtime target runs setup, the suite
+  command, and teardown inside that container as one lifecycle exec; nested
+  effigy re-entries keep their own routing
 - `teardown_policy` defaults to `on-success`
 - `teardown_policy = "always"` guarantees cleanup after setup failure or runner failure
 - use `effigy test managed -- --package my-crate --test my_test` when forwarding raw runner args

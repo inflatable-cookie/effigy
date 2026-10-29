@@ -53,8 +53,11 @@ pub(crate) fn safe_oci_pull_dir_name(reference: &str) -> String {
 }
 
 pub(crate) fn digest_from_ref(reference: &str) -> Option<String> {
-    let (_, digest) = reference.split_once('@')?;
-    Some(digest.to_owned())
+    let digest = reference.rsplit_once("@sha256:")?.1;
+    if digest.is_empty() || digest.contains('/') || digest.contains('@') {
+        return None;
+    }
+    Some(format!("sha256:{digest}"))
 }
 
 pub(crate) fn redact_oci_reference(reference: &str) -> String {

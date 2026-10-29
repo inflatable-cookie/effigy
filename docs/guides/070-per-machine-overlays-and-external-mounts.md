@@ -13,7 +13,9 @@ The primitives:
 2. **`[manifest].extend = [...]`** — append onto array-valued fields
    from an imported fragment rather than replacing them.
 3. **`optional = true` include directive** — silently skip an include
-   when its file is missing.
+   when its file is missing. Accepted through v0.15 with one deprecation
+   notice; omit the missing include or rely on auto-discovered
+   `effigy.local.toml`. Removed in v0.16.
 4. **`domains = [...]` sugar on `[containers.<name>.dns]`** — a flat
    list of public-facing names that expand into routes inheriting from
    `domain_defaults`.
@@ -92,8 +94,10 @@ domains = [
 domain_defaults = { tls = true, service = "<env-name>-tunnel" }
 
 # Concurrent process that brings the integration up alongside the
-# main dev task.
-[tasks.dev.profiles.default.concurrent.<env-name>-tunnel]
+# main dev task. `concurrent` is an array, so each entry is an array item
+# (named via `name`); a `[tasks...concurrent.<name>]` subtable does not parse.
+[[tasks.dev.profiles.default.concurrent]]
+name = "<env-name>-tunnel"
 run = """
 autossh -M 0 -N \
   -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
@@ -256,11 +260,39 @@ entries on those paths.
 `optional = true` on includes (not used in the scaffold above, but
 worth knowing) lets a layer reference further fragments that may not
 exist on every machine. Pair it with auto-discovery to chain
-overlays.
+overlays. Through v0.15 the directive still loads; write a path-only
+include for a file that always exists, or let auto-discovery pick up
+`effigy.local.toml`. The form is removed in v0.16.
 
 `external = true` on a mount makes the `host` value's interpolation
 resolve to an absolute path outside the repo without tripping the
 default repo-relative containment check.
+
+## v0.15 compatibility window
+
+Manual `[manifest].include` `optional` and `override` still parse
+through v0.15 with the same effective values. Each form records one
+deprecation notice naming the replacement and that the form is
+removed in v0.16:
+
+- `optional` — omit a missing include, or rely on auto-discovered
+  `effigy.local.toml`. The notice fires when the key is present,
+  including `optional = false`.
+- `override` — use auto-discovered `effigy.local.toml` for
+  machine-local replacement, or `[manifest].extend` for arrays.
+
+Public kebab-case aliases at their real positions still load:
+`[contracts].schema-index` / `selection-contract` as `schema_index` /
+`selection_contract`, and `[sources.<name>].rev-file` as `rev_file`.
+A task named `schema-index` is not an alias. Contract 041's
+`docs_policy.graph.kinds.<kind>.default-currentness` is the primary
+kebab spelling and is not in this window. Canonical snake_case and
+path-only includes print no notice. Combined legacy forms still print
+one notice per manifest. `--json` carries that notice in the command
+envelope `warnings` array and never on stdout. Auto-discovered
+`effigy.local.toml` is not a manual optional/override and stays
+silent. User-global program preference aliases (`colima-nerdctl`,
+`docker-compose`) are out of this window.
 
 ## CI And Determinism
 
@@ -281,8 +313,8 @@ file-source attribution. After enabling an overlay, expect to see:
 
 - `containers.web.dns.routes` containing the env's domains, sourced
   from `envs/<env-name>/effigy.env.toml`.
-- `tasks.dev.profiles.default.concurrent.<env-name>-tunnel` sourced
-  from the same file.
+- the `<env-name>-tunnel` entry under
+  `tasks.dev.profiles.default.concurrent`, sourced from the same file.
 - A non-empty `include_graph` whose terminal edge is the local
   overlay.
 

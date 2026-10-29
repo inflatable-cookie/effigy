@@ -7,6 +7,59 @@ use std::rc::Rc;
 const ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const NONCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+/// The names the caller's session sources have in the exec client's own
+/// environment, and the values they carry there. A relay forwards the names it
+/// is given and nothing else, so none of these may cross into the guest
+/// environment or its argv (contract 032; effigy#338; effigy#445).
+const SESSION_SOURCE_NAMES: [&str; 5] = [
+    "EFFIGY_SECRET_PASSPHRASE",
+    "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
+    "EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS",
+    "EFFIGY_INTERNAL_SECRET_GRANT",
+    "EFFIGY_TEST_SECRETS_PASSPHRASE",
+];
+const SESSION_SOURCE_VALUES: [&str; 3] = [
+    "relay-must-not-forward-this",
+    "retired-passphrase",
+    "test-passphrase",
+];
+
+/// What the guest process actually received: its whole environment, minus the
+/// base variables the model and the guest shell itself provide (the model's
+/// `PATH`/`MODEL_PRESERVED` stand in for the runtime's base environment, and a
+/// POSIX shell exports `PWD`/`SHLVL`/`OLDPWD`/`_` of its own), plus its argv.
+/// Every other name the guest sees is a name a relay delivered, so the caller
+/// can assert the delivered set exactly.
+const MODEL_BASE_ENV: [&str; 6] = [
+    "PATH=",
+    "MODEL_PRESERVED=",
+    "PWD=",
+    "SHLVL=",
+    "OLDPWD=",
+    "_=",
+];
+
+fn delivered_guest_surface(output: &str) -> (Vec<String>, Vec<String>) {
+    let mut env = Vec::new();
+    let mut argv = Vec::new();
+    let mut inside = false;
+    for line in output.lines() {
+        match line {
+            "env-begin" => inside = true,
+            "env-end" => inside = false,
+            line if line.starts_with("argv:") => argv.push(line["argv:".len()..].to_owned()),
+            line if inside => {
+                if !MODEL_BASE_ENV.iter().any(|base| line.starts_with(base)) {
+                    env.push(line.to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+    env.sort();
+    (env, argv)
+}
+
 fn operation(budget: Duration) -> OperationContext {
     OperationContext::new(
         Deadline::At(Instant::now() + budget),
@@ -536,7 +589,17 @@ fn launch_refuses_multi_line_values_unportable_names_and_recovery_adapters() {
         .is_err());
 }
 
-/// The relays run as written: a fake CLI echoes what it received.
+/// The relays run as written, against fakes that model the environment
+/// boundaries on the way to the guest: `ssh` carries no client environment into
+/// the VM, `sudo` resets the environment and preserves only the names it is
+/// told to, and the runtime exec sees exactly what those two left it.
+///
+/// The guest is observed whole - its complete environment and its argv - with
+/// the caller's session sources sitting in the relay's own environment as they
+/// do in the real exec client. The main proof asserts none of them crossed; the
+/// paired control forwards a session-access *name* and asserts the harness
+/// sees it, so the absence assertions are a property of the relay rather than of
+/// what the fake happens to print (review 5686048338).
 #[test]
 fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
     use std::io::Write;
@@ -544,6 +607,8 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
+    let model_path = format!("{}:/usr/bin:/bin", bin.display());
+    let preserved = dir.path().join("preserved");
     let write = |name: &str, body: &str| {
         let path = bin.join(name);
         std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
@@ -551,17 +616,42 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
     };
-    // docker: shows the env file it was given, its argv, then its stdin.
+    // The container CLI shows the env file it was given, its argv, then stdin.
     let docker = write("docker", "cat /dev/fd/4; printf 'argv:%s\\n' \"$*\"; cat");
-    // colima ssh --profile P -- <cmd...>: runs the VM command locally.
-    let colima = write("colima", "shift 4; exec \"$@\"");
+    // `colima ssh --profile P -- <cmd...>`: an ssh session carries no client
+    // environment into the VM, so the VM command starts from a base only.
+    let colima = write(
+        "colima",
+        &format!("shift 4\nexec env -i PATH='{model_path}' \"$@\""),
+    );
+    // `sudo --preserve-env=NAMES nerdctl ...`: sudo resets the environment and
+    // keeps only the named variables, which it finds in its own environment.
     write(
         "sudo",
-        "case $1 in --preserve-env=*) printf 'keep:%s\\n' \"${1#*=}\"; shift ;; esac; exec \"$@\"",
+        &format!(
+            r#"keep=
+case $1 in --preserve-env=*) keep=${{1#*=}}; shift ;; esac
+printf 'preserve:%s\n' "$keep"
+: > '{preserved}'
+for name in $(printf '%s' "$keep" | tr ',' ' '); do
+    case $name in ''|*[!A-Za-z0-9_]*) exit 98 ;; esac
+    eval "value=\"\$$name\""
+    printf '%s=%s\n' "$name" "$value" >> '{preserved}'
+done
+exec env -i PATH='{model_path}' MODEL_PRESERVED='{preserved}' sh -c '
+while IFS= read -r pair; do
+    export "$pair"
+done < "$MODEL_PRESERVED"
+exec "$@"
+' sh "$@"
+"#,
+            preserved = preserved.display(),
+        ),
     );
+    // The guest runtime exec reports its whole environment and its argv.
     write(
         "nerdctl",
-        "printf 'A=%s B=%s\\n' \"$A\" \"$B\"; printf 'argv:%s\\n' \"$*\"; cat",
+        "printf 'argv:%s\\n' \"$*\"; printf 'env-begin\\n'; env; printf 'env-end\\n'; cat",
     );
     let run = |argv: Vec<String>, stdin: &[u8]| {
         use std::os::unix::process::CommandExt;
@@ -570,9 +660,17 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
             .args(&argv[1..])
             .process_group(0)
             .env_clear()
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("PATH", &model_path)
             .env("EFFIGY_REMOTE_V0", "one")
             .env("EFFIGY_REMOTE_V1", "two words = more")
+            // The caller's session sources sit in the relay's environment, as
+            // they do in the real exec client. A relay forwards named values
+            // only, so none of these may reach the guest or an argument.
+            .env("EFFIGY_SECRET_PASSPHRASE", "relay-must-not-forward-this")
+            .env("EFFIGY_INTERNAL_SECRET_PASSPHRASE", "retired-passphrase")
+            .env("EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS", "1")
+            .env("EFFIGY_INTERNAL_SECRET_GRANT", "1")
+            .env("EFFIGY_TEST_SECRETS_PASSPHRASE", "test-passphrase")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -583,49 +681,109 @@ fn host_relays_deliver_values_by_name_and_pass_stdin_through() {
         assert!(output.status.success(), "{output:?}");
         String::from_utf8(output.stdout).unwrap()
     };
-    let docker_out = run(
-        vec![
+    let docker_command = |names: [&str; 2]| {
+        let mut argv: Vec<String> = vec![
             "/bin/sh".into(),
             "-c".into(),
             DOCKER_RELAY.into(),
             "effigy-remote".into(),
             "2".into(),
-            "A".into(),
-            "B".into(),
-            docker.display().to_string(),
-            "exec".into(),
-            "-i".into(),
-        ],
-        b"typed input\n",
-    );
+        ];
+        argv.extend(names.map(str::to_owned));
+        argv.push(docker.display().to_string());
+        argv.extend(["exec".to_owned(), "-i".to_owned()]);
+        argv
+    };
+    let colima_command = |names: [&str; 2], mode: &str| {
+        let mut argv: Vec<String> = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            COLIMA_RELAY.into(),
+            "effigy-remote".into(),
+            "2".into(),
+        ];
+        argv.extend(names.map(str::to_owned));
+        argv.push(colima.display().to_string());
+        argv.extend([
+            "effigy".to_owned(),
+            mode.to_owned(),
+            COLIMA_VM.to_owned(),
+            "exec".to_owned(),
+            "-e".to_owned(),
+            "A".to_owned(),
+        ]);
+        argv
+    };
+    let assert_no_session_source = |surface: &str, output: &str| {
+        for forbidden in SESSION_SOURCE_NAMES
+            .iter()
+            .chain(SESSION_SOURCE_VALUES.iter())
+        {
+            assert!(
+                !output.contains(forbidden),
+                "{surface}: `{forbidden}` crossed a relay into the guest: {output}"
+            );
+        }
+        // Stronger than a value check: no Effigy-private name reaches the
+        // guest at all.
+        assert!(
+            !output
+                .lines()
+                .any(|line| line.starts_with("EFFIGY_") || line.contains(" EFFIGY_")),
+            "{surface}: an Effigy-private name reached the guest: {output}"
+        );
+    };
+
+    // docker: the env file the guest is created with is the whole delivered
+    // environment, and it carries the two declared values only.
+    let docker_out = run(docker_command(["A", "B"]), b"typed input\n");
     assert_eq!(
         docker_out,
         "A=one\nB=two words = more\nargv:exec -i\ntyped input\n"
     );
+    assert_no_session_source("docker", &docker_out);
+
     for (mode, tail) in [("none", ""), ("stdin", "typed input\n")] {
+        let out = run(colima_command(["A", "B"], mode), b"typed input\n");
+        let (env, argv) = delivered_guest_surface(&out);
+        // The guest process's complete environment is exactly the two
+        // declared values, and its argv names them.
+        assert_eq!(env, ["A=one", "B=two words = more"], "{mode}: {out}");
+        assert_eq!(argv, ["exec -e A"], "{mode}: {out}");
+        assert!(out.contains("preserve:A,B\n"), "{mode}: {out}");
+        assert!(out.ends_with(tail), "{mode}: {out}");
+        assert_no_session_source(mode, &out);
+    }
+
+    // The control: give the same relay a session-access name to forward and
+    // the harness observes it in the guest's environment and argv. Without
+    // this, the absence assertions above would prove nothing about what the
+    // fake prints.
+    let docker_control = run(
+        docker_command(["A", "EFFIGY_INTERNAL_SECRET_GRANT"]),
+        b"typed input\n",
+    );
+    assert!(
+        docker_control.contains("EFFIGY_INTERNAL_SECRET_GRANT=two words = more\n"),
+        "docker control: a forwarded access name was not observed: {docker_control}"
+    );
+    for (mode, _) in [("none", ""), ("stdin", "typed input\n")] {
         let out = run(
-            vec![
-                "/bin/sh".into(),
-                "-c".into(),
-                COLIMA_RELAY.into(),
-                "effigy-remote".into(),
-                "2".into(),
-                "A".into(),
-                "B".into(),
-                colima.display().to_string(),
-                "effigy".into(),
-                mode.into(),
-                COLIMA_VM.into(),
-                "exec".into(),
-                "-e".into(),
-                "A".into(),
-            ],
+            colima_command(["A", "EFFIGY_INTERNAL_SECRET_GRANT"], mode),
             b"typed input\n",
         );
-        assert_eq!(
-            out,
-            format!("keep:A,B\nA=one B=two words = more\nargv:exec -e A\n{tail}"),
-            "{mode}"
+        let (env, argv) = delivered_guest_surface(&out);
+        assert!(
+            env.iter()
+                .any(|pair| pair.starts_with("EFFIGY_INTERNAL_SECRET_GRANT=")),
+            "colima control ({mode}): a forwarded access name was not observed: {out}"
+        );
+        assert_eq!(argv, ["exec -e A".to_owned()], "{mode}: {out}");
+        // ... and the passphrase value itself still never crosses, even when
+        // an access name does: the relay forwards only the names it is given.
+        assert!(
+            !out.contains("relay-must-not-forward-this"),
+            "colima control ({mode}): {out}"
         );
     }
 }

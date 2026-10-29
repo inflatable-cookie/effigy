@@ -580,7 +580,14 @@ impl Owner {
             let (cols, rows) = terminal.unwrap_or((120, 40));
             command = format!("stty cols {cols} rows {rows} >/dev/null 2>&1; {command}");
         }
-        let env = workload_environment(&workload.spec).map_err(SpawnError::Failed)?;
+        let mut env = workload_environment(&workload.spec).map_err(SpawnError::Failed)?;
+        let pending_secret = crate::runner::managed_secrets::prepare(
+            run,
+            &workload.spec.env,
+            &mut env,
+            workload.spec.pty,
+        )
+        .map_err(SpawnError::Failed)?;
         let spec = ProcessSpec {
             argv: vec!["/bin/sh".into(), "-c".into(), command.into()],
             cwd: workload.spec.cwd.clone(),
@@ -594,9 +601,31 @@ impl Owner {
             },
             label: workload.spec.name.clone(),
         };
-        let process = run.spawn(spec, false).map_err(|error| {
+        let mut process = run.spawn(spec, false).map_err(|error| {
             SpawnError::Failed(format!("`{}` did not start: {error}", workload.spec.name))
         })?;
+        if let Some(file) = pending_secret {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while file.try_exists().map_err(|_| {
+                SpawnError::Failed("cannot observe managed secret acknowledgement".into())
+            })? {
+                if let Observed::Verified(exit, _) = process.poll() {
+                    let _ = run.complete(&process, exit);
+                    return Err(SpawnError::Failed(
+                        "managed exec exited before reading its environment".into(),
+                    ));
+                }
+                if let Some(cause) = pending_stop(run, self.watch.as_ref()) {
+                    return Err(SpawnError::Stopped(cause));
+                }
+                if Instant::now() >= deadline {
+                    return Err(SpawnError::Failed(
+                        "managed exec did not read its environment within 60s".into(),
+                    ));
+                }
+                std::thread::sleep(TURN);
+            }
+        }
         let sequence = sequence_of(&process);
         println!(
             "[managed] started `{}` (pid {})",
@@ -623,7 +652,15 @@ impl Owner {
         setup: &str,
     ) -> Result<(), SpawnError> {
         let name = self.workloads[index].spec.name.clone();
-        let env = workload_environment(&self.workloads[index].spec).map_err(SpawnError::Failed)?;
+        let mut env =
+            workload_environment(&self.workloads[index].spec).map_err(SpawnError::Failed)?;
+        let pending_secret = crate::runner::managed_secrets::prepare(
+            run,
+            &self.workloads[index].spec.env,
+            &mut env,
+            true,
+        )
+        .map_err(SpawnError::Failed)?;
         let spec = ProcessSpec {
             argv: vec!["/bin/sh".into(), "-c".into(), setup.into()],
             cwd: self.workloads[index].spec.cwd.clone(),
@@ -636,7 +673,15 @@ impl Owner {
         let mut process = run.spawn(spec, false).map_err(|error| {
             SpawnError::Failed(format!("`{name}` setup did not start: {error}"))
         })?;
+        let delivery_deadline = Instant::now() + Duration::from_secs(60);
         loop {
+            if Instant::now() >= delivery_deadline
+                && pending_secret.as_ref().is_some_and(|file| file.exists())
+            {
+                return Err(SpawnError::Failed(
+                    "managed setup did not read its environment within 60s".into(),
+                ));
+            }
             run.verify_admission()
                 .map_err(|error| SpawnError::Failed(error.to_string()))?;
             if let Observed::Verified(exit, _) = process.poll() {

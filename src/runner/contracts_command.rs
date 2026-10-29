@@ -60,15 +60,23 @@ fn run_check_json(
         None => SelectionValidation::Skip,
     };
 
-    let prepared = prepare_check_json(
+    let prepared = match prepare_check_json(
         repo_root,
         &config,
         index_override,
         changed_only_base,
         &selection_validation,
         contract_override,
-    )
-    .map_err(map_contracts_error)?;
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            if let Some(payload) = error.check_json_payload() {
+                let text = error.to_string();
+                return render_command_result(output_json, false, payload, text);
+            }
+            return Err(map_contracts_error(error));
+        }
+    };
 
     if output_json {
         let report =
@@ -106,5 +114,8 @@ fn map_contracts_error(error: ContractsError) -> RunnerError {
             RunnerError::task_invocation_failed_parse(&path, error)
         }
         ContractsError::Message(message) => RunnerError::task_invocation(message),
+        ContractsError::ContractBody { failure, .. } => {
+            RunnerError::task_invocation(failure.reason)
+        }
     }
 }

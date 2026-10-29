@@ -84,6 +84,7 @@ pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
     if let Some(code) = runner::run_internal_kernel_entry(entry) {
         std::process::exit(code);
     }
+    runner::cleanup_managed_secrets()?;
     runner::capture_startup_executable();
     // Source preparation and operator gateway commands own the router from
     // the start; nested task runs adopt it before custody spawns.

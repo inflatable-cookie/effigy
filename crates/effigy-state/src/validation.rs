@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::artifact::ArtifactRefError;
@@ -23,14 +23,14 @@ pub fn validate_state_stack(
         return Err(StateStackValidationError::NoLayers);
     }
 
-    let mut seen_keys = BTreeSet::new();
+    let mut key_index = BTreeMap::new();
     let mut previous_order = 0;
     for (index, layer) in manifest.layers.iter().enumerate() {
         let key = layer.key.trim();
         if key.is_empty() {
             return Err(StateStackValidationError::EmptyLayerKey { index });
         }
-        if !seen_keys.insert(key.to_owned()) {
+        if key_index.insert(key.to_owned(), index).is_some() {
             return Err(StateStackValidationError::DuplicateLayerKey {
                 index,
                 key: key.to_owned(),
@@ -76,12 +76,22 @@ pub fn validate_state_stack(
 
     for (index, layer) in manifest.layers.iter().enumerate() {
         for dependency in &layer.depends_on {
-            if !seen_keys.contains(dependency) {
-                return Err(StateStackValidationError::UnknownDependency {
-                    index,
-                    key: layer.key.clone(),
-                    dependency: dependency.clone(),
-                });
+            match key_index.get(dependency) {
+                None => {
+                    return Err(StateStackValidationError::UnknownDependency {
+                        index,
+                        key: layer.key.clone(),
+                        dependency: dependency.clone(),
+                    });
+                }
+                Some(&dep_index) if dep_index >= index => {
+                    return Err(StateStackValidationError::DependencyOrder {
+                        index,
+                        key: layer.key.clone(),
+                        dependency: dependency.clone(),
+                    });
+                }
+                Some(_) => {}
             }
         }
     }
@@ -191,6 +201,11 @@ pub enum StateStackValidationError {
         key: String,
         dependency: String,
     },
+    DependencyOrder {
+        index: usize,
+        key: String,
+        dependency: String,
+    },
 }
 
 impl fmt::Display for StateStackValidationError {
@@ -226,6 +241,10 @@ impl fmt::Display for StateStackValidationError {
             Self::UnknownDependency { index, key, dependency } => write!(
                 formatter,
                 "state stack layer {index} `{key}` depends on unknown layer `{dependency}`"
+            ),
+            Self::DependencyOrder { index, key, dependency } => write!(
+                formatter,
+                "state stack layer {index} `{key}` depends on `{dependency}` which is not an earlier layer"
             ),
         }
     }

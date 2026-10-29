@@ -44,9 +44,9 @@ effigy deps unpin bun <LIBRARY_PATH> [--dry-run]
 | Consumer lockfiles | Committed resolved baseline; never the desired-state store for local links |
 | Library manifests | Package/crate names, workspace membership, package roots, and peer declarations |
 | `.effigy/local/dependency-links.json` | Repo-local desired link state, ignored by git |
-| `~/.effigy/deps/bun-registrations.json` | Machine-local ownership/refcount index for Effigy-managed Bun registrations |
+| `~/.effigy/deps/bun-registrations.json` | Machine-local claims for Effigy-managed Bun registrations while a link is in flight |
 | `.cargo/config.toml` | Cargo's repo-local physical patch mechanism, ignored by git |
-| Bun global link registry | Bun's machine-global package registration mechanism |
+| Bun global link registry | Bun's machine-global registration, used only while a link is being made |
 | Consumer `node_modules` symlinks | Bun's ephemeral physical link mechanism |
 | Consumer root `package.json` `overrides` | Committed Bun pin desired state |
 | `effigy deps` | Shared inventory plus mode-specific planning, mutation, verification, status, and JSON reporting |
@@ -107,9 +107,16 @@ consumer symlinks.
 
 Bun also needs a locked, atomic machine-local index at
 `~/.effigy/deps/bun-registrations.json`. It records the canonical package path,
-whether Effigy created the registration, and the consumer/link identities that
-still desire it. Repo-local state alone cannot safely decide whether a global
-registration is shared.
+whether Effigy created the registration, the consumer/link identities that still
+desire it, and the checkout boundary that owned the consumer when the claim was
+written. Repo-local state alone cannot safely decide whether a global
+registration is shared, and a deleted checkout can no longer show its own
+boundaries.
+
+Registrations are transient. `bun link` registers a package so the consumer's
+save-less `bun link` can resolve it; the owner retires that registration when
+the consumer symlink exists and the ledger records the desired link. Keeping it
+between commands is what left registrations pointing at deleted worktrees.
 
 ## Cargo Adapter
 

@@ -24,7 +24,7 @@ use crate::operator::{self, error};
 use crate::server::GatewayConfig;
 #[cfg(any(target_os = "macos", test))]
 mod broker;
-const MARKER: &str = "Managed by Effigy gateway setup v1";
+pub(crate) const MARKER: &str = "Managed by Effigy gateway setup v1";
 const MAX_FILE: u64 = 8 << 20;
 /// Bound on one executable image staged for privileged setup. A developer
 /// build of `effigy` with debug info is well past 128 MiB, so the bound leaves
@@ -404,6 +404,7 @@ pub fn apply_platform(
     cx: &EffectContext,
     config: &GatewayConfig,
     suffixes: &[String],
+    uid: u32,
 ) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -517,9 +518,11 @@ pub fn apply_platform(
             false,
         )?;
         // A binary-local capability avoids lowering a host-wide port threshold.
-        install_bind_capability()?;
+        // It is bound to exactly the binary setup ran, and a foreign record is
+        // preserved rather than replaced.
+        crate::linux_operator::install_current_capability(uid)?;
     }
-    let _ = config;
+    let _ = (config, uid);
     Ok(())
 }
 pub fn save_receipt(
@@ -556,7 +559,7 @@ fn remove_managed(
         Ok(())
     })
 }
-fn remove_managed_with(
+pub(crate) fn remove_managed_with(
     cx: &EffectContext,
     dir: &DirFd,
     name: &str,
@@ -667,7 +670,7 @@ pub fn remove_platform(
             Observed::Absent(_) => {}
             other => return Err(error(format!("preserving foreign DNS unit: {other:?}"))),
         }
-        remove_bind_capability()?;
+        crate::linux_operator::remove_current_capability(uid)?;
     }
     let _ = (uid, suffixes);
     Ok(())
@@ -840,100 +843,11 @@ fn migrate_root_with(
     )
 }
 
-#[cfg(target_os = "linux")]
-fn bind_capability_file() -> io::Result<std::fs::File> {
-    let path = std::env::current_exe()?;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)?;
-    let actual = std::fs::metadata("/proc/self/exe")?;
-    let opened = file.metadata()?;
-    if !opened.is_file()
-        || opened.dev() != actual.dev()
-        || opened.ino() != actual.ino()
-        || opened.nlink() != 1
-        || opened.mode() & 0o022 != 0
-    {
-        return Err(error("installed gateway binary changed during setup"));
-    }
-    Ok(file)
-}
-#[cfg(target_os = "linux")]
-const BIND_CAPABILITY: [u8; 20] = [1, 0, 0, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-#[cfg(target_os = "linux")]
-fn verify_bind_capability(file: &std::fs::File) -> io::Result<bool> {
-    use std::os::fd::AsRawFd;
-    let mut bytes = [0u8; 24];
-    // SAFETY: live owned descriptor and initialized writable buffer of exactly
-    // the reported size; the fixed attribute name is NUL-terminated.
-    let count = unsafe {
-        libc::fgetxattr(
-            file.as_raw_fd(),
-            c"security.capability".as_ptr(),
-            bytes.as_mut_ptr().cast(),
-            bytes.len(),
-        )
-    };
-    if count < 0 {
-        let failure = io::Error::last_os_error();
-        if failure.raw_os_error() == Some(libc::ENODATA) {
-            return Ok(false);
-        }
-        return Err(failure);
-    }
-    if count as usize != BIND_CAPABILITY.len() || bytes[..count as usize] != BIND_CAPABILITY {
-        return Err(error("preserving foreign executable capability"));
-    }
-    Ok(true)
-}
-#[cfg(target_os = "linux")]
-/// Apply the exact binary-local low-port capability during authorized setup.
-pub fn install_bind_capability() -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-    let file = bind_capability_file()?;
-    if verify_bind_capability(&file)? {
-        return Ok(());
-    }
-    // Linux vfs_cap_data revision 2, effective flag, permitted bit 10 only.
-    // File capabilities do not grant privilege to arbitrary child programs.
-    // SAFETY: verified live descriptor, fixed NUL-terminated xattr name and
-    // exactly initialized Linux capability bytes. No path is reopened.
-    if unsafe {
-        libc::fsetxattr(
-            file.as_raw_fd(),
-            c"security.capability".as_ptr(),
-            BIND_CAPABILITY.as_ptr().cast(),
-            BIND_CAPABILITY.len(),
-            0,
-        )
-    } != 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-/// Remove only the exact capability installed by this adapter.
-pub fn remove_bind_capability() -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-    let file = bind_capability_file()?;
-    if !verify_bind_capability(&file)? {
-        return Ok(());
-    }
-    // SAFETY: descriptor stays live; the fixed attribute name is NUL-terminated.
-    if unsafe { libc::fremovexattr(file.as_raw_fd(), c"security.capability".as_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    pub(super) fn with_run(work: impl FnOnce(&mut Run<'_>, &EffectContext, &Path)) {
+    pub(crate) fn with_run(work: impl FnOnce(&mut Run<'_>, &EffectContext, &Path)) {
         let home = tempfile::tempdir().unwrap();
         let op = operator::context(Duration::from_secs(10), EffectClass::Mutate);
         let cx = op.effects().unwrap();

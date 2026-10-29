@@ -108,8 +108,9 @@ include = ["envs/cumberland/effigy.env.toml"]
 ```
 
 This is the right tool when an imported fragment needs to grow a shared list
-(DNS routes, env-schema paths, scan globs) without restating every existing
-entry. `extend` rejects non-array paths and conflicts with `override` on
+(DNS routes, env-schema paths, scan globs) or merge entries into a shared
+table without restating every existing entry. `extend` needs arrays or
+tables on both sides and conflicts with `override` on
 the same path — pick one per path.
 
 Includes can also opt out of the "missing file is an error" default:

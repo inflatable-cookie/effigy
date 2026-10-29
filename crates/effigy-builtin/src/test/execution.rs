@@ -20,7 +20,7 @@ use effigy_tui::multiprocess::{
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::sweep::Sweep;
 use super::{BuiltinError, BuiltinTestExecResult};
-use crate::ports::BuiltinTestChildEvidence;
+use crate::ports::{BuiltinContainerSuiteTarget, BuiltinTestChildEvidence};
 use crate::{BuiltinRuntimePorts, HostSuiteCustody};
 #[path = "planning/runnable/cargo_env.rs"]
 mod cargo_env;
@@ -57,19 +57,13 @@ pub(super) fn run_builtin_test_targets_tui(
     let specs = runnable
         .iter()
         .map(|suite| {
-            let execution_command = render_routed_suite_command(ports, suite)?;
-            let script = lifecycle_execution_command_from_parts(
-                &execution_command,
-                suite.setup_command.as_deref(),
-                suite.teardown_command.as_deref(),
-                suite.teardown_policy,
-            );
+            let execution_command = render_suite_execution_command(ports, suite)?;
             let host = runs_on_host(suite);
             Ok(ProcessSpec {
                 name: suite.name.clone(),
                 run: match &sweep {
-                    Some(sweep) if host => sweep.command(&script),
-                    _ => script,
+                    Some(sweep) if host => sweep.command(&execution_command),
+                    _ => execution_command,
                 },
                 cwd: suite.root.clone(),
                 start_after_ms: 0,
@@ -162,33 +156,11 @@ pub(super) fn run_builtin_test_targets_parallel(
     let jobs = runnable
         .into_iter()
         .map(|job| {
-            let env_wrapped_command = wrap_command_with_env(
-                cargo_env::maybe_wrap_with_cargo_env(
-                    job.command.clone(),
-                    &job.cargo_env,
-                    job.cargo_env_match,
-                    &job.root,
-                ),
-                &job.env,
-                &job.root,
-            );
-            let routed_command = route_suite_command(
-                ports,
-                &job.runtime,
-                job.nested_invocation,
-                &job.root,
-                &env_wrapped_command,
-            )?;
-            let script = lifecycle_execution_command_from_parts(
-                &routed_command,
-                job.setup_command.as_deref(),
-                job.teardown_command.as_deref(),
-                job.teardown_policy,
-            );
+            let routed_command = render_suite_execution_command(ports, &job)?;
             let host = runs_on_host(&job);
             let execution_command = match &sweep {
-                Some(sweep) if host => sweep.command(&script),
-                _ => script,
+                Some(sweep) if host => sweep.command(&routed_command),
+                _ => routed_command,
             };
             // A suite the caller's run owns runs under that run's custody: one
             // child run per suite, moved to the worker that runs it, so the run
@@ -434,9 +406,10 @@ pub(super) fn run_builtin_test_targets_parallel(
 /// Route one rendered suite command to its owning catalog's declared
 /// runtime target.
 ///
-/// Host targets run the command unchanged. Container targets execute through
-/// the runner's container machinery via the runtime ports; nested effigy
-/// re-entries keep their own routing and are never wrapped again.
+/// The command is the suite's lifecycle (setup, primary, teardown). Host
+/// targets run it unchanged. Container targets execute through the runner's
+/// container machinery via the runtime ports; nested effigy re-entries keep
+/// their own routing and are never wrapped again.
 fn route_suite_command(
     ports: &dyn BuiltinRuntimePorts,
     runtime: &BuiltinTargetRuntime,
@@ -529,17 +502,26 @@ fn runs_on_host(suite: &BuiltinTestRunnable) -> bool {
     matches!(suite.runtime, BuiltinTargetRuntime::Host) && !suite.nested_invocation
 }
 
-fn render_routed_suite_command(
+/// One suite command: env wrap, then setup/command/teardown, then container
+/// routing. Lifecycle is assembled before routing so a named-container target
+/// runs those hooks inside the selected container (CHANGELOG, guide 022).
+fn render_suite_execution_command(
     ports: &dyn BuiltinRuntimePorts,
     suite: &BuiltinTestRunnable,
 ) -> Result<String, BuiltinError> {
     let wrapped = render_wrapped_suite_command(suite);
+    let lifecycle = lifecycle_execution_command_from_parts(
+        &wrapped,
+        suite.setup_command.as_deref(),
+        suite.teardown_command.as_deref(),
+        suite.teardown_policy,
+    );
     route_suite_command(
         ports,
         &suite.runtime,
         suite.nested_invocation,
         &suite.root,
-        &wrapped,
+        &lifecycle,
     )
 }
 
@@ -650,6 +632,9 @@ mod tests {
     struct ScratchPorts {
         env: Vec<(String, OsString)>,
         custody_marker: Option<PathBuf>,
+        /// Lifecycle commands handed to container routing. Empty unless a
+        /// non-nested container suite actually routed.
+        routed_commands: Arc<Mutex<Vec<String>>>,
     }
 
     impl BuiltinRuntimePorts for ScratchPorts {
@@ -714,6 +699,32 @@ mod tests {
         ) -> BTreeSet<String> {
             BTreeSet::new()
         }
+
+        fn prepare_container_suite_target(
+            &self,
+            target_root: &Path,
+            container: &str,
+        ) -> Result<BuiltinContainerSuiteTarget, BuiltinError> {
+            Ok(BuiltinContainerSuiteTarget {
+                container: container.to_owned(),
+                service: "app".to_owned(),
+                root: target_root.to_path_buf(),
+            })
+        }
+
+        fn render_container_suite_command(
+            &self,
+            _target: &BuiltinContainerSuiteTarget,
+            suite_command: &str,
+        ) -> Result<String, BuiltinError> {
+            self.routed_commands
+                .lock()
+                .expect("routed command lock")
+                .push(suite_command.to_owned());
+            // Identity render: the observation is which command was routed,
+            // and printf still has to run as a host script.
+            Ok(suite_command.to_owned())
+        }
     }
 
     fn suite(root: &Path, command: &str, runtime: BuiltinTargetRuntime) -> BuiltinTestRunnable {
@@ -763,10 +774,12 @@ mod tests {
                 .filter(|key| !["TMPDIR", "TMP", "TEMP"].contains(&key.as_str()))
                 .cloned()
                 .collect::<Vec<_>>();
+            // Unit separator: a suite command can contain `|` (the sweep
+            // prologue is `exec 9>>marker || exit 1`) and newlines.
             std::fs::write(
                 &self.marker,
                 format!(
-                    "{}|{}|{}|{}|{}|{}|{}",
+                    "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
                     self.label,
                     command,
                     cwd.display(),
@@ -790,6 +803,7 @@ mod tests {
                 .map(|key| ((*key).to_owned(), dir.as_os_str().to_owned()))
                 .collect(),
             custody_marker: None,
+            routed_commands: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -828,9 +842,16 @@ mod tests {
             run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
         assert!(results[0].success, "{:?}", results[0]);
         let recorded = std::fs::read_to_string(&marker).expect("custody marker");
-        let fields = recorded.split('|').collect::<Vec<_>>();
+        let fields = recorded.split('\u{1f}').collect::<Vec<_>>();
+        assert_eq!(fields.len(), 7, "custody marker fields: {recorded}");
         assert_eq!(fields[0], "proof", "the suite reached its own custody");
-        assert_eq!(fields[1], "printf suite", "the suite runs its own command");
+        // A host sweep prefixes `exec 9>>marker || exit 1\n`; the suite text
+        // stays. Sweep::begin can also return none, leaving the command bare.
+        assert!(
+            fields[1] == "printf suite" || fields[1].ends_with("\nprintf suite"),
+            "the suite runs its own command: {}",
+            fields[1]
+        );
         assert_eq!(
             &fields[3..6],
             [
@@ -840,12 +861,13 @@ mod tests {
             ],
             "custody ran the suite with the run's temp environment: {recorded}"
         );
-        // The run's three temp variables are the whole scratch environment; a
-        // host suite may also carry the invoking Effigy so its nested
-        // invocations share the binary that started the test run.
+        // Scratch plus the invoking Effigy, plus the suite sweep token when
+        // a marker could be created.
         assert!(
-            fields[6].is_empty() || fields[6] == "EFFIGY_EXECUTABLE",
-            "no variable beyond the run's temp environment and the invoking Effigy: {recorded}"
+            fields[6].split(',').all(|key| {
+                key.is_empty() || key == "EFFIGY_EXECUTABLE" || key == "EFFIGY_TEST_SUITE"
+            }),
+            "no variable beyond the run's temp environment, the invoking Effigy, and the suite sweep token: {recorded}"
         );
     }
 
@@ -877,6 +899,112 @@ mod tests {
             std::fs::read_to_string(&seen).expect("suite output"),
             scratch.path().display().to_string(),
             "a container suite keeps the container's own temp directory"
+        );
+    }
+
+    #[test]
+    fn a_container_suite_routes_setup_and_teardown_inside_the_selected_container() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let mut runnable = suite(
+            fixture.path(),
+            "printf primary",
+            BuiltinTargetRuntime::Container {
+                container: "web".to_owned(),
+            },
+        );
+        runnable.setup_command = Some("printf setup".to_owned());
+        runnable.teardown_command = Some("printf teardown".to_owned());
+
+        let ports = ports(scratch.path());
+        let results =
+            run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
+        assert!(results[0].success, "{:?}", results[0]);
+
+        let routed = ports.routed_commands.lock().expect("routed lock").clone();
+        assert_eq!(
+            routed.len(),
+            1,
+            "one container route for the suite: {routed:?}"
+        );
+        let command = &routed[0];
+        assert!(
+            command.contains("printf setup"),
+            "setup must be inside the container exec, got {command}"
+        );
+        assert!(
+            command.contains("printf primary"),
+            "primary must be inside the container exec, got {command}"
+        );
+        assert!(
+            command.contains("printf teardown"),
+            "teardown must be inside the container exec, got {command}"
+        );
+    }
+
+    #[test]
+    fn a_nested_container_suite_does_not_wrap_lifecycle_into_the_outer_container() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let mut runnable = suite(
+            fixture.path(),
+            "printf nested",
+            BuiltinTargetRuntime::Container {
+                container: "web".to_owned(),
+            },
+        );
+        runnable.nested_invocation = true;
+        runnable.setup_command = Some("printf setup".to_owned());
+
+        let ports = ports(scratch.path());
+        let results =
+            run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
+        assert!(results[0].success, "{:?}", results[0]);
+        assert!(
+            ports
+                .routed_commands
+                .lock()
+                .expect("routed lock")
+                .is_empty(),
+            "a nested re-entry keeps its own routing"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_suite_does_not_project_success() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let runnable = suite(fixture.path(), "exit 130", BuiltinTargetRuntime::Host);
+
+        let results =
+            run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
+                .expect("suite recorded");
+        assert!(
+            !results[0].success,
+            "exit 130 must not project success: {:?}",
+            results[0]
+        );
+        assert_eq!(results[0].code, Some(130));
+    }
+
+    #[test]
+    fn a_host_suite_never_calls_container_routing() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let mut runnable = suite(fixture.path(), "printf host", BuiltinTargetRuntime::Host);
+        runnable.setup_command = Some("printf setup".to_owned());
+
+        let ports = ports(scratch.path());
+        let results =
+            run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
+        assert!(results[0].success, "{:?}", results[0]);
+        assert!(
+            ports
+                .routed_commands
+                .lock()
+                .expect("routed lock")
+                .is_empty(),
+            "a host suite must not reach container routing"
         );
     }
 }

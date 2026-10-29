@@ -238,6 +238,8 @@ Core rules:
 - `dev-overlay` runs only after the baseline is already working
 - local and OCI sources resolve through the same artifact substrate before
   app-specific apply hooks run
+- apply order is declaration order; `depends_on` must name an earlier layer
+  (self and later keys fail closed)
 - apply order must be visible in text and JSON reports
 
 Apply report should include:

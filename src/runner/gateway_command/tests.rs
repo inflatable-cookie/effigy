@@ -1636,6 +1636,108 @@ fn gateway_down_names_each_step_it_takes() {
     );
 }
 
+/// An `up` from a command line records exactly one event, at the boundary, and
+/// the shared lifecycle it calls records none (effigy#450 review).
+#[test]
+fn gateway_up_records_one_command_event_at_the_boundary() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    let directory = config.pid_file_path.parent().unwrap();
+    std::fs::create_dir_all(directory).expect("gateway directory");
+    // The command refuses (nothing is set up), but its request is recorded.
+    let _ = run_gateway_up_with_config(&config, false);
+    let log = std::fs::read_to_string(directory.join("gateway.stderr.log"))
+        .expect("the up request is recorded beside the gateway records");
+    let events = log
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 1, "{log}");
+    assert_eq!(events[0]["event"], "gateway_up", "{log}");
+    assert_eq!(events[0]["cause"], "gateway up command", "{log}");
+    assert_eq!(events[0]["caller"]["pid"], std::process::id(), "{log}");
+}
+
+/// A task run that starts the gateway in-process says so: it is not an operator
+/// `gateway up` command (effigy#450 review).
+#[test]
+fn managed_gateway_start_records_its_own_cause() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let config = GatewayConfig::private(root.clone());
+    record_managed_gateway_start(&config);
+    let log = std::fs::read_to_string(root.join("gateway.stderr.log"))
+        .expect("the managed start is recorded beside the gateway records");
+    let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+    assert_eq!(record["event"], "gateway_up", "{log}");
+    assert_eq!(record["cause"], "managed gateway start", "{log}");
+    assert_ne!(record["cause"], "gateway up command", "{log}");
+}
+
+/// A successful `setup` — which starts the gateway as its last step — emits its
+/// own setup event and no extra `gateway up` or `gateway down` command event.
+#[test]
+fn gateway_setup_emits_exactly_its_setup_event() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let gateway = GatewayConfig::private(root.clone());
+    // The setup boundary records the action; its platform and lifecycle steps
+    // are the shared helpers that write nothing.
+    record_gateway_setup(&gateway, false);
+    let before = std::fs::read_to_string(root.join("gateway.stderr.log")).expect("setup event");
+    let _ = effigy_gateway::operator::up(&gateway);
+    let _ = effigy_gateway::operator::down(&gateway);
+    let after = std::fs::read_to_string(root.join("gateway.stderr.log")).expect("setup event");
+    assert_eq!(before, after, "setup's own steps add no command event");
+    let events = after
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 1, "{after}");
+    assert_eq!(events[0]["event"], "gateway_setup", "{after}");
+    assert_eq!(events[0]["cause"], "gateway setup command", "{after}");
+    // A removed setup is still one setup action, named as removal.
+    record_gateway_setup(&gateway, true);
+    let after_remove =
+        std::fs::read_to_string(root.join("gateway.stderr.log")).expect("setup event");
+    let last = after_remove
+        .lines()
+        .last()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .unwrap();
+    assert_eq!(last["event"], "gateway_setup", "{after_remove}");
+    assert_eq!(
+        last["cause"], "gateway setup remove command",
+        "{after_remove}"
+    );
+}
+
+/// Every `down` request is attributable, including one that finds nothing to
+/// stop: the request is recorded in the private root's own gateway log before
+/// the first read (effigy#450).
+#[test]
+fn gateway_down_records_its_caller_before_it_reads_any_state() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let config = GatewayConfig::private(root.clone());
+    run_gateway_down_with_config(&config, false)
+        .expect("a stopped private gateway reports the stop");
+    let log = std::fs::read_to_string(root.join("gateway.stderr.log"))
+        .expect("the down request is recorded beside the gateway records");
+    let record: serde_json::Value = serde_json::from_str(log.trim()).expect("one event line");
+    assert_eq!(record["event"], "gateway_stop");
+    assert_eq!(record["action"], "down");
+    assert_eq!(record["cause"], "gateway down command");
+    assert_eq!(record["pid"], std::process::id());
+    assert_eq!(record["caller"]["pid"], std::process::id());
+}
+
 #[test]
 fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
     let (done, lines) = effigy_ui::steps::capture_lines(|| {

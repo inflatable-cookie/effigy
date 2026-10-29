@@ -62,9 +62,10 @@ impl<'a> Run<'a> {
             self.root,
             invocation,
             opts,
-            cleanup,
+            || Ok(cleanup.clone()),
             adapter,
             Some(self.id),
+            None,
             None,
         )?;
         if !detached && !run.root.is_machine() && run.ancestor_closure.is_none() {

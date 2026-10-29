@@ -262,6 +262,131 @@ fn write_state_context_file_returns_repo_relative_path() {
 }
 
 #[test]
+fn plan_lineage_accepts_depends_on_an_earlier_layer() {
+    let manifest = StateStackManifest::parse_toml(
+        r#"
+schema = "effigy.state-stack.v1"
+name = "order-ok"
+environment = "dev"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "migrate"
+apply_mode = "task"
+environment_policy = "all"
+
+[[layers]]
+key = "seed"
+role = "baseline-seed"
+source = "./seed.sql"
+apply_mode = "sql"
+environment_policy = "all"
+depends_on = ["structure"]
+"#,
+    )
+    .expect("parse");
+    let plan = manifest
+        .plan_lineage()
+        .expect("earlier depends_on is valid");
+    assert_eq!(
+        plan.layers
+            .iter()
+            .map(|layer| layer.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["structure", "seed"]
+    );
+}
+
+#[test]
+fn plan_lineage_refuses_depends_on_a_later_layer() {
+    let manifest = StateStackManifest::parse_toml(
+        r#"
+schema = "effigy.state-stack.v1"
+name = "order-later"
+environment = "dev"
+
+[[layers]]
+key = "users"
+role = "baseline-seed"
+source = "./users.sql"
+apply_mode = "sql"
+environment_policy = "all"
+depends_on = ["roles"]
+
+[[layers]]
+key = "roles"
+role = "baseline-seed"
+source = "./roles.sql"
+apply_mode = "sql"
+environment_policy = "all"
+"#,
+    )
+    .expect("parse");
+    let error = manifest
+        .plan_lineage()
+        .expect_err("later depends_on must fail closed");
+    assert_eq!(
+        error.to_string(),
+        "state stack layer 0 `users` depends on `roles` which is not an earlier layer"
+    );
+}
+
+#[test]
+fn plan_lineage_refuses_self_depends_on() {
+    let manifest = StateStackManifest::parse_toml(
+        r#"
+schema = "effigy.state-stack.v1"
+name = "order-self"
+environment = "dev"
+
+[[layers]]
+key = "seed"
+role = "baseline-seed"
+source = "./seed.sql"
+apply_mode = "sql"
+environment_policy = "all"
+depends_on = ["seed"]
+"#,
+    )
+    .expect("parse");
+    let error = manifest
+        .plan_lineage()
+        .expect_err("self depends_on must fail closed");
+    assert_eq!(
+        error.to_string(),
+        "state stack layer 0 `seed` depends on `seed` which is not an earlier layer"
+    );
+}
+
+#[test]
+fn plan_lineage_still_names_an_unknown_depends_on() {
+    let manifest = StateStackManifest::parse_toml(
+        r#"
+schema = "effigy.state-stack.v1"
+name = "order-unknown"
+environment = "dev"
+
+[[layers]]
+key = "seed"
+role = "baseline-seed"
+source = "./seed.sql"
+apply_mode = "sql"
+environment_policy = "all"
+depends_on = ["missing"]
+"#,
+    )
+    .expect("parse");
+    let error = manifest
+        .plan_lineage()
+        .expect_err("unknown depends_on must fail closed");
+    assert_eq!(
+        error.to_string(),
+        "state stack layer 0 `seed` depends on unknown layer `missing`"
+    );
+}
+
+#[test]
 fn parse_state_history_kind_rejects_unknown_values() {
     let error = parse_state_history_kind("weird").expect_err("unknown kind should fail");
     assert_eq!(

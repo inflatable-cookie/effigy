@@ -1,7 +1,7 @@
 use super::errors::ArtifactStagingError;
 use super::metadata::ArtifactMetadata;
 use super::refs::{ArtifactKind, ArtifactSourceRef, LocalArtifactRef, OciArtifactRef};
-use super::util::{resolve_local_path, staging_dir_name};
+use super::util::{digest_from_ref, resolve_local_path, staging_dir_name};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -191,8 +191,21 @@ pub fn stage_oci_artifact(
 
     let mut metadata =
         ArtifactMetadata::new(request.kind, &source_ref, staged_root.clone(), staged_files);
-    if let Some(digest) = &request.digest {
-        metadata = metadata.with_digest(digest.clone());
+    let digest = match (
+        digest_from_ref(request.source.reference()),
+        request.digest.as_deref(),
+    ) {
+        (Some(pinned), Some(observed)) if pinned != observed => {
+            return Err(ArtifactStagingError::DigestMismatch {
+                pinned,
+                observed: observed.to_owned(),
+            });
+        }
+        (Some(pinned), _) => Some(pinned),
+        (None, observed) => observed.map(str::to_owned),
+    };
+    if let Some(digest) = digest {
+        metadata = metadata.with_digest(digest);
     }
     if let Some(label) = &request.environment_label {
         metadata = metadata.with_environment_label(label.clone());

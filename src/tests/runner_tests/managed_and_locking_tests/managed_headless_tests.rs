@@ -432,3 +432,90 @@ fn managed_headless_plain_environment_shows_host_processes_and_its_workload() {
     );
     assert_gone(&root, &["api.pid", "worker.pid", "service.pid"]);
 }
+
+/// Drive the named shell's final production callback, retaining its verified
+/// container ID, cwd and user path, against a private runtime double.
+#[test]
+fn managed_secret_named_exec_verifies_ownership_and_forwards_only_names() {
+    let _guard = lock_test();
+    let fixture = effigy_test_support::Fixture::workspace("managed-secret-named-").unwrap();
+    let root = fixture.path().canonicalize().unwrap();
+    write_root_manifest(
+        &root,
+        r#"[containers]
+default = "web"
+[containers.web]
+compose_file = "compose.yaml"
+project_name = "private-secret-proof"
+primary_service = "app"
+working_dir = "/workspace"
+"#,
+    );
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  app:\n    image: alpine\n",
+    )
+    .unwrap();
+    let _runtime = install_fake_container_runtime(&root);
+    let policy = effigy_containers::load_container_policy(&root, None).unwrap();
+    let value = "named-secret-'quoted'\nwith newline\n";
+    let script = format!(
+        "set +x\nexport DATABASE_URL={}\n",
+        effigy_core::shell::shell_quote(value)
+    );
+    let _env = EnvGuard::set_many(&[
+        (
+            "EFFIGY_INTERNAL_MANAGED_ENV_NAMES",
+            Some("DATABASE_URL".into()),
+        ),
+        ("EFFIGY_INTERNAL_MANAGED_ENV_SCRIPT", Some(script)),
+        ("EFFIGY_INTERNAL_MANAGED_ENV_DIRECTORY", None),
+    ]);
+    let args = effigy_containers::compose::compose_args(
+        &policy,
+        [
+            "exec",
+            "-T",
+            "app",
+            "sh",
+            "-lc",
+            "printf '%s' \"$DATABASE_URL\" > received",
+        ],
+    );
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+        &root,
+        &policy,
+        args,
+        effigy_containers::ContainerAction::Shell,
+        "named secret proof",
+    )
+    .unwrap();
+    assert!(!plan.command_line().contains(value));
+    let result =
+        crate::runner::exec_command::run_managed_compose_exec_plan(&policy, &plan, true).unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(fs::read_to_string(root.join("received")).unwrap(), value);
+    let argv = fs::read_to_string(root.join("fake-docker.log")).unwrap();
+    assert!(
+        argv.contains(&"a".repeat(64)),
+        "exec must target the inspected full ID"
+    );
+    assert!(argv.contains("-e DATABASE_URL"));
+    assert!(!argv.contains(value));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains(value));
+    // A changed checkout label must refuse before any further exec.
+    let proof_path = root.join("owned-container.json");
+    let mut proof: serde_json::Value =
+        serde_json::from_slice(&fs::read(&proof_path).unwrap()).unwrap();
+    proof["Config"]["Labels"]["com.effigy.checkout"] = serde_json::json!(root.join("foreign"));
+    fs::write(proof_path, proof.to_string()).unwrap();
+    fs::remove_file(root.join("received")).unwrap();
+    assert!(
+        crate::runner::exec_command::run_managed_compose_exec_plan(&policy, &plan, true).is_err()
+    );
+    assert!(!root.join("received").exists());
+}

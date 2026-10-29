@@ -59,6 +59,12 @@ fn a_managed_session_prompts_once_before_it_renders_and_keeps_the_access_off_the
     // secret through the session's access, so the workload received the value
     // without the session asking a second time.
     session.wait_for("workload saw");
+    let argv =
+        fs::read_to_string(fixture.root.join("workload-argv")).expect("workload argv receipt");
+    assert!(
+        !argv.contains(SECRET_VALUE),
+        "the task secret reached the host workload's argv"
+    );
     let transcript = session.output();
     let dump: Vec<&str> = transcript
         .lines()
@@ -291,7 +297,7 @@ alias = "root"
 mode = "tui"
 secrets = "required"
 concurrent = [
-  { name = "dump", run = "/usr/bin/env; /bin/ps -ww -o args= -p $$; printf 'workload saw %s\\n' \"$DATABASE_URL\"", start = 1, tab = 1 },
+  { name = "dump", run = "/usr/bin/env; /bin/ps -ww -o args= -p $$ > workload-argv; printf 'workload saw %s\\n' \"$DATABASE_URL\"", start = 1, tab = 1 },
 ]
 
 [tasks.probe]
@@ -605,4 +611,81 @@ fn assert_session_stopped(session: &mut PtySession) {
         session.child.try_wait().expect("poll session").is_some(),
         "the session fixture is still running after the test stopped it"
     );
+}
+
+#[test]
+fn invocation_and_doctor_sweep_only_non_live_managed_secret_files() {
+    use effigy_kernel::ident::{process_identity, ProcessStartIdentity};
+    use effigy_test_support::process::FixtureCommandExt;
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+
+    for args in [vec!["--version"], vec!["doctor", "--json"]] {
+        let workspace =
+            effigy_test_support::Fixture::workspace("managed-secret-sweep-cli-").unwrap();
+        let root = workspace.path().canonicalize().unwrap();
+        let home = effigy_test_support::Fixture::short_home("esw-").unwrap();
+        fs::write(root.join("effigy.toml"), "[tasks.ok]\nrun = \"true\"\n").unwrap();
+        let namespace = home.path().join(".effigy/managed-secrets");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&namespace)
+            .unwrap();
+        let identity = process_identity(std::process::id())
+            .verified()
+            .unwrap()
+            .clone();
+        for live in [true, false] {
+            let mut owner = identity.clone();
+            if !live {
+                owner.start = ProcessStartIdentity::LinuxTicks(0);
+            }
+            let directory = namespace.join(if live { "live" } else { "stale" });
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&directory)
+                .unwrap();
+            let meta = fs::metadata(&directory).unwrap();
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(directory.join("owner"))
+                .unwrap();
+            file.write_all(
+                serde_json::json!({"identity": owner, "device": meta.dev(), "inode": meta.ino()})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(directory.join("env.delivery"))
+                .unwrap();
+            file.write_all(b"CLI-sweep-private-value").unwrap();
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(&args)
+            .current_dir(&root)
+            .env("HOME", home.path())
+            .output_owned()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!namespace.join("stale").exists());
+        assert_eq!(
+            fs::read_to_string(namespace.join("live/env.delivery")).unwrap(),
+            "CLI-sweep-private-value"
+        );
+        for bytes in [&output.stdout, &output.stderr] {
+            let output = String::from_utf8_lossy(bytes);
+            assert!(!output.contains("CLI-sweep-private-value"));
+            assert!(!output.contains(&namespace.display().to_string()));
+        }
+    }
 }

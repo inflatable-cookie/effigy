@@ -267,7 +267,24 @@ impl std::fmt::Debug for Redactor {
     }
 }
 impl Redactor {
-    pub(crate) fn new(secrets: Vec<Vec<u8>>) -> Self {
+    pub(crate) fn new(mut secrets: Vec<Vec<u8>>) -> Self {
+        // A PTY's output processing expands LF to CRLF. Match that display
+        // representation too, before it reaches logs, tails or a front end.
+        let terminal = secrets
+            .iter()
+            .filter(|secret| secret.contains(&b'\n'))
+            .map(|secret| {
+                let mut displayed = Vec::with_capacity(secret.len());
+                for &byte in secret {
+                    if byte == b'\n' {
+                        displayed.push(b'\r');
+                    }
+                    displayed.push(byte);
+                }
+                displayed
+            })
+            .collect::<Vec<_>>();
+        secrets.extend(terminal);
         Self {
             display: RedactionPass::new(secrets.clone(), b"[REDACTED]"),
             // A secret can itself contain the display marker, or a replacement

@@ -87,7 +87,10 @@ dependencies, timeouts, and retries stay declarative under `[test]`.
 
 Suite planning renders the resolved target, source, suite, command or step
 chain, cwd, lifecycle stages, and forwarded arguments. Opaque runtime behavior
-must be labelled; planning must not execute it to discover more detail.
+must be labelled; planning must not execute it to discover more detail. A
+catalog with a named-container runtime target runs each suite's setup, command
+and teardown inside that container as one lifecycle exec. Nested effigy
+re-entries keep their own routing and are not wrapped again.
 
 Task-reference expansion preserves two distinct contexts. The selected catalog
 owns the task working directory. The originating repository owns the already

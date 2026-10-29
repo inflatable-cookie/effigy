@@ -308,6 +308,54 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
     run_owned_compose_exec_plan_with_deadline(policy, plan, capture, stdin_file, None)
 }
 
+pub(in crate::runner) fn run_managed_compose_exec_plan(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    capture: bool,
+) -> Result<Output, RunnerError> {
+    let parsed = parse_compose_exec_args(&plan.args)?;
+    let binding = crate::runner::container_runtime_prep::verify_service_binding(
+        &plan.repo_root,
+        policy,
+        &parsed.service,
+        None,
+    )?;
+    let names = std::env::var(crate::runner::managed_secrets::NAMES)
+        .ok()
+        .map(|names| {
+            names
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !names.is_empty() {
+        // The managed engine supplied this private bootstrap. Keep all the
+        // existing binding/reverification, user, cwd and command selection.
+        let (program, mut args) =
+            verified_native_exec_invocation(policy, plan, &binding, !capture, None)?;
+        let exec = args
+            .iter()
+            .position(|a| a == "exec")
+            .ok_or_else(|| RunnerError::task_invocation("missing managed native exec"))?;
+        for name in names.iter().rev() {
+            args.splice(
+                exec + 1..exec + 1,
+                [OsString::from("-e"), OsString::from(name)],
+            );
+        }
+        let command = crate::runner::managed_secrets::relay(&program, &args, &names);
+        let relay = ContainerComposeInvocationPlan {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), command.into()],
+            label: "managed container exec".into(),
+            ..plan.clone()
+        };
+        return run_exec_process_plan(&relay, capture, None, None);
+    }
+    run_verified_compose_exec_plan(policy, plan, &binding, capture, None, None)
+}
+
 fn run_owned_compose_exec_plan_with_deadline(
     policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
