@@ -596,6 +596,39 @@ impl ActivationEntry {
     }
 }
 
+/// One entry staged for removal, inside a private directory created for it.
+///
+/// The final unlink runs on a name inside a fresh, owner-only directory whose
+/// name nothing else addresses: the user manager only knows the unit name in
+/// the activation directory, and a concurrent Effigy setup uses its own random
+/// name. A replacement at the shared unit name during the removal therefore
+/// cannot be deleted by it — the newcomer is simply left in place and reported.
+struct StagedEntry {
+    dir: std::fs::File,
+    /// The unit the staged entry must name.
+    unit: PathBuf,
+    /// The private directory's path, for the messages and the tests.
+    path: PathBuf,
+    /// The private directory's name inside the activation directory.
+    name: String,
+    /// The exact entry that was moved into the private directory.
+    expected: EntryIdentity,
+}
+
+impl StagedEntry {
+    /// The one name used inside the private directory.
+    const ENTRY: &'static str = "entry";
+
+    fn observe(&self) -> io::Result<ActivationEntry> {
+        entry_of(
+            &self.dir,
+            Self::ENTRY,
+            &self.unit,
+            &self.path.join(Self::ENTRY),
+        )
+    }
+}
+
 impl ActivationDir {
     const NAME: &'static str = "default.target.wants";
 
@@ -637,172 +670,167 @@ impl ActivationDir {
     /// identity, or foreign. A foreign entry is never removed, replaced or
     /// handed to the manager.
     fn entry(&self) -> io::Result<ActivationEntry> {
-        self.entry_of(UNIT_NAME)
+        entry_of(&self.dir, UNIT_NAME, &self.unit, &self.entry)
     }
 
-    /// One entry's state inside the bound directory.
-    fn entry_of(&self, name: &str) -> io::Result<ActivationEntry> {
-        let Some((dev, ino)) = self.identity_of(name)? else {
-            return Ok(ActivationEntry::Absent);
-        };
-        match self.target_of(name) {
-            Ok(Some(target)) if target == self.unit => {
-                Ok(ActivationEntry::Ours(EntryIdentity { dev, ino, target }))
-            }
-            Ok(Some(_)) => Ok(ActivationEntry::Foreign),
-            Ok(None) => Ok(ActivationEntry::Absent),
-            // A non-link entry is not Effigy's link either.
-            Err(failure) if failure.raw_os_error() == Some(libc::EINVAL) => {
-                Ok(ActivationEntry::Foreign)
-            }
-            Err(failure) => Err(failure),
-        }
-    }
-
-    /// The inode of one entry, without following it.
-    fn identity_of(&self, name: &str) -> io::Result<Option<(u64, u64)>> {
-        use std::os::fd::AsRawFd;
-        let name = cstring(name)?;
-        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: live directory descriptor, NUL-terminated name and a writable
-        // stat buffer; AT_SYMLINK_NOFOLLOW keeps the link itself.
-        if unsafe {
-            libc::fstatat(
-                self.dir.as_raw_fd(),
-                name.as_ptr(),
-                &mut stat,
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        } != 0
-        {
-            let failure = io::Error::last_os_error();
-            return match failure.raw_os_error() {
-                Some(libc::ENOENT) => Ok(None),
-                _ => Err(failure),
-            };
-        }
-        Ok(Some((stat.st_dev as u64, stat.st_ino as u64)))
-    }
-
-    /// The target of one entry inside the bound directory. `None` means the
-    /// name does not exist; anything that is not a symbolic link is a non-link
-    /// (`EINVAL`) the caller classifies.
-    fn target_of(&self, name: &str) -> io::Result<Option<PathBuf>> {
-        use std::os::fd::AsRawFd;
-        use std::os::unix::ffi::OsStringExt;
-        let name = cstring(name)?;
-        let mut buffer = vec![0u8; libc::PATH_MAX as usize];
-        // SAFETY: live directory descriptor, NUL-terminated single component and
-        // a writable buffer of exactly the reported size. No path is reopened.
-        let len = unsafe {
-            libc::readlinkat(
-                self.dir.as_raw_fd(),
-                name.as_ptr(),
-                buffer.as_mut_ptr().cast(),
-                buffer.len(),
-            )
-        };
-        if len < 0 {
-            let failure = io::Error::last_os_error();
-            return match failure.raw_os_error() {
-                Some(libc::ENOENT) => Ok(None),
-                _ => Err(failure),
-            };
-        }
-        let len = len as usize;
-        if len >= buffer.len() {
-            return Err(error(format!(
-                "the login activation link {} names a longer target than a path may be",
-                self.entry.display()
-            )));
-        }
-        Ok(Some(PathBuf::from(std::ffi::OsString::from_vec(
-            buffer[..len].to_vec(),
-        ))))
-    }
-
-    /// Remove Effigy's activation entry inside the bound directory, binding the
-    /// *entry* and not only the directory.
-    ///
-    /// A check followed by `unlinkat` by name leaves a window: the manager can
-    /// remove Effigy's link and a foreign entry can appear before the unlink,
-    /// which would then delete something Effigy never wrote. The name is
-    /// therefore moved aside atomically first (`renameat` never follows the
-    /// final component), verified under a name the manager does not use, and
-    /// only then removed. Anything that is not Effigy's own link is put back
-    /// exactly as it was found and refused.
+    /// Remove the *exact* entry that was observed, by staging it into a private
+    /// directory first. `Ok(())` when the entry was gone already.
     fn unlink_entry(&self, expected: &EntryIdentity) -> io::Result<()> {
-        self.unlink_entry_staged(expected, &self.staging_name())
+        let Some(staged) = self.stage_entry(expected)? else {
+            return Ok(());
+        };
+        self.drop_staged(&staged)
     }
 
-    /// The staged removal for one expected entry. The caller observed this
-    /// exact inode; anything else at the name is a replacement and is refused.
-    fn unlink_entry_staged(&self, expected: &EntryIdentity, staged: &str) -> io::Result<()> {
-        // Move the entry aside without replacing anything already at the
-        // temporary name, so a leftover or a squatter is never overwritten.
-        match self.rename_named_exclusive(UNIT_NAME, staged) {
+    /// Move the entry into a private directory and verify it is the observed
+    /// one. The shared unit name is free from here on, so nothing that replaces
+    /// it can be reached by the removal.
+    fn stage_entry(&self, expected: &EntryIdentity) -> io::Result<Option<StagedEntry>> {
+        let staged = self.create_staging(expected)?;
+        match rename_exclusive_at(&self.dir, UNIT_NAME, &staged.dir, StagedEntry::ENTRY) {
             Ok(()) => {}
             // The entry is already gone; there is nothing to remove.
-            Err(failure) if failure.raw_os_error() == Some(libc::ENOENT) => return Ok(()),
-            Err(failure) if failure.raw_os_error() == Some(libc::EEXIST) => {
+            Err(failure) if failure.raw_os_error() == Some(libc::ENOENT) => {
+                self.discard_staging(&staged);
+                return Ok(None);
+            }
+            Err(failure) => {
+                self.discard_staging(&staged);
                 return Err(error(format!(
-                    "the login activation entry {} was not removed: the temporary name {} is already in use, and Effigy does not replace an entry it did not write. Move it aside, then run `effigy gateway setup` again",
+                    "moving the login activation entry {} into {} failed: {failure}; run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again",
                     self.entry.display(),
-                    self.staged_path(staged).display()
-                )))
-            }
-            Err(failure) => {
-                return Err(error(format!(
-                    "moving the login activation entry {} aside failed: {failure}; run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again",
-                    self.entry.display()
-                )))
+                    staged.path.display()
+                )));
             }
         }
-        // The entry that moved has to be the exact one that was observed: a
-        // different inode is a replacement even when it names the same unit.
-        match self.entry_of(staged) {
-            Ok(ActivationEntry::Ours(observed)) if &observed == expected => {}
-            Ok(other) => return Err(self.changed_entry(&other, staged)),
+        match staged.observe() {
+            Ok(ActivationEntry::Ours(observed)) if &observed == expected => Ok(Some(staged)),
+            Ok(other) => {
+                let detail = other.describe();
+                let restored = self.restore_staged(&staged);
+                Err(self.changed_entry(&detail, restored, &staged))
+            }
             Err(failure) => {
-                return Err(error(format!(
-                    "inspecting the login activation entry {} failed: {failure}; run `effigy gateway setup` again",
-                    self.staged_path(staged).display()
-                )))
+                let restored = self.restore_staged(&staged);
+                Err(self.changed_entry(
+                    &format!("it could not be inspected ({failure})"),
+                    restored,
+                    &staged,
+                ))
             }
-        }
-        // The name is never unlinked on the strength of an older observation:
-        // the same identity is required again immediately before the unlink.
-        match self.entry_of(staged) {
-            Ok(ActivationEntry::Ours(observed)) if &observed == expected => {
-                self.unlink_named(staged)
-            }
-            Ok(other) => Err(self.changed_entry(&other, staged)),
-            Err(failure) => Err(error(format!(
-                "inspecting the login activation entry {} failed: {failure}; run `effigy gateway setup` again",
-                self.staged_path(staged).display()
-            ))),
         }
     }
 
-    /// Refuse a staged entry that is not the one that was observed, putting it
-    /// back only when its own name is still free.
-    fn changed_entry(&self, observed: &ActivationEntry, staged: &str) -> io::Error {
-        let detail = match observed {
-            ActivationEntry::Ours(identity) => format!(
-                "it is now a different entry naming {}",
-                identity.target.display()
-            ),
-            other => other.describe(),
-        };
-        let kept = match self.rename_named_exclusive(staged, UNIT_NAME) {
+    /// Remove the staged entry inside its private directory. The name unlinked
+    /// here is not one any other actor addresses, so a replacement at the shared
+    /// unit name cannot be deleted by this step.
+    fn drop_staged(&self, staged: &StagedEntry) -> io::Result<()> {
+        match staged.observe() {
+            Ok(ActivationEntry::Ours(observed)) if &observed == &staged.expected => {}
+            Ok(other) => {
+                // Not the entry that was staged: it is never put back as
+                // Effigy's activation link and never deleted. It is kept aside
+                // and named instead.
+                return Err(error(format!(
+                    "the staged login activation entry {} changed before it was removed ({}); nothing was deleted and it is kept at {}. Inspect it, then run `effigy gateway setup` again",
+                    self.entry.display(),
+                    other.describe(),
+                    staged.path.join(StagedEntry::ENTRY).display()
+                )));
+            }
+            Err(failure) => {
+                return Err(error(format!(
+                    "the staged login activation entry {} could not be inspected: {failure}; nothing was deleted and it is kept at {}. Run `effigy gateway setup` again",
+                    self.entry.display(),
+                    staged.path.join(StagedEntry::ENTRY).display()
+                )))
+            }
+        }
+        unlink_named(
+            &staged.dir,
+            StagedEntry::ENTRY,
+            &staged.path.join(StagedEntry::ENTRY),
+        )?;
+        self.discard_staging(staged);
+        Ok(())
+    }
+
+    /// Put the staged entry back at the shared unit name, replacing nothing.
+    fn restore_staged(&self, staged: &StagedEntry) -> io::Result<()> {
+        rename_exclusive_at(&staged.dir, StagedEntry::ENTRY, &self.dir, UNIT_NAME)?;
+        self.discard_staging(staged);
+        Ok(())
+    }
+
+    /// Create a fresh, owner-only directory for one staged removal. Nothing is
+    /// ever reused: a name that already exists is skipped, not overwritten.
+    fn create_staging(&self, expected: &EntryIdentity) -> io::Result<StagedEntry> {
+        let uid = self.dir.metadata()?.uid();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let mut last = None;
+        for attempt in 0..8 {
+            let name = format!(
+                ".{UNIT_NAME}.removal-{}-{nanos}-{attempt}",
+                std::process::id()
+            );
+            let path = self.staged_path(&name);
+            match mkdir_at(&self.dir, &name) {
+                Ok(()) => {
+                    let dir = open_dir_at(&self.dir, &name, &path)?;
+                    verify_staging_dir(&dir, &path, uid)?;
+                    return Ok(StagedEntry {
+                        dir,
+                        unit: self.unit.clone(),
+                        path,
+                        name,
+                        expected: expected.clone(),
+                    });
+                }
+                Err(failure) if failure.raw_os_error() == Some(libc::EEXIST) => {
+                    last = Some(failure);
+                }
+                Err(failure) => {
+                    return Err(error(format!(
+                        "creating a private removal directory in {} failed: {failure}; run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again",
+                        self.entry.parent().unwrap_or(&self.entry).display()
+                    )))
+                }
+            }
+        }
+        Err(error(format!(
+            "creating a private removal directory in {} failed after 8 attempts ({}); run `effigy gateway setup` again",
+            self.entry.parent().unwrap_or(&self.entry).display(),
+            last.map(|failure| failure.to_string())
+                .unwrap_or_else(|| "no free name".to_owned())
+        )))
+    }
+
+    /// Remove a private staging directory once its entry is gone. A directory
+    /// that still holds something is left alone.
+    fn discard_staging(&self, staged: &StagedEntry) {
+        let _ = rmdir_at(&self.dir, &staged.name);
+    }
+
+    /// Refuse a staged entry that is not the one that was observed, restoring it
+    /// to the shared name only when that name is still free.
+    fn changed_entry(
+        &self,
+        detail: &str,
+        restored: io::Result<()>,
+        staged: &StagedEntry,
+    ) -> io::Error {
+        let kept = match restored {
             Ok(()) => "it was put back".to_owned(),
             Err(failure) if failure.raw_os_error() == Some(libc::EEXIST) => format!(
                 "its name is now occupied by another entry, so the entry Effigy moved is kept at {}",
-                self.staged_path(staged).display()
+                staged.path.join(StagedEntry::ENTRY).display()
             ),
             Err(failure) => format!(
                 "it could not be put back automatically ({failure}) and is kept at {}",
-                self.staged_path(staged).display()
+                staged.path.join(StagedEntry::ENTRY).display()
             ),
         };
         error(format!(
@@ -814,54 +842,6 @@ impl ActivationDir {
     /// The full path of a temporary name, for the messages only.
     fn staged_path(&self, staged: &str) -> PathBuf {
         self.entry.with_file_name(staged)
-    }
-
-    /// A temporary name for the staged removal. It is inside the verified
-    /// directory, short enough for one name component, and unique per process
-    /// and instant so it cannot collide with a leftover of an earlier run.
-    fn staging_name(&self) -> String {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos())
-            .unwrap_or(0);
-        format!(".{UNIT_NAME}.removal-{}-{nanos}", std::process::id())
-    }
-
-    /// Rename one entry to another name in this directory without replacing
-    /// anything already there: `renameat2(RENAME_NOREPLACE)` on Linux and
-    /// `renameatx_np(RENAME_EXCL)` on macOS. Ordinary `renameat` would silently
-    /// overwrite the destination, which is exactly what must not happen to an
-    /// entry Effigy did not write.
-    fn rename_named_exclusive(&self, from: &str, to: &str) -> io::Result<()> {
-        use std::os::fd::AsRawFd;
-        let from = cstring(from)?;
-        let to = cstring(to)?;
-        let dir = self.dir.as_raw_fd();
-        // SAFETY: live directory descriptor and two NUL-terminated names; the
-        // flags only add "do not replace an existing destination".
-        let result = rename_exclusive(dir, &from, dir, &to);
-        if result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-
-    /// Remove one entry by name inside the bound directory.
-    fn unlink_named(&self, name: &str) -> io::Result<()> {
-        use std::os::fd::AsRawFd;
-        let name = cstring(name)?;
-        // SAFETY: live directory descriptor and a NUL-terminated single component.
-        if unsafe { libc::unlinkat(self.dir.as_raw_fd(), name.as_ptr(), 0) } != 0 {
-            let failure = io::Error::last_os_error();
-            if failure.raw_os_error() == Some(libc::ENOENT) {
-                return Ok(());
-            }
-            return Err(error(format!(
-                "removing the login activation link {} failed: {failure}; run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again",
-                self.entry.display()
-            )));
-        }
-        Ok(())
     }
 
     /// Put Effigy's activation entry back inside the bound directory. An entry
@@ -897,6 +877,168 @@ impl ActivationDir {
         }
         Ok(())
     }
+}
+
+/// One entry's state inside a directory descriptor, without following it.
+fn entry_of(
+    dir: &std::fs::File,
+    name: &str,
+    unit: &Path,
+    label: &Path,
+) -> io::Result<ActivationEntry> {
+    let Some((dev, ino)) = identity_of(dir, name)? else {
+        return Ok(ActivationEntry::Absent);
+    };
+    match target_of(dir, name, label) {
+        Ok(Some(target)) if target == unit => {
+            Ok(ActivationEntry::Ours(EntryIdentity { dev, ino, target }))
+        }
+        Ok(Some(_)) => Ok(ActivationEntry::Foreign),
+        Ok(None) => Ok(ActivationEntry::Absent),
+        // A non-link entry is not Effigy's link either.
+        Err(failure) if failure.raw_os_error() == Some(libc::EINVAL) => {
+            Ok(ActivationEntry::Foreign)
+        }
+        Err(failure) => Err(failure),
+    }
+}
+
+/// The inode of one entry, without following it.
+fn identity_of(dir: &std::fs::File, name: &str) -> io::Result<Option<(u64, u64)>> {
+    use std::os::fd::AsRawFd;
+    let name = cstring(name)?;
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: live directory descriptor, NUL-terminated name and a writable
+    // stat buffer; AT_SYMLINK_NOFOLLOW keeps the link itself.
+    if unsafe {
+        libc::fstatat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            &mut stat,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        let failure = io::Error::last_os_error();
+        return match failure.raw_os_error() {
+            Some(libc::ENOENT) => Ok(None),
+            _ => Err(failure),
+        };
+    }
+    Ok(Some((stat.st_dev as u64, stat.st_ino as u64)))
+}
+
+/// The target of one entry inside a directory, read without following it.
+fn target_of(dir: &std::fs::File, name: &str, label: &Path) -> io::Result<Option<PathBuf>> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStringExt;
+    let name = cstring(name)?;
+    let mut buffer = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: live directory descriptor, NUL-terminated single component and
+    // a writable buffer of exactly the reported size. No path is reopened.
+    let len = unsafe {
+        libc::readlinkat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+        )
+    };
+    if len < 0 {
+        let failure = io::Error::last_os_error();
+        return match failure.raw_os_error() {
+            Some(libc::ENOENT) => Ok(None),
+            _ => Err(failure),
+        };
+    }
+    let len = len as usize;
+    if len >= buffer.len() {
+        return Err(error(format!(
+            "the login activation link {} names a longer target than a path may be",
+            label.display()
+        )));
+    }
+    Ok(Some(PathBuf::from(std::ffi::OsString::from_vec(
+        buffer[..len].to_vec(),
+    ))))
+}
+
+/// Remove one entry by name inside a directory descriptor.
+fn unlink_named(dir: &std::fs::File, name: &str, label: &Path) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let name = cstring(name)?;
+    // SAFETY: live directory descriptor and a NUL-terminated single component.
+    if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+        let failure = io::Error::last_os_error();
+        if failure.raw_os_error() == Some(libc::ENOENT) {
+            return Ok(());
+        }
+        return Err(error(format!(
+            "removing the login activation link {} failed: {failure}; run `systemctl --user disable {UNIT_NAME}`, then `effigy gateway setup` again",
+            label.display()
+        )));
+    }
+    Ok(())
+}
+
+/// `mkdirat` one private directory, owner-only.
+fn mkdir_at(dir: &std::fs::File, name: &str) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let name = cstring(name)?;
+    // SAFETY: live directory descriptor and a NUL-terminated single component.
+    if unsafe { libc::mkdirat(dir.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// `rmdir` one private directory inside a directory descriptor.
+fn rmdir_at(dir: &std::fs::File, name: &str) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let name = cstring(name)?;
+    // SAFETY: live directory descriptor and a NUL-terminated single component.
+    if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Open one child directory without following a link.
+fn open_dir_at(dir: &std::fs::File, name: &str, label: &Path) -> io::Result<std::fs::File> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let name = cstring(name)?;
+    // SAFETY: live directory descriptor and a NUL-terminated single component;
+    // the returned descriptor is owned immediately below.
+    let raw = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(error(format!(
+            "opening the private removal directory {} failed: {}",
+            label.display(),
+            io::Error::last_os_error()
+        )));
+    }
+    // SAFETY: `openat` returned a new owned descriptor and nothing else owns it.
+    Ok(std::fs::File::from(unsafe { OwnedFd::from_raw_fd(raw) }))
+}
+
+/// A private removal directory must be a real directory owned by the operator
+/// and writable by nobody else.
+fn verify_staging_dir(dir: &std::fs::File, path: &Path, uid: u32) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = dir.metadata()?;
+    if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+        return Err(error(format!(
+            "refusing the private removal directory {}: it must be a real directory owned by uid {uid} with no group or other access",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 /// `rename` without replacing an existing destination, on the platforms the
@@ -952,6 +1094,26 @@ fn rename_exclusive(
     // No exclusive rename here, so nothing is renamed at all.
     unsafe { *libc::__errno_location() = libc::ENOSYS };
     -1
+}
+
+/// Rename between two directory descriptors, replacing nothing: a destination
+/// that already exists refuses the rename.
+fn rename_exclusive_at(
+    from: &std::fs::File,
+    from_name: &str,
+    to: &std::fs::File,
+    to_name: &str,
+) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let from_name = cstring(from_name)?;
+    let to_name = cstring(to_name)?;
+    // SAFETY: two live directory descriptors and two NUL-terminated names; the
+    // flags only add "do not replace an existing destination".
+    let result = rename_exclusive(from.as_raw_fd(), &from_name, to.as_raw_fd(), &to_name);
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Open a directory without following a final link.
@@ -3659,10 +3821,11 @@ mod tests {
         });
     }
 
-    /// The staged name is never overwritten, and a put-back never replaces an
-    /// entry that appeared while the replacement was staged.
+    /// The regression the review asked for: the staged removal unlinks a name
+    /// inside its own private directory, so a replacement that appears at the
+    /// shared unit name during the removal is never the entry that is deleted.
     #[test]
-    fn a_staged_removal_never_replaces_an_entry_it_did_not_write() {
+    fn a_replacement_at_the_unit_name_during_staging_is_preserved() {
         with_run(|run, cx| {
             let home = tempfile::tempdir().unwrap();
             let paths = paths(home.path());
@@ -3672,45 +3835,85 @@ mod tests {
             install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
             let activation = ActivationDir::open(&paths, uid).unwrap().unwrap();
             let observed = observed_entry(&activation);
+
+            // Stage Effigy's entry, then let a foreign entry appear at the unit
+            // name before the staged entry is removed.
+            let staged = activation.stage_entry(&observed).unwrap().unwrap();
             let elsewhere = home.path().join("elsewhere.service");
             std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
-
-            // A foreign entry already sits at the temporary name.
-            let staged = ".effigy-gateway.service.removal-fixture";
-            std::os::unix::fs::symlink(&elsewhere, paths.wants.with_file_name(staged)).unwrap();
-            let error = activation
-                .unlink_entry_staged(&observed, staged)
-                .unwrap_err();
-            let message = error.to_string();
-            assert!(message.contains("is already in use"), "{message}");
-            assert!(message.contains("does not replace an entry"), "{message}");
-            // Nothing was moved, replaced or deleted.
-            assert_eq!(
-                std::fs::read_link(paths.wants.with_file_name(staged)).unwrap(),
-                elsewhere
-            );
-            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), paths.unit);
-            std::fs::remove_file(paths.wants.with_file_name(staged)).unwrap();
-
-            // Effigy's entry is staged, then a foreign entry appears at its
-            // name: the put-back refuses and keeps both entries.
-            activation
-                .rename_named_exclusive(UNIT_NAME, staged)
-                .unwrap();
             std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
-            let error = activation.changed_entry(&ActivationEntry::Foreign, staged);
+
+            // The removal deletes only its private staged entry.
+            activation.drop_staged(&staged).unwrap();
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+            assert!(
+                !staged.path.exists(),
+                "the private removal directory is cleaned up"
+            );
+        });
+    }
+
+    /// A staged entry replaced inside the private directory is refused and kept,
+    /// never deleted and never installed as Effigy's activation link.
+    #[test]
+    fn a_staged_entry_that_changed_is_refused_and_kept_aside() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let activation = ActivationDir::open(&paths, uid).unwrap().unwrap();
+            let observed = observed_entry(&activation);
+            let staged = activation.stage_entry(&observed).unwrap().unwrap();
+
+            // A different inode with the same target replaces the staged entry.
+            let entry_path = staged.path.join(StagedEntry::ENTRY);
+            std::fs::remove_file(&entry_path).unwrap();
+            std::os::unix::fs::symlink(&paths.unit, &entry_path).unwrap();
+
+            let error = activation.drop_staged(&staged).unwrap_err();
             let message = error.to_string();
             assert!(
-                message.contains("changed while it was being removed"),
+                message.contains("changed before it was removed"),
                 "{message}"
             );
-            assert!(message.contains("preserved, not deleted"), "{message}");
-            assert!(message.contains("its name is now occupied"), "{message}");
-            // The foreign entry survived, and Effigy's own entry is kept aside
-            // rather than replacing it.
+            assert!(message.contains("nothing was deleted"), "{message}");
+            assert!(
+                message.contains(&entry_path.display().to_string()),
+                "{message}"
+            );
+            // The replacement is still there and the shared name stays free.
+            assert_eq!(std::fs::read_link(&entry_path).unwrap(), paths.unit);
+            assert!(!activation_linked(&paths, uid));
+        });
+    }
+
+    /// A put-back into an occupied unit name replaces nothing and says where the
+    /// entry Effigy moved is kept.
+    #[test]
+    fn putting_a_staged_entry_back_refuses_an_occupied_name() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let activation = ActivationDir::open(&paths, uid).unwrap().unwrap();
+            let observed = observed_entry(&activation);
+            let staged = activation.stage_entry(&observed).unwrap().unwrap();
+
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let error = activation.restore_staged(&staged).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(libc::EEXIST));
+            // Neither entry was replaced or deleted.
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
             assert_eq!(
-                std::fs::read_link(paths.wants.with_file_name(staged)).unwrap(),
+                std::fs::read_link(staged.path.join(StagedEntry::ENTRY)).unwrap(),
                 paths.unit
             );
         });

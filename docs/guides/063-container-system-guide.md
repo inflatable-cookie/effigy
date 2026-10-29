@@ -1664,14 +1664,18 @@ by you and not group- or world-writable, and the entry Effigy uses there must
 be its own link to the owned unit. Effigy binds and verifies both, then reads
 and removes only its own entry — never by reopening the path, and never by
 unlinking a name it checked earlier. Removal records the entry's inode at the
-check, moves the entry aside atomically into a temporary name inside the
-verified directory, and requires that same inode (and target) again after the
-move and immediately before the unlink, so a link replaced with an identical
-target is refused as a different entry. Both the move aside and the put-back
-are exclusive renames (`renameat2(RENAME_NOREPLACE)` on Linux,
-`renameatx_np(RENAME_EXCL)` on macOS): an entry already at the temporary name
-is never overwritten, and a put-back refuses — naming where Effigy's entry is
-kept — when something appeared at the unit name instead. This happens *before*
+check, moves the entry aside into a fresh, owner-only removal directory inside
+the verified activation directory, and requires that same inode (and target) in
+there before it unlinks it. The unlink therefore never targets the shared unit
+name: a replacement that appears at that name while the removal runs — the
+manager's own `disable`, a concurrent setup, anything that plays by the
+directory — is never the entry that is deleted, and it is left in place and
+reported by `status`. Both the move and the put-back are exclusive renames
+(`renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS),
+so nothing at either destination is ever replaced, and a put-back refuses —
+naming where Effigy's entry is kept — when the unit name was taken meanwhile.
+An entry replaced inside the private directory is refused and kept aside rather
+than deleted or installed as Effigy's link. This happens *before*
 any `systemctl --user` request that could follow the directory or entry
 (`enable` on a repeated setup, `disable --now` on `setup --remove`), so a
 `default.target.wants` that is a symlink to another directory, or an entry that

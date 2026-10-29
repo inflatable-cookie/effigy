@@ -165,10 +165,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `default.target.wants` and an entry naming another target (or not a link) are
   refused without touching them or stopping anything, and removal refuses
   before the unit file is deleted. Removal binds the entry itself: its inode is
-  recorded at the check, the entry is moved aside and must still be that inode
-  (with that target) after the move and immediately before the unlink, and both
-  the move and the put-back are exclusive renames that never overwrite an entry
-  Effigy did not write — a collision is refused and both entries are kept. An
+  recorded at the check, the entry is moved into a fresh owner-only removal
+  directory and must still be that inode (with that target) there before it is
+  removed, so the unlink never targets the shared unit name and a replacement
+  arriving at that name is left in place. The move and the put-back are
+  exclusive renames that never overwrite an entry Effigy did not write, and an
+  entry replaced inside the private directory is refused and kept aside. An
   `enable` that fails after writing the link is reported as enabled and still
   carries the manager failure and its recovery commands. A failed unit rewrite
   restores the previous file's activation and says the installed route still
