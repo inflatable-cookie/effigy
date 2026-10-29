@@ -298,7 +298,10 @@ fn backpressure_is_bounded_and_cancel_stays_live_without_ack() {
         data.iter().map(|s| s.seq).collect::<Vec<_>>(),
         (0..16).collect::<Vec<_>>()
     );
-    assert!(stops >= 1, "full stream window suppressed cancellation");
+    assert_eq!(
+        stops, 2,
+        "one cancellation and owner EOF must both reach custody"
+    );
     assert!(frames.iter().any(|f| matches!(f, Frame::Response(Response { id, outcome: ResponseOutcome::Observed(_), .. }) if *id == RequestId::new([3;16]))));
     assert_eq!(
         chunks.0.len(),

@@ -193,13 +193,15 @@ impl Host {
         );
     }
     pub fn stops(&self, run: RunId) -> usize {
-        self.database()
+        let count = self
+            .database()
             .query_row(
                 "SELECT count(*) FROM requests WHERE run_id=?1 AND state='pending'",
                 [run.to_string()],
-                |row| row.get::<_, usize>(0),
+                |row| row.get::<_, i64>(0),
             )
-            .expect("stop requests")
+            .expect("stop requests");
+        usize::try_from(count).expect("nonnegative bounded request count")
     }
     pub fn database(&self) -> rusqlite::Connection {
         rusqlite::Connection::open_with_flags(
@@ -267,10 +269,15 @@ impl Admission for Engine<'_> {
         ticket: &AdmissionTicket,
         plan: &ResolvedInvocation,
     ) -> Result<(), Refusal> {
-        self.ledger.borrow_mut().record(Call::Admit(
-            ticket.run(),
-            serde_json::to_value(plan).expect("capture complete host invocation including argv"),
-        ));
+        let captured =
+            serde_json::to_value(plan).expect("capture complete host invocation including argv");
+        assert!(
+            !captured.to_string().contains(&"ab".repeat(32)),
+            "capability leaked into admitted argv or plan"
+        );
+        self.ledger
+            .borrow_mut()
+            .record(Call::Admit(ticket.run(), captured));
         let run = Run::begin_admitted(
             cx,
             &self.host.root,
