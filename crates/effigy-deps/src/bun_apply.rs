@@ -445,7 +445,7 @@ fn apply_bun_link_plan_inner(
     let mut errors = Vec::new();
     let mut outcome = BunLinkOutcome::Applied;
 
-    index_store.update_exact(index_before, |_current| {
+    index_store.update_exact(index_before, |current| {
         validate_physical_preconditions(&plan, observer)?;
         for change in &physical_changes {
             if let Err(error) = apply_exact_change(change) {
@@ -593,6 +593,27 @@ fn apply_bun_link_plan_inner(
             }
         }
 
+        if let Some(change) = &ledger_change {
+            // The ledger commits inside the same transaction. A failed write
+            // then leaves the index untouched instead of needing a restore
+            // after the lock is released.
+            if let Err(error) = apply_exact_change(change) {
+                outcome = BunLinkOutcome::ApplyFailed;
+                errors.push(error.to_string());
+                rollback = rollback_bun_link(
+                    &plan,
+                    home,
+                    &attempted_processes,
+                    &backups,
+                    &applied_files,
+                    process,
+                    observer,
+                );
+                return Ok((None, ()));
+            }
+            applied_files.push(PlannedChange::clone(change));
+        }
+
         if retire == RetireRegistrations::LinkOwned {
             // Retire inside this transaction, while the index lock is held:
             // the registration only exists so the consumer's save-less `bun
@@ -607,7 +628,10 @@ fn apply_bun_link_plan_inner(
                 observer,
             );
         }
-        let next = index_change.map(|_| planned_index.clone());
+        // Retirement changes the index even when the plan itself planned no
+        // index change (a re-link over an existing claim), so the write is
+        // decided by the index this transaction produced.
+        let next = (planned_index != *current).then(|| planned_index.clone());
         Ok((next, ()))
     })?;
 
@@ -625,36 +649,7 @@ fn apply_bun_link_plan_inner(
         });
     }
 
-    if let Some(change) = ledger_change {
-        if let Err(error) = apply_exact_change(change) {
-            errors.push(error.to_string());
-            outcome = BunLinkOutcome::ApplyFailed;
-            if let Some(index_change) = index_change {
-                if let Err(error) = index_store.replace_exact(
-                    index_change.after.as_deref(),
-                    index_change.before.as_deref(),
-                ) {
-                    errors.push(error.to_string());
-                }
-            }
-            rollback = rollback_bun_link(
-                &plan,
-                home,
-                &attempted_processes,
-                &backups,
-                &applied_files,
-                process,
-                observer,
-            );
-            // The rollback restored the registration the transaction retired,
-            // so nothing was retired after all.
-            registration_retirement = BunRegistrationRetirement::default();
-        }
-    }
-
-    if outcome == BunLinkOutcome::Applied {
-        cleanup_backups(&backups, &mut errors);
-    }
+    cleanup_backups(&backups, &mut errors);
     Ok(BunLinkOperationReport {
         plan,
         outcome,

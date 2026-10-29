@@ -1032,3 +1032,75 @@ fn an_owned_link_retires_its_registration_inside_the_apply() {
         1
     );
 }
+
+#[test]
+fn a_relink_retires_an_existing_claim_instead_of_leaving_it_in_the_index() {
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    // The fixture link leaves the claim and registration a recovery reads.
+    link(&fixture, &process);
+    assert_eq!(registration_consumers(&fixture), [fixture.repo.clone()]);
+
+    // A re-link over that claim plans no index change of its own, so the
+    // retirement alone has to decide that the index is written.
+    let report = super::apply_bun_link_plan_owned(
+        plan(&fixture, false),
+        &fixture.home,
+        &process,
+        &FsBunPlanObserver,
+    )
+    .unwrap();
+
+    assert_eq!(report.outcome, BunLinkOutcome::Applied);
+    assert_eq!(report.registration_retirement.unregistered, ["underlay"]);
+    assert!(
+        registration_consumers(&fixture).is_empty(),
+        "the retired claim stayed in the index"
+    );
+    assert_eq!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Missing
+    );
+}
+
+#[test]
+fn a_ledger_write_failure_leaves_the_link_exactly_as_it_was() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = fixture(&[("underlay", DependencyDepth::Direct)]);
+    let process = FixtureProcess::new(&fixture.home);
+    // Start from the claimed state a fixture link leaves, then drop the ledger
+    // so the plan has a ledger write to attempt.
+    link(&fixture, &process);
+    let ledger = fixture.repo.join(".effigy/local/dependency-links.json");
+    fs::remove_file(&ledger).unwrap();
+    let planned = plan(&fixture, false);
+    let ledger_dir = fixture.repo.join(".effigy/local");
+    fs::set_permissions(&ledger_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let report =
+        super::apply_bun_link_plan_owned(planned, &fixture.home, &process, &FsBunPlanObserver)
+            .unwrap();
+    fs::set_permissions(&ledger_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(report.outcome, BunLinkOutcome::ApplyFailed);
+    assert!(!report.errors.is_empty());
+    assert!(report.registration_retirement.is_empty());
+    assert!(
+        report.rollback.failures.is_empty(),
+        "{:?}",
+        report.rollback.failures
+    );
+    // A failed transaction leaves the claim, the registration and the ledger
+    // exactly as they were: nothing is retired before the ledger commits.
+    assert_eq!(registration_consumers(&fixture), [fixture.repo.clone()]);
+    assert!(matches!(
+        FsBunPlanObserver
+            .observe_path(&bun_registration_path(&fixture.home, "underlay"))
+            .unwrap(),
+        BunPathObservation::Symlink { .. }
+    ));
+    assert!(!ledger.exists());
+}
