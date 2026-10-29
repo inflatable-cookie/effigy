@@ -6363,6 +6363,8 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             .env("FAKE_OWNED_STATE", &state)
             .env("FAKE_GUEST_ADAPTER", &guest_adapter)
             .env("FAKE_GUEST_ROOT", fixture.path().join("guest"))
+            .env_remove("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF")
+            .env("EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE", "download")
             .current_dir(&checkout)
             .env("HOME", &cleanup.home)
             .env("EFFIGY_TEST_CONTAINERS_HOME", cleanup.home.join(".effigy"))
@@ -7325,6 +7327,10 @@ fn write_switch_fake_guest(root: &Path, home: &Path) -> PathBuf {
     fs::create_dir_all(artifact.parent().expect("private artifact parent"))
         .expect("private artifact cache");
     let bytes = b"private fake guest executable, never executed\n";
+    let digest = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     fs::write(&artifact, bytes).expect("fake guest artifact");
     fs::write(artifact.with_extension("active-version"), &version).expect("artifact version");
     fs::write(
@@ -7334,10 +7340,7 @@ fn write_switch_fake_guest(root: &Path, home: &Path) -> PathBuf {
     .expect("artifact install identity");
     fs::write(
         artifact.with_extension("receipt"),
-        format!(
-            "release_triple={triple}\nsha256={:x}\n",
-            Sha256::digest(bytes)
-        ),
+        format!("release_triple={triple}\nsha256={digest}\n"),
     )
     .expect("artifact digest receipt");
 
