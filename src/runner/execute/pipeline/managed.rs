@@ -109,12 +109,12 @@ pub(in crate::runner) fn run_managed_task(
     ) || container_handoff;
     let mut host_aliases = match execution_mode {
         ManagedExecutionMode::RenderPlan => None,
-        _ => super::super::host_alias::host_alias_resolver(preflight, selection)?,
+        _ => super::super::host_alias::session_host_alias_resolver(preflight, selection)?,
     };
     let host_env_aliases = match (&host_aliases, execution_mode) {
         (Some(resolver), _) => resolver.hosts(),
         (None, ManagedExecutionMode::RenderPlan) => {
-            super::super::host_alias::host_plan_env_aliases(preflight, selection)?
+            super::super::host_alias::session_host_plan_env_aliases(preflight, selection)?
         }
         (None, _) => Vec::new(),
     };

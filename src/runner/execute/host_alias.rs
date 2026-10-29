@@ -48,6 +48,31 @@ pub(in crate::runner) fn host_alias_resolver(
     }
 }
 
+/// The session resolver a managed session uses: the checkout's aliases,
+/// whatever the parent task's binding is, because the session decides per
+/// process which entries run on the host.
+pub(in crate::runner) fn session_host_alias_resolver(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<Option<HostAliasResolver>, RunnerError> {
+    match scoped_checkout_root(preflight, selection)? {
+        Some(scope_root) => HostAliasResolver::for_checkout(&scope_root),
+        None => Ok(None),
+    }
+}
+
+/// The session twin of [`host_plan_env_aliases`]: what a session `--plan`
+/// render shows.
+pub(in crate::runner) fn session_host_plan_env_aliases(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<Vec<effigy_core::host_alias::HostAlias>, RunnerError> {
+    match scoped_checkout_root(preflight, selection)? {
+        Some(scope_root) => host_env_aliases(&scope_root),
+        None => Ok(Vec::new()),
+    }
+}
+
 /// The declared/effective aliases a host-bound run's environment resolves
 /// without proving anything is published: what a `--plan` render shows.
 pub(in crate::runner) fn host_plan_env_aliases(
@@ -67,14 +92,11 @@ fn host_execution_scope_root(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<Option<PathBuf>, RunnerError> {
-    if super::workspace_seeded::inside_container_handoff() {
+    let Some(scope_root) = scoped_checkout_root(preflight, selection)? else {
         return Ok(None);
-    }
+    };
     let inputs =
         effective_runtime_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
-    if inputs.containers.is_none() {
-        return Ok(None);
-    }
     let binding = resolve_execution_binding_resolution(
         inputs.default_run_in,
         inputs.systems.as_ref(),
@@ -87,6 +109,27 @@ fn host_execution_scope_root(
         binding.binding(),
         ContainerExecutionBinding::None | ContainerExecutionBinding::Host
     ) {
+        return Ok(None);
+    }
+    Ok(Some(scope_root))
+}
+
+/// The checkout's root when it is a runtime scope that declares container
+/// environments, whatever the task's own binding is.
+///
+/// A managed session resolves aliases per process, so a container-bound
+/// session's host entries need the checkout's aliases even though the parent
+/// task binds to a container (effigy#431 review).
+fn scoped_checkout_root(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<Option<PathBuf>, RunnerError> {
+    if super::workspace_seeded::inside_container_handoff() {
+        return Ok(None);
+    }
+    let inputs =
+        effective_runtime_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
+    if inputs.containers.is_none() {
         return Ok(None);
     }
     Ok(Some(inputs.scope_root))
