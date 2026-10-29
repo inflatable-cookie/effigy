@@ -482,6 +482,21 @@ fn reaches(address: std::net::SocketAddr) -> bool {
     std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(200)).is_ok()
 }
 
+/// Resolve a host render's inherited environment: the values it would otherwise
+/// receive unchanged that name an alias endpoint.
+pub(in crate::runner) fn resolve_host_env_inherited(
+    root: &Path,
+    label: &str,
+    delivered: &BTreeSet<String>,
+) -> Result<Vec<(String, String)>, RunnerError> {
+    let Some(mut resolver) = HostAliasResolver::for_checkout(root)? else {
+        return Ok(Vec::new());
+    };
+    let resolved = resolver.resolved_inherited_env(delivered, true)?;
+    let _ = label;
+    Ok(resolved)
+}
+
 /// Borrow resolved secret pairs for a spawn.
 pub(in crate::runner) fn secret_env_slice(
     pairs: &[(String, SecretString)],

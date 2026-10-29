@@ -66,7 +66,7 @@ pub(super) fn try_run_builtin_test(
         .map(Some);
     }
 
-    let runnable = planning::apply_passthrough_to_runnable(
+    let mut runnable = planning::apply_passthrough_to_runnable(
         suite_selection.runnable,
         &suite_selection.passthrough,
     );
@@ -77,10 +77,11 @@ pub(super) fn try_run_builtin_test(
     // commands (effigy#431, contract 005). A suite this run does not select is
     // never proved, and an alias that only appears in prose is never proved
     // either.
-    for suite in &runnable {
+    for suite in &mut runnable {
         if !matches!(suite.runtime, planning::BuiltinTargetRuntime::Host) {
             continue;
         }
+        let label = format!("test.suites.{}", suite.runner);
         let mut texts = vec![suite.command.as_str()];
         texts.extend(suite.env.values().map(String::as_str));
         if let Some(setup) = suite.setup_command.as_deref() {
@@ -89,11 +90,28 @@ pub(super) fn try_run_builtin_test(
         if let Some(teardown) = suite.teardown_command.as_deref() {
             texts.push(teardown);
         }
-        ports.prove_host_suite_aliases(
-            &suite.root,
-            &format!("test.suites.{}", suite.runner),
-            &texts,
-        )?;
+        ports.prove_host_suite_aliases(&suite.root, &label, &texts)?;
+        // A value the suite would otherwise inherit unchanged names the
+        // declared alias just as its own `env` does: resolve and prove it, and
+        // deliver what Effigy resolved (effigy#431 review). Every key the suite
+        // delivers itself keeps its own precedence.
+        let mut delivered = suite
+            .env
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        for text in [
+            suite.command.as_str(),
+            suite.setup_command.as_deref().unwrap_or_default(),
+            suite.teardown_command.as_deref().unwrap_or_default(),
+        ] {
+            delivered.extend(effigy_managed::declared_env_keys(text));
+        }
+        for (key, value) in
+            ports.resolve_host_suite_inherited_env(&suite.root, &label, &delivered)?
+        {
+            suite.env.entry(key).or_insert(value);
+        }
     }
     let max_parallel = planning::builtin_test_max_parallel(catalogs, resolved_root);
     // The TUI spawns its own processes, so it cannot put suites behind the

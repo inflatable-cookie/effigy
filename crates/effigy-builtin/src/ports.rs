@@ -116,6 +116,21 @@ pub trait BuiltinRuntimePorts {
         Ok(Vec::new())
     }
 
+    /// Resolve the values this host suite would otherwise inherit unchanged
+    /// from the caller's environment, with the scope's aliases and their
+    /// publication proof (effigy#431 review). A key the suite's own environment
+    /// delivers — its `env`, a step's `env`, or a rendered command's assignment
+    /// — is never resolved or proved: that value already won.
+    fn resolve_host_suite_inherited_env(
+        &self,
+        root: &std::path::Path,
+        _label: &str,
+        _delivered: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<(String, String)>, BuiltinError> {
+        let _ = root;
+        Ok(Vec::new())
+    }
+
     /// Prove every delivered alias this suite would use before anything runs:
     /// the alias's route must belong to this checkout and publish an upstream
     /// port. `label` names the suite in the refusal. The default implementation

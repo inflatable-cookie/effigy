@@ -2003,8 +2003,10 @@ rewrite, used by the runner and by the managed session's run specs):
   and the step environment of that suite's `setup`/`teardown` commands — proved
   for the suites the run selects, before any suite starts
 - a value the child would otherwise inherit unchanged from the caller's
-  environment, such as an exported `DATABASE_URL`: each naming an endpoint is
-  resolved and proved like a declared value and delivered to the child
+  environment, such as an exported `DATABASE_URL`, for a host task, a sequence
+  step, a managed host workload and a selected host suite with its lifecycle:
+  each naming an endpoint is resolved and proved like a declared value and
+  delivered to the child
 
 Each is delivered with this checkout's effective alias in place of the
 declared one. That env map is the one Effigy already owns: a consumer whose
@@ -2051,9 +2053,11 @@ so host execution could quietly deliver the canonical alias and reach another
 checkout's service. A sensitive value the declaring environment overrides — the
 task's own `env`, or a sequence step's — is dropped rather than delivered, so it
 is neither resolved nor proved: the declared value outranks the secret source.
-A key a run delivers itself — task `env`, an env-schema value, a secret — is
-never re-resolved from the caller's environment, so the source that wins still
-wins; every other inherited value is. A managed session's client makes that
+A key a run delivers itself — task `env`, an env-schema value, a secret, a
+suite's `env`, a step's `env`, or a rendered command's own assignment — is never
+re-resolved from the caller's environment, so the source that wins still wins,
+and a managed session decides this per host workload so a value no workload
+receives is never proved. A managed session's client makes that
 proof and hands the resolved values to its supervisor in the supervisor's own
 environment, so the supervisor inherits what was proved.
 

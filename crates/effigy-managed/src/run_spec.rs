@@ -55,6 +55,35 @@ impl RunSpecContext<'_> {
     }
 }
 
+/// Every env key a rendered command delivers itself.
+///
+/// Effigy renders a delivered environment as `env 'KEY=value' … sh -c '…'`, and
+/// a command body may assign a key of its own; either way the key is delivered
+/// by the command, not inherited, so a caller that resolves inherited values
+/// must not resolve or prove this one. This reads the same rendering
+/// [`render_task_run_spec`] writes.
+pub fn declared_env_keys(command: &str) -> std::collections::BTreeSet<String> {
+    let mut keys = std::collections::BTreeSet::new();
+    for token in command
+        .split(|character: char| character.is_whitespace() || character == '\'' || character == '"')
+    {
+        let Some((name, _)) = token.split_once('=') else {
+            continue;
+        };
+        let mut characters = name.chars();
+        let Some(first) = characters.next() else {
+            continue;
+        };
+        if !(first.is_ascii_alphabetic() || first == '_')
+            || !characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            continue;
+        }
+        keys.insert(name.to_owned());
+    }
+    keys
+}
+
 pub fn render_task_run_spec(
     run: &ManifestManagedRun,
     context: RunSpecContext<'_>,

@@ -349,21 +349,44 @@ fn start_managed_run(
     // Reading the task's secrets here prompts once for the passphrase on
     // this terminal; the supervisor receives it in its spawn environment.
     let secrets = context.task_secrets()?;
-    // This checkout's scope resolves the values the session would otherwise
-    // inherit unchanged, and refuses before its supervisor starts when one has
-    // no published backing service. The supervisor receives the resolved values
-    // in its spawn environment (effigy#431 review).
+    // This checkout's scope resolves the values each host workload would
+    // otherwise inherit unchanged, and refuses before its supervisor starts when
+    // one has no published backing service. A workload's own delivered
+    // environment decides what it inherits, so a key its commands deliver is
+    // never resolved or proved (effigy#431 review). The supervisor receives the
+    // resolved values in its spawn environment.
     let resolved_inherited_env = match context.host_aliases.as_mut() {
         Some(resolver) => {
-            let mut delivered = context
+            let mut session_delivered = context
                 .selection
                 .task
                 .env
                 .keys()
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>();
-            delivered.extend(secrets.iter().map(|(key, _)| key.clone()));
-            resolver.resolved_inherited_env(&delivered, true)?
+            session_delivered.extend(secrets.iter().map(|(key, _)| key.clone()));
+            let host_placed = matches!(
+                context.binding_resolution.binding(),
+                ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+            ) || context.container_handoff;
+            let mut resolved: Vec<(String, String)> = Vec::new();
+            for process in &plan.processes {
+                if !(host_placed || process.run_on_host) {
+                    continue;
+                }
+                let mut delivered = session_delivered.clone();
+                delivered.extend(process.secret_env.keys().cloned());
+                delivered.extend(effigy_managed::declared_env_keys(&process.run));
+                if let Some(setup) = process.setup.as_deref() {
+                    delivered.extend(effigy_managed::declared_env_keys(setup));
+                }
+                for (key, value) in resolver.resolved_inherited_env(&delivered, true)? {
+                    if !resolved.iter().any(|(existing, _)| existing == &key) {
+                        resolved.push((key, value));
+                    }
+                }
+            }
+            resolved
         }
         None => Vec::new(),
     };
@@ -481,7 +504,6 @@ fn displayed_plan(
     let workloads = managed_workloads(
         context,
         &plan,
-        &[],
         &[],
         "<run token>",
         container_repo_root.as_deref(),
@@ -753,7 +775,6 @@ fn own_managed_run(
         // published backing service for them (effigy#431, contract 005). A key
         // the session's own rendered environment delivers wins over a secret of
         // the same name, so that secret is neither delivered again nor proved.
-        let mut inherited_env = Vec::new();
         if let Some(resolver) = context.host_aliases.as_mut() {
             let mut delivered: std::collections::BTreeSet<String> = selection
                 .task
@@ -769,11 +790,6 @@ fn own_managed_run(
                 .map(|(key, value)| (key.as_str(), value))
                 .collect::<Vec<_>>();
             secrets = resolver.resolved_secret_env(&pairs, &delivered, true)?;
-            delivered.extend(secrets.iter().map(|(key, _)| key.clone()));
-            // A host workload would otherwise inherit this value unchanged; it
-            // names the declared alias just as a task's own env does
-            // (effigy#431 review).
-            inherited_env = resolver.resolved_inherited_env(&delivered, true)?;
         }
         let role_schema_env = managed_role_schema_env(
             &preflight.catalogs,
@@ -819,15 +835,9 @@ fn own_managed_run(
                 )
                 .collect(),
         };
-        Ok((
-            secrets,
-            inherited_env,
-            env_schema_resolved,
-            container_repo_root,
-            owned,
-        ))
+        Ok((secrets, env_schema_resolved, container_repo_root, owned))
     })();
-    let (secrets, inherited_env, env_schema_resolved, container_repo_root, owned) = match inputs {
+    let (secrets, env_schema_resolved, container_repo_root, owned) = match inputs {
         Ok(inputs) => inputs,
         Err(error) => {
             // The failure's own category: an input that could not be read is
@@ -873,7 +883,6 @@ fn own_managed_run(
             context,
             &plan,
             &secrets,
-            &inherited_env,
             &token,
             container_repo_root.as_deref(),
             pane_feedback,
@@ -1236,7 +1245,6 @@ fn managed_workloads(
     context: &ManagedContext<'_, '_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
     secrets: &[(String, SecretString)],
-    inherited_env: &[(String, String)],
     token: &str,
     container_repo_root: Option<&std::path::Path>,
     pane_feedback: bool,
@@ -1279,11 +1287,6 @@ fn managed_workloads(
                     .map(|(key, value)| (key.clone(), value.expose().to_owned())),
             );
             secret.extend(process.secret_env.clone());
-            // A host workload's inherited value Effigy resolved is delivered
-            // plainly, exactly as the child would have inherited it.
-            for (key, value) in inherited_env {
-                plain.entry(key.clone()).or_insert_with(|| value.clone());
-            }
             let command = if context.container_handoff {
                 render_handoff_managed_standard_command(setup.as_deref(), &run)
             } else {
@@ -1738,7 +1741,6 @@ working_dir = "/workspace"
                 &context,
                 &plan,
                 &[("DATABASE_URL".into(), SecretString::new(secret.into()))],
-                &[],
                 "run-proof",
                 Some(Path::new("/workspace")),
                 false,

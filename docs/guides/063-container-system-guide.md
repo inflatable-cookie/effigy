@@ -1517,8 +1517,11 @@ value source precedence is unchanged.
 
 That covers a task's own `env`, an env-schema or `.env` value, a declared
 secret, a sequence step's environment, a managed session's process plan
-(`mode = "tui"`), and a configured test suite's own environment, command and
-`setup`/`teardown` step environments. Every alias a selected suite would use is
+(`mode = "tui"`), a configured test suite's own environment, command and
+`setup`/`teardown` step environments, and a value the child would otherwise
+inherit unchanged from your own shell — such as an exported `DATABASE_URL` — for
+a host task, a sequence step, a managed host workload and a selected host suite.
+A key the run delivers itself keeps its own precedence. Every alias a selected suite would use is
 proved before any suite starts, and the proof reads only the endpoints Effigy
 delivered — text that merely mentions the alias proves nothing. Only an endpoint is rewritten - a value
 that is exactly the host, the host of a URL authority, or a host carrying its

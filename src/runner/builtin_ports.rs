@@ -148,6 +148,16 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
             .map_err(|error| BuiltinError::task_invocation(error.to_string()))
     }
 
+    fn resolve_host_suite_inherited_env(
+        &self,
+        root: &Path,
+        label: &str,
+        delivered: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<(String, String)>, BuiltinError> {
+        crate::runner::execute::host_alias::resolve_host_env_inherited(root, label, delivered)
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))
+    }
+
     fn prove_host_suite_aliases(
         &self,
         root: &Path,

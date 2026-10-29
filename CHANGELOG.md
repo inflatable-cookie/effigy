@@ -508,9 +508,11 @@ During v0.x, MINOR bumps may include breaking changes.
   route a stopped stack left behind refuses instead of authorizing a run that
   cannot connect, and a managed session proves only the processes it places on
   the host. A value the child would otherwise inherit unchanged - an exported
-  `DATABASE_URL`, say - is resolved and proved the same way, so the caller's own
-  environment cannot reach another checkout's service; a key the run delivers
-  itself keeps its own precedence. A worktree's first host run records the
+  `DATABASE_URL`, say - is resolved and proved the same way for a host task, a
+  sequence step, a managed host workload and a selected host suite with its
+  lifecycle, so the caller's own environment cannot reach another checkout's
+  service; a key the run delivers itself keeps its own precedence, and a managed
+  session decides it per host workload. A worktree's first host run records the
   checkout's scope token before resolving, so a fresh worktree is scoped rather
   than canonical; a container registry this scoped checkout declares but Effigy
   cannot read is refused instead of falling back to the canonical names; and a

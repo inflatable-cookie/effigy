@@ -494,6 +494,89 @@ fn an_inherited_database_url_is_resolved_and_proved_by_a_managed_session() {
     });
 }
 
+/// A configured host suite inherits the caller's environment too, so an
+/// inherited `DATABASE_URL` is resolved and proved like any other value
+/// (effigy#431 review).
+#[test]
+fn a_configured_host_suite_resolves_and_proves_an_inherited_url() {
+    with_private_gateway("scoped-host-alias-suite-inherited", || {
+        let primary = primary_checkout("scoped-host-alias-suite-inherited");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        let out = checkout.join("suite-inherited-url.txt");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [test.suites.unit]\n\
+             run = \"sh -lc 'echo $DATABASE_URL > {out}'\"\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with a suite");
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        let error = run_task(&checkout, "test", &["unit"]).expect_err("the suite must refuse");
+        assert_task_invocation_error_contains(
+            error,
+            &["DATABASE_URL", &alias, "effigy container up web"],
+        );
+        assert!(!out.exists(), "the refused suite never ran its command");
+
+        publish_alias_route(&checkout, &alias);
+        run_task(&checkout, "test", &["unit"]).expect("the suite runs");
+        assert_eq!(
+            fs::read_to_string(&out)
+                .expect("the suite recorded its URL")
+                .trim(),
+            format!("postgres://app@{alias}:5432/app"),
+            "an inherited value is resolved for a configured suite"
+        );
+    });
+}
+
+/// A host workload whose own entry delivers a key never inherits it, so an
+/// inherited alias that entry overrides must neither refuse nor replace it
+/// (effigy#431 review).
+#[test]
+fn a_session_entry_override_keeps_the_inherited_value_out() {
+    with_private_gateway("scoped-host-alias-entry-override", || {
+        let primary = primary_checkout("scoped-host-alias-entry-override");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let out = checkout.join("entry-override.txt");
+        let manifest = format!(
+            "{MANIFEST}\n\
+             [tasks.record]\n\
+             run_in = \"host\"\n\
+             run = \"sh -lc 'echo $DATABASE_URL > {out}'\"\n\
+             env = {{ DATABASE_URL = \"postgres://app@elsewhere.example:5432/db\" }}\n\
+             \n\
+             [tasks.dev]\n\
+             mode = \"tui\"\n\
+             concurrent = [\n\
+               {{ name = \"record\", task = \"record\", run_in = \"host\", start = 1 }},\n\
+             ]\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with an override entry");
+        let _env = EnvGuard::set_many(&[(
+            "DATABASE_URL",
+            Some("postgres://app@postgres.acme.test:5432/app".to_owned()),
+        )]);
+
+        // No route is published: the inherited value cannot reach the only host
+        // workload, which delivers its own value for that key.
+        run_task(&checkout, "dev", &["--headless"]).expect("the session runs");
+        assert_eq!(
+            fs::read_to_string(&out)
+                .expect("the workload recorded its URL")
+                .trim(),
+            "postgres://app@elsewhere.example:5432/db",
+            "the entry's own value reached the workload"
+        );
+    });
+}
+
 /// A container-bound session's `run_in = "host"` entry runs on the host, so it
 /// resolves this checkout's alias and is proved like any other host entry —
 /// through the public `effigy dev` path, before any container work starts
