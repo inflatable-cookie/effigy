@@ -634,10 +634,20 @@ fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Resul
                     key.session,
                     run.id(),
                     AttachmentId::new([8; 16]),
-                )?;
-                let socket = std::os::unix::net::UnixStream::connect(home.join("a.sock"))?;
+                )
+                .inspect_err(|error| {
+                    session.event(format!("secondary attach: {error}").into_bytes())
+                })?;
+                let socket = std::os::unix::net::UnixStream::connect(home.join("a.sock"))
+                    .inspect_err(|error| {
+                        session.event(format!("secondary socket: {error}").into_bytes())
+                    })?;
                 let input = std::fs::File::from(std::os::fd::OwnedFd::from(socket));
-                session.watch_attachment(&run, &attachment, &input)?;
+                session
+                    .watch_attachment(&run, &attachment, &input)
+                    .inspect_err(|error| {
+                        session.event(format!("secondary watch: {error}").into_bytes())
+                    })?;
             }
             session.event(frame);
         }

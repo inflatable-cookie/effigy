@@ -1367,6 +1367,10 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
 fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
     for cause in [Release::Eof, Release::Detach] {
         let home = home();
+        eprintln!(
+            "workspace lifetime {cause:?}: setup {}",
+            home.path().display()
+        );
         let cx = context();
         let root = StateRoot::effects(&cx, home.path()).unwrap();
         workspace_session(&cx, &root);
@@ -1396,11 +1400,39 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             ClientMode::Owning,
         )
         .unwrap();
+        eprintln!("workspace lifetime {cause:?}: waiting for Active");
         while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        let cx = context();
 
         let listener = std::os::unix::net::UnixListener::bind(home.path().join("a.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        eprintln!("workspace lifetime {cause:?}: requesting secondary watch");
         client.send_frame(b"watch-secondary").unwrap();
-        let (socket, _) = listener.accept().unwrap();
+        loop {
+            if let Event::Engine(bytes) = client.event(cx.operation()).unwrap() {
+                assert_eq!(
+                    String::from_utf8(bytes).unwrap(),
+                    "watch-secondary",
+                    "secondary watch acknowledgement"
+                );
+                break;
+            }
+        }
+        eprintln!("workspace lifetime {cause:?}: accepting secondary socket");
+        let accept_deadline = Instant::now() + Duration::from_secs(10);
+        let socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < accept_deadline,
+                        "secondary socket deadline"
+                    );
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("secondary socket: {error}"),
+            }
+        };
         let mut terminal = ChildGuard(
             Command::new("/bin/sleep")
                 .arg("40")
@@ -1410,9 +1442,16 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
                 .spawn()
                 .unwrap(),
         );
-        while !matches!(client.event(cx.operation()).unwrap(), Event::Engine(_)) {}
+        eprintln!("workspace lifetime {cause:?}: killing secondary terminal");
         terminal.0.kill().unwrap();
-        assert!(!terminal.0.wait().unwrap().success());
+        eventually(|| match terminal.0.try_wait().unwrap() {
+            Some(status) => {
+                assert!(!status.success());
+                true
+            }
+            None => false,
+        });
+        eprintln!("workspace lifetime {cause:?}: waiting for secondary release");
         eventually(|| {
             // The supervisor records only the secondary's EOF; the owner lives.
             match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
@@ -1426,6 +1465,8 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             engine_status(home.path()),
             Observed::Verified(RunStatus::Live(_), _)
         ));
+        eprintln!("workspace lifetime {cause:?}: refilling secondary slots");
+        let cx = context();
         // All eight slots can be filled after the killed terminal is released.
         for n in 0..SECONDARY_MAX {
             attach_secondary(
@@ -1438,6 +1479,7 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             .unwrap();
         }
         let mut owner = resume_owner(&cx, &root, key.session, id(9)).unwrap();
+        eprintln!("workspace lifetime {cause:?}: releasing owner");
         owner.release(&cx, &root, cause).unwrap();
         if cause == Release::Detach {
             // A round trip proves the supervisor consumed the handle's detach
@@ -1459,7 +1501,9 @@ fn custody_workspace_handles_drive_owner_and_secondary_lifetimes() {
             ));
             client.stop(&cx, id(8)).unwrap();
         }
+        eprintln!("workspace lifetime {cause:?}: waiting for supervisor settlement");
         client.wait(cx.operation()).unwrap();
+        eprintln!("workspace lifetime {cause:?}: verifying settlement");
         assert!(workload_gone(home.path()));
         let _reader =
             match effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root) {
