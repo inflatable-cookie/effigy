@@ -979,6 +979,16 @@ impl Owner {
         end: End,
     ) -> Result<Option<String>, RunnerError> {
         self.event(&EngineEvent::Stopping);
+        // A wait that ends with the run is not a live wait: drop it, and keep
+        // the entries that failed or never started, which are the run's
+        // terminal, attributed result (effigy#458).
+        let now = Instant::now();
+        for state in self.waits.states(now) {
+            if !matches!(state.phase, EntryPhase::NotStarted | EntryPhase::Failed) {
+                self.wait_ledger.retire(&state.entry);
+            }
+        }
+        self.wait_ledger.retire(super::OUTPUT_LOG);
         let non_zero = self
             .workloads
             .iter()

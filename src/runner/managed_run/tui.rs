@@ -496,6 +496,10 @@ fn stdin_hung_up() -> bool {
 }
 
 /// Runs the TUI over a started run until it closes.
+///
+/// `initial_waits` is the session's ordering graph projected before the
+/// supervisor's first event: the tabs name their own wait from the first frame
+/// instead of showing a generic one (effigy#458).
 pub(in crate::runner) fn attach_tui(
     started: Started,
     addressed: &Addressed<'_>,
@@ -503,6 +507,7 @@ pub(in crate::runner) fn attach_tui(
     tabs: Vec<ManagedTab>,
     tab_order: Vec<String>,
     shells: Vec<ProcessSpec>,
+    initial_waits: Vec<EntryState>,
 ) -> Result<Option<String>, RunnerError> {
     task_engine::install_client_router()?;
     let Started { client, run, root } = started;
@@ -528,6 +533,10 @@ pub(in crate::runner) fn attach_tui(
             TabSource::Workload | TabSource::Shell => {}
         }
     }
+    let entries = initial_waits
+        .into_iter()
+        .map(|state| (state.entry.clone(), state))
+        .collect();
     let shared = Arc::new(Mutex::new(Shared {
         client,
         root,
@@ -536,7 +545,7 @@ pub(in crate::runner) fn attach_tui(
         hosts,
         queue,
         exits: BTreeMap::new(),
-        entries: BTreeMap::new(),
+        entries,
         startup_finished: false,
         closed: None,
         stop: StopSender::new(),
