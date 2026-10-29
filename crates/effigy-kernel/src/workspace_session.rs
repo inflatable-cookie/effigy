@@ -33,7 +33,7 @@ use crate::run::{
     self, AttachMode, Attachments, BeginOpts, Fence, Phase, Release, Run, RunError,
     SettlementAdapter,
 };
-use crate::store::StoreReader;
+use crate::store::{Store, StoreReader};
 use crate::supervise::Placement;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,137 @@ use serde::{Deserialize, Serialize};
 /// `AttachMode::Borrow` is its JSON encoding, so a session is the run that
 /// borrows rather than a child run that holds the environment exclusively.
 const BORROW_MODE: &str = "\"Borrow\"";
+
+/// One environment's recorded session, before it is validated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionRow {
+    run: RunId,
+    session_generation: Generation,
+    environment_generation: Generation,
+}
+
+/// The session `environment` recorded, while that record still describes it.
+/// Every field is checked against the journal: a record is evidence to
+/// validate, never authority.
+fn live_session_row(
+    conn: &rusqlite::Connection,
+    environment: &ResourceId,
+    current_environment_generation: Generation,
+) -> Result<Option<SessionRow>, RunError> {
+    let row = conn
+        .query_row(
+            "SELECT run_id, session_generation, environment_generation FROM workspace_sessions \
+             WHERE environment=?1",
+            [environment.name().to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((run, session_generation, environment_generation)) = row else {
+        return Ok(None);
+    };
+    let row = SessionRow {
+        run: run
+            .parse()
+            .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?,
+        session_generation: Generation::new(session_generation as u64),
+        environment_generation: Generation::new(environment_generation as u64),
+    };
+    // A new environment generation revokes the session (§8.7): the record is
+    // stale even if its run has not settled yet.
+    if row.environment_generation != current_environment_generation {
+        return Ok(None);
+    }
+    let live = conn
+        .query_row(
+            "SELECT generation, phase FROM runs WHERE run_id=?1",
+            [row.run.to_string()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    match live {
+        Some((generation, phase))
+            if generation as u64 == row.session_generation.get() && phase != "closed" => {}
+        _ => return Ok(None),
+    }
+    let borrowing = conn
+        .query_row(
+            "SELECT env_generation FROM attachments WHERE environment=?1 AND run_id=?2 \
+             AND mode=?3 AND state<>'released'",
+            params![
+                environment.name().to_string(),
+                row.run.to_string(),
+                BORROW_MODE
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    match borrowing {
+        Some(generation) if generation as u64 == row.environment_generation.get() => {}
+        _ => return Ok(None),
+    }
+    Ok(Some(row))
+}
+
+/// Records `session` as `environment`'s workspace session. One environment has
+/// one live session: an existing record that still validates refuses the write,
+/// and a stale one is replaced.
+fn record_session(
+    cx: &EffectContext,
+    root: &StateRoot,
+    session: &SessionRef,
+) -> Result<(), RunError> {
+    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+    store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+        let current: Option<i64> = txn
+            .conn()
+            .query_row(
+                "SELECT generation FROM resources WHERE name=?1",
+                [session.environment().name().to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current = current.map(|value| Generation::new(value as u64));
+        if current != Some(session.environment_generation()) {
+            return Err(RunError::refused(
+                "the environment generation moved before the session was recorded",
+            ));
+        }
+        if let Some(existing) = live_session_row(
+            txn.conn(),
+            session.environment(),
+            session.environment_generation(),
+        )? {
+            if existing.run != session.run() {
+                return Err(RunError::refused(
+                    "this environment already has a live workspace session",
+                ));
+            }
+            return Ok(());
+        }
+        txn.conn().execute(
+            "INSERT INTO workspace_sessions \
+             (environment, run_id, session_generation, environment_generation, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
+             ON CONFLICT(environment) DO UPDATE SET run_id=excluded.run_id, \
+              session_generation=excluded.session_generation, \
+              environment_generation=excluded.environment_generation, updated_at=excluded.updated_at",
+            params![
+                session.environment().name().to_string(),
+                session.run().to_string(),
+                session.generation().get() as i64,
+                session.environment_generation().get() as i64,
+                txn.now(),
+            ],
+        )?;
+        Ok::<_, RunError>(())
+    })
+}
 
 pub(crate) fn session_evidence() -> Evidence {
     Evidence::new("workspace session journal".into(), None).expect("fixed evidence source")
@@ -173,30 +304,38 @@ impl SessionRef {
         )
     }
 
-    /// The session of `environment`: the non-closed run that borrows it. An
-    /// environment has one workspace entry, and the entry's owner gate admits at
-    /// most one unresolved run, so at most one such run exists.
+    /// The session of `environment`: the run its journal recorded as the
+    /// workspace session, while that record still holds.
+    ///
+    /// A `Borrow` attachment alone does not name the session — a child run or a
+    /// host `dev` hold can borrow the same environment — so the mapping is its
+    /// own record, and this read validates it before use: the run is at the
+    /// recorded generation and not closed, it still borrows the environment at
+    /// the recorded generation, and the environment has not advanced. A record
+    /// that fails any check resolves as absent, so a stale session is never
+    /// mistaken for a live one and a successor can be admitted.
     pub fn resolve(reader: &StoreReader, environment: &ResourceId) -> Observed<Option<SessionRef>> {
         let result = (|| -> Result<Option<SessionRef>, RunError> {
-            let mut statement = reader.conn().prepare(
-                "SELECT r.run_id FROM attachments a JOIN runs r ON r.run_id=a.run_id \
-                 WHERE a.environment=?1 AND a.mode=?2 AND a.state<>'released' \
-                 AND r.phase<>'closed' ORDER BY r.created_at DESC, r.run_id DESC LIMIT 1",
-            )?;
-            let Some(run) = statement
+            let generation: Option<i64> = reader
+                .conn()
                 .query_row(
-                    params![environment.name().to_string(), BORROW_MODE],
-                    |row| row.get::<_, String>(0),
+                    "SELECT generation FROM resources WHERE name=?1",
+                    [environment.name().to_string()],
+                    |row| row.get(0),
                 )
-                .optional()?
-            else {
+                .optional()?;
+            let Some(generation) = generation else {
                 return Ok(None);
             };
-            let run = run
-                .parse()
-                .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))?;
-            match Self::of_run(reader, run) {
-                Observed::Verified(session, _) => Ok(session),
+            let current = Generation::new(generation as u64);
+            let Some(row) = live_session_row(reader.conn(), environment, current)? else {
+                return Ok(None);
+            };
+            match Self::of_run(reader, row.run) {
+                Observed::Verified(session, _) => Ok(session.filter(|session| {
+                    session.generation() == row.session_generation
+                        && session.environment_generation() == row.environment_generation
+                })),
                 Observed::Absent(_) => Ok(None),
                 Observed::Unknown(reason) => Err(RunError::unavailable(reason.to_string())),
             }
@@ -204,7 +343,7 @@ impl SessionRef {
         match result {
             Ok(Some(session)) => Observed::Verified(Some(session), session_evidence()),
             Ok(None) => Observed::Absent(AbsenceProof::NoRow {
-                table: "attachments".into(),
+                table: "workspace_sessions".into(),
             }),
             Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
         }
@@ -313,6 +452,12 @@ impl SessionRef {
             environment.resource.clone(),
             environment.generation,
         );
+        if let Err(error) = record_session(cx, root, &session) {
+            // A session the journal cannot name is not a session: settle it so
+            // nothing live is left without its environment record.
+            run.settle(cleanup, adapter)?;
+            return Err(error);
+        }
         Ok((run, session))
     }
 }

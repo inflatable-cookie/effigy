@@ -568,3 +568,164 @@ fn down_stops_children_then_takes_the_permit() {
         })
         .expect("down intent");
 }
+
+/// A run that borrows the environment, the way `hold()` attaches a persistent
+/// environment's holder. A child or a host `dev` hold does this too, so the
+/// attachment alone never says which run is the session.
+fn hold_borrowing(holder: &mut Run<'_>, environment: &Fence) {
+    Attachments::attach(holder, environment, AttachMode::Borrow, Wait::FailFast)
+        .expect("borrowing attachment");
+}
+
+#[test]
+fn a_borrowing_child_run_never_masks_the_session() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, fence) = active_environment(&cx, &root);
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+
+    // The reviewer's probe: a child of the session that borrows the same
+    // environment, as a persistent `hold()` does.
+    let mut child = session_run
+        .begin_child(
+            &inv(task("dev"), "dev"),
+            opts(run_id(31)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect("child admission");
+    hold_borrowing(&mut child, &fence);
+
+    let reader = read_journal(&cx, &root);
+    assert_eq!(
+        SessionRef::resolve(&reader, &environment)
+            .verified()
+            .cloned()
+            .flatten(),
+        Some(session.clone()),
+        "a borrowing child is the session's work, never the session"
+    );
+    // And the down still names it as the session's own child, not a foreign
+    // holder, so the session is not refused against itself.
+    let children = match SessionHandle::new(session.clone())
+        .down(&observe(&cx), &root, &reader)
+        .verified()
+        .cloned()
+        .expect("down observation")
+    {
+        DownStart::Ready(children) => children,
+        other => panic!("expected readiness, got {other:?}"),
+    };
+    assert_eq!(children.children(), &[child.id()]);
+}
+
+#[test]
+fn a_borrowing_root_run_is_not_the_session() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, fence) = active_environment(&cx, &root);
+    let (_session_run, session) = admit_session(&cx, &root, &fence);
+
+    // A host `dev` run on a persistent environment: root (no parent), Task
+    // owned, borrowing. Only the recorded mapping can tell it apart.
+    let mut host = Run::begin(
+        &cx,
+        &root,
+        &inv(task("dev:host"), "dev:host"),
+        opts(run_id(32)),
+        &cleanup(&cx),
+        &mut adapter(),
+    )
+    .expect("host run");
+    hold_borrowing(&mut host, &fence);
+
+    let reader = read_journal(&cx, &root);
+    assert_eq!(
+        SessionRef::resolve(&reader, &environment)
+            .verified()
+            .cloned()
+            .flatten(),
+        Some(session.clone()),
+        "a borrowing root run is not the session"
+    );
+    // It holds the environment, so a down refuses and names it.
+    match SessionHandle::new(session.clone())
+        .down(&observe(&cx), &root, &reader)
+        .verified()
+        .cloned()
+        .expect("down observation")
+    {
+        DownStart::Refused { holders } => {
+            assert_eq!(holders, vec![DownHolder::Live(host.id())]);
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(is_live(&host), "the foreign holder is untouched");
+}
+
+#[test]
+fn a_settled_or_superseded_session_does_not_resolve() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, fence) = active_environment(&cx, &root);
+
+    // A superseded environment generation revokes the recorded session.
+    let (mut session_run, session) = admit_session(&cx, &root, &fence);
+    let mut store = Store::open(&cx, &root).expect("store");
+    store
+        .transaction(&cx, |txn| {
+            let next = txn.next_generation(&environment)?;
+            txn.conn().execute(
+                "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
+                rusqlite::params![
+                    environment.name().to_string(),
+                    next.get().to_string(),
+                    txn.now()
+                ],
+            )?;
+            Ok::<_, RunError>(())
+        })
+        .expect("environment generation advanced");
+    let reader = read_journal(&cx, &root);
+    assert_eq!(
+        SessionRef::resolve(&reader, &environment)
+            .verified()
+            .cloned()
+            .flatten(),
+        None,
+        "a stale session is absent, never mistaken for the live one"
+    );
+    assert_eq!(
+        SessionRef::of_run(&reader, session.run())
+            .verified()
+            .cloned()
+            .flatten(),
+        Some(session.clone()),
+        "the run's own identity is still readable"
+    );
+
+    // A settled session does not resolve either.
+    session_run
+        .interrupt(
+            &cleanup(&cx),
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        )
+        .expect("interrupt");
+    session_run
+        .settle(&cleanup(&cx), &mut adapter())
+        .expect("settle");
+    let reader = read_journal(&cx, &root);
+    assert_eq!(
+        SessionRef::resolve(&reader, &environment)
+            .verified()
+            .cloned()
+            .flatten(),
+        None
+    );
+}

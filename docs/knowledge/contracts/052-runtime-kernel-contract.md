@@ -2783,12 +2783,19 @@ The kernel records this boundary needs are implemented and proven (the kernel
 seam below, and lane A's channel). `crates/effigy-kernel/src/workspace_session.rs`
 is the lane B session layer on top of them and owns no second authority:
 
-- `SessionRef` resolves the environment's one borrowing run durably, so a TUI, a
-  text client and a headless entry report one managed identity; `SessionRef::admit`
-  refuses any placement other than `Detached` and holds the environment `Borrow`
-  attachment for the run's life. The entry itself is guarded by the workspace
-  entry's owner gate, and request ids inside the session are the kernel seam's
-  `run::reserve` records — one admission authority, not two.
+- `SessionRef` resolves the environment's one session through its own additive
+  record (`workspace_sessions`), not by guessing from an attachment: a child run
+  or a host `dev` hold on a persistent environment can borrow the same
+  environment, so a `Borrow` row names a holder, never the session. Every read
+  validates the record against the journal — the run is at the recorded
+  generation and not closed, it still borrows the environment at the recorded
+  generation, and the environment has not advanced — and an invalid record
+  resolves as absent, so a stale session is never mistaken for a live one and a
+  successor can be admitted. `SessionRef::admit` refuses any placement other than
+  `Detached`, holds the environment `Borrow` attachment for the run's life and
+  records the mapping, refusing to replace a live one. The entry itself is guarded
+  by the workspace entry's owner gate, and request ids inside the session are the
+  kernel seam's `run::reserve` records — one admission authority, not two.
 - `SessionHandle` hands the kernel seam's `run::Session` to reservation, attach
   and bounded control, and exposes the down coordination. `OwnerLoss` maps EOF,
   a disconnect and TERM/HUP to the kernel's owner release (`Release::Eof`) and to
