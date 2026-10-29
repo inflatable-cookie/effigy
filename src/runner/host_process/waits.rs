@@ -65,6 +65,10 @@ pub(in crate::runner) struct HostPlanOutcome {
 pub(in crate::runner) struct HostWaitGraph {
     ledger: WaitLedger,
     waits: EntryWaits,
+    /// The entries this call starts. A restart publishes only those: a process
+    /// another call started is never claimed ready or waiting here
+    /// (effigy#458).
+    owned: BTreeSet<String>,
     /// The last state published per entry, and when, so a settled record is
     /// written once and a live wait refreshes without a write per call.
     published: BTreeMap<String, EntryState>,
@@ -101,8 +105,9 @@ impl HostWaitGraph {
 
     /// The graph of `policy`'s host processes. `started` names what this call
     /// replaces; every other declared process is already running, so it counts
-    /// as ready and a dependent never waits for an entry this call does not
-    /// start.
+    /// as running. A selected dependent still waits until the plan re-confirms
+    /// that reader's readiness, and names that wait while it blocks — a restart
+    /// re-confirms a reader it does not own (effigy#458).
     pub(in crate::runner) fn for_policy(
         repo_root: &std::path::Path,
         policy: &EffectiveContainerPolicy,
@@ -141,6 +146,9 @@ impl HostWaitGraph {
     fn publish_snapshot(&mut self, now: Instant) {
         self.waits.refresh(now);
         for state in self.waits.states(now) {
+            if !self.owned.contains(&state.entry) {
+                continue;
+            }
             if state.holds_a_wait() {
                 self.ledger.publish(&state);
             } else {
@@ -172,12 +180,16 @@ impl HostWaitGraph {
         let mut waits = EntryWaits::new(order, environment, now);
         for process in &policy.host_processes {
             if !started.contains(&process.name) {
-                waits.ready(&process.name, now);
+                // Already running outside this call. Its readiness is still
+                // observed before a dependent launches, so it is running until
+                // the plan observes it ready — never prematurely ready.
+                waits.running(&process.name, now);
             }
         }
         Self {
             ledger: ledger.clone(),
             waits,
+            owned: started.clone(),
             published: BTreeMap::new(),
             published_at: BTreeMap::new(),
         }
@@ -201,6 +213,9 @@ impl HostWaitGraph {
         }
         self.waits.refresh(now);
         for state in self.waits.states(now) {
+            if !self.owned.contains(&state.entry) {
+                continue;
+            }
             let due = should_publish(
                 self.published.get(&state.entry),
                 self.published_at.get(&state.entry).copied(),
@@ -259,6 +274,9 @@ impl HostWaitGraph {
         }
         let entries = self.waits.states(now);
         for state in entries {
+            if !self.owned.contains(&state.entry) {
+                continue;
+            }
             if !matches!(
                 state.phase,
                 effigy_tui::waits::EntryPhase::NotStarted | effigy_tui::waits::EntryPhase::Failed
@@ -383,6 +401,9 @@ pub(in crate::runner) fn run_host_plan(
         let step = (|| -> Result<(), RunnerError> {
             for dependency in &process.depends_on {
                 awaited = dependency.clone();
+                // Publish the wait this entry holds before blocking on the
+                // reader's readiness, so a restart of a dependent names the
+                // reader it re-confirms even when another call started it.
                 graph.publish_all(now());
                 launcher.dependency_ready(dependency, &mut |at| graph.publish_all(at))?;
                 graph.dependency_ready(dependency, now());
@@ -1352,6 +1373,94 @@ mod environment_tests {
         assert_eq!(json["waiting_on"]["name"], "api");
         assert_eq!(json["waiting_on"]["phase"], "starting");
         assert_eq!(launcher.spawns, vec!["api", "front", "admin", "jobs"]);
+    }
+
+    /// A restart of one dependent re-confirms a reader another call started.
+    /// While the plan blocks on that reader's readiness, the entry names it —
+    /// its phase, its elapsed time and its machine-readable identity — instead
+    /// of publishing nothing (effigy#458).
+    #[test]
+    fn a_restarted_host_names_the_running_reader_it_reconfirms() {
+        let (_dir, checkout) = fixture();
+        let policy = four_entry_policy(&checkout);
+        let clock = Clock::new();
+        WaitLedger::task(&checkout, "dev", "default").publish_environment_identity(ENVIRONMENT);
+        let ledger = WaitLedger::environment(&checkout, ENVIRONMENT);
+        // `front` is restarted; `api` and `admin` run outside this call.
+        let selected = BTreeSet::from(["front".to_owned()]);
+        let mut graph = HostWaitGraph::for_policy(&checkout, &policy, &selected, clock.at());
+
+        // The staged snapshot already names the reader it must re-confirm.
+        let staged = records(&checkout);
+        let front = state_of(&staged, "front");
+        assert_eq!(
+            front.waiting_on,
+            Some(WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Running
+            })
+        );
+        assert_eq!(front.tab_label(), "front [waiting: api running]");
+        assert_eq!(
+            front.headless_line().as_deref(),
+            Some("[managed] front: waiting for api (running) (0s)")
+        );
+        let json = serde_json::to_value(front).expect("record json");
+        assert_eq!(json["waiting_on"]["kind"], "entry");
+        assert_eq!(json["waiting_on"]["name"], "api");
+        assert_eq!(json["waiting_on"]["phase"], "running");
+
+        // The plan blocks on api's readiness and keeps the wait live.
+        let mut launcher = FakeLauncher {
+            ledger: &ledger,
+            clock: &clock,
+            failure: None,
+            spawns: Vec::new(),
+            frames: Vec::new(),
+        };
+        let ordered = crate::runner::host_process::order_host_processes(&policy.host_processes)
+            .expect("the plan order resolves");
+        run_host_plan(
+            &ordered,
+            Some(&selected),
+            &mut graph,
+            &mut launcher,
+            &|| clock.at(),
+        )
+        .expect("the restart finishes");
+        let during_block = &launcher.frames[1];
+        let front = state_of(during_block, "front");
+        assert_eq!(
+            front.waiting_on,
+            Some(WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Running
+            }),
+            "the wait survives the block"
+        );
+        assert_eq!(
+            front.status_line(),
+            "waiting for api (running) (1s)",
+            "its elapsed time is its own"
+        );
+        assert_eq!(
+            launcher.spawns,
+            vec!["front"],
+            "only the restarted host launched"
+        );
+        let settled = records(&checkout);
+        assert!(
+            settled.iter().all(|state| !state.holds_a_wait()),
+            "the restart settles its own record"
+        );
+        assert_eq!(
+            settled
+                .iter()
+                .map(|state| state.entry.as_str())
+                .collect::<Vec<_>>(),
+            vec!["front"],
+            "a restart never claims another call's running processes ready"
+        );
     }
 
     /// Declaration order is not launch order: a host declared before its

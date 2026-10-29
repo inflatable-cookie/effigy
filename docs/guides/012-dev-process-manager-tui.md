@@ -378,7 +378,10 @@ names the launch the plan is performing now and that entry's actual phase
 (`jobs [waiting: api starting]`) instead of leaving it blank, naming a queued
 neighbour or inventing a dependency. If a launch aborts the plan, every entry it
 never started is terminal and says so (`not started — plan stopped after api
-failed: …500…`), so no tab waits after the plan has ended. Each publisher stages a complete snapshot and commits it with one atomic
+failed: …500…`), so no tab waits after the plan has ended. A restart re-confirms
+the reader it declares even when another call started it, and names that wait
+while it blocks (`front [waiting: api running]`); it publishes only the entries
+it starts, never claiming another call's running processes ready. Each publisher stages a complete snapshot and commits it with one atomic
 record, so a reader always sees a whole snapshot: a write that races the handoff
 — the run's phase still ticking while the planner publishes — never replaces the
 planner's state, and the window before the commit still shows the run's

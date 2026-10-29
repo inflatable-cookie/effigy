@@ -283,7 +283,10 @@ launch the plan is performing now, with that entry's actual phase, as its own
 wait (`launch`) — distinct from a declared `depends_on` edge and never
 attributed as one. A launch that aborts the plan marks every entry it never
 started `not started` with the plan's own attribution
-(`plan stopped after <entry> <report>`), so no wait outlives the plan. A failure the planner published is terminal and is never
+(`plan stopped after <entry> <report>`), so no wait outlives the plan. A restart
+publishes only the entries it replaces: a reader another call started stays
+running in the graph, and a selected dependent names the readiness it
+re-confirms (`waiting for api (running)`) while it blocks. A failure the planner published is terminal and is never
 replaced by the run's generic `up` exit; the run's own environment reason
 carries the planner's failing entry and its report. `status --json` reads both scopes — the run's
 scope names its environment before the phase blocks — and reports each waiting

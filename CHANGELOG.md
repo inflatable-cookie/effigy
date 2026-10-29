@@ -282,7 +282,8 @@ During v0.x, MINOR bumps may include breaking changes.
   its own `launch` identity in JSON and never attributed as a dependency. A
   launch that aborts the plan marks every entry it never started terminal
   (`not started — plan stopped after api failed: …500…`), so no wait outlives
-  the plan. A host
+  the plan, and a restart names the reader readiness it re-confirms
+  (`waiting for api (running)`) while publishing only the entries it replaces. A host
   failure the planner published
   survives the run's generic `up` exit: the run's error names the failing entry
   and its observed status. A wait is recorded as
