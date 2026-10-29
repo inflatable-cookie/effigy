@@ -504,11 +504,15 @@ During v0.x, MINOR bumps may include breaking changes.
   alias, the service and `effigy container up <NAME>`, and the command never
   runs. The proof reads the endpoints Effigy delivered, so text that merely
   mentions the alias proves nothing, and a suite this run does not select is
-  never proved. A worktree's first host run records the checkout's scope token
+  never proved. It also asks the recorded upstream to accept a connection, so a
+  route a stopped stack left behind refuses instead of authorizing a run that
+  cannot connect, and a managed session proves only the processes it places on
+  the host. A worktree's first host run records the checkout's scope token
   before resolving, so a fresh worktree is scoped rather than canonical; a
   container registry this scoped checkout declares but Effigy cannot read is
   refused instead of falling back to the canonical names; and a sensitive value
-  the task's own environment overrides is neither resolved nor proved. A
+  the task's or a sequence step's own environment overrides is dropped rather
+  than delivered, so it is neither resolved nor proved. A
   container-bound run is untouched: its target's own network already answers
   both names. A checkout that names no default container environment still
   resolves. See

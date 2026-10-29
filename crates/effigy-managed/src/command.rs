@@ -19,6 +19,7 @@ pub fn resolve_managed_task_plan<'a>(
     catalogs: &'a [LoadedCatalog],
     task_scope_cwd: &'a Path,
     host_env_aliases: &'a [crate::run_spec::HostAlias],
+    host_placed: bool,
     resolver: TaskResolverFn<'a>,
 ) -> Result<Option<ManagedTaskPlan>, ManagedError> {
     let Some(mode) = task.mode.as_deref() else {
@@ -65,6 +66,7 @@ pub fn resolve_managed_task_plan<'a>(
         catalogs,
         task_scope_cwd,
         host_env_aliases,
+        host_placed,
         resolver,
     })
     .map(Some)

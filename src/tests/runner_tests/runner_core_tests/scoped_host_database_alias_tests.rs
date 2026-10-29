@@ -118,9 +118,27 @@ fn effective_alias_in(checkout: &Path, environment: Option<&str>, label: &str) -
 }
 
 /// Publish one alias route for a scope, the record `container up` leaves
-/// behind once the backing service has a published host port.
-fn publish_alias_route(checkout: &Path, domain: &str, host_port: u16) {
-    publish_alias_route_with_endpoint(checkout, domain, next_free_alias_address(), 5432, host_port);
+/// behind once the backing service has a published host port. The published
+/// service listens on an OS-assigned port and answers, because the proof asks
+/// the recorded upstream whether it is alive.
+fn publish_alias_route(checkout: &Path, domain: &str) -> u16 {
+    let database = fake_database("alias-service");
+    publish_alias_route_with_endpoint(
+        checkout,
+        domain,
+        next_free_alias_address(),
+        5432,
+        database.port,
+    );
+    database.port
+}
+
+/// A loopback port nothing listens on: a published service that is gone.
+fn closed_loopback_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("probe a free port");
+    let port = listener.local_addr().expect("probe address").port();
+    drop(listener);
+    port
 }
 
 /// The lowest pool address the fixture's routes do not already answer on for
@@ -324,8 +342,8 @@ fn each_scoped_host_task_reaches_only_its_own_declared_database_alias() {
         assert_ne!(one_alias, two_alias, "each scope keeps its own apex");
 
         // Each scope's own backing service, with a distinct published port.
-        publish_alias_route(&one, &one_alias, 55432);
-        publish_alias_route(&two, &two_alias, 55433);
+        publish_alias_route(&one, &one_alias);
+        publish_alias_route(&two, &two_alias);
 
         run_task(&one, "check", &[]).expect("the first worktree's task runs");
         run_task(&two, "check", &[]).expect("the second worktree's task runs");
@@ -427,7 +445,7 @@ fn a_worktrees_first_host_run_is_scoped() {
         );
         assert!(!checkout.join("database-url.txt").exists());
 
-        publish_alias_route(&checkout, &alias, 55432);
+        publish_alias_route(&checkout, &alias);
         run_task(&checkout, "check", &[]).expect("the first run reaches its own service");
         assert_eq!(
             database_url(&checkout),
@@ -439,6 +457,76 @@ fn a_worktrees_first_host_run_is_scoped() {
                 .as_deref(),
             Some(token.as_str()),
             "the recorded token stays the checkout's generation"
+        );
+    });
+}
+
+/// A route can outlive its service. Emptying the stack leaves the record
+/// behind, and a stale record must not authorize a run that cannot connect
+/// (effigy#431 review).
+#[test]
+fn a_stale_alias_route_refuses() {
+    with_private_gateway("scoped-host-alias-stale", || {
+        let primary = primary_checkout("scoped-host-alias-stale");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let alias = effective_alias(&checkout, "postgres");
+        // A published port nothing listens on: the stack stopped after the
+        // route was written.
+        let empty = closed_loopback_port();
+        publish_alias_route_with_endpoint(
+            &checkout,
+            &alias,
+            next_free_alias_address(),
+            5432,
+            empty,
+        );
+
+        let error = run_task(&checkout, "check", &[]).expect_err("the stale route must refuse");
+        let rendered = error.to_string();
+        assert!(rendered.contains(&alias), "{rendered}");
+        assert!(
+            rendered.contains(&format!("127.0.0.1:{empty}")),
+            "the refusal names the published upstream nothing answers on: {rendered}"
+        );
+        assert!(!checkout.join("database-url.txt").exists());
+    });
+}
+
+/// A sequence step that overrides a sensitive value does not deliver the
+/// secret of that name, so an unused sensitive alias must not refuse it
+/// (effigy#431 review).
+#[test]
+fn a_sequence_step_override_is_not_refused_by_an_unused_sensitive_value() {
+    with_private_gateway("scoped-host-alias-step-override", || {
+        let primary = primary_checkout("scoped-host-alias-step-override");
+        let checkout = linked_worktree(&primary, "worktree-one");
+        let out = checkout.join("step-override.txt");
+        fs::write(
+            checkout.join(".env.schema"),
+            "# The declared backing service @type=url @sensitive\nDATABASE_URL=\n",
+        )
+        .expect("env schema");
+        fs::write(
+            checkout.join(".env"),
+            "DATABASE_URL=postgres://app@postgres.acme.test:5432/from-dotenv\n",
+        )
+        .expect("dotenv");
+        let manifest = format!(
+            "{MANIFEST}\n[env_schema]\nschema = \".env.schema\"\n\n\
+             [tasks.override-step]\nrun_in = \"host\"\nrun = [\n\
+               {{ id = \"override\", run = \"sh -lc 'printf %s $DATABASE_URL > {out}'\", env = {{ DATABASE_URL = \"postgres://app@elsewhere.example:5432/app\" }} }},\n\
+             ]\n",
+            out = out.display(),
+        );
+        fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with an override step");
+
+        run_task(&checkout, "override-step", &[]).expect("the overriding step proceeds");
+        assert_eq!(
+            fs::read_to_string(&out)
+                .expect("the step recorded its URL")
+                .trim(),
+            "postgres://app@elsewhere.example:5432/app",
+            "the step's own env value reached the child"
         );
     });
 }
@@ -633,7 +721,7 @@ fn a_scoped_host_task_refuses_an_alias_route_another_checkout_owns() {
         let alias = effective_alias(&checkout, "postgres");
         // The route answers, but it records the primary checkout: resolving
         // this alias would reach another scope's database.
-        publish_alias_route(&primary, &alias, 55432);
+        publish_alias_route(&primary, &alias);
 
         let error = run_task(&checkout, "check", &[]).expect_err("the task must refuse");
         assert_task_invocation_error_contains(error, &[&alias, "belongs to"]);
@@ -650,7 +738,7 @@ fn a_scoped_host_task_refuses_an_alias_route_with_no_published_port() {
         let primary = primary_checkout("scoped-host-alias-unpublished");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
-        publish_alias_route(&checkout, &alias, 55432);
+        publish_alias_route(&checkout, &alias);
         let table_path = gateway_dir().expect("gateway dir").join("routes.json");
         EndpointStore::for_routes(&table_path)
             .routes::<_, effigy_gateway::GatewayError>(|table| {
@@ -697,7 +785,7 @@ fn a_scoped_host_task_resolves_an_env_schema_secret_and_keeps_the_task_env_prece
         );
         fs::write(checkout.join("effigy.toml"), manifest).expect("manifest with env schema");
         let alias = effective_alias(&checkout, "postgres");
-        publish_alias_route(&checkout, &alias, 55432);
+        publish_alias_route(&checkout, &alias);
 
         run_task(&checkout, "check-schema", &[]).expect("the task runs");
         let recorded = database_url(&checkout);
@@ -718,7 +806,7 @@ fn a_sequence_step_environment_resolves_the_same_declared_alias() {
         let primary = primary_checkout("scoped-host-alias-sequence");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
-        publish_alias_route(&checkout, &alias, 55432);
+        publish_alias_route(&checkout, &alias);
 
         run_task(&checkout, "steps", &[]).expect("the sequence runs");
         assert_eq!(
@@ -738,7 +826,7 @@ fn a_managed_session_resolves_the_scoped_database_alias() {
         let primary = primary_checkout("scoped-host-alias-managed");
         let checkout = linked_worktree(&primary, "worktree-one");
         let alias = effective_alias(&checkout, "postgres");
-        publish_alias_route(&checkout, &alias, 55432);
+        publish_alias_route(&checkout, &alias);
         write_managed_session_manifest(&checkout);
 
         run_task(&checkout, "dev", &["--headless"]).expect("the managed session runs");
@@ -866,7 +954,7 @@ catalog = "postgres"
 
         // With only the default environment published, the second
         // environment's declared alias is proved exactly like the default's.
-        publish_alias_route(&checkout, &first_alias, 55432);
+        publish_alias_route(&checkout, &first_alias);
         let error = run_task(&checkout, "check-both", &[]).expect_err("the task must refuse");
         let rendered = error.to_string();
         assert!(
@@ -876,7 +964,7 @@ catalog = "postgres"
         assert!(rendered.contains(&second_alias), "{rendered}");
         assert!(!checkout.join("second-url.txt").exists());
 
-        publish_alias_route(&checkout, &second_alias, 55433);
+        publish_alias_route(&checkout, &second_alias);
         run_task(&checkout, "check-both", &[]).expect("the task runs");
         assert_eq!(
             fs::read_to_string(checkout.join("first-url.txt"))
@@ -990,7 +1078,7 @@ env = {{ DATABASE_URL = "postgres://app:secret@postgres.acme.test:5432/app" }}
             );
         }
 
-        publish_alias_route(&checkout, &alias, 55432);
+        publish_alias_route(&checkout, &alias);
         run_task(&checkout, "test", &["unit"]).expect("the suite runs");
         let expected = format!("postgres://app:secret@{alias}:5432/app");
         for (name, path) in [
@@ -1089,7 +1177,7 @@ fn a_container_task_keeps_the_canonical_alias_the_scope_network_answers() {
         )
         .expect("manifest with a workspace binding");
         let alias = effective_alias(&checkout, "postgres");
-        publish_alias_route(&checkout, &alias, 55432);
+        publish_alias_route(&checkout, &alias);
 
         let host = rendered_command(&checkout, "check");
         assert!(

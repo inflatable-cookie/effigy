@@ -97,16 +97,19 @@ pub(in crate::runner) fn run_managed_task(
         .as_ref()
         .map(|invocation| &invocation.runtime_args)
         .unwrap_or(&preflight.runtime_args_exec);
-    // A host-placed managed session in a runtime-scoped checkout resolves the
-    // canonical declared backing-service alias in every environment it renders
+    // A managed session in a runtime-scoped checkout resolves the canonical
+    // declared backing-service alias in every process it places on the host -
+    // including the host entries of a container-bound session, whose own
+    // processes keep the declared name on their target's network
     // (effigy#431, contract 005). A plan renders nothing, so it resolves
     // nothing.
-    let mut host_aliases = match (execution_mode, container_binding) {
-        (ManagedExecutionMode::RenderPlan, _) => None,
-        (_, ContainerExecutionBinding::None | ContainerExecutionBinding::Host) => {
-            super::super::host_alias::host_alias_resolver(preflight, selection)?
-        }
-        _ => None,
+    let host_placed = matches!(
+        container_binding,
+        ContainerExecutionBinding::None | ContainerExecutionBinding::Host
+    ) || container_handoff;
+    let mut host_aliases = match execution_mode {
+        ManagedExecutionMode::RenderPlan => None,
+        _ => super::super::host_alias::host_alias_resolver(preflight, selection)?,
     };
     let host_env_aliases = match (&host_aliases, execution_mode) {
         (Some(resolver), _) => resolver.hosts(),
@@ -123,6 +126,7 @@ pub(in crate::runner) fn run_managed_task(
         &preflight.catalogs,
         &selection.catalog.catalog_root,
         &host_env_aliases,
+        host_placed,
         &effigy_routing::resolve_task_selection,
     )?;
     let Some(plan) = plan else {
@@ -176,6 +180,9 @@ pub(in crate::runner) fn run_managed_task(
     if owner.is_none() {
         if let Some(resolver) = host_aliases.as_mut() {
             for process in &plan.processes {
+                if !(host_placed || process.run_on_host) {
+                    continue;
+                }
                 resolver.require_published_in(&preflight.selector.task_name, &process.run)?;
                 if let Some(setup) = process.setup.as_deref() {
                     resolver.require_published_in(&preflight.selector.task_name, setup)?;

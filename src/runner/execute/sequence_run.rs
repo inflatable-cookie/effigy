@@ -366,25 +366,6 @@ fn run_steps(
     // including the values a step inherits from the task and chains from its
     // predecessors (contract 005).
     let mut host_aliases = host_alias_resolver(preflight, selection)?;
-    // A step whose own environment delivers a key wins over a secret of the
-    // same name, so that secret is neither delivered again nor proved.
-    let mut delivered_keys: BTreeSet<String> = task_env.keys().cloned().collect();
-    delivered_keys.extend(env.chained_env().keys().cloned());
-    let resolved_secrets = match (host_aliases.as_mut(), secrets) {
-        (Some(resolver), Some(pairs)) => {
-            Some(resolver.resolved_secret_env(pairs, &delivered_keys)?)
-        }
-        _ => None,
-    };
-    let resolved_secret_refs = resolved_secrets
-        .as_deref()
-        .map(secret_env_slice)
-        .unwrap_or_default();
-    let secrets = if resolved_secrets.is_some() {
-        Some(resolved_secret_refs.as_slice())
-    } else {
-        secrets
-    };
     let mut planned = Vec::with_capacity(steps.len());
     for (index, step) in steps.iter().enumerate() {
         env.apply_from_step(
@@ -407,6 +388,14 @@ fn run_steps(
         if let Some(resolver) = host_aliases.as_mut() {
             resolver.resolve_plain_env(&mut step_env)?;
         }
+        // A step whose own environment delivers a key wins over a secret of
+        // the same name, so that secret is neither delivered again nor proved
+        // (effigy#431 review).
+        let mut step_secrets: Option<Vec<(String, SecretString)>> = None;
+        if let (Some(resolver), Some(pairs)) = (host_aliases.as_mut(), secrets) {
+            let delivered = step_env.keys().cloned().collect::<BTreeSet<_>>();
+            step_secrets = Some(resolver.resolved_secret_env(pairs, &delivered)?);
+        }
         let (label, timeout) = match step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),
             ManifestManagedRunStep::Step(table) => (
@@ -421,6 +410,7 @@ fn run_steps(
             label,
             timeout,
             subject,
+            step_secrets,
         ));
     }
     let mut report = SequenceReport {
@@ -432,7 +422,9 @@ fn run_steps(
         outcome: WorkloadOutcome::Succeeded,
     };
     let total = planned.len();
-    for (index, (action, env, label, timeout, subject)) in planned.into_iter().enumerate() {
+    for (index, (action, env, label, timeout, subject, step_secrets)) in
+        planned.into_iter().enumerate()
+    {
         if report.code != 0 {
             report
                 .steps
@@ -467,7 +459,18 @@ fn run_steps(
         let child_id = child.id();
         let result = {
             let _parent = child.enter();
-            let _env = SpawnScope::enter(&env, secrets, preflight.output_json, timeout);
+            // A step that overrides a key does not deliver the secret of that
+            // name, so only the secrets this step delivers reach it.
+            let step_secret_refs = step_secrets
+                .as_deref()
+                .map(secret_env_slice)
+                .unwrap_or_default();
+            let step_secret_slice = if step_secrets.is_some() {
+                Some(step_secret_refs.as_slice())
+            } else {
+                secrets
+            };
+            let _env = SpawnScope::enter(&env, step_secret_slice, preflight.output_json, timeout);
             execute_step(
                 &action,
                 preflight,

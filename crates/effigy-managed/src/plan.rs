@@ -28,6 +28,10 @@ pub struct ManagedConcurrentPlanInput<'a> {
     /// Declared backing-service aliases a host execution environment resolves
     /// to this checkout's effective aliases (effigy#431, contract 005).
     pub host_env_aliases: &'a [crate::run_spec::HostAlias],
+    /// Whether this session's processes are placed on the host unless an entry
+    /// says otherwise. A container-bound session resolves the alias only in the
+    /// entries it places on the host (effigy#431 review).
+    pub host_placed: bool,
     pub resolver: TaskResolverFn<'a>,
 }
 
@@ -61,6 +65,7 @@ pub fn resolve_managed_concurrent_task_plan(
         catalogs,
         task_scope_cwd,
         host_env_aliases,
+        host_placed,
         resolver,
     } = input;
     let environment_bound = task_is_environment_bound(catalog, selector, task)?;
@@ -78,6 +83,7 @@ pub fn resolve_managed_concurrent_task_plan(
             task_scope_cwd,
             passthrough,
             host_env_aliases,
+            host_placed,
             resolver,
         )? {
             resolved.push(own);
@@ -106,6 +112,7 @@ pub fn resolve_managed_concurrent_task_plan(
         catalogs,
         task_scope_cwd,
         host_env_aliases,
+        host_placed,
         resolver,
     )?;
     build_managed_task_plan(
@@ -341,6 +348,29 @@ mod tests {
     use effigy_manifest::TaskManifest;
     use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
+    /// Resolve a reference inside the fixture's own catalog.
+    fn same_catalog_reference<'c>(
+        selector: &TaskSelector,
+        catalogs: &'c [LoadedCatalog],
+        _cwd: &Path,
+    ) -> Result<effigy_manifest::TaskSelection<'c>, String> {
+        let catalog = catalogs
+            .first()
+            .ok_or_else(|| "the fixture has one catalog".to_owned())?;
+        let task = catalog
+            .manifest
+            .tasks
+            .get(&selector.task_name)
+            .ok_or_else(|| format!("the fixture declares no task `{}`", selector.task_name))?;
+        Ok(effigy_manifest::TaskSelection {
+            catalog,
+            task,
+            mode: effigy_core::task_selection::CatalogSelectionMode::ExplicitPrefix,
+            evidence: Vec::new(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+        })
+    }
+
     /// No test here resolves a task reference; a reference would be a bug in
     /// the fixture.
     fn no_references<'c>(
@@ -358,6 +388,19 @@ mod tests {
         manifest: &str,
         task: &str,
         passthrough: &[&str],
+    ) -> (
+        tempfile::TempDir,
+        Result<Option<ManagedTaskPlan>, ManagedError>,
+    ) {
+        plan_for_placement(manifest, task, passthrough, &[], true)
+    }
+
+    fn plan_for_placement(
+        manifest: &str,
+        task: &str,
+        passthrough: &[&str],
+        host_env_aliases: &[crate::run_spec::HostAlias],
+        host_placed: bool,
     ) -> (
         tempfile::TempDir,
         Result<Option<ManagedTaskPlan>, ManagedError>,
@@ -386,7 +429,8 @@ mod tests {
             &runtime_args,
             std::slice::from_ref(&catalog),
             &catalog.catalog_root,
-            &[],
+            host_env_aliases,
+            host_placed,
             resolver,
         );
         (root, result)
@@ -416,6 +460,101 @@ workspace = "app"
 run = "bun run dev"
 # BOUND_DEV_TASK_FIELDS
 "#;
+
+    /// A session plan rendered with a scoped alias, resolved through a task
+    /// reference because that is how an entry carries an environment.
+    fn plan_with_alias(manifest: &str, host_placed: bool) -> ManagedTaskPlan {
+        let root = tempfile::tempdir().expect("fixture dir");
+        let manifest: TaskManifest = toml::from_str(manifest).expect("fixture manifest parses");
+        let catalog = LoadedCatalog::for_test("repo", root.path(), manifest, 0);
+        let selected = catalog
+            .manifest
+            .tasks
+            .get("dev")
+            .expect("the fixture declares `dev`");
+        let selector = TaskSelector {
+            prefix: None,
+            task_name: "dev".to_owned(),
+        };
+        let runtime_args = TaskRuntimeArgs::default();
+        let alias = crate::run_spec::HostAlias::scoped(
+            "postgres.acme.test",
+            "postgres.acme-wabcdef12.test",
+        )
+        .expect("a scoped alias");
+        let resolver: effigy_manifest::TaskResolverFn<'_> = &same_catalog_reference;
+        resolve_managed_task_plan(
+            &selector,
+            &catalog,
+            selected,
+            &runtime_args,
+            std::slice::from_ref(&catalog),
+            &catalog.catalog_root,
+            &[alias],
+            host_placed,
+            resolver,
+        )
+        .expect("managed session")
+        .expect("plan")
+    }
+
+    /// effigy#431: a container-bound session leaves its container entries on
+    /// the declared name — that is what the target's own network answers — and
+    /// resolves this checkout's effective alias only in the entries it places
+    /// on the host.
+    #[test]
+    fn a_container_bound_session_resolves_only_its_host_entries() {
+        let manifest = BOUND_DEV.replace(
+            "run = \"bun run dev\"\n",
+            "concurrent = [\n  { name = \"host-entry\", task = \"with-alias\", run_in = \"host\", start = 1 },\n  { name = \"box-entry\", task = \"with-alias\", start = 2 },\n]\n",
+        );
+        let manifest = format!(
+            "{manifest}\n[tasks.with-alias]\nrun = \"printf %s $DATABASE_URL\"\nenv = {{ DATABASE_URL = \"postgres://app@postgres.acme.test:5432/app\" }}\n"
+        );
+        let plan = plan_with_alias(&manifest, false);
+        let host = plan
+            .processes
+            .iter()
+            .find(|process| process.name == "host-entry")
+            .expect("the host entry");
+        assert!(
+            host.run.contains("postgres.acme-wabcdef12.test"),
+            "a host entry receives this checkout's alias: {}",
+            host.run
+        );
+        let container = plan
+            .processes
+            .iter()
+            .find(|process| process.name == "box-entry")
+            .expect("the container entry");
+        assert!(
+            container.run.contains("postgres.acme.test")
+                && !container.run.contains("postgres.acme-wabcdef12.test"),
+            "a container entry keeps the declared name: {}",
+            container.run
+        );
+    }
+
+    /// A host-bound session resolves the alias in every entry it renders.
+    #[test]
+    fn a_host_bound_session_resolves_every_entry() {
+        let manifest = format!(
+            "{BOUND_DEV}concurrent = [\n  {{ name = \"one\", task = \"with-alias\", start = 1 }},\n  {{ name = \"two\", task = \"with-alias\", start = 2 }},\n]\n\n[tasks.with-alias]\nrun = \"printf %s $DATABASE_URL\"\nenv = {{ DATABASE_URL = \"postgres://app@postgres.acme.test:5432/app\" }}\n"
+        );
+        let plan = plan_with_alias(&manifest, true);
+        for name in ["one", "two"] {
+            let process = plan
+                .processes
+                .iter()
+                .find(|process| process.name == name)
+                .unwrap_or_else(|| panic!("the {name} entry"));
+            assert!(
+                process.run.contains("postgres.acme-wabcdef12.test"),
+                "a host session resolves {name}: {}",
+                process.run
+            );
+        }
+    }
 
     /// effigy#322: a plain `[tasks.dev]` bound to an environment is a managed
     /// session. Its own `run` is the one workload; no `concurrent` entry and

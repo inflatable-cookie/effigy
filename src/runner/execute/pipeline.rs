@@ -165,6 +165,7 @@ fn plan_command_shape(
             &preflight.catalogs,
             &selection.catalog.catalog_root,
             &host_env_aliases,
+            false,
             &effigy_routing::resolve_task_selection,
         )?
         else {

@@ -184,31 +184,25 @@ impl HostAliasResolver {
     /// An owned, resolved copy of the secret values a host run delivers. The
     /// caller keeps the originals: only this copy reaches the child.
     ///
-    /// A key the plain environment already delivers is skipped: the child sees
-    /// the plain value, so proving the secret's alias would refuse a run that
-    /// never uses it (effigy#431 review).
+    /// A key the plain environment already delivers is dropped: the declared
+    /// value outranks the secret source, so the child sees the plain value and
+    /// proving the secret's alias would refuse a run that never uses it
+    /// (effigy#431 review).
     pub(in crate::runner) fn resolved_secret_env(
         &mut self,
         pairs: &[(&str, &SecretString)],
         overridden: &BTreeSet<String>,
     ) -> Result<Vec<(String, SecretString)>, RunnerError> {
-        let mut owned = pairs
-            .iter()
-            .map(|(key, value)| {
-                (
-                    (*key).to_owned(),
-                    SecretString::new(value.expose().to_owned()),
-                )
-            })
-            .collect::<Vec<_>>();
-        for (key, value) in owned.iter_mut() {
-            if overridden.contains(key) {
+        let mut owned = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs {
+            if overridden.contains(*key) {
                 continue;
             }
-            let Some(resolved) = self.resolve_value(key, value.expose())? else {
-                continue;
+            let resolved = match self.resolve_value(key, value.expose())? {
+                Some(resolved) => SecretString::new(resolved),
+                None => SecretString::new(value.expose().to_owned()),
             };
-            *value = SecretString::new(resolved);
+            owned.push(((*key).to_owned(), resolved));
         }
         Ok(owned)
     }
@@ -278,8 +272,27 @@ impl HostAliasResolver {
                 &format!("the route belongs to `{}`", route.project),
             ));
         }
-        if route.tcp_target.is_none() {
+        // A recorded route can outlive its service: the stack was stopped, the
+        // VM restarted, or the container was replaced. The gateway treats a
+        // target that does not answer as dead, and so does this proof, so a
+        // stale record never authorizes a run that would fail to connect
+        // (effigy#431 review).
+        let Some(target) = route.tcp_target.as_deref() else {
             return Err(self.unpublished(key, alias, "its route names no published upstream port"));
+        };
+        let Ok(address) = target.parse::<std::net::SocketAddr>() else {
+            return Err(self.unpublished(
+                key,
+                alias,
+                &format!("its route names an invalid upstream `{target}`"),
+            ));
+        };
+        if !reaches(address) {
+            return Err(self.unpublished(
+                key,
+                alias,
+                &format!("nothing answers on its published upstream `{target}`"),
+            ));
         }
         Ok(())
     }
@@ -376,6 +389,12 @@ fn scoped_environment_policies(
         policies.push(policy);
     }
     Ok(policies)
+}
+
+/// Whether a recorded upstream accepts a connection, within the gateway's own
+/// short deadline.
+fn reaches(address: std::net::SocketAddr) -> bool {
+    std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(200)).is_ok()
 }
 
 /// Borrow resolved secret pairs for a spawn.

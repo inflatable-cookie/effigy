@@ -2022,9 +2022,15 @@ such as `postgres.<apex>.example.com`. Effigy rewrites the environment it
 delivers; it never rewrites a command body or configuration text it only passes
 through.
 
+A managed session proves the alias in the processes it places on the host and
+nowhere else: a container-routed session keeps the declared name in its own
+processes, which its target's network answers, and resolves the scope's alias
+only in the entries it runs on the host.
+
 Before the child starts, Effigy proves the alias: the record for the effective
-domain must belong to this checkout's path and must carry a published upstream
-port. The proof reads the endpoints Effigy delivered, with the same shape rule
+domain must belong to this checkout's path, must carry a published upstream
+port, and that upstream must accept a connection within the gateway's own short
+deadline. A record left behind by a stopped stack is stale, not published. The proof reads the endpoints Effigy delivered, with the same shape rule
 as the rewrite, so text that merely mentions an effective alias proves nothing
 and refuses nothing. A missing route, a route another checkout owns, or a route with no
 published port refuses the run with the declared alias, the backing service and
@@ -2039,8 +2045,9 @@ container environment still resolves its aliases from all of its environments.
 A container registry this scoped checkout declares but Effigy cannot read is
 refused — without it there is no way to know which names belong to this scope,
 so host execution could quietly deliver the canonical alias and reach another
-checkout's service. A sensitive value the task's own environment overrides is
-never delivered, so it is neither resolved nor proved.
+checkout's service. A sensitive value the declaring environment overrides — the
+task's own `env`, or a sequence step's — is dropped rather than delivered, so it
+is neither resolved nor proved: the declared value outranks the secret source.
 
 A plan (`--plan`) runs nothing, so it refuses nothing: a task plan renders the
 aliases it would deliver, and the built-in `test` plan keeps the declared
