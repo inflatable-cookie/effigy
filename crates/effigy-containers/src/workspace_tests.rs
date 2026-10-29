@@ -1,4 +1,35 @@
 #[cfg(test)]
+mod operator_workspace_tests {
+    use super::super::resolve_operator_workspace_for_container;
+
+    #[test]
+    fn a_named_environment_does_not_adopt_an_inline_workspace() {
+        let manifest = toml::from_str::<effigy_manifest::TaskManifest>(
+            r#"
+[containers]
+default = "web"
+[containers.web]
+primary_service = "app"
+[systems]
+default = "dev"
+[systems.dev]
+default_workspace = "inline"
+[systems.dev.workspaces.inline]
+container = { image = "node:20", mount = "." }
+"#,
+        )
+        .unwrap();
+        for selected in [None, Some("web")] {
+            assert!(
+                resolve_operator_workspace_for_container(&manifest, selected)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod structured_mount_tests {
     use super::super::*;
     use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};

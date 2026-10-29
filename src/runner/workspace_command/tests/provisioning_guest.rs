@@ -1209,6 +1209,115 @@ fn a_declared_workspace_is_the_container_mode_boundary() {
 }
 
 #[test]
+fn explicitly_selected_non_default_workspaces_prepare_and_verify_the_guest() {
+    for (system, default_workspace) in [("dev", true), ("audit", true), ("dev", false)] {
+        let repo = fixture("selected-workspace");
+        container_mode_manifest(&repo);
+        let mut manifest = std::fs::read_to_string(repo.join("effigy.toml")).unwrap();
+        if !default_workspace {
+            manifest = manifest.replace("default_workspace = \"app\"\n", "");
+        }
+        manifest.push_str("\n[containers.other]\nprimary_service = 'app'\nworking_dir = '/alternate'\n[containers.other.services.app]\ncatalog = 'node'\n[containers.service_only]\nprimary_service = 'app'\nworking_dir = '/service'\n[containers.service_only.services.app]\ncatalog = 'node'\n");
+        if system == "audit" {
+            manifest.push_str("\n[systems.audit]\ndefault_workspace = 'app'\n[systems.audit.workspaces.app]\ncontainer = 'web'\n");
+        }
+        manifest.push_str(&format!("\n[systems.{system}.workspaces.alt]\ncontainer = 'other'\nworking_dir = '/alternate'\nuser = 'selected'\nhome = '/home/selected'\n"));
+        std::fs::write(repo.join("effigy.toml"), manifest).unwrap();
+        let selected = crate::runner::workspace_command::resolve_public_workspace_container(
+            &repo,
+            Some(system),
+            Some("alt"),
+            "workspace",
+        )
+        .unwrap()
+        .expect("selected container");
+        assert_eq!(selected, "other");
+        let mut policy = effigy_containers::load_container_policy(&repo, Some(&selected))
+            .expect("selected environment resolves its declared workspace policy");
+        assert_eq!(policy.workspace_user.as_deref(), Some("selected"));
+        assert_eq!(policy.workspace_home.as_deref(), Some("/home/selected"));
+        let rendered = policy.read_compose(&policy.compose_files[0]).unwrap();
+        assert!(
+            rendered.contains("/alternate/.effigy/state:ro"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("/alternate/.effigy/secrets:ro"),
+            "{rendered}"
+        );
+        let workspace = operator_workspace_for_policy(&repo, &policy).unwrap();
+        assert_eq!(workspace.as_ref().unwrap().guest_checkout, "/alternate");
+
+        // Both entry adapters must reach the activation fence instead of
+        // treating this selected container as a hybrid service.
+        let error =
+            super::super::ensure_workspace_effigy_available_for_policy(&repo, &policy, None)
+                .expect_err("an unprepared non-default workspace must refuse")
+                .to_string();
+        assert!(error.contains("no activation record"), "{system}: {error}");
+        let origin = std::time::Instant::now();
+        let mut budget = crate::runner::exec_command::BoundedCommandBudget::new(
+            origin,
+            origin + std::time::Duration::from_secs(60),
+            4096,
+            4096,
+        );
+        let error = super::super::ensure_workspace_effigy_available_for_policy_bounded(
+            &repo,
+            &policy,
+            HOST_CONTAINER_ID,
+            &mut budget,
+        )
+        .expect_err("bounded entry also needs a prepared activation")
+        .to_string();
+        assert!(error.contains("no activation record"), "{system}: {error}");
+
+        let artifact = artifact(&repo, "pinned selected workspace guest");
+        let mut guest = guest();
+        let prepared = prepare_workspace_guest(
+            &mut guest,
+            &artifact,
+            crate::runner::workspace_command::provisioning::LinuxWorkspaceTarget::X86_64Gnu,
+            WorkspacePrepareFacts {
+                repo_root: &repo,
+                policy: &policy,
+                operator_workspace: workspace,
+                session_run_id: Some("run-7".to_owned()),
+                enrolment: None,
+                channel: WorkspaceChannelLocator::default(),
+                backend: crate::runner::workspace_client::context::WorkspaceBackendDescriptor {
+                    kind: "fake".to_owned(),
+                    profile: "default".to_owned(),
+                    runtime: None,
+                    vm_type: None,
+                },
+                container: container_identity(),
+                environment: local_identity(),
+                artifact_install_identity: None,
+            },
+        )
+        .unwrap()
+        .expect("selected workspace prepares a guest and immutable context");
+        assert_eq!(prepared.paths.guest_checkout, "/alternate");
+        verify_pinned_guest_binary(&mut guest, &entry())
+            .expect("prepared selected workspace verifies");
+        guest = guest.with_container(observed_identity(&"a1".repeat(32)));
+        let error = verify_pinned_guest_binary(&mut guest, &entry())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(HOST_REPREPARE_COMMAND), "{error}");
+
+        policy.name = "service_only".to_owned();
+        assert!(
+            operator_workspace_for_policy(&repo, &policy)
+                .unwrap()
+                .is_none(),
+            "an unrelated service with a catalog user remains hybrid"
+        );
+    }
+}
+
+#[test]
 fn hybrid_entry_needs_no_prepared_guest_and_no_activation() {
     let repo = fixture("hybrid-entry");
     hybrid_manifest(&repo);

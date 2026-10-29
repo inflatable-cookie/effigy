@@ -66,6 +66,7 @@ pub use report::{
     ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
+pub use workspace::resolve_operator_workspace_for_container;
 /// The Effigy state home for this process: `~/.effigy`, or the private
 /// fixture home while unit tests run. Callers that touch `ports.json` or other
 /// shared state must resolve it here rather than reading `HOME` directly.

@@ -2336,7 +2336,10 @@ services run in containers, has no guest.
 | Authority | the owning engine | requests over the host authority channel (§8.3) |
 
 The mode boundary is the environment's declared operator workspace, never a
-mode or environment name. Hybrid mode provisions no guest binary, no context,
+mode or environment name. Prepare and entry match the selected container against
+workspace declarations across all systems, including explicitly selected
+non-default systems and workspaces; the default binding is not a mode filter.
+Hybrid mode provisions no guest binary, no context,
 no channel listener and no enrolment credential. Its service lifecycle uses
 the same host engines.
 

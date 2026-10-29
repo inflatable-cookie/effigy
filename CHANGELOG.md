@@ -385,6 +385,9 @@ During v0.x, MINOR bumps may include breaking changes.
   path-only includes stay silent. `--json` carries the notice in
   `warnings`, never stdout.
 
+- Explicitly selected non-default workspace containers receive the same pinned
+  guest preparation and entry identity verification as the default workspace.
+
 - Workspace guest reads and publication target the host-verified full container
   id; configured hostnames and id prefixes cannot reuse another container's
   context. Compose mount isolation resolves interpolated long-form named-volume

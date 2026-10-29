@@ -34,6 +34,86 @@ pub(crate) use host_integration::{
 use isolation::build_isolation_mounts;
 use library_mounts::build_library_mounts;
 
+/// Resolve the operator workspace belonging to a selected container.
+///
+/// An omitted container keeps the manifest's default selection. A named one
+/// may belong to any declared system/workspace, not only the default binding.
+/// The default binding wins when it names that container, preserving existing
+/// behavior for aliases. Catalog users alone never declare an operator workspace.
+///
+/// Returns a policy error when an explicitly enumerated binding cannot resolve.
+pub fn resolve_operator_workspace_for_container(
+    manifest: &effigy_manifest::TaskManifest,
+    requested_container: Option<&str>,
+) -> Result<Option<ManifestWorkspaceConfig>, ContainerPolicyError> {
+    use effigy_manifest::{ManifestTask, ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer};
+    let resolve = |task: &ManifestTask| {
+        effigy_manifest::resolve_task_execution_binding_from_parts(
+            None,
+            manifest.systems.as_ref(),
+            manifest.containers.as_ref(),
+            "container",
+            task,
+        )
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+    };
+    let default = resolve(&ManifestTask::default());
+    let Some(requested) = requested_container else {
+        return Ok(match default? {
+            Some(ResolvedTaskExecutionBinding::Workspace(binding))
+                if matches!(
+                    binding.container.as_ref(),
+                    Some(ResolvedWorkspaceContainer::Named(_))
+                ) =>
+            {
+                Some(binding.workspace_config)
+            }
+            _ => None,
+        });
+    };
+    // Ambiguous defaults cannot invalidate an explicit system/workspace choice.
+    match default {
+        Ok(Some(ResolvedTaskExecutionBinding::Workspace(binding))) if matches!(binding.container.as_ref(), Some(ResolvedWorkspaceContainer::Named(name)) if name == requested) =>
+        {
+            return Ok(Some(binding.workspace_config));
+        }
+        _ => {}
+    }
+    let Some(systems) = manifest.systems.as_ref() else {
+        return Ok(None);
+    };
+    for (system_name, system) in &systems.systems {
+        let mut workspaces = system.workspaces.keys().cloned().collect::<Vec<_>>();
+        if workspaces.is_empty() {
+            if system.container.is_none()
+                && manifest
+                    .containers
+                    .as_ref()
+                    .and_then(|c| c.default.as_ref())
+                    .is_none()
+            {
+                continue;
+            }
+            workspaces.push("default".to_owned());
+        }
+        for workspace in workspaces {
+            let task = ManifestTask {
+                system: Some(system_name.clone()),
+                workspace: Some(workspace),
+                ..Default::default()
+            };
+            let Some(ResolvedTaskExecutionBinding::Workspace(binding)) = resolve(&task)? else {
+                continue;
+            };
+            if matches!(binding.container.as_ref(), Some(ResolvedWorkspaceContainer::Named(name)) if name == requested)
+            {
+                return Ok(Some(binding.workspace_config));
+            }
+        }
+    }
+    Ok(None)
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct WorkspaceComposeRewrite<'a> {
     pub(crate) repo_root: &'a Path,

@@ -916,21 +916,9 @@ fn environment_declares_operator_workspace(
 ) -> Result<bool, RunnerError> {
     let manifest =
         crate::runner::manifest::load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    let binding = effigy_manifest::resolve_task_execution_binding_from_parts(
-        None,
-        manifest.systems.as_ref(),
-        manifest.containers.as_ref(),
-        "container",
-        &effigy_manifest::ManifestTask::default(),
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let Some(effigy_manifest::ResolvedTaskExecutionBinding::Workspace(workspace)) = binding else {
-        return Ok(false);
-    };
-    Ok(matches!(
-        workspace.container.as_ref(),
-        Some(effigy_manifest::ResolvedWorkspaceContainer::Named(name)) if name == &policy.name
-    ))
+    effigy_containers::resolve_operator_workspace_for_container(&manifest, Some(&policy.name))
+        .map(|workspace| workspace.is_some())
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn workspace_path_map(
