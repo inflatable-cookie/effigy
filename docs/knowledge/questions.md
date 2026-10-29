@@ -733,3 +733,29 @@ proof. Current-tree examples include the route-token tests in
 argument-redaction test. Apply the same source-context check to every
 historical revision; a production literal or a value of unclear origin
 remains a finding. A changed blob gets scanned again.
+
+## Q-021: Guest facts the workspace client channel still needs
+
+Status: open
+Asked: 2026-10-29
+Owners: Queue lanes `v015-workspace-client` (context) and the channel
+transport task; [contract 052](contracts/052-runtime-kernel-contract.md)
+
+The client glue (effigy#452) lands with three facts its lanes do not yet
+publish, and it refuses host authority rather than guessing any of them. Each
+needs its owning lane to decide the shape:
+
+- A guest-local observation of the container id, VM boot, platform and libc.
+  `WorkspaceContainerIdentity` exists and the host's Prepare probes it through
+  `GuestWorkspace::probe_container_identity`, but no guest-process observation
+  exists, so a guest cannot form `LiveGuestRun` without trusting the context's
+  own claim (§8.1 forbids that). Owner: lane C.
+- A qualified transport for a backend. `WorkspaceChannelLocator` is published
+  absent for every backend, so no guest can open the channel; the transport is
+  the separate task lane A's note names.
+- The session generation a direct terminal presents in
+  `workspace_channel::EnrolRequest::session_generation`. `WorkspaceContext`
+  publishes `session_run_id` only, so an enrolled direct terminal cannot form
+  the frame. Either the context publishes the session's generation alongside
+  its run, or the channel accepts the session the host recorded for the
+  credential. Owner: lane C and lane A respectively; a guest must not guess it.

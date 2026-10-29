@@ -350,6 +350,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 
+- **A container-mode guest runs Effigy through its published context and the one
+  host channel.** Static reads (`effigy tasks`, the pinned identity and the
+  pinned sources) are answered locally from the immutable context generation and
+  never open a connection or write anything. Every command with host authority
+  is classified and sent as one typed channel request that the host re-resolves,
+  gates and journals; a host refusal is returned as an error and never falls
+  back to guest state or a guest engine. `effigy skill run --stdio passthrough`
+  is refused in a guest because it would run a task without host authority.
+  Until a guest transport, a guest-local container observation and a published
+  session generation land, host authority reports itself unavailable with the
+  specific missing fact named, and local reads keep working.
+
 - Workspace guest publication now completes as a journalled obligation under
   the environment activation gate before publishing active or attaching task
   holders. Concurrent prepares and stops serialize; interrupted publication

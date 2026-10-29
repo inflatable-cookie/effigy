@@ -3013,6 +3013,72 @@ a server that serves a reconnect publishes nothing from the previous connection
 and never carries an unpublished chunk or a full window into it. The transport, the guest client and the runner integration
 remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
 
+#### Implemented: the client glue (effigy#452)
+
+`src/runner/workspace_client.rs` is the one integration file this section
+allows to join the lanes, and it takes the module root lane C left as
+`src/runner/workspace_client/mod.rs`. It owns no authority: no store, no gate,
+no run, no resolution and no second credential.
+
+- **Dispatch.** `runner::run_command`, `run_command_with_context` and
+  `run_skill_passthrough_with_context` consult the guest dispatch first. It
+  returns `None` when no context is published, so an ordinary host command and
+  a hybrid workspace take the unchanged host dispatch and nothing is written.
+  Every other entry point — `effigy container …` and `effigy workspace …`
+  included — reaches it through that one seam, so those two command modules
+  needed no adaptation of their own.
+- **Local reads.** Version, the pinned task list from the context's composed
+  manifest snapshot, the pinned sources and a checkout-relative file read are
+  served by lane C's `GuestLocalReads` from the published generation and the
+  mounted checkout. They open no connection, hold no capability and write
+  nothing.
+- **Host authority.** Everything else becomes one channel request: `observe`
+  for a live read (`doctor`, run and container status, logs, hosts, scope) and
+  `invoke` for anything with authority (tasks, `container down` and the rest of
+  the container lifecycle, the workspace entry, stores, delivery). The method
+  label grants nothing — the host decides the effect class from its own policy.
+  The body carries a selector, the checkout-relative cwd, the host target, the
+  operator's own arguments and the output mode; it carries no plan, executable,
+  entry point or state root.
+- **Refusals and replay.** A connection-level refusal (`pin`, negotiation,
+  authentication) and a request-level refusal both return an error that names
+  lane A's stable code; nothing falls back to guest state or guest execution.
+  One request is one `Intent` — its id and body together — so a connection that
+  dies before answering is replayed on a fresh connection under the same id and
+  the host answers from its record instead of admitting a second run. Detach is
+  accepted only for the run this connection admitted, so a secondary terminal
+  leaving writes no control frame. Stream frames are acknowledged and dropped:
+  output belongs to the session front end that attaches.
+
+Three facts the merged lanes do not give a guest are refused for rather than
+guessed at. Each refusal names what is missing; none of them falls back:
+
+- **The container identity.** `context::GuestWorkspace::probe_container_identity`
+  is the host's Prepare probe. Nothing in the guest observes its own container
+  id, VM boot, platform and libc, so `LiveGuestRun` cannot be formed without
+  trusting the context's own claim, which §8.1 forbids. `UnobservedContainer`
+  refuses host access and leaves local reads working.
+- **The transport.** Every context published today carries
+  `WorkspaceChannelLocator::default()`, because a locator is pinned only once a
+  transport is qualified. `UnqualifiedTransport` refuses with `unavailable` for
+  a backend with no qualified transport.
+- **The session generation.** A direct terminal must present
+  `workspace_channel::EnrolRequest::session_generation`, and the published
+  context names only `session_run_id`. `enrolment_session` refuses instead of
+  presenting a generation nobody published (§8.8: a missing credential leaves
+  local reads working and reports host access unavailable).
+
+Proofs are the source/fake-runtime cases under `workspace_client::tests`: the
+pinned read and its stability, hybrid detection writing nothing, the dispatch
+table for command and container entry, each refusal (version, identity,
+generation, capability, unqualified channel) before any effect, the host's real
+`Server` over an in-memory transport reaching resolution and the kernel's own
+admission record, a repeated intent answered from that record, and a secondary
+terminal writing no control frame. Lane A's `test:kernel:workspace-channel`
+and lane B's `test:kernel:workspace` own the wire and session halves. The
+transport, the guest container observation and the published session
+generation remain their own tasks.
+
 ## 9. Authority map
 
 | Resource kind | Authority | Gate | Run placement | Journals | Settle undoes |
