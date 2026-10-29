@@ -178,7 +178,11 @@ During v0.x, MINOR bumps may include breaking changes.
   another account is an identity failure refused with the move-aside recovery
   (never a `chmod` through the link), a directory refusal's `chmod` is one
   quoted shell word naming the directory that failed rather than the service
-  entry inside it, and only a mode problem is repaired by that command; a changed definition disables the activation
+  entry inside it, and only a mode problem is repaired by that command;
+  `gateway status` keeps a foreign or unsafe activation as its own refusal (it
+  is never reported as merely disabled, so its advice cannot hand the manager a
+  path Effigy refuses), and an unsafe unit file is named as that file rather
+  than as an unrelated directory; a changed definition disables the activation
   before it rewrites the unit and refuses if it remains. `setup --remove`
   completes the filesystem removal and then reports a `daemon-reload` that
   refuses, cannot be reached or times out, with the exact

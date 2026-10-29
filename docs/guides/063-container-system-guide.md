@@ -1641,7 +1641,12 @@ loginctl disable-linger "$USER"   # undo
 (`unit`, `enabled`, `linger`, `low_port`) and a `recovery` list of exact commands
 for anything that is not ready. Nothing there is inferred: an unobservable linger
 state is omitted, and a foreign unit or capability is reported as `foreign`
-rather than claimed.
+rather than claimed. A login activation Effigy cannot trust — a foreign entry or
+an unsafe activation directory — is kept as its own refusal with the move-aside
+recovery and never becomes "not enabled", so `status` never tells you to enable
+the unit through a path Effigy refuses. An unsafe unit *file* (a link, a
+non-regular or changed file) is named as that file, not as an unrelated
+directory.
 
 `unit` is one of `missing`, `installed`, `foreign`, `unsafe` or `stale`. Setup
 writes the unit's own `ExecStart` as quoted `"<installed effigy>" gateway up`

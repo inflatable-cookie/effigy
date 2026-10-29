@@ -873,10 +873,18 @@ fn unit_dir_refusal(
     operator_uid: u32,
     failure: impl std::fmt::Display,
 ) -> io::Error {
+    // The open failure itself says what is there (a link, a file, an
+    // unreadable path), so the advice comes from that identity too: only a
+    // plain mode problem is repaired with a `chmod`.
+    let advice = match std::fs::symlink_metadata(&paths.user_dir) {
+        Ok(metadata) => directory_recovery(&metadata, &paths.user_dir, operator_uid),
+        Err(observation) => {
+            format!("it could not be observed ({observation}); inspect it and move it aside")
+        }
+    };
     error(format!(
-        "refusing the systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} ({failure}). {}, then run `effigy gateway setup` again",
-        path_label(&paths.user_dir),
-        chmod_advice("755", &paths.user_dir)
+        "refusing the systemd user unit directory {}: it must be a real directory owned by uid {operator_uid} ({failure}). {advice}, then run `effigy gateway setup` again",
+        path_label(&paths.user_dir)
     ))
 }
 
@@ -1913,41 +1921,148 @@ fn usable_executable(executable: &Path, operator_uid: u32) -> bool {
 }
 
 fn read_unit_file(paths: &LaunchPaths) -> io::Result<Option<Vec<u8>>> {
+    read_unit_file_checked(paths).map_err(error)
+}
+
+/// The owned unit file, or the sentence that says why it cannot be trusted.
+/// Status names this reason, so an unsafe *file* is never reported as an
+/// unrelated directory.
+fn read_unit_file_checked(paths: &LaunchPaths) -> Result<Option<Vec<u8>>, String> {
     use std::os::unix::fs::OpenOptionsExt;
     let before = match std::fs::symlink_metadata(&paths.unit) {
         Ok(metadata) => metadata,
         Err(failure) if failure.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(failure) => return Err(failure),
+        Err(failure) => {
+            return Err(format!(
+                "the unit file {} could not be observed ({failure}); inspect it",
+                path_label(&paths.unit)
+            ))
+        }
     };
-    if before.file_type().is_symlink() || !before.is_file() {
-        return Err(error("unit file is not a regular file"));
+    if before.file_type().is_symlink() {
+        return Err(format!(
+            "the unit file {} is a symbolic link; move that entry aside and install a real file — Effigy never follows or repairs through a link",
+            path_label(&paths.unit)
+        ));
+    }
+    if !before.is_file() {
+        return Err(format!(
+            "the unit file {} is not a regular file; move that entry aside and install a real file",
+            path_label(&paths.unit)
+        ));
     }
     let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(&paths.unit)?;
-    let opened = file.metadata()?;
+        .open(&paths.unit)
+        .map_err(|failure| {
+            format!(
+                "the unit file {} could not be opened ({failure}); inspect it",
+                path_label(&paths.unit)
+            )
+        })?;
+    let opened = file.metadata().map_err(|failure| {
+        format!(
+            "the unit file {} could not be observed ({failure}); inspect it",
+            path_label(&paths.unit)
+        )
+    })?;
     if opened.dev() != before.dev() || opened.ino() != before.ino() {
-        return Err(error("unit file changed while being observed"));
+        return Err(format!(
+            "the unit file {} changed while it was being observed; run `effigy gateway status` again",
+            path_label(&paths.unit)
+        ));
     }
     let mut bytes = Vec::new();
-    file.take(MAX_UNIT_FILE + 1).read_to_end(&mut bytes)?;
+    file.take(MAX_UNIT_FILE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|failure| {
+            format!(
+                "the unit file {} could not be read ({failure}); inspect it",
+                path_label(&paths.unit)
+            )
+        })?;
     if bytes.len() as u64 > MAX_UNIT_FILE {
-        return Err(error("unit file is larger than a unit may be"));
+        return Err(format!(
+            "the unit file {} is larger than a unit may be; inspect it",
+            path_label(&paths.unit)
+        ));
     }
     Ok(Some(bytes))
 }
 
+/// What status observed about the login activation. A refusal is kept, never
+/// collapsed into "not enabled": advising an operator to enable the unit
+/// through a foreign or unsafe path hands the manager the same path Effigy
+/// refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ActivationObservation {
+    /// No activation directory, or no entry in it.
+    Absent,
+    /// Effigy's own link to the owned unit.
+    Ours,
+    /// An entry Effigy did not write, with the sentence that says so.
+    Foreign(String),
+    /// The directory or the entry could not be trusted, with the reason.
+    Unsafe(String),
+    /// The observation itself failed.
+    Unknown(String),
+}
+
+impl ActivationObservation {
+    fn is_ours(&self) -> bool {
+        matches!(self, Self::Ours)
+    }
+
+    fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+}
+
+/// Observe the activation without repairing anything, keeping every refusal's
+/// own sentence.
+fn observe_activation(paths: &LaunchPaths, operator_uid: u32) -> ActivationObservation {
+    let dir = match ActivationDir::open(paths, operator_uid) {
+        Ok(Some(dir)) => dir,
+        Ok(None) => return ActivationObservation::Absent,
+        Err(failure) => return ActivationObservation::Unsafe(failure.to_string()),
+    };
+    match dir.entry() {
+        Ok(ActivationEntry::Absent) => ActivationObservation::Absent,
+        Ok(ActivationEntry::Ours(_)) => ActivationObservation::Ours,
+        Ok(ActivationEntry::Foreign) => ActivationObservation::Foreign(format!(
+            "the login activation entry {} is not Effigy's link to {}",
+            path_label(&paths.wants),
+            path_label(&paths.unit)
+        )),
+        Err(failure) => ActivationObservation::Unknown(failure.to_string()),
+    }
+}
+
 /// True only when Effigy's activation entry names its own unit path, read
-/// through a verified, bound activation directory. A linked or foreign
-/// activation directory, and a foreign entry, are reported as not enabled,
-/// never guessed.
+/// through a verified, bound activation directory.
 fn activation_linked(paths: &LaunchPaths, operator_uid: u32) -> bool {
-    ActivationDir::open(paths, operator_uid)
-        .ok()
-        .flatten()
-        .and_then(|dir| dir.entry().ok())
-        .is_some_and(|entry| matches!(entry, ActivationEntry::Ours(_)))
+    observe_activation(paths, operator_uid).is_ours()
+}
+
+/// Recovery for an activation Effigy cannot trust. It never names `enable`:
+/// that would let the manager resolve the path Effigy refused.
+fn activation_recovery(paths: &LaunchPaths, activation: &ActivationObservation) -> Option<String> {
+    match activation {
+        ActivationObservation::Absent | ActivationObservation::Ours => None,
+        ActivationObservation::Foreign(detail) => Some(format!(
+            "preserving the foreign login activation: {detail}. Move that entry aside (or run `systemctl --user disable {UNIT_NAME}` yourself), then run `effigy gateway setup`; do not enable the unit through {activation}",
+            activation = path_label(&paths.wants)
+        )),
+        ActivationObservation::Unsafe(detail) => Some(format!(
+            "{detail} Do not enable the unit through {activation}",
+            activation = path_label(paths.activation_dir())
+        )),
+        ActivationObservation::Unknown(detail) => Some(format!(
+            "the login activation could not be observed ({detail}); run `effigy gateway status` again as this account, then `effigy gateway setup`; do not enable the unit through {activation}",
+            activation = path_label(paths.activation_dir())
+        )),
+    }
 }
 
 /// Whether a login-less boot start is opted in. `None` is unobservable.
@@ -1976,13 +2091,19 @@ pub fn observe(
 ) -> LaunchStatus {
     let unit = observe_unit(paths, operator_uid);
     // The login activation link is the observation; whether the unit it starts
-    // can still work is the unit state's own answer.
-    let linked = matches!(unit, UnitState::Installed | UnitState::Stale)
-        && activation_linked(paths, operator_uid);
+    // can still work is the unit state's own answer. A refused activation keeps
+    // its own recovery instead of becoming "not enabled".
+    let activation = observe_activation(paths, operator_uid);
+    let linked = matches!(unit, UnitState::Installed | UnitState::Stale) && activation.is_ours();
     let mut recovery = Vec::new();
+    if let Some(line) = activation_recovery(paths, &activation) {
+        recovery.push(line);
+    }
     match unit {
         UnitState::Installed if !linked => {
-            recovery.extend(recovery_steps(paths).into_iter().take(3));
+            if activation.is_absent() {
+                recovery.extend(recovery_steps(paths).into_iter().take(3));
+            }
         }
         UnitState::Stale => {
             let executable = declared_unit_executable(paths)
@@ -1991,7 +2112,7 @@ pub fn observe(
             recovery.push(format!(
                 "the login launch unit names {executable}, which is missing or no longer a safe owner-only executable for uid {operator_uid}; restore the binary it names (a rollback to the previous install) or run `effigy gateway setup` from the installed binary"
             ));
-            if !linked {
+            if activation.is_absent() {
                 recovery.push(format!("systemctl --user enable {UNIT_NAME}"));
             }
             recovery.push(format!("systemctl --user restart {UNIT_NAME}"));
@@ -2004,31 +2125,22 @@ pub fn observe(
             paths.unit.display()
         )),
         UnitState::Unsafe => {
-            // Name the first component that is actually unusable, with its own
-            // metadata and without following a link.
-            let unit_dir = std::fs::symlink_metadata(&paths.user_dir);
-            let activation = std::fs::symlink_metadata(paths.activation_dir());
-            let advice = match (&unit_dir, &activation) {
-                (Ok(metadata), _) if !directory_usable(metadata, operator_uid) => {
-                    directory_recovery(metadata, &paths.user_dir, operator_uid)
-                }
-                (_, Ok(metadata)) => {
-                    directory_recovery(metadata, paths.activation_dir(), operator_uid)
-                }
-                (Err(failure), _) => {
-                    format!("it could not be observed ({failure}); inspect it and move it aside")
-                }
-                // The unit directory is usable but its activation directory
-                // could not be observed.
-                (Ok(_), Err(failure)) => {
-                    format!("the activation directory could not be observed ({failure}); inspect it and move it aside")
-                }
+            // Name the component that is actually unsafe. `observe_unit` checks
+            // the unit directory first and then the owned unit file, so the
+            // recovery follows the same order and never points at a healthy
+            // directory or an unrelated one.
+            let advice = match std::fs::symlink_metadata(&paths.user_dir) {
+                Ok(metadata) if !directory_usable(&metadata, operator_uid) => format!(
+                    "the systemd user unit directory {} is unusable: {}",
+                    path_label(&paths.user_dir),
+                    directory_recovery(&metadata, &paths.user_dir, operator_uid)
+                ),
+                _ => read_unit_file_checked(paths).err().unwrap_or_else(|| {
+                    "the login launch unit could not be observed; inspect it and move the offending entry aside".to_owned()
+                }),
             };
             recovery.push(format!(
-                "the systemd user unit path {} or its activation directory {} is unsafe: {}, then run `effigy gateway setup`",
-                path_label(&paths.user_dir),
-                path_label(paths.activation_dir()),
-                advice
+                "the login launch unit cannot be trusted: {advice}. Then run `effigy gateway setup`"
             ))
         }
         UnitState::Installed => {}
@@ -4511,7 +4623,130 @@ mod tests {
         });
     }
 
-    /// A teardown on a fresh or partially removed installation has no unit
+    /// A foreign or unsafe activation is not "disabled": status must keep the
+    /// refusal and must never advise enabling the unit through that path.
+    #[test]
+    fn status_does_not_advise_enabling_through_a_foreign_or_unsafe_activation() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+
+            // A valid owned unit, but the activation entry names somebody else.
+            let paths = paths(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Installed);
+            assert!(!status.enabled);
+            let advice = status.recovery.join("\n");
+            assert!(
+                advice.contains("preserving the foreign login activation"),
+                "{advice}"
+            );
+            assert!(
+                !advice.contains("systemctl --user enable"),
+                "status must not advise enable through a foreign entry: {advice}"
+            );
+            assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
+
+            // A stale unit with the same foreign entry: still no enable advice.
+            std::fs::remove_file(&binary).unwrap();
+            let stale = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(stale.unit, UnitState::Stale);
+            let stale_advice = stale.recovery.join("\n");
+            assert!(
+                stale_advice.contains("restore the binary"),
+                "{stale_advice}"
+            );
+            assert!(
+                !stale_advice.contains("systemctl --user enable"),
+                "a stale unit must not be enabled through a foreign entry: {stale_advice}"
+            );
+
+            // A foreign activation *directory* (a symlink to a foreign place):
+            // the refusal is kept and enable is not advised.
+            std::fs::remove_file(&paths.wants).unwrap();
+            let foreign_dir = home.path().join("foreign-wants");
+            std::fs::create_dir(&foreign_dir).unwrap();
+            let activation = paths.activation_dir().to_path_buf();
+            std::fs::remove_dir(&activation).unwrap();
+            std::os::unix::fs::symlink(&foreign_dir, &activation).unwrap();
+            let unsafe_status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            let unsafe_advice = unsafe_status.recovery.join("\n");
+            assert!(
+                unsafe_advice.contains("refusing the login activation directory"),
+                "the activation refusal is kept, not collapsed into disabled: {unsafe_advice}"
+            );
+            assert!(
+                !unsafe_advice.contains("systemctl --user enable"),
+                "status must not advise enable through an unsafe directory: {unsafe_advice}"
+            );
+        });
+    }
+
+    /// An unsafe unit *file* is named as that file, not as an unrelated
+    /// directory, and never with advice that mutates through a link.
+    #[test]
+    fn status_names_an_unsafe_unit_file_rather_than_a_directory() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+
+            // The unit file becomes a symlink; both directories stay normal.
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+            std::fs::remove_file(&paths.unit).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.unit).unwrap();
+
+            let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(status.unit, UnitState::Unsafe);
+            let advice = status.recovery.join("\n");
+            assert!(
+                advice.contains(&path_label(&paths.unit)),
+                "the unsafe unit file is named: {advice}"
+            );
+            assert!(
+                advice.contains("symbolic link"),
+                "the cause is named: {advice}"
+            );
+            assert!(
+                !advice.contains(&format!("directory {}", path_label(paths.activation_dir()))),
+                "a healthy activation directory is not blamed: {advice}"
+            );
+            assert!(!advice.contains("chmod"), "{advice}");
+            assert!(
+                !advice.contains("Move that entry aside and create a real directory"),
+                "{advice}"
+            );
+
+            // With the activation directory absent, the advice still names the
+            // unit file instead of an absent directory.
+            std::fs::remove_dir_all(paths.activation_dir()).unwrap();
+            let absent = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+            assert_eq!(absent.unit, UnitState::Unsafe);
+            let absent_advice = absent.recovery.join("\n");
+            assert!(
+                absent_advice.contains(&path_label(&paths.unit)),
+                "{absent_advice}"
+            );
+            assert!(
+                !absent_advice.contains("activation directory")
+                    || absent_advice.contains("unit file"),
+                "an absent activation directory is not blamed: {absent_advice}"
+            );
+        });
+    }
+
+    /// Removing an entry Effigy did not write is refused at the entry    /// A teardown on a fresh or partially removed installation has no unit
     /// directory at all: that is no activation, not a refusal, so cleanup can
     /// still run. Unsafe or uncertain identities are still refused.
     #[test]

@@ -463,7 +463,10 @@ privileged stage, a fresh exec of the installed binary as the operator binds
 the configured low ports and reports `bound`, `in_use` or `denied`, and a
 denial fails setup rather than leaving a gateway that cannot serve 80/443.
 `gateway status` observes the unit, its login activation, `linger` and the
-capability record without repairing or elevating, omits an unobservable linger
+capability record without repairing or elevating; a foreign or unsafe
+activation keeps its own refusal (never "not enabled", so no `enable` advice
+through a refused path), and an unsafe unit file is named as that file rather
+than as a directory, omits an unobservable linger
 state, and reports a foreign unit or capability as `foreign` with the exact
 recovery commands. Boot and native user-manager qualification on a Linux host
 remains a separate exact-candidate clean-base proof; guide 063 carries its
