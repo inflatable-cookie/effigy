@@ -227,6 +227,22 @@ case "$*" in
     ;;
   "link --no-save")
     package="$(package_name)"
+    if [ -f "$home/hold-register-tree" ]; then
+      # A wrapper whose descendant would create the registration after the
+      # owner was interrupted, unless the whole tree is stopped.
+      echo "$$" > "$home/register-tree-child.pid"
+      registration="$registration_root/$package"
+      export registration
+      (
+        echo "$$" > "$home/register-tree-descendant.pid"
+        sleep 2
+        mkdir -p "$(dirname "$registration")"
+        ln -sfn "$PWD" "$registration"
+        echo wrote > "$home/register-tree-descendant-wrote"
+      ) &
+      wait
+      exit 0
+    fi
     if [ -f "$home/hold-register" ]; then
       echo "$$" > "$home/register-child.pid"
       sleep 2
@@ -465,6 +481,48 @@ fn interrupt_stops_an_in_flight_registration_before_it_leaves_residue() {
 }
 
 #[test]
+fn interrupt_stops_a_wrapper_and_its_descendant_before_they_can_register() {
+    let machine = Machine::new("effigy-bun-link-tree-");
+    machine.mark("hold-register-tree");
+    let args = machine.link_args();
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut owner = RunningOwner {
+        machine: &machine,
+        child: machine
+            .command(&args)
+            .spawn()
+            .expect("spawn the effigy CLI in the fixture"),
+    };
+    assert!(
+        wait_until(Duration::from_secs(60), || machine
+            .marked("register-tree-descendant.pid")),
+        "the fixture never started the descendant; calls: {}",
+        fs::read_to_string(machine.home.join("calls.log")).unwrap_or_default()
+    );
+    interrupt(&mut owner.child);
+    let status = wait_for_exit(&mut owner.child);
+    assert!(
+        !status.success(),
+        "interrupted owner must not report success: {status:?}"
+    );
+    // The descendant sleeps two seconds and then registers: nothing of the
+    // wrapper's tree may be left to do that.
+    std::thread::sleep(Duration::from_millis(2_500));
+    assert_eq!(
+        fs::symlink_metadata(machine.registration())
+            .map(|_| ())
+            .ok(),
+        None,
+        "a wrapper's descendant recreated the registration after cleanup"
+    );
+    assert!(
+        !machine.marked("register-tree-descendant-wrote"),
+        "the descendant survived the interrupt cleanup"
+    );
+    assert!(machine.claim_consumers().is_empty());
+}
+
+#[test]
 fn a_refused_retirement_keeps_the_claim_for_unlink() {
     let machine = Machine::new("effigy-bun-link-refused-retirement-");
     machine.mark("fail-unlink");
@@ -509,6 +567,8 @@ impl Drop for RunningOwner<'_> {
         // Both recorded fixture children, so a panicking proof leaves none.
         stop_recorded_child(self.machine, "held-child.pid");
         stop_recorded_child(self.machine, "register-child.pid");
+        stop_recorded_child(self.machine, "register-tree-child.pid");
+        stop_recorded_child(self.machine, "register-tree-descendant.pid");
     }
 }
 

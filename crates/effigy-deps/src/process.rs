@@ -120,15 +120,48 @@ fn begin_spawn() -> Option<SpawnSlot> {
     Some(SpawnSlot { published: false })
 }
 
+/// Stop the child and everything it started.
+///
+/// Each owned child runs in its own process group, so a wrapper's descendant —
+/// the `bun` a shim or a script actually runs — dies with it. Killing only the
+/// direct child would let a descendant outlive the cleanup, recreate the
+/// registration, and keep the ancestor's pipes open so the caller stays blocked
+/// while it holds the index lock.
+/// A child command that leads its own process group.
+///
+/// The group is what makes the whole owned tree addressable: terminating it
+/// stops the child and everything the child started.
+fn owned_command(request: &ProcessRequest) -> Command {
+    let mut command = Command::new(&request.program);
+    command
+        .args(&request.args)
+        .current_dir(&request.cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    // SAFETY: `pre_exec` runs in the forked child before `exec`, where only
+    // async-signal-safe work is allowed. `setpgid` is async-signal-safe and
+    // makes the child the leader of its own group, so terminating the tree is
+    // `kill(-pid, ...)` for every descendant it starts.
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                .map_err(std::io::Error::from)
+        });
+    }
+    command
+}
+
 #[cfg(unix)]
-fn terminate_pid(pid: u32) {
+fn terminate_owned_tree(pid: u32) {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
-    let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+    let _ = kill(Pid::from_raw(-(pid as i32)), Signal::SIGKILL);
 }
 
 #[cfg(not(unix))]
-fn terminate_pid(_pid: u32) {}
+fn terminate_owned_tree(_pid: u32) {}
 
 /// Run the interrupted owner's cleanup with no child process left running.
 ///
@@ -146,7 +179,7 @@ pub fn interrupt_cleanup<T>(cleanup: impl FnOnce() -> T) -> T {
             (state.pids.clone(), state.spawning)
         };
         for pid in pids {
-            terminate_pid(pid);
+            terminate_owned_tree(pid);
         }
         if spawning == 0 || Instant::now() >= deadline {
             break;
@@ -165,7 +198,7 @@ pub fn interrupt_cleanup<T>(cleanup: impl FnOnce() -> T) -> T {
         .pids
         .clone();
     for pid in leftover {
-        terminate_pid(pid);
+        terminate_owned_tree(pid);
     }
     result
 }
@@ -386,12 +419,7 @@ impl ReadOnlyProcess for StdReadOnlyProcess {
                         .to_owned(),
             });
         };
-        let child = Command::new(&request.program)
-            .args(&request.args)
-            .current_dir(&request.cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        let child = owned_command(request)
             .spawn()
             .map_err(|source| DepsError::ProcessSpawn {
                 program: request.program.clone(),
@@ -527,8 +555,16 @@ mod tests {
     #[test]
     fn a_spawn_that_has_not_published_its_pid_is_still_stopped_by_cleanup() {
         // The window this covers: `spawn` returned, so the child is running,
-        // but its PID has not reached the registry that cleanup reads.
-        let mut child = Command::new("sleep").arg("10").spawn().unwrap();
+        // but its PID has not reached the registry that cleanup reads. The
+        // child is started the way the owned path starts one, in its own
+        // process group, so cleanup can stop its whole tree.
+        let mut child = owned_command(&ProcessRequest {
+            program: "sleep".to_owned(),
+            args: vec!["10".to_owned()],
+            cwd: std::env::temp_dir(),
+        })
+        .spawn()
+        .unwrap();
         let slot = begin_spawn().expect("a spawn is allowed before cleanup");
         let cleanup = thread::spawn(|| crate::process::interrupt_cleanup(|| ()));
         thread::sleep(Duration::from_millis(100));

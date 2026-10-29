@@ -421,7 +421,9 @@ During v0.x, MINOR bumps may include breaking changes.
   a spawn can leave a registration process running past the cleanup. Stopping
   that child lets the apply release its own transaction, so the retiral takes the
   index lock instead of assuming the process still holds it, and the command
-  waits for a pending cleanup before returning. It also retires nothing unless it holds the Bun index lock for its
+  waits for a pending cleanup before returning. Each child runs in its own
+  process group, so the cleanup stops the whole tree and a wrapper's descendant
+  cannot recreate the registration after it. It also retires nothing unless it holds the Bun index lock for its
   own apply: a link that only wants that lock planned its registrations before
   this owner created anything, so they are not in the index yet and this owner
   cannot see them. While it holds the lock it reads the index instead of waiting

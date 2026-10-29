@@ -147,7 +147,11 @@ Unix.
   fail and release its own transaction before the retiral runs, so the retiral
   takes the index lock itself (bounded wait) instead of assuming the process
   still holds it, and the command waits for a pending interrupt cleanup before
-  it returns, so the process cannot exit with the registration still owned. A leftover claim means an owner died between writing the claim and
+  it returns, so the process cannot exit with the registration still owned.
+  Every child runs in its own process group and the cleanup stops the whole
+  tree: a wrapper's descendant — the `bun` a shim or script actually runs —
+  would otherwise recreate the registration after the cleanup and keep the
+  ancestor's pipes open while the caller still held the index lock. A leftover claim means an owner died between writing the claim and
   retiring it; status reports `bun-registration-without-ledger` and
   `deps unlink bun` or the next link retires it.
 - Validate other repo references before removal. Retain and report stale or
