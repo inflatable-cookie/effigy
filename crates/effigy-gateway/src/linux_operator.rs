@@ -398,9 +398,11 @@ pub fn install(
     // be a false refusal. The failure is still reported, with the recovery
     // commands, because a link does not prove the manager finished its own
     // request. Without the link the login activation is genuinely absent.
-    let linked = activation_linked(paths, operator_uid);
-    match (linked, enable_refusal) {
-        (true, None) => Ok(LaunchInstall {
+    match (observe_activation(paths, operator_uid), enable_refusal) {
+        (activation, _) if !activation.is_absent() && !activation.is_ours() => {
+            Ok(refused_activation(paths, &activation))
+        }
+        (activation, None) if activation.is_ours() => Ok(LaunchInstall {
             enabled: true,
             recovery: Vec::new(),
             reason: None,
@@ -410,7 +412,7 @@ pub fn install(
             operator_uid,
             format!("the systemd user manager refused `enable {UNIT_NAME}`: {reason}"),
         )),
-        (false, None) => Ok(unconfirmed(
+        (_, None) => Ok(unconfirmed(
             paths,
             operator_uid,
             format!(
@@ -421,15 +423,32 @@ pub fn install(
     }
 }
 
-/// A run whose manager request did not finish. The link is reported as it is:
-/// a repeated setup with unchanged bytes keeps the link the manager already
+/// A run whose manager request did not finish. The activation is reported as it
+/// is: a repeated setup with unchanged bytes keeps the link the manager already
 /// has, so claiming it unenabled would contradict both the file system and
-/// `gateway status`. The recovery commands are retained either way.
+/// `gateway status`. A refused activation is named instead of being handed the
+/// enable advice, and only a genuinely absent activation gets the recovery
+/// commands that finish an enable.
 fn unconfirmed(paths: &LaunchPaths, operator_uid: u32, reason: String) -> LaunchInstall {
+    let activation = observe_activation(paths, operator_uid);
+    if !activation.is_absent() && !activation.is_ours() {
+        return refused_activation(paths, &activation);
+    }
     LaunchInstall {
-        enabled: activation_linked(paths, operator_uid),
+        enabled: activation.is_ours(),
         recovery: recovery_steps(paths),
         reason: Some(reason),
+    }
+}
+
+/// A post-request activation Effigy cannot trust. The refusal is the report, and
+/// no recovery command is offered: `enable` would hand the manager the path
+/// Effigy just refused.
+fn refused_activation(paths: &LaunchPaths, activation: &ActivationObservation) -> LaunchInstall {
+    LaunchInstall {
+        enabled: false,
+        recovery: Vec::new(),
+        reason: activation_recovery(paths, activation),
     }
 }
 
@@ -2019,6 +2038,15 @@ impl ActivationObservation {
     }
 }
 
+/// True only when Effigy's activation entry names its own unit path, read
+/// through a verified, bound activation directory. A refusal is `false`. The
+/// tests use it to assert that a case leaves Effigy's own link; production code
+/// matches `ActivationObservation` so a refusal is never collapsed.
+#[cfg(test)]
+fn activation_linked(paths: &LaunchPaths, operator_uid: u32) -> bool {
+    observe_activation(paths, operator_uid).is_ours()
+}
+
 /// Observe the activation without repairing anything, keeping every refusal's
 /// own sentence.
 fn observe_activation(paths: &LaunchPaths, operator_uid: u32) -> ActivationObservation {
@@ -2037,12 +2065,6 @@ fn observe_activation(paths: &LaunchPaths, operator_uid: u32) -> ActivationObser
         )),
         Err(failure) => ActivationObservation::Unknown(failure.to_string()),
     }
-}
-
-/// True only when Effigy's activation entry names its own unit path, read
-/// through a verified, bound activation directory.
-fn activation_linked(paths: &LaunchPaths, operator_uid: u32) -> bool {
-    observe_activation(paths, operator_uid).is_ours()
 }
 
 /// Recovery for an activation Effigy cannot trust. It never names `enable`:
@@ -3879,6 +3901,60 @@ mod tests {
         }
     }
 
+    /// A manager that swaps the activation for a foreign one while it answers a
+    /// request, and optionally reports that request as failed.
+    struct ReplaceActivationDuring {
+        paths: LaunchPaths,
+        /// `entry` replaces the service entry; anything else replaces
+        /// `default.target.wants` itself with a symlink to a foreign directory.
+        shape: &'static str,
+        /// The request during which the replacement happens.
+        during: &'static str,
+        /// Whether that request also reports a failure.
+        fails: bool,
+    }
+
+    impl SystemdUser for ReplaceActivationDuring {
+        fn run(&mut self, args: &[&str]) -> io::Result<SystemdOutcome> {
+            let name = args.first().copied().unwrap_or_default();
+            if name != self.during {
+                return Ok(SystemdOutcome {
+                    code: 0,
+                    stderr: Vec::new(),
+                });
+            }
+            let elsewhere = self.paths.home.join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\n").unwrap();
+            if self.shape == "entry" {
+                use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+                let activation = self.paths.activation_dir();
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o755)
+                    .create(activation)
+                    .unwrap();
+                std::fs::set_permissions(activation, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+                let _ = std::fs::remove_file(&self.paths.wants);
+                std::os::unix::fs::symlink(&elsewhere, &self.paths.wants).unwrap();
+            } else {
+                let activation = self.paths.activation_dir().to_path_buf();
+                let foreign = self.paths.home.join("foreign-wants");
+                std::fs::create_dir_all(&foreign).unwrap();
+                let _ = std::fs::remove_dir_all(&activation);
+                std::os::unix::fs::symlink(&foreign, &activation).unwrap();
+            }
+            Ok(SystemdOutcome {
+                code: if self.fails { 1 } else { 0 },
+                stderr: if self.fails {
+                    b"fixture refusal\n".to_vec()
+                } else {
+                    Vec::new()
+                },
+            })
+        }
+    }
+
     /// A manager whose `disable --now` removes Effigy's activation link and
     /// leaves a foreign entry under the same name before Effigy removes it.
     struct ReplaceEntryOnDisable {
@@ -4925,6 +5001,110 @@ mod tests {
             // The replacement is exactly where it was, and the old unit too.
             assert_eq!(std::fs::read_link(&paths.wants).unwrap(), elsewhere);
             assert!(paths.unit.exists());
+        });
+    }
+
+    /// A manager request can leave an activation Effigy must refuse. Setup must
+    /// report that refusal instead of "no login link" plus `enable` advice, for
+    /// a foreign entry and for a symlinked activation directory, whether the
+    /// manager reported success or failure, and after either request.
+    #[test]
+    fn a_post_request_activation_refusal_is_reported_without_enable_advice() {
+        with_run(|run, cx| {
+            let uid = nix::unistd::Uid::effective().as_raw();
+            for (label, shape, during, fails) in [
+                ("foreign entry after enable", "entry", "enable", false),
+                ("foreign entry after failed enable", "entry", "enable", true),
+                (
+                    "unsafe directory after reload",
+                    "directory",
+                    "daemon-reload",
+                    false,
+                ),
+                (
+                    "unsafe directory after enable",
+                    "directory",
+                    "enable",
+                    false,
+                ),
+                (
+                    "unsafe directory after failed enable",
+                    "directory",
+                    "enable",
+                    true,
+                ),
+            ] {
+                let home = tempfile::tempdir().unwrap();
+                let paths = paths(home.path());
+                let binary = installed_binary(home.path());
+                let mut manager = ReplaceActivationDuring {
+                    paths: paths.clone(),
+                    shape,
+                    during,
+                    fails,
+                };
+                let installed = install(run, cx, &paths, uid, &binary, &mut manager)
+                    .unwrap_or_else(|failure| panic!("{label}: setup failed: {failure}"));
+                assert!(!installed.enabled, "{label}");
+                assert!(
+                    installed.recovery.is_empty(),
+                    "{label}: no enable advice for a refused activation: {installed:?}"
+                );
+                let reason = installed.reason.as_deref().unwrap_or_default();
+                let lowered = reason.to_lowercase();
+                assert!(
+                    lowered.contains("do not enable the unit through")
+                        || lowered.contains("preserving the foreign login activation"),
+                    "{label}: the refusal is reported: {reason}"
+                );
+                assert!(
+                    !reason.contains("left no login activation link"),
+                    "{label}: a refusal is not reported as a missing link: {reason}"
+                );
+
+                // Status reaches the same conclusion for the same state.
+                let status = observe(&paths, uid, BindCapabilityState::Installed, Some(false));
+                let advice = status.recovery.join("\n");
+                assert!(
+                    !advice.contains("systemctl --user enable"),
+                    "{label}: status does not advise enable either: {advice}"
+                );
+                if shape == "directory" {
+                    assert!(
+                        std::fs::symlink_metadata(paths.activation_dir())
+                            .unwrap()
+                            .file_type()
+                            .is_symlink(),
+                        "{label}"
+                    );
+                }
+            }
+        });
+    }
+
+    /// A repeated setup with unchanged bytes keeps its link through a failed
+    /// reload, and setup still reports the observed link with the recovery
+    /// commands rather than claiming it is not enabled.
+    #[test]
+    fn a_repeated_setup_that_cannot_reload_reports_the_link_it_kept() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            assert!(activation_linked(&paths, uid));
+
+            let mut wedged = FakeSystemd::with_fault("daemon-reload", Fault::Wedged);
+            let again = install(run, cx, &paths, uid, &binary, &mut wedged).unwrap();
+            assert!(again.enabled, "the kept activation link is the fact");
+            assert_eq!(again.recovery, recovery_steps(&paths));
+            assert!(again
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("daemon-reload")));
+            assert!(activation_linked(&paths, uid));
         });
     }
 

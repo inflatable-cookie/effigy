@@ -182,7 +182,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `gateway status` keeps a foreign or unsafe activation as its own refusal (it
   is never reported as merely disabled, so its advice cannot hand the manager a
   path Effigy refuses), and an unsafe unit file is named as that file rather
-  than as an unrelated directory; a changed definition disables the activation
+  than as an unrelated directory, and a post-request activation that is foreign
+  or unsafe is reported as that refusal rather than as a missing link, with the
+  `enable` recovery offered only for a genuinely absent activation; a changed
+  definition disables the activation
   before it rewrites the unit and refuses if it remains. `setup --remove`
   completes the filesystem removal and then reports a `daemon-reload` that
   refuses, cannot be reached or times out, with the exact

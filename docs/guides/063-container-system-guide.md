@@ -1674,7 +1674,11 @@ is observed as enabled, because the link is the fact and the reply is not.
 If the systemd user manager cannot be reached, refuses, or does not answer
 within 20 seconds, setup does not fail after writing the unit: it prints the
 manager's own sentence and the exact `systemctl --user daemon-reload`, `enable`
-and `start` commands that finish the enable, and keeps the installed unit.
+and `start` commands that finish the enable, and keeps the installed unit. Those
+`enable` commands are offered only when the activation is genuinely absent: if
+the activation Effigy observes after the request is foreign or unsafe, setup
+reports that refusal instead, because enabling through it would hand the manager
+the path Effigy refuses.
 Removal behaves the same way: it disables, removes and unlinks the unit Effigy
 owns, and a `daemon-reload` that refuses, cannot be reached or times out is then
 reported as a failure naming the exact `systemctl --user daemon-reload` command
