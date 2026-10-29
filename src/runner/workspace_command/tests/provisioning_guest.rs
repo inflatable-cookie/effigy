@@ -85,12 +85,12 @@ fn local_identity() -> WorkspaceEnvironmentIdentity {
 }
 
 /// An isolated fake activation fence for tests that do not run the engine.
-fn local_fence() -> effigy_kernel::run::Fence {
+fn local_fence(environment: &str) -> effigy_kernel::run::Fence {
     use effigy_kernel::id::{CheckoutId, CheckoutKind, Generation, ResourceId};
     effigy_kernel::run::Fence {
         resource: ResourceId::environment(
             CheckoutId::new(CheckoutKind::EphemeralClone, [7; 16]),
-            "dev",
+            environment,
         )
         .unwrap(),
         generation: Generation::new(7),
@@ -163,7 +163,7 @@ fn prepare(
                 vm_type: None,
             },
             container,
-            environment: local_fence(),
+            environment: local_fence("dev"),
             artifact_install_identity: None,
         },
     )
@@ -191,7 +191,7 @@ fn prepare_refusal(repo: &Path, guest: &mut FakeGuest, artifact: &Path) -> Strin
                 vm_type: None,
             },
             container: container_identity(),
-            environment: local_fence(),
+            environment: local_fence("dev"),
             artifact_install_identity: None,
         },
     )
@@ -1439,17 +1439,19 @@ fn explicitly_selected_non_default_workspaces_prepare_and_verify_the_guest() {
                     vm_type: None,
                 },
                 container: container_identity(),
-                environment: local_fence(),
+                environment: local_fence(&policy.name),
                 artifact_install_identity: None,
             },
         )
         .unwrap()
         .expect("selected workspace prepares a guest and immutable context");
         assert_eq!(prepared.paths.guest_checkout, "/alternate");
-        verify_pinned_guest_binary(&mut guest, &entry())
+        let mut selected_entry = entry();
+        selected_entry.environment.resource_id = format!("env:{}", policy.name);
+        verify_pinned_guest_binary(&mut guest, &selected_entry)
             .expect("prepared selected workspace verifies");
         guest = guest.with_container(observed_identity(&"a1".repeat(32)));
-        let error = verify_pinned_guest_binary(&mut guest, &entry())
+        let error = verify_pinned_guest_binary(&mut guest, &selected_entry)
             .unwrap_err()
             .to_string();
         assert!(error.contains(HOST_REPREPARE_COMMAND), "{error}");
@@ -1812,7 +1814,7 @@ fn prepare_disk(
                 vm_type: None,
             },
             container: container_identity(),
-            environment: local_fence(),
+            environment: local_fence("dev"),
             artifact_install_identity: None,
         },
     )
@@ -2051,7 +2053,7 @@ fn a_musl_only_image_refuses_a_glibc_artifact() {
                 vm_type: None,
             },
             container: container_identity(),
-            environment: local_fence(),
+            environment: local_fence("dev"),
             artifact_install_identity: None,
         },
     )

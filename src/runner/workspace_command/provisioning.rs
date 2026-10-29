@@ -472,6 +472,13 @@ pub(super) fn publish_workspace_guest_in(
     let Some(operator_workspace) = operator_workspace_for_policy(repo_root, policy)? else {
         return Ok(None);
     };
+    let expected = effigy_containers::environment::EnvRef::for_policy(policy)
+        .map_err(crate::runner::environment::error)?;
+    if run.fence().resource != expected.resource {
+        return Err(RunnerError::task_invocation(
+            "workspace publication belongs to another environment owner",
+        ));
+    }
     let mut prepared = None;
     run.publish_guest_with(|fence| {
         let result = publish_workspace_guest_effect(repo_root, policy, operator_workspace, fence)

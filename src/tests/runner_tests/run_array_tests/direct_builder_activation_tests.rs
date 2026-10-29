@@ -311,7 +311,9 @@ shell = "/bin/sh"
     });
     fs::create_dir_all(routes_path.parent().unwrap()).unwrap();
     routes.save(&routes_path).unwrap();
-    let routes_before = fs::read(&routes_path).unwrap();
+    let routes_before = effigy_gateway::routes::RouteTable::load(&routes_path)
+        .unwrap()
+        .routes;
     let bin_dir = install_fake_container_runtime(&root);
     write_executable(
         &bin_dir.join("colima"),
@@ -427,7 +429,9 @@ esac
         sibling_lease_bytes
     );
     assert_eq!(
-        fs::read(&routes_path).unwrap(),
+        effigy_gateway::routes::RouteTable::load(&routes_path)
+            .unwrap()
+            .routes,
         routes_before,
         "sibling route changed"
     );
