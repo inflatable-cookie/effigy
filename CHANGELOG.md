@@ -500,11 +500,13 @@ During v0.x, MINOR bumps may include breaking changes.
   restores its own readable evidence at entry — it runs no workload code and
   holds no secret beyond the nonce the contract asks it to expose — so the
   recorded generation, group and nonce still prove identity before any signal.
-  A settle that still cannot finish now names the effect, the redacted label
-  its intent recorded and the recorded custody reason instead of only the
-  elapsed wait, and `gateway setup` reports those entries when cleanup is
-  incomplete — including when the last open effect is the one that stayed
-  unresolved and no later effect can carry its reason.
+  A settle that still cannot finish now names the effect's own sequence, the
+  redacted label its intent recorded and the recorded custody reason instead of
+  only the elapsed wait, and `gateway setup` reports those entries when cleanup
+  is incomplete — including when the last open effect is the one that stayed
+  unresolved and no later effect can carry its reason. Every setup adapter
+  child also records which program it runs, so two identically labelled setup
+  commands stay attributable.
 
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy

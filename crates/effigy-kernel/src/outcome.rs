@@ -100,41 +100,47 @@ pub struct EffectReport {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct Residue {
+    /// The effect's own journal sequence: the stable identity of one effect in
+    /// its run, so two otherwise identical effects (the same kind, the same
+    /// redacted label) are told apart.
+    pub sequence: i64,
     pub kind: String,
     pub id: ResourceId,
+    /// The redacted label the effect's intent recorded, when it recorded one.
+    pub label: Option<String>,
     pub observation: Observed<String>,
     pub next: Invocation,
 }
 impl Residue {
     /// The residue a settle records for an effect it could not release: its
-    /// kind, the resource it was fenced on, the redacted label its own intent
-    /// recorded when it recorded one, and the kernel's reason. Keeping the
-    /// wording here means the settle and a caller that requires complete
-    /// cleanup describe an unresolved effect the same way (effigy#476).
+    /// journal sequence, kind, the resource it was fenced on, the redacted
+    /// label its own intent recorded when it recorded one, and the kernel's
+    /// reason. Keeping the wording here means the settle and a caller that
+    /// requires complete cleanup describe an unresolved effect the same way
+    /// (effigy#476).
     pub fn unresolved(
+        sequence: i64,
         kind: &str,
         id: ResourceId,
         label: Option<&str>,
         reason: &str,
         next: Invocation,
     ) -> Self {
-        let detail = match label {
-            Some(label) if !label.is_empty() => format!("{label}: {reason}"),
-            _ => reason.to_owned(),
-        };
         Self {
+            sequence,
             kind: kind.to_owned(),
             id,
-            observation: Observed::Unknown(UnknownReason::Inconsistent(detail)),
+            label: label.filter(|label| !label.is_empty()).map(str::to_owned),
+            observation: Observed::Unknown(UnknownReason::Inconsistent(reason.to_owned())),
             next,
         }
     }
     /// What stayed unresolved, in the words an operator acts on: the effect
-    /// kind, the reason the kernel recorded, and (the kernel keeps it in that
-    /// reason) the redacted label the effect's own intent recorded. A settle
-    /// can stop on its *last* open effect, where no later effect carries the
-    /// reason, so a caller that requires complete cleanup reports this instead
-    /// of a bare "unresolved cleanup" (effigy#476).
+    /// kind, its own sequence, the redacted label its intent recorded and the
+    /// reason the kernel recorded. A settle can stop on its *last* open effect,
+    /// where no later effect carries the reason, so a caller that requires
+    /// complete cleanup reports this instead of a bare "unresolved cleanup"
+    /// (effigy#476).
     pub fn describe(&self) -> String {
         let reason = match &self.observation {
             // A residue reason is already a rendered observation; the settle
@@ -143,7 +149,12 @@ impl Residue {
             Observed::Unknown(UnknownReason::Inconsistent(detail)) => detail.clone(),
             other => other.unproven(),
         };
-        format!("`{}`: {reason}", self.kind)
+        let label = self
+            .label
+            .as_ref()
+            .map(|label| format!(" (`{label}`)"))
+            .unwrap_or_default();
+        format!("`{}` effect {}{label}: {reason}", self.kind, self.sequence)
     }
 }
 #[derive(Debug, Clone, Serialize)]

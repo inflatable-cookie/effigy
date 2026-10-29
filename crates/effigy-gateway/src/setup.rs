@@ -335,6 +335,22 @@ pub fn command(
     }
     Ok(output)
 }
+/// The command an adapter child runs, as a safe attributable identity: the
+/// program's own file name. Every setup command shares the same generic label,
+/// so a residue that named only the label could not tell two setup process
+/// effects apart; the journal already redacts this label (effigy#476).
+fn adapter_label(argv: &[OsString]) -> String {
+    let program = argv
+        .first()
+        .and_then(|program| Path::new(program).file_name())
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty());
+    match program {
+        Some(program) => format!("gateway setup adapter: {program}"),
+        None => "gateway setup adapter".to_owned(),
+    }
+}
+
 fn command_outcome(
     run: &mut Run<'_>,
     cx: &EffectContext,
@@ -344,6 +360,7 @@ fn command_outcome(
     let env: BTreeMap<_, _> = std::env::vars_os()
         .map(|(key, value)| (key, EnvValue::Plain(value)))
         .collect();
+    let label = adapter_label(&argv);
     let mut child = Custody::spawn(
         run,
         ProcessSpec {
@@ -357,7 +374,7 @@ fn command_outcome(
             } else {
                 Terminal::None
             },
-            label: "gateway setup adapter".into(),
+            label,
         },
         cx,
     )
@@ -1122,21 +1139,65 @@ pub(crate) mod tests {
             &[],
         )
         .unwrap();
-        settled.add_residue(effigy_kernel::outcome::Residue::unresolved(
-            "kernel:process",
-            ResourceId::store(Scope::Machine, "gateway-setup").unwrap(),
-            Some("gateway setup adapter"),
-            recorded,
-            operator::next(),
-        ));
+        let id = || ResourceId::store(Scope::Machine, "gateway-setup").unwrap();
+        for sequence in [5, 7] {
+            settled.add_residue(effigy_kernel::outcome::Residue::unresolved(
+                sequence,
+                "kernel:process",
+                id(),
+                Some("gateway setup adapter: sudo"),
+                recorded,
+                operator::next(),
+            ));
+        }
         let message = unresolved_cleanup(&settled).to_string();
         assert!(message.contains("`kernel:process`"), "{message}");
-        assert!(message.contains("gateway setup adapter"), "{message}");
+        assert!(message.contains("gateway setup adapter: sudo"), "{message}");
         assert!(message.contains("group anchor unavailable"), "{message}");
+        // Otherwise identical effects are told apart by their own sequence.
+        assert!(message.contains("effect 5"), "{message}");
+        assert!(message.contains("effect 7"), "{message}");
         assert_eq!(
             message.matches("the evidence contradicts itself").count(),
-            1,
+            2,
             "a recorded reason is not wrapped twice: {message}"
+        );
+    }
+
+    /// Every gateway setup command shares the adapter label, so the label names
+    /// the program it runs: an unresolved effect is then attributable without
+    /// journaling argv (effigy#476).
+    #[test]
+    fn adapter_labels_name_the_command_and_stay_distinct() {
+        let labels: Vec<String> = [
+            "/opt/homebrew/bin/mkcert",
+            "/usr/bin/sudo",
+            "/home/operator/.local/bin/effigy",
+        ]
+        .into_iter()
+        .map(|program| {
+            adapter_label(&[
+                program.into(),
+                "--".into(),
+                "gateway".into(),
+                "setup".into(),
+            ])
+        })
+        .collect();
+        assert_eq!(
+            labels,
+            [
+                "gateway setup adapter: mkcert",
+                "gateway setup adapter: sudo",
+                "gateway setup adapter: effigy"
+            ]
+        );
+        // No path, no argv and no environment value reaches the label.
+        assert!(labels.iter().all(|label| !label.contains('/')));
+        assert_eq!(
+            adapter_label(&[]),
+            "gateway setup adapter",
+            "an argv-less spec keeps the generic label instead of inventing one"
         );
     }
 

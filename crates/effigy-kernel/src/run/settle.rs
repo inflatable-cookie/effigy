@@ -446,6 +446,7 @@ pub(crate) fn outcome(
             let label = effect_label(&effect).map(str::to_owned);
             let reason = effect.reason.unwrap_or_else(|| "unresolved effect".into());
             outcome.add_residue(Residue::unresolved(
+                effect.sequence,
                 &effect.spec.kind,
                 effect.spec.target.resource,
                 label.as_deref(),
