@@ -498,10 +498,11 @@ During v0.x, MINOR bumps may include breaking changes.
   declared service; a missing render, stopped or absent container, stale
   render, several running containers, an unreadable runtime or environments
   that declare the same service with different shared identities refuse and
-  name the project and recovery command. A data command never publishes a
+  name the project and recovery command. The data step never publishes a
   render, starts or replaces a shared service, or falls back to a local service
-  of the same name, and credential values no longer reach the host command
-  line. Unshared targets keep the checkout-local route.
+  of the same name (seed still activates its environment first, and dump starts
+  nothing), and credential values no longer reach the host command line.
+  Unshared targets keep the checkout-local route.
 
 - `effigy gateway setup` works on a machine where the operator home has never
   held Effigy state. A gateway directory that is verified absent is no legacy

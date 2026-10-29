@@ -1418,10 +1418,12 @@ running in the expected project, from the declared render digest and for the
 declared service. A missing render, a stopped or absent container, a container
 created from another render, more than one running container for the service,
 or environments that declare the same service with different shared identities
-all refuse with the exact project and the recovery command. A data command
-never publishes a render, starts or replaces a shared service, or falls back to
-a local service of the same name. Credentials reach the container by variable
-name, never in the command line.
+all refuse with the exact project and the recovery command. The data step
+itself never publishes a render, starts or replaces a shared service, or falls
+back to a local service of the same name; `data seed` does activate its
+environment first, and that activation runs the same apply as any task start.
+`data dump` stays read-only and starts nothing. Credentials reach the container
+by variable name, never in the command line.
 
 ## Cache Lifecycle
 
