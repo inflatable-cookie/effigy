@@ -598,7 +598,9 @@ impl EntryWaits {
             record.detail = Some(detail.clone());
         }
         self.end_launch(entry);
-        self.fail_dependents(entry, Attribution::new(entry, detail), now);
+        // A start failure leaves nothing to wait for: every dependent, whether
+        // it needed this entry's start or its readiness, is terminal.
+        self.fail_dependents(entry, Attribution::new(entry, detail), now, Dependents::All);
     }
 
     /// The plan aborted. Every entry it never started is terminal and names
@@ -632,13 +634,15 @@ impl EntryWaits {
         }
         self.end_launch(entry);
         if code != 0 {
-            // A dependent that needed this entry only started cannot be
-            // stopped by a later exit; a dependent that needed its readiness
-            // never gets it, so it is not started and attributed.
+            // Only a dependent that needs this entry's *readiness* loses its
+            // prerequisite: it never arrives. A dependent that only needs the
+            // entry to have started is not held by a later exit — it may be
+            // waiting on its own delay and still starts (effigy#458).
             self.fail_dependents(
                 entry,
                 Attribution::new(entry, format!("exited with {code}")),
                 now,
+                Dependents::ReadinessOnly,
             );
         }
     }
@@ -703,12 +707,18 @@ impl EntryWaits {
 
     /// Marks every entry that waits for `failed` as `not started`, and theirs,
     /// so a failure never leaves a dependent claiming to run.
-    fn fail_dependents(&mut self, failed: &str, attribution: Attribution, now: Instant) {
+    fn fail_dependents(
+        &mut self,
+        failed: &str,
+        attribution: Attribution,
+        now: Instant,
+        which: Dependents,
+    ) {
         let mut blocked = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         seen.insert(failed.to_owned());
-        let mut frontier = vec![failed.to_owned()];
-        while let Some(name) = frontier.pop() {
+        let mut frontier = vec![(failed.to_owned(), true)];
+        while let Some((name, root)) = frontier.pop() {
             for entry in self.order.entries() {
                 if !entry.waits_for.iter().any(|dependency| dependency == &name) {
                     continue;
@@ -716,8 +726,16 @@ impl EntryWaits {
                 if !seen.insert(entry.name.clone()) {
                     continue;
                 }
+                // A first-hop edge that only needs the failed entry to have
+                // started survives a later exit; everything downstream of a
+                // blocked entry is unsatisfiable whatever its edge.
+                let blocked_hop = !root || which == Dependents::All || entry.waits_for_readiness;
+                if !blocked_hop {
+                    seen.remove(&entry.name);
+                    continue;
+                }
                 blocked.push(entry.name.clone());
-                frontier.push(entry.name.clone());
+                frontier.push((entry.name.clone(), false));
             }
         }
         for name in blocked {
@@ -903,6 +921,16 @@ impl EntryWaits {
             }
         }
     }
+}
+
+/// Which dependents a failure reaches (effigy#458).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dependents {
+    /// Every dependent: the entry never started, so nothing that needs it can.
+    All,
+    /// Only dependents that need the entry's readiness: a later exit does not
+    /// stop an entry that only needed its start.
+    ReadinessOnly,
 }
 
 /// Whether the plan has finished with an entry: it observed the entry's

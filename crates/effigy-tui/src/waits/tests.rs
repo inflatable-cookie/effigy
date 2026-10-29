@@ -190,6 +190,91 @@ fn a_failed_prerequisite_stops_every_dependent_with_attribution() {
     assert_eq!(api.not_started_because, None);
 }
 
+/// A workload that only needs its predecessor to have *started* is not stopped
+/// by that predecessor's later nonzero exit: it may still be inside its own
+/// scheduled delay, and it starts when the delay elapses (effigy#458).
+#[test]
+fn a_predecessor_exiting_nonzero_does_not_stop_a_start_only_dependent() {
+    let clock = Clock::new();
+    let order = SessionOrder::workloads(&[
+        WorkloadOrder {
+            name: "api",
+            after: &[],
+        },
+        WorkloadOrder {
+            name: "front",
+            after: &[],
+        },
+        WorkloadOrder {
+            name: "admin",
+            after: &[],
+        },
+    ]);
+    let mut waits = EntryWaits::new(order, None, clock.at(0.0));
+    waits.started("api", clock.at(0.5));
+    // front is inside its own scheduled delay when api exits 7, with
+    // `fail_on_non_zero = false` the session keeps going.
+    waits.delaying("front", Duration::from_millis(1_500), clock.at(0.5));
+    waits.exited("api", 7, clock.at(0.6));
+
+    let front = waits.state("front", clock.at(0.7)).expect("front's state");
+    assert_eq!(
+        front.phase,
+        EntryPhase::Waiting,
+        "front still starts after its delay"
+    );
+    assert_eq!(front.not_started_because, None);
+    assert_eq!(
+        front.waiting_on,
+        Some(WaitOn::Delay {
+            remaining_ms: 1_500
+        })
+    );
+    assert!(
+        waits.not_started().is_empty(),
+        "no dependent was blocked by api's exit"
+    );
+
+    waits.delay_elapsed("front", clock.at(2.1));
+    assert!(waits.may_start("front"));
+}
+
+/// A dependent that needs the readiness of an entry that exited before it was
+/// ready is terminal, and so is everything downstream of it (effigy#458).
+#[test]
+fn an_exit_before_readiness_stops_readiness_dependents_transitively() {
+    let clock = Clock::new();
+    let order = SessionOrder::hosts(&[
+        HostOrder {
+            name: "api",
+            depends_on: &[],
+        },
+        HostOrder {
+            name: "front",
+            depends_on: &["api".to_owned()],
+        },
+        HostOrder {
+            name: "admin",
+            depends_on: &["front".to_owned()],
+        },
+    ]);
+    let mut waits = EntryWaits::new(order, None, clock.at(0.0));
+    waits.started("api", clock.at(0.5));
+    waits.exited("api", 7, clock.at(1.0));
+    for name in ["front", "admin"] {
+        let state = waits.state(name, clock.at(2.0)).expect("state");
+        assert_eq!(state.phase, EntryPhase::NotStarted, "{name}");
+        assert_eq!(
+            state
+                .not_started_because
+                .as_ref()
+                .map(|cause| cause.name.as_str()),
+            Some("api"),
+            "{name} attributes the failing prerequisite"
+        );
+    }
+}
+
 /// A dependency that exits non-zero before its dependents started is the same
 /// definitive failure; an entry that only needs its predecessor to have
 /// started is never un-started by that predecessor's later exit.
