@@ -183,8 +183,9 @@ During v0.x, MINOR bumps may include breaking changes.
   is never reported as merely disabled, so its advice cannot hand the manager a
   path Effigy refuses), and an unsafe unit file is named as that file rather
   than as an unrelated directory, and a post-request activation that is foreign
-  or unsafe is reported as that refusal rather than as a missing link, with the
-  `enable` recovery offered only for a genuinely absent activation; a changed
+  or unsafe is reported as that refusal rather than as a missing link — after
+  `daemon-reload` as well as after `enable`, and in a failed rewrite's recovery —
+  with the `enable` recovery offered only for a genuinely absent activation; a changed
   definition disables the activation
   before it rewrites the unit and refuses if it remains. `setup --remove`
   completes the filesystem removal and then reports a `daemon-reload` that

@@ -428,7 +428,8 @@ A repeated setup whose unit bytes are unchanged keeps the existing link and
 reports the observed `enabled` state together with any manager failure and its
 recovery commands. An `enable` that fails after writing the link is reported as
 enabled *and* as a failed manager request. A post-request activation that is
-foreign or unsafe is reported as that refusal, and the `enable` recovery is
+foreign or unsafe is reported as that refusal — after `daemon-reload` as well as
+after `enable`, and in a failed rewrite's recovery — and the `enable` recovery is
 offered only for a genuinely absent activation. Removal keeps the rule in the other
 direction: the unit file and the activation are removed, and a `daemon-reload`
 that refuses, cannot be reached or times out is then reported as a failure

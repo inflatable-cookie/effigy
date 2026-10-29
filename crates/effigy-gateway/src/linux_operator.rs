@@ -392,6 +392,12 @@ pub fn install(
             format!("the systemd user manager refused `daemon-reload`: {reason}"),
         ));
     }
+    // `daemon-reload` is a manager request like any other, so the activation is
+    // observed again before `enable`: a swap during reload is refused here
+    // instead of being enabled through.
+    if let Some(refused) = post_request_refusal(paths, operator_uid) {
+        return Ok(refused);
+    }
     let enable_refusal = manager_refusal(systemd.run(&["enable", UNIT_NAME]));
     // The link is the fact, not the reply: an `enable` that failed after
     // writing it has done the filesystem work, so calling that unenabled would
@@ -441,6 +447,15 @@ fn unconfirmed(paths: &LaunchPaths, operator_uid: u32, reason: String) -> Launch
     }
 }
 
+/// The refusal a manager request earned: the activation is no longer Effigy's
+/// own link and is not absent, so continuing would hand the manager a path
+/// Effigy refuses. `None` means it is still ours or genuinely absent.
+fn post_request_refusal(paths: &LaunchPaths, operator_uid: u32) -> Option<LaunchInstall> {
+    let activation = observe_activation(paths, operator_uid);
+    (!activation.is_absent() && !activation.is_ours())
+        .then(|| refused_activation(paths, &activation))
+}
+
 /// A post-request activation Effigy cannot trust. The refusal is the report, and
 /// no recovery command is offered: `enable` would hand the manager the path
 /// Effigy just refused.
@@ -466,6 +481,16 @@ fn rewrite_failed(
     was_linked: bool,
     failure: impl std::fmt::Display,
 ) -> io::Error {
+    // A refused activation must never be handed enable advice: report it with
+    // the recovery that fits it instead.
+    let activation = observe_activation(paths, operator_uid);
+    if !activation.is_absent() && !activation.is_ours() {
+        let refusal = activation_recovery(paths, &activation)
+            .unwrap_or_else(|| "the login activation is not Effigy's own link".to_owned());
+        return error(format!(
+            "rewriting the launch unit failed: {failure}; {refusal}"
+        ));
+    }
     let retained = read_unit_file(paths)
         .ok()
         .flatten()
@@ -3912,11 +3937,14 @@ mod tests {
         during: &'static str,
         /// Whether that request also reports a failure.
         fails: bool,
+        /// Every request the manager received, in order.
+        calls: Vec<String>,
     }
 
     impl SystemdUser for ReplaceActivationDuring {
         fn run(&mut self, args: &[&str]) -> io::Result<SystemdOutcome> {
-            let name = args.first().copied().unwrap_or_default();
+            let name = args.first().copied().unwrap_or_default().to_owned();
+            self.calls.push(name.clone());
             if name != self.during {
                 return Ok(SystemdOutcome {
                     code: 0,
@@ -5004,6 +5032,56 @@ mod tests {
         });
     }
 
+    /// A failed rewrite must not advise enabling through an activation that is
+    /// no longer Effigy's own.
+    #[test]
+    fn a_failed_rewrite_never_advises_enabling_through_a_refused_activation() {
+        with_run(|run, cx| {
+            let home = tempfile::tempdir().unwrap();
+            let paths = paths(home.path());
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let binary = installed_binary(home.path());
+            let mut manager = FakeManager::for_paths(&paths);
+            install(run, cx, &paths, uid, &binary, &mut manager).unwrap();
+            let previous = std::fs::read(&paths.unit).unwrap();
+
+            // A foreign entry: the recovery names the refusal, never enable.
+            let elsewhere = home.path().join("elsewhere.service");
+            std::fs::write(&elsewhere, b"[Unit]\\n").unwrap();
+            std::fs::remove_file(&paths.wants).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &paths.wants).unwrap();
+            let message = rewrite_failed(&paths, uid, &previous, true, "disk full").to_string();
+            assert!(message.contains("disk full"), "{message}");
+            assert!(
+                message.to_lowercase().contains("do not enable"),
+                "the refusal replaces enable advice: {message}"
+            );
+            assert!(
+                !message.contains("systemctl --user enable"),
+                "no enable advice through a foreign entry: {message}"
+            );
+
+            // An unsafe activation directory: the same.
+            std::fs::remove_file(&paths.wants).unwrap();
+            let activation = paths.activation_dir().to_path_buf();
+            std::fs::remove_dir(&activation).unwrap();
+            std::os::unix::fs::symlink(home.path(), &activation).unwrap();
+            let message = rewrite_failed(&paths, uid, &previous, true, "disk full").to_string();
+            assert!(
+                !message.contains("systemctl --user enable"),
+                "no enable advice through an unsafe directory: {message}"
+            );
+
+            // An absent activation keeps the ordinary recovery text.
+            std::fs::remove_file(&activation).unwrap();
+            let message = rewrite_failed(&paths, uid, &previous, false, "disk full").to_string();
+            assert!(
+                message.contains("it was not enabled before this run"),
+                "{message}"
+            );
+        });
+    }
+
     /// A manager request can leave an activation Effigy must refuse. Setup must
     /// report that refusal instead of "no login link" plus `enable` advice, for
     /// a foreign entry and for a symlinked activation directory, whether the
@@ -5042,6 +5120,7 @@ mod tests {
                     shape,
                     during,
                     fails,
+                    calls: Vec::new(),
                 };
                 let installed = install(run, cx, &paths, uid, &binary, &mut manager)
                     .unwrap_or_else(|failure| panic!("{label}: setup failed: {failure}"));
@@ -5076,6 +5155,15 @@ mod tests {
                             .file_type()
                             .is_symlink(),
                         "{label}"
+                    );
+                }
+                // A swap during daemon-reload must stop setup before it asks
+                // the manager to enable through the replaced activation.
+                if during == "daemon-reload" {
+                    assert!(
+                        !manager.calls.iter().any(|call| call == "enable"),
+                        "{label}: `enable` was not requested after the swap: {:?}",
+                        manager.calls
                     );
                 }
             }
