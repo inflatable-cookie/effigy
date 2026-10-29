@@ -18,6 +18,7 @@
 //! no route, and a retry after the listener recovers publishes its own route
 //! without duplicating the container route.
 
+use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -223,6 +224,9 @@ struct ExposureFixture {
     /// the observation budget. A rewrite re-renders the manifest from it, so a
     /// changed declaration keeps every other field exactly as it was.
     declared: Vec<(String, String, u16, String)>,
+    /// Declared `depends_on` edges, by process name. Empty for a process with
+    /// no declared dependency.
+    depends_on: BTreeMap<String, Vec<String>>,
     health_timeout_secs: u64,
     _env: EnvGuard,
 }
@@ -231,16 +235,28 @@ struct ExposureFixture {
 /// given host listeners, declared in order.
 fn render_manifest(
     listeners: &[(String, String, u16, String)],
+    depends_on: &BTreeMap<String, Vec<String>>,
     health_timeout_secs: u64,
 ) -> String {
     let mut host_processes = String::new();
     for (name, domain, bind, readiness_path) in listeners {
+        let depends_on = match depends_on.get(name) {
+            Some(dependencies) if !dependencies.is_empty() => format!(
+                "depends_on = [{}]\n",
+                dependencies
+                    .iter()
+                    .map(|dependency| format!("\"{dependency}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            _ => String::new(),
+        };
         host_processes.push_str(&format!(
             r#"
 [[containers.e2e.host_processes]]
 name = "{name}"
 run = "exec python3 scripts/{name}.py"
-restart = "never"
+{depends_on}restart = "never"
 shutdown_grace_secs = 1
 
 [containers.e2e.host_processes.listener]
@@ -325,9 +341,10 @@ impl ExposureFixture {
                 "/health".to_owned(),
             ));
         }
+        let depends_on = BTreeMap::new();
         std::fs::write(
             repo.join("effigy.toml"),
-            render_manifest(&declared, health_timeout_secs),
+            render_manifest(&declared, &depends_on, health_timeout_secs),
         )
         .expect("write manifest");
 
@@ -404,6 +421,7 @@ impl ExposureFixture {
             container_host_port,
             state,
             declared,
+            depends_on,
             health_timeout_secs,
             _env: env,
         }
@@ -476,9 +494,22 @@ impl ExposureFixture {
     fn rewrite_manifest(&self) {
         std::fs::write(
             self.repo().join("effigy.toml"),
-            render_manifest(&self.declared, self.health_timeout_secs),
+            render_manifest(&self.declared, &self.depends_on, self.health_timeout_secs),
         )
         .expect("rewrite manifest");
+    }
+
+    /// Declare that one listener depends on another, as an edited manifest
+    /// would.
+    fn set_listener_dependency(&mut self, name: &str, dependencies: &[&str]) {
+        self.depends_on.insert(
+            name.to_owned(),
+            dependencies
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+        );
+        self.rewrite_manifest();
     }
 
     /// Stop everything this fixture started: host processes first, so no
@@ -1042,6 +1073,143 @@ fn detached_up_never_prints_a_secret_whose_marker_left_the_window() {
             "a progress line never prints a value whose marker was cut: {line}"
         );
     }
+    fixture.down();
+}
+
+/// A dependent whose dependency is withheld withholds its own route, and the
+/// generation it used to run is settled: a dependency declaration that changed
+/// since that generation started must not leave its old route served behind a
+/// report that withholds it (effigy#455).
+#[test]
+fn detached_up_withholds_a_dependent_whose_dependency_is_withheld() {
+    let mut fixture = ExposureFixture::new(
+        "dependent",
+        &[
+            FixtureListener {
+                name: "front",
+                domain: FRONT_DOMAIN,
+                child: READY_CHILD,
+            },
+            FixtureListener {
+                name: "api",
+                domain: API_DOMAIN,
+                child: READY_CHILD,
+            },
+        ],
+        30,
+    );
+    fixture
+        .up(false)
+        .expect("the first activation exposes both listeners independently");
+    assert!(fixture.routes().lookup(API_DOMAIN).is_some());
+
+    // The next declaration chains api on front, and front refuses readiness.
+    fixture.set_listener_dependency("api", &["front"]);
+    fixture.set_listener_child("front", REFUSING_CHILD);
+    let error = fixture
+        .up(false)
+        .expect_err("a withheld dependency withholds its dependent");
+    let text = error.to_string();
+    assert!(
+        text.contains(&format!("`front` kept route {FRONT_DOMAIN} withheld")),
+        "the failing dependency is withheld: {text}"
+    );
+    assert!(
+        text.contains(&format!("`api` kept route {API_DOMAIN} withheld")),
+        "the dependent is withheld: {text}"
+    );
+    assert!(
+        text.contains("its dependency `front`"),
+        "the dependent names the dependency that withheld it: {text}"
+    );
+    assert!(
+        text.contains("no longer serves a route this activation does not expose"),
+        "the dependent's previous generation is settled: {text}"
+    );
+
+    let table = fixture.routes();
+    assert!(
+        table.lookup(FRONT_DOMAIN).is_none(),
+        "the withheld dependency has no route: {table:?}"
+    );
+    assert!(
+        table.lookup(API_DOMAIN).is_none(),
+        "the dependent's previous generation no longer serves its route: {table:?}"
+    );
+    assert!(
+        table.lookup(CONTAINER_DOMAIN).is_some(),
+        "the container's verified route stays published: {table:?}"
+    );
+    fixture.down();
+}
+
+/// When the activation budget is spent, a dependent whose newly declared
+/// dependency was withheld is **not** reconciled as exposed from the healthy
+/// generation it ran before: the declared chain decides first, that generation
+/// is settled, and the report names the route withheld (effigy#455).
+#[test]
+fn detached_up_budget_does_not_reconcile_a_withheld_dependents_old_generation() {
+    let mut fixture = ExposureFixture::new(
+        "dependent-budget",
+        &[
+            FixtureListener {
+                name: "front",
+                domain: FRONT_DOMAIN,
+                child: READY_CHILD,
+            },
+            FixtureListener {
+                name: "api",
+                domain: API_DOMAIN,
+                child: READY_CHILD,
+            },
+        ],
+        30,
+    );
+    fixture
+        .up(false)
+        .expect("the first activation exposes both listeners independently");
+    assert!(fixture.routes().lookup(API_DOMAIN).is_some());
+
+    // The next declaration chains api on front, front never opens its port and
+    // the budget is short: front's expiry spends the budget before api is
+    // reached.
+    fixture.set_listener_dependency("api", &["front"]);
+    fixture.set_listener_child("front", CLOSED_PORT_CHILD);
+    fixture.set_health_budget(3);
+    let error = fixture
+        .up(false)
+        .expect_err("the declared chain withholds both routes");
+    let text = error.to_string();
+    assert!(
+        text.contains(&format!("`front` kept route {FRONT_DOMAIN} withheld")),
+        "the listener that never bound is withheld: {text}"
+    );
+    assert!(
+        text.contains(&format!("`api` kept route {API_DOMAIN} withheld")),
+        "the dependent is withheld, not reconciled: {text}"
+    );
+    assert!(
+        !text.contains(&format!("{API_DOMAIN} ->")),
+        "the dependent is never reported exposed: {text}"
+    );
+    assert!(
+        text.contains("its dependency `front` was withheld"),
+        "the dependent names the withheld dependency: {text}"
+    );
+
+    let table = fixture.routes();
+    assert!(
+        table.lookup(FRONT_DOMAIN).is_none(),
+        "the settled listener has no route: {table:?}"
+    );
+    assert!(
+        table.lookup(API_DOMAIN).is_none(),
+        "the dependent's old generation no longer serves its route: {table:?}"
+    );
+    assert!(
+        table.lookup(CONTAINER_DOMAIN).is_some(),
+        "the container's verified route stays published: {table:?}"
+    );
     fixture.down();
 }
 

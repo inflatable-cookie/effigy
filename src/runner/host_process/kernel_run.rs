@@ -639,11 +639,29 @@ fn start_host_processes_inner(
             let listener = resolved_host_process_listener(hp, &listener_binds);
             let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
             // The activation's observation budget is spent: nothing further is
-            // started. A listener the previous activation already published is
-            // still this environment's exposure, so it is reconciled against
-            // its own published generation and route before any verdict; only a
-            // listener with nothing verified is reported withheld (effigy#455).
+            // started. The declared dependency chain decides first - a
+            // dependency this activation withheld withholds this process,
+            // however healthy the generation it used to run was - and only then
+            // is a listener the previous activation published reconciled
+            // against its own generation and route (effigy#455).
             if activation_budget_spent {
+                if let Some((dependency, detail, observed_status)) =
+                    withheld_dependency(&hp.depends_on, &withheld)
+                {
+                    withdraw_listener(
+                        repo_root,
+                        policy,
+                        hp,
+                        listener.as_ref(),
+                        &log_file,
+                        format!("its dependency `{dependency}` was withheld by this activation: {detail}"),
+                        observed_status,
+                        "withheld dependency",
+                        &mut withheld,
+                        &mut listener_failures,
+                    )?;
+                    continue;
+                }
                 let Some(listener) = listener.as_ref() else {
                     continue;
                 };
@@ -767,23 +785,18 @@ fn start_host_processes_inner(
                 });
             }
             if let Some((dependency, diagnostic, observed_status)) = dependency_refusal {
-                let detail =
-                    format!("its dependency `{dependency}` did not become ready: {diagnostic}");
-                withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
-                match listener.as_ref() {
-                    Some(listener) => listener_failures.push(listener_failure(
-                        hp,
-                        listener,
-                        &log_file,
-                        detail,
-                        observed_status,
-                    )),
-                    // A process without a listener serves no route, so there is
-                    // no exposure to withhold; it stays unstarted and the
-                    // console says why instead of waiting on it. Its own
-                    // dependents still learn about it from `withheld`.
-                    None => eprintln!("[host process] `{}` was not started: {detail}", hp.name),
-                }
+                withdraw_listener(
+                    repo_root,
+                    policy,
+                    hp,
+                    listener.as_ref(),
+                    &log_file,
+                    format!("its dependency `{dependency}` did not become ready: {diagnostic}"),
+                    observed_status,
+                    "withheld dependency",
+                    &mut withheld,
+                    &mut listener_failures,
+                )?;
                 continue;
             }
             let spec = HostProcessRuntimeSpec {
@@ -1051,6 +1064,62 @@ fn resolved_host_process_listener(
         listener.bind = bind.clone();
     }
     Some(listener)
+}
+
+/// This activation's own decision about a withheld dependency, if any of this
+/// process's declared dependencies is one.
+fn withheld_dependency(
+    dependencies: &[String],
+    withheld: &BTreeMap<String, (String, Option<u16>)>,
+) -> Option<(String, String, Option<u16>)> {
+    for dependency in dependencies {
+        if let Some((diagnostic, observed_status)) = withheld.get(dependency.as_str()) {
+            return Some((dependency.clone(), diagnostic.clone(), *observed_status));
+        }
+    }
+    None
+}
+
+/// Report one process this activation withheld, and - when it has a listener -
+/// settle the generation that may still be serving the route it used to
+/// publish. A dependent whose dependency is withheld must not keep serving an
+/// unrelated route, and a route the report withholds must not stay in the store
+/// (effigy#455).
+#[allow(clippy::too_many_arguments)]
+fn withdraw_listener(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    hp: &effigy_containers::EffectiveHostProcess,
+    listener: Option<&EffectiveManagedHostListener>,
+    log_file: &Path,
+    detail: String,
+    observed_status: Option<u16>,
+    purpose: &str,
+    withheld: &mut BTreeMap<String, (String, Option<u16>)>,
+    listener_failures: &mut Vec<ManagedHostListenerFailure>,
+) -> Result<(), RunnerError> {
+    let Some(listener) = listener else {
+        // A process without a listener serves no route, so there is no exposure
+        // to withhold; it stays unstarted and the console says why instead of
+        // waiting on it. Its own dependents still learn about it from
+        // `withheld`.
+        withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
+        eprintln!("[host process] `{}` was not started: {detail}", hp.name);
+        return Ok(());
+    };
+    settle_listener_generation(repo_root, policy, &hp.name, purpose)?;
+    let detail = format!(
+        "{detail}; any generation it ran before was settled so it no longer serves a route this activation does not expose"
+    );
+    withheld.insert(hp.name.clone(), (detail.clone(), observed_status));
+    listener_failures.push(listener_failure(
+        hp,
+        listener,
+        log_file,
+        detail,
+        observed_status,
+    ));
+    Ok(())
 }
 
 /// What one verified listener publishes, as the report names it.
