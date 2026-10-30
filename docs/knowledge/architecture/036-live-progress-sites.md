@@ -227,8 +227,10 @@ These keep their disposition under the gate, with current evidence.
 
 Every plane proves its frames on a fake clock: the same operation's frames move
 as its object, sub-step, count, event or elapsed wait moves, and each names the
-exact thing awaited. A glyph that only animates is not evidence, and no test
-reads the wall clock.
+exact thing awaited. An event is additive — `frame_at` names the awaited object
+alongside the last event, so a published progress line never replaces the wait
+for the rest of the phase. A glyph that only animates is not evidence, and no
+test reads the wall clock.
 
 | Plane | Fake-clock proof |
 | --- | --- |

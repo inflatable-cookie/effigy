@@ -58,9 +58,12 @@ when the real cause was two named services failing their health checks.
   object (service, image, dependency, layer or gate), known counts or ratios,
   elapsed time, and the last meaningful event or exact blocker. If no further
   event can be observed, name the precise wait and probe alongside elapsed
-  time. A changing glyph alone is not progress. Managed TUI entries have their
-  own dependency-derived state; a waiting entry never borrows another entry's
-  label. This rule applies to every command plane for the v0.15 gate (Q-017).
+  time. An event is additive: a frame keeps naming the thing it still awaits
+  next to the last event, so publishing a progress line never hides the
+  operation for the rest of the phase. A changing glyph alone is not progress.
+  Managed TUI entries have their own dependency-derived state; a waiting entry
+  never borrows another entry's label. This rule applies to every command plane
+  for the v0.15 gate (Q-017).
 - **A managed entry's wait comes from the ordering graph.** Each entry's tab
   and status say what actually blocks it: the entry the resolved start order or
   a host process's `depends_on` puts first and that entry's current phase, the

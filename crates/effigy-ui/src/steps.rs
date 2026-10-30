@@ -192,6 +192,11 @@ impl ProgressSource {
     }
 
     /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
+    ///
+    /// A frame always names what is still awaited once its sub-step is known,
+    /// and the last event is added on top: an event says what just happened,
+    /// never what the operation is waiting for, so publishing one cannot hide
+    /// the awaited object for the rest of the phase (Q-017).
     pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
@@ -201,10 +206,11 @@ impl ProgressSource {
         if let Some((done, total)) = state.count {
             label.push_str(&format!(" ({done}/{total})"));
         }
+        if state.sub_step.is_some() && !state.awaiting.is_empty() {
+            label.push_str(&format!("; waiting for {}", state.awaiting));
+        }
         if let Some(event) = &state.event {
             label.push_str(&format!("; last: {event}"));
-        } else if state.sub_step.is_some() {
-            label.push_str(&format!("; waiting for {}", state.awaiting));
         }
         label.push_str(&format!("; {}s elapsed", elapsed.as_secs()));
         label
@@ -769,7 +775,7 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(5)));
         assert_eq!(
             step.label(),
-            "checking web (2/3); last: HTTP 404; 5s elapsed"
+            "checking web (2/3); waiting for web health probe on port 8080; last: HTTP 404; 5s elapsed"
         );
         source.update(
             "checking database",
@@ -779,7 +785,7 @@ mod tests {
         assert!(step.inner.render_live(&source, Duration::from_secs(7)));
         assert_eq!(
             step.label(),
-            "checking database (3/3); last: connection refused; 7s elapsed"
+            "checking database (3/3); waiting for web health probe on port 8080; last: connection refused; 7s elapsed"
         );
         step.finish_clear();
         assert!(!step.inner.render_live(&source, Duration::from_secs(8)));
@@ -797,7 +803,7 @@ mod tests {
         source.event("run agq holds it (pid 9012, task `dev`)");
         assert_eq!(
             source.frame_at(Duration::from_secs(3)),
-            "reconciling the backend (1/3); last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
+            "reconciling the backend (1/3); waiting for the environment gate for `stack`; last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
         );
     }
 
