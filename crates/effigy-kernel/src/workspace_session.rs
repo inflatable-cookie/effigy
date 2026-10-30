@@ -1438,6 +1438,12 @@ pub enum ActivationRefusal {
     SelectionMismatch,
     /// A selection is already finished and cannot be completed twice.
     SelectionSettled,
+    /// A workspace activation must commit through `commit_selection`: the
+    /// generic commit cannot publish a generation with no durable selection.
+    SelectionRequired,
+    /// The exact successor is still running or unsettled, so its generation is
+    /// not abandoned around it.
+    SuccessorRunning,
     /// Recovery has no live listener for a selection it would have to complete.
     ServingLost,
     /// A selection could still be completed, so it cannot be abandoned.
@@ -1470,6 +1476,8 @@ impl ActivationRefusal {
             Self::SelectionAbandoned => "selection_abandoned",
             Self::SelectionMismatch => "selection_mismatch",
             Self::SelectionSettled => "selection_settled",
+            Self::SelectionRequired => "selection_required",
+            Self::SuccessorRunning => "successor_running",
             Self::ServingLost => "serving_lost",
             Self::SelectionStillCompletable => "selection_still_completable",
         }
@@ -1549,6 +1557,12 @@ impl std::fmt::Display for ActivationRefusal {
             }
             Self::SelectionSettled => {
                 "this workspace selection is already finished; a selection completes or abandons exactly once"
+            }
+            Self::SelectionRequired => {
+                "a workspace activation commit records the guest selection it published; use commit_selection with the validated receipt"
+            }
+            Self::SuccessorRunning => {
+                "the committed successor is still running or unsettled; stop and settle it before abandoning its generation"
             }
             Self::ServingLost => {
                 "the committed session has no live verified listener, so its selection cannot be completed; abandon it instead"
@@ -2084,20 +2098,25 @@ impl WorkspaceActivationReservation {
         environment_run: &Run<'_>,
         session_run: &Run<'_>,
     ) -> Result<CommittedActivation, RunError> {
-        self.commit_with(cx, root, environment_run, session_run, None)
+        let _ = (cx, root, environment_run, session_run);
+        // The generic commit published `active(E)`, the mapping and the session's
+        // `Borrow` with no record of the guest bytes that generation selects,
+        // which is exactly the window §8.11 closes. There is one commit path:
+        // `commit_selection`.
+        Err(ActivationRefusal::SelectionRequired.into())
     }
 
-    /// The commit both entry points share. `selection` is the validated guest
-    /// selection the workspace path publishes; when it is present the same
-    /// transaction writes the `Pending` selection obligation, so a generation is
-    /// never advertised without the record of the bytes it selected.
+    /// The one commit: re-validate the stored plan, the held runs and the
+    /// validated selection receipt, then write `active(E)`, the session
+    /// mapping, the session's `Borrow` attachment and a `Pending` selection
+    /// obligation in one transaction, or none of them.
     pub(super) fn commit_with(
         &self,
         cx: &EffectContext,
         root: &StateRoot,
         environment_run: &Run<'_>,
         session_run: &Run<'_>,
-        selection: Option<&SelectionReceipt>,
+        selection: &SelectionReceipt,
     ) -> Result<CommittedActivation, RunError> {
         let fence = environment_run.fence().clone();
         if fence.resource != self.record.environment {
@@ -2134,19 +2153,15 @@ impl WorkspaceActivationReservation {
             plan
         };
         let receipt = plan.validate_publication(environment_run)?;
-        if let Some(selection) = selection {
-            selection.validate(&plan)?;
-            // The receipt the commit publishes is the one the run recorded: a
-            // selection built against another publication names other bytes.
-            if selection.publication() != &receipt {
-                return Err(ActivationRefusal::SelectionMismatch.into());
-            }
+        selection.validate(&plan)?;
+        // The receipt the commit publishes is the one the run recorded: a
+        // selection built against another publication names other bytes.
+        if selection.publication() != &receipt {
+            return Err(ActivationRefusal::SelectionMismatch.into());
         }
         let plan_before = plan.clone();
         crate::fault_point!(ActivationCommitBefore)?;
-        if selection.is_some() {
-            crate::fault_point!(SelectionCommitBefore)?;
-        }
+        crate::fault_point!(SelectionCommitBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let committed = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             run::check_activation_fence(txn.conn(), &fence)?;
@@ -2173,10 +2188,17 @@ impl WorkspaceActivationReservation {
                 // generation's selection is frozen.
                 let obligation =
                     selection::read_obligation(txn.conn(), &self.record.environment, self.record.generation)?;
-                if let (Some(requested), Some(stored)) = (selection, obligation.as_ref()) {
-                    if requested.selection() != stored.receipt().selection() {
+                if let Some(stored) = obligation.as_ref() {
+                    if selection.selection() != stored.receipt().selection() {
                         return Err(ActivationRefusal::SelectionMismatch.into());
                     }
+                }
+                // A committed reservation without its obligation is a record
+                // this kernel cannot explain; it never answers as success.
+                if obligation.is_none() {
+                    return Err(RunError::broken(
+                        "a committed workspace activation records no selection obligation",
+                    ));
                 }
                 return Ok(CommittedActivation { plan, obligation });
             }
@@ -2242,21 +2264,16 @@ impl WorkspaceActivationReservation {
             // The selection obligation is written by this commit's own
             // transaction: there is no window in which the generation is
             // committed and no durable record of the pointers it needs.
-            let obligation = match selection {
-                Some(selection) => Some(selection::record_obligation(
-                    txn,
-                    &plan,
-                    environment_run.id(),
-                    selection,
-                )?),
-                None => None,
-            };
+            let obligation = Some(selection::record_obligation(
+                txn,
+                &plan,
+                environment_run.id(),
+                selection,
+            )?);
             Ok(CommittedActivation { plan, obligation })
         })?;
         crate::fault_point!(ActivationCommitAfter)?;
-        if selection.is_some() {
-            crate::fault_point!(SelectionCommitAfter)?;
-        }
+        crate::fault_point!(SelectionCommitAfter)?;
         Ok(committed)
     }
 

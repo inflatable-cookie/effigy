@@ -104,9 +104,12 @@ impl From<ServingRefusal> for RunError {
 
 /// The endpoint and pin one published generation's listener serves. It is what
 /// a selection records, so a client's locator and the listener the guest
-/// reaches are one fact.
+/// reaches are one fact, and it names the exact session that holds the key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServingLease {
+    /// The session whose launch holds the key and the bound listener. A lease
+    /// for another session is never a valid selection for this one.
+    pub session: SessionBinding,
     pub supervisor_id: String,
     pub endpoint: String,
     pub pin: Digest,
@@ -380,6 +383,7 @@ impl SessionLaunch {
         let bound = ChannelBound {
             session: self.session.clone(),
             lease: ServingLease {
+                session: self.session.clone(),
                 supervisor_id: self.supervisor_id.clone(),
                 endpoint: endpoint.to_string(),
                 pin: self.key.pin(),

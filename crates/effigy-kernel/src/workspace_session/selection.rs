@@ -143,6 +143,12 @@ impl SelectionReceipt {
     pub fn validate(&self, plan: &ActivationPlan) -> Result<(), RunError> {
         plan.validate_receipt(&self.publication)?;
         self.selection.validate()?;
+        // The locator this selection publishes must be the lease of *this*
+        // session: a lease another launch holds serves another key, another
+        // listener and another session, and is never this generation's.
+        if self.selection.serving.session != *plan.binding() {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
         let selected = format!("sha256:{}", self.selection.objects.binary.digest.hex());
         if self.publication.publication.artifact_digest != selected
             || self.publication.publication.context_generation
@@ -542,6 +548,27 @@ impl SelectionObligation {
         Ok(())
     }
 
+    /// Whether the exact successor run reached complete settlement: closed with
+    /// a complete cleanup outcome. An interrupted row that was never settled is
+    /// not settled, and an in-progress stop is not settled either.
+    pub(crate) fn successor_settled(&self, txn: &Txn<'_>) -> Result<bool, RunError> {
+        let row: Option<(String, Option<String>)> = txn
+            .conn()
+            .query_row(
+                "SELECT phase, cleanup_outcome FROM runs WHERE run_id=?1",
+                [self.session_run.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(match row {
+            Some((phase, cleanup)) => phase == "closed" && cleanup.as_deref() == Some("complete"),
+            // A run row pruned after complete settlement is settled; a missing
+            // row for a successor this generation committed is broken, not a
+            // licence to revoke a live run.
+            None => false,
+        })
+    }
+
     /// The committed generation must still be the one this obligation published
     /// and the environment must still be serving it. A recovery never
     /// re-targets a generation another activation replaced.
@@ -640,7 +667,7 @@ impl WorkspaceActivationReservation {
         session_run: &Run<'_>,
         receipt: &SelectionReceipt,
     ) -> Result<CommittedActivation, RunError> {
-        self.commit_with(cx, root, environment_run, session_run, Some(receipt))
+        self.commit_with(cx, root, environment_run, session_run, receipt)
     }
 }
 
@@ -663,11 +690,17 @@ pub fn selection_recovered(
     root: &StateRoot,
     obligation: &SelectionObligation,
     liveness: &SelectionLiveness,
+    receipt: &SelectionSwitchReceipt,
     wait: Wait,
 ) -> Result<(), RunError> {
     if !liveness.complete() {
         return Err(ActivationRefusal::ServingLost.into());
     }
+    // Recovery *completes* the committed selection, it does not assume it: the
+    // caller proves it re-read the exact targets back after repeating the same
+    // ordered compares. A third value, a missing object or an unreadable one is
+    // refused here exactly as it is on the live path.
+    obligation.validate_switch(receipt)?;
     let _gate = Gate::acquire(
         cx,
         root,
@@ -717,6 +750,12 @@ pub fn selection_abandoned(
     let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
     store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
         crate::fault_point!(SelectionAbandonBefore)?;
+        // The exact successor is stopped and settled under its own private slot
+        // *before* its generation is revoked, so abandonment never strands a
+        // run that still owns a task slot, a listener or a holder.
+        if !obligation.successor_settled(txn)? {
+            return Err(ActivationRefusal::SuccessorRunning.into());
+        }
         revoke(txn, obligation)?;
         obligation.finish(txn, SelectionState::Abandoned, Some(reason))?;
         Ok::<_, RunError>(())

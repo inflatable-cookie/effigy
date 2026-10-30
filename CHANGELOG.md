@@ -184,10 +184,14 @@ until the host-log writer has a safe secret-handling boundary.
   workspace commit now records the guest selection it published — binary,
   context and credential objects, the three expected→next selector values and
   the serving lease — in the same transaction as `active(E)`, the session
-  mapping and the session's `Borrow` attachment, and `unfinished_selection`,
-  `Attachments::selection_switched`, `selection_recovered` and
-  `selection_abandoned` complete, complete-from-recovery or revoke it without
-  ever publishing an unserved generation or restoring the predecessor. One
+  mapping and the session's `Borrow` attachment. That is the only commit: the
+  generic one refuses rather than publishing a generation with no durable
+  selection, and a lease another session's launch published is refused.
+  `unfinished_selection`, `Attachments::selection_switched`,
+  `selection_recovered` (three proven liveness facts *and* the exact switch
+  readback) and `selection_abandoned` (only once the exact successor is settled)
+  complete, complete-from-recovery or revoke it without ever publishing an
+  unserved generation or restoring the predecessor. One
   session owns its listener and memory-only serving key
   (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
   lifetime, and refuses to publish an unbound, unqualified or stopped listener.

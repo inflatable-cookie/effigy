@@ -796,8 +796,9 @@ Three production facts remain to implement and prove:
   `Attachments::selection_switched`, `unfinished_selection`,
   `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
   `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
-  the durable `SelectionReceipt`/`SelectionObligation` commit and the
-  switch/recovery/abandonment order are implemented and fault-proven against the
+  the durable `SelectionReceipt`/`SelectionObligation` commit (the only commit
+  that publishes a generation), the exact-readback switch/recovery order and the
+  settled-successor abandonment are implemented and fault-proven against the
   real journal. What remains for #482 is the container/runner typed wrapper and
   guest selector switching, for #483 the transport, server-key generation and
   TLS qualification, and for #452 the glue and supervisor ownership transfer. The

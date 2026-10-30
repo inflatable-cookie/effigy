@@ -3062,6 +3062,7 @@ incompatible schemas refuse with re-prepare guidance. Absent/incomplete session 
 pub struct GuestObject { pub path: String, pub digest: Digest }
 pub struct SelectionObjects { pub binary: GuestObject, pub context: GuestObject, pub credential: GuestObject, pub context_generation: Generation, pub credential_generation: Generation }
 pub struct SelectorChange { pub path: String, pub expected: Option<String>, pub next: String }
+pub struct ServingLease { pub session: SessionBinding, pub supervisor_id: String, pub endpoint: String, pub pin: Digest } // published by SessionLaunch
 pub struct GuestSelection { pub backend: String, pub objects: SelectionObjects, pub switches: [SelectorChange; 3], pub serving: ServingLease }
 pub struct SelectionReceipt { /* publication + selection, validated */ }
 pub enum SelectionState { Pending, Switched, Abandoned }
@@ -3079,12 +3080,18 @@ impl Attachments {
 }
 pub struct SelectionLiveness { pub session: Observed<()>, pub target: Observed<()>, pub listener: Observed<()> }
 pub fn unfinished_selection(reader: &StoreReader, environment: &ResourceId) -> Observed<Option<SelectionObligation>>;
-pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, wait: Wait) -> Result<(), RunError>;
+pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, receipt: &SelectionSwitchReceipt, wait: Wait) -> Result<(), RunError>;
 pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, reason: &str, wait: Wait) -> Result<(), RunError>;
 ```
 
 `commit_selection` takes the validated `SelectionReceipt`, not a bare `GuestSelection`: the receipt is the only value that has
-hashed the context document, and a selection that never hashed it cannot be committed. The typed container/runner wrapper and the
+hashed the context document, and a selection that never hashed it cannot be committed. It is the **only** commit: the generic
+`commit` refuses `selection_required`, so no generation is published with no durable record of the bytes it selects. A receipt's
+`ServingLease` names its own session, so a lease another session's launch published (another key, listener and run) is refused.
+Recovery is completion, not assumption: `selection_recovered` requires both the three proven liveness facts **and** the exact
+`SelectionSwitchReceipt` readback, repeating the same compares a live switch does; a third value, a missing object or an unknown
+answer never completes. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
+or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
 host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
 is what they call.
 
