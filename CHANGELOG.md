@@ -190,6 +190,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Add a live-state progress source and a feedback lint ratchet for migrating legacy spinner construction.
 
+- **Environment and Colima profile progress shows live state.** A container
+  environment transition is one step whose label moves with the work: while it
+  waits it names `Gate(Env)` and the holder the gate's own body records (run,
+  pid, task and process state), then each reconcile phase and what it observed
+  (the published render, the record it wrote, the live runs attached, the
+  backend effect). A refused transition shows the live holder that refused it,
+  and every frame carries the elapsed wait. `effigy container profile
+  repair|reset-runtime|resize|recreate|purge|prune-health-pid-files` run under
+  the same live step: the profile operation now running, how many Colima calls
+  it has left, and the state `colima list --json` last reported for the profile.
+  Timeouts, gate authority and repair behavior are unchanged; the lint
+  baseline for these sites is reduced to zero.
+
 - **Linux runs the operator gateway from a launch-only systemd user unit.**
   `effigy gateway setup` installs and enables
   `~/.config/systemd/user/effigy-gateway.service`, whose only actions are
@@ -349,6 +362,15 @@ During v0.x, MINOR bumps may include breaking changes.
   unchanged.
 
 ### Changed
+
+- Doctor scan checks and vault lock, unlock and generate-hook waits now draw
+  through the live progress source: the current sub-step, known count, elapsed
+  wait and last event or exact probe, instead of a label fixed for the whole
+  operation. Unlock and lock name the machine vault write gate until that
+  acquire returns (up to 60s), then the decrypt or lock sub-step. Secret
+  values and credential paths stay out of those labels. JSON, piped and quiet
+  output stay silent. The feedback-spinner inventory dropped the four owned
+  call sites.
 
 - Workspace guest publication now completes as a journalled obligation under
   the environment activation gate before publishing active or attaching task
@@ -649,6 +671,36 @@ During v0.x, MINOR bumps may include breaking changes.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
+- A failing managed host listener withholds only its own route. `container up`
+  now decides exposure per declared route target: a listener that answers its
+  readiness request with the wrong status, or never opens its port, keeps its
+  own route absent while the container's verified routes and every other
+  ready listener stay published. `container up --detach` reports the partial
+  exposure in text and JSON, naming the published routes and the withheld
+  listener with its observed status and a bounded, redacted child-output tail,
+  instead of the whole activation's readiness and exposure as unverified. A
+  definite status mismatch is refused as soon as it is observed rather than
+  spending `readiness.timeout_secs`, and a still-closed port's progress line
+  carries the child's own bounded output tail. Progress and activation-budget
+  refusals name the supervisor's actual probe phase: an open port with no HTTP
+  status keeps its running readiness clock and is never described as closed.
+  A port that never opens is
+  bounded by the bring-up's observation budget instead of holding `up` open,
+  and its progress carries that same bounded, redacted tail. The timed-out
+  generation is settled before the command returns, so it cannot publish a
+  route after the report. A listener the activation did not start is reconciled
+  against its own published generation and the current declaration (domain,
+  TLS, bind, live readiness), so only a generation that still serves the
+  declared target keeps its route; a generation that fails that check is
+  settled and its route withdrawn, and a withheld listener's `depends_on`
+  chain withholds every dependent route, settling previously running dependents
+  under the current declaration even after the activation budget expires.
+  Retrying listener failures are settled too, including failures before the
+  first child, so detach cannot hang waiting for them to become active or let
+  them publish a late route. An incomplete settlement remains a refusal.
+  A log line whose `key=` marker falls
+  outside the bounded read window is dropped rather than printed unredacted
+  (effigy#455).
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already

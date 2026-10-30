@@ -2121,12 +2121,10 @@ fn a_musl_only_image_refuses_a_glibc_artifact() {
 
 #[test]
 fn the_identity_probe_reports_the_image_c_library() {
-    let musl = format!(
-        "cgroup=0::/ \nboot=boot-a\nhostname=app\nplatform=x86_64\n\
-         libc_musl=/lib/ld-musl-x86_64.so.1\nlibc_glibc=\n"
-    );
+    let musl = "cgroup=0::/ \nboot=boot-a\nhostname=app\nplatform=x86_64\n\
+         libc_musl=/lib/ld-musl-x86_64.so.1\nlibc_glibc=\n";
     assert_eq!(
-        parse_container_identity(&musl, HOST_CONTAINER_ID)
+        parse_container_identity(musl, HOST_CONTAINER_ID)
             .expect("musl identity")
             .libc,
         "musl"

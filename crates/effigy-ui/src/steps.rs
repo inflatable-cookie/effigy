@@ -149,9 +149,24 @@ impl ProgressSource {
         }
     }
 
-    /// The frame a live step draws after `elapsed`: the current sub-step, the
-    /// known count, the latest event or the awaited object, then the elapsed
-    /// wait. Public so a test can check frames on a fake clock.
+    /// Publish the latest event without changing the current sub-step: what an
+    /// operation just observed about the object it is waiting on.
+    pub fn event(&self, event: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.event = Some(event.into());
+    }
+
+    /// Name a new object or probe after the previous wait ended. Clears
+    /// sub-step, count and event so frames name this wait until `update`.
+    pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.awaiting = awaiting.into();
+        state.sub_step = None;
+        state.count = None;
+        state.event = None;
+    }
+
+    /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
     pub fn frame_at(&self, elapsed: Duration) -> String {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut label = state
@@ -743,6 +758,21 @@ mod tests {
         step.finish_clear();
         assert!(!step.inner.render_live(&source, Duration::from_secs(8)));
         assert!(step.label().ends_with("7s elapsed"));
+    }
+
+    #[test]
+    fn an_event_lands_without_moving_the_sub_step() {
+        let source = ProgressSource::waiting_for("the environment gate for `stack`");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(1)),
+            "waiting for the environment gate for `stack`; 1s elapsed"
+        );
+        source.update("reconciling the backend", Some((1, 3)), None);
+        source.event("run agq holds it (pid 9012, task `dev`)");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(3)),
+            "reconciling the backend (1/3); last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
+        );
     }
 
     #[test]
