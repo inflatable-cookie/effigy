@@ -1123,6 +1123,11 @@ fn activate_inline_workspace_container_runtime_with(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
+            reconcile_shared_services:
+                crate::runner::container_runtime_prep::reconcile_shared_services_for(
+                    policy,
+                    session_context,
+                ),
         },
         &plan,
     )

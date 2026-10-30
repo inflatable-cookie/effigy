@@ -790,9 +790,19 @@ impl Store {
         )?;
         if tables == 0 {
             // Incremental auto-vacuum must be chosen before the first table.
+            // A fresh store gets the additive tables and indexes too: the
+            // constants describe one complete schema, and the very first write
+            // may already be a newer primitive (a workspace activation
+            // reservation, for instance).
             self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
             return self.transaction_within(cx, wait, |txn| {
                 txn.conn.execute_batch(SCHEMA_V1)?;
+                for (_, sql) in ADDITIVE_TABLES {
+                    txn.conn.execute_batch(sql)?;
+                }
+                for (_, sql) in ADDITIVE_INDEXES {
+                    txn.conn.execute_batch(sql)?;
+                }
                 txn.conn.execute(
                     "INSERT INTO meta(key, value) VALUES ('schema_version', ?1), \
                      ('created_by', ?2), ('last_written_by', ?2), \
@@ -820,6 +830,7 @@ impl Store {
         if has_backend(&self.conn)?
             && has_column(&self.conn, "engine")?
             && has_session_owner(&self.conn)?
+            && has_activation_session_owner(&self.conn)?
             && !stale_build
             && !adds_index
             && !adds_table
@@ -841,6 +852,11 @@ impl Store {
                 if !has_table(txn.conn, name)? {
                     txn.conn.execute_batch(sql)?;
                 }
+            }
+            if !has_activation_session_owner(txn.conn)? {
+                txn.conn.execute_batch("ALTER TABLE workspace_activation_reservations ADD COLUMN session_owner TEXT;
+                    UPDATE workspace_activation_reservations SET session_owner=(SELECT owner FROM runs WHERE run_id=session_run)
+                    WHERE session_run IS NOT NULL")?;
             }
             if !has_session_owner(txn.conn)? {
                 txn.conn.execute_batch(
@@ -1215,13 +1231,17 @@ impl StoreReader {
         let phase = self.run_phase(run);
         let gate = match &phase {
             Observed::Verified(RunPhaseFact::NonClosed, _) => {
-                let owner: Observed<(String, String)> = self.row(
-                    "resources",
-                    "SELECT r.scope, r.name FROM runs JOIN resources r ON r.name=runs.owner \
-                     WHERE runs.run_id=?1",
-                    [run.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                );
+                let sql = match has_table(&self.conn, "workspace_session_runs") {
+                    Ok(true) => "SELECT r.scope, coalesce(s.gate_key, r.name) FROM runs \
+                        JOIN resources r ON r.name=runs.owner \
+                        LEFT JOIN workspace_session_runs s ON s.run_id=runs.run_id WHERE runs.run_id=?1",
+                    Ok(false) => "SELECT r.scope,r.name FROM runs JOIN resources r ON r.name=runs.owner WHERE runs.run_id=?1",
+                    Err(error) => return Observed::Unknown(read_unknown(&error.into())),
+                };
+                let owner: Observed<(String, String)> =
+                    self.row("resources", sql, [run.to_string()], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    });
                 match owner {
                     Observed::Verified((scope, name), _) => {
                         gate::probe_names(cx, root, &scope, &name)
@@ -1485,7 +1505,11 @@ fn has_column(conn: &Connection, column: &str) -> rusqlite::Result<bool> {
         |r| r.get(0),
     )
 }
-fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+fn has_activation_session_owner(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_activation_reservations') WHERE name='session_owner')",
+        [], |row| row.get(0))
+}
+pub(crate) fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
         [name],
@@ -1552,7 +1576,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 4] = [
+const ADDITIVE_TABLES: [(&str, &str); 6] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1626,6 +1650,44 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 ) STRICT;",
+    ),
+    // 052 §8.7/§8.11: the successor environment generation a workspace
+    // activation reserved, plus the two runs it binds — the environment
+    // activation run admitted at E and the Task-owned session staged against
+    // it at its own generation S. One row per (environment, generation): a
+    // later generation is a new activation, and the earlier row is kept as the
+    // evidence a recovery reads. `state` is text without a CHECK on purpose, so
+    // a reader that meets a state it does not know refuses instead of guessing.
+    // No foreign key: a pruned run must not take its reservation with it.
+    (
+        "workspace_activation_reservations",
+        "CREATE TABLE IF NOT EXISTS workspace_activation_reservations (
+  environment TEXT NOT NULL,
+  environment_generation INTEGER NOT NULL,
+  reservation_id TEXT NOT NULL UNIQUE,
+  state TEXT NOT NULL,
+  environment_run TEXT,
+  session_owner TEXT,
+  session_run TEXT,
+  session_generation INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (environment, environment_generation)
+) STRICT;
+CREATE INDEX IF NOT EXISTS workspace_activation_reservations_session
+  ON workspace_activation_reservations(session_run)",
+    ),
+    (
+        "workspace_session_runs",
+        "CREATE TABLE IF NOT EXISTS workspace_session_runs (
+  run_id TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  reservation_id TEXT,
+  base_generation INTEGER NOT NULL,
+  gate_key TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS workspace_session_runs_owner ON workspace_session_runs(owner)",
     ),
 ];
 

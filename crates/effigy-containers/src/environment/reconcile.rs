@@ -583,6 +583,34 @@ impl<'r> EnvRun<'r> {
         op: Operation,
         wait: Wait,
     ) -> Result<Self, EnvError> {
+        Self::admit(ctx, env, op, wait, None)
+    }
+
+    /// Admits the operation at the generation a workspace activation reserved
+    /// (§8.7). The reservation is bound to this run in the admission
+    /// transaction, so this is the only admission that may take a generation a
+    /// workspace activation reserved; a competing activation is refused by name
+    /// instead of taking it.
+    pub fn begin_claimed(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<Self, EnvError> {
+        let claim = reservation
+            .claim()
+            .map_err(|error| EnvError::from_run(&env.name, error))?;
+        Self::admit(ctx, env, op, wait, Some(claim))
+    }
+
+    fn admit(
+        ctx: &EnvContext<'r>,
+        env: &EnvRef,
+        op: Operation,
+        wait: Wait,
+        claim: Option<effigy_kernel::workspace_session::ActivationClaim>,
+    ) -> Result<Self, EnvError> {
         if ctx.cx.operation().placement() != Placement::Host {
             return Err(EnvError::HostAuthorityRequired);
         }
@@ -616,24 +644,37 @@ impl<'r> EnvRun<'r> {
         // Admission settles an interrupted predecessor under a window this
         // call makes once the gate is held, so the wait above (up to ten
         // minutes) cannot spend it (effigy#447).
-        let admitted = admit_under_gate_probe(ctx.root, env, &progress, || {
-            Run::begin_with_fresh_cleanup(
+        let options = effigy_kernel::run::BeginOpts {
+            id,
+            wait,
+            acknowledge: vec![],
+            next,
+            custody: None,
+        };
+        let admitted = admit_under_gate_probe(ctx.root, env, &progress, || match claim {
+            Some(claim) => Run::begin_claimed(
                 &ctx.cx,
                 ctx.root,
                 &invocation,
-                effigy_kernel::run::BeginOpts {
-                    id,
-                    wait,
-                    acknowledge: vec![],
-                    next,
-                    custody: None,
-                },
+                options,
                 || {
                     ctx.cleanup()
                         .map_err(|error| RunError::broken(error.to_string()))
                 },
                 &mut EnvSettlement,
-            )
+                claim,
+            ),
+            None => Run::begin_with_fresh_cleanup(
+                &ctx.cx,
+                ctx.root,
+                &invocation,
+                options,
+                || {
+                    ctx.cleanup()
+                        .map_err(|error| RunError::broken(error.to_string()))
+                },
+                &mut EnvSettlement,
+            ),
         })
         .map_err(|error| admission_error(env, wait, started, error));
         let run = match admitted {
@@ -1025,6 +1066,48 @@ impl<'r> EnvRun<'r> {
         }
     }
 
+    /// Publish the exact frozen successor session and record the guest's
+    /// acknowledgement before `commit_activation`. The callback returns the
+    /// identity actually published; the host never fills it into a generic
+    /// receipt after publication.
+    pub fn publish_workspace_guest_with(
+        &mut self,
+        plan: &effigy_kernel::workspace_session::ActivationPlan,
+        publish: impl FnOnce(
+            &effigy_kernel::workspace_session::ActivationPlan,
+        ) -> Result<
+            effigy_kernel::workspace_session::WorkspacePublicationReceipt,
+            BackendError,
+        >,
+    ) -> Result<(), EnvError> {
+        if plan.environment_run() != Some(self.run.id()) || plan.fence() != *self.run.fence() {
+            return self.kernel(Err(RunError::refused(
+                "workspace publication plan names another activation",
+            )));
+        }
+        let intent = Attachments::intend_guest_publication(&mut self.run);
+        let ticket = self.kernel(intent)?;
+        self.transitioned = true;
+        match publish(plan) {
+            Ok(receipt) => {
+                let recorded = plan.validate_receipt(&receipt).and_then(|()| {
+                    Attachments::workspace_guest_published(&mut self.run, &ticket, receipt)
+                });
+                self.kernel(recorded)
+            }
+            Err(error) => {
+                self.failed = true;
+                let recorded = Attachments::guest_publication_unknown(
+                    &mut self.run,
+                    &ticket,
+                    UnknownReason::Inconsistent(error.to_string()),
+                );
+                self.kernel(recorded)?;
+                Err(EnvError::Backend(error))
+            }
+        }
+    }
+
     /// Publishes `active` and attaches requesting holders.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
         self.phase_with_count("activating the environment", (0, holders.len() as u64));
@@ -1041,8 +1124,29 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
+    /// Commits a staged workspace activation under this run's held `Gate(Env)`:
+    /// the guest publication this run recorded is validated against the staged
+    /// plan, and then `active(E)`, the environment's session mapping and the
+    /// session's `Borrow` attachment commit in one transaction (§8.7, §8.11).
+    /// The live holders of a predecessor generation are left attached: a
+    /// successor never stops a predecessor or rebinds its listener. The caller
+    /// retains the owning session Run from Task admission through this commit;
+    /// its borrowed private slot closes the session-death/publication race.
+    pub fn commit_activation(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session_run: &effigy_kernel::run::Run<'_>,
+    ) -> Result<effigy_kernel::workspace_session::SessionRef, EnvError> {
+        let result = reservation.commit(&self.cx, self.root, &self.run, session_run);
+        let committed = self.kernel(result)?;
+        self.published = true;
+        Ok(committed.session())
+    }
+
     /// Ends the run. A run that changed nothing republishes the state it
     /// found, so an inspection never makes an active environment inactive.
+    /// For a live mapped workspace this retains the predecessor's applied
+    /// generation, including after HeldByRuns; only its successor commit replaces it.
     pub fn finish(mut self, ok: bool) -> Result<CleanupOutcome, EnvError> {
         if ok
             && !self.published
@@ -1158,6 +1262,30 @@ mod tests {
     use super::super::record::Retention;
     use super::super::tests::{bring_up, closure, env, holder, home, root, Fake};
     use super::*;
+
+    #[test]
+    fn claimed_admission_keeps_the_reserved_fence_under_the_live_gate_probe() {
+        let home = home();
+        let state = root(home.path());
+        let ctx = EnvContext::new(&state, CancelToken::default()).expect("environment context");
+        let stack = env("reserved-probe");
+        let reservation =
+            effigy_kernel::workspace_session::WorkspaceActivationReservation::reserve(
+                &ctx.cx,
+                &state,
+                &stack.resource,
+                Wait::FailFast,
+            )
+            .expect("reserved environment generation");
+        assert!(EnvRun::begin(&ctx, &stack, Operation::Up, Wait::FailFast).is_err());
+        let run = EnvRun::begin_claimed(&ctx, &stack, Operation::Up, Wait::FailFast, &reservation)
+            .expect("claimed admission under the progress probe");
+        assert_eq!(run.fence().generation, reservation.generation());
+        run.finish(false).expect("settle claimed admission");
+        reservation
+            .cancel(&ctx.cx, &state, Wait::FailFast)
+            .expect("release the settled reservation");
+    }
 
     /// effigy#461: at a fake clock, the frames an operator sees name the held
     /// gate and the holder its body records, each reconcile phase, and the

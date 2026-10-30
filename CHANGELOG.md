@@ -6,8 +6,32 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+Known limits: Environment-owned host processes write their child's raw stdout and stderr
+directly to `.effigy/runtime/host-processes/.../<process>.log`. A secret echoed
+by the child can appear in that log. This direct-log behavior predates
+v0.15; the new custody output sanitizer does not cover this path. ANSI colour
+forcing and plain-log projection for managed TUI panes are deferred to v0.16
+until the host-log writer has a safe secret-handling boundary.
+
 ### Security
 
+- Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
+  PM, APC and the other non-printing bytes) *before* redaction, over merged
+  stdout/stderr arrival order, so a value a child split with a control
+  sequence can no longer reappear unredacted in a log, tail, JSON envelope or
+  TUI transcript; a sideways carriage return inside a value is dropped, so it
+  cannot erase or join what a display shows after redaction, while a `CR LF`
+  line ending keeps its CR. Secret-bearing output is well-formed text: a C1
+  control (a UTF-8 `U+009B` CSI, for example) and an invalid byte are dropped,
+  because a renderer drops them and joins what is either side; a TAB is dropped
+  too, because a renderer moves the bytes after it to the next tab stop and the
+  pane drops the escape that moves them. Ordinary processes keep their layout. Each stream's log and queue is redacted again over
+  its own bytes, because keeping the streams apart can join halves that arrival
+  order separated. A redaction replacement is a byte readers keep and no secret
+  contains, so no reader can join across it; if no such byte exists for a
+  secret set, captured output stops rather than write a joinable marker. Output for those processes is plain; ordinary processes keep
+  their colour. The merged redacted arrival-order tail is the canonical
+  captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
 
@@ -761,6 +785,45 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 
+- Keep the existing workspace session and its holders authoritative, including
+  new borrowed operations after a failed activation, until the successor commits
+  atomically. Register detached successors under their private liveness slot and
+  retain the owning successor handle throughout publication. Read-only workspace
+  replay also works on older schema-1 journals without triggering migration.
+  Ordinary held reconciliation keeps the published session's Borrow fence usable
+  after a failed successor is cancelled.
+
+- A declared database data target whose service is `shared = true` now seeds and
+  dumps in that service's own machine-wide Compose project and render, so
+  `stack` and `hybrid` declarations of one shared identity feed one database and
+  volume instead of failing against the checkout-local Compose that removed the
+  service. The selected environment's declarations are used, so `--name hybrid`
+  seeds hybrid's target rather than the manifest default. Before the first
+  statement Effigy proves the expected render's every file (Compose input and
+  bound configuration) is present, readable and unchanged, and that the runtime
+  reports exactly one running container of the declared service in the declared
+  project from the declared render digest; a missing, unreadable or altered
+  render file, stopped or absent container, stale render, several running
+  containers, an unreadable runtime or environments that declare the same
+  service with different shared identities refuse and name the project and
+  recovery command. A data step never publishes a render, starts or replaces a
+  shared service — its own or an unrelated one — or falls back to a local
+  service of the same name; a seed that selects a shared target skips its
+  environment activation, and every activation a data seed performs (including a
+  routed app-defined `data:seed` task) leaves shared services alone. A seed
+  whose environment has shared services and is stopped refuses and names
+  `effigy container up <NAME>` instead of bringing it up, because that would
+  reconcile them; an environment with no shared services keeps its prior
+  bring-up behaviour, and the decision is made per activated environment, so a
+  catalog-routed step cannot start another catalog's shared service. The exec forwards
+  the client credential by name only: each call creates its own private 0600 file
+  that the Compose client sources before it runs, on the host or through the
+  Colima VM transport, and removes it afterwards, so concurrent data commands
+  never share a credential path and no value reaches a command line or a report.
+  Every shared Compose call is bounded (15 minutes for a control call, one hour
+  for a data exec) and takes its process group with it on expiry, while the
+  complete output still feeds the dump artifact. Unshared targets keep the
+  checkout-local route.
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target
   libraries or linkers refuse the build before it can attest an artifact.
@@ -1028,6 +1091,12 @@ During v0.x, MINOR bumps may include breaking changes.
   unmounted volume or a permission refusal never prunes routes.
 - A repository task named `fmt` runs again for `effigy fmt`, and `effigy
   changelog` accepts a CommonMark lazy continuation line instead of refusing it.
+- The machine gateway stays running after its last route is withdrawn; it no
+  longer stops five minutes after `container down`. A private gateway still
+  stops once its route table stays empty for five minutes, and its operator log
+  records the cause as `route table empty for 300 s`. A managed `container up`
+  that finds the machine gateway positively stopped starts it, and a start that
+  cannot verify a running gateway refuses instead of claiming it up.
 
 ## [0.14.1] - 2026-10-08
 

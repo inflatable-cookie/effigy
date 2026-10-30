@@ -18,7 +18,8 @@ mod machine;
 mod memory;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
 pub use machine::{
-    machine_completion, record_gateway_operator, record_gateway_stop, MachineCompletion,
+    machine_completion, record_gateway_operator, record_gateway_stop, try_record_gateway_operator,
+    MachineCompletion,
 };
 pub use memory::{ForegroundRecord, Incarnation};
 #[path = "../objects/run.rs"]
@@ -34,6 +35,7 @@ pub use terminal::{
     EVIDENCE as TERMINAL_RECORD_EVIDENCE, KEEP_MS as TERMINAL_RECORD_KEEP_MS,
 };
 
+pub(crate) use attachments::{check_activation_fence, holder_attachment, publish_active_state};
 pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, GuestPublicationReceipt, GuestPublicationTicket,
     Holder, Liveness, TransitionPermit, GUEST_PUBLICATION_KIND,
@@ -42,8 +44,8 @@ pub use history::{children, history, recent, summary, unclosed, RunSummary};
 pub use logs::{read_log, LogRead};
 pub use workspace::{
     attach_secondary, lookup, reserve, resume_owner, resume_secondary, AdmissionKey,
-    AdmissionTicket, Attachment, AttachmentId, Chunk, Client, Gap, RecordedOutcome, Recovered,
-    Release, RequestId, Reservation, Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK,
+    AdmissionTicket, Attachment, AttachmentId, Chunk, Client, Gap, InvalidHexId, RecordedOutcome,
+    Recovered, Release, RequestId, Reservation, Session, UnknownAdmission, CONTROL_MAX, MAX_CHUNK,
     SECONDARY_MAX,
 };
 mod workspace;
@@ -387,6 +389,7 @@ impl<'a> Run<'a> {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -404,7 +407,9 @@ impl<'a> Run<'a> {
         cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None, None)
+        Self::begin_under(
+            cx, root, inv, opts, cleanup, adapter, None, None, None, None,
+        )
     }
 
     /// Admit a run bound to a keyed workspace request (§8.11). The reservation,
@@ -436,6 +441,42 @@ impl<'a> Run<'a> {
             None,
             None,
             Some(ticket),
+            None,
+        )
+    }
+
+    /// Admit the environment activation run at the generation a workspace
+    /// activation reserved (§8.7), binding that reservation in the admission
+    /// transaction.
+    ///
+    /// The adopted generation is the one the environment's counter would
+    /// advance to next, so a reservation grants nothing the gate and the counter
+    /// do not already confirm: it only names E early enough for the Task-owned
+    /// session to be admitted (under `Gate(Task)` alone) before this run takes
+    /// `Gate(Env)`. A reservation that already names another run, one whose
+    /// generation another activation consumed, or one that is committed or
+    /// cancelled refuses before the run row exists.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_claimed(
+        cx: &EffectContext,
+        root: &'a StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        cleanup: impl FnOnce() -> Result<CleanupContext, RunError>,
+        adapter: &mut impl SettlementAdapter,
+        claim: crate::workspace_session::ActivationClaim,
+    ) -> Result<Self, RunError> {
+        Self::begin_under(
+            cx,
+            root,
+            inv,
+            opts,
+            cleanup,
+            adapter,
+            None,
+            None,
+            None,
+            Some(claim),
         )
     }
 
@@ -450,6 +491,7 @@ impl<'a> Run<'a> {
         parent: Option<RunId>,
         planned: Option<EffectSpec>,
         admission: Option<AdmissionTicket>,
+        claim: Option<crate::workspace_session::ActivationClaim>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
         if root.is_machine()
@@ -476,13 +518,37 @@ impl<'a> Run<'a> {
             return Err(RunError::refused("invocation class differs from context"));
         }
         cx.operation().check("begin")?;
-        let mut ids = inv.spec().gates.clone();
-        ids.push(inv.spec().owner.clone());
-        let ids = aliases::gates(root, &inv.spec().owner, &ids)?;
+        let session_binding = claim.as_ref().and_then(|claim| claim.session_binding());
+        // Only a frozen workspace-session claim may use its private liveness
+        // slot. It keeps the same logical Task owner and admits no generic
+        // predecessor recovery. No Env gate is acquired on this path.
+        let gate_owner = match session_binding {
+            Some(binding) => {
+                if !inv.spec().gates.is_empty() || !inv.spec().attachments.is_empty() {
+                    return Err(RunError::refused(
+                        "reserved workspace admission takes only its session slot",
+                    ));
+                }
+                let store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+                crate::workspace_session::session_run_gate(
+                    store.conn(),
+                    &binding.owner,
+                    binding.run,
+                )?
+            }
+            None => inv.spec().owner.clone(),
+        };
+        let ids = if session_binding.is_some() {
+            aliases::gates(root, &gate_owner, std::slice::from_ref(&gate_owner))?
+        } else {
+            let mut ids = inv.spec().gates.clone();
+            ids.push(inv.spec().owner.clone());
+            aliases::gates(root, &inv.spec().owner, &ids)?
+        };
         let mut guard = Gate::acquire(cx, root, &ids, opts.wait)?;
         crate::fault_point!(BeginGated)?;
         // Only an owner gate may span recovery callbacks or later effects (K14).
-        guard.retain_owner(&inv.spec().owner);
+        guard.retain_owner(&gate_owner);
         // #275: one bounded admission sweep, never a close-time scan. A
         // refused alias gate creates no journal merely to run maintenance.
         if !root.is_machine() {
@@ -498,7 +564,10 @@ impl<'a> Run<'a> {
             settle::compact_machine_closed(&mut store, &inv.spec().owner, &cleanup)?;
         }
         let mut predecessors = Vec::new();
-        for owner in guard.ids() {
+        if session_binding.is_none() {
+            crate::workspace_session::refuse_session_overlap(store.conn(), &inv.spec().owner)?;
+        }
+        for owner in guard.ids().filter(|_| session_binding.is_none()) {
             predecessors.extend(
                 journal::predecessors(store.conn(), owner)?
                     .into_iter()
@@ -506,12 +575,24 @@ impl<'a> Run<'a> {
             );
         }
         let admit = |txn: &mut crate::store::Txn<'_>| {
+            if session_binding.is_none() {
+                let reserved: bool = txn.conn().query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspace_session_runs WHERE run_id=?1)",
+                    [opts.id.to_string()],
+                    |row| row.get(0),
+                )?;
+                if reserved {
+                    return Err(RunError::refused(
+                        "this run identity belongs to a frozen workspace session",
+                    ));
+                }
+            }
             if admission.is_none() {
                 // A keyed workspace reservation keeps its run identity until it
                 // is admitted or its session generation ends.
                 workspace::refuse_unkeyed(txn, opts.id)?;
             }
-            let identity = if admission.is_some() {
+            let identity = if admission.is_some() || session_binding.is_some() {
                 Some(serde_json::to_string(
                     &crate::ident::process_identity(std::process::id())
                         .verified()
@@ -521,7 +602,29 @@ impl<'a> Run<'a> {
                 None
             };
             txn.resource(&inv.spec().owner, "run")?;
-            let generation = txn.next_generation(&inv.spec().owner)?;
+            let generation = if let Some(binding) = session_binding {
+                binding.generation
+            } else {
+                crate::workspace_session::refuse_session_overlap(txn.conn(), &inv.spec().owner)?;
+                txn.next_generation(&inv.spec().owner)?
+            };
+            match &claim {
+                // The reserved generation is claimed in this transaction: a
+                // crash leaves either no run and an unclaimed reservation, or
+                // one admitted run bound to it.
+                Some(claim) => {
+                    claim.bind(txn, &inv.spec().owner, generation, opts.id)?;
+                }
+                // A reserved generation is not admitted around its
+                // reservation: a competing environment activation is refused
+                // by name instead of taking the generation the staged session
+                // is labelled with.
+                None => crate::workspace_session::refuse_reserved_generation(
+                    txn.conn(),
+                    &inv.spec().owner,
+                    generation,
+                )?,
+            }
             txn.conn().execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,invocation,digest,created_at,updated_at,workload_outcome,parent_run,owner_identity) \
                 VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9,?10)", params![opts.id.to_string(),
                 inv.spec().owner.name().to_string(), generation.get() as i64,
@@ -650,6 +753,31 @@ impl<'a> Run<'a> {
         }
         Ok(run)
     }
+    fn holds_owner_gate(&self) -> Result<bool, RunError> {
+        let gate = crate::workspace_session::session_run_gate(
+            self.store.conn(),
+            &self.owner.resource,
+            self.id,
+        )?;
+        Ok(self.guard.covers(&gate))
+    }
+
+    /// Borrowing this exact owner keeps its Task-ranked liveness slot held
+    /// through activation commit. A cross-process probe cannot provide this
+    /// guarantee: the probed process may die before the transaction starts.
+    pub(crate) fn owns_workspace_session(
+        &self,
+        root: &StateRoot,
+        binding: &crate::workspace_session::SessionBinding,
+    ) -> Result<bool, RunError> {
+        self.can_effect()?;
+        Ok(self.root.path() == root.path()
+            && self.id == binding.run
+            && self.owner.resource == binding.owner
+            && self.owner.generation == binding.generation
+            && self.holds_owner_gate()?)
+    }
+
     pub(crate) fn capture_log(
         &self,
         sequence: i64,
@@ -783,7 +911,9 @@ impl<'a> Run<'a> {
                 &self.cx.child(std::time::Duration::from_secs(30)),
                 |txn| {
                     journal::check_fence(txn.conn(), &self.owner)?;
-                    journal::check_fence(txn.conn(), &spec.target)?;
+                    if spec.target != self.owner {
+                        journal::check_intent_target(txn.conn(), self.id, &spec)?;
+                    }
                     journal::insert_effect(txn, self.id, &spec)
                 },
             )?;
@@ -859,9 +989,9 @@ impl<'a> Run<'a> {
             }
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    journal::check_fence(txn.conn(), &self.owner)?;
+                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
-                    journal::check_target(txn.conn(), &effect)?;
+                    journal::check_run_target(txn.conn(), self.id, &self.owner, &effect)?;
                     if !matches!(effect.state, EffectState::Intended | EffectState::Unknown) {
                         return Err(RunError::broken("effect already completed"));
                     }
@@ -886,7 +1016,9 @@ impl<'a> Run<'a> {
         }
         result
     }
-    fn can_effect(&self) -> Result<(), RunError> {
+    /// Whether this run may still record an effect. The workspace activation
+    /// seam asks it before a commit publishes any state from the run.
+    pub(crate) fn can_effect(&self) -> Result<(), RunError> {
         self.cx.operation().check("effect")?;
         if self.poisoned || matches!(self.phase()?, Phase::Stopping | Phase::Closed) {
             return Err(RunError::broken("run must settle before more effects"));
@@ -917,7 +1049,7 @@ impl<'a> Run<'a> {
             crate::fault_point!(PhaseBefore)?;
             self.store
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                    journal::check_fence(txn.conn(), &self.owner)?;
+                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     txn.conn().execute(
                         "UPDATE runs SET phase=?2,updated_at=?3 WHERE run_id=?1",
                         params![self.id.to_string(), phase.name(), txn.now()],
@@ -943,9 +1075,9 @@ impl<'a> Run<'a> {
         if ticket.run != self.id || ticket.owner != self.owner {
             return Err(RunError::broken("foreign completion ticket"));
         }
-        journal::check_fence(self.store.conn(), &self.owner)?;
+        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
         let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
-        journal::check_target(self.store.conn(), &effect)?;
+        journal::check_run_target(self.store.conn(), self.id, &self.owner, &effect)?;
         if effect.state != EffectState::Applied || self.completed.contains_key(&ticket.sequence) {
             return Err(RunError::broken("effect is not awaiting completion"));
         }
@@ -1011,7 +1143,7 @@ impl<'a> Run<'a> {
                 &self.cx,
                 BusyWait::AtLeast(SETTLE_BUSY_WAIT),
                 |txn| {
-                    journal::check_fence(txn.conn(), &self.owner)?;
+                    journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
                     crate::fault_point!(PhaseBefore)?;
                     txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
                         params![self.id.to_string(), serde_json::to_string(&workload)?, txn.now()])?;
@@ -1046,7 +1178,7 @@ impl<'a> Run<'a> {
         let cx = settle::cleanup_effects(cleanup)?;
         let machine_lifecycle = self.machine_lifecycle();
         self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
-            journal::check_fence(txn.conn(),&self.owner)?;
+            journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
             txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
             if machine_lifecycle {
                 txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE run_id=?1 AND state='pending'", params![self.id.to_string(),txn.now()])?;
@@ -1111,7 +1243,7 @@ pub(super) fn request_bounded(
     let mut store = Store::open_within(cx, root, wait)?;
     crate::fault_point!(RequestBefore)?;
     store.transaction_within(cx, wait, |txn| {
-        journal::check_fence(txn.conn(), &request.expected)?;
+        journal::check_run_fence(txn.conn(), request.run, &request.expected)?;
         let record = journal::run(txn.conn(), request.run)?;
         if record.owner != request.expected.resource.name().to_string() || record.generation != request.expected.generation || record.phase == Phase::Closed {
             return Err(RunError::refused("request run is not current"));
@@ -1169,7 +1301,7 @@ fn pending_requests(
 
 impl Run<'_> {
     pub fn requests(&self) -> Result<Vec<Request>, RunError> {
-        journal::check_fence(self.store.conn(), &self.owner)?;
+        journal::check_run_fence(self.store.conn(), self.id, &self.owner)?;
         pending_requests(self.store.conn(), self.id, &self.owner)
     }
 
@@ -1181,7 +1313,7 @@ impl Run<'_> {
         successor: RunId,
         generation: Generation,
     ) -> Result<bool, RunError> {
-        if !self.guard.covers(&self.owner.resource) {
+        if !self.holds_owner_gate()? {
             return Err(RunError::broken("recovery control needs the owner gate"));
         }
         let fence = Fence {
@@ -1212,7 +1344,7 @@ impl Run<'_> {
             return Err(RunError::broken("foreign request"));
         }
         self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-            journal::check_fence(txn.conn(), &request.expected)?;
+            journal::check_run_fence(txn.conn(), request.run, &request.expected)?;
             txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE request_id=?1 AND run_id=?3",
                 params![request.id.to_string(), txn.now(), self.id.to_string()])?;
             Ok::<_, RunError>(())

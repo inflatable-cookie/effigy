@@ -35,7 +35,7 @@ pub const GUEST_PUBLICATION_KIND: &str = "kernel:workspace-guest-publication";
 pub struct GuestPublicationTicket(EffectTicket);
 
 /// Verified publication facts recorded before the environment becomes active.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuestPublicationReceipt {
     pub environment: Fence,
     pub container_id: String,
@@ -44,8 +44,106 @@ pub struct GuestPublicationReceipt {
     pub context_generation: u64,
 }
 
+fn check_guest_receipt(run: &Run<'_>, receipt: &GuestPublicationReceipt) -> Result<(), RunError> {
+    let hex = receipt
+        .artifact_digest
+        .strip_prefix("sha256:")
+        .unwrap_or("");
+    if receipt.environment != run.owner
+        || receipt.container_id.len() != 64
+        || !receipt.container_id.bytes().all(|b| b.is_ascii_hexdigit())
+        || receipt.vm_boot_id.trim().is_empty()
+        || hex.len() != 64
+        || !hex.bytes().all(|b| b.is_ascii_hexdigit())
+        || receipt.context_generation == 0
+    {
+        return Err(RunError::refused(
+            "invalid workspace guest publication receipt",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Attachments;
+
+/// The one `active` publication every environment activation writes: the
+/// resource is active at its own run's generation, and `last_applied` names
+/// that generation so a holder's `attach` can prove it.
+pub(crate) fn publish_active_state(
+    txn: &mut crate::store::Txn<'_>,
+    owner: &Fence,
+) -> Result<(), RunError> {
+    txn.conn().execute(
+        "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
+        params![
+            owner.resource.name().to_string(),
+            owner.generation.get().to_string(),
+            txn.now()
+        ],
+    )?;
+    Ok(())
+}
+
+/// The activation commit's fence check, so the reservation seam verifies the
+/// environment generation with the kernel's own rule rather than a copy.
+pub(crate) fn check_activation_fence(
+    conn: &rusqlite::Connection,
+    owner: &Fence,
+) -> Result<(), RunError> {
+    journal::check_fence(conn, owner)
+}
+
+/// One holder's `Borrow` attachment, written as an `Applied` effect of that
+/// holder's own journal in the caller's transaction. The environment activation
+/// run is the only writer: `publish_active_for` and the workspace activation
+/// commit both install a holder this way, so the holder's settle releases it by
+/// exactly the rule it would have used had it attached itself.
+pub(crate) fn holder_attachment(
+    txn: &mut crate::store::Txn<'_>,
+    env: &Fence,
+    holder: RunId,
+    mode: AttachMode,
+) -> Result<(), RunError> {
+    let record = journal::run(txn.conn(), holder)?;
+    let owner: Vec<u8> = txn.conn().query_row(
+        "SELECT canonical FROM resources WHERE name=?1",
+        [&record.owner],
+        |r| r.get(0),
+    )?;
+    if matches!(record.phase, Phase::Stopping | Phase::Closed) || owner >= env.resource.canonical()
+    {
+        return Err(RunError::refused(
+            "requesting holder is settling or out of gate order",
+        ));
+    }
+    let spec = EffectSpec {
+        target: env.clone(),
+        kind: KIND.into(),
+        payload: serde_json::to_value(mode)?,
+        settlement: Settlement::Reconcile(Value::Null),
+        required: true,
+    };
+    let sequence = journal::insert_effect(txn, holder, &spec)?;
+    txn.conn().execute(
+        "INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached') \
+         ON CONFLICT(environment,run_id) DO UPDATE SET env_generation=excluded.env_generation,mode=excluded.mode,state='attached'",
+        params![
+            env.resource.name().to_string(),
+            holder.to_string(),
+            env.generation.get() as i64,
+            serde_json::to_string(&mode)?
+        ],
+    )?;
+    journal::write_effect(
+        txn,
+        holder,
+        sequence,
+        EffectState::Applied,
+        Some(&Value::Bool(true)),
+        None,
+    )
+}
 /// Borrows the gated environment run exclusively. No caller can release the
 /// gate or advance its generation while using the permit.
 #[derive(Debug)]
@@ -174,20 +272,46 @@ impl Attachments {
         ticket: &GuestPublicationTicket,
         receipt: GuestPublicationReceipt,
     ) -> Result<(), RunError> {
-        let hex = receipt
-            .artifact_digest
-            .strip_prefix("sha256:")
-            .unwrap_or("");
-        if receipt.environment != run.owner
-            || receipt.container_id.len() != 64
-            || !receipt.container_id.bytes().all(|b| b.is_ascii_hexdigit())
-            || receipt.vm_boot_id.trim().is_empty()
-            || hex.len() != 64
-            || !hex.bytes().all(|b| b.is_ascii_hexdigit())
-            || receipt.context_generation == 0
-        {
+        let reserved: bool = run.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_activation_reservations WHERE environment_run=?1)",
+            [run.id.to_string()], |row| row.get(0),
+        )?;
+        if reserved {
             return Err(RunError::refused(
-                "invalid workspace guest publication receipt",
+                "a workspace activation requires its session-bound publication receipt",
+            ));
+        }
+        check_guest_receipt(run, &receipt)?;
+        run.applied(&ticket.0, serde_json::to_value(receipt)?)?;
+        run.completed(&ticket.0, crate::outcome::RequiredObligation::Applied)
+    }
+
+    /// Record the guest's acknowledgement of the exact frozen workspace
+    /// session, before its atomic activation commit. The generic publication
+    /// receipt alone cannot authenticate a workspace session mapping.
+    pub fn workspace_guest_published(
+        run: &mut Run<'_>,
+        ticket: &GuestPublicationTicket,
+        receipt: crate::workspace_session::WorkspacePublicationReceipt,
+    ) -> Result<(), RunError> {
+        check_guest_receipt(run, &receipt.publication)?;
+        if receipt.activation_run != run.id {
+            return Err(RunError::refused(
+                "workspace publication names another activation run",
+            ));
+        }
+        let binding = &receipt.session;
+        let matches: bool = run.store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_activation_reservations \
+             WHERE environment=?1 AND environment_generation=?2 AND environment_run=?3 AND state='reserved' \
+             AND session_owner=?4 AND session_run=?5 AND session_generation=?6)",
+            params![run.owner.resource.name().to_string(), run.owner.generation.get() as i64,
+                run.id.to_string(), binding.owner.name().to_string(), binding.run.to_string(), binding.generation.get() as i64],
+            |row| row.get(0),
+        )?;
+        if !matches {
+            return Err(RunError::from(
+                crate::workspace_session::ActivationRefusal::ReceiptMismatch,
             ));
         }
         run.applied(&ticket.0, serde_json::to_value(receipt)?)?;
@@ -205,6 +329,8 @@ impl Attachments {
     }
 
     /// Publishes an environment's applied generation under its owner gate.
+    /// A still-mapped workspace session retains its applied fence through a
+    /// no-op publication; changing that fence requires its atomic successor commit.
     /// Engines call this only after their required startup effects completed.
     pub fn publish_active(run: &mut Run<'_>) -> Result<(), RunError> {
         run.can_effect()?;
@@ -219,15 +345,16 @@ impl Attachments {
         run.store
             .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                 journal::check_fence(txn.conn(), &run.owner)?;
-                txn.conn().execute(
-                "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
-                params![
-                    run.owner.resource.name().to_string(),
-                    run.owner.generation.get().to_string(),
-                    txn.now()
-                ],
-            )?;
-                Ok::<_, RunError>(())
+                crate::workspace_session::refuse_reserved_generation(
+                    txn.conn(),
+                    &run.owner.resource,
+                    run.owner.generation,
+                )?;
+                if crate::workspace_session::preserve_active_predecessor(txn, &run.owner)?.is_some()
+                {
+                    return Ok(());
+                }
+                publish_active_state(txn, &run.owner)
             })
     }
     pub fn attach(
@@ -252,11 +379,15 @@ impl Attachments {
         let result = (|| {
             crate::fault_point!(AttachBefore)?;
             let sequence = run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
-                journal::check_fence(txn.conn(),&run.owner)?;
-                journal::check_fence(txn.conn(),env)?;
-                let active: bool = txn.conn().query_row("SELECT state='active' AND last_applied=cast(generation AS TEXT) FROM resources WHERE name=?1",
-                    [env.resource.name().to_string()],|r| r.get::<_,Option<bool>>(0))?.unwrap_or(false);
-                if !active { return Err(RunError::EnvNotActive); }
+                journal::check_fence(txn.conn(), &run.owner)?;
+                let preserved = matches!(mode, AttachMode::Borrow)
+                    && crate::workspace_session::preserved_environment(txn.conn(), env)?;
+                if !preserved {
+                    journal::check_fence(txn.conn(),env)?;
+                    let active: bool = txn.conn().query_row("SELECT state='active' AND last_applied=cast(generation AS TEXT) FROM resources WHERE name=?1",
+                        [env.resource.name().to_string()],|r| r.get::<_,Option<bool>>(0))?.unwrap_or(false);
+                    if !active { return Err(RunError::EnvNotActive); }
+                }
                 let spec = EffectSpec { target:env.clone(),kind:KIND.into(),payload:serde_json::to_value(mode)?,settlement:Settlement::Reconcile(Value::Null),required:true };
                 let sequence=journal::insert_effect(txn,run.id,&spec)?;
                 txn.conn().execute("INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached')",
@@ -332,6 +463,8 @@ impl Attachments {
     /// and inserts each requesting run's attachment in the same transaction,
     /// as an `Applied` effect of that holder's own journal. The holder's
     /// settle releases it exactly as if it had attached itself.
+    /// A live mapped workspace retains its applied fence; new holders can only
+    /// Borrow that fence until an atomic workspace activation replaces it.
     pub fn publish_active_for(
         run: &mut Run<'_>,
         holders: &[(RunId, AttachMode)],
@@ -350,45 +483,29 @@ impl Attachments {
             run.store
                 .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                     journal::check_fence(txn.conn(), &run.owner)?;
-                    let env = run.owner.resource.name().to_string();
-                    txn.conn().execute(
-                        "UPDATE resources SET state='active',last_applied=?2,updated_at=?3 WHERE name=?1",
-                        params![env, run.owner.generation.get().to_string(), txn.now()],
+                    crate::workspace_session::refuse_reserved_generation(
+                        txn.conn(), &run.owner.resource, run.owner.generation,
                     )?;
-                    for (holder, mode) in holders {
-                        let record = journal::run(txn.conn(), *holder)?;
-                        let owner: Vec<u8> = txn.conn().query_row(
-                            "SELECT canonical FROM resources WHERE name=?1",
-                            [&record.owner],
-                            |r| r.get(0),
-                        )?;
-                        if matches!(record.phase, Phase::Stopping | Phase::Closed)
-                            || owner >= run.owner.resource.canonical()
-                        {
-                            return Err(RunError::refused("requesting holder is settling or out of gate order"));
+                    let applied = match crate::workspace_session::preserve_active_predecessor(txn, &run.owner)? {
+                        Some(applied) => applied,
+                        None => {
+                            publish_active_state(txn, &run.owner)?;
+                            run.owner.clone()
                         }
+                    };
+                    for (holder, mode) in holders {
                         let exists: bool = txn.conn().query_row(
                             "SELECT EXISTS(SELECT 1 FROM attachments WHERE environment=?1 AND run_id=?2 AND state<>'released')",
-                            params![env, holder.to_string()],
+                            params![run.owner.resource.name().to_string(), holder.to_string()],
                             |r| r.get(0),
                         )?;
                         if exists {
                             continue;
                         }
-                        let spec = EffectSpec {
-                            target: run.owner.clone(),
-                            kind: KIND.into(),
-                            payload: serde_json::to_value(mode)?,
-                            settlement: Settlement::Reconcile(Value::Null),
-                            required: true,
-                        };
-                        let sequence = journal::insert_effect(txn, *holder, &spec)?;
-                        txn.conn().execute(
-                            "INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached') \
-                             ON CONFLICT(environment,run_id) DO UPDATE SET env_generation=excluded.env_generation,mode=excluded.mode,state='attached'",
-                            params![env, holder.to_string(), run.owner.generation.get() as i64, serde_json::to_string(mode)?],
-                        )?;
-                        journal::write_effect(txn, *holder, sequence, EffectState::Applied, Some(&Value::Bool(true)), None)?;
+                        if applied != run.owner && !matches!(mode, AttachMode::Borrow) {
+                            return Err(RunError::refused("a preserved workspace fence permits only Borrow holders"));
+                        }
+                        holder_attachment(txn, &applied, *holder, *mode)?;
                     }
                     Ok::<_, RunError>(())
                 })?;
