@@ -420,9 +420,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Cache and volume list/prune and workspace context, permission and shutdown
   waits now draw through the same live progress source: the current volume,
   guest sub-step or system, known count, elapsed wait and last event or the
-  exact inspect, remove, identity, path or `container down` probe. JSON, piped
-  and quiet output stay silent, so the piped `[info]` waiting lines those
-  waits used to print are gone. Nested invocations still hide the CLI header;
+  exact inspect, remove, identity, path or `container down` probe. Existing
+  piped workspace waiting lines remain unchanged. Nested invocations still
+  hide the CLI header;
   a nested cache or volume command on a terminal now draws the same live step
   as a direct one. The feedback-spinner inventory dropped the two owned call
   sites.

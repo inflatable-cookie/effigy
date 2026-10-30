@@ -148,6 +148,12 @@ pub(super) fn ensure_workspace_permissions_ready(
     let allow_repair = true;
     let perm_plan = plan_workspace_permission_prep(&plan.owned_disposable_paths());
     let progress_label = render_workspace_permission_progress_label(&perm_plan);
+    if repo_override.is_none()
+        && (!std::io::IsTerminal::is_terminal(&std::io::stderr())
+            || effigy_ui::theme::is_ci_environment())
+    {
+        super::emit_workspace_info(&progress_label, false);
+    }
     let progress = super::WorkspaceOpProgress::start(
         repo_override.is_some(),
         super::PROBE_PERMISSION_PREP,

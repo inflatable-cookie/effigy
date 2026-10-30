@@ -8,7 +8,7 @@ use effigy_manifest::ManifestTask;
 use effigy_runtime::shell::run_container_shell_session as run_runtime_container_shell_session;
 use effigy_ui::steps::{self, ProgressSource, Step};
 use effigy_ui::style_text;
-use effigy_ui::theme::Theme;
+use effigy_ui::theme::{is_ci_environment, Theme};
 use effigy_ui::OutputMode;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -498,6 +498,9 @@ struct WorkspaceShutdownProgressReporter {
 impl WorkspaceShutdownProgressReporter {
     fn new(system: &str) -> Self {
         let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_DOWN, true);
+        if !std::io::stderr().is_terminal() || is_ci_environment() {
+            emit_workspace_info("waiting for workspace system shutdown", false);
+        }
         progress.update(format!("stopping workspace system `{system}`"), None, None);
         Self {
             progress,
