@@ -13,10 +13,6 @@ v0.15; the new custody output sanitizer does not cover this path. ANSI colour
 forcing and plain-log projection for managed TUI panes are deferred to v0.16
 until the host-log writer has a safe secret-handling boundary.
 
-### Fixed
-
-- Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
-
 ### Security
 
 - Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.
@@ -950,6 +946,8 @@ until the host-log writer has a safe secret-handling boundary.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- Bind guest workspace channel aliases to their session-owned listener while retaining the numeric host endpoint for recovery.
 
 - A host task in a linked or detached worktree whose manifest declares no `[containers]` registry runs again. The absence is read from the manifest's shape, so it no longer surfaces as a container-policy refusal. A declared registry that cannot load still refuses, and a declared backing-service alias whose stack is not up still refuses before the run starts.
 
