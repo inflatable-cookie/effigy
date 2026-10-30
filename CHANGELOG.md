@@ -417,6 +417,15 @@ During v0.x, MINOR bumps may include breaking changes.
   values and credential paths stay out of those labels. JSON, piped and quiet
   output stay silent. The feedback-spinner inventory dropped the four owned
   call sites.
+- Cache and volume list/prune and workspace context, permission and shutdown
+  waits now draw through the same live progress source: the current volume,
+  guest sub-step or system, known count, elapsed wait and last event or the
+  exact inspect, remove, identity, path or `container down` probe. Existing
+  piped workspace waiting lines remain unchanged. Nested invocations still
+  hide the CLI header;
+  a nested cache or volume command on a terminal now draws the same live step
+  as a direct one. The feedback-spinner inventory dropped the two owned call
+  sites.
 
 - Workspace guest publication now completes as a journalled obligation under
   the environment activation gate before publishing active or attaching task
