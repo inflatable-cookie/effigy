@@ -637,15 +637,6 @@ pub fn live_step(source: ProgressSource) -> Step {
     Step::new_live(Arc::clone(global_sink()), None, source)
 }
 
-/// One finished line for an outcome that resolved without a running step.
-pub fn outcome_line(ok: bool, summary: &str) {
-    if capture_finish(ok, summary) {
-        return;
-    }
-    let sink = global_sink();
-    sink.write_finish(sink.mode(), ok, summary);
-}
-
 /// Silence steps while another surface owns the terminal (the managed-run
 /// TUI). Dropping the guard restores drawing.
 pub fn suspend_terminal() -> TerminalGuard {

@@ -85,43 +85,43 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    876,
+    867,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1050,
+    1041,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1053,
+    1044,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1055,
+    1046,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1057,
+    1048,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1074,
+    1065,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1076,
+    1067,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
   ],

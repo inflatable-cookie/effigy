@@ -10,7 +10,7 @@ use effigy_release::{
     ReleaseRunRequest, ReleaseStage, ReleaseStatus, ResolvedGate,
 };
 
-use effigy_ui::steps::{live_step, outcome_line, ProgressSource, Step};
+use effigy_ui::steps::{finish_line, live_step, ProgressSource, Step};
 
 use super::*;
 
@@ -378,7 +378,7 @@ impl GateObserver for ReleaseGateSteps {
         match self.running.take() {
             Some(step) if result.passed => step.succeed(&summary),
             Some(step) => step.fail(&summary),
-            None => outcome_line(result.passed, &summary),
+            None => finish_line(result.passed, &summary),
         }
     }
 
