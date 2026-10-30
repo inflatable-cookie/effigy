@@ -226,6 +226,8 @@ pub(super) fn await_services_ready(
                         last_probe_error,
                         last_failed_read.as_ref(),
                         &steps,
+                        &parent,
+                        &progress,
                     )?
                 } else {
                     ReadinessReport {
@@ -320,6 +322,8 @@ pub(super) fn await_services_ready(
         last_probe_error,
         last_failed_read.as_ref(),
         &steps,
+        &parent,
+        &progress,
     )
 }
 
@@ -516,8 +520,10 @@ fn readiness_failure(
     probe_error: Option<String>,
     failed_read: Option<&ProbeRead>,
     steps: &BTreeMap<String, ServiceStep>,
+    parent: &TimedStep,
+    parent_progress: &ProgressSource,
 ) -> Result<ReadinessReport, RunnerError> {
-    let logs = exited_logs(&policy.repo_root, policy, services);
+    let logs = exited_logs(&policy.repo_root, policy, services, parent_progress);
     // The diagnostic says which read failed and what it covered; the JSON keeps
     // the same read as a token, its probe number and its container names.
     let read_error = probe_error
@@ -541,6 +547,10 @@ fn readiness_failure(
         probe_error.as_deref(),
         &policy.project_name,
     );
+    // The readiness wait's own step ends on the diagnosis's first line; the
+    // error carries the evidence and its `next:` line. A step an earlier
+    // branch already cleared ignores this.
+    parent.fail(diagnostic.lines().next().unwrap_or_default());
     Err(readiness_wait_error(policy, diagnostic, waiting_on))
 }
 
@@ -558,26 +568,81 @@ fn probe_read_error(project: &str, failed_read: Option<&ProbeRead>, error: &str)
 /// Only exited services are read: a healthy stack pays nothing for a
 /// diagnostic it does not need, and an unhealthy one gets the evidence its
 /// health check could not give.
+///
+/// Each read is a bounded runtime call of its own, and the readiness step has
+/// already ended on one failure path, so the reads run under a live step that
+/// names the container it is reading and reports a read the runtime does not
+/// answer (effigy#460, Q-017).
 fn exited_logs(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     services: &[ServiceHealth],
+    parent: &ProgressSource,
 ) -> BTreeMap<String, String> {
+    let exited = services
+        .iter()
+        .filter(|service| service.has_exited())
+        .collect::<Vec<_>>();
+    if exited.is_empty() {
+        return BTreeMap::new();
+    }
+    let total = exited.len() as u64;
+    let progress = exited_logs_progress(total);
+    let step = TimedStep::live(progress.clone());
     let mut logs = BTreeMap::new();
-    for service in services.iter().filter(|service| service.has_exited()) {
-        let Ok(line) = container_last_log_line_for_policy(
+    let mut unanswered = 0_u64;
+    for (index, service) in exited.iter().enumerate() {
+        let done = index as u64 + 1;
+        let sub_step = exited_log_step_label(&service.service, done, total);
+        progress.update(sub_step.clone(), Some((done, total)), None);
+        // The readiness wait's own frame names the same read, so a timeout never
+        // shows the finished probe while a log read runs.
+        parent.now_waiting_for(exited_log_parent_label(&service.service));
+        parent.update(sub_step, Some((done, total)), None);
+        match container_last_log_line_for_policy(
             repo_root,
             policy,
             &service.container,
             EXITED_LOG_TAIL,
-        ) else {
-            continue;
-        };
-        if !line.is_empty() {
-            logs.insert(service.service.clone(), line);
+        ) {
+            Ok(line) if !line.is_empty() => {
+                logs.insert(service.service.clone(), line);
+            }
+            Ok(_) => {}
+            Err(_) => unanswered += 1,
         }
     }
+    if unanswered > 0 {
+        step.fail(format!(
+            "{unanswered} of {total} exited container log read{} did not answer",
+            if total == 1 { "" } else { "s" }
+        ));
+    } else {
+        step.succeed(format!(
+            "read the last output of {total} exited container{}",
+            if total == 1 { "" } else { "s" }
+        ));
+    }
     logs
+}
+
+/// The live step the exited-container log reads share: the count they cover and
+/// elapsed time (effigy#460, Q-017).
+fn exited_logs_progress(total: u64) -> ProgressSource {
+    ProgressSource::waiting_for(format!(
+        "the last output of {total} exited container{}",
+        if total == 1 { "" } else { "s" }
+    ))
+}
+
+/// One exited container's log read, with its position in the set.
+fn exited_log_step_label(service: &str, done: u64, total: u64) -> String {
+    format!("reading the last line `{service}` printed ({done}/{total})")
+}
+
+/// The same read named on the readiness wait's own frame.
+fn exited_log_parent_label(service: &str) -> String {
+    format!("the runtime's log tail of `{service}`")
 }
 
 /// Update one step per service and return the ones that are not ready. A
@@ -972,6 +1037,129 @@ mod tests {
             probe_budget_deadline(nearly, deadline),
             nearly + PROBE_BUDGET_MINIMUM
         );
+    }
+
+    #[test]
+    fn the_exited_log_reads_name_the_container_they_are_reading() {
+        // The readiness step has already ended on one failure path, so these
+        // reads own their live step; each frame names the container and its
+        // position, and the readiness frame names the same read.
+        let progress = exited_logs_progress(2);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(3)),
+            "waiting for the last output of 2 exited containers; 3s elapsed"
+        );
+        let sub_step = exited_log_step_label("web", 1, 2);
+        progress.update(sub_step.clone(), Some((1, 2)), None);
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(9)),
+            "reading the last line `web` printed (1/2) (1/2); waiting for the last output of 2 exited containers; 9s elapsed"
+        );
+        let parent = ProgressSource::waiting_for("the environment's services to report healthy");
+        parent.now_waiting_for(exited_log_parent_label("web"));
+        parent.update(sub_step, Some((1, 2)), None);
+        assert_eq!(
+            parent.frame_at(Duration::from_secs(12)),
+            "reading the last line `web` printed (1/2) (1/2); waiting for the runtime's log tail of `web`; 12s elapsed"
+        );
+    }
+
+    /// A checkout whose runtime answers one log read, inside a fixture
+    /// directory, so the exited-service diagnostic can be exercised without a
+    /// real container runtime.
+    fn exited_logs_fixture(
+        name: &str,
+        logs_answer: &str,
+    ) -> (
+        effigy_test_support::Fixture,
+        EffectiveContainerPolicy,
+        crate::contract_test_support::EnvGuard,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = effigy_test_support::Fixture::workspace(name).expect("fixture workspace");
+        let root = fixture.path().canonicalize().unwrap();
+        std::fs::write(
+            root.join("effigy.toml"),
+            "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\n",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  app:\n    image: alpine:latest\n",
+        )
+        .expect("write compose");
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).expect("mkdir bin");
+        let script =
+            format!("#!/bin/sh\ncase \"$*\" in\n  logs*) {logs_answer} ;;\n  *) exit 0 ;;\nesac\n");
+        for name in ["docker", "colima"] {
+            let executable = bin.join(name);
+            std::fs::write(&executable, &script).expect("write fake runtime");
+            std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod fake runtime");
+        }
+        let env = crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "PATH",
+                Some(format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap()
+                )),
+            ),
+            ("HOME", Some(root.display().to_string())),
+            ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
+        ]);
+        let (policy, _decisions) =
+            effigy_containers::load_container_policy_for_creation(&root, Some("web"))
+                .expect("creation policy");
+        (fixture, policy, env)
+    }
+
+    #[test]
+    fn a_readiness_timeout_names_each_exited_log_read_and_its_evidence() {
+        let (_fixture, policy, _env) = exited_logs_fixture(
+            "effigy-readiness-exited-logs-",
+            "printf 'app: database is not ready\\n'",
+        );
+        let services = vec![health("db", "exited", None, 0, None)];
+        let parent = ProgressSource::waiting_for("the environment's services to report healthy");
+        let logs = exited_logs(&policy.repo_root, &policy, &services, &parent);
+        assert_eq!(
+            logs.get("db").map(String::as_str),
+            Some("app: database is not ready"),
+            "the exited container's own last line is read under the named step"
+        );
+    }
+
+    #[test]
+    fn a_readiness_timeout_without_a_log_answer_still_reports_the_service() {
+        let (_fixture, policy, _env) = exited_logs_fixture(
+            "effigy-readiness-exited-logs-missing-",
+            "echo 'runtime logs unavailable' >&2; exit 1",
+        );
+        let services = vec![health("db", "exited", None, 0, None)];
+        let parent = ProgressSource::waiting_for("the environment's services to report healthy");
+        let logs = exited_logs(&policy.repo_root, &policy, &services, &parent);
+        assert!(
+            logs.is_empty(),
+            "an unanswered log read yields no evidence, not a guess"
+        );
+        // The evidence it does have still reaches the diagnostic.
+        let parent_step = TimedStep::live(parent.clone());
+        let Err(error) = readiness_failure(
+            &policy,
+            &services,
+            None,
+            None,
+            &BTreeMap::new(),
+            &parent_step,
+            &parent,
+        ) else {
+            panic!("a readiness failure is an error");
+        };
+        let message = error.to_string();
+        assert!(message.contains("db exited"), "{message}");
     }
 
     #[test]

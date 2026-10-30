@@ -1035,6 +1035,8 @@ names which of the probe's two runtime reads is running — the project's
 container list, or the inspect of the names that list returned. A read that
 fails keeps that identity in the retry frame, the timeout diagnostic and the
 `--json` `waiting_on` probe entry, which also names the containers it covered.
+The timeout diagnostic's per-service log reads name the container each one is
+reading, and report a read the runtime does not answer.
 An environment that
 declares `[containers.<name>.health]` keeps that check as its final gate: the
 wait names that probe and its attempt, and a check that answers a complete

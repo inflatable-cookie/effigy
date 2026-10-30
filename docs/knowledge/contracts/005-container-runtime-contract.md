@@ -169,7 +169,10 @@ timeout diagnostic name the read, its probe number and, for an inspect, the
 containers it was reading, and the `waiting_on` probe entry carries the same
 facts as `probe` (`container_list` or `containers_inspect`), `probe_number` and
 `containers`. A service whose health regresses after reporting healthy opens
-a fresh step with its own attempt and last check output. A service that
+a fresh step with its own attempt and last check output. The timeout diagnostic
+reads each exited service's own last log line under a live step that names that
+container and its position in the set, and reports a read the runtime does not
+answer instead of leaving the finished probe on screen. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
 one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers
 a definite status line outside `2xx`/`3xx` is refused at once, naming the status

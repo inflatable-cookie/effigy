@@ -689,7 +689,10 @@ During v0.x, MINOR bumps may include breaking changes.
   inspect of the names that list returned, with those names shown — alongside
   its probe number, budget and the last known counts and event. A service whose
   health regresses after reporting healthy opens a fresh step with its own
-  attempt and last check output. A declared health check names its probe and
+  attempt and last check output. When an exited service's own last log line is
+  read for the timeout diagnostic, each read runs under a live step naming that
+  container, and a read the runtime does not answer is reported rather than
+  shown as the finished probe. A declared health check names its probe and
   attempt. A
   failed shared-service step, and a declared health check that times out, carry
   the same `waiting_on` list in `--json` and keep their text unchanged.
