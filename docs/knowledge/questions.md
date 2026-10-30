@@ -749,3 +749,67 @@ proof. Current-tree examples include the route-token tests in
 argument-redaction test. Apply the same source-context check to every
 historical revision; a production literal or a value of unclear origin
 remains a finding. A changed blob gets scanned again.
+
+## Q-021: Guest facts the workspace client channel still needs
+
+Status: open (normative seam bounded; production implementation and qualification outstanding)
+Asked: 2026-10-29
+Owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
+Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
+
+Tom's 2026-10-30 ruling (decision 8c0ef812) bounds the normative seam to 250 lines,
+tied to the merged #484 reservation/publication APIs. The detailed E-step,
+crash/fault/retry and ownership-transfer draft is explicitly
+[non-normative, unimplemented/post-v0.15 candidate material](contracts/052-runtime-kernel-contract.md#appendix-b-non-normative-post-v015-sequence-candidates),
+with no acceptance claims. It does not qualify any backend or waive Q-017.
+
+Three production facts remain to implement and prove:
+
+- **Guest-local identity.** Observe the full container id, boot, platform and
+  libc independently of the context, using qualified guest-local sources.
+  Cgroup is diagnostic only under §8.2: even a matching full cgroup id cannot
+  prove placement. Cgroup-only availability refuses; backend fixture/native
+  qualification must distinguish it from a qualified mountinfo observation.
+  The host selects the first artifact from the bound image; executing it verifies
+  that selection. Prepare compares the staged binary's own observation with the
+  host-bound target before publication. Unknown/conflicting facts refuse before
+  credential access; no Docker socket, fabricated identity or context-as-proof.
+- **Qualified TLS locator.** One session-owned key/listener; verify SPKI pin and
+  key possession before Hello or any credential frame. Colima, Docker Desktop
+  and Linux Docker each need bounded local and native qualification. §8.11 pins
+  the typed alias/bind → session key/listener → qualified locator handoff and
+  reconnect interface; only the verified locator reaches context publication.
+  A fresh Linux project renders its alias before creation, applies to create the network
+  and guest, then resolves/probes from that guest; it never needs the missing
+  network first or guesses its IPAM gateway as the daemon's host-gateway address.
+- **Actual session publication.** Use #484's reservation, frozen
+  `SessionBinding {owner, run, generation}`, `admit_reserved`, typed publication
+  receipt and atomic commit of active(E), mapping and Borrow. The immutable v2
+  context publishes the actual session run and S, separate from environment E.
+  Preserve canonical Task-before-Env order and the predecessor's live holders.
+  The post-#484 atomic attach-or-reserve decision is still required: re-read the
+  live mapping and matching inputs under the same Env gate that reserves a
+  successor, so simultaneous callers cannot revoke a matching live session.
+  The proposed normative `SelectionReceipt`/`SelectionObligation` handoff also
+  binds immutable binary/context/credential objects, expected/next selectors and
+  serving lease to that commit. Switching follows the durable commit; recovery
+  completes those exact comparisons or settles/revokes/abandons the successor.
+  Unknown remains Pending. This compact handoff is unimplemented; the detailed
+  appendix is still non-normative, and #484 alone does not supply it.
+
+Recovery judges listener liveness independently of session and target. A bounded
+pinned TLS-only probe must be available while selection is unfinished, including
+Holding; it opens no channel/admission and carries no application or credential
+frames. Complete only with all three facts verified. With an established dead
+listener or lost target, stop/settle the exact live successor on its own private
+slot before abandonment; a dead session needs no stop. Unknown liveness remains
+unresolved and grants no publication/admission. Abandonment cannot refuse solely
+because session and target remain live when the listener is established dead.
+Never stop a predecessor to clear its successor or rebind an old endpoint/pin.
+
+Code-first tasks own crash-family, concurrent-decision, fresh-network and
+mispinned-peer zero credential/Hello-byte proofs. Proposed test names and #452's
+239 fake tests supply no production evidence. Q-017's Colima, Docker Desktop and
+Linux Docker qualification gate remains; safe refusal is not qualification.
+Rootless Linux and Apple Containers have no qualification claim. No production
+code or stop condition changes in this design-only seam.
