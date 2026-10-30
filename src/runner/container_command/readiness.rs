@@ -593,11 +593,14 @@ fn exited_logs(
     let mut unanswered = 0_u64;
     for (index, service) in exited.iter().enumerate() {
         let done = index as u64 + 1;
-        let sub_step = exited_log_step_label(&service.service, done, total);
+        // The read is issued against the runtime container, so the frames name
+        // that identity — a Compose `container_name` may differ from the
+        // service name (effigy#460, Q-017).
+        let sub_step = exited_log_step_label(&service.container, done, total);
         progress.update(sub_step.clone(), Some((done, total)), None);
         // The readiness wait's own frame names the same read, so a timeout never
         // shows the finished probe while a log read runs.
-        parent.now_waiting_for(exited_log_parent_label(&service.service));
+        parent.now_waiting_for(exited_log_parent_label(&service.container));
         parent.update(sub_step, Some((done, total)), None);
         match container_last_log_line_for_policy(
             repo_root,
@@ -635,14 +638,16 @@ fn exited_logs_progress(total: u64) -> ProgressSource {
     ))
 }
 
-/// One exited container's log read, with its position in the set.
-fn exited_log_step_label(service: &str, done: u64, total: u64) -> String {
-    format!("reading the last line `{service}` printed ({done}/{total})")
+/// One exited container's log read, with its position in the set. `container`
+/// is the runtime identity the read is issued against, not the Compose service
+/// name (effigy#460).
+fn exited_log_step_label(container: &str, done: u64, total: u64) -> String {
+    format!("reading the last line `{container}` printed ({done}/{total})")
 }
 
 /// The same read named on the readiness wait's own frame.
-fn exited_log_parent_label(service: &str) -> String {
-    format!("the runtime's log tail of `{service}`")
+fn exited_log_parent_label(container: &str) -> String {
+    format!("the runtime's log tail of `{container}`")
 }
 
 /// Update one step per service and return the ones that are not ready. A
@@ -1049,18 +1054,18 @@ mod tests {
             progress.frame_at(Duration::from_secs(3)),
             "waiting for the last output of 2 exited containers; 3s elapsed"
         );
-        let sub_step = exited_log_step_label("web", 1, 2);
+        let sub_step = exited_log_step_label("demo-web-1", 1, 2);
         progress.update(sub_step.clone(), Some((1, 2)), None);
         assert_eq!(
             progress.frame_at(Duration::from_secs(9)),
-            "reading the last line `web` printed (1/2) (1/2); waiting for the last output of 2 exited containers; 9s elapsed"
+            "reading the last line `demo-web-1` printed (1/2) (1/2); waiting for the last output of 2 exited containers; 9s elapsed"
         );
         let parent = ProgressSource::waiting_for("the environment's services to report healthy");
-        parent.now_waiting_for(exited_log_parent_label("web"));
+        parent.now_waiting_for(exited_log_parent_label("demo-web-1"));
         parent.update(sub_step, Some((1, 2)), None);
         assert_eq!(
             parent.frame_at(Duration::from_secs(12)),
-            "reading the last line `web` printed (1/2) (1/2); waiting for the runtime's log tail of `web`; 12s elapsed"
+            "reading the last line `demo-web-1` printed (1/2) (1/2); waiting for the runtime's log tail of `demo-web-1`; 12s elapsed"
         );
     }
 
@@ -1090,8 +1095,11 @@ mod tests {
         .expect("write compose");
         let bin = root.join("bin");
         std::fs::create_dir(&bin).expect("mkdir bin");
-        let script =
-            format!("#!/bin/sh\ncase \"$*\" in\n  logs*) {logs_answer} ;;\n  *) exit 0 ;;\nesac\n");
+        let log = root.join("calls");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$*\" in\n  logs*) {logs_answer} ;;\n  *) exit 0 ;;\nesac\n",
+            log = log.display(),
+        );
         for name in ["docker", "colima"] {
             let executable = bin.join(name);
             std::fs::write(&executable, &script).expect("write fake runtime");
@@ -1118,17 +1126,34 @@ mod tests {
 
     #[test]
     fn a_readiness_timeout_names_each_exited_log_read_and_its_evidence() {
-        let (_fixture, policy, _env) = exited_logs_fixture(
+        let (fixture, policy, _env) = exited_logs_fixture(
             "effigy-readiness-exited-logs-",
             "printf 'app: database is not ready\\n'",
         );
-        let services = vec![health("db", "exited", None, 0, None)];
+        // The Compose service is `db`, but its runtime container carries an
+        // explicit `container_name`: the log read and both frames name the
+        // container, which is what the read is issued against.
+        let mut exited = health("db", "exited", None, 0, None);
+        exited.container = "custom-container".to_owned();
+        let services = vec![exited];
         let parent = ProgressSource::waiting_for("the environment's services to report healthy");
         let logs = exited_logs(&policy.repo_root, &policy, &services, &parent);
         assert_eq!(
             logs.get("db").map(String::as_str),
             Some("app: database is not ready"),
-            "the exited container's own last line is read under the named step"
+            "the diagnostic is keyed by the service its log line belongs to"
+        );
+        let calls = std::fs::read_to_string(fixture.path().join("calls")).unwrap_or_default();
+        assert!(
+            calls
+                .lines()
+                .any(|call| call == "logs --tail 20 custom-container"),
+            "the read targets the runtime container: {calls:?}"
+        );
+        assert_eq!(
+            parent.frame_at(Duration::from_secs(5)),
+            "reading the last line `custom-container` printed (1/1) (1/1); waiting for the runtime's log tail of `custom-container`; 5s elapsed",
+            "both readiness frames name the container, not the service"
         );
     }
 
@@ -1144,6 +1169,12 @@ mod tests {
         assert!(
             logs.is_empty(),
             "an unanswered log read yields no evidence, not a guess"
+        );
+        // `health()` names the container `demo-<service>-1`; the unanswered read
+        // named that container too.
+        assert_eq!(
+            parent.frame_at(Duration::from_secs(4)),
+            "reading the last line `demo-db-1` printed (1/1) (1/1); waiting for the runtime's log tail of `demo-db-1`; 4s elapsed"
         );
         // The evidence it does have still reaches the diagnostic.
         let parent_step = TimedStep::live(parent.clone());
