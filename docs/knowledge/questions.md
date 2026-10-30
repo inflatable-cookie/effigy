@@ -790,6 +790,12 @@ Three production facts remain to implement and prove:
   The post-#484 atomic attach-or-reserve decision is still required: re-read the
   live mapping and matching inputs under the same Env gate that reserves a
   successor, so simultaneous callers cannot revoke a matching live session.
+  The proposed normative `SelectionReceipt`/`SelectionObligation` handoff also
+  binds immutable binary/context/credential objects, expected/next selectors and
+  serving lease to that commit. Switching follows the durable commit; recovery
+  completes those exact comparisons or settles/revokes/abandons the successor.
+  Unknown remains Pending. This compact handoff is unimplemented; the detailed
+  appendix is still non-normative, and #484 alone does not supply it.
 
 Recovery judges listener liveness independently of session and target. A bounded
 pinned TLS-only probe must be available while selection is unfinished, including
