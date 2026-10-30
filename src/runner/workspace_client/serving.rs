@@ -118,9 +118,18 @@ impl std::fmt::Display for ServeError {
 /// parts when its own call returns: ownership moves here, and the serving owner
 /// retains them for the session's whole life.
 pub(crate) struct OwnedWorkspaceChannel<'a> {
-    pub(crate) run: Run<'a>,
+    /// The frozen session's owning run, already adopted under its supervisor
+    /// id. A `PreparedHostChannel` cannot exist before that adoption: the
+    /// kernel's `SessionLaunch::launch` requires the run's custody record
+    /// (`Run::session_owner`), so the activation adopts first and the channel is
+    /// prepared against the adopted run. Moving the supervisor in (rather than a
+    /// bare `Run`) is what makes that ordering the only representable one.
+    pub(crate) supervisor: SessionSupervisor<'a>,
+    /// `environment::workspace::WorkspaceOwner::session`.
     pub(crate) session: SessionRef,
-    pub(crate) prepared: PreparedHostChannel,
+    /// `environment::workspace::WorkspaceOwner::channel`: the launch, the TLS
+    /// acceptor and the qualified locator publication produced.
+    pub(crate) channel: PreparedHostChannel,
 }
 
 /// Why the frozen channel was not adopted for serving.
@@ -187,27 +196,26 @@ where
     /// custody.
     ///
     /// This is the consuming entry the environment calls once with the values
-    /// it committed: the run it owns, the session identity it published and the
-    /// prepared channel (`launch`, `acceptor`, `QualifiedHostLocator`). The run
-    /// is adopted under `supervisor_id` — the kernel's durable custody record,
-    /// not a copy of the binding — and is then retained by the returned owner,
-    /// which stops the listener and wipes the key when it is dropped or
-    /// stopped, and durably settles the run through [`Self::settle`].
+    /// it committed: the adopted run (the kernel's durable custody record, which
+    /// the prepared channel required), the session identity it published and the
+    /// prepared channel (`launch`, `acceptor`, `QualifiedHostLocator`). The
+    /// returned owner retains all of them, stops the listener and wipes the key
+    /// when it is dropped or stopped, and durably settles the run through
+    /// [`Self::settle`].
     ///
     /// Refuses a prepared channel published for another session rather than
     /// serving a listener it did not qualify.
     pub(crate) fn adopt_owned(
         owned: OwnedWorkspaceChannel<'a>,
-        supervisor_id: &str,
         server: channel::Server<Ad, Rs, Ob, Id>,
         cx: &'a EffectContext,
         observe: &'a ObserveContext,
         root: &'a StateRoot,
     ) -> Result<Self, AdoptError> {
         let OwnedWorkspaceChannel {
-            run,
+            supervisor,
             session,
-            prepared,
+            channel: prepared,
         } = owned;
         let PreparedHostChannel {
             launch,
@@ -219,7 +227,6 @@ where
         {
             return Err(AdoptError::WrongSession);
         }
-        let supervisor = SessionSupervisor::adopt(run, supervisor_id)?;
         let mut owner = Self::new(supervisor, launch, acceptor, server, cx, observe, root);
         owner.custody.locator = Some(locator);
         Ok(owner)

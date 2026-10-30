@@ -3415,8 +3415,11 @@ the owned values it produced:
 
 ```rust
 ServingOwner::adopt_owned(
-    OwnedWorkspaceChannel { run, session, prepared: PreparedHostChannel },
-    supervisor_id,
+    OwnedWorkspaceChannel {
+        supervisor,   // the run already adopted under its supervisor id
+        session: SessionRef,
+        channel: PreparedHostChannel,
+    },
     dispatcher,
     &cx,
     &observe,
@@ -3424,14 +3427,18 @@ ServingOwner::adopt_owned(
 ) -> Result<ServingOwner, AdoptError>
 ```
 
-It refuses a prepared channel published for another session, adopts the run
-under the supervisor id (the kernel's durable `workspace_session_custody`
-record, not a copy of the binding), and retains the run, listener, key and
-advertised locator for the session's whole life. The activation must move them
-and not keep, drop or recreate them when its call returns. `settle` stops
-serving, stops the listener, wipes the key and settles the adopted run through
-the kernel's own close transaction; dropping the owner stops the listener and
-wipes the key without settling, so the supervisor decides the outcome.
+The adopted run — not a bare `Run` — is what the entry takes, because a
+`PreparedHostChannel` cannot exist before that adoption: the kernel's
+`SessionLaunch::launch` requires the run's custody record
+(`Run::session_owner`), so the activation adopts first and prepares the channel
+against the adopted run, leaving that ordering the only representable one. The
+entry refuses a prepared channel whose locator names another session, and
+retains run, listener, key and advertised locator for the session's whole life;
+the activation must move them and not keep, drop or recreate them when its call
+returns. `settle` stops serving, stops the listener, wipes the key and settles
+the adopted run through the kernel's close transaction; dropping the owner
+stops the listener and wipes the key without settling, so the supervisor decides
+the outcome.
 
 The pinned TLS connection is the production transport now that #504 merged: a
 context that qualifies a locator is opened through `PinnedChannelOpener`

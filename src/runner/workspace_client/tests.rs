@@ -1430,3 +1430,633 @@ fn an_unresumable_cursor_is_a_typed_refusal_with_no_fallback() {
     // The refusal recorded no second run and stopped nothing.
     assert_eq!(calls.lock().expect("calls").admitted, vec![run]);
 }
+
+// ---------------------------------------------------------------------------
+// The frozen activation handoff: adopt the owned channel, retain it, settle it.
+// ---------------------------------------------------------------------------
+
+use super::serving::{AdoptError, OwnedWorkspaceChannel, ServingOwner};
+use crate::runner::workspace_transport::qualification::{
+    Backend, ChannelAliasPlan, ChannelPreparation, GuestChannelProbe, GuestDialEvidence,
+    PreparedHostChannel, ResolvedAlias,
+};
+use effigy_kernel::workspace_session::SessionRef;
+use std::net::{SocketAddr, TcpStream};
+
+/// The guest half of `prepare_channel`'s qualification. The fixture models the
+/// private fixture network: the TLS dial is real (pin checked in the
+/// handshake) and sends no application bytes.
+struct PrivateGuest {
+    target: WorkspaceContainerIdentity,
+    peer: SocketAddr,
+}
+
+impl GuestChannelProbe for PrivateGuest {
+    fn resolve(
+        &mut self,
+        _: &WorkspaceContainerIdentity,
+        alias: &str,
+        _: Duration,
+    ) -> Observed<ResolvedAlias> {
+        assert_eq!(alias, "effigy-host");
+        Observed::Verified(
+            ResolvedAlias {
+                target: self.target.clone(),
+                address: self.peer.ip(),
+            },
+            serving_evidence(),
+        )
+    }
+
+    fn dial(
+        &mut self,
+        _: &WorkspaceContainerIdentity,
+        endpoint: &str,
+        pin: &Digest,
+        budget: Duration,
+    ) -> Observed<GuestDialEvidence> {
+        let port = endpoint
+            .strip_prefix("effigy-host:")
+            .and_then(|port| port.parse::<u16>().ok())
+            .expect("the guest dials the published alias");
+        self.peer.set_port(port);
+        match crate::runner::workspace_transport::TlsChannelTransport::connect(
+            self.peer,
+            pin.clone(),
+            budget,
+        ) {
+            Ok(transport) => {
+                let verified = transport.verified_peer().expect("a pinned peer").digest;
+                drop(transport);
+                Observed::Verified(
+                    GuestDialEvidence {
+                        target: self.target.clone(),
+                        peer: self.peer,
+                        pin: verified,
+                    },
+                    serving_evidence(),
+                )
+            }
+            Err(_) => Observed::Unknown(effigy_kernel::observe::UnknownReason::Unparsable(
+                "guest TLS dial refused".into(),
+            )),
+        }
+    }
+}
+
+/// Prepare the exact channel the environment publishes, on this run.
+fn prepare_owned_channel(
+    supervisor: &mut SessionSupervisor<'_>,
+    session: &SessionRef,
+) -> PreparedHostChannel {
+    let target = container();
+    let plan = ChannelAliasPlan::observed(Backend::LinuxDocker, "default", None, None)
+        .expect("an observed alias plan");
+    let mut guest = PrivateGuest {
+        target: target.clone(),
+        peer: "127.0.0.1:0".parse().expect("peer"),
+    };
+    crate::runner::workspace_transport::qualification::prepare_channel(
+        ChannelPreparation {
+            container_mode: true,
+            plan: &plan,
+            target: &target,
+            session,
+            supervisor: "452-supervisor",
+        },
+        supervisor,
+        &mut guest,
+        Duration::from_secs(2),
+    )
+    .expect("channel preparation")
+    .expect("container mode prepares a channel")
+}
+
+fn serving_server_for(
+    calls: SharedCalls,
+    root: &StateRoot,
+) -> host::Server<CountingAdmitter<'_>, CountingResolver, CountingObserver, RunIds> {
+    host::Server::new(
+        negotiation(),
+        fence(),
+        server_identity(),
+        grants_for(capability()),
+        host::Dispatcher::new(
+            CountingAdmitter {
+                calls: calls.clone(),
+                root,
+                runs: Vec::new(),
+            },
+            CountingResolver {
+                calls: calls.clone(),
+                owner: session_task("guest-request").resource(),
+            },
+            CountingObserver {
+                calls: calls.clone(),
+            },
+            RunIds(VecDeque::new()),
+        ),
+    )
+}
+
+#[test]
+fn the_owned_channel_is_adopted_retained_and_settled() {
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let endpoint: SocketAddr = prepared
+            .locator
+            .channel()
+            .endpoint
+            .as_deref()
+            .and_then(|endpoint| endpoint.strip_prefix("effigy-host:"))
+            .and_then(|port| port.parse::<u16>().ok())
+            .and_then(|port| Some(SocketAddr::from(([127, 0, 0, 1], port))))
+            .expect("a published alias endpoint");
+
+        let owner = ServingOwner::adopt_owned(
+            OwnedWorkspaceChannel {
+                supervisor,
+                session,
+                channel: prepared,
+            },
+            serving_server_for(calls.clone(), root),
+            cx,
+            observe,
+            root,
+        )
+        .expect("the frozen channel is adopted");
+
+        // The owner retains the launch and the advertised locator; nothing
+        // served until it takes a turn.
+        assert!(owner.launch().is_some(), "the listener is retained");
+        assert!(
+            owner.locator().is_some(),
+            "the published locator is retained"
+        );
+        assert!(owner.key_held(), "the signing key is retained");
+        assert!(
+            !owner.serving(),
+            "no connection is dispatched before a turn"
+        );
+
+        let mut owner = owner;
+        let served = owner
+            .serve_pending(&mut host::NoStreams)
+            .expect("a turn with nothing waiting");
+        assert!(served.is_none(), "nothing was waiting");
+        assert!(owner.serving(), "the adopted run serves the channel");
+
+        // Settlement stops the listener, wipes the key and settles the run.
+        let cleanup = cleanup(cx);
+        let outcome = owner.settle(&cleanup, &mut NoEffects);
+        assert!(outcome.is_ok(), "the session settles: {outcome:?}");
+        assert!(
+            TcpStream::connect(endpoint).is_err(),
+            "no listener outlives the settled owner"
+        );
+    });
+}
+
+#[test]
+fn a_channel_published_for_another_session_is_never_adopted() {
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let endpoint: SocketAddr = prepared
+            .locator
+            .channel()
+            .endpoint
+            .as_deref()
+            .and_then(|endpoint| endpoint.strip_prefix("effigy-host:"))
+            .and_then(|port| port.parse::<u16>().ok())
+            .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+            .expect("a published alias endpoint");
+        // Another session's identity: the same environment, a different run.
+        let other = SessionRef::new(
+            RunId::new(1, [201; 10]).expect("run id"),
+            session.fence().clone(),
+            session.environment().clone(),
+            session.environment_generation(),
+        );
+
+        let error = ServingOwner::adopt_owned(
+            OwnedWorkspaceChannel {
+                supervisor,
+                session: other,
+                channel: prepared,
+            },
+            serving_server_for(Arc::new(Mutex::new(Calls::default())), root),
+            cx,
+            observe,
+            root,
+        )
+        .expect_err("a channel published for another session is refused");
+
+        assert!(matches!(error, AdoptError::WrongSession), "{error:?}");
+        assert!(
+            TcpStream::connect(endpoint).is_err(),
+            "a refused adoption does not keep the other session's listener"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// The serving owner: adopt, serve, accept, dispatch, release.
+// ---------------------------------------------------------------------------
+
+use super::serving::ChannelAccept;
+use crate::runner::workspace_transport::listener::SessionTlsListener;
+use effigy_kernel::observe::Evidence;
+use effigy_kernel::workspace_session::{ServingProbe, SessionLaunch, SessionSupervisor};
+
+fn serving_evidence() -> Evidence {
+    Evidence::new("452 serving owner proof".to_owned(), None).expect("evidence")
+}
+
+/// A probe that answers the qualification handshake. The real pinned handshake
+/// is the transport's own proof (#504); this fixture only needs a launch that is
+/// qualified enough to publish.
+struct VerifiedProbe;
+
+impl ServingProbe for VerifiedProbe {
+    fn pinned_handshake(&mut self, _: SocketAddr, _: &Digest, _: Duration) -> Observed<()> {
+        Observed::Verified((), serving_evidence())
+    }
+}
+
+/// A session run with its environment active and the session's own custody
+/// record, as the host supervisor holds it after the E10 handoff.
+fn with_admitted_session<T>(
+    test: impl for<'a> FnOnce(
+        Run<'a>,
+        SessionRef,
+        &'a EffectContext,
+        &'a StateRoot,
+        &'a ObserveContext,
+    ) -> T,
+) -> T {
+    let fixture = effigy_test_support::Fixture::new("workspace-serving").expect("fixture");
+    let cx = effects();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let observe = observation();
+    let checkout = CheckoutId::new(CheckoutKind::EphemeralClone, [37; 16]);
+    let environment = ResourceId::environment(checkout, "stack").expect("environment");
+    let task = TaskId::new(checkout, "", Surface::Published, "workspace", None).expect("task");
+    let invocation = ResolvedInvocation::new(InvocationSpec {
+        owner: task.resource(),
+        task: task.clone(),
+        route: Route::Task,
+        argv: vec![],
+        cwd: "".into(),
+        target: ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        gates: vec![],
+        attachments: vec![],
+        class: EffectClass::Mutate,
+        placement: effigy_kernel::ctx::Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .expect("invocation");
+    let cleanup_context = cleanup(&cx);
+    // The environment row must be active before a session may borrow it.
+    let mut environment_spec = invocation.spec().clone();
+    environment_spec.owner = environment.clone();
+    let environment_invocation = ResolvedInvocation::new(environment_spec).expect("invocation");
+    Run::begin(
+        &cx,
+        &root,
+        &environment_invocation,
+        BeginOpts {
+            id: RunId::new(1, [36; 10]).expect("run id"),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next_argv(),
+            custody: None,
+        },
+        &cleanup_context,
+        &mut NoEffects,
+    )
+    .expect("environment run")
+    .settle(&cleanup_context, &mut NoEffects)
+    .expect("settled environment");
+    let connection =
+        rusqlite::Connection::open(root.path().join(effigy_kernel::store::DB_NAME)).expect("store");
+    connection
+        .execute(
+            "UPDATE resources SET state='active',last_applied='1' WHERE name=?1",
+            [environment.name().to_string()],
+        )
+        .expect("active environment");
+    drop(connection);
+    let (run, session) = SessionRef::admit(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: session_run(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next_argv(),
+            custody: None,
+        },
+        &cleanup_context,
+        &mut NoEffects,
+        &effigy_kernel::run::Fence {
+            resource: environment,
+            generation: Generation::new(1),
+        },
+        effigy_kernel::supervise::Placement::Detached,
+    )
+    .expect("session admitted");
+    test(run, session, &cx, &root, &observe)
+}
+
+/// The same fixture, already adopted by an independent supervisor.
+fn with_serving_session<T>(
+    test: impl for<'a> FnOnce(
+        SessionSupervisor<'a>,
+        SessionRef,
+        &'a EffectContext,
+        &'a StateRoot,
+        &'a ObserveContext,
+    ) -> T,
+) -> T {
+    with_admitted_session(|run, session, cx, root, observe| {
+        let supervisor = SessionSupervisor::adopt(run, "452-supervisor").expect("adopted");
+        test(supervisor, session, cx, root, observe)
+    })
+}
+
+/// A transport whose bytes are scripted: it answers nothing on its own, so the
+/// loop's dispatch is what the proof observes.
+struct ScriptedTransport {
+    input: Vec<u8>,
+    cursor: usize,
+    written: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Transport for ScriptedTransport {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.input.len() - self.cursor;
+        if left == 0 {
+            return Ok(0);
+        }
+        let take = left.min(buf.len());
+        buf[..take].copy_from_slice(&self.input[self.cursor..self.cursor + take]);
+        self.cursor += take;
+        Ok(take)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.written
+            .lock()
+            .expect("written")
+            .extend_from_slice(bytes);
+        Ok(())
+    }
+    fn verified_peer(&self) -> Option<host::ServerIdentity> {
+        Some(host::ServerIdentity {
+            digest: server_identity(),
+        })
+    }
+}
+
+fn framed(frames: &[host::Frame]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for frame in frames {
+        let body = host::encode_frame(frame).expect("encoded frame");
+        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&body);
+    }
+    bytes
+}
+
+/// Every frame the host wrote, decoded in order.
+fn decoded(bytes: &[u8]) -> Vec<host::Frame> {
+    let mut frames = Vec::new();
+    let mut cursor = 0;
+    while cursor + 4 <= bytes.len() {
+        let mut prefix = [0u8; 4];
+        prefix.copy_from_slice(&bytes[cursor..cursor + 4]);
+        let length = u32::from_be_bytes(prefix) as usize;
+        cursor += 4;
+        frames.push(host::decode_frame(&bytes[cursor..cursor + length]).expect("a valid frame"));
+        cursor += length;
+    }
+    assert_eq!(cursor, bytes.len(), "trailing bytes on the wire");
+    frames
+}
+
+fn grants_for(capability: Secret) -> host::GrantBook {
+    let mut grants = host::GrantBook::new();
+    grants.issue(
+        capability,
+        grant_binding(),
+        host::session_operations(),
+        [Target::Host].into_iter().collect(),
+    );
+    grants
+}
+
+/// The client half of a served connection: negotiate and authenticate, then end
+/// the stream, so the host's connection turn closes cleanly.
+fn serving_connection() -> (ScriptedTransport, Arc<Mutex<Vec<u8>>>) {
+    let binary = running_binary();
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let input = framed(&[
+        host::Frame::Hello(host::Hello {
+            schema: host::SCHEMA.to_owned(),
+            protocol_versions: vec![host::PROTOCOL_V1],
+            effigy_version: binary.version,
+            binary_digest: parse_digest(&binary.digest).expect("digest"),
+            context_generation: Generation::new(GENERATION),
+            session_run_id: session_run(),
+        }),
+        host::Frame::Authenticate(capability()),
+    ]);
+    (
+        ScriptedTransport {
+            input,
+            cursor: 0,
+            written: written.clone(),
+        },
+        written,
+    )
+}
+
+/// An acceptor that refuses to hand over a connection before the session run
+/// serves the channel, so the owner's ordering is what the proof measures.
+struct ScriptedAccept {
+    connections: VecDeque<ScriptedTransport>,
+    accepted: usize,
+}
+
+impl ChannelAccept for ScriptedAccept {
+    type Transport = ScriptedTransport;
+    fn accept(
+        &mut self,
+        launch: &SessionLaunch,
+        run: &Run<'_>,
+    ) -> io::Result<Option<ScriptedTransport>> {
+        assert!(
+            launch.serving(run),
+            "a connection was accepted before the session run served the channel"
+        );
+        self.accepted += 1;
+        Ok(self.connections.pop_front())
+    }
+}
+
+#[test]
+fn a_connection_is_served_only_after_the_session_run_serves() {
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let (listener, key, _acceptor) = SessionTlsListener::bind(
+            SocketAddr::from(([127u8, 0, 0, 1], 0)),
+            Duration::from_secs(1),
+        )
+        .expect("bound session listener");
+        let mut launch = SessionLaunch::launch(
+            &mut supervisor,
+            &session,
+            "452-supervisor",
+            key,
+            Box::new(listener),
+        )
+        .expect("session listener custody");
+        launch
+            .qualify(&mut VerifiedProbe, Duration::from_secs(1))
+            .expect("qualified");
+        launch
+            .publish(&supervisor)
+            .expect("a qualified listener publishes its locator");
+        let endpoint = launch.endpoint().expect("bound endpoint");
+        assert!(
+            !launch.serving(&supervisor),
+            "a published launch does not serve until its owner says so"
+        );
+
+        let (connection, written) = serving_connection();
+        let acceptor = ScriptedAccept {
+            connections: VecDeque::from(vec![connection]),
+            accepted: 0,
+        };
+        let server = host::Server::new(
+            negotiation(),
+            fence(),
+            server_identity(),
+            grants_for(capability()),
+            host::Dispatcher::new(
+                CountingAdmitter {
+                    calls: calls.clone(),
+                    root,
+                    runs: Vec::new(),
+                },
+                CountingResolver {
+                    calls: calls.clone(),
+                    owner: session_task("guest-request").resource(),
+                },
+                CountingObserver {
+                    calls: calls.clone(),
+                },
+                RunIds(VecDeque::new()),
+            ),
+        );
+        let mut owner = ServingOwner::new(supervisor, launch, acceptor, server, cx, observe, root);
+        assert!(
+            !owner.serving(),
+            "no connection is dispatched before the owner serves"
+        );
+
+        let served = owner
+            .serve_pending(&mut host::NoStreams)
+            .expect("the owner served its connection")
+            .expect("a connection was waiting");
+        assert_eq!(served.responses, 0);
+        assert!(owner.serving(), "the owner serves after its first turn");
+        assert_eq!(owner.served(), 1);
+
+        // The connection's negotiation and credential were answered through the
+        // dispatcher this owner feeds.
+        let frames = decoded(&written.lock().expect("written"));
+        assert!(
+            matches!(frames.first(), Some(host::Frame::HelloOk(_))),
+            "the served connection negotiated"
+        );
+
+        // The listener lives only while the owner holds its custody.
+        assert!(TcpStream::connect(endpoint).is_ok());
+        owner.stop();
+        assert!(
+            !owner.key_held(),
+            "the session key is wiped with the owner's custody"
+        );
+        assert!(
+            TcpStream::connect(endpoint).is_err(),
+            "no listener outlives its owner"
+        );
+    });
+}
+
+#[test]
+fn dropping_the_owner_closes_the_socket_it_held() {
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let (listener, key, _acceptor) = SessionTlsListener::bind(
+            SocketAddr::from(([127u8, 0, 0, 1], 0)),
+            Duration::from_secs(1),
+        )
+        .expect("bound session listener");
+        let mut launch = SessionLaunch::launch(
+            &mut supervisor,
+            &session,
+            "452-supervisor",
+            key,
+            Box::new(listener),
+        )
+        .expect("session listener custody");
+        launch
+            .qualify(&mut VerifiedProbe, Duration::from_secs(1))
+            .expect("qualified");
+        launch.publish(&supervisor).expect("published");
+        let endpoint = launch.endpoint().expect("bound endpoint");
+        let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+        let server = host::Server::new(
+            negotiation(),
+            fence(),
+            server_identity(),
+            grants_for(capability()),
+            host::Dispatcher::new(
+                CountingAdmitter {
+                    calls: calls.clone(),
+                    root,
+                    runs: Vec::new(),
+                },
+                CountingResolver {
+                    calls: calls.clone(),
+                    owner: session_task("guest-request").resource(),
+                },
+                CountingObserver {
+                    calls: calls.clone(),
+                },
+                RunIds(VecDeque::new()),
+            ),
+        );
+        let owner = ServingOwner::new(
+            supervisor,
+            launch,
+            ScriptedAccept {
+                connections: VecDeque::new(),
+                accepted: 0,
+            },
+            server,
+            cx,
+            observe,
+            root,
+        );
+        assert!(TcpStream::connect(endpoint).is_ok(), "the listener is live");
+        drop(owner);
+        assert!(
+            TcpStream::connect(endpoint).is_err(),
+            "dropping the owner closes the socket and wipes the key"
+        );
+    });
+}
