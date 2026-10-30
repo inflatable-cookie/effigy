@@ -1043,6 +1043,10 @@ inventory, exec readiness or exposure verification leaves the scope in place.
 `effigy container up --detach` exits non-zero and reports the activation as
 unavailable. It never treats an unavailable probe as an empty or ready stack,
 and there is nothing to clean up: the next `up` reconciles from what is running.
+A host listener that fails its own readiness is the one exception that is not
+unavailable: the activation settles, the container's verified routes stay
+published, and the command reports partial exposure naming the withheld route
+and the published ones.
 
 The supported reconciliation command is `effigy container up --detach`.
 Each environment has one record (contract 053): the backend it runs on and why,
@@ -1067,6 +1071,30 @@ also reports preparation failures as unavailable with no recovery authority.
 These stages and codes identify caller boundaries, not readiness proof; the
 cause is what refused. Details contain no raw backend output, argv or
 environment.
+
+Partial exposure is reported separately, because the activation settled. When
+the container's routes are published and a managed host listener kept only its
+own route withheld, the JSON `state` is `partial`, `phase` is
+`listener_exposure`, `readiness` is `verified`, `exposure` is `partial` and
+`failure_kind` is `managed_listener_exposure`. `exposed_routes` lists every
+route the activation published as `domain -> target`, and `withheld_routes`
+names each failed listener with its `route_domain`, `status`,
+`observed_status`, bounded `detail`, bounded `output_tail` and its own
+`restart` recovery. The text form names the same published and withheld routes.
+A listener that answers the wrong status is refused as soon as that answer is
+seen, and a still-closed port's progress line carries the child's own bounded,
+redacted output tail. A port that never opens cannot hold the activation open:
+listener startup shares the bring-up's observation budget, so `up` returns with
+that listener's route withheld when the budget is spent, settling that
+generation before the command returns so it cannot publish after the report.
+A listener the activation did not start is reconciled against its own published
+generation first: a healthy generation the previous activation published stays
+exposed when it still matches the current declaration (route domain, TLS, bind
+and the live declared readiness request), and a generation that serves an older
+declaration, or no longer answers the declared readiness request, is settled so
+its route is withdrawn before the report withholds the declared one. A dependent of
+a withheld listener withholds its own route too, through a whole `depends_on`
+chain, instead of waiting for a record that process never wrote.
 Fresh full-ID inspect must match project, service, non-oneoff running state and
 checkout ownership; bindings come from current inspect published ports. An
 owned replacement updates its TCP target in the same locked route transaction,
@@ -1560,6 +1588,41 @@ TCP catalog services such as postgres, mariadb, redis, and memcached also
 answer on their checkout's loopback alias address. That means host and
 container code can use the same stable names without hand-written
 `/etc/hosts` edits.
+
+A linked worktree or marked ephemeral clone answers those aliases on its own
+scoped apex (`postgres.acme-w<key>.test`). Its container targets resolve the
+declared name too, and a task Effigy runs on the host receives the scoped name
+where its configuration carries the declared one - in `[tasks.<name>].env`, an
+env-schema or `.env` value, a declared secret, or a sequence step's
+environment - so `php artisan test` or `cargo test` in a worktree reaches that
+worktree's database. The consumer's manifest keeps the declared name and its
+value source precedence is unchanged.
+
+That covers a task's own `env`, an env-schema or `.env` value, a declared
+secret, a sequence step's environment, a managed session's process plan
+(`mode = "tui"`), a configured test suite's own environment, command and
+`setup`/`teardown` step environments, and a value the child would otherwise
+inherit unchanged from your own shell — such as an exported `DATABASE_URL` — for
+a host task, a sequence step, a managed host workload and a selected host suite.
+Each child boundary decides its own precedence: a key the run delivers to that
+child wins, while a `setup` step's assignment is its own statement, and a key
+that only appears in a command's text assigns nothing — neither hides the
+caller's value from the workload or suite command after it. Every alias a selected suite would use is
+proved before any suite starts, and the proof reads only the endpoints Effigy
+delivered — text that merely mentions the alias proves nothing. Only an endpoint is rewritten - a value
+that is exactly the host, the host of a URL authority, or a host carrying its
+own port - so text that merely names the alias (a search pattern, a JSON blob,
+a comma-separated list), a URL credential and a URL naming another server keep
+their bytes. Effigy rewrites the environment it
+delivers, never a command body.
+
+Before such a run starts, Effigy proves the scope's backing service: its route
+must belong to this checkout and publish an upstream port. When it does not,
+the task refuses with the alias, the service and the command that starts the
+stack (`effigy container up <NAME>`), and nothing runs. The primary checkout
+keeps its declared name, and a container-bound task is not rewritten because
+its target's own network already answers both names. A `--plan` render refuses
+nothing: a task plan shows the aliases it would deliver.
 
 By default, generated TCP aliases, the `container hosts` cookie apex and
 gateway service-alias registration all use the same apex.

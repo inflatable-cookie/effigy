@@ -26,7 +26,7 @@ use std::cell::RefCell;
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anstyle::Style;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -95,6 +95,101 @@ impl StepMode {
     }
 }
 
+/// Shared, operation-specific progress state. The awaited object or probe is
+/// always present, even before the operation has emitted its first event.
+#[derive(Debug, Clone)]
+pub struct ProgressSource {
+    state: Arc<Mutex<ProgressState>>,
+    started: Instant,
+}
+
+#[derive(Debug)]
+struct ProgressState {
+    awaiting: String,
+    sub_step: Option<String>,
+    count: Option<(u64, u64)>,
+    event: Option<String>,
+}
+
+impl ProgressSource {
+    /// Name the exact object or probe being awaited.
+    pub fn waiting_for(awaiting: impl Into<String>) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(ProgressState {
+                awaiting: awaiting.into(),
+                sub_step: None,
+                count: None,
+                event: None,
+            })),
+            started: Instant::now(),
+        }
+    }
+
+    /// Name the exact object or probe now awaited, when the work moves on to
+    /// something other than the one first named.
+    pub fn waiting_on(&self, awaiting: impl Into<String>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .awaiting = awaiting.into();
+    }
+
+    /// Update the current object or sub-step, known count and latest event.
+    pub fn update(
+        &self,
+        sub_step: impl Into<String>,
+        count: Option<(u64, u64)>,
+        event: Option<String>,
+    ) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.sub_step = Some(sub_step.into());
+        state.count = count;
+        if event.is_some() {
+            state.event = event;
+        }
+    }
+
+    /// Publish the latest event without changing the current sub-step: what an
+    /// operation just observed about the object it is waiting on.
+    pub fn event(&self, event: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.event = Some(event.into());
+    }
+
+    /// Name a new object or probe after the previous wait ended. Clears
+    /// sub-step, count and event so frames name this wait until `update`.
+    pub fn now_waiting_for(&self, awaiting: impl Into<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.awaiting = awaiting.into();
+        state.sub_step = None;
+        state.count = None;
+        state.event = None;
+    }
+
+    /// The operator-visible label at `elapsed`. Tests use this as a fake clock.
+    pub fn frame_at(&self, elapsed: Duration) -> String {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut label = state
+            .sub_step
+            .clone()
+            .unwrap_or_else(|| format!("waiting for {}", state.awaiting));
+        if let Some((done, total)) = state.count {
+            label.push_str(&format!(" ({done}/{total})"));
+        }
+        if let Some(event) = &state.event {
+            label.push_str(&format!("; last: {event}"));
+        } else if state.sub_step.is_some() {
+            label.push_str(&format!("; waiting for {}", state.awaiting));
+        }
+        label.push_str(&format!("; {}s elapsed", elapsed.as_secs()));
+        label
+    }
+
+    fn frame(&self) -> String {
+        self.frame_at(self.started.elapsed())
+    }
+}
+
 /// One step's own state. Cloning a [`Step`] shares it, so a finish from any
 /// clone is the step's single finish.
 struct StepInner {
@@ -104,6 +199,25 @@ struct StepInner {
     bar: Option<ProgressBar>,
     finished: AtomicBool,
     children: Mutex<Vec<Weak<StepInner>>>,
+    render_lock: Mutex<()>,
+}
+
+impl StepInner {
+    fn render_live(&self, source: &ProgressSource, elapsed: Duration) -> bool {
+        let _guard = self
+            .render_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.finished.load(Ordering::SeqCst) {
+            return false;
+        }
+        let label = source.frame_at(elapsed);
+        *self.label.lock().unwrap_or_else(PoisonError::into_inner) = label.clone();
+        if let Some(bar) = &self.bar {
+            bar.set_message(self.sink.style_label(&label));
+        }
+        true
+    }
 }
 
 /// A running step. Dropping it does not finish it; call [`Step::succeed`],
@@ -139,6 +253,7 @@ impl Step {
                 bar,
                 finished: AtomicBool::new(false),
                 children: Mutex::new(Vec::new()),
+                render_lock: Mutex::new(()),
             }),
         };
         active.retain(|entry| entry.strong_count() > 0);
@@ -153,6 +268,26 @@ impl Step {
                 .push(Arc::downgrade(&step.inner));
         }
         step
+    }
+
+    fn new_live(sink: Arc<Sink>, parent: Option<&Step>, source: ProgressSource) -> Self {
+        let step = Self::new(sink, parent, &source.frame());
+        if step.inner.bar.is_some() {
+            let weak = Arc::downgrade(&step.inner);
+            std::thread::spawn(move || loop {
+                std::thread::sleep(TICK);
+                let Some(inner) = weak.upgrade() else { break };
+                if !inner.render_live(&source, source.started.elapsed()) {
+                    break;
+                }
+            });
+        }
+        step
+    }
+
+    /// Start a nested step driven by an operation's live state.
+    pub fn live_step(&self, source: ProgressSource) -> Step {
+        Step::new_live(Arc::clone(&self.inner.sink), Some(self), source)
     }
 
     /// The label the operator last saw for this step.
@@ -180,6 +315,10 @@ impl Step {
     }
 
     /// A nested step: a distinct line for the part of the work now running.
+    #[cfg_attr(
+        effigy_feedback_lint,
+        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    )]
     pub fn step(&self, label: &str) -> Step {
         Step::new(Arc::clone(&self.inner.sink), Some(self), label)
     }
@@ -197,6 +336,11 @@ impl Step {
 
     /// Finished without a line: a step that resolved into other output.
     pub fn finish_clear(&self) {
+        let _guard = self
+            .inner
+            .render_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if self.inner.finished.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -212,6 +356,11 @@ impl Step {
     }
 
     fn finish(&self, ok: bool, summary: &str) {
+        let _guard = self
+            .inner
+            .render_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if self.inner.finished.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -244,6 +393,10 @@ impl Step {
             let Some(child) = child.upgrade() else {
                 continue;
             };
+            let _guard = child
+                .render_lock
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             if child.finished.swap(true, Ordering::SeqCst) {
                 continue;
             }
@@ -321,6 +474,10 @@ impl Sink {
         crate::style_text(self.color, self.styles.muted, label)
     }
 
+    #[cfg_attr(
+        effigy_feedback_lint,
+        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    )]
     fn start_bar(&self, label: &str) -> ProgressBar {
         let bar = self.multi().add(ProgressBar::new_spinner());
         if let Ok(style) = ProgressStyle::with_template(SPINNER_TEMPLATE) {
@@ -455,10 +612,29 @@ fn print_line_to(sink: &Sink, json: bool, line: &str) {
     sink.write_above_bars(&format!("{line}\n"));
 }
 
+/// End an outcome that was immediate: one ✓/✗ line, no spinner. Use it where a
+/// step would start and succeed in the same breath.
+pub fn finish_line(ok: bool, summary: &str) {
+    if capture_finish(ok, summary) {
+        return;
+    }
+    let sink = global_sink();
+    sink.write_finish(sink.mode(), ok, summary);
+}
+
 /// Start a top-level step. The label is short, present tense and names its
 /// subject: `starting web`.
+#[cfg_attr(
+    effigy_feedback_lint,
+    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+)]
 pub fn step(label: &str) -> Step {
     Step::new(Arc::clone(global_sink()), None, label)
+}
+
+/// Start a top-level step driven by an operation's live state.
+pub fn live_step(source: ProgressSource) -> Step {
+    Step::new_live(Arc::clone(global_sink()), None, source)
 }
 
 /// Silence steps while another surface owns the terminal (the managed-run
@@ -552,6 +728,52 @@ mod tests {
             .multi
             .set(MultiProgress::with_draw_target(ProgressDrawTarget::hidden()));
         (sink, buffer)
+    }
+
+    #[test]
+    fn live_frames_show_state_and_elapsed_until_finish() {
+        let source = ProgressSource::waiting_for("web health probe on port 8080");
+        let (sink, _) = sink(StepMode::Silent);
+        let step = Step::new_live(sink, None, source.clone());
+        assert!(step.inner.render_live(&source, Duration::from_secs(2)));
+        assert_eq!(
+            step.label(),
+            "waiting for web health probe on port 8080; 2s elapsed"
+        );
+        source.update("checking web", Some((2, 3)), Some("HTTP 404".into()));
+        assert!(step.inner.render_live(&source, Duration::from_secs(5)));
+        assert_eq!(
+            step.label(),
+            "checking web (2/3); last: HTTP 404; 5s elapsed"
+        );
+        source.update(
+            "checking database",
+            Some((3, 3)),
+            Some("connection refused".into()),
+        );
+        assert!(step.inner.render_live(&source, Duration::from_secs(7)));
+        assert_eq!(
+            step.label(),
+            "checking database (3/3); last: connection refused; 7s elapsed"
+        );
+        step.finish_clear();
+        assert!(!step.inner.render_live(&source, Duration::from_secs(8)));
+        assert!(step.label().ends_with("7s elapsed"));
+    }
+
+    #[test]
+    fn an_event_lands_without_moving_the_sub_step() {
+        let source = ProgressSource::waiting_for("the environment gate for `stack`");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(1)),
+            "waiting for the environment gate for `stack`; 1s elapsed"
+        );
+        source.update("reconciling the backend", Some((1, 3)), None);
+        source.event("run agq holds it (pid 9012, task `dev`)");
+        assert_eq!(
+            source.frame_at(Duration::from_secs(3)),
+            "reconciling the backend (1/3); last: run agq holds it (pid 9012, task `dev`); 3s elapsed"
+        );
     }
 
     #[test]

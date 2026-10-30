@@ -604,28 +604,18 @@ fn active_backend_id_for_policy(repo_root: &Path, policy: &EffectiveContainerPol
     }
 }
 
+/// Copy into the full container id the caller already verified. Resolving a
+/// service alias here could select a replacement after the caller's fence.
 pub(in crate::runner) fn copy_file_into_service(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    service: &str,
+    container_id: &str,
     host_source: &Path,
     container_dest: &str,
 ) -> Result<(), RunnerError> {
-    let container_id = colima::resolve_compose_service_container_id(
-        repo_root,
-        policy,
-        service,
-        None,
-        &run_command_capture_allow_failure,
-        &format_args,
-    )?;
     let mut args = vec![OsString::from("cp")];
     args.push(OsString::from(host_source));
-    args.push(OsString::from(format!(
-        "{}:{}",
-        container_id.to_string_lossy(),
-        container_dest
-    )));
+    args.push(OsString::from(format!("{container_id}:{container_dest}")));
 
     let (program, resolved_args) = copy_file_into_service_invocation(repo_root, policy, &args)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;

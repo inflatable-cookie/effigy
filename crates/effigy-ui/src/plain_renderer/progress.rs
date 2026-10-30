@@ -9,6 +9,10 @@ use effigy_core::widgets::StepState;
 use super::PlainRenderer;
 
 impl<W: Write> PlainRenderer<W> {
+    #[cfg_attr(
+        effigy_feedback_lint,
+        deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+    )]
     pub(super) fn render_spinner(&mut self, label: &str) -> UiResult<Box<dyn SpinnerHandle>> {
         if self.progress_enabled {
             let spinner = ProgressBar::new_spinner();

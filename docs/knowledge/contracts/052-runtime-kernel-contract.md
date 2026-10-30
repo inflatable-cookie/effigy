@@ -398,7 +398,7 @@ names the rule or invariant it relies on.
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
 | K10 | **Observability is not outcome.** A failed status, log or report write never changes a workload's outcome or exit code. | A succeeded task turned into an error by a status write; ENOSPC on a log failing the workload. |
 | K11 | **Output independence.** Output format never changes execution. One output owner per invocation. | `--json` selecting a different executor, scheduler, timeout or cleanup. |
-| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor, and are redacted before any sink. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts. |
+| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output is reduced to well-formed text whose only control is `LF` (plus the `CR` of a line ending) and then redacted, in merged arrival order, before every sink; the canonical captured tail is that same merged result, and a stream log or queue is redacted as its own byte stream. A redaction replacement is a byte readers keep and no secret contains, so no reader can join across it. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; a secret split by a C1 control or an invalid byte a renderer drops; a secret split by a lone carriage return or a TAB, which a display moves the next bytes with; a redaction replacement a reader drops (a NUL or other control); a stream sink assembled by filtering the merged result without redacting that projection; terminal-byte normalization after redaction. |
 | K13 | **Safe files.** Every kernel open is descriptor-relative, no-follow, owner- and mode-checked and size-bounded. Mutation on a network filesystem is refused. | Following a symlink in the state root; reading an unbounded or non-regular file; flock on NFS or SMB. |
 | K14 | **Acquisition order.** Multi-gate acquisition follows canonical order. No store transaction or allocator/resource gate other than an owner gate is held across a subprocess, prompt or network call. Native custody leases (§7.1) protect cleanup lifetime and never serialize allocation. | A global allocator lock held during `colima list`; an admin prompt under `routes.lock`. |
 | K15 | **Bounded retention.** Retention never removes an unsettled run, a referenced object or a live claim. Garbage collection never runs in Static or Observe. | Unbounded history; deleting evidence a settle still needs. |
@@ -1231,8 +1231,10 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   is residue only while the member is still present: a member that exited
   between the group inventory and its evidence read is re-inventoried, so a
   clean settle cannot report residue for a process that is already gone.
-- I-P5: capture is bounded (tail ring plus rotating log) and redacted at the
-  source, before any sink (K12).
+- I-P5: capture is bounded (tail ring plus rotating log) and, for a
+  secret-bearing process, sanitized of terminal controls and then redacted at
+  the source, in merged arrival order, before any sink (K12; output capture
+  below).
 - I-P6: secrets never appear in argv; no `set_var`.
 - I-P7: one router per process (K9). Libraries take `CancelToken`. Rhai polls
   the token and never installs a handler.
@@ -1245,6 +1247,76 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   by number. PGID, boot identity and a start after launch alone cannot prove
   continuity across an emptied and reused group. Guest-placement Effigy
   never creates sessions or clears the nonce.
+
+#### Output capture
+
+Capture is one pipeline over merged arrival order (K12, effigy#486). For a
+secret-bearing process — one whose spawn spec carries a `SecretValue` — the
+merged stdout/stderr bytes carry each byte's origin stream and pass through a
+bounded streaming terminal-control sanitizer *before* redaction. CSI, OSC,
+DCS, SOS, PM and APC strings, escape intermediates, two-byte escapes, the
+other C0 controls, TAB and DEL are dropped; `LF` is the only control that
+passes, because it is a line break no reader joins across. A carriage return
+survives only as the CR of a `CR LF` line ending. The two horizontal controls
+are dropped for the same reason: a display applies a lone CR by erasing what it
+covers and expands a TAB to the next tab stop, so the bytes after either are
+moved rather than printed where they stand — and a reader that strips the
+control, or a soft wrap a TAB forces, is a join no separator breaks. A value
+split by one would never be one run to the redactor; dropping them joins the
+halves before redaction, which is the frame a display could show.
+
+What reaches a sink is well-formed text: a multi-byte character is validated
+before any of it is emitted, and a C1 control (`U+0080`..=`U+009F`, the UTF-8
+class a terminal renderer drops, CSI and OSC among them) or an invalid byte —
+a stray continuation, an overlong lead, a surrogate, a scalar past
+`U+10FFFF` — is dropped. A renderer drops those, so retaining them would hand
+it a join; dropping them here, before redaction, joins the halves in the
+frame the redactor sees. A sequence's bytes are emitted with the tag of the
+stream that began it, so a per-stream projection stays well-formed too. The
+sanitizer holds at most one partial character, which EOF drops. Sanitizing first is what makes the redactor see the bytes a front
+end shows: a value a child split with `ESC [ 1 m` is one value on screen and
+two non-matching runs to a redactor over raw bytes, and a reader that
+interprets controls reassembles it.
+
+The sanitizer's state carries across reads and across streams and is O(1): a
+sequence's bytes are discarded as they arrive, so no read or stream boundary
+can split a decision and nothing is buffered. It fails closed — a malformed
+or unterminated control drops its bytes, an open sequence never completes at
+EOF, and no byte the machine cannot classify is emitted. Only the visible
+bytes it emits keep their origin tags. Keeping the streams apart is itself a
+byte removal, and a removal can join two halves of a secret that arrival order
+kept apart — `super` on stdout, `noise` on stderr, `secret` on stdout leaves
+the merged stream safe and would leave the stdout projection unsafe — so each
+stream's stored log and queue is redacted again over its own byte stream
+before it is written. The merged output queue and the merged tail stay
+canonical: they are the only capture that keeps arrival order, and no consumer
+concatenates two projections into one. A process whose spec carries no secret
+skips both the sanitizer and the projection pass and keeps its colour. A
+secret whose own bytes hold a control is also matched in its visible form, so
+stripping the control from it cannot leave an unredacted remainder.
+
+Redaction's own replacement has the same rule (effigy#486). A secret can itself
+contain the display marker, or a marker can join adjacent bytes into another
+secret, so a second streaming pass removes that occurrence. What it removes it
+*with* must survive a reader: a control byte (a NUL, say) is dropped by the
+front end's `sanitize_log_text`, which joins the bytes either side of it and
+rebuilds the secret the pass took out. The replacement is therefore one byte
+value that every reader keeps and no secret contains — printable ASCII, in a
+fixed preference order — so it can neither hold a secret nor be spanned by one,
+and every control, TAB included, is excluded because a reader drops it or a
+renderer moves with it. When the secret set covers every such byte, no replacement is
+both safe and readable: the capture then stops and reports `Truncated` with the
+reason, emitting nothing, rather than write a marker a reader would join across.
+The workload itself is unaffected; this is capture state only.
+
+Every reader draws from that one result: the per-stream rotating logs, the
+per-stream queues, the merged output queue, the bounded merged arrival-order
+tail (`tail()`, the canonical captured tail), the bounded diagnostic excerpt a
+settle or doctor report quotes, and any JSON envelope carrying their bytes.
+Nothing normalizes terminal bytes after redaction; a post-redaction
+normalization path would recreate the split. A consumer that needs both
+streams reads the merged capture, never a concatenation of the projections,
+and a consumer that wants a bounded tail takes the merged tail.
 
 #### Failure model
 
@@ -1331,6 +1403,64 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   gateway setup`) through `command(…, terminal = true)` twice in one run
   against fake absolute programs, settling with `Complete` cleanup.
 - No secret bytes appear in `ps -o args` during any run.
+- `redaction_sanitizes_controls_split_into_known_secrets_before_every_sink`
+  drives the shipping capture pipeline and capture logs with no live child:
+  a known secret split by CSI, OSC (BEL and ST), a CSI or an OSC split across
+  reads, a CSI or an OSC split across streams, interleaved streams, a
+  malformed CSI and a two-byte escape. Every sink — both per-stream logs,
+  both queues, the merged output, the merged tail, the settle excerpt and a
+  JSON envelope — is free of the value and of any terminal control, and the
+  merged tail keeps the redaction marker.
+- `redaction_drops_an_unterminated_control_and_its_tail_at_eof` shows the
+  fail-closed rule: an unterminated OSC, CSI or DCS word drops everything
+  after its introducer, and a later read never resumes inside it.
+- `redaction_redacts_a_projection_that_joins_a_secret_across_an_interleaved_stream`
+  pins the projection rule: with the halves on one stream and the other
+  stream's visible bytes between them, the merged capture never held the
+  value, and the stream's own log and queue show the marker instead of the
+  joined halves.
+- `redaction_drops_utf8_c1_controls_and_invalid_bytes_before_redaction` splits
+  a value with a C1 CSI, a C1 OSC/ST pair, C1 padding, an invalid byte, a
+  stray continuation, an overlong lead, a surrogate and a scalar past
+  `U+10FFFF`, across reads and across streams: every sink is well-formed,
+  control-free and free of the value, ordinary non-ASCII text survives, and a
+  secret that itself carries a C1 control is matched in its C1-free form.
+- `redaction_drops_a_tab_that_a_renderer_would_shift_the_next_bytes_with` splits
+  a value with a TAB in one read, across reads and across streams, and with
+  padding that wraps a row: every sink is free of the value and of the TAB, and
+  an ordinary process keeps its own TABs.
+- `redaction_drops_a_lone_carriage_return_and_keeps_a_line_ending` drops a CR
+  inside a value, at a read boundary, at a stream boundary and at EOF, so the
+  halves reach redaction as one value and no sink holds a lone CR; a `CR LF`
+  line ending keeps its CR, and a secret that itself carries a CR is matched
+  in the CR-free form a display shows.
+- `redaction_replaces_a_reformed_secret_with_a_byte_no_reader_drops` puts a
+  secret that is a substring of the display marker, and a marker that joins
+  adjacent bytes into another secret, through the shipping pipeline: every sink
+  is free of the value, holds no byte the front end drops, and the reader's own
+  filter of the sink is the sink.
+- `redaction_stops_capture_when_no_reader_safe_replacement_exists` covers the
+  corner where the secrets cover every kept replacement byte: every stored sink
+  is empty and the capture reports `Truncated`.
+- `redaction_keeps_terminal_colour_for_a_process_without_secrets` and
+  `redaction_covers_the_visible_form_of_a_secret_that_carries_a_control`
+  keep ordinary colour intact and redact a secret that itself holds a
+  control, in its visible form.
+- `managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_them`
+  is the end-to-end counterexample on the managed path: a live secret-bearing
+  child writes the split value, and the managed TUI's own reader
+  (`ingest_log_payload` then `ansi_line`, the existing main path) shows the
+  redaction marker and never the value, and its last case is a real
+  pseudo-terminal whose display goes through the session's terminal emulator
+  (`LiveTerminalBuffer`), which applies carriage returns, and a third split by
+  a UTF-8 C1 control, whose break probe shows the emulator dropping that
+  character and joining its neighbours. A fourth proof feeds a TAB-split value
+  to the same emulator and shows the pane dropping the cursor-forward escape a
+  TAB renders as, which is the join this task removes. Its break probe feeds
+  the pre-fix arrival shape to that same reader, which reassembles it, so the
+  assertion fails if the sanitizer is removed. The companion
+  `managed_delivery_redaction_keeps_colour_for_a_child_without_secrets`
+  keeps an ordinary child's colour.
 - A Rhai script cannot swallow a stop.
 
 ### 5.8 Placement, supervisor and sentinel
@@ -2336,7 +2466,16 @@ services run in containers, has no guest.
 | Authority | the owning engine | requests over the host authority channel (§8.3) |
 
 The mode boundary is the environment's declared operator workspace, never a
-mode or environment name. Hybrid mode provisions no guest binary, no context,
+mode or environment name. Prepare and entry match the selected container against
+workspace declarations across all systems, including explicitly selected
+non-default systems and workspaces; the default binding is not a mode filter.
+Declarations sharing a named container must have identical effective workspace
+configuration (including mounts, checkout path and identity). Conflicting
+declarations refuse by name even when a task supplies a workspace override;
+use distinct container names for distinct workspaces. A declared workspace
+without a non-empty resolved user and absolute home refuses Prepare and entry
+with configuration and host re-prepare guidance; it never becomes hybrid.
+Hybrid mode provisions no guest binary, no context,
 no channel listener and no enrolment credential. Its service lifecycle uses
 the same host engines.
 
@@ -2363,11 +2502,39 @@ workspace is admitted:
 - Location: `/run/effigy/context/<generation>/` inside the container,
   outside the bind-mounted checkout, owned by root and read-only to the
   workspace user. `/run/effigy/context/current` names the published
-  generation.
+  generation. The document is `context.json`, schema
+  `effigy.workspace-context.v1`; a guest reads the pointer and then one
+  generation, and an unknown schema or field is unprepared rather than a
+  newer version to guess at.
 - Refresh: the host publishes a new complete generation on every Prepare and
   whenever a fact it carries changes on the host, then switches `current`.
   It never edits a published generation. A guest invocation reads one
   generation for its whole run.
+- Sources closure: the pins name the root manifest, the source lock, every
+  bundle and catalog source the host composed from, each composition fragment,
+  and the rendered composed manifest. The rendered document is published once
+  at `/run/effigy/snapshots/<digest>/manifest.toml`, so a bundle- or
+  catalog-provided task is guest-readable without the guest reading a cache the
+  host did not approve. A bundle or catalog pin's snapshot is the rendered
+  result it contributed.
+- The environment fence is the environment record's activation generation,
+  which the activation run advances; `container up`, a task's environment apply
+  and the workspace handoff all publish through the same Prepare, so the
+  recovery a refusal names prepares the workspace rather than repeating it.
+- Entry fences: the host verifies the backend's full container id and targets
+  that exact id for context reads, image/boot probes and publication. The
+  context's container id must match in full; a hostname, cgroup claim or id
+  prefix never proves placement. VM boot id, image platform/libc and environment
+  generation must also match. A replaced container, a reboot that retained the
+  filesystem, or a re-activation with unchanged files refuses and names the
+  host re-prepare. No additional state ledger is needed for this binding.
+- Local reads: version, the pinned task list and the pinned source identities
+  come from the context, the immutable rendered snapshot and the mounted
+  checkout alone. The pins whose snapshot is checkout-visible are
+  digest-checked before anything is parsed, so a checkout that changed since
+  Prepare refuses instead of reading bytes the host never approved. A local
+  reader holds no capability, so a Static or Observe read cannot enrol, and an
+  authority-bearing command refuses rather than enrol.
 - Staleness: the context is input, not liveness proof. Every request carries
   the context generation; the host refuses a stale one (K7) and the client
   rereads `current`. A missing context means the workspace is unprepared:
@@ -2382,6 +2549,37 @@ workspace is admitted:
   its previous generation, key wraps and unlock credentials (§7.3 families
   10–11) with an empty read-only overlay. Vault reads and writes are channel
   requests to the secrets engine.
+- Mount isolation validates the complete effective mount set the primary
+  service will have: injected and retained entries, short and long form, with
+  absolute guest targets checked before comparison. Parent (`..`) traversal
+  refuses; redundant separators and current-directory (`.`) components normalize
+  before private-store overlap, mask ownership and duplicate-target checks.
+  This also applies to checkout destinations and every Compose overlay.
+  Compose interpolation is expanded and a bind-backed named volume is resolved
+  through its local driver options. External volumes, explicit volume-name
+  aliases, unknown volume names and drivers whose host source cannot be
+  established are refused without a backend source inspection receipt.
+  Exact aliases from the host catalog's owned-volume inventory remain usable;
+  their driver and external options still undergo verification.
+  Effigy-generated disposable volumes remain owned by the workspace; a source
+  declaration that collides with one still undergoes the same checks. Volume
+  mappings merge recursively across inputs, preserving inherited external flags
+  and driver options. Mount interpolation accepts `.env` literal assignments,
+  including simple single/double quotes and Compose inline comments. Dotenv
+  expansion, escapes, multiline or alternate assignments, duplicate names,
+  environment-file selection overrides, tilde paths and nested Compose interpolation are
+  refused when their meaning cannot be proven; they are never partially read
+  as a safe host path. Every Compose input file Compose is handed is
+  rewritten and validated, not only the first: an overlay, later or
+  intermediate, replaces an entry at the same guest target, so a state root
+  bound at another target in any overlay is refused and an overlay entry at a
+  masked target is stripped. The
+  workspace mounts are injected into the first file that defines the primary
+  service and the masks are appended to the last one, so they are applied after
+  every source file and own their guest paths. A host state root, an ancestor of
+  one mounted anywhere but the masked checkout mount, a second source for one
+  guest path, an entry whose source cannot be proven, and anything overlapping
+  the guest's `/run/effigy` store are refused by name.
 
 Ordinary source edits and task outputs in the mounted checkout are workspace
 files, not host records. The context's authoritative inputs are host
@@ -2588,11 +2786,41 @@ only, and host access needs a terminal opened through Effigy.
 - Each release publishes version-locked Linux x86_64 and aarch64 artifacts
   with a checksum and provenance manifest naming the version, protocol
   version, target and libc baseline, and catalog schema.
-- Workspace Prepare acquires the artifact on the host, verifies its digest,
-  and installs it into a guest-private executable store, selected per
+- The artifact family is the image's platform **and** its C library, never a
+  host `uname` and never a default: a glibc image takes the `*-gnu` artifact and
+  a musl image the `*-musl` one. The guest reports the loader it can see, and an
+  image whose C library the host cannot prove refuses Prepare rather than
+  guessing. An image with no artifact for its own family refuses with the host
+  re-prepare command and the missing target named.
+- The store is `/run/effigy/bin/<digest>/effigy`, one immutable file per
+  digest, selected by the digest in `/run/effigy/bin/current`. An artifact is
+  authenticated before it is published: its producer receipt names the target
+  and the digest its bytes must have, a release download also matches the
+  checksum published beside the artifact, and the installed executable is
+  re-hashed in the container. A release that publishes no checksum cannot be
+  installed, and an image without a SHA-256 utility refuses Prepare. A local
+  producer builds with the requested Rust `--target` and copies from that
+  target's release directory; unavailable target libraries or linkers fail
+  before publication. Each artifact has its own `<binary>.receipt` containing
+  its target and digest, so producing another target cannot replace its
+  evidence. An aggregate rehearsal receipt is not artifact evidence. The guest
+  authenticates installed executables with bounded digest probes, never by
+  reading the file into a bounded command's output. The stable
+  entry path `/usr/local/bin/effigy` is an atomically replaced symlink into the
+  store, so a running invocation keeps the bytes it resolved and only a new
+  invocation sees a new generation. Before handoff, entry verification requires
+  that symlink to point directly to the pinned immutable executable and hashes
+  the bytes reached through the stable entry; missing or retargeted entries
+  refuse with host re-prepare guidance.
+- Workspace Prepare consumes the produced artifact on the host, verifies its
+  digest, and installs it into a guest-private executable store, selected per
   workspace generation by an atomic pointer. The architecture comes from the
   container image's platform, not the host's `uname`. An image whose libc
   has no matching artifact refuses Prepare.
+- No consumer-time build: Prepare consumes bytes a release download or an
+  explicit `effigy workspace:linux:artifact` already produced, and otherwise
+  refuses naming that command. It never discovers a checkout to build from and
+  never writes a host source pointer at consumer runtime.
 - No run-time build or download: task, exec and terminal entry never fetch
   or compile Effigy or look for a sibling checkout. A contributor's explicit
   Prepare may build the artifact and record the same digest receipt.
@@ -2614,6 +2842,28 @@ This is the implementation seam for §8, not a claim that the client or any
 transport is implemented or qualified. The channel is separate from the
 kernel's remote custody protocol: the former requests host authority; the
 latter proves and controls a workload already admitted by the host.
+
+**Prepare publication.** Container-mode activation uses the actual environment
+owner run and `Gate(Env)`. A typed kernel-owned additive publication obligation
+commits before guest staging, immutable file writes or pointer switches. Its
+receipt names the activation fence, full container identity, VM boot identity,
+artifact digest and context generation. Only after that receipt is applied and
+the required obligation is completed may activation publish active and attach
+requesting holders. Container up, task activation and workspace handoff use
+this same boundary; publication never follows settlement as a separate effect.
+
+Existing holders remain attached to their original selections. This narrow
+operation permits only additive immutable binary, snapshot and context objects
+and atomic pointers for future invocations; it grants no stop, reset, runtime
+replacement or generic environment-effect permission. Those transitions still
+require `TransitionPermit` and its holder checks. Guest identity is re-probed
+before publishing the context. An existing object with wrong bytes is refused;
+recovery skips retained orphan context documents instead of overwriting them.
+Partial publication or a missing receipt leaves activation unsuccessful and
+pending. Recovery retains additive bytes without replaying container I/O; a
+fresh activation verifies or publishes a complete generation under the gate.
+No database transaction spans guest I/O. Hybrid activation emits no guest
+publication obligation or artifacts.
 
 **Wire.** TLS pins the server identity from the selected context before the
 client sends a credential. A length-prefixed UTF-8 JSON frame has a four-byte
@@ -2670,8 +2920,13 @@ side effects; retries re-observe and may return newer facts. Neither retry
 rule grants authority after capability revocation or generation change.
 
 A `stream` frame names `id`, `stream_id`, monotonically increasing `seq`,
-`kind` and payload. Kinds are `event`, `stdout`, `stderr`, `terminal_output`,
-`terminal_input`, `resize`, `ack`, `end` and `gap`; events carry typed host
+`kind` and payload. `id` is the attach request that opened the connection's
+attachment, `stream_id` 0 is that attachment's terminal, and `seq` is one
+strictly increasing series per stream id shared by every kind on it — retained
+output's series is the absolute log position of each frame, and a source that
+keeps no position numbers frames instead. Kinds are `event`, `stdout`,
+`stderr`, `terminal_output`, `terminal_input`, `resize`, `ack`, `end` and
+`gap`; events carry typed host
 status or outcome, resize carries positive rows and columns, and `end`
 carries the final sequence and outcome where known. Per stream, the receiver
 acknowledges consumed sequence numbers; the sender permits at most 16
@@ -2884,14 +3139,78 @@ Revoking a generation ends the enrolment credential with the capabilities it
 issued, so re-enrolment cannot mint a live capability for a dead generation.
 A connection owns at most one attachment: attaching to another run refuses,
 replacing this connection's own secondary releases the replaced row, and only
-the connection that admitted a run holds its owner handle. Captured output is
+the connection that admitted a run holds its owner handle. A connection that
+ends on a refused or malformed frame releases its own secondary row with it, so
+a rejected frame can neither exhaust the run's secondary slots nor orphan one,
+while an owning client's lifetime is still released only by its own end of
+stream: malformed traffic records no owner stop. Captured output is
 published through a pump bounded by the acknowledgement window, so a control
 request is answered while data is backpressured; the connection's lifetime is
 its session's, and a closed connection whose frames were malformed releases no
 owner lifetime. Each connection starts and ends with no queued stream state, so
 a server that serves a reconnect publishes nothing from the previous connection
-and never carries an unpublished chunk or a full window into it. The transport, the guest client and the runner integration
-remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
+and never carries an unpublished chunk or a full window into it.
+
+Stream sequences are numbered once per stream id and shared by every kind on
+it, so a stream's stdout and stderr form `0, 1` rather than restarting each
+other, and the acknowledgement window frees frames in that one series. A source
+that reads a retained log publishes each chunk with its absolute position, and
+the sequence is then that position: one frame's sequence is its first byte's
+offset, so a cursor, a frame sequence and the retained log are one coordinate
+system across reconnects and chunk boundaries with no replay store or second
+cursor. `RetainedStreams` is the kernel's own
+endpoint over `run::read_log`. Retained streams have independent logs and
+independent lengths, so an attach reports the position it consumed on each
+stream id it read (`cursors`), with `cursor` as the default for the primary
+stream; one position for the whole connection would skip the bytes a client
+never read on a shorter stream or replay the bytes it had consumed on a longer
+one. Negotiation is per stream and pure: `resume(run, cursors)` answers the
+start position of **every** stream the endpoint publishes, and refuses the
+attach — opening none — when a stream the client did not name individually
+would have to be guessed, when a cursor names a stream the endpoint does not
+carry, when a position is past that stream's retained end, or when a position
+cannot be established because no retained log exists (a nonzero cursor cannot be
+resumed after retention removed the bytes). A stream's position at or before its
+retained end continues from there; bytes the log rotated past become one `gap`
+frame naming the first missing offset, ahead of the data that resumes there — and
+that gap is published even when the surviving segment is empty and no data
+follows it, so a run that ends there does not leave the client believing it saw
+everything. Every emitted frame on a stream keeps a strictly increasing sequence
+and no gap is presented as complete output. Nothing moves until
+`start(attachment, positions)` runs for the attachment that actually opened, so a
+replacement the host then refuses leaves the connection's working attachment
+exactly where it was. The endpoint re-checks the connection's attachment with
+`Attachment::attached_observed` on every read, so a released or replaced row
+stops publication. `input` delivers one validated terminal input frame exactly
+once to the terminal owner — `Terminal::input` — and `resize` hands over the
+newest size with no queue behind it. Delivery is fenced on the attachment's own
+lifetime twice: the channel re-reads the row immediately before the call, and
+`Terminal` receives the live `Attachment` rather than its identifier, so the
+owner's final check before writing is `Attachment::attached_observed` and a row
+released, replaced or ended by its run's closure in between writes nothing. An
+inbound frame is accepted only for the connection's own attach request id, its
+own terminal stream and the stream's next sequence, and only as
+`terminal_input`, `resize` or `ack`; an acknowledgement must also be shape-only
+and name a data frame this connection published and has not freed. An unknown
+stream, a foreign request, a repeated, out-of-order, duplicate, stale or
+resumed-unsent sequence, a malformed payload or an outbound kind refuses and
+closes with no host effect — no input reaches a terminal, no size is recorded
+and no frame is freed. A replacement attachment is rebound in one step: the
+previous attachment's window, held chunk, numbering and inbound sequence are
+dropped before the requested cursor positions its own stream, so a replacement
+resumes at its own cursor and its acknowledgements cannot free the previous
+attachment's frames. The acknowledgement window is shared by every stream on a
+connection while each frame stays its own stream's: an acknowledgement releases
+that stream's frames that sit between other streams' frames, so an interleaved
+stream's consumption is never blocked by another stream's order. A host with no
+terminal owner refuses input and resize (`NoTerminal`) instead of reporting a
+delivery it did not make. The kernel has no per-run terminal input/resize
+writer, and no host front end owns a session terminal yet (the transport, the
+guest client and the runner integration are separate tasks), so channel-owned
+delivery stops at the `Terminal` contract: the production runner terminal writer
+and the serving-loop binding are a separately owned follow-up, and nothing here
+claims production terminal delivery.
+`test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map
 

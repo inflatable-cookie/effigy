@@ -1,4 +1,5 @@
 //! One typed, ordered sequence engine. Output mode chooses sinks only.
+use super::host_alias::{host_alias_resolver, secret_env_slice};
 use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
 use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
@@ -13,6 +14,7 @@ use effigy_managed::{render_step_command_template, StepEnvAccumulator};
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
 use effigy_routing::{resolve_catalog_by_prefix, select_catalog_and_task};
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub(super) fn maybe_run_in_process_sequence(
@@ -359,6 +361,11 @@ fn run_steps(
         selection.task.env_file.as_ref(),
         preflight.runtime_args_raw.env_schema_override.as_deref(),
     )?;
+    // A host sequence in a runtime-scoped checkout resolves the canonical
+    // declared backing-service alias in every environment it delivers,
+    // including the values a step inherits from the task and chains from its
+    // predecessors (contract 005).
+    let mut host_aliases = host_alias_resolver(preflight, selection)?;
     let mut planned = Vec::with_capacity(steps.len());
     for (index, step) in steps.iter().enumerate() {
         env.apply_from_step(
@@ -378,6 +385,31 @@ fn run_steps(
                 *value = value.replace("{skill}", &source.source_root.display().to_string());
             }
         }
+        if let Some(resolver) = host_aliases.as_mut() {
+            resolver.resolve_plain_env(&mut step_env)?;
+        }
+        // A step whose own environment delivers a key wins over a secret of
+        // the same name, so that secret is neither delivered again nor proved
+        // (effigy#431 review).
+        let mut step_secrets: Option<Vec<(String, SecretString)>> = None;
+        let mut delivered = step_env.keys().cloned().collect::<BTreeSet<_>>();
+        if let (Some(resolver), Some(pairs)) = (host_aliases.as_mut(), secrets) {
+            step_secrets = Some(resolver.resolved_secret_env(pairs, &delivered, true)?);
+        }
+        delivered.extend(
+            secrets
+                .unwrap_or_default()
+                .iter()
+                .map(|(key, _)| (*key).to_owned()),
+        );
+        // A value this step would inherit unchanged is resolved and proved too.
+        let inherited = match host_aliases.as_mut() {
+            Some(resolver) => resolver.resolved_inherited_env(&delivered, true)?,
+            None => Vec::new(),
+        };
+        for (key, value) in inherited {
+            step_env.entry(key).or_insert(value);
+        }
         let (label, timeout) = match step {
             ManifestManagedRunStep::Command(_) => ((index + 1).to_string(), None),
             ManifestManagedRunStep::Step(table) => (
@@ -392,6 +424,7 @@ fn run_steps(
             label,
             timeout,
             subject,
+            step_secrets,
         ));
     }
     let mut report = SequenceReport {
@@ -403,7 +436,9 @@ fn run_steps(
         outcome: WorkloadOutcome::Succeeded,
     };
     let total = planned.len();
-    for (index, (action, env, label, timeout, subject)) in planned.into_iter().enumerate() {
+    for (index, (action, env, label, timeout, subject, step_secrets)) in
+        planned.into_iter().enumerate()
+    {
         if report.code != 0 {
             report
                 .steps
@@ -438,7 +473,18 @@ fn run_steps(
         let child_id = child.id();
         let result = {
             let _parent = child.enter();
-            let _env = SpawnScope::enter(&env, secrets, preflight.output_json, timeout);
+            // A step that overrides a key does not deliver the secret of that
+            // name, so only the secrets this step delivers reach it.
+            let step_secret_refs = step_secrets
+                .as_deref()
+                .map(secret_env_slice)
+                .unwrap_or_default();
+            let step_secret_slice = if step_secrets.is_some() {
+                Some(step_secret_refs.as_slice())
+            } else {
+                secrets
+            };
+            let _env = SpawnScope::enter(&env, step_secret_slice, preflight.output_json, timeout);
             execute_step(
                 &action,
                 preflight,

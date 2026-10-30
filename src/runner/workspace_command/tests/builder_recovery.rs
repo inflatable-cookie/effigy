@@ -78,7 +78,7 @@ if cmd == 'exec':
     if tail[1:] == ['true']: sys.exit(0)
     if len(tail) != 4 or tail[1:3] != ['sh', '-lc']: sys.exit(25)
     script = tail[3]
-    if not all(part in script for part in ['cargo build --release --bin effigy', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/workspace/.effigy/linux-release/artifacts/effigy-']): sys.exit(26)
+    if not all(part in script for part in ['cargo build --release --bin effigy --target ', 'cd /workspace', 'EFFIGY_ACTIVE_VERSION=', '/workspace/.effigy/linux-release/artifacts/effigy-']): sys.exit(26)
     (state / 'build-effect').write_text('verified current-source build')
     if mode == 'signal_success':
         (state / 'await-signal').write_text('ready')
@@ -91,7 +91,7 @@ if cmd == 'exec':
     binary = artifacts / ('effigy-' + triple)
     binary.write_text('fresh current source output ' + mode)
     pathlib.Path(str(binary) + '.active-version').write_text(os.environ['EFFIGY_RECOVERY_VERSION'])
-    (artifacts / 'rehearsal.txt').write_text('release_triple=' + ('wrong-target' if mode == 'wrong_target' else triple) + '\ncompleted_at=2026-10-16T00:00:00Z\n')
+    pathlib.Path(str(binary) + '.receipt').write_text('release_triple=' + ('wrong-target' if mode == 'wrong_target' else triple) + '\nsha256=' + __import__('hashlib').sha256(binary.read_bytes()).hexdigest() + '\ncompleted_at=2026-10-16T00:00:00Z\n')
     print('private-build-ok')
     sys.exit(0)
 raise SystemExit('unauthorized backend operation: ' + repr(args))

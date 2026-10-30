@@ -6,9 +6,10 @@ use effigy_cli::{ContainerArgs, ContainerSubcommand, WorkspaceArgs};
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_manifest::ManifestTask;
 use effigy_runtime::shell::run_container_shell_session as run_runtime_container_shell_session;
+use effigy_ui::steps::{self, ProgressSource, Step};
 use effigy_ui::style_text;
 use effigy_ui::theme::{is_ci_environment, Theme};
-use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
+use effigy_ui::OutputMode;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,27 @@ pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy(
     repo_override: Option<PathBuf>,
 ) -> Result<(), RunnerError> {
     provisioning::ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override)
+}
+
+/// Publish the guest context and pinned executable for this environment.
+///
+/// Called by the host's activation paths (`container up`, a task's environment
+/// apply, the workspace handoff): container-mode workspaces get a prepared
+/// guest, and hybrid mode publishes nothing.
+pub(in crate::runner) fn publish_workspace_guest(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    provisioning::publish_workspace_guest(repo_root, policy).map(|_prepared| ())
+}
+
+/// Only the host environment activation owns this publication boundary.
+pub(in crate::runner) fn publish_workspace_guest_in(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    run: &mut effigy_containers::environment::EnvRun<'_>,
+) -> Result<(), RunnerError> {
+    provisioning::publish_workspace_guest_in(repo_root, policy, run).map(|_| ())
 }
 
 pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy_bounded(
@@ -341,7 +363,7 @@ pub(super) fn cleanup_workspace_session(
         return Ok(());
     }
 
-    let mut progress = WorkspaceShutdownProgressReporter::new(container_label);
+    let progress = WorkspaceShutdownProgressReporter::new(container_label);
     let result = run_container(ContainerArgs {
         subcommand: ContainerSubcommand::Down {
             name: container_name,
@@ -352,7 +374,7 @@ pub(super) fn cleanup_workspace_session(
         output_json: false,
     });
     match &result {
-        Ok(_) => progress.finish(),
+        Ok(_) => progress.succeed(),
         Err(error) => progress.fail(error),
     }
     result.map(|_| ())
@@ -469,37 +491,33 @@ fn workspace_handoff_terminal_reset_sequence() -> &'static str {
 }
 
 struct WorkspaceShutdownProgressReporter {
-    spinner: Option<Box<dyn SpinnerHandle>>,
+    progress: WorkspaceOpProgress,
     system: String,
 }
 
 impl WorkspaceShutdownProgressReporter {
     fn new(system: &str) -> Self {
-        let transient = WorkspaceTransientProgressReporter::new(
-            false,
-            "waiting for workspace system shutdown",
-            true,
-        );
+        let progress = WorkspaceOpProgress::start(false, PROBE_CONTAINER_DOWN, true);
+        if !std::io::stderr().is_terminal() || is_ci_environment() {
+            emit_workspace_info("waiting for workspace system shutdown", false);
+        }
+        progress.update(format!("stopping workspace system `{system}`"), None, None);
         Self {
-            spinner: transient.spinner,
+            progress,
             system: system.to_owned(),
         }
     }
 
-    fn finish(&mut self) {
-        let Some(spinner) = self.spinner.take() else {
-            return;
-        };
-        spinner.finish_clear();
+    fn succeed(self) {
+        self.progress
+            .succeed(&format!("workspace system {} stopped", self.system));
     }
 
     /// Off a terminal there is no spinner to end; the error the command returns
     /// carries the same cause.
-    fn fail(&mut self, error: &RunnerError) {
-        let Some(spinner) = self.spinner.take() else {
-            return;
-        };
-        spinner.finish_error(&workspace_shutdown_failure_line(&self.system, error));
+    fn fail(self, error: &RunnerError) {
+        self.progress
+            .fail(&workspace_shutdown_failure_line(&self.system, error));
     }
 }
 
@@ -517,43 +535,96 @@ fn workspace_shutdown_failure_line(system: &str, error: &RunnerError) -> String 
     format!("workspace system {system} shutdown failed: {cause}")
 }
 
-pub(super) struct WorkspaceTransientProgressReporter {
-    spinner: Option<Box<dyn SpinnerHandle>>,
+pub(super) const PROBE_CONTAINER_DOWN: &str = "container down";
+pub(super) const PROBE_CONTAINER_IDENTITY: &str = "container identity probe";
+pub(super) const PROBE_GUEST_PUBLICATION: &str = "workspace guest publication";
+pub(super) const PROBE_PERMISSION_PREP: &str = "workspace path inspect";
+
+/// Live progress for workspace context, provisioning and shutdown. Labels
+/// name the current object or sub-step, known count, elapsed wait and last
+/// event or the exact probe. JSON, piped and quiet output stay silent.
+pub(super) struct WorkspaceOpProgress {
+    source: Option<ProgressSource>,
+    step: Option<Step>,
 }
 
-impl WorkspaceTransientProgressReporter {
-    pub(super) fn new(suppress: bool, label: &str, leading_blank_lines: bool) -> Self {
-        use std::io::Write;
-
+impl WorkspaceOpProgress {
+    pub(super) fn start(
+        suppress: bool,
+        probe: impl Into<String>,
+        leading_blank_lines: bool,
+    ) -> Self {
         if suppress {
-            return Self { spinner: None };
+            return Self {
+                source: None,
+                step: None,
+            };
         }
-
         if leading_blank_lines {
             let mut stderr = std::io::stderr().lock();
             let _ = writeln!(stderr);
             let _ = writeln!(stderr);
         }
-
-        if !std::io::stderr().is_terminal() || is_ci_environment() {
-            emit_workspace_info(label, false);
-            return Self { spinner: None };
+        let source = ProgressSource::waiting_for(probe);
+        let step = steps::live_step(source.clone());
+        Self {
+            source: Some(source),
+            step: Some(step),
         }
-
-        let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
-        let spinner = renderer.spinner(label).ok();
-        Self { spinner }
     }
 
-    pub(super) fn finish(&mut self, success: bool) {
-        let Some(spinner) = self.spinner.take() else {
-            return;
-        };
-        if success {
-            spinner.finish_clear();
-        } else {
-            spinner.finish_error("workspace operation failed");
+    pub(super) fn now_waiting_for(&self, probe: impl Into<String>) {
+        if let Some(source) = &self.source {
+            source.now_waiting_for(probe);
         }
+    }
+
+    pub(super) fn update(
+        &self,
+        sub_step: impl Into<String>,
+        count: Option<(u64, u64)>,
+        event: Option<String>,
+    ) {
+        if let Some(source) = &self.source {
+            source.update(sub_step, count, event);
+        }
+    }
+
+    pub(super) fn succeed(self, summary: &str) {
+        if let Some(step) = self.step {
+            step.succeed(summary);
+        }
+    }
+
+    pub(super) fn fail(self, summary: &str) {
+        if let Some(step) = self.step {
+            step.fail(summary);
+        }
+    }
+
+    pub(super) fn finish_clear(self) {
+        if let Some(step) = self.step {
+            step.finish_clear();
+        }
+    }
+
+    pub(super) fn fail_error(self, error: &RunnerError) {
+        let cause = error
+            .human_error()
+            .what_failed()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        self.fail(&cause);
+    }
+
+    #[cfg(test)]
+    pub(super) fn frame_at(&self, elapsed: std::time::Duration) -> String {
+        self.source
+            .as_ref()
+            .map(|source| source.frame_at(elapsed))
+            .unwrap_or_default()
     }
 }
 

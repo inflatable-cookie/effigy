@@ -6,6 +6,8 @@ mod binding;
 mod context;
 #[path = "execute/entry.rs"]
 mod entry;
+#[path = "execute/host_alias.rs"]
+pub(in crate::runner) mod host_alias;
 #[path = "execute/json_payload.rs"]
 mod json_payload;
 #[path = "execute/nested.rs"]
@@ -32,8 +34,12 @@ mod sequence_run;
 mod workspace_seeded;
 
 #[cfg(test)]
+pub(in crate::runner) use pipeline::command::{build_task_command, TaskCommand};
+#[cfg(test)]
 pub(in crate::runner) use pipeline::managed::resolve_managed_session_secret_access;
 pub(in crate::runner) use pipeline::managed::{
     inline_managed_policy, release_inline_managed_environment,
 };
+#[cfg(test)]
+pub(in crate::runner) use selection::{resolve_task_selection, SelectionResolution};
 pub(in crate::runner) use sequence_run::render_script_path;

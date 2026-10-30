@@ -1817,6 +1817,10 @@ fn probe_low_ports(
 
 /// Run one setup stage. The label names the step while it runs, and the stage
 /// ends with one line: what now holds, or the failure's own sentence.
+#[cfg_attr(
+    effigy_feedback_lint,
+    deprecated(note = "feedback legacy spinner: migrate to a live progress source")
+)]
 fn setup_step<T>(
     label: &str,
     work: impl FnOnce(&effigy_ui::Step) -> std::io::Result<T>,

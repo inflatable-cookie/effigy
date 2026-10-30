@@ -1,4 +1,72 @@
 #[cfg(test)]
+mod operator_workspace_tests {
+    use super::super::resolve_operator_workspace_for_container;
+
+    #[test]
+    fn a_named_environment_does_not_adopt_an_inline_workspace() {
+        let manifest = toml::from_str::<effigy_manifest::TaskManifest>(
+            r#"
+[containers]
+default = "web"
+[containers.web]
+primary_service = "app"
+[systems]
+default = "dev"
+[systems.dev]
+default_workspace = "inline"
+[systems.dev.workspaces.inline]
+container = { image = "node:20", mount = "." }
+"#,
+        )
+        .unwrap();
+        for selected in [None, Some("web")] {
+            assert!(
+                resolve_operator_workspace_for_container(&manifest, selected)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn conflicting_workspace_aliases_refuse_instead_of_preferring_the_default() {
+        for alternate in [
+            "working_dir = '/alternate'",
+            "working_dir = '/workspace'\nuser = 'other'",
+            "working_dir = '/workspace'\nhome = '/other'",
+            "working_dir = '/workspace'\nmounts = ['cache:/workspace/cache']",
+        ] {
+            let manifest = toml::from_str::<effigy_manifest::TaskManifest>(&format!(
+                "[containers]\ndefault = 'web'\n[containers.web]\nprimary_service = 'app'\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'web'\nworking_dir = '/workspace'\n[systems.dev.workspaces.alt]\ncontainer = 'web'\n{alternate}\n"
+            )).unwrap();
+            for selected in [None, Some("web")] {
+                let error = resolve_operator_workspace_for_container(&manifest, selected)
+                    .expect_err("conflicting aliases cannot safely collapse to a container name")
+                    .to_string();
+                assert!(
+                    error.contains("dev/app") && error.contains("dev/alt"),
+                    "{error}"
+                );
+                assert!(error.contains("distinct container names"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn identical_aliases_normalize_implicit_and_explicit_container_references() {
+        let manifest = toml::from_str::<effigy_manifest::TaskManifest>(
+            "[containers]\ndefault = 'web'\n[containers.web]\nprimary_service = 'app'\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'web'\nworking_dir = '/workspace'\n[systems.audit.workspaces.alt]\nworking_dir = '/workspace'\n"
+        ).unwrap();
+        for selected in [None, Some("web")] {
+            let workspace = resolve_operator_workspace_for_container(&manifest, selected)
+                .unwrap()
+                .expect("identical effective aliases remain supported");
+            assert_eq!(workspace.working_dir.as_deref(), Some("/workspace"));
+        }
+    }
+}
+
+#[cfg(test)]
 mod structured_mount_tests {
     use super::super::*;
     use effigy_manifest::{ManifestSystemMount, ManifestSystemMountTable};
@@ -1068,5 +1136,721 @@ mod worktree_git_mount_tests {
         .expect("local config marker");
         assert!(build_worktree_git_mounts(&root).is_empty());
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod guest_isolation_tests {
+    use super::super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn temp_dir(label: &str) -> PathBuf {
+        effigy_test_support::Fixture::process_lifetime(&format!("effigy-guest-mount-{label}-"))
+            .expect("fixture directory")
+    }
+
+    fn bind_mount(source: &Path, target: &str) -> RenderedWorkspaceMount {
+        RenderedWorkspaceMount {
+            target: target.to_owned(),
+            rendered: format!("{}:{target}", source.display()),
+            source: Some(source.to_path_buf()),
+            named_volume: None,
+        }
+    }
+
+    #[test]
+    fn guest_masks_cover_the_checkout_store_and_local_vault_read_only() {
+        let repo_root = temp_dir("masks");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+
+        let masks = build_guest_mask_mounts("dev", &canonical, Path::new("/workspace"));
+
+        assert_eq!(masks.len(), GUEST_MASKED_CHECKOUT_PATHS.len());
+        let targets = masks
+            .iter()
+            .map(|mount| mount.target.as_str())
+            .collect::<Vec<_>>();
+        assert!(targets.contains(&"/workspace/.effigy/state"));
+        assert!(targets.contains(&"/workspace/.effigy/secrets"));
+        for mask in &masks {
+            assert!(
+                mask.rendered.ends_with(":ro"),
+                "a mask is read-only: {}",
+                mask.rendered
+            );
+            assert!(
+                mask.source.is_none(),
+                "a mask never names a host path: {}",
+                mask.rendered
+            );
+            assert!(mask.named_volume.is_some(), "a mask is an empty volume");
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn an_ordinary_workspace_mount_set_passes_isolation() {
+        let repo_root = temp_dir("allowed");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let checkout = bind_mount(&canonical, "/workspace");
+        let mut mounts = vec![checkout];
+        mounts.extend(build_guest_mask_mounts(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+        ));
+
+        enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+            .expect("allowed");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn guest_target_traversal_refuses_declared_and_short_and_long_compose_mounts() {
+        let repo = temp_dir("target-traversal");
+        let canonical = repo.canonicalize().unwrap();
+        let data = canonical.join("data");
+        fs::create_dir(&data).unwrap();
+        for target in [
+            "/run/other/../effigy/context",
+            "/run/effigy/../effigy/bin",
+            "/workspace/other/../.effigy/state",
+            "/workspace/other/../.effigy/secrets",
+            "/workspace/cache/../data",
+        ] {
+            let error = enforce_guest_mount_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &[bind_mount(&data, target)],
+            )
+            .expect_err("injected mounts must not hide their effective target");
+            assert!(
+                error.to_string().contains("without `..` traversal"),
+                "{error}"
+            );
+            for raw in [
+                format!("./data:{target}"),
+                format!("{{type: bind, source: ./data, target: '{target}'}}"),
+                format!("{{type: volume, source: cache, target: '{target}'}}"),
+            ] {
+                let definitions = serde_yaml::from_str("cache: {}").unwrap();
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    Some(&definitions),
+                    &[serde_yaml::from_str(&raw).unwrap()],
+                )
+                .expect_err("Compose forms obey the same target boundary");
+                assert!(
+                    error.to_string().contains("without `..` traversal"),
+                    "{error}"
+                );
+            }
+        }
+        let error = enforce_guest_mount_isolation(
+            "dev",
+            &canonical,
+            Path::new("/outer/../workspace"),
+            &[bind_mount(&data, "/workspace/data")],
+        )
+        .expect_err("the checkout destination also cannot carry parent traversal");
+        assert!(
+            error.to_string().contains("without `..` traversal"),
+            "{error}"
+        );
+        let mount =
+            serde_yaml::from_str("{type: bind, source: ./data, target: run/effigy/context}")
+                .unwrap();
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            None,
+            &[mount],
+        )
+        .expect_err("long-form targets must also be absolute guest paths");
+        assert!(error.to_string().contains("absolute guest path"), "{error}");
+    }
+
+    #[test]
+    fn guest_target_aliases_share_store_mask_and_duplicate_checks() {
+        let repo = temp_dir("target-aliases");
+        let canonical = repo.canonicalize().unwrap();
+        let data = canonical.join("data");
+        fs::create_dir(&data).unwrap();
+        for (target, reason) in [
+            ("/run//effigy/./context", "guest's own store"),
+            ("/workspace/.effigy/./state", "masked checkout path"),
+            ("//workspace//.effigy/secrets/", "masked checkout path"),
+        ] {
+            let error = enforce_guest_mount_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &[bind_mount(&data, target)],
+            )
+            .expect_err("equivalent spellings do not evade protected destinations");
+            assert!(error.to_string().contains(reason), "{error}");
+        }
+        let mounts = [
+            bind_mount(&data, "/workspace/data"),
+            bind_mount(&data, "//workspace//./data/"),
+        ];
+        let error =
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect_err("two aliases of one guest path are duplicate destinations");
+        assert!(
+            error
+                .to_string()
+                .contains("two sources at guest path `/workspace/data`"),
+            "{error}"
+        );
+        enforce_guest_mount_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &[bind_mount(&data, "//workspace//./data/")],
+        )
+        .expect("an ordinary destination may use redundant separators and dots");
+    }
+
+    #[test]
+    fn a_mount_into_the_guest_private_store_is_refused() {
+        let repo_root = temp_dir("guest-store");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let host = repo_root.join("context");
+        fs::create_dir_all(&host).expect("host context");
+        let mounts = vec![bind_mount(&host, "/run/effigy/context")];
+
+        let error =
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect_err("the guest store is not a host mount");
+
+        assert!(error.to_string().contains("guest's own store"));
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_declared_checkout_state_or_vault_mount_is_refused() {
+        let repo_root = temp_dir("checkout-state");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let vault = canonical.join(".effigy/secrets");
+        fs::create_dir_all(&vault).expect("vault root");
+
+        for source in [&state, &vault] {
+            let mounts = vec![bind_mount(source, "/workspace/leaked")];
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("a host state root never mounts into the guest");
+            assert!(error.to_string().contains("host state root"));
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_machine_state_root_mount_is_refused() {
+        let repo_root = temp_dir("machine-state");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let home = repo_root.join("home");
+        let machine_state = home.join(".effigy/state");
+        fs::create_dir_all(&machine_state).expect("machine state");
+        crate::with_test_effigy_home(&home.join(".effigy"), || {
+            let mounts = vec![bind_mount(&machine_state, "/workspace/machine")];
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("the machine state root is host-only");
+            assert!(error.to_string().contains("host state root"));
+        });
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_mount_above_the_guest_private_store_is_refused() {
+        let repo_root = temp_dir("guest-store-parent");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let host = repo_root.join("host-run");
+        fs::create_dir_all(&host).expect("host directory");
+
+        for target in ["/run", "/"] {
+            let mounts = vec![bind_mount(&host, target)];
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("a store ancestor would shadow the guest store");
+            assert!(error.to_string().contains("guest's own store"), "{error}");
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_checkout_family_mounted_at_another_guest_path_is_refused() {
+        let repo_root = temp_dir("checkout-family");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let effigy_dir = canonical.join(".effigy");
+
+        // `<checkout>/.effigy` carries both the store and the vault, so mounting
+        // it anywhere but the masked checkout mount is refused.
+        for source in [&effigy_dir, &canonical] {
+            let mounts = vec![bind_mount(source, "/workspace/elsewhere")];
+            let error =
+                enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                    .expect_err("an ancestor of host state carries it too");
+            let message = error.to_string();
+            assert!(
+                message.contains("contains a host state root")
+                    || message.contains("host state root"),
+                "{message}"
+            );
+        }
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn the_checkout_mount_itself_may_carry_the_masked_families() {
+        let repo_root = temp_dir("checkout-mount");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        fs::create_dir_all(canonical.join(".effigy/state")).expect("state root");
+        let mounts = vec![
+            bind_mount(&canonical, "/workspace"),
+            bind_mount(&canonical.join(".effigy/state"), "/workspace/.effigy/state"),
+        ];
+
+        // The second entry is the mask's own target; the mask owns that guest
+        // path, so a bind there is refused while the checkout mount itself is
+        // the one allowed carrier of the masked family.
+        let error =
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect_err("the checkout store is never a bind source");
+        let message = error.to_string();
+        assert!(
+            message.contains("mask") && message.contains("/workspace/.effigy/state"),
+            "{message}"
+        );
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_compose_interpolated_mount_source_is_resolved_before_it_is_checked() {
+        let repo_root = temp_dir("interpolated");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let compose_dir = repo_root.join("infra");
+        fs::create_dir_all(&compose_dir).expect("compose dir");
+        // The compose file names a variable the project `.env` sets, so only an
+        // interpolated read sees the state root the entry would actually bind.
+        fs::write(
+            compose_dir.join(".env"),
+            format!("EFFIGY_TEST_STATE={}\n", state.display()),
+        )
+        .expect("project env file");
+        let volumes = vec![serde_yaml::Value::String(
+            "${EFFIGY_TEST_STATE}/.effigy/state:/workspace/leaked".to_owned(),
+        )];
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            None,
+            &volumes,
+        )
+        .expect_err("an interpolated state root is still a state root");
+        assert!(error.to_string().contains("host state root"), "{error}");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn an_unresolvable_interpolation_is_refused_instead_of_assumed_safe() {
+        let repo_root = temp_dir("unresolvable");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let compose_dir = repo_root.join("infra");
+        fs::create_dir_all(&compose_dir).expect("compose dir");
+        let volumes = vec![serde_yaml::Value::String(
+            "${EFFIGY_MOUNT_THAT_IS_NEVER_SET}/data:/workspace/data".to_owned(),
+        )];
+
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            None,
+            &volumes,
+        )
+        .expect_err("an unprovable source is refused");
+        assert!(error.to_string().contains("cannot prove"), "{error}");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn a_bind_backed_named_volume_is_checked_through_its_driver_options() {
+        let repo_root = temp_dir("named-bind");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let compose_dir = repo_root.join("infra");
+        fs::create_dir_all(&compose_dir).expect("compose dir");
+
+        // The service entry only names a volume; its bind device is the host
+        // state root.
+        let mut driver_opts = serde_yaml::Mapping::new();
+        driver_opts.insert(
+            serde_yaml::Value::String("type".to_owned()),
+            serde_yaml::Value::String("none".to_owned()),
+        );
+        driver_opts.insert(
+            serde_yaml::Value::String("o".to_owned()),
+            serde_yaml::Value::String("bind".to_owned()),
+        );
+        driver_opts.insert(
+            serde_yaml::Value::String("device".to_owned()),
+            serde_yaml::Value::String(state.display().to_string()),
+        );
+        let mut named = serde_yaml::Mapping::new();
+        named.insert(
+            serde_yaml::Value::String("driver".to_owned()),
+            serde_yaml::Value::String("local".to_owned()),
+        );
+        named.insert(
+            serde_yaml::Value::String("driver_opts".to_owned()),
+            serde_yaml::Value::Mapping(driver_opts),
+        );
+        let mut document = serde_yaml::Mapping::new();
+        document.insert(
+            serde_yaml::Value::String("state-bind".to_owned()),
+            serde_yaml::Value::Mapping(named),
+        );
+        let document_volumes = serde_yaml::Value::Mapping(document);
+        let volumes = vec![serde_yaml::Value::String(
+            "state-bind:/workspace/leaked".to_owned(),
+        )];
+
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            Some(&document_volumes),
+            &volumes,
+        )
+        .expect_err("a bind-backed named volume carries the host path");
+        assert!(error.to_string().contains("host state root"), "{error}");
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn external_alias_and_uninspectable_volume_sources_are_refused() {
+        let repo_root = temp_dir("external-volume");
+        let canonical = repo_root.canonicalize().unwrap();
+        // The existing backend volume may bind host state. Without an inspect
+        // receipt the declaration cannot establish what it will mount.
+        for definition in [
+            "state-bind: {external: true}",
+            "state-bind: {external: {name: host-state}}",
+            "state-bind: {name: host-state}",
+            "state-bind: {driver: other-driver}",
+            "state-bind: {driver_opts: {device: /host/state}}",
+            "{}",
+        ] {
+            let definitions = serde_yaml::from_str(definition).unwrap();
+            for raw in [
+                "state-bind:/workspace/leaked",
+                "{type: volume, source: state-bind, target: /workspace/leaked}",
+            ] {
+                let mount = serde_yaml::from_str(raw).unwrap();
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    Some(&definitions),
+                    &[mount],
+                )
+                .expect_err("a volume without a proven source is refused");
+                assert!(
+                    error.to_string().contains("cannot prove"),
+                    "{definition}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dotenv_comments_and_literal_quotes_cannot_hide_a_state_bind() {
+        let repo_root = temp_dir("dotenv-comments");
+        let canonical = repo_root.canonicalize().unwrap();
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).unwrap();
+        for assignment in [
+            format!("EFFIGY_TEST_STATE={} # host state", state.display()),
+            format!("EFFIGY_TEST_STATE=\"{}\" # host state", state.display()),
+            format!("EFFIGY_TEST_STATE='{}' # host state", state.display()),
+        ] {
+            fs::write(canonical.join(".env"), assignment).unwrap();
+            for raw in [
+                "${EFFIGY_TEST_STATE}:/workspace/leaked",
+                "{type: bind, source: '${EFFIGY_TEST_STATE}', target: /workspace/leaked}",
+            ] {
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    None,
+                    &[serde_yaml::from_str(raw).unwrap()],
+                )
+                .expect_err("Compose's comment removal must not hide protected state");
+                assert!(error.to_string().contains("host state root"), "{error}");
+            }
+        }
+        fs::write(
+            canonical.join(".env"),
+            "EFFIGY_TEST_STATE='./data#literal'\n",
+        )
+        .unwrap();
+        fs::create_dir_all(canonical.join("data#literal")).unwrap();
+        enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            None,
+            &[serde_yaml::Value::String(
+                "${EFFIGY_TEST_STATE}:/workspace/data".to_owned(),
+            )],
+        )
+        .expect("a literal hash is not an inline comment");
+    }
+
+    #[test]
+    fn unsupported_dotenv_meanings_are_refused_before_mount_interpolation() {
+        let repo_root = temp_dir("dotenv-unprovable");
+        let canonical = repo_root.canonicalize().unwrap();
+        for assignment in [
+            "EFFIGY_TEST_STATE=${EFFIGY_TEST_OTHER}/.effigy/state",
+            "EFFIGY_TEST_STATE=\"${EFFIGY_TEST_OTHER}/.effigy/state\"",
+            "EFFIGY_TEST_STATE=\"/safe\\t/.effigy/state\"",
+            "EFFIGY_TEST_STATE='/safe\\'/.effigy/state'",
+            "EFFIGY_TEST_STATE='/safe\n/.effigy/state'",
+            "EFFIGY_TEST_STATE: /safe",
+            "export EFFIGY_TEST_STATE=/safe",
+            "EFFIGY_TEST_STATE=/safe\nEFFIGY_TEST_STATE=/other",
+            "EFFIGY_TEST_STATE=/safe\u{a0}",
+        ] {
+            fs::write(canonical.join(".env"), assignment).unwrap();
+            let error = enforce_effective_guest_volume_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &canonical,
+                None,
+                &[serde_yaml::Value::String(
+                    "${EFFIGY_TEST_STATE}:/workspace/leaked".to_owned(),
+                )],
+            )
+            .expect_err("unknown dotenv semantics cannot establish a safe source");
+            assert!(error.to_string().contains("provable literal"), "{error}");
+        }
+        fs::remove_file(canonical.join(".env")).unwrap();
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            None,
+            &[serde_yaml::Value::String(
+                "${EFFIGY_TEST_UNSET:-${EFFIGY_TEST_OTHER}}:/workspace/leaked".to_owned(),
+            )],
+        )
+        .expect_err("nested defaults must not be partially expanded");
+        assert!(
+            error.to_string().contains("nested Compose interpolation"),
+            "{error}"
+        );
+        for raw in [
+            "~/.effigy/state:/workspace/leaked",
+            "{type: bind, source: '~/.effigy/state', target: /workspace/leaked}",
+        ] {
+            let error = enforce_effective_guest_volume_isolation(
+                "dev",
+                &canonical,
+                Path::new("/workspace"),
+                &canonical,
+                None,
+                &[serde_yaml::from_str(raw).unwrap()],
+            )
+            .expect_err("tilde expansion cannot be mistaken for a project-relative path");
+            assert!(error.to_string().contains("tilde expansion"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_long_form_interpolated_named_bind_cannot_expose_host_state() {
+        let repo_root = temp_dir("interpolated-named-bind");
+        let canonical = repo_root.canonicalize().unwrap();
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).unwrap();
+        fs::write(
+            canonical.join(".env"),
+            "EFFIGY_TEST_STATE_VOLUME=state-bind\n",
+        )
+        .unwrap();
+        for (kind, driver, volume_type, flags, device) in [
+            (
+                "volume",
+                "local",
+                "none",
+                "bind",
+                state.display().to_string(),
+            ),
+            (
+                "${EFFIGY_TEST_KIND:-volume}",
+                "local",
+                "none",
+                "bind",
+                state.display().to_string(),
+            ),
+            (
+                "volume",
+                "${EFFIGY_TEST_DRIVER:-local}",
+                "${EFFIGY_TEST_TYPE:-none}",
+                "${EFFIGY_TEST_FLAGS:-bind}",
+                "./.effigy/state".to_owned(),
+            ),
+        ] {
+            let definitions = serde_yaml::from_str::<serde_yaml::Value>(&format!(
+                "state-bind:\n  driver: '{driver}'\n  driver_opts:\n    type: '{volume_type}'\n    o: '{flags}'\n    device: '{device}'\n"
+            )).unwrap();
+            for source in [
+                "${EFFIGY_TEST_STATE_VOLUME}",
+                "${EFFIGY_TEST_UNSET_VOLUME:-state-bind}",
+            ] {
+                let mount = serde_yaml::from_str::<serde_yaml::Value>(&format!(
+                    "type: '{kind}'\nsource: '{source}'\ntarget: /workspace/leaked\n"
+                ))
+                .unwrap();
+                let error = enforce_effective_guest_volume_isolation(
+                    "dev",
+                    &canonical,
+                    Path::new("/workspace"),
+                    &canonical,
+                    Some(&definitions),
+                    &[mount],
+                )
+                .expect_err("interpolation must resolve the bind before isolation checks");
+                assert!(error.to_string().contains("host state root"), "{error}");
+            }
+        }
+        let definitions = serde_yaml::from_str::<serde_yaml::Value>(
+            "state-bind:\n  driver: local\n  driver_opts:\n    type: none\n    o: bind\n    device: unresolved/relative\n"
+        ).unwrap();
+        let mount = serde_yaml::from_str::<serde_yaml::Value>(
+            "type: volume\nsource: state-bind\ntarget: /workspace/leaked\n",
+        )
+        .unwrap();
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &canonical,
+            Some(&definitions),
+            &[mount],
+        )
+        .expect_err("an unprovable bind device must not be treated as a managed volume");
+        assert!(error.to_string().contains("cannot prove"), "{error}");
+    }
+
+    #[test]
+    fn two_sources_for_one_guest_path_are_refused() {
+        let repo_root = temp_dir("duplicate-target");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        fs::create_dir_all(canonical.join("one")).expect("one");
+        fs::create_dir_all(canonical.join("two")).expect("two");
+        let mounts = vec![
+            bind_mount(&canonical.join("one"), "/workspace/data"),
+            bind_mount(&canonical.join("two"), "/workspace/data"),
+        ];
+
+        let error =
+            enforce_guest_mount_isolation("dev", &canonical, Path::new("/workspace"), &mounts)
+                .expect_err("one guest path, one source");
+        assert!(
+            error.to_string().contains("two sources at guest path"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn effective_compose_volumes_are_checked_in_short_and_long_form() {
+        let repo_root = temp_dir("effective-volumes");
+        let canonical = repo_root.canonicalize().expect("canonical root");
+        let state = canonical.join(".effigy/state");
+        fs::create_dir_all(&state).expect("state root");
+        let compose_dir = repo_root.join("infra");
+        fs::create_dir_all(&compose_dir).expect("compose dir");
+
+        let short = vec![serde_yaml::Value::String(format!(
+            "{}:/workspace/leaked",
+            state.display()
+        ))];
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            None,
+            &short,
+        )
+        .expect_err("a retained short-form mount is checked");
+        assert!(error.to_string().contains("host state root"), "{error}");
+
+        let mut long_form = serde_yaml::Mapping::new();
+        long_form.insert(
+            serde_yaml::Value::String("type".to_owned()),
+            serde_yaml::Value::String("bind".to_owned()),
+        );
+        long_form.insert(
+            serde_yaml::Value::String("source".to_owned()),
+            serde_yaml::Value::String(canonical.join(".effigy").display().to_string()),
+        );
+        long_form.insert(
+            serde_yaml::Value::String("target".to_owned()),
+            serde_yaml::Value::String("/workspace/effigy".to_owned()),
+        );
+        let error = enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            None,
+            &[serde_yaml::Value::Mapping(long_form)],
+        )
+        .expect_err("a retained long-form mount is checked");
+        assert!(error.to_string().contains("host state root"), "{error}");
+
+        let ordinary = vec![
+            serde_yaml::Value::String("node_modules:/workspace/node_modules".to_owned()),
+            serde_yaml::Value::String(format!("{}:/workspace", canonical.display())),
+        ];
+        enforce_effective_guest_volume_isolation(
+            "dev",
+            &canonical,
+            Path::new("/workspace"),
+            &compose_dir,
+            Some(&serde_yaml::from_str("node_modules: {}").unwrap()),
+            &ordinary,
+        )
+        .expect("ordinary volumes and the checkout mount are allowed");
+        let _ = fs::remove_dir_all(repo_root);
     }
 }

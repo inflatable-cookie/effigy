@@ -30,11 +30,8 @@ impl Drop for ChildGuard {
     }
 }
 fn home() -> tempfile::TempDir {
-    // Three characters at most: the fixture path plus a run id and `.sock`
-    // must fit `sun_path`, and an Effigy run scratch root spends most of that
-    // budget before the fixture name. A longer prefix fails the harness with
-    // "cannot hold a ... fixture and its control socket".
-    effigy_test_support::short_tempdir("kc-").unwrap()
+    // Keep the fixture inside the run root; kernel socket probes support deep homes.
+    effigy_test_support::short_tempdir("kcustody-").unwrap()
 }
 fn fixture() -> PathBuf {
     std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
@@ -505,8 +502,11 @@ fn custody_detach_secondary_client_death_and_explicit_stop() {
     .unwrap();
     while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
     let root = StateRoot::effects(&cx, home.path()).unwrap();
-    let socket = root.path().join("sock").join(format!("{}.sock", id(1)));
-    drop(std::os::unix::net::UnixStream::connect(&socket).unwrap());
+    let observe = cx.operation().observe().unwrap();
+    assert_eq!(
+        connect_control_socket(&observe, &root, &inv.spec().owner, id(1)).verified(),
+        Some(&effigy_kernel::probe::ProbeIo::UnixOpen)
+    );
     assert!(matches!(
         fresh_status(&cx.operation().observe().unwrap(), &root, id(1)),
         Observed::Verified(RunStatus::Live(_), _)

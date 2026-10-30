@@ -74,6 +74,7 @@ fn the_busy_refusal_text_names_the_holder_the_gate_recorded() {
 
 mod adapters;
 mod faults;
+mod guest_publication;
 
 const PROJECT: &str = "acme-stack";
 
@@ -1174,9 +1175,12 @@ fn an_activation_past_the_sixty_second_budget_still_settles() {
     assert_store_sound(&ctx);
 }
 
-/// The operator sees which phase a transition is in: the gate wait and the
-/// settlement each report themselves, so a slow activation never looks like a
-/// hang and an expired settle is named where it happened (effigy#447).
+/// The operator sees which phase a transition is in: one live step per
+/// transition names the gate it waits for and each reconcile phase, and the
+/// run ends with its own settlement line, so a slow activation never looks
+/// like a hang and an expired settle is named where it happened (effigy#461,
+/// effigy#447). The frame text itself is proven by
+/// `environment::reconcile::tests`; this pins the finish lines a piped run sees.
 #[test]
 fn a_transition_names_its_wait_and_its_settlement() {
     let home = home();
@@ -1188,24 +1192,14 @@ fn a_transition_names_its_wait_and_its_settlement() {
         bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[])
     });
     assert_eq!(applied.unwrap(), Applied::Reconciled);
-    for expected in [
-        "✓ environment `stack` is free".to_owned(),
-        "✓ environment `stack` settled".to_owned(),
-    ] {
-        assert!(
-            lines.contains(&expected),
-            "missing {expected:?} in {lines:?}"
-        );
-    }
-    // Two runs, so the apply run and the activation each report their own
-    // admission and settlement.
+    // Two runs, so the apply run and the activation each end with their own
+    // settlement, and an admission contributes no separate line.
     assert_eq!(
-        lines
-            .iter()
-            .filter(|line| line.ends_with("` settled"))
-            .count(),
-        2,
-        "{lines:?}"
+        lines,
+        vec![
+            "✓ environment `stack` settled".to_owned(),
+            "✓ environment `stack` settled".to_owned(),
+        ]
     );
 }
 

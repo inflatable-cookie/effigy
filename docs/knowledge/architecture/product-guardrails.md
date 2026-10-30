@@ -61,6 +61,15 @@ when the real cause was two named services failing their health checks.
   time. A changing glyph alone is not progress. Managed TUI entries have their
   own dependency-derived state; a waiting entry never borrows another entry's
   label. This rule applies to every command plane for the v0.15 gate (Q-017).
+  The UI's `ProgressSource` supplies the current subject, count, latest event
+  and elapsed wait to `live_step`. When no event is available, it names the
+  exact awaited object or probe with the elapsed time. `lint:feedback` checks
+  compiler-resolved legacy constructor and wrapper uses against the finite
+  inventory in `config/feedback-spinner-baseline.json`; its ceiling prevents
+  additions. The inventory includes references and test uses as well as
+  production calls. Migrations remove their entries as they replace legacy
+  uses. The final v0.15 migration gate removes the inventory before candidate
+  freeze; it is not an exception to the live-state rule.
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
   - the evidence (exit code, the last relevant output, the health check's

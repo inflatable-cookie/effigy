@@ -114,8 +114,6 @@ fn map_contracts_error(error: ContractsError) -> RunnerError {
             RunnerError::task_invocation_failed_parse(&path, error)
         }
         ContractsError::Message(message) => RunnerError::task_invocation(message),
-        ContractsError::ContractBody { failure, .. } => {
-            RunnerError::task_invocation(failure.reason)
-        }
+        ContractsError::ContractBody(body) => RunnerError::task_invocation(body.failure.reason),
     }
 }
