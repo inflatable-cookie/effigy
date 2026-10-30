@@ -1,8 +1,14 @@
 # There is one reviewed spinner sink: `Step`'s own bar construction in
 # `crates/effigy-ui/src/steps.rs`, which the feedback inventory exempts by
-# name. Every other `ProgressBar::new_spinner` in the workspace is a
-# fixed-label spinner the live-step API does not drive, so this disallows it
-# anywhere, including inside a wrapper.
+# name. `indicatif` may be named in no other production file, and the sink may
+# build exactly one bar with exactly one style and steady tick. This config is
+# the second gate: every constructor that makes a bar is disallowed everywhere,
+# so a second construction fails even inside the sink file.
 disallowed-methods = [
   { path = "indicatif::ProgressBar::new_spinner", reason = "feedback legacy spinner: migrate to a live progress source" },
+  { path = "indicatif::ProgressBar::new", reason = "feedback legacy spinner: migrate to a live progress source" },
+  { path = "indicatif::ProgressBar::no_length", reason = "feedback legacy spinner: migrate to a live progress source" },
+  { path = "indicatif::ProgressBar::with_draw_target", reason = "feedback legacy spinner: migrate to a live progress source" },
+  { path = "indicatif::ProgressBar::hidden", reason = "feedback legacy spinner: migrate to a live progress source" },
+  { path = "indicatif::ProgressBar::with_style", reason = "feedback legacy spinner: migrate to a live progress source" },
 ]

@@ -64,6 +64,91 @@ class InventoryTests(unittest.TestCase):
         self.assertIn('--all-targets', command)
         self.assertNotIn('-p', command)
 
+    def test_an_alternative_spinner_constructor_is_reported(self):
+        # The finding's fixture: a fixed-label spinner built without any
+        # deprecated entry point, through indicatif's other constructors.
+        wrapper = """use indicatif::{ProgressBar, ProgressStyle};
+
+pub fn show(label: &str) -> ProgressBar {
+    let bar = ProgressBar::no_length();
+    bar.set_style(ProgressStyle::default_spinner());
+    bar.set_message(label.to_owned());
+    bar.enable_steady_tick(std::time::Duration::from_millis(80));
+    bar
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'wrapper.rs').write_text(wrapper)
+            errors = lint.indicatif_errors(root)
+        self.assertTrue(errors, 'an alternative constructor must not pass')
+        for fragment in ('src/wrapper.rs:1:', 'src/wrapper.rs:4:',
+                         'src/wrapper.rs:5:', 'src/wrapper.rs:7:'):
+            self.assertTrue(any(fragment in error for error in errors), (fragment, errors))
+        self.assertTrue(any('ProgressBar::no_length' in error for error in errors), errors)
+        self.assertTrue(
+            any('ProgressStyle::default_spinner' in error for error in errors), errors
+        )
+        self.assertTrue(
+            any('live_step(ProgressSource::waiting_for' in error for error in errors), errors
+        )
+
+    def test_the_sink_holds_only_the_reviewed_construction(self):
+        reviewed = """use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+struct Sink;
+
+impl Sink {
+    fn start_bar(&self, label: &str) -> ProgressBar {
+        let bar = self.multi().add(ProgressBar::new_spinner());
+        if let Ok(style) = ProgressStyle::with_template(SPINNER_TEMPLATE) {
+            bar.set_style(style);
+        }
+        bar.set_message(label.to_owned());
+        bar.enable_steady_tick(TICK);
+        bar
+    }
+}
+"""
+        extra = """fn a_second_spinner() -> ProgressBar {
+    let bar = ProgressBar::no_length();
+    bar.enable_steady_tick(TICK);
+    bar
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            sink = root / 'crates/effigy-ui/src/steps.rs'
+            sink.parent.mkdir(parents=True)
+            sink.write_text(reviewed)
+            self.assertEqual(lint.sink_errors(root), [])
+            self.assertEqual(lint.indicatif_errors(root), [])
+            sink.write_text(reviewed + extra)
+            errors = lint.sink_errors(root)
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn('crates/effigy-ui/src/steps.rs:17:', errors[0])
+        self.assertIn('ProgressBar::no_length', errors[0])
+        self.assertIn('crates/effigy-ui/src/steps.rs:18:', errors[1])
+        self.assertIn('enable_steady_tick', errors[1])
+
+    def test_the_sink_cannot_re_export_the_spinner_crate(self):
+        reviewed = """use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+pub use indicatif::ProgressBar;
+
+struct Sink;
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            sink = root / 'crates/effigy-ui/src/steps.rs'
+            sink.parent.mkdir(parents=True)
+            sink.write_text(reviewed)
+            errors = lint.sink_errors(root)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn('crates/effigy-ui/src/steps.rs:3:', errors[0])
+        self.assertIn('re-export', errors[0])
+
     def test_compiler_resolves_a_renamed_static_helper(self):
         # Build a standalone fixture in an isolated directory through Oxide.
         # Its API carries the same deprecation marker as the checked API.

@@ -41,10 +41,16 @@ path and the milestone QA path both fail on a reintroduced bare spinner.
   reports the real call site with the file, the line and the migration.
 - There is no allowlist, ceiling or baseline file. Any such use fails, and so
   does an `#[allow(deprecated)]`-style suppression.
-- `config/feedback-lint/clippy.toml` disallows
-  `indicatif::ProgressBar::new_spinner` everywhere except the one reviewed
-  sink in `crates/effigy-ui/src/steps.rs`, so a new helper that builds its own
-  bare spinner fails even before it is wired to a label.
+- The spinner crate is owned the same way. `indicatif` may be named in exactly
+  one production file, the reviewed sink in `crates/effigy-ui/src/steps.rs`,
+  and that file may build exactly one bar with one style and one steady tick.
+  A fixed-label spinner built through another constructor
+  (`ProgressBar::no_length`, `ProgressBar::new`, `ProgressStyle::default_spinner`,
+  `enable_steady_tick`) is therefore reported at its own file and line, whether
+  it is written directly or hidden behind a wrapper.
+- `config/feedback-lint/clippy.toml` disallows every bar constructor
+  (`new_spinner`, `new`, `no_length`, `with_draw_target`, `hidden`, `with_style`)
+  as a second gate, so a second construction fails even inside the sink.
 - The shipped API is the gate as well: `steps::live_step(ProgressSource)`,
   `Step::live_step`, `steps::finish_line`, and `exec::runtime_wait(label,
   awaiting)` for the runtime fallback. The old `Renderer::spinner`/

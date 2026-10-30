@@ -444,11 +444,15 @@ until the host-log writer has a safe secret-handling boundary.
   `effigy lint:feedback` no longer reads a baseline or ceiling file: it fails
   on every compiler-resolved use of a fixed-label constructor in any workspace
   crate, including through an alias or wrapper, naming the file, the line and
-  the migration, and `clippy::disallowed_methods` rejects every bare
-  `indicatif::ProgressBar::new_spinner` outside the one reviewed sink. The gate
-  is part of `effigy validate`, `effigy qa` and `effigy qa:gates`, so the
-  normal validation path and the milestone QA path both refuse a bare spinner
-  instead of depending on someone running the selector. A managed pane's start
+  the migration. The gate also owns the spinner crate: `indicatif` may be
+  named in one production file (the reviewed sink) and that file may build one
+  bar, so a fixed-label spinner built through `ProgressBar::no_length`,
+  `ProgressStyle::default_spinner` and `enable_steady_tick` fails at its own
+  file and line, and `clippy::disallowed_methods` rejects every bar
+  constructor as a second gate. The gate is part of `effigy validate`,
+  `effigy qa` and `effigy qa:gates`, so the normal validation path and the
+  milestone QA path both refuse a bare spinner instead of depending on someone
+  running the selector. A managed pane's start
   clock now belongs to the process's current attempt, so an entry that queued
   behind its prerequisite starts its own count at zero rather than showing the
   time it spent waiting, and a silent teardown names the command's exit as the

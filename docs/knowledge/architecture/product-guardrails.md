@@ -88,9 +88,14 @@ when the real cause was two named services failing their health checks.
   through an alias or wrapper in another crate, naming the file, the line and
   the migration. There is no allowlist, no exemption to add and no ceiling: a
   new fixed-label spinner fails the lint instead of joining an inventory, and
-  a suppressed diagnostic fails it too. `clippy::disallowed_methods` rejects
-  every `indicatif::ProgressBar::new_spinner` except the one reviewed sink.
-  Every site's disposition is recorded in
+  a suppressed diagnostic fails it too. The gate also owns the spinner crate
+  itself: `indicatif` may be named in exactly one production file (the reviewed
+  step sink), and that file may build exactly one bar with one style and one
+  steady tick, so a fixed-label spinner built through another constructor
+  (`ProgressBar::no_length`, `ProgressBar::new`, `ProgressStyle::default_spinner`,
+  `enable_steady_tick`) fails at its own file and line whether it is written
+  directly or behind a wrapper. `clippy::disallowed_methods` rejects every
+  bar constructor as a second gate. Every site's disposition is recorded in
   [live progress sites](036-live-progress-sites.md).
 - **Errors describe what is wrong.** Every error a person can see names:
   - the thing that failed (service, file, command, route or checkout);
