@@ -1900,7 +1900,7 @@ mod live_progress_tests {
             let frame = progress.frame_at(Duration::from_secs(17));
             assert_eq!(
                 frame,
-                "sealing local credential; last: vault decrypted; 17s elapsed"
+                "sealing local credential; waiting for vault decrypt; last: vault decrypted; 17s elapsed"
             );
             assert_redacted(&frame);
             progress.update(
@@ -1911,7 +1911,7 @@ mod live_progress_tests {
             let frame = progress.frame_at(Duration::from_secs(18));
             assert_eq!(
                 frame,
-                "writing local credential; last: credential sealed; 18s elapsed"
+                "writing local credential; waiting for vault decrypt; last: credential sealed; 18s elapsed"
             );
             assert_redacted(&frame);
             progress.succeed("vault unlocked for commands and tasks");
@@ -1947,7 +1947,7 @@ mod live_progress_tests {
             let frame = progress.frame_at(Duration::from_secs(2));
             assert_eq!(
                 frame,
-                "removing local unlock files (1/2); last: removed local-dev key; 2s elapsed"
+                "removing local unlock files (1/2); waiting for vault lock; last: removed local-dev key; 2s elapsed"
             );
             assert_redacted(&frame);
             progress.update(
@@ -1958,7 +1958,7 @@ mod live_progress_tests {
             let frame = progress.frame_at(Duration::from_secs(3));
             assert_eq!(
                 frame,
-                "removing local unlock files (2/2); last: removed local unlock credential; 3s elapsed"
+                "removing local unlock files (2/2); waiting for vault lock; last: removed local unlock credential; 3s elapsed"
             );
             assert_redacted(&frame);
             progress.fail("could not lock the vault: failed to remove local-dev key");
@@ -2006,7 +2006,7 @@ mod live_progress_tests {
             let frame = progress.frame_at(Duration::from_secs(8));
             assert_eq!(
                 frame,
-                "running generate hook; last: inline command; 8s elapsed"
+                "running generate hook; waiting for vault generate hook; last: inline command; 8s elapsed"
             );
             assert_redacted(&frame);
             assert!(!frame.contains("echo"));

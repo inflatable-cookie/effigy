@@ -1231,7 +1231,7 @@ mod progress_tests {
         let frame = progress.frame_at(Duration::from_secs(42));
         assert_eq!(
             frame,
-            "repairing the Colima runtime of profile `effigy`; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
+            "repairing the Colima runtime of profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; last: profile `effigy` reported Running with 2 CPUs, 32GiB memory and 100GiB disk (target=300GiB); 42s elapsed"
         );
 
         progress.phase(
@@ -1270,7 +1270,7 @@ mod progress_tests {
         progress.observe(&absent);
         assert_eq!(
             progress.frame_at(Duration::from_secs(1)),
-            "reading the state Colima reports for profile `effigy`; last: profile `effigy` is not listed by `colima list --json`; 1s elapsed"
+            "reading the state Colima reports for profile `effigy`; waiting for `colima list --json` to answer for profile `effigy`; last: profile `effigy` is not listed by `colima list --json`; 1s elapsed"
         );
 
         let quiet = ProfileProgress::new(

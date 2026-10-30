@@ -69,9 +69,14 @@ fn a_health_wait_frame_names_the_probe_attempt_elapsed_and_last_answer() {
         "probing `http://127.0.0.1:8080/healthz` for web (attempt 3); waiting for `http://127.0.0.1:8080/healthz` to report web healthy; 4s elapsed"
     );
     progress.event("`http://127.0.0.1:8080/healthz` did not answer healthy");
+    // Two reads after the event: the probe and the attempt stay named.
     assert_eq!(
         progress.frame_at(std::time::Duration::from_secs(9)),
-        "probing `http://127.0.0.1:8080/healthz` for web (attempt 3); last: `http://127.0.0.1:8080/healthz` did not answer healthy; 9s elapsed"
+        "probing `http://127.0.0.1:8080/healthz` for web (attempt 3); waiting for `http://127.0.0.1:8080/healthz` to report web healthy; last: `http://127.0.0.1:8080/healthz` did not answer healthy; 9s elapsed"
+    );
+    assert_eq!(
+        progress.frame_at(std::time::Duration::from_secs(30)),
+        "probing `http://127.0.0.1:8080/healthz` for web (attempt 3); waiting for `http://127.0.0.1:8080/healthz` to report web healthy; last: `http://127.0.0.1:8080/healthz` did not answer healthy; 30s elapsed"
     );
     step.finish_clear();
 }

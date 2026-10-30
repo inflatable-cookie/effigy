@@ -2202,7 +2202,7 @@ mod live_progress_tests {
         show_apply_hook(&progress, "users", 1, 2);
         assert_eq!(
             progress.frame_at(Duration::from_secs(9)),
-            "running apply hook `users` (1/2); last: layer `users` applied; 9s elapsed"
+            "running apply hook `users` (1/2); waiting for apply hook `users` to finish; last: layer `users` applied; 9s elapsed"
         );
     }
 
@@ -2255,7 +2255,7 @@ mod live_progress_tests {
         );
         assert_eq!(
             progress.frame_at(Duration::from_secs(5)),
-            "pushing capture artifact `db-dump` to oci://registry/dump (2/2); last: capture task `snapshot` finished; 5s elapsed"
+            "pushing capture artifact `db-dump` to oci://registry/dump (2/2); waiting for artifact `db-dump` to be pushed; last: capture task `snapshot` finished; 5s elapsed"
         );
         // The sticky event never costs the wait its destination.
         let later = progress.frame_at(Duration::from_secs(45));

@@ -285,13 +285,13 @@ mod tests {
                 reporter
                     .live_frame(GOD_FILES, Duration::from_secs(0))
                     .expect("god files"),
-                "scanning for god files (1/3); last: shared scan inventory; 0s elapsed"
+                "scanning for god files (1/3); waiting for god files scan; last: shared scan inventory; 0s elapsed"
             );
             assert_eq!(
                 reporter
                     .live_frame(GOD_FILES, Duration::from_secs(4))
                     .expect("god files"),
-                "scanning for god files (1/3); last: shared scan inventory; 4s elapsed"
+                "scanning for god files (1/3); waiting for god files scan; last: shared scan inventory; 4s elapsed"
             );
 
             reporter.finish_scan(GOD_FILES, &ScanOutcome::Clear { warnings: 0 });
@@ -304,7 +304,7 @@ mod tests {
                 reporter
                     .live_frame(DUPLICATE_BLOCKS, Duration::from_secs(9))
                     .expect("duplicate blocks"),
-                "scanning for duplicate blocks (2/3); last: shared scan inventory; 9s elapsed"
+                "scanning for duplicate blocks (2/3); waiting for duplicate blocks scan; last: shared scan inventory; 9s elapsed"
             );
             reporter.finish_scan(DUPLICATE_BLOCKS, &ScanOutcome::Failed { errors: 2 });
 
