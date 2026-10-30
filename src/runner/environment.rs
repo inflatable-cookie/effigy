@@ -5,6 +5,9 @@
 //! and a command that uses an environment holds it through a session run
 //! (or, for a managed run, through its own task run).
 
+#[path = "environment_workspace.rs"]
+pub(in crate::runner) mod workspace;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 

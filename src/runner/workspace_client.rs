@@ -50,6 +50,10 @@
 #![allow(dead_code)]
 
 pub(crate) mod context;
+// #482's producer side: the staged guest probe and the guest's own identity
+// observation, which the v2 context verification takes.
+pub(crate) mod guest_probe;
+pub(crate) mod identity;
 pub(crate) mod serving;
 
 #[cfg(test)]
@@ -317,6 +321,13 @@ pub(crate) fn classify(cmd: &Command) -> GuestOperation {
             "`effigy gateway` runs on the host, never in a container-mode guest; run it on the host \
              or ask the host session for the route table with `effigy container hosts`"
         )),
+        // The staged guest probe is the producer's own guest entry: the ordinary
+        // dispatch runs it (guest_probe module), and it never crosses the
+        // channel. A guest that asked for it is not making a host request.
+        Command::InternalGuestProbe(_) => GuestOperation::Refused(
+            "the staged guest probe is dispatched by the workspace producer, not by a guest command"
+                .to_owned(),
+        ),
         // Hidden internal entry points are refused at the guest CLI (§8.6).
         Command::InternalGateway(_)
         | Command::InternalGatewayIdentity(_)
@@ -687,6 +698,9 @@ fn live_run_from(
         container,
         environment_generation: context.activation.environment.generation.clone(),
         session_run_id: context.session_run_id.clone(),
+        // The v1 context publishes no session generation; the v2 entry verifies
+        // one, and the binding then fills this from the published S.
+        session_generation: context.session_generation,
         context_generation: generation,
     }
 }
@@ -1429,6 +1443,12 @@ fn local_read_error(error: LocalReadError) -> RunnerError {
 /// ordinary host dispatch runs unchanged, and nothing was written. Hybrid mode
 /// always takes this path (§8.10 R1).
 pub(crate) fn guest_command(cmd: &Command) -> Result<Option<String>, RunnerError> {
+    // The staged guest probe is executed by the producer inside the created
+    // container. It is the guest's own entry, handled by `guest_probe`, so it
+    // takes the ordinary dispatch rather than the channel.
+    if matches!(cmd, Command::InternalGuestProbe(_)) {
+        return Ok(None);
+    }
     let mut guest = ContainerGuest;
     let published = match detect(&mut guest)? {
         GuestPlacement::Host => return Ok(None),

@@ -453,6 +453,11 @@ pub enum EnvError {
     Backend(BackendError),
     Invalid(String),
     Kernel(RunError),
+    /// Preserve the original refusal when cleanup also needs recovery.
+    Cleanup {
+        cause: Box<EnvError>,
+        failures: Vec<EnvError>,
+    },
 }
 
 impl std::fmt::Display for EnvError {
@@ -483,6 +488,11 @@ impl std::fmt::Display for EnvError {
             Self::Backend(error) => write!(f, "{error}"),
             Self::Invalid(message) => f.write_str(message),
             Self::Kernel(error) => write!(f, "environment record: {error}"),
+            Self::Cleanup { cause, failures } => {
+                write!(f, "{cause}")?;
+                for error in failures { write!(f, "; cleanup requires recovery: {error}")?; }
+                Ok(())
+            }
         }
     }
 }
@@ -1066,6 +1076,80 @@ impl<'r> EnvRun<'r> {
         }
     }
 
+    /// Read this held activation's plan from its own root and capability.
+    pub fn workspace_plan(
+        &self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+    ) -> Result<effigy_kernel::workspace_session::ActivationPlan, EnvError> {
+        let observe = self
+            .cx
+            .child(Duration::from_secs(30))
+            .operation()
+            .observe()
+            .map_err(|_| {
+                EnvError::Kernel(RunError::refused(
+                    "workspace activation cannot observe its plan",
+                ))
+            })?;
+        let reader = match effigy_kernel::store::Store::read(&observe, self.root) {
+            Observed::Verified(reader, _) => reader,
+            _ => {
+                return Err(EnvError::Kernel(RunError::unavailable(
+                    "workspace activation journal is unreadable",
+                )))
+            }
+        };
+        match reservation.plan(&reader) {
+            Observed::Verified(Some(plan), _)
+                if plan.environment_run() == Some(self.id()) && plan.fence() == *self.fence() =>
+            {
+                Ok(plan)
+            }
+            _ => Err(EnvError::Kernel(RunError::unavailable(
+                "workspace activation plan is not bound to this owner",
+            ))),
+        }
+    }
+
+    /// Start the required publication before the caller's sequenced staging
+    /// and channel I/O. The sealed ticket is still owned by this exact Env run.
+    pub fn intend_workspace_publication(
+        &mut self,
+        plan: &effigy_kernel::workspace_session::ActivationPlan,
+    ) -> Result<effigy_kernel::run::GuestPublicationTicket, EnvError> {
+        if plan.environment_run() != Some(self.run.id()) || plan.fence() != *self.run.fence() {
+            return self.kernel(Err(RunError::refused(
+                "workspace publication plan names another activation",
+            )));
+        }
+        let result = Attachments::intend_guest_publication(&mut self.run);
+        let ticket = self.kernel(result)?;
+        self.transitioned = true;
+        Ok(ticket)
+    }
+
+    pub fn acknowledge_workspace_publication(
+        &mut self,
+        plan: &effigy_kernel::workspace_session::ActivationPlan,
+        ticket: &effigy_kernel::run::GuestPublicationTicket,
+        receipt: effigy_kernel::workspace_session::WorkspacePublicationReceipt,
+    ) -> Result<(), EnvError> {
+        let result = plan
+            .validate_receipt(&receipt)
+            .and_then(|()| Attachments::workspace_guest_published(&mut self.run, ticket, receipt));
+        self.kernel(result)
+    }
+
+    pub fn unknown_workspace_publication(
+        &mut self,
+        ticket: &effigy_kernel::run::GuestPublicationTicket,
+        reason: UnknownReason,
+    ) -> Result<(), EnvError> {
+        self.failed = true;
+        let result = Attachments::guest_publication_unknown(&mut self.run, ticket, reason);
+        self.kernel(result)
+    }
+
     /// Publish the exact frozen successor session and record the guest's
     /// acknowledgement before `commit_activation`. The callback returns the
     /// identity actually published; the host never fills it into a generic
@@ -1190,6 +1274,19 @@ impl<'r> EnvRun<'r> {
         selection: &effigy_kernel::workspace_session::SelectionReceipt,
         launch: &effigy_kernel::workspace_session::SessionLaunch,
     ) -> Result<effigy_kernel::workspace_session::SessionRef, EnvError> {
+        self.commit_workspace_selection(reservation, session_run, selection, launch)
+            .map(|committed| committed.session())
+    }
+
+    /// Return the durable selection obligation so the caller can perform CAS
+    /// and record readback before reporting successful activation.
+    pub fn commit_workspace_selection(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session_run: &effigy_kernel::run::Run<'_>,
+        selection: &effigy_kernel::workspace_session::SelectionReceipt,
+        launch: &effigy_kernel::workspace_session::SessionLaunch,
+    ) -> Result<effigy_kernel::workspace_session::CommittedActivation, EnvError> {
         let result = reservation.commit_selection(
             &self.cx,
             self.root,
@@ -1200,7 +1297,17 @@ impl<'r> EnvRun<'r> {
         );
         let committed = self.kernel(result)?;
         self.published = true;
-        Ok(committed.session())
+        Ok(committed)
+    }
+
+    pub fn workspace_selection_switched(
+        &mut self,
+        obligation: &effigy_kernel::workspace_session::SelectionObligation,
+        launch: &effigy_kernel::workspace_session::SessionLaunch,
+        reader: &mut dyn effigy_kernel::workspace_session::SelectorReader,
+    ) -> Result<(), EnvError> {
+        let result = Attachments::selection_switched(&mut self.run, obligation, launch, reader);
+        self.kernel(result)
     }
 
     /// Ends the run. A run that changed nothing republishes the state it
@@ -1383,6 +1490,14 @@ mod tests {
             platform: None,
             guest: Some(effigy_kernel::workspace_session::GuestContextInputs {
                 version: env!("CARGO_PKG_VERSION").into(),
+                protocol: 1,
+                host_user: "1000".into(),
+                checkout_id: checkout().text(),
+                environment_resource: stack.resource.name().to_string(),
+                profile: "fixture".into(),
+                runtime: None,
+                vm_type: None,
+                routes: vec![],
                 paths: effigy_kernel::workspace_session::GuestPaths {
                     host_checkout: "/host".into(),
                     guest_checkout: "/workspace".into(),
@@ -1610,6 +1725,9 @@ mod tests {
         );
         let document = serde_json::to_vec(&serde_json::json!({
             "schema": "effigy.workspace-context.v2",
+            "protocol": 1, "host_user": "1000", "checkout_id": checkout().text(),
+            "environment_resource": stack.resource.name().to_string(), "profile": "fixture",
+            "runtime": null, "vm_type": null, "routes": [], "platform": "x86_64", "libc": "gnu",
             "version": inputs.guest.as_ref().expect("guest").version,
             "paths": inputs.guest.as_ref().expect("guest").paths,
             "sources": inputs.guest.as_ref().expect("guest").sources,
@@ -1629,7 +1747,7 @@ mod tests {
                 "path": "/run/effigy/objects/enrol/1",
                 "digest": effigy_kernel::id::Digest::of(b"enrol").hex(),
             },
-            "locator": { "endpoint": lease.endpoint(), "pin": lease.pin().hex() },
+            "locator": { "endpoint": lease.endpoint(), "pin": format!("sha256:{}", lease.pin().hex()) },
             "selection_digest": inputs.selection.hex(),
         }))
         .expect("context document");

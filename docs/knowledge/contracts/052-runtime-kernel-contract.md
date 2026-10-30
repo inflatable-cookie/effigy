@@ -2940,11 +2940,11 @@ complete output. ≤16 unacked data frames, ≤512 KiB queued decoded data; cont
 resize latest-wins; check attachment lifetime before terminal writes; missing delivery refuses. Kernel record tests do not qualify
 a production terminal writer/serving loop/transport. §8.7 governs down and live holders.
 
-**Guest-local identity — #482 (C).** Proposed in `src/runner/workspace_client/identity.rs`:
+**Guest-local identity — #482 (C).** The context-free reader is in `src/runner/workspace_client/identity.rs`:
 
 ```rust
-struct ProcGuestIdentity { /* real /proc and image root, fixture roots in tests */ }
-struct GuestSelfObservation { container: WorkspaceContainerIdentity, evidence: GuestIdentityEvidence }
+struct ProcGuestIdentity; // bounded real proc files; pure byte/ELF fixtures in tests
+struct GuestSelfObservation { container_id: String, vm_boot_id: String, platform: String, libc: String }
 trait GuestIdentity { fn observe(&mut self) -> Result<GuestSelfObservation, GuestIdentityRefusal>; }
 impl ProcGuestIdentity { fn process() -> Self; }
 ```
@@ -2958,6 +2958,48 @@ even when it matches the context. Cgroup-only availability must refuse `Unproven
 promotes it. Hostnames, markers, environment variables and id prefixes also prove nothing. Each backend's fixture and native
 qualification must distinguish a valid mountinfo observation from cgroup-only and copied-context cases; the latter refuse without
 credentials or publication.
+
+The hidden `__guest-identity` and `__guest-reach --resolve|--dial` entries execute
+from the staged digest object, without reading a context or credential or writing
+host state. The host adapter runs them against the exact bound container with the
+caller's remaining execution/capture budget. Resolve reads only the unique
+`effigy-host` hosts entry; dial performs a pinned TLS handshake with no channel
+frames. Guest mount-root/boot observation precedes both operations. ELF64 machine
+and the single known interpreter verify the executing object; static, unknown or
+conflicting loader evidence refuses. Native Colima, Desktop and Linux Docker
+qualification remains required before treating a candidate mount-root source as
+qualified placement evidence.
+
+The canonical full-v2 wire type is the kernel's exported `WorkspaceContextDocument`;
+`workspace_client/context_v2.rs` uses a transparent wrapper around that exact type.
+Host user, checkout/environment resource, protocol, profile/runtime/VM descriptor,
+paths, source pins and routes are compared with frozen `GuestContextInputs`.
+Platform and libc are checked against the applied required binary stage's image
+facts read into `ActivationPlan`; a fresh reservation never guesses them before
+apply, and an absent or uncertain stage cannot validate a context receipt.
+The C full-v2 producer/reader is `workspace_client/context_v2.rs`. Its session block
+comes from `ActivationPlan::session()`, its channel from `QualifiedHostLocator`,
+and it refuses v1 documents and unknown fields. The reserved owner orchestration
+is `environment_workspace.rs` over the container engine's `WorkspaceActivation`:
+Task admission precedes claimed Env admission. The admitted Run is adopted once
+before channel construction; its already-adopted `SessionSupervisor` and exact
+listener are moved together to serving. Successful completion requires durable
+selection readback. `up_prepared` calls the C `prepare_reserved_guest` producer:
+required publication intent, target/platform binding, required immutable binary
+stage, independent guest identity, the merged qualified advertised-locator API,
+full-v2 document, staged-guest context-bound TLS-only probe, canonical kernel
+receipt, commit, CAS and readback. No credential is minted before independent
+identity or staged before pinned qualification. Recovery re-reads the exact
+Pending obligation under an actual Env guard; unknown target/listener evidence
+switches nothing, while a settled failed successor can be abandoned without
+restoring its predecessor. Its typed source boundary supplies no default locator
+or successful publication fallback. The workspace-client owner installs the
+serialized CLI/serving consumer after this producer, moving the already-adopted
+supervisor, exact session/listener and original Arc effect/observe contexts and
+root together; it owns final serving E2E and durable custody close. Legacy local
+preparation remains separate from that reserved authority path. Native Colima,
+Docker Desktop and Linux Docker identity/reachability qualification is still
+required at the candidate gate.
 
 The host selects the first artifact from the exact container image's backend OS/architecture/variant and one observed image loader
 family, before executing it. `/proc/self/exe` ELF machine/interpreter verifies those staged bytes; it does not select them.

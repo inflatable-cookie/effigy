@@ -89,6 +89,7 @@ fn workspace_context(
             container: container(),
         },
         session_run_id: session.map(|run| run.to_string()),
+        session_generation: session.map(|_| 1),
         paths: context::WorkspacePathMap {
             host_checkout: "/Users/operator/app".to_owned(),
             guest_checkout: GUEST_CHECKOUT.to_owned(),

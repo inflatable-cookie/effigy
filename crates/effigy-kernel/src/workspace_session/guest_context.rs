@@ -24,9 +24,29 @@ pub struct GuestSourcePin {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GuestRoute {
+    pub declared_domain: String,
+    pub domain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    pub tls: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GuestContextInputs {
     /// Exact host active version, including local-build identity when present.
     pub version: String,
+    pub protocol: u32,
+    pub host_user: String,
+    pub checkout_id: String,
+    pub environment_resource: String,
+    pub profile: String,
+    pub runtime: Option<String>,
+    pub vm_type: Option<String>,
+    pub routes: Vec<GuestRoute>,
     pub paths: GuestPaths,
     pub sources: Vec<GuestSourcePin>,
 }
@@ -42,6 +62,41 @@ impl GuestContextInputs {
             return Err(RunError::refused(
                 "guest version must be nonempty and contain no NUL",
             ));
+        }
+        if self.protocol != 1
+            || [
+                &self.host_user,
+                &self.checkout_id,
+                &self.environment_resource,
+                &self.profile,
+            ]
+            .iter()
+            .any(|value| value.trim().is_empty() || value.contains('\0'))
+            || [&self.runtime, &self.vm_type].iter().any(|value| {
+                value
+                    .as_ref()
+                    .is_some_and(|value| value.trim().is_empty() || value.contains('\0'))
+            })
+        {
+            return Err(RunError::refused(
+                "guest protocol, host, checkout, environment or backend identity is incomplete",
+            ));
+        }
+        let mut routes = std::collections::BTreeSet::new();
+        for route in &self.routes {
+            if [&route.declared_domain, &route.domain].iter().any(|name| {
+                name.is_empty() || name.chars().any(char::is_whitespace) || name.contains('\0')
+            }) || route.port == Some(0)
+                || route
+                    .service
+                    .as_ref()
+                    .is_some_and(|name| name.trim().is_empty() || name.contains('\0'))
+                || !routes.insert((&route.domain, &route.service, route.port))
+            {
+                return Err(RunError::refused(
+                    "guest route identity is malformed or duplicated",
+                ));
+            }
         }
         for (field, path) in [
             ("host_checkout", &self.paths.host_checkout),

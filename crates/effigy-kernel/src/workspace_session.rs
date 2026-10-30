@@ -39,7 +39,7 @@
 mod down;
 mod guest_context;
 mod guest_stage;
-pub use guest_context::{GuestContextInputs, GuestPaths, GuestSourcePin};
+pub use guest_context::{GuestContextInputs, GuestPaths, GuestRoute, GuestSourcePin};
 pub use guest_stage::{
     BoundPlatform, GuestBinaryReceipt, GuestBinaryStage, ImagePlatform, LoaderFamily,
 };
@@ -51,10 +51,11 @@ mod tests;
 
 pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use selection::{
-    selection_abandoned, selection_recovered, unfinished_selection, GuestObject, GuestSelection,
-    SelectionLiveness, SelectionObjects, SelectionObligation, SelectionReceipt, SelectionState,
-    SelectionSwitchReceipt, SelectorChange, SelectorReadback, SelectorReader, BINARY_SELECTOR,
-    CONTEXT_SELECTOR, ENTRY_SELECTOR,
+    selection_abandoned, selection_recovered, unfinished_selection, AdvertisedLocator,
+    CredentialSelection, GuestObject, GuestSelection, SelectionLiveness, SelectionObjects,
+    SelectionObligation, SelectionReceipt, SelectionState, SelectionSwitchReceipt, SelectorChange,
+    SelectorReadback, SelectorReader, WorkspaceContextDocument, WorkspaceSessionBinding,
+    BINARY_SELECTOR, CONTEXT_SELECTOR, ENTRY_SELECTOR, WORKSPACE_CONTEXT_SCHEMA,
 };
 pub use serving::{
     ChannelBound, ChannelListener, GuestLocatorChallenge, GuestLocatorEvidence, GuestLocatorTarget,
@@ -2929,9 +2930,15 @@ pub struct ActivationPlan {
     environment_run: Option<RunId>,
     session: SessionBinding,
     guest: Option<GuestContextInputs>,
+    image_platform: Option<ImagePlatform>,
 }
 
 impl ActivationPlan {
+    pub fn image_platform(&self) -> Result<&ImagePlatform, RunError> {
+        self.image_platform.as_ref().ok_or_else(|| {
+            RunError::refused("workspace context needs the verified staged image platform")
+        })
+    }
     pub fn guest_context(&self) -> Result<&GuestContextInputs, RunError> {
         self.guest
             .as_ref()
@@ -3113,7 +3120,34 @@ fn activation_plan(
     if borrowed {
         return Err(RunError::from(ActivationRefusal::WrongSessionOwner));
     }
+    // Read only the existing required stage's frozen binding. Fresh Up never
+    // guesses image facts in its initial guest inputs before apply.
+    let mut image_platform = None;
+    if let Some(run) = record.environment_run {
+        let mut query = conn.prepare(
+            "SELECT target FROM events WHERE run_id=?1 AND state='applied' ORDER BY seq",
+        )?;
+        for encoded in query.query_map([run.to_string()], |row| row.get::<_, String>(0))? {
+            let spec: crate::run::EffectSpec = serde_json::from_str(&encoded?)?;
+            if spec.kind != crate::run::GUEST_BINARY_KIND {
+                continue;
+            }
+            let stage: GuestBinaryStage = serde_json::from_value(spec.payload)?;
+            if stage.run != run
+                || stage.reservation != record.id
+                || stage.environment.resource != record.environment
+                || stage.environment.generation != record.generation
+                || image_platform.is_some()
+            {
+                return Err(RunError::broken(
+                    "workspace context has conflicting staged image facts",
+                ));
+            }
+            image_platform = Some(stage.binding.platform);
+        }
+    }
     Ok(Some(ActivationPlan {
+        image_platform,
         reservation: record.id,
         environment: record.environment.clone(),
         environment_generation: record.generation,
