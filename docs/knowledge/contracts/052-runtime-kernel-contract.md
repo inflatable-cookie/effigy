@@ -3055,27 +3055,38 @@ locator, immutable context/artifact identity and generation-bound credential sel
 incompatible schemas refuse with re-prepare guidance. Absent/incomplete session or locator permits local reads only, host
 `unavailable`. Never overwrite immutable objects or retarget a live predecessor's selected bytes.
 
-**Durable selection handoff — proposed, unimplemented (#482).** Kernel types in `crates/effigy-kernel/src/workspace_session.rs`
-and `run/attachments.rs`:
+**Durable selection handoff — implemented in the kernel (effigy#488).** Kernel types in
+`crates/effigy-kernel/src/workspace_session{,/selection,/serving}.rs` and `run/attachments.rs`:
 
 ```rust
 pub struct GuestObject { pub path: String, pub digest: Digest }
-pub struct SelectionObjects { pub binary: GuestObject, pub context: GuestObject, pub credential: GuestObject, pub credential_generation: u64 }
+pub struct SelectionObjects { pub binary: GuestObject, pub context: GuestObject, pub credential: GuestObject, pub context_generation: Generation, pub credential_generation: Generation }
 pub struct SelectorChange { pub path: String, pub expected: Option<String>, pub next: String }
-pub struct ServingLease { pub supervisor_id: String, pub endpoint: String, pub pin: Digest }
 pub struct GuestSelection { pub backend: String, pub objects: SelectionObjects, pub switches: [SelectorChange; 3], pub serving: ServingLease }
-pub struct SelectionReceipt { pub publication: WorkspacePublicationReceipt, pub selection: GuestSelection }
+pub struct SelectionReceipt { /* publication + selection, validated */ }
 pub enum SelectionState { Pending, Switched, Abandoned }
-pub struct SelectionObligation { pub id: RequestId, pub reservation: ActivationReservationId, pub receipt: SelectionReceipt, pub state: SelectionState }
-impl SelectionReceipt { pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8]) -> Result<Self, RunError>; }
-impl WorkspaceActivationReservation { pub fn commit_selection(&self, cx: &EffectContext, root: &StateRoot, environment_run: &Run<'_>, session_run: &Run<'_>) -> Result<CommittedActivation, RunError>; }
-impl CommittedActivation { pub fn selection_obligation(&self) -> &SelectionObligation; }
+pub struct SelectionObligation { /* id, reservation, E, activation run, session run, receipt, state */ }
+impl SelectionReceipt {
+    pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8]) -> Result<Self, RunError>;
+    pub fn validate(&self, plan: &ActivationPlan) -> Result<(), RunError>;
+}
+impl WorkspaceActivationReservation {
+    pub fn commit_selection(&self, cx: &EffectContext, root: &StateRoot, environment_run: &Run<'_>, session_run: &Run<'_>, receipt: &SelectionReceipt) -> Result<CommittedActivation, RunError>;
+}
+impl CommittedActivation { pub fn selection_obligation(&self) -> Option<&SelectionObligation>; }
+impl Attachments {
+    pub fn selection_switched(run: &mut Run<'_>, obligation: &SelectionObligation, receipt: &SelectionSwitchReceipt) -> Result<(), RunError>;
+}
+pub struct SelectionLiveness { pub session: Observed<()>, pub target: Observed<()>, pub listener: Observed<()> }
 pub fn unfinished_selection(reader: &StoreReader, environment: &ResourceId) -> Observed<Option<SelectionObligation>>;
-// crates/effigy-containers/src/environment/reconcile.rs — proposed typed publication
-impl EnvRun<'_> { pub fn publish_workspace_selection_with(&mut self, plan: &ActivationPlan, publish: impl FnOnce(&ActivationPlan) -> Result<SelectionReceipt, BackendError>) -> Result<(), EnvError>; }
-// src/runner/workspace_command/provisioning.rs — proposed host recovery driver
-fn recover_selection(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, guest: &mut dyn GuestWorkspace) -> Observed<SelectionState>;
+pub fn selection_recovered(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, wait: Wait) -> Result<(), RunError>;
+pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot, obligation: &SelectionObligation, liveness: &SelectionLiveness, reason: &str, wait: Wait) -> Result<(), RunError>;
 ```
+
+`commit_selection` takes the validated `SelectionReceipt`, not a bare `GuestSelection`: the receipt is the only value that has
+hashed the context document, and a selection that never hashed it cannot be committed. The typed container/runner wrapper and the
+host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
+is what they call.
 
 Order: journal intent → stage/verify immutable objects → return/store `SelectionReceipt` → `commit_selection` → switch →
 acknowledge. The typed wrapper journals before guest I/O, validates/stores the immutable complete receipt (changed retries refuse)
@@ -3098,11 +3109,15 @@ obligation before atomically revoking its mapping/grants and marking Abandoned. 
 authority; mixed or revoked selections report unavailable. Never restore predecessor authority or overwrite a third value during
 abandonment. Unknown remains Pending; no replayed container activation, new session or pointer guess.
 
-One post-#484 correction remains required, not implemented by this document: attach-or-activate must re-read the live session and
-matching publication inputs under the same `Gate(Env)` hold that decides whether to reserve a successor. The proposed
-`WorkspaceActivationReservation::decide` must attach without advancing a generation when the live publication matches; competing
-callers that both previously saw Absent cannot invalidate that session or create two activations. `reserve` alone does not provide
-this atomic decision. Changes in policy, target or artifact require a fenced successor, preserving the predecessor.
+The post-#484 correction is implemented as `WorkspaceActivationReservation::decide` (effigy#488). It takes `Gate(Env)` once and,
+in one transaction, re-reads the live mapping, the committed reservation that names it, the selection that generation committed,
+the publication it recorded and the frozen `PublishInputs` it was decided on, then either answers `Attach(SessionRef)` or
+recovers/reserves exactly the successor E. Frozen inputs (`ArtifactEvidence`, `Selection`, `inputs_digest`, `TargetEvidence`) are
+recorded on the reservation before anything is applied, so two callers that both observed `Absent` recover one reservation and a
+third intent meets the reserved fence by name. Identical inputs attach without advancing any generation; a changed policy,
+profile, backend or artifact reserves a fenced successor and leaves the predecessor authoritative. A target that disagrees with
+the published container or boot refuses `TargetEvidenceMismatch`, and an unfinished selection refuses `SelectionPending`: no later
+attach or reservation bypasses Pending.
 
 Selection recovery must distinguish session, target and listener liveness. While selection is unfinished, a bounded pinned
 TLS-only probe must be available on the same listener, including any Holding phase; it carries no application frames, credentials,
@@ -3110,9 +3125,14 @@ admission or channel authority. Complete selection only with a live session, ver
 established dead listener or lost target requires stopping/settling the exact successor under its own private slot before
 revoking/abandoning its generation; a dead session can be abandoned without stopping it. Never stop the predecessor or publish an
 unserved generation. Unknown liveness stays unresolved/`unknown` and grants no publication or new admission. Abandonment must not
-refuse merely because session and target are live when the listener is established dead. The detailed recovery handoff above and
-ownership-transfer protocol are unimplemented; Appendix B adds no normative requirements or implementation claims to this compact
-seam.
+refuse merely because session and target are live when the listener is established dead. The kernel now implements this judgement as
+`selection_recovered` (all three facts verified) and `selection_abandoned` (at least one fact positively absent; unknown liveness
+stays Pending and refuses). Session-owned listener/key custody is implemented in `workspace_session/serving.rs`:
+`SessionLaunch` holds the `ServingKey` and a bound `ChannelListener` for the session's durable lifetime, `ChannelBound` (the only
+value naming a locator) is produced only by `SessionLaunch::publish` from a bound, qualified listener, `ServingLease` is the
+endpoint/pin a selection records, and `ServingProbe` is the injected pinned-handshake liveness check. Transport, the server key's
+generation and TLS verification remain #483; ownership transfer over a real supervisor pipe remains #452's glue. Appendix B adds
+no normative requirements or implementation claims to this compact seam.
 
 **Glue and proofs.** #452 owns `src/runner/workspace_client.rs` integration only: read context → observe guest → verify
 context/artifact/session → open qualified TLS → check server pin → Hello/hello_ok → authenticate/enrol → request. Identity and

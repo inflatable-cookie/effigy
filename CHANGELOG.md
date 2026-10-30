@@ -174,6 +174,25 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Added
 
+- **A workspace activation is decided, selected and served by one owner.**
+  `WorkspaceActivationReservation::decide` takes `Gate(Env)` once and answers
+  `Attach` or reserves exactly the next environment generation from the frozen
+  publish inputs, so two callers cannot revoke a matching live session or create
+  two activations; a changed policy, profile, backend or artifact supersedes with
+  a fenced successor, while a target that disagrees with the published container
+  or boot, or a generation whose selection is unfinished, refuses by name. The
+  workspace commit now records the guest selection it published — binary,
+  context and credential objects, the three expected→next selector values and
+  the serving lease — in the same transaction as `active(E)`, the session
+  mapping and the session's `Borrow` attachment, and `unfinished_selection`,
+  `Attachments::selection_switched`, `selection_recovered` and
+  `selection_abandoned` complete, complete-from-recovery or revoke it without
+  ever publishing an unserved generation or restoring the predecessor. One
+  session owns its listener and memory-only serving key
+  (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
+  lifetime, and refuses to publish an unbound, unqualified or stopped listener.
+  Transport, TLS qualification and the runner/container adapters remain with
+  #482/#483/#452.
 - **A container-mode workspace is prepared for the workspace client.** Host
   Prepare publishes an immutable guest context and a version-locked Linux
   Effigy into the container, outside the bind-mounted checkout. Activation

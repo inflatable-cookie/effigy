@@ -756,7 +756,7 @@ remains a finding. A changed blob gets scanned again.
 
 ## Q-021: Guest facts the workspace client channel still needs
 
-Status: open (normative seam bounded; production implementation and qualification outstanding)
+Status: open (kernel owner seam implemented by #488; guest identity, transport and glue implementation and qualification outstanding)
 Asked: 2026-10-29
 Owners: #482 (C identity/context/publication), #483 (A transport), #452 (glue).
 Authority: [contract 052 §8.11](contracts/052-runtime-kernel-contract.md#811-workspace-client-interface-v1).
@@ -791,15 +791,17 @@ Three production facts remain to implement and prove:
   receipt and atomic commit of active(E), mapping and Borrow. The immutable v2
   context publishes the actual session run and S, separate from environment E.
   Preserve canonical Task-before-Env order and the predecessor's live holders.
-  The post-#484 atomic attach-or-reserve decision is still required: re-read the
-  live mapping and matching inputs under the same Env gate that reserves a
-  successor, so simultaneous callers cannot revoke a matching live session.
-  The proposed normative `SelectionReceipt`/`SelectionObligation` handoff also
-  binds immutable binary/context/credential objects, expected/next selectors and
-  serving lease to that commit. Switching follows the durable commit; recovery
-  completes those exact comparisons or settles/revokes/abandons the successor.
-  Unknown remains Pending. This compact handoff is unimplemented; the detailed
-  appendix is still non-normative, and #484 alone does not supply it.
+  The kernel seam for all of this landed in effigy#488
+  (`WorkspaceActivationReservation::decide`, `commit_selection`,
+  `Attachments::selection_switched`, `unfinished_selection`,
+  `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
+  `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
+  the durable `SelectionReceipt`/`SelectionObligation` commit and the
+  switch/recovery/abandonment order are implemented and fault-proven against the
+  real journal. What remains for #482 is the container/runner typed wrapper and
+  guest selector switching, for #483 the transport, server-key generation and
+  TLS qualification, and for #452 the glue and supervisor ownership transfer. The
+  detailed appendix is still non-normative.
 
 Recovery judges listener liveness independently of session and target. A bounded
 pinned TLS-only probe must be available while selection is unfinished, including
