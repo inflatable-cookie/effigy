@@ -19,6 +19,7 @@ use effigy_containers::{
 };
 use effigy_core::repo_markers::has_task_manifest;
 use effigy_core::shell::shell_quote;
+use effigy_ui::steps::ProgressSource;
 use serde_json::json;
 
 use super::gateway_registration::{
@@ -377,25 +378,58 @@ pub(super) fn ensure_pinned_host_ports_available(
 pub(in crate::runner) fn ensure_shared_services_running(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
+    ensure_shared_services_observed(policy, &ProgressSource::waiting_for("shared services"))
+}
+
+/// The ensure with the wait it is in named on `progress`: for each shared
+/// service, the machine gate, the runtime's container read, the render
+/// publication and the `compose up` it runs (effigy#460, Q-017).
+pub(in crate::runner) fn ensure_shared_services_observed(
+    policy: &EffectiveContainerPolicy,
+    progress: &ProgressSource,
+) -> Result<Vec<String>, RunnerError> {
     let renders = policy
         .render
         .as_ref()
         .map_or(&[][..], |render| render.shared.as_slice());
-    ensure_shared_services_with_renders(policy, renders)
+    ensure_shared_services_with_renders_observed(policy, renders, progress)
 }
 
 /// The ensure with the shared renders it may publish. They are the ones the
 /// policy's one render produced; publication happens after the vanished-render
 /// refusal so a missing directory is never silently restored (ef5780da).
+#[cfg(test)]
 fn ensure_shared_services_with_renders(
     policy: &EffectiveContainerPolicy,
     renders: &[effigy_containers::SharedRender],
 ) -> Result<Vec<String>, RunnerError> {
+    ensure_shared_services_with_renders_observed(
+        policy,
+        renders,
+        &ProgressSource::waiting_for("shared services"),
+    )
+}
+
+fn ensure_shared_services_with_renders_observed(
+    policy: &EffectiveContainerPolicy,
+    renders: &[effigy_containers::SharedRender],
+    progress: &ProgressSource,
+) -> Result<Vec<String>, RunnerError> {
     let mut notes = Vec::new();
-    for service in &policy.shared_services {
+    let total = policy.shared_services.len() as u64;
+    for (done, service) in policy.shared_services.iter().enumerate() {
+        let done = done as u64;
         // Held until this service's ensure is complete; a gate that cannot be
         // taken is named and the ensure proceeds, because the service still
         // has to run.
+        progress.update(
+            format!(
+                "waiting for the machine gate of shared project `{}`",
+                service.project_name
+            ),
+            Some((done, total)),
+            None,
+        );
         let _gate = match crate::runner::task_engine::shared_service_gate(&service.project_name) {
             Ok(gate) => Some(gate),
             Err(error) => {
@@ -407,12 +441,25 @@ fn ensure_shared_services_with_renders(
             }
         };
         // One inventory read serves the refusal and the replacement below.
+        progress.update(
+            format!(
+                "reading the runtime's containers for shared `{}`",
+                service.service_name
+            ),
+            Some((done, total)),
+            None,
+        );
         let containers = read_shared_containers(policy, service);
         refuse_vanished_shared_render(policy, service, containers.as_deref())?;
         if let Some(render) = renders
             .iter()
             .find(|render| Some(render.directory.as_path()) == service.compose_file.parent())
         {
+            progress.update(
+                format!("publishing the render of shared `{}`", service.service_name),
+                Some((done, total)),
+                None,
+            );
             effigy_containers::policy::render::publish_shared_render(render).map_err(|error| {
                 RunnerError::task_invocation(format!(
                     "cannot publish shared {} render: {error}",
@@ -420,10 +467,26 @@ fn ensure_shared_services_with_renders(
                 ))
             })?;
         }
+        progress.update(
+            format!(
+                "checking the render of shared `{}` against its container",
+                service.service_name
+            ),
+            Some((done, total)),
+            None,
+        );
         let replaced = replace_stale_shared_render(policy, service, containers.as_deref())?;
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
+        progress.update(
+            format!(
+                "waiting for docker compose up (shared {}) to return",
+                service.service_name
+            ),
+            Some((done, total)),
+            None,
+        );
         run_shared_compose_capture(
             workdir,
             policy,

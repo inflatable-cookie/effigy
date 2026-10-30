@@ -24,7 +24,7 @@ use super::steps::{self, ComposeSteps, ProgressSource, TimedStep};
 use super::support;
 use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
-    annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_running,
+    annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_observed,
     reconcile_primary_service_tcp_alias_hosts, resolve_repo_root_or_invocation_cwd_scope,
     wait_for_container_ready, ContainerRepoScope,
 };
@@ -250,6 +250,7 @@ fn detached_activation_failure(
             }
             RunnerError::TaskInvocation(_) => "invocation_refusal",
             RunnerError::ManagedHostReadiness { .. } => "managed_readiness",
+            RunnerError::ContainerReadinessWait { .. } => "container_readiness",
             RunnerError::GatewayRouteTable { .. }
             | RunnerError::GatewayRouteRegistration { .. }
             | RunnerError::GatewayRouteShape { .. }
@@ -257,8 +258,7 @@ fn detached_activation_failure(
             | RunnerError::GatewayRuntimeTarget { .. } => "gateway_route_refusal",
             _ => "other",
         };
-        return RunnerError::CommandJsonFailure {
-            rendered: serde_json::json!({
+        let mut rendered = serde_json::json!({
                 "state": "unavailable",
                 "phase": "detached_activation",
                 "activation_stage": operation.stage.unwrap_or("preparation"),
@@ -272,8 +272,12 @@ fn detached_activation_failure(
                 "stop": "effigy container down",
                 "retirement_removes_mutable_data": true,
                 "message": message,
-            })
-            .to_string(),
+        });
+        if let Some(waits) = readiness_waiting_on(&error) {
+            rendered["waiting_on"] = waits;
+        }
+        return RunnerError::CommandJsonFailure {
+            rendered: rendered.to_string(),
         };
     }
     RunnerError::task_invocation(format!(
@@ -534,7 +538,7 @@ fn prepare_container_up(
     let shared_service_notes = steps::during(
         ProgressSource::waiting_for(awaiting),
         "shared services ready",
-        |_| ensure_shared_services_running(&policy),
+        |progress| ensure_shared_services_observed(&policy, progress),
     )?;
     operation.preparation_step = Some("dispatch");
     let up_plan = effigy_runtime::container_manager::compose_up_invocation_plan(
@@ -576,15 +580,7 @@ fn run_container_up_compose(
     // The stack's own step names the Compose call it waits on and the last
     // runtime line it read, so a runtime whose progress this parser does not
     // recognise still shows what it is waiting for (effigy#460, Q-017).
-    let progress = ProgressSource::waiting_for(format!(
-        "{} to return for stack `{}`",
-        plan.up_plan.label, plan.policy.name
-    ));
-    progress.update(
-        format!("starting the `{}` stack", plan.policy.name),
-        None,
-        None,
-    );
+    let progress = activation_source(&plan.up_plan.label, &plan.policy.name);
     let whole_stack = TimedStep::live(progress.clone());
     let project = plan.policy.project_name.clone();
     let mut observe = |line: &str| {
@@ -636,6 +632,25 @@ fn run_container_up_compose(
             Ok(Some(AttachedComposeEnd::Failed(error.to_string())))
         }
     }
+}
+
+/// The live state of one Compose activation's whole-stack step: the Compose
+/// call it waits on and the stack it brings up. Runtime lines move it with
+/// `event` (effigy#460, Q-017).
+fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
+    let progress = ProgressSource::waiting_for(format!("{up_label} to return for stack `{stack}`"));
+    progress.update(format!("starting the `{stack}` stack"), None, None);
+    progress
+}
+
+/// The machine-readable waits a readiness refusal ended on, when it has any.
+fn readiness_waiting_on(error: &RunnerError) -> Option<serde_json::Value> {
+    let RunnerError::ContainerReadinessWait { details_json, .. } = error else {
+        return None;
+    };
+    serde_json::from_str::<serde_json::Value>(details_json)
+        .ok()
+        .map(|details| details["waiting_on"].clone())
 }
 
 fn container_up_stop_requested(plan: &ContainerUpPlan) -> bool {
@@ -1726,6 +1741,62 @@ mod tests {
         assert_eq!(
             document["cause"],
             "gateway endpoint store: revision changed"
+        );
+    }
+
+    #[test]
+    fn activation_frames_name_the_compose_call_and_the_last_runtime_line() {
+        use std::time::Duration;
+
+        let progress = super::activation_source("docker compose up", "web");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "starting the `web` stack; waiting for docker compose up to return for stack `web`; 12s elapsed"
+        );
+        // The runtime's own line, mapped through the same label production uses.
+        let started = effigy_containers::exec::ComposeStepEvent::Starting {
+            subject: "demo-web-1".to_owned(),
+        };
+        progress.event(started.label("demo"));
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(20)),
+            "starting the `web` stack; last: starting web; 20s elapsed"
+        );
+    }
+
+    #[test]
+    fn a_detached_readiness_refusal_json_names_the_waits_it_ended_on() {
+        let operation = DetachedOperationState {
+            active: true,
+            stage: Some("readiness"),
+            ..Default::default()
+        };
+        let error = RunnerError::ContainerReadinessWait {
+            environment: "demo".to_owned(),
+            diagnostic: "environment `demo` did not become ready within 60s".to_owned(),
+            details_json: serde_json::json!({
+                "environment": "demo",
+                "readiness": "unverified",
+                "waiting_on": [{
+                    "kind": "service",
+                    "service": "web",
+                    "problem": "web is unhealthy after 4 failed checks",
+                }],
+            })
+            .to_string(),
+        };
+        let RunnerError::CommandJsonFailure { rendered } =
+            detached_activation_failure(&operation, true, error)
+        else {
+            panic!("a detached readiness refusal renders its JSON envelope");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json");
+        assert_eq!(document["failure_kind"], "container_readiness");
+        assert_eq!(document["readiness"], "unverified");
+        assert_eq!(document["waiting_on"][0]["service"], "web");
+        assert_eq!(
+            document["waiting_on"][0]["problem"],
+            "web is unhealthy after 4 failed checks"
         );
     }
 

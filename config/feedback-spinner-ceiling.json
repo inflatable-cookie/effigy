@@ -121,13 +121,13 @@
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    415,
+    419,
     "let settling = steps::phase(\"settling the environment\");",
     27
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    482,
+    486,
     "let ports_step = steps::phase(\"preparing ports and loopback\");",
     29
   ],

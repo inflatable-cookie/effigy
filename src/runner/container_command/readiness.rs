@@ -79,7 +79,14 @@ pub(super) fn await_services_ready(
     let started = Instant::now();
     let deadline = deadline.unwrap_or_else(|| observation_deadline(policy));
     let progress = ProgressSource::waiting_for("the environment's services to report healthy");
-    progress.update("reading service health", None, None);
+    progress.update(
+        format!(
+            "reading the health of every service in project `{}`",
+            policy.project_name
+        ),
+        None,
+        None,
+    );
     let parent = TimedStep::live(progress.clone());
     let mut steps = BTreeMap::<String, ServiceStep>::new();
     let mut attempts = BTreeMap::<String, u32>::new();
@@ -138,7 +145,11 @@ pub(super) fn await_services_ready(
                     // The step ends on the diagnosis's first line; the error
                     // carries the evidence and its `next:` line.
                     parent.fail(diagnosis.lines().next().unwrap_or_default());
-                    return Err(RunnerError::task_invocation(diagnosis));
+                    return Err(readiness_wait_error(
+                        policy,
+                        diagnosis,
+                        waiting_on_entries(&services, None, &policy.project_name),
+                    ));
                 }
             }
             Err(error) => {
@@ -170,16 +181,77 @@ pub(super) fn await_services_ready(
     readiness_failure(policy, &last_services, last_probe_error, &steps)
 }
 
-/// The parent step after a probe that read every service: how many are
-/// healthy, and the first service still failing, in its own words.
+/// The parent step after a probe that read every service: the services it is
+/// waiting on by name, how many are healthy, and the first one still failing
+/// in its own words.
 fn observe_parent(progress: &ProgressSource, services: &[ServiceHealth]) {
     let ready = services.iter().filter(|service| service.is_ready()).count();
-    let latest = unready(services).first().map(|service| service.problem());
+    let waiting = unready(services);
+    let names = waiting
+        .iter()
+        .map(|service| service.service.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sub_step = if names.is_empty() {
+        "waiting for services to report healthy".to_owned()
+    } else {
+        format!("waiting for {names} to report healthy")
+    };
+    let latest = waiting.first().map(|service| service.problem());
     progress.update(
-        "waiting for services to report healthy",
+        sub_step,
         Some((ready as u64, services.len() as u64)),
         latest,
     );
+}
+
+/// The waits a readiness wait ended on, machine-readable: one entry per
+/// service still unready, and one for a health read the runtime did not answer.
+fn waiting_on_entries(
+    services: &[ServiceHealth],
+    probe_error: Option<&str>,
+    project: &str,
+) -> Vec<serde_json::Value> {
+    let mut waits: Vec<serde_json::Value> = unready(services)
+        .into_iter()
+        .map(|service| {
+            serde_json::json!({
+                "kind": "service",
+                "service": service.service,
+                "container": service.container,
+                "state": service.state,
+                "problem": service.problem(),
+            })
+        })
+        .collect();
+    if let Some(error) = probe_error {
+        waits.push(serde_json::json!({
+            "kind": "probe",
+            "project": project,
+            "probe": "health read",
+            "error": first_line(error),
+        }));
+    }
+    waits
+}
+
+/// The readiness failure: the human diagnostic, and the same waits as the
+/// machine-readable `waiting_on` list.
+fn readiness_wait_error(
+    policy: &EffectiveContainerPolicy,
+    diagnostic: String,
+    waiting_on: Vec<serde_json::Value>,
+) -> RunnerError {
+    RunnerError::ContainerReadinessWait {
+        environment: policy.name.clone(),
+        diagnostic,
+        details_json: serde_json::json!({
+            "environment": policy.name,
+            "readiness": "unverified",
+            "waiting_on": waiting_on,
+        })
+        .to_string(),
+    }
 }
 
 /// The parent step after a probe the runtime could not answer: it names the
@@ -242,7 +314,8 @@ fn readiness_failure(
             waiting.step.fail(service.problem());
         }
     }
-    Err(RunnerError::task_invocation(diagnostic))
+    let waiting_on = waiting_on_entries(services, probe_error.as_deref(), &policy.project_name);
+    Err(readiness_wait_error(policy, diagnostic, waiting_on))
 }
 
 /// The last log line of every service that stopped instead of starting.
@@ -384,8 +457,33 @@ mod tests {
         observe_parent(&progress, &services);
         assert_eq!(
             progress.frame_at(Duration::from_secs(12)),
-            "waiting for services to report healthy (2/3); last: web is unhealthy after 4 failed checks; 12s elapsed"
+            "waiting for web to report healthy (2/3); last: web is unhealthy after 4 failed checks; 12s elapsed"
         );
+    }
+
+    #[test]
+    fn the_wait_is_machine_readable_per_service_and_per_probe() {
+        let services = vec![
+            health(
+                "web",
+                "running",
+                Some(HealthState::Unhealthy),
+                4,
+                Some("GET / HTTP/1.1 404"),
+            ),
+            health("db", "running", Some(HealthState::Healthy), 0, None),
+        ];
+        let waits = waiting_on_entries(&services, Some("docker: daemon not responding"), "demo");
+        assert_eq!(waits.len(), 2, "{waits:?}");
+        assert_eq!(waits[0]["kind"], "service");
+        assert_eq!(waits[0]["service"], "web");
+        assert_eq!(
+            waits[0]["problem"],
+            "web is unhealthy after 4 failed checks"
+        );
+        assert_eq!(waits[1]["kind"], "probe");
+        assert_eq!(waits[1]["project"], "demo");
+        assert_eq!(waits[1]["error"], "docker: daemon not responding");
     }
 
     #[test]

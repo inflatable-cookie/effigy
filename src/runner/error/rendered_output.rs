@@ -16,6 +16,9 @@ pub(super) fn runner_error_json_details(error: &RunnerError) -> Option<&str> {
         RunnerError::AdmissionRefused { details_json, .. }
         | RunnerError::RunControl { details_json, .. } => non_empty_rendered(details_json),
         RunnerError::BoundedExecFailure { json_details, .. } => non_empty_rendered(json_details),
+        RunnerError::ContainerReadinessWait { details_json, .. } => {
+            non_empty_rendered(details_json)
+        }
         RunnerError::TaskLockConflict(details) => {
             details.details_json.as_deref().and_then(non_empty_rendered)
         }

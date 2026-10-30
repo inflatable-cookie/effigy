@@ -48,6 +48,15 @@ pub enum RunnerError {
         /// The listeners that failed, with their bounded, redacted evidence.
         failures: Vec<crate::runner::host_process::ManagedHostListenerFailure>,
     },
+    /// A container bring-up ended while services still waited to report ready.
+    /// The display sentence is the human diagnostic; `details_json` carries the
+    /// machine-readable `waiting_on` list, one entry per wait the bring-up was
+    /// still in (effigy#460, Q-017).
+    ContainerReadinessWait {
+        environment: String,
+        diagnostic: String,
+        details_json: String,
+    },
     ContainerSurfaceRegistryMissing,
     ContainerSurfaceDefaultTargetMissing,
     ContainerSurfaceNotDefined {
@@ -335,6 +344,7 @@ impl RunnerError {
             // answer, or the work it ran failed.
             RunnerError::Cwd(_)
             | RunnerError::ManagedHostReadiness { .. }
+            | RunnerError::ContainerReadinessWait { .. }
             | RunnerError::ManagedListenerExposure { .. }
             | RunnerError::WorkspaceSessionCleanup { .. }
             | RunnerError::RunControl { .. }

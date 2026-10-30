@@ -677,6 +677,11 @@ During v0.x, MINOR bumps may include breaking changes.
   stages finished (`3/8`) and name the one now running; shared services name
   the services they await. Every frame carries elapsed time. JSON, piped and
   quiet output stay silent. Rendering is a single finished line, not a spinner.
+  A readiness refusal carries its machine-readable `waiting_on` list in
+  `--json`: one entry per service still unready, with its problem, and one for
+  a health read the runtime did not answer. Shared-service waits name the
+  machine gate, the runtime container read, the render publication, or the
+  `docker compose up` they are in.
 
 ### Removed
 
