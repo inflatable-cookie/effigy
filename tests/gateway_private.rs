@@ -5296,7 +5296,7 @@ fn run_fixture_cli(scope: &str, command: &mut Command) -> Output {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command.spawn_owned().expect("spawn fixture CLI");
+    let child = command.spawn_owned().expect("spawn fixture CLI");
     let pid = child.id();
     let output = child.wait_with_output().expect("wait for fixture CLI");
     println!(
@@ -5524,7 +5524,7 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
 
     let up = run_fixture_cli(
         "borrowed plain environment container up",
-        &mut plain
+        plain
             .command(&cleanup, &["container", "up", "--detach"])
             .env("FAKE_HEALTHY", &plain.healthy),
     );
