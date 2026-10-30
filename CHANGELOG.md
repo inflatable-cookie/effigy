@@ -8,6 +8,23 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Security
 
+- Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
+  PM, APC and the other non-printing bytes) *before* redaction, over merged
+  stdout/stderr arrival order, so a value a child split with a control
+  sequence can no longer reappear unredacted in a log, tail, JSON envelope or
+  TUI transcript; a sideways carriage return inside a value is dropped, so it
+  cannot erase or join what a display shows after redaction, while a `CR LF`
+  line ending keeps its CR. Secret-bearing output is well-formed text: a C1
+  control (a UTF-8 `U+009B` CSI, for example) and an invalid byte are dropped,
+  because a renderer drops them and joins what is either side; a TAB is dropped
+  too, because a renderer moves the bytes after it to the next tab stop and the
+  pane drops the escape that moves them. Ordinary processes keep their layout. Each stream's log and queue is redacted again over
+  its own bytes, because keeping the streams apart can join halves that arrival
+  order separated. A redaction replacement is a byte readers keep and no secret
+  contains, so no reader can join across it; if no such byte exists for a
+  secret set, captured output stops rather than write a joinable marker. Output for those processes is plain; ordinary processes keep
+  their colour. The merged redacted arrival-order tail is the canonical
+  captured tail.
 - Require the release secret audit to scan the committed candidate tree and
   history since the pinned v0.14.1 commit, with exact fixture-blob exemptions.
 
