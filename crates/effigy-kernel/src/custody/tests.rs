@@ -1924,8 +1924,10 @@ fn redaction_drops_utf8_c1_controls_and_invalid_bytes_before_redaction() {
     // dropped before redaction, which joins the halves in the frame a display
     // could show, and what reaches a sink is well-formed text only.
     const SECRET: &[u8] = b"custody-split-secret-value";
+    type Steps = Vec<(Stream, &'static [u8])>;
+    type Shape = (&'static str, Steps);
     let cx = cx();
-    let shapes: Vec<(&str, Vec<(Stream, &[u8])>)> = vec![
+    let shapes: Vec<Shape> = vec![
         // U+009B CSI between the halves: the renderer drops it.
         (
             "c1-csi",
