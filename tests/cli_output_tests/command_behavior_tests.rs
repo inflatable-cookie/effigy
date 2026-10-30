@@ -4619,9 +4619,12 @@ detach_timeout_secs = 1
             ("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1"),
         ],
     );
-    // The managed status projection: the run journal plus its environment.
+    let owner_client = owner.id();
+    // The managed status projection: the run journal plus its environment. Each
+    // read is a fixture child of its own, reported with its pid and exit.
     let status = |task: &str| -> Value {
-        let output = Command::new(binary)
+        let mut command = Command::new(binary);
+        command
             .arg("--repo")
             .arg(&root)
             .args([task, "status", "--json"])
@@ -4630,8 +4633,16 @@ detach_timeout_secs = 1
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str())),
             )
-            .output()
-            .expect("managed status");
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn_owned().expect("spawn managed status");
+        let pid = child.id();
+        let output = child.wait_with_output().expect("managed status");
+        println!(
+            "[fixture] managed status `{task}`: pid {pid} exited ({})",
+            output.status
+        );
         String::from_utf8_lossy(&output.stdout)
             .lines()
             .rev()
@@ -4676,6 +4687,7 @@ detach_timeout_secs = 1
             // The run journal supplies the phase, cleanup and closed reason that
             // ended the owner, so an early exit is reported with its cause
             // rather than as a bare assertion.
+            println!("[fixture] owner `devc` session client: pid {owner_client} exited ({exit})");
             panic!(
                 "the stack owner exited before the handover: {exit:?}; run journal={}",
                 status("devc")
@@ -4693,6 +4705,7 @@ detach_timeout_secs = 1
             ("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1"),
         ],
     );
+    let incoming_client = incoming.id();
     let incoming_deadline = Instant::now() + Duration::from_secs(240);
     let incoming_exit = loop {
         if incoming.try_wait().expect("poll incoming run").is_some() {
@@ -4704,6 +4717,10 @@ detach_timeout_secs = 1
         );
         std::thread::sleep(Duration::from_millis(200));
     };
+    println!(
+        "[fixture] incoming `devh` session client: pid {incoming_client} exited ({})",
+        incoming_exit.status
+    );
     assert!(
         incoming_exit.status.success(),
         "the forward handover refused: stdout={} stderr={} colima={}",
@@ -4725,7 +4742,8 @@ detach_timeout_secs = 1
     // observation, and an unreaped zombie must not read as running.
     let exit_deadline = Instant::now() + Duration::from_secs(60);
     let owner_exit_epoch = loop {
-        if owner.try_wait().expect("poll ended owner").is_some() {
+        if let Some(exit) = owner.try_wait().expect("poll ended owner") {
+            println!("[fixture] owner `devc` session client: pid {owner_client} exited ({exit})");
             break std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
@@ -5519,7 +5537,8 @@ impl FixturePrivateGateway {
     }
 
     fn run(&self, subcommand: &str, extra: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_effigy"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        command
             .args(["gateway", subcommand, "--private-state-root"])
             .arg(&self.root)
             .args(extra)
@@ -5530,8 +5549,18 @@ impl FixturePrivateGateway {
             .env("FOREIGN_CAROOT", &self.ca)
             .env("PATH", &self.path)
             .stdin(Stdio::null())
-            .output_owned()
-            .expect("fixture private gateway CLI")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn_owned().expect("fixture private gateway CLI");
+        let pid = child.id();
+        let output = child
+            .wait_with_output()
+            .expect("wait for fixture private gateway CLI");
+        println!(
+            "[fixture] private gateway {subcommand}: pid {pid} exited ({})",
+            output.status
+        );
+        output
     }
 
     /// The facts every fixture child needs to select and trust this gateway.
