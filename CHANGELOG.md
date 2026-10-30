@@ -915,6 +915,7 @@ until the host-log writer has a safe secret-handling boundary.
   `force = true`) moves the run to durable custody, since foreground runs
   carry no shims. `effigy tasks status` for such a task now reports
   `not-recorded` again.
+- `effigy container <name> status --json` always includes its required `warnings` array, even when empty.
 - Database seed and dump keep the database password out of every spawned
   command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
   variable name and never the value, and each exec sources it from a private
