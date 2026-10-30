@@ -5307,6 +5307,54 @@ fn run_fixture_cli(scope: &str, command: &mut Command) -> Output {
     output
 }
 
+/// Start one private gateway for a plain-environment case, reporting the exact
+/// pid and exit of the control command that prepares and starts it. Those cases
+/// do not use the shared starter because their receipt names every child they
+/// start (effigy#493).
+fn start_plain_environment_gateway(
+    fixture: &Path,
+    effects: &HostEffectSentinels,
+    foreign_ca: &Path,
+    gateway_cleanup: &mut GatewayCleanup<'_>,
+    scope: &str,
+) -> PathBuf {
+    let private_gateway = private_root(fixture, &format!("{}-gateway", scope.replace(' ', "-")));
+    let tls = run_fixture_cli(
+        &format!("{scope}: private gateway setup-tls"),
+        &mut gateway_command(
+            &private_gateway,
+            "setup-tls",
+            effects,
+            Some(foreign_ca),
+            &[],
+        ),
+    );
+    assert!(
+        tls.status.success(),
+        "{scope}: private gateway setup-tls: {tls:?}"
+    );
+    let up = run_fixture_cli(
+        &format!("{scope}: private gateway up"),
+        &mut gateway_command(
+            &private_gateway,
+            "up",
+            effects,
+            Some(foreign_ca),
+            &[
+                "--dns-addr",
+                "127.0.0.1:0",
+                "--proxy-addr",
+                "127.0.0.1:0",
+                "--https-addr",
+                "127.0.0.1:0",
+            ],
+        ),
+    );
+    assert!(up.status.success(), "{scope}: private gateway up: {up:?}");
+    gateway_cleanup.track(&private_gateway);
+    private_gateway
+}
+
 /// The pid a fixture private gateway recorded for its own daemon.
 fn private_gateway_daemon_pid(root: &Path) -> u32 {
     let path = root.join("gateway.pid");
@@ -5328,7 +5376,10 @@ fn stop_private_gateway(
     scope: &str,
 ) {
     let pid = private_gateway_daemon_pid(root);
-    let down = run_gateway(root, "down", effects, Some(foreign_ca), &[]);
+    let down = run_fixture_cli(
+        &format!("{scope}: private gateway down"),
+        &mut gateway_command(root, "down", effects, Some(foreign_ca), &[]),
+    );
     assert!(
         down.status.success(),
         "{scope}: private gateway down failed: {}",
@@ -5399,8 +5450,13 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    let (private_gateway, _https_address) =
-        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let private_gateway = start_plain_environment_gateway(
+        fixture.path(),
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+        "plain environment",
+    );
     let plain =
         PlainEnvironmentFixture::build(fixture.path(), &effects, &private_gateway, &foreign_ca);
     let mut cleanup = plain.cleanup();
@@ -5509,8 +5565,13 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
     let foreign_ca = fixture.path().join("foreign-ca");
     private_directory(&foreign_ca);
     let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    let (private_gateway, _https_address) =
-        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let private_gateway = start_plain_environment_gateway(
+        fixture.path(),
+        &effects,
+        &foreign_ca,
+        &mut gateway_cleanup,
+        "borrowed plain environment",
+    );
     let plain =
         PlainEnvironmentFixture::build(fixture.path(), &effects, &private_gateway, &foreign_ca);
     let cleanup = plain.cleanup();
