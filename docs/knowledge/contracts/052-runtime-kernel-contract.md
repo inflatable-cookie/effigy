@@ -2911,7 +2911,8 @@ another challenge refuses. Qualification rechecks custody after guest I/O.
 Selection requires guest evidence, exact target equality and exact document
 endpoint/pin equality. A numeric host socket is never a guest selection locator.
 Retries retain the same lease; stop, owner loss and settlement revoke publication.
-
+The numeric `SessionLaunch::qualify` route proves host liveness only; its lease
+cannot authorize a guest selection without `qualify_guest` evidence.
 
 This is the normative production seam (effigy#481), not implemented transport or backend qualification. Only APIs marked
 implemented below are the merged #484 seam. Tom's 2026-10-30 scope ruling (8c0ef812) caps this core at 250 lines. Detailed

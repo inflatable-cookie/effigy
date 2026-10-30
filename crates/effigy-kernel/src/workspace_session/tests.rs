@@ -4387,7 +4387,7 @@ fn a_selection_never_names_another_session_s_listener() {
     )
     .expect_err("an unqualified listener publishes nothing");
     assert!(
-        matches!(error, RunError::Refused(ref message) if message.contains("qualified")),
+        matches!(error, RunError::Refused(ref message) if message == &ServingRefusal::Unqualified.to_string()),
         "{error:?}"
     );
     end_run(
