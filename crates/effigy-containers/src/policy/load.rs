@@ -261,6 +261,24 @@ fn load_policy(
     })
 }
 
+/// Whether the checkout's manifest declares a `[containers]` registry.
+///
+/// `Ok(false)` is the typed absence: the manifest loads and has no registry.
+/// A manifest that cannot load is an error, never an absence, so a caller can
+/// tell "no registry here" from "a registry that did not load" without reading
+/// an error message.
+pub fn declares_container_registry(repo_root: &Path) -> Result<bool, ContainerPolicyError> {
+    let canonical_root = repo_root
+        .canonicalize()
+        .map_err(|error| ContainerPolicyError::Read {
+            path: repo_root.into(),
+            error,
+        })?;
+    let manifest_path = canonical_root.join(TASK_MANIFEST_FILE);
+    let loaded = load_task_manifest_with_inspection(&manifest_path)?;
+    Ok(loaded.manifest.containers.is_some())
+}
+
 pub fn load_all_container_policies(
     repo_root: &Path,
 ) -> Result<Vec<EffectiveContainerPolicy>, ContainerPolicyError> {
