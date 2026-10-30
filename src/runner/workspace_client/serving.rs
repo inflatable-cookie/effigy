@@ -144,6 +144,26 @@ pub(crate) struct OwnedWorkspaceChannel<'a> {
     pub(crate) root: &'a StateRoot,
 }
 
+/// The producer's frozen owner, moved in whole.
+///
+/// `environment::workspace::WorkspaceUp::Selected(Box<WorkspaceOwner>)` is the
+/// one value the activation emits, after its environment commit, CAS receipt and
+/// `selection_switched` record. This conversion is a literal field move: no run
+/// or listener is rebuilt, re-adopted or dropped, and the activation must not
+/// keep its own copies once it has handed the owner over.
+impl From<crate::runner::environment::workspace::WorkspaceOwner> for OwnedWorkspaceChannel<'static> {
+    fn from(owner: crate::runner::environment::workspace::WorkspaceOwner) -> Self {
+        Self {
+            supervisor: owner.supervisor,
+            session: owner.session,
+            channel: owner.channel,
+            effect: owner.effect,
+            observe: owner.observe,
+            root: owner.root,
+        }
+    }
+}
+
 /// Why the frozen channel was not adopted for serving.
 #[derive(Debug)]
 pub(crate) enum AdoptError {
