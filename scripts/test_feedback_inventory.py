@@ -132,6 +132,57 @@ impl Sink {
         self.assertIn('crates/effigy-ui/src/steps.rs:18:', errors[1])
         self.assertIn('enable_steady_tick', errors[1])
 
+    def test_a_multiline_comment_does_not_shift_the_reported_line(self):
+        # A block comment used to be deleted outright, moving every later line
+        # up and reporting the wrong source line.
+        source = """/* a comment
+   that spans
+   several lines */
+let unrelated = 1;
+
+fn show() {
+    let bar = ProgressBar::no_length();
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'wrapped.rs').write_text(source)
+            errors = lint.indicatif_errors(root)
+        lines = source.splitlines()
+        expected = next(number for number, line in enumerate(lines, 1) if 'no_length' in line)
+        self.assertEqual(expected, 7)
+        self.assertTrue(any(f'src/wrapped.rs:{expected}:' in error for error in errors), errors)
+
+    def test_comment_delimiters_in_strings_do_not_hide_source(self):
+        source = """fn show() {
+    let opener = "/*";
+    let closer = "*/";
+    let slashes = "//";
+    let bar = ProgressBar::no_length();
+    let _ = (opener, closer, slashes, bar);
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'strings.rs').write_text(source)
+            errors = lint.indicatif_errors(root)
+        self.assertTrue(any('src/strings.rs:5:' in error for error in errors), errors)
+
+    def test_commented_code_is_not_a_use(self):
+        source = """fn show() {
+    // let bar = ProgressBar::no_length();
+    /* let other = ProgressBar::no_length();
+       let third = ProgressStyle::with_template("{spinner}"); */
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'commented.rs').write_text(source)
+            self.assertEqual(lint.indicatif_errors(root), [])
+
     def test_the_sink_cannot_re_export_the_spinner_crate(self):
         reviewed = """use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 

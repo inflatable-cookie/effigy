@@ -127,29 +127,98 @@ def check(observed):
     ]
 
 
+RAW_STRING = re.compile(r'(?:br|rb|r)(#*)"')
+
+
+def _raw_string_start(text, index):
+    """The hash count and opening quote of a raw string at `index`, if any."""
+    if index > 0 and (text[index - 1].isalnum() or text[index - 1] == '_'):
+        return None
+    match = RAW_STRING.match(text, index)
+    return (len(match.group(1)), match.end() - 1) if match else None
+
+
+def _char_literal_end(text, index):
+    """The end of a char literal at `index`, or None for a lifetime."""
+    if index + 1 >= len(text):
+        return None
+    if text[index + 1] == '\\':
+        cursor = index + 2
+        while cursor < len(text) and text[cursor] != "'":
+            cursor += 2 if text[cursor] == '\\' else 1
+        return cursor + 1 if cursor < len(text) else None
+    if index + 2 < len(text) and text[index + 2] == "'" and text[index + 1] != "'":
+        return index + 3
+    return None
+
+
 def strip_comments(text):
-    """Drop comments, so a prose mention of a term is not a use of it."""
-    text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
-    lines = []
-    for line in text.splitlines():
-        quote = ''
-        index = 0
-        while index < len(line):
-            char = line[index]
-            if quote:
-                if char == '\\':
+    """Drop comments while keeping every newline, so line numbers are exact.
+
+    This is a small Rust lexer, not a regular expression: a `//` or `/*` inside
+    a string, raw string or char literal is data, and a block comment keeps its
+    own newlines. So a term after a multiline comment is reported at its real
+    line, and code can never be hidden behind a comment delimiter in a literal.
+    """
+    kept = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char == '/' and text.startswith('//', index):
+            while index < length and text[index] != '\n':
+                index += 1
+            continue
+        if char == '/' and text.startswith('/*', index):
+            depth = 1
+            index += 2
+            while index < length and depth:
+                if text.startswith('/*', index):
+                    depth += 1
+                    index += 2
+                elif text.startswith('*/', index):
+                    depth -= 1
+                    index += 2
+                else:
+                    if text[index] == '\n':
+                        kept.append('\n')
+                    index += 1
+            continue
+        raw = _raw_string_start(text, index)
+        if raw:
+            hashes, quote = raw
+            terminator = '"' + '#' * hashes
+            end = text.find(terminator, quote + 1)
+            end = length if end < 0 else end + len(terminator)
+            kept.append(text[index:end])
+            index = end
+            continue
+        if char == '"':
+            kept.append(char)
+            index += 1
+            while index < length:
+                if text[index] == '\\':
+                    kept.append(text[index:index + 2])
                     index += 2
                     continue
-                if char == quote:
-                    quote = ''
-            elif char in '\'"':
-                quote = char
-            elif char == '/' and line.startswith('//', index):
-                line = line[:index]
-                break
-            index += 1
-        lines.append(line)
-    return '\n'.join(lines)
+                kept.append(text[index])
+                if text[index] == '"':
+                    index += 1
+                    break
+                index += 1
+            continue
+        if char == "'":
+            end = _char_literal_end(text, index)
+            if end is None:
+                kept.append(char)
+                index += 1
+            else:
+                kept.append(text[index:end])
+                index = end
+            continue
+        kept.append(char)
+        index += 1
+    return ''.join(kept)
 
 
 def source_files(root, *directories):
