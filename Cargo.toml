@@ -150,6 +150,7 @@ rpassword = "7"
 tempfile = "3"
 
 [dev-dependencies]
+effigy-json-schema = { path = "crates/effigy-json-schema" }
 effigy-test-support = { path = "crates/effigy-test-support" }
 # A settled-run proof asks the kernel whether a workload group still exists.
 libc = "0.2"
