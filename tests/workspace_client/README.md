@@ -22,9 +22,10 @@ no-tests-as-failure and a 30-minute outer budget for Oxide admission.
 | Same ID across reconnect or changed digest | One real admitted run, replayed identity or ID conflict |
 | Lost owner or uncommitted reservation | Unknown, never readmission |
 | Foreign stream/request, replayed or out-of-order terminal input | Invalid-request close/refusal before terminal dispatch |
+| Terminal delivery and attachment loss | Input delivered once, latest resize retained, detach buffers nothing; released attachment cannot read or deliver |
 | Output sequence and backpressure | Per-stream monotonic sequence; 16 frames / 512 KiB, source backpressure |
 | Cancellation with no acknowledgements | Stop mailbox and response remain serviceable at the full data window |
-| Reconnect cursor | Resume from cursor, explicit gap or refusal; never silently restart output |
+| Reconnect cursor | Real retained logs resume each stream at its cursor; exact rotated gap precedes retained bytes; never silently restart output |
 | EOF, acknowledged detach, secondary EOF | Owner stop only for EOF; detach and secondary loss leave owner running |
 | Context identity locks and stale reads | Refuse before any guest or checkout read |
 | Static guest reads | No state, vault, enrolment, capability or filesystem I/O |
@@ -35,7 +36,10 @@ The host fake scripts **every** resolver, entropy, admission and observation
 call. An unexpected call fails immediately; unconsumed scripted calls fail
 closeout. Admission uses `Run::begin_admitted`, not a second replay map. Sessions
 use `SessionRef::admit`, and reconnect constructs a new dispatcher while keeping
-the actual journal. The cleanup adapter rejects any unplanned effect.
+the actual journal. The cleanup adapter rejects any unplanned effect. The terminal sink also scripts
+every delivery and checks `Attachment::attached_observed` immediately before
+recording it. `RetainedStreams` reads private captured-log segments through the
+kernel reader; no fake replay store supplies its cursor or gap.
 
 Every host fixture starts an unrelated process under a retained PID and keeps a
 foreign-container marker. Assertions after owned-run settlement check both.
