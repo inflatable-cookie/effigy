@@ -44,10 +44,24 @@ const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
 /// How often the daemon drops cached certificates no route names.
 const CERT_PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// Waits out one idle delay. Production sleeps; tests drive the clock.
+type IdleWait = Arc<dyn Fn(Duration) + Send + Sync>;
+
+/// Idle-stop state the route watcher shares with the timers it arms.
+#[derive(Clone)]
+struct IdleShutdown {
+    generation: Arc<AtomicU64>,
+    shutdown: watch::Sender<bool>,
+    wait: IdleWait,
+    /// Gateway state directory that holds the operator log for the stop record.
+    state_dir: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdleShutdownAction {
     None,
-    Arm,
+    /// The timer generation this empty table armed.
+    Arm(u64),
     Cancel,
 }
 
@@ -1757,6 +1771,12 @@ fn setup_file_watcher(
     gateway_config: GatewayConfig,
 ) -> Result<RecommendedWatcher, GatewayError> {
     let watched_path = path.to_path_buf();
+    let idle = IdleShutdown {
+        generation: idle_shutdown_generation,
+        shutdown: shutdown_tx,
+        wait: Arc::new(std::thread::sleep),
+        state_dir: path.parent().unwrap_or(path).to_path_buf(),
+    };
 
     let mut watcher =
         notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
@@ -1769,8 +1789,7 @@ fn setup_file_watcher(
                             &watched_path,
                             &table,
                             &dns_cache,
-                            &idle_shutdown_generation,
-                            &shutdown_tx,
+                            &idle,
                             gateway_config.is_private(),
                         ) {
                             error!(error = %error, "failed to reload route table");
@@ -1804,38 +1823,33 @@ fn setup_file_watcher(
     Ok(watcher)
 }
 
+/// Reloads the route table and, when the reload empties it, starts the idle
+/// timer. The timer's handle is returned so a caller can wait for its decision.
 fn reload_route_table_and_maybe_schedule_shutdown(
     path: &Path,
     table: &Arc<RwLock<RouteTable>>,
     dns_cache: &Arc<DnsCache>,
-    idle_shutdown_generation: &Arc<AtomicU64>,
-    shutdown_tx: &watch::Sender<bool>,
+    idle: &IdleShutdown,
     private: bool,
-) -> Result<(), GatewayError> {
+) -> Result<Option<std::thread::JoinHandle<()>>, GatewayError> {
     let new_table = RouteTable::load(path)?;
     if private {
         validate_private_routes(&new_table)?;
     }
-    let action = apply_reloaded_route_table(table, new_table, dns_cache);
+    let action = apply_reloaded_route_table(table, new_table, dns_cache, private, &idle.generation);
     debug!("route table reloaded, DNS cache cleared");
     match action {
-        IdleShutdownAction::Arm => {
-            let generation = idle_shutdown_generation.fetch_add(1, Ordering::SeqCst) + 1;
-            schedule_idle_shutdown(
-                Arc::clone(table),
-                Arc::clone(idle_shutdown_generation),
-                shutdown_tx.clone(),
-                generation,
-                IDLE_SHUTDOWN_DELAY,
-            );
-        }
+        IdleShutdownAction::Arm(generation) => Ok(Some(schedule_idle_shutdown(
+            Arc::clone(table),
+            idle.clone(),
+            generation,
+        ))),
         IdleShutdownAction::Cancel => {
-            idle_shutdown_generation.fetch_add(1, Ordering::SeqCst);
             debug!("route table became non-empty; cancelled pending idle shutdown");
+            Ok(None)
         }
-        IdleShutdownAction::None => {}
+        IdleShutdownAction::None => Ok(None),
     }
-    Ok(())
 }
 
 fn validate_private_routes(table: &RouteTable) -> Result<(), GatewayError> {
@@ -1851,10 +1865,16 @@ fn validate_private_routes(table: &RouteTable) -> Result<(), GatewayError> {
     Ok(())
 }
 
+/// Only a private gateway stops itself when its route table stays empty. The
+/// machine gateway outlives its last route, so a later `container up` or
+/// `up` finds it still running (effigy#480). The generation moves under the
+/// table's write lock, so a timer's check cannot interleave with a transition.
 fn apply_reloaded_route_table(
     table: &Arc<RwLock<RouteTable>>,
     new_table: RouteTable,
     dns_cache: &Arc<DnsCache>,
+    idle_shutdown: bool,
+    idle_generation: &AtomicU64,
 ) -> IdleShutdownAction {
     let action = {
         let mut guard = crate::locks::write_tolerant(table);
@@ -1862,8 +1882,13 @@ fn apply_reloaded_route_table(
         let is_empty = new_table.is_empty();
         *guard = new_table;
         match (was_empty, is_empty) {
-            (false, true) => IdleShutdownAction::Arm,
-            (true, false) => IdleShutdownAction::Cancel,
+            (false, true) if idle_shutdown => {
+                IdleShutdownAction::Arm(idle_generation.fetch_add(1, Ordering::SeqCst) + 1)
+            }
+            (true, false) if idle_shutdown => {
+                idle_generation.fetch_add(1, Ordering::SeqCst);
+                IdleShutdownAction::Cancel
+            }
             _ => IdleShutdownAction::None,
         }
     };
@@ -1871,21 +1896,39 @@ fn apply_reloaded_route_table(
     action
 }
 
+/// Stops the gateway when its route table is still empty after the idle delay
+/// and no later transition moved the generation. The stop is recorded before
+/// the shutdown signal, so the cause survives the clean exit. A stop whose
+/// record cannot be written does not happen: the gateway stays up and the
+/// failure is logged, so no stop is ever unrecorded (effigy#480).
 fn schedule_idle_shutdown(
     table: Arc<RwLock<RouteTable>>,
-    idle_shutdown_generation: Arc<AtomicU64>,
-    shutdown_tx: watch::Sender<bool>,
+    idle: IdleShutdown,
     generation: u64,
-    delay: Duration,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        std::thread::sleep(delay);
-        if idle_shutdown_generation.load(Ordering::SeqCst) != generation {
+        (idle.wait)(IDLE_SHUTDOWN_DELAY);
+        // Decide under the table's read lock. A reload that returns a route
+        // takes the write lock and moves the generation, so it lands either
+        // before this decision (the stop is cancelled) or after it (the gateway
+        // is already stopping).
+        let guard = crate::locks::read_tolerant(&table);
+        if idle.generation.load(Ordering::SeqCst) != generation || !guard.is_empty() {
             return;
         }
-        if crate::locks::read_tolerant(&table).is_empty() {
-            info!("route table stayed empty through idle timeout; stopping gateway");
-            let _ = shutdown_tx.send(true);
+        let cause = format!("route table empty for {} s", IDLE_SHUTDOWN_DELAY.as_secs());
+        match effigy_kernel::run::try_record_gateway_operator(
+            &idle.state_dir,
+            effigy_kernel::run::OperatorAction::Down,
+            &cause,
+        ) {
+            Ok(()) => {
+                info!(cause = %cause, "route table stayed empty through idle timeout; stopping gateway");
+                let _ = idle.shutdown.send(true);
+            }
+            Err(error) => {
+                error!(cause = %cause, error = %error, "cannot record the idle stop; the gateway stays up");
+            }
         }
     })
 }

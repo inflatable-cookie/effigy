@@ -59,13 +59,25 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
 pub(in crate::runner) fn ensure_gateway_running_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    ensure_gateway_running_for_container_with(
+        policy,
+        crate::runner::gateway_command::gateway_up_for_managed_task,
+    )
+}
+
+/// The start `container up` runs before any route registers, with the managed
+/// start injected so the gateway's own proof can drive it (effigy#480).
+fn ensure_gateway_running_for_container_with(
+    policy: &EffectiveContainerPolicy,
+    start: impl FnOnce(&str) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
     if !crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(policy) {
         return Ok(());
     }
     let executable =
         effigy_containers::session::resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let command = effigy_containers::session::managed_gateway_command(&executable);
-    crate::runner::gateway_command::gateway_up_for_managed_task(&command)
+    start(&command)
 }
 
 pub(in crate::runner) fn register_gateway_routes_for_container(

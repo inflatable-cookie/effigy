@@ -116,14 +116,104 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
     let config = gateway_config()?;
     refuse_a_fixtures_operator_gateway_mutation(&config)?;
-    if !config.is_private() && effigy_core::executable_override::current().is_none() {
-        // A task run, not an operator command: name it as what it is.
-        record_managed_gateway_start(&config);
-        effigy_gateway::operator::up(&config)
-            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-        return Ok(());
+    managed_gateway_up(
+        &config,
+        command,
+        operator_gateway_up,
+        verified_gateway_status_for_up,
+    )
+}
+
+/// The managed start `container up` runs. A private root or an
+/// installed-override build takes the preflight-and-command path. The machine
+/// gateway starts through the operator lifecycle, but under the same managed
+/// rule: only a positively stopped gateway is started, a running or unverifiable
+/// one is never started or replaced, and an unverifiable one is reported as
+/// such rather than claimed up (effigy#480). Both starts are injected so tests
+/// drive this branch without touching the machine gateway.
+pub(in crate::runner) fn managed_gateway_up(
+    config: &GatewayConfig,
+    command: &str,
+    operator_up: impl FnOnce(&GatewayConfig) -> Result<ManagedStartOutcome, RunnerError>,
+    preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
+) -> Result<(), RunnerError> {
+    if config.is_private() || effigy_core::executable_override::current().is_some() {
+        return gateway_up_for_managed_task_with(command, preflight);
     }
-    gateway_up_for_managed_task_with(command, verified_gateway_status_for_up)
+    match preflight(config).status {
+        Ok(running) => {
+            if let Some(note) = running_gateway_build_note(&running.status) {
+                eprintln!("{note}");
+            }
+            Ok(())
+        }
+        Err(effigy_gateway::GatewayError::NotRunning) => {
+            // A task run, not an operator command: name it as what it is.
+            emit_gateway_startup_notice(ManagedStartState::Stopped);
+            record_managed_gateway_start(config);
+            // The operator reports what it observed. Only a verified ready
+            // gateway is a start this caller can rely on: `up` reuses whatever
+            // it finds, including a gateway it could not verify, so an
+            // unchecked status here would become a false running claim.
+            operator_up(config)?.require_verified()
+        }
+        // An ambiguous process state is reported, never claimed up, and no
+        // start or replacement is attempted.
+        Err(error @ effigy_gateway::GatewayError::ProcessStateUnknown { .. }) => {
+            eprintln!("[gateway] cannot verify the running gateway ({error}); proceeding without starting or replacing it");
+            Ok(())
+        }
+        // Every other refusal stays the operator lifecycle's own refusal, as it
+        // was before this branch preflighted: a legacy identity, or an
+        // unreadable or malformed record. Its observation is checked too, so a
+        // start that never verified a ready gateway is never claimed up.
+        Err(_) => operator_up(config)?.require_verified(),
+    }
+}
+
+/// What the operator lifecycle observed when a managed start ran. A start is
+/// `ready` only when the gateway's own identity and self-test verified it; an
+/// unverified observation keeps its own status so a caller can report it
+/// instead of naming the gateway running (effigy#480).
+pub(in crate::runner) struct ManagedStartOutcome {
+    pub(in crate::runner) status: &'static str,
+    pub(in crate::runner) ready: bool,
+    pub(in crate::runner) reason: Option<String>,
+}
+
+impl ManagedStartOutcome {
+    /// Continue only on a verified running gateway. Anything else — an
+    /// unverifiable identity, a gateway still starting, or a start that never
+    /// became ready — is a refusal naming what was observed.
+    fn require_verified(self) -> Result<(), RunnerError> {
+        if self.ready {
+            return Ok(());
+        }
+        let reason = self
+            .reason
+            .map(|reason| format!(": {reason}"))
+            .unwrap_or_default();
+        Err(RunnerError::task_invocation(format!(
+            "the managed gateway start did not verify a running gateway (operator status `{}`{reason}); refusing to continue as if the gateway were up. `effigy gateway status` reports the observation; if it is unverifiable, ask the host administrator to confirm the daemon is stopped, then `effigy gateway down` and `effigy gateway up` replace it",
+            self.status,
+        )))
+    }
+}
+
+impl From<effigy_gateway::operator::Status> for ManagedStartOutcome {
+    fn from(status: effigy_gateway::operator::Status) -> Self {
+        Self {
+            status: status.status,
+            ready: status.ready,
+            reason: status.reason,
+        }
+    }
+}
+
+fn operator_gateway_up(config: &GatewayConfig) -> Result<ManagedStartOutcome, RunnerError> {
+    effigy_gateway::operator::up(config)
+        .map(ManagedStartOutcome::from)
+        .map_err(|e| RunnerError::task_invocation(e.to_string()))
 }
 
 /// One bounded event names an operator action at the command boundary, before
@@ -404,9 +494,9 @@ fn gateway_identity_probe_with(
     }
 }
 
-struct GatewayUpStatusProbe {
-    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
-    identity_permission_denied: bool,
+pub(in crate::runner) struct GatewayUpStatusProbe {
+    pub(in crate::runner) status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+    pub(in crate::runner) identity_permission_denied: bool,
 }
 
 /// Keep replacement preflight read-only and local. If a live identity is
@@ -1284,7 +1374,7 @@ fn ensure_gateway_tls_ca_ready(
     Ok(already_installed)
 }
 
-fn gateway_config() -> Result<GatewayConfig, RunnerError> {
+pub(in crate::runner) fn gateway_config() -> Result<GatewayConfig, RunnerError> {
     gateway_config_with_private(None)
 }
 
