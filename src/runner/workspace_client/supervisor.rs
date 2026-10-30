@@ -457,7 +457,7 @@ impl<'a> ServiceOwner<'a> {
             session,
             lease,
         } = handoff;
-        let adopted = ServingOwner::adopt_owned(owner.into(), server)?;
+        let adopted = ServingOwner::adopt_owned(owner, server)?;
         Self::retained(adopted, session, lease)
     }
 

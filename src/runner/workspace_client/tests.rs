@@ -160,15 +160,20 @@ fn publish(guest: &mut FakeGuest, document: &WorkspaceContextV2, capability: Opt
     );
     guest.put_file(&snapshot_path(&sha256_text(MANIFEST)), MANIFEST, 0o444);
     if let Some(capability) = capability {
-        guest.put_file(
-            &client_capability_path(TEST_CLIENT),
-            render_capability(&StoredCapability {
-                generation: Generation::new(document.session.generation),
-                secret: capability.clone(),
-            })
-            .as_bytes(),
-            0o600,
-        );
+        let stored = StoredCapability {
+            generation: Generation::new(document.session.generation),
+            secret: capability.clone(),
+        };
+        // The named proof client, and the client this process resolves to, so a
+        // dispatch under test presents the capability the same way a terminal
+        // would.
+        for client in [TEST_CLIENT.to_owned(), client_id().expect("a client")] {
+            guest.put_file(
+                &client_capability_path(&client),
+                render_capability(&stored).as_bytes(),
+                0o600,
+            );
+        }
     }
 }
 
