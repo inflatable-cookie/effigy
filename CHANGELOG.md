@@ -442,11 +442,18 @@ until the host-log writer has a safe secret-handling boundary.
   the elapsed wait; and a managed TUI pane's generic start state shows its
   elapsed wait, with the shutdown footer naming the completion's real counts.
   `effigy lint:feedback` no longer reads a baseline or ceiling file: it fails
-  on every compiler-resolved use of a fixed-label constructor, including
-  through an alias or wrapper, naming the file, the line and the migration, and
-  `clippy::disallowed_methods` rejects every bare
-  `indicatif::ProgressBar::new_spinner` outside the one reviewed sink. Each
-  site's disposition is recorded in
+  on every compiler-resolved use of a fixed-label constructor in any workspace
+  crate, including through an alias or wrapper, naming the file, the line and
+  the migration, and `clippy::disallowed_methods` rejects every bare
+  `indicatif::ProgressBar::new_spinner` outside the one reviewed sink. The gate
+  is part of `effigy validate`, `effigy qa` and `effigy qa:gates`, so the
+  normal validation path and the milestone QA path both refuse a bare spinner
+  instead of depending on someone running the selector. A managed pane's start
+  clock now belongs to the process's current attempt, so an entry that queued
+  behind its prerequisite starts its own count at zero rather than showing the
+  time it spent waiting, and a silent teardown names the command's exit as the
+  thing it awaits instead of a runtime report that never comes. Each site's
+  disposition is recorded in
   [live progress sites](docs/knowledge/architecture/036-live-progress-sites.md).
 - **A managed session names what each entry waits for.** Every tab, the
   `--headless` text and `status` show the entry's own dependency-derived state
