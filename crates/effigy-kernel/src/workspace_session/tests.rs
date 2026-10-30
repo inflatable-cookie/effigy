@@ -5251,7 +5251,7 @@ fn a_partial_switch_readback_is_refused_and_retried_to_exactness() {
     for change in &receipt.selection().switches[..2] {
         assert!(switch(&mut partial, change));
     }
-    let error = Attachments::selection_switched(&mut environment_run, &obligation, &mut partial)
+    let error = Attachments::selection_switched(&mut environment_run, obligation, &mut partial)
         .expect_err("a partial switch is not a completion");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     let reader = read_journal(&cx, &root);
@@ -6097,7 +6097,7 @@ fn dropping_an_unsettled_owner_closes_its_socket_and_wipes_its_key() {
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .unwrap();
     launch.publish(&run).unwrap();
-    assert!(std::net::TcpStream::connect(&endpoint).is_ok());
+    assert!(std::net::TcpStream::connect(endpoint).is_ok());
     drop(run);
     assert!(!launch.key_held());
     assert!(!launch.owned());
