@@ -302,7 +302,7 @@ fn run_up(
     }
 }
 
-fn mark_front(env: &mut BTreeMap<OsString, EnvValue>, ansi: bool) {
+pub(in crate::runner) fn mark_front(env: &mut BTreeMap<OsString, EnvValue>, ansi: bool) {
     env.insert(
         OsString::from("EFFIGY_INTERNAL_ANSI_FRONT"),
         EnvValue::Plain(OsString::from(if ansi { "1" } else { "0" })),

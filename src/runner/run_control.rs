@@ -331,7 +331,6 @@ pub(in crate::runner) enum Event<'a> {
         stream: Stream,
         offset: u64,
         bytes: &'a [u8],
-        retained_from: u64,
     },
     /// Bytes `from..to` were rotated or retained away before they were read.
     Expired { stream: Stream, from: u64, to: u64 },
@@ -449,7 +448,6 @@ pub(in crate::runner) fn follow(
                         stream,
                         offset: read.from,
                         bytes: &read.bytes,
-                        retained_from: read.retained_from,
                     })
                     .map_err(FollowError::Lost)?;
                     offsets.set(stream, read.from + read.bytes.len() as u64);
@@ -519,29 +517,19 @@ fn logs(
     let id = record.id;
     let mut offsets = from;
     // A fresh offset does not carry the parser state of its previous reader.
-    // It may lie inside an escape or past a rotated prefix, so it starts
-    // fail-closed until a safe terminal-string boundary is observed.
+    // It may lie inside an escape or past a rotated prefix, so reconstruct
+    // from byte zero or remain fail-closed.
     let mut projections = [
         resume_projection(&record, Stream::Stdout, from.stdout),
         resume_projection(&record, Stream::Stderr, from.stderr),
     ];
-    let mut generations = [None, None];
     let ending = if json {
         let mut streams = [StreamJson::new(from.stdout), StreamJson::new(from.stderr)];
         let mut logs_gone = false;
         let ending = follow(checkout, id, &mut offsets, keep_following, &mut |event| {
             match event {
-                Event::Bytes {
-                    stream,
-                    bytes,
-                    retained_from,
-                    ..
-                } => {
+                Event::Bytes { stream, bytes, .. } => {
                     let slot = stream as usize;
-                    if generations[slot].is_some_and(|previous| previous != retained_from) {
-                        projections[slot] = PlainStream::unknown();
-                    }
-                    generations[slot] = Some(retained_from);
                     streams[slot]
                         .bytes
                         .extend_from_slice(&projections[slot].project(bytes));
@@ -593,17 +581,7 @@ fn logs(
             &mut offsets,
             keep_following,
             &mut |event| match event {
-                Event::Bytes {
-                    stream,
-                    bytes,
-                    retained_from,
-                    ..
-                } => {
-                    let slot = stream as usize;
-                    if generations[slot].is_some_and(|previous| previous != retained_from) {
-                        projections[slot] = PlainStream::unknown();
-                    }
-                    generations[slot] = Some(retained_from);
+                Event::Bytes { stream, bytes, .. } => {
                     let projected;
                     let bytes = if terminal[stream as usize] {
                         bytes
@@ -659,9 +637,8 @@ fn logs(
     }
 }
 
-/// Replay at most 4 KiB preceding a raw cursor. If the beginning is not
-/// retained, the parser remains fail-closed unless replay establishes a safe
-/// boundary; the lookback itself is not part of the requested output.
+/// Reconstruct a cold cursor only from retained byte zero. The ceiling bounds
+/// work for large logs; unknown or expired prefixes remain fail-closed.
 fn resume_projection(record: &RunRecord, stream: Stream, offset: u64) -> PlainStream {
     if offset == 0 {
         return PlainStream::default();
@@ -684,20 +661,17 @@ fn resume_with(
     if offset == 0 {
         return PlainStream::default();
     }
-    let start = offset.saturating_sub(4096);
-    let Some(read) = read(start, (offset - start) as usize) else {
-        return PlainStream::unknown();
-    };
-    if read.from != start || read.from + read.bytes.len() as u64 != offset {
+    if offset > effigy_core::terminal_projection::PREFIX_SCAN_LIMIT {
         return PlainStream::unknown();
     }
-    let mut projection = if start == 0 {
-        PlainStream::default()
-    } else {
-        PlainStream::unknown()
+    let Some(read) = read(0, offset as usize) else {
+        return PlainStream::unknown();
     };
+    if read.retained_from != 0 || read.from != 0 || read.bytes.len() as u64 != offset {
+        return PlainStream::unknown();
+    }
+    let mut projection = PlainStream::default();
     projection.push(&read.bytes);
-    projection.take_gap();
     projection
 }
 

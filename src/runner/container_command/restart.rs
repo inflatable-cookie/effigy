@@ -49,11 +49,11 @@ pub(super) fn run_container_restart(
     // yields to `down` instead of holding the environment for the whole gate
     // budget (effigy#390).
     use std::io::IsTerminal;
-    let marker = std::env::var("EFFIGY_INTERNAL_ANSI_FRONT").ok();
+    let marker = crate::runner::startup_ansi_front();
     let ansi_front = super::lifecycle::interactive_front(
         output_json,
         std::env::var_os("CI").is_some(),
-        marker.as_deref(),
+        marker,
         std::io::stdout().is_terminal(),
     );
     let report = restart_host_processes_for_container_with_front(

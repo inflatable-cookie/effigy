@@ -581,11 +581,6 @@ fn wait_for_listener_activation(
 
 /// Bytes of a child's log this wait reads before bounding the tail it names.
 const LISTENER_OUTPUT_TAIL_READ_BYTES: u64 = 8 * 1024;
-/// Bytes of context this wait reads backwards to find the start of the line its
-/// window begins inside. Keeping that context means a secret-shaped
-/// `key=value` is whole before the redactor sees it, instead of losing its
-/// marker to the window edge (effigy#455).
-const LISTENER_OUTPUT_LINE_CONTEXT_BYTES: u64 = 4 * 1024;
 /// Characters of child output a progress line or a refusal keeps. The child
 /// may print anything, so the tail is bounded and redacted where it is read,
 /// not only where it is printed.
@@ -601,42 +596,70 @@ pub(super) const MAX_LISTENER_FAILURE_DETAIL_BYTES: usize = 900;
 /// child's words. A log that is missing, a symlink, or empty contributes
 /// nothing.
 ///
-/// Redaction applies after a safe terminal boundary and subsequent newline.
-/// If bounded context cannot establish both, the whole window becomes a gap;
-/// this avoids exposing a value whose `key=` marker was cut off.
+/// Reconstruct parser state from byte zero before reading the bounded tail.
+/// Redaction only sees whole lines, so a truncated leading line is elided.
 fn listener_output_tail(log_path: &Path) -> Option<String> {
-    let metadata = fs::symlink_metadata(log_path).ok()?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+    listener_output_tail_with(log_path, || {})
+}
+
+fn listener_output_tail_with(log_path: &Path, after_read: impl FnOnce()) -> Option<String> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(log_path)
+        .ok()?;
+    let before = file.metadata().ok()?;
+    if !before.is_file() || before.len() == 0 {
         return None;
     }
-    let len = metadata.len();
-    let mut start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
-    let mut file = fs::File::open(log_path).ok()?;
-    use std::io::{Read as _, Seek, SeekFrom};
-    if start > 0 {
-        let back = start.min(LISTENER_OUTPUT_LINE_CONTEXT_BYTES);
-        file.seek(SeekFrom::Start(start - back)).ok()?;
-        let mut context = Vec::new();
-        (&mut file).take(back).read_to_end(&mut context).ok()?;
-        if let Some(offset) = context.iter().rposition(|byte| *byte == b'\n') {
-            start = start - back + offset as u64 + 1;
-        }
+    let len = before.len();
+    let start = len.saturating_sub(LISTENER_OUTPUT_TAIL_READ_BYTES);
+    if start > effigy_core::terminal_projection::PREFIX_SCAN_LIMIT {
+        return Some("[projection unavailable (log too large / changed)]".to_owned());
     }
-    file.seek(SeekFrom::Start(start)).ok()?;
-    let mut raw = Vec::new();
-    file.take(LISTENER_OUTPUT_TAIL_READ_BYTES + LISTENER_OUTPUT_LINE_CONTEXT_BYTES)
-        .read_to_end(&mut raw)
-        .ok()?;
-    // A bounded suffix can start inside an OSC or after a secret's key.
-    // Resume only after an unambiguous terminal-string terminator and the
-    // following newline; otherwise no part of this window is safe to show.
-    let (gap, safe) = if start == 0 {
-        (0, raw.as_slice())
-    } else {
-        safe_tail_suffix(&raw)
+    let read = || -> std::io::Result<_> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut projection = effigy_core::terminal_projection::PlainStream::default();
+        let mut remaining = start;
+        let mut buffer = [0u8; 8192];
+        while remaining > 0 {
+            let amount = remaining.min(buffer.len() as u64) as usize;
+            file.read_exact(&mut buffer[..amount])?;
+            projection.push(&buffer[..amount]);
+            remaining -= amount as u64;
+        }
+        let mut raw = vec![0; (len - start) as usize];
+        file.read_exact(&mut raw)?;
+        after_read();
+        Ok((
+            projection,
+            raw,
+            file.metadata()?,
+            fs::symlink_metadata(log_path)?,
+        ))
     };
-    let plain = effigy_core::terminal_projection::PlainStream::default().push(safe);
-    let text = String::from_utf8_lossy(&plain);
+    let Ok((mut projection, raw, after, path_after)) = read() else {
+        return Some("[projection unavailable (log too large / changed)]".to_owned());
+    };
+    if !same_log_snapshot(&before, &after) || !same_log_snapshot(&before, &path_after) {
+        return Some("[projection unavailable (log too large / changed)]".to_owned());
+    }
+    // Drop the first projected line when the tail starts midstream. A raw
+    // newline inside an OSC is not a safe boundary for secret redaction.
+    let partial = start > 0;
+    let plain = projection.push(&raw);
+    let safe = if partial {
+        match plain.iter().position(|byte| *byte == b'\n') {
+            Some(index) => &plain[index + 1..],
+            None => &[],
+        }
+    } else {
+        plain.as_slice()
+    };
+    let text = String::from_utf8_lossy(safe);
     let lines = text
         .lines()
         .map(str::trim_end)
@@ -644,34 +667,24 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
         .filter(|line| !line.starts_with("[effigy host-process]"))
         .collect::<Vec<_>>();
     if lines.is_empty() {
-        return (gap != 0).then(|| format!("[plain output gap: {gap} bytes elided]"));
+        return partial.then(|| "[plain output gap: partial line elided]".to_owned());
     }
-    let tail = if gap == 0 {
-        lines.join(" | ")
-    } else {
-        format!(
-            "[plain output gap: {gap} bytes elided] | {}",
-            lines.join(" | ")
-        )
-    };
     Some(effigy_ui::human::bound_text(
-        &tail,
+        &lines.join(" | "),
         LISTENER_OUTPUT_TAIL_BYTES,
     ))
 }
 
-fn safe_tail_suffix(raw: &[u8]) -> (usize, &[u8]) {
-    let mut saw_newline = false;
-    for index in 0..raw.len().saturating_sub(1) {
-        saw_newline |= raw[index] == b'\n';
-        if raw[index] == 0x1b && raw[index + 1] == b'\\' && (saw_newline || index >= 4096) {
-            if let Some(end) = raw[index + 2..].iter().position(|byte| *byte == b'\n') {
-                let start = index + 2 + end + 1;
-                return (start, &raw[start..]);
-            }
-        }
-    }
-    (raw.len(), &[])
+pub(in crate::runner) fn same_log_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    after.is_file()
+        && before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && before.len() == after.len()
+        && before.mtime() == after.mtime()
+        && before.mtime_nsec() == after.mtime_nsec()
+        && before.ctime() == after.ctime()
+        && before.ctime_nsec() == after.ctime_nsec()
 }
 
 /// How often a listener whose port is still closed reports progress. The
@@ -3667,13 +3680,67 @@ while True:
     }
 
     #[test]
-    fn listener_tail_recovers_only_after_safe_boundary_and_whole_line() {
-        let input = b"unknown\n\x1b\\partial-secret\nclear error\n";
-        let (gap, suffix) = safe_tail_suffix(input);
-        assert_eq!(gap, b"unknown\n\x1b\\partial-secret\n".len());
-        assert_eq!(suffix, b"clear error\n");
-        let flood = vec![b'x'; 8192];
-        assert_eq!(safe_tail_suffix(&flood), (flood.len(), &[][..]));
+    fn listener_tail_replays_osc_prefix_and_preserves_redaction() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let log = dir.path().join("app.log");
+        let mut bytes = vec![b'x'; 12000];
+        bytes.extend_from_slice(b"\x1b]title\nsecret payload\x1b\\\nerror: DB_PASSWORD=hunter2\n");
+        fs::write(&log, bytes).expect("write");
+        let tail = listener_output_tail(&log).unwrap();
+        assert!(!tail.contains("secret payload"));
+        assert!(tail.contains("error: DB_PASSWORD=<redacted>"), "{tail}");
+    }
+
+    #[test]
+    fn listener_tail_never_treats_osc_newline_as_redaction_boundary() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let log = dir.path().join("app.log");
+        let mut bytes = b"DB_PASSWORD=\x1b]title\n".to_vec();
+        bytes.extend(vec![b'x'; 4000]);
+        bytes.extend_from_slice(b"\x1b\\hunter2\nerror: failed\n");
+        bytes.extend(vec![b'x'; 8000]);
+        bytes.extend_from_slice(b"\nfinal error\n");
+        fs::write(&log, bytes).unwrap();
+        let tail = listener_output_tail(&log).unwrap();
+        assert!(!tail.contains("hunter2"), "{tail}");
+        assert!(tail.contains("final error"), "{tail}");
+    }
+
+    #[test]
+    fn listener_tail_detects_replacement_truncation_and_oversize() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let log = dir.path().join("app.log");
+        let replacement = dir.path().join("replacement.log");
+        fs::write(&log, b"first line\n").unwrap();
+        let before = fs::metadata(&log).unwrap();
+        fs::write(&replacement, b"other line\n").unwrap();
+        fs::rename(&replacement, &log).unwrap();
+        assert!(!same_log_snapshot(&before, &fs::metadata(&log).unwrap()));
+        fs::write(&replacement, b"different log\n").unwrap();
+        let result = listener_output_tail_with(&log, || fs::rename(&replacement, &log).unwrap());
+        assert_eq!(
+            result.as_deref(),
+            Some("[projection unavailable (log too large / changed)]")
+        );
+        let result = listener_output_tail_with(&log, || fs::write(&log, b"cut").unwrap());
+        assert_eq!(
+            result.as_deref(),
+            Some("[projection unavailable (log too large / changed)]")
+        );
+        let before = fs::metadata(&log).unwrap();
+        fs::write(&log, b"x").unwrap();
+        assert!(!same_log_snapshot(&before, &fs::metadata(&log).unwrap()));
+        let file = fs::OpenOptions::new().write(true).open(&log).unwrap();
+        file.set_len(
+            effigy_core::terminal_projection::PREFIX_SCAN_LIMIT
+                + LISTENER_OUTPUT_TAIL_READ_BYTES
+                + 1,
+        )
+        .unwrap();
+        assert_eq!(
+            listener_output_tail(&log).as_deref(),
+            Some("[projection unavailable (log too large / changed)]")
+        );
     }
 
     /// A wait on a closed port names the child's own output, bounded and
@@ -4243,6 +4310,46 @@ vite: internal server error\nDB_PASSWORD=hunter2\n",
             ),
             None
         );
+    }
+
+    #[test]
+    fn managed_tui_capability_reaches_environment_producer() {
+        use crate::runner::managed_run::{
+            test_decode, test_encode, test_mark_front, TestFront, TestPayload,
+        };
+        for (front, ansi) in [
+            (TestFront::Tui, true),
+            (TestFront::Text, false),
+            (TestFront::Detached, false),
+        ] {
+            let payload = TestPayload {
+                task: "dev".into(),
+                args: Vec::new(),
+                front,
+                state_home: "/state".into(),
+                terminal: None,
+                ansi_workloads: Vec::new(),
+                ansi_environment: ansi,
+            };
+            let payload: TestPayload = test_decode(&test_encode(&payload)).unwrap();
+            let mut up_env = BTreeMap::new();
+            test_mark_front(&mut up_env, payload.ansi_environment);
+            let marker = match up_env.get(std::ffi::OsStr::new("EFFIGY_INTERNAL_ANSI_FRONT")) {
+                Some(effigy_kernel::custody::EnvValue::Plain(value)) => value.to_str(),
+                _ => None,
+            };
+            let mut spec = runtime_spec(&[]);
+            spec.ansi_front = crate::runner::container_command::test_interactive_front(
+                false, false, marker, false,
+            );
+            let spec: HostProcessRuntimeSpec =
+                serde_json::from_slice(&serde_json::to_vec(&spec).unwrap()).unwrap();
+            let env = child_environment(std::iter::empty(), &spec, &[], None);
+            assert_eq!(
+                plain_env(env, "CARGO_TERM_COLOR").as_deref(),
+                ansi.then_some("always")
+            );
+        }
     }
 
     /// A generation that never answers names the reserved address, the path it

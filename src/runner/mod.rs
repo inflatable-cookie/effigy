@@ -111,3 +111,15 @@ mod task_ref_parser_tests;
 pub(crate) fn cleanup_managed_secrets() -> std::io::Result<()> {
     managed_secrets::sweep()
 }
+
+/// Records the presentation marker consumed by the binary before it starts
+/// threads or launches subprocesses. The marker carries no secret or authority.
+pub fn set_startup_ansi_front(value: Option<String>) {
+    let _ = STARTUP_ANSI_FRONT.set(value);
+}
+
+static STARTUP_ANSI_FRONT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+fn startup_ansi_front() -> Option<&'static str> {
+    STARTUP_ANSI_FRONT.get().and_then(Option::as_deref)
+}

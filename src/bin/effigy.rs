@@ -1,4 +1,10 @@
 fn main() {
+    // Capture and remove the internal presentation marker before any worker
+    // threads or subprocesses start. Descendants must not inherit it.
+    // SAFETY: this is the first operation in main, before this binary starts
+    // any threads or invokes code that can access the process environment.
+    let ansi_front = unsafe { effigy_kernel::startup::take_variable("EFFIGY_INTERNAL_ANSI_FRONT") };
+    effigy::runner::set_startup_ansi_front(ansi_front);
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(target_os = "macos")]
     if raw_args
