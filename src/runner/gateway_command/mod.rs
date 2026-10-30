@@ -551,16 +551,16 @@ fn run_gateway_up_with_config(
             "starting the gateway process",
             &format!("the gateway to answer on {}", config.proxy.bind_addr),
             |progress| {
-                let status = effigy_gateway::operator::up_observed(config, &|phase| {
+                effigy_gateway::operator::up_observed(config, &|phase| {
                     observe_start(progress, &config.proxy.bind_addr.to_string(), phase)
                 })
-                .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
-                // The gateway answers; read what it will serve from the table
-                // already published. This is a read, never a publication.
-                observe_existing_routes(config, progress);
-                Ok(status)
+                .map_err(|e| RunnerError::task_invocation(e.to_string()))
             },
         )?;
+        // The gateway answers; read what it will serve from the table already
+        // published. This is a read of existing state, never a publication,
+        // and its own step reports a read failure without failing the command.
+        read_existing_routes_step(config);
         return Ok(if output_json {
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
@@ -1883,12 +1883,19 @@ fn observe_start(progress: &ProgressSource, listener: &str, phase: StartPhase) {
                 Some(reason) => format!("gateway status is {status}: {reason}"),
                 None => format!("gateway status is {status}"),
             };
-            progress.update("checking the gateway self-test", None, Some(event));
+            // The listener is in the sub-step as well as the awaited sentence:
+            // the event replaces that sentence in the frame, and the port must
+            // never leave the operator's view.
+            progress.update(
+                format!("checking the gateway self-test on {listener}"),
+                None,
+                Some(event),
+            );
         }
         StartPhase::Unobserved { reason } => {
             progress.now_waiting_for(format!("the gateway to answer on {listener}"));
             progress.update(
-                "checking the gateway self-test",
+                format!("checking the gateway self-test on {listener}"),
                 None,
                 Some(format!("cannot read the gateway status: {reason}")),
             );
@@ -1983,25 +1990,19 @@ fn summarize_routes(
     summary
 }
 
-/// Show the routes already published in the table the daemon serves, one route
-/// at a time. This reads the existing table; neither `gateway up` nor `gateway
-/// setup` publishes a route, so a table that cannot be read is the step's last
-/// event and never changes the command's outcome.
-fn observe_existing_routes(config: &GatewayConfig, progress: &ProgressSource) {
+/// Read the existing route table, one route at a time, naming each route with
+/// its position and certificate state as it is read. Returns how many routes
+/// the table held. This reads published state: an unreadable table returns the
+/// read error and has no other effect.
+fn read_existing_routes(
+    config: &GatewayConfig,
+    progress: &ProgressSource,
+) -> std::io::Result<usize> {
     let path = config.route_table_path.display();
     progress.now_waiting_for(format!("the route table at {path}"));
     progress.update("reading the existing route table", None, None);
-    let route_table = match RouteTable::load(&config.route_table_path) {
-        Ok(route_table) => route_table,
-        Err(error) => {
-            progress.update(
-                format!("cannot read the route table at {path}"),
-                None,
-                Some(error.to_string()),
-            );
-            return;
-        }
-    };
+    let route_table = RouteTable::load(&config.route_table_path)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     let count = route_table.len();
     summarize_published_routes(config, &route_table, progress);
     progress.update(
@@ -2013,6 +2014,27 @@ fn observe_existing_routes(config: &GatewayConfig, progress: &ProgressSource) {
         None,
         None,
     );
+    Ok(count)
+}
+
+/// Read the existing table as its own operator step. `gateway up` and `gateway
+/// setup` read the published table; they never publish a route, so an
+/// unreadable table ends this step with the exact read error and leaves the
+/// command's own outcome as it was.
+fn read_existing_routes_step(config: &GatewayConfig) {
+    let progress = ProgressSource::waiting_for(format!(
+        "the route table at {}",
+        config.route_table_path.display()
+    ));
+    progress.update("reading the existing route table", None, None);
+    let step = live_step(progress.clone());
+    match read_existing_routes(config, &progress) {
+        Ok(_) => step.succeed(&progress.summary()),
+        Err(error) => step.fail(&format!(
+            "cannot read the route table at {}: {error}",
+            config.route_table_path.display()
+        )),
+    }
 }
 
 /// The bind-probe child's own result: the code it settled with and the bytes it
@@ -2359,15 +2381,15 @@ fn run_gateway_setup(
             "starting the gateway as the operator",
             &format!("the gateway to answer on {}", config.proxy.bind_addr),
             |progress| {
-                let result = operator::up_observed(&config, &|phase| {
+                operator::up_observed(&config, &|phase| {
                     observe_start(progress, &config.proxy.bind_addr.to_string(), phase)
-                })?;
-                // Setting up leaves a gateway that serves the table already
-                // published; name each route as it is read, not as published.
-                observe_existing_routes(&config, progress);
-                Ok(result)
+                })
             },
         )?;
+        // Setting up leaves a gateway that serves the table already published;
+        // read it as its own step, which names a read failure without turning
+        // the completed setup into a failure.
+        read_existing_routes_step(&config);
         Ok(if output_json {
             serde_json::to_string(&result).map_err(std::io::Error::other)?
         } else {

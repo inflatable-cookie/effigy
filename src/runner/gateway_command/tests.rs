@@ -24,13 +24,18 @@ fn private_gateway_publication_can_finish_after_the_old_one_second_window() {
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let started = std::time::Instant::now();
-    daemon::wait_for_private_gateway_ready_with_probe(&operation, &readiness_progress(), || {
-        if started.elapsed() < std::time::Duration::from_millis(1100) {
-            Err(effigy_gateway::GatewayError::NotRunning)
-        } else {
-            Ok(())
-        }
-    })
+    daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &readiness_progress(),
+        readiness_listener(),
+        || {
+            if started.elapsed() < std::time::Duration::from_millis(1100) {
+                Err(effigy_gateway::GatewayError::NotRunning)
+            } else {
+                Ok(())
+            }
+        },
+    )
     .expect("durable initialization may exceed one second before verified publication");
 }
 
@@ -43,6 +48,7 @@ fn private_gateway_publication_obeys_its_finite_kernel_budget() {
     let error = daemon::wait_for_private_gateway_ready_with_probe(
         &operation,
         &readiness_progress(),
+        readiness_listener(),
         || Err(effigy_gateway::GatewayError::NotRunning),
     )
     .unwrap_err();
@@ -74,6 +80,7 @@ fn private_gateway_publication_never_retries_an_unverified_permission_refusal() 
     let result = daemon::wait_for_private_gateway_ready_with_probe(
         &operation,
         &readiness_progress(),
+        readiness_listener(),
         || {
             probes += 1;
             Err(effigy_gateway::GatewayError::Io(
@@ -1778,16 +1785,22 @@ fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
     );
 }
 
-/// The progress the readiness probes in these tests report into.
+/// The progress the readiness probes in these tests report into, shaped the
+/// way `wait_for_private_gateway_ready` builds it: the listener address lives
+/// in the probe's sub-step, not in the awaited sentence.
 fn readiness_progress() -> ProgressSource {
-    ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:8080")
+    ProgressSource::waiting_for("the gateway to answer")
+}
+
+fn readiness_listener() -> std::net::SocketAddr {
+    "127.0.0.1:8080".parse().expect("listener")
 }
 
 /// Fake-clock frames while the listener is not yet answering: each refusal
-/// becomes the last event, the awaited address stays named, and the elapsed
-/// count follows the probe number.
+/// becomes the last event, and every frame keeps the exact listener address
+/// and the elapsed count as it goes.
 #[test]
-fn listener_readiness_frames_name_each_blocker_as_it_happens() {
+fn listener_readiness_frames_keep_the_listener_address_as_blockers_arrive() {
     let operation = effigy_gateway::operator::context(
         std::time::Duration::from_secs(15),
         effigy_kernel::ctx::EffectClass::Observe,
@@ -1795,29 +1808,35 @@ fn listener_readiness_frames_name_each_blocker_as_it_happens() {
     let progress = readiness_progress();
     let mut frames = Vec::new();
     let mut probes = 0;
-    daemon::wait_for_private_gateway_ready_with_probe(&operation, &progress, || {
-        probes += 1;
-        frames.push(progress.frame_at(std::time::Duration::from_secs(probes)));
-        match probes {
-            1 => Err(effigy_gateway::GatewayError::NotRunning),
-            2 => Err(effigy_gateway::GatewayError::Io(
-                std::io::ErrorKind::NotFound.into(),
-            )),
-            _ => Ok(()),
-        }
-    })
+    daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &progress,
+        readiness_listener(),
+        || {
+            probes += 1;
+            frames.push(progress.frame_at(std::time::Duration::from_secs(probes)));
+            match probes {
+                1 => Err(effigy_gateway::GatewayError::NotRunning),
+                2 => Err(effigy_gateway::GatewayError::Io(
+                    std::io::ErrorKind::NotFound.into(),
+                )),
+                _ => Ok(()),
+            }
+        },
+    )
     .expect("the listener answers on the third probe");
     assert_eq!(
         frames,
         vec![
-            "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; 1s elapsed",
-            "checking the verified listener; last: the gateway is not answering yet; 2s elapsed",
-            "checking the verified listener; last: the gateway record is not published yet; 3s elapsed",
+            "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; 1s elapsed",
+            "checking the verified listener on 127.0.0.1:8080; last: the gateway is not answering yet; 2s elapsed",
+            "checking the verified listener on 127.0.0.1:8080; last: the gateway record is not published yet; 3s elapsed",
         ]
     );
 }
 
-/// A probe that refuses for good names what is wrong and stops the wait.
+/// A probe that refuses for good names what is wrong and stops the wait, with
+/// the listener it refused on still in the frame.
 #[test]
 fn listener_readiness_failure_keeps_the_probe_it_refused_on() {
     let operation = effigy_gateway::operator::context(
@@ -1825,15 +1844,20 @@ fn listener_readiness_failure_keeps_the_probe_it_refused_on() {
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let progress = readiness_progress();
-    let result = daemon::wait_for_private_gateway_ready_with_probe(&operation, &progress, || {
-        Err(effigy_gateway::GatewayError::Io(
-            std::io::ErrorKind::PermissionDenied.into(),
-        ))
-    });
+    let result = daemon::wait_for_private_gateway_ready_with_probe(
+        &operation,
+        &progress,
+        readiness_listener(),
+        || {
+            Err(effigy_gateway::GatewayError::Io(
+                std::io::ErrorKind::PermissionDenied.into(),
+            ))
+        },
+    );
     assert!(result.is_err());
     assert_eq!(
         progress.frame_at(std::time::Duration::from_secs(5)),
-        "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; 5s elapsed"
+        "checking the verified listener on 127.0.0.1:8080; waiting for the gateway to answer; 5s elapsed"
     );
 }
 
@@ -1878,7 +1902,7 @@ fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        "checking the gateway self-test; last: gateway status is starting; 4s elapsed"
+        "checking the gateway self-test on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
     );
 }
 
@@ -1897,7 +1921,7 @@ fn operator_start_frame_carries_the_self_test_blocker() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(6)),
-        "checking the gateway self-test; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
+        "checking the gateway self-test on 127.0.0.1:80; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
     );
 }
 
@@ -1915,7 +1939,7 @@ fn operator_start_frame_names_an_unreadable_status() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(3)),
-        "checking the gateway self-test; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
+        "checking the gateway self-test on 127.0.0.1:80; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
     );
 }
 
@@ -2185,17 +2209,18 @@ fn an_empty_route_table_is_read_without_a_route_frame() {
 }
 
 /// The operator path reads through the real loader. An absent table is no
-/// routes yet and an unreadable one is the step's last event: `up` and `setup`
-/// read the published table, so neither read can change their outcome.
+/// routes yet; an unreadable one returns the exact read error so the caller can
+/// finish its step with that cause.
 #[test]
-fn observing_existing_routes_reads_the_table_without_changing_the_outcome() {
+fn reading_existing_routes_reports_an_absent_table_and_a_read_failure() {
     let home = tempfile::tempdir().expect("gateway fixture");
     let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
     std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
         .expect("an empty gateway directory");
-    let progress = ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:80");
+    let progress = ProgressSource::waiting_for("the gateway to answer");
     progress.update("checking the gateway self-test", None, None);
-    observe_existing_routes(&config, &progress);
+    let count = read_existing_routes(&config, &progress).expect("an absent table reads as empty");
+    assert_eq!(count, 0);
     assert_eq!(
         progress.summary(),
         "the route table has no routes registered yet"
@@ -2208,18 +2233,50 @@ fn observing_existing_routes_reads_the_table_without_changing_the_outcome() {
         )
     );
 
-    // A table path under a regular file cannot be read; the step keeps going
-    // and names the read failure as its last event.
+    // A table path under a regular file cannot be read: the read error comes
+    // back so the step can finish with it.
     let blocked = home.path().join("not-a-directory");
     std::fs::write(&blocked, b"not a directory").expect("blocking file");
     let unreadable = GatewayConfig::standard(blocked.join("gateway"));
-    let progress = ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:80");
+    let progress = ProgressSource::waiting_for("the gateway to answer");
     progress.update("checking the gateway self-test", None, None);
-    observe_existing_routes(&unreadable, &progress);
-    let frame = progress.frame_at(fake_clock(3));
-    assert!(
-        frame.starts_with("cannot read the route table at "),
-        "{frame}"
+    let error = read_existing_routes(&unreadable, &progress)
+        .expect_err("a table under a regular file cannot be read");
+    assert!(!error.to_string().is_empty(), "{error}");
+}
+
+/// The read step ends with what it read, and a read failure ends the step with
+/// its exact cause instead of a success mark: the command's own outcome is
+/// unaffected because this step only reads published state.
+#[test]
+fn the_route_read_step_finishes_with_what_it_read_or_why_it_could_not() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("an empty gateway directory");
+    let ((), lines) = effigy_ui::steps::capture_lines(|| read_existing_routes_step(&config));
+    assert_eq!(
+        lines,
+        vec!["✓ the route table has no routes registered yet"]
     );
-    assert!(frame.contains("; last: "), "{frame}");
+
+    let blocked = home.path().join("not-a-directory");
+    std::fs::write(&blocked, b"not a directory").expect("blocking file");
+    let unreadable = GatewayConfig::standard(blocked.join("gateway"));
+    let progress = ProgressSource::waiting_for("the gateway to answer");
+    progress.update("checking the gateway self-test", None, None);
+    let cause = read_existing_routes(&unreadable, &progress)
+        .expect_err("a table under a regular file cannot be read")
+        .to_string();
+    let ((), lines) = effigy_ui::steps::capture_lines(|| read_existing_routes_step(&unreadable));
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    assert!(
+        line.starts_with(&format!(
+            "✗ cannot read the route table at {}: ",
+            unreadable.route_table_path.display()
+        )),
+        "{line}"
+    );
+    assert!(line.contains(&cause), "{line}");
 }

@@ -123,23 +123,26 @@ pub(super) fn wait_for_private_gateway_ready(
         Duration::from_secs(15),
         effigy_kernel::ctx::EffectClass::Observe,
     );
-    progress.now_waiting_for(format!(
-        "the gateway to answer on {}",
-        config.proxy.bind_addr
-    ));
-    wait_for_private_gateway_ready_with_probe(&operation, progress, || {
+    // The listener address lives in the probe's own sub-step: once an event
+    // arrives the frame shows that event instead of this sentence, and the
+    // operator must still see the exact port being waited on.
+    progress.now_waiting_for("the gateway to answer");
+    wait_for_private_gateway_ready_with_probe(&operation, progress, config.proxy.bind_addr, || {
         server::get_verified_gateway_status(config).map(|_| ())
     })
 }
 
 /// Poll the verified listener until it answers or the budget ends. Each
-/// refused probe names its blocker as the step's last event.
+/// refused probe names its blocker as the step's last event, and the listener
+/// address stays in the current sub-step so no frame loses the exact port.
 pub(super) fn wait_for_private_gateway_ready_with_probe(
     operation: &effigy_kernel::ctx::OperationContext,
     progress: &ProgressSource,
+    listener: std::net::SocketAddr,
     mut probe: impl FnMut() -> Result<(), effigy_gateway::GatewayError>,
 ) -> Result<(), RunnerError> {
-    progress.update("checking the verified listener", None, None);
+    let action = format!("checking the verified listener on {listener}");
+    progress.update(action.as_str(), None, None);
     loop {
         operation
             .check("private gateway verified listener publication")
@@ -158,7 +161,7 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
             }
             Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
         };
-        progress.update("checking the verified listener", None, Some(blocker.into()));
+        progress.update(action.as_str(), None, Some(blocker.into()));
         let remaining = operation.remaining().ok_or_else(|| {
             RunnerError::task_invocation("private gateway startup requires a finite budget")
         })?;

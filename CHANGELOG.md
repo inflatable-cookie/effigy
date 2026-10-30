@@ -518,12 +518,13 @@ During v0.x, MINOR bumps may include breaking changes.
   own reported status and the blocker that status carries while it self-tests
   or winds down. `gateway up` and `gateway setup` name each route already in the
   route table as they read it, with its position and certificate state; they
-  read the published table and never publish a route. `gateway setup` probes
-  each low-port address in turn and names it as its outcome lands (bound,
-  already in use, denied); a refusal stops at that address with the probe's own
-  sentence. Each step names the exact port, record, route or suffix list it
-  awaits, with elapsed time, and still ends with one line. `--json` and piped
-  output are unchanged.
+  read the published table and never publish a route, and a table that cannot
+  be read ends that step with the read error while the command itself still
+  succeeds. `gateway setup` probes each low-port address in turn and names it as
+  its outcome lands (bound, already in use, denied); a refusal stops at that
+  address with the probe's own sentence. Each step names the exact port, record,
+  route or suffix list it awaits, with elapsed time, and still ends with one
+  line. `--json` and piped output are unchanged.
 - **`test:focused` locks per invocation, not per task.** Its gate is keyed by
   the arguments its command receives as well as the resolved task, so two
   different test filters run at the same time and two identical invocations
