@@ -882,6 +882,7 @@ fn activate<'a>(
         committed
             .selection_obligation()
             .expect("the commit records its selection"),
+        &launch,
         &mut reader,
     )
     .expect("the switch is recorded");
@@ -3236,7 +3237,7 @@ fn commit_and_switch(
         reservation.commit_selection(cx, root, environment_run, session_run, &receipt, &launch)?;
     if let Some(obligation) = committed.selection_obligation() {
         let mut reader = FakeSelectors::exact(&receipt);
-        Attachments::selection_switched(environment_run, obligation, &mut reader)?;
+        Attachments::selection_switched(environment_run, obligation, &launch, &mut reader)?;
     }
     Ok(committed)
 }
@@ -3380,7 +3381,7 @@ fn activate_with_selection<'a>(
         .clone();
     let mut environment_run = environment_run;
     let mut reader = FakeSelectors::exact(&receipt);
-    Attachments::selection_switched(&mut environment_run, &obligation, &mut reader)
+    Attachments::selection_switched(&mut environment_run, &obligation, &launch, &mut reader)
         .expect("the switch is recorded");
     let switched = super::selection::read_obligation(
         read_journal(cx, root).conn(),
@@ -3790,6 +3791,7 @@ fn commit_pending_selection<'a>(
     Run<'a>,
     SelectionReceipt,
     SelectionObligation,
+    SessionLaunch,
 ) {
     let reservation =
         match WorkspaceActivationReservation::decide(cx, root, environment, inputs, Wait::FailFast)
@@ -3827,6 +3829,7 @@ fn commit_pending_selection<'a>(
         environment_run,
         receipt,
         obligation,
+        launch,
     )
 }
 
@@ -3836,7 +3839,7 @@ fn a_switch_refuses_a_third_value_and_completes_once() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (_, session_run, _session, mut environment_run, receipt, obligation) =
+    let (_, session_run, _session, mut environment_run, receipt, obligation, launch) =
         commit_pending_selection(
             &cx,
             &root,
@@ -3848,7 +3851,8 @@ fn a_switch_refuses_a_third_value_and_completes_once() {
     // A value that is not the obligation's target is refused, never recorded.
     let mut third = FakeSelectors::third(&receipt);
     assert!(
-        Attachments::selection_switched(&mut environment_run, &obligation, &mut third).is_err(),
+        Attachments::selection_switched(&mut environment_run, &obligation, &launch, &mut third)
+            .is_err(),
         "a third value is not a completion"
     );
     let reader = read_journal(&cx, &root);
@@ -3862,6 +3866,7 @@ fn a_switch_refuses_a_third_value_and_completes_once() {
     Attachments::selection_switched(
         &mut environment_run,
         &obligation,
+        &launch,
         &mut FakeSelectors::exact(&receipt),
     )
     .expect("exact switch");
@@ -3874,6 +3879,7 @@ fn a_switch_refuses_a_third_value_and_completes_once() {
     let error = Attachments::selection_switched(
         &mut environment_run,
         &obligation,
+        &launch,
         &mut FakeSelectors::exact(&receipt),
     )
     .expect_err("a selection completes once");
@@ -3902,7 +3908,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (reservation, session_run, session, environment_run, receipt, obligation) =
+    let (reservation, session_run, session, environment_run, receipt, obligation, _launch) =
         commit_pending_selection(
             &cx,
             &root,
@@ -4028,14 +4034,15 @@ fn an_established_dead_listener_abandons_and_revokes_without_restoring_the_prede
     let predecessor =
         activate_with_selection(&cx, &root, &environment, run_id(214), run_id(215), &first);
     let predecessor_session = predecessor.session.clone();
-    let (_, session_run, session, environment_run, _, obligation) = commit_pending_selection(
-        &cx,
-        &root,
-        &environment,
-        run_id(216),
-        run_id(217),
-        &publish_inputs(52, None),
-    );
+    let (_, session_run, session, environment_run, _, obligation, _launch) =
+        commit_pending_selection(
+            &cx,
+            &root,
+            &environment,
+            run_id(216),
+            run_id(217),
+            &publish_inputs(52, None),
+        );
     finish_activation(&cx, environment_run);
     let reader = read_journal(&cx, &root);
     assert_eq!(resolved(&reader, &environment), Some(session.clone()));
@@ -4938,6 +4945,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
             Attachments::selection_switched(
                 activating,
                 obligation.as_ref().expect("selection obligation"),
+                &launch,
                 &mut FakeSelectors::exact(&receipt),
             )?;
             Ok(())
@@ -5251,8 +5259,9 @@ fn a_partial_switch_readback_is_refused_and_retried_to_exactness() {
     for change in &receipt.selection().switches[..2] {
         assert!(switch(&mut partial, change));
     }
-    let error = Attachments::selection_switched(&mut environment_run, obligation, &mut partial)
-        .expect_err("a partial switch is not a completion");
+    let error =
+        Attachments::selection_switched(&mut environment_run, obligation, &launch, &mut partial)
+            .expect_err("a partial switch is not a completion");
     assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     let reader = read_journal(&cx, &root);
     assert_eq!(
@@ -5284,7 +5293,7 @@ fn a_partial_switch_readback_is_refused_and_retried_to_exactness() {
         partial.objects, staged,
         "immutable objects never change during switching"
     );
-    Attachments::selection_switched(&mut environment_run, obligation, &mut partial)
+    Attachments::selection_switched(&mut environment_run, obligation, &launch, &mut partial)
         .expect("retry completes");
     let reader = read_journal(&cx, &root);
     assert_eq!(
@@ -5571,14 +5580,15 @@ fn recovery_observes_under_the_environment_gate() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (_, _session_run, _, environment_run, receipt, obligation) = commit_pending_selection(
-        &cx,
-        &root,
-        &environment,
-        run_id(251),
-        run_id(252),
-        &publish_inputs(97, None),
-    );
+    let (_, _session_run, _, environment_run, receipt, obligation, _launch) =
+        commit_pending_selection(
+            &cx,
+            &root,
+            &environment,
+            run_id(251),
+            run_id(252),
+            &publish_inputs(97, None),
+        );
     // The activation run still holds `Gate(Env)`: recovery must not take a
     // readback behind its back, so it refuses before it reads anything.
     #[derive(Debug, Default)]
@@ -5704,6 +5714,7 @@ fn a_fresh_project_freezes_the_artifact_its_first_publication_selected() {
         committed
             .selection_obligation()
             .expect("the commit records its selection"),
+        &launch,
         &mut FakeSelectors::exact(&receipt),
     )
     .expect("the switch is recorded");
@@ -5945,7 +5956,7 @@ fn recovery_refuses_a_target_that_is_not_the_published_container() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let (_, _session_run, _session, environment_run, receipt, obligation) =
+    let (_, _session_run, _session, environment_run, receipt, obligation, _launch) =
         commit_pending_selection(
             &cx,
             &root,
@@ -6103,4 +6114,201 @@ fn dropping_an_unsettled_owner_closes_its_socket_and_wipes_its_key() {
     assert!(!launch.owned());
     assert!(launch.lease().is_none());
     assert!(std::net::TcpStream::connect(endpoint).is_err());
+}
+
+/// The guest read can overlap supervisor loss; the journal may not mistake
+/// the still-open run row for custody after the read finishes.
+struct OwnerLossReader<'a> {
+    owner: Option<Run<'a>>,
+    inner: FakeSelectors,
+}
+impl SelectorReader for OwnerLossReader<'_> {
+    fn read_selector(&mut self, path: &str) -> Observed<String> {
+        drop(self.owner.take());
+        self.inner.read_selector(path)
+    }
+    fn read_object(&mut self, path: &str) -> Observed<Digest> {
+        self.inner.read_object(path)
+    }
+}
+
+#[test]
+fn owner_loss_between_commit_and_switch_keeps_the_selection_pending() {
+    for during_readback in [false, true] {
+        let cx = context();
+        let fixture = home();
+        let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+        let (environment, _predecessor) = active_environment(&cx, &root);
+        let (_, session_run, _, mut environment_run, receipt, obligation, launch) =
+            commit_pending_selection(
+                &cx,
+                &root,
+                &environment,
+                run_id(84),
+                run_id(85),
+                &publish_inputs(101, None),
+            );
+        let mut reader = OwnerLossReader {
+            owner: Some(session_run),
+            inner: FakeSelectors::exact(&receipt),
+        };
+        if !during_readback {
+            drop(reader.owner.take());
+        }
+        assert!(Attachments::selection_switched(
+            &mut environment_run,
+            &obligation,
+            &launch,
+            &mut reader
+        )
+        .is_err());
+        assert!(!launch.key_held());
+        assert_eq!(
+            obligation_row(&read_journal(&cx, &root), &environment)
+                .unwrap()
+                .0,
+            "pending"
+        );
+        end_run(&cx, environment_run, WorkloadOutcome::NotStarted);
+    }
+}
+
+/// The transport can report independent failure or endpoint loss without the
+/// supervisor calling SessionLaunch::stop (which clears the cached locator).
+#[derive(Debug)]
+struct FailingListener {
+    inner: FakeListener,
+    failure: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ChannelListener for FailingListener {
+    fn endpoint(&self) -> Option<std::net::SocketAddr> {
+        match self.failure.load(std::sync::atomic::Ordering::SeqCst) {
+            2 => None,
+            3 => Some("127.0.0.1:46000".parse().unwrap()),
+            _ => self.inner.endpoint(),
+        }
+    }
+    fn phase(&self) -> ListenerPhase {
+        if self.failure.load(std::sync::atomic::Ordering::SeqCst) == 1 {
+            ListenerPhase::Stopped
+        } else {
+            self.inner.phase()
+        }
+    }
+    fn qualify(&mut self) -> Result<(), ServingRefusal> {
+        self.inner.qualify()
+    }
+    fn stop(&mut self) {
+        self.inner.stop();
+    }
+}
+
+#[test]
+fn independent_listener_failure_refuses_cached_publication_commit_and_switch() {
+    for failure_mode in 1..=3 {
+        for committed in [false, true] {
+            let cx = context();
+            let fixture = home();
+            let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+            let environment = pending_environment(&cx, &root);
+            let inputs = publish_inputs(102, None);
+            let reservation = match WorkspaceActivationReservation::decide(
+                &cx,
+                &root,
+                &environment,
+                &inputs,
+                Wait::FailFast,
+            )
+            .unwrap()
+            {
+                ActivationDecision::Activate(r) => *r,
+                _ => panic!("fresh activation"),
+            };
+            let (mut session_run, _) = admit_staged(&cx, &root, &reservation, run_id(86));
+            let binary = inputs.artifact.selected().unwrap().clone();
+            let (mut environment_run, publication) =
+                admit_activation_publishing(&cx, &root, &reservation, run_id(87), &binary);
+            let plan = plan_of(&reservation, &read_journal(&cx, &root)).unwrap();
+            let failure = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let (inner, _) = FakeListener::bound();
+            let key = ServingKey::new(vec![8; 32], Digest::of(b"independent failure")).unwrap();
+            let mut launch = SessionLaunch::launch(
+                &mut session_run,
+                &plan.session(),
+                "supervisor-1",
+                key,
+                Box::new(FailingListener {
+                    inner,
+                    failure: failure.clone(),
+                }),
+            )
+            .unwrap();
+            let receipt = selection_receipt(
+                &plan,
+                publication,
+                binary,
+                None,
+                &receipt_selection(&reservation),
+                &session_run,
+                &mut launch,
+            );
+            let obligation = if committed {
+                Some(
+                    reservation
+                        .commit_selection(
+                            &cx,
+                            &root,
+                            &environment_run,
+                            &session_run,
+                            &receipt,
+                            &launch,
+                        )
+                        .unwrap()
+                        .selection_obligation()
+                        .unwrap()
+                        .clone(),
+                )
+            } else {
+                None
+            };
+            failure.store(failure_mode, std::sync::atomic::Ordering::SeqCst);
+            assert!(
+                launch.publish(&session_run).is_err(),
+                "no cached ChannelBound after transport failure"
+            );
+            assert!(launch.lease().is_none());
+            assert!(launch.serve(&session_run).is_err());
+            assert!(!launch.serving(&session_run));
+            if let Some(obligation) = obligation {
+                assert!(Attachments::selection_switched(
+                    &mut environment_run,
+                    &obligation,
+                    &launch,
+                    &mut FakeSelectors::exact(&receipt)
+                )
+                .is_err());
+                assert_eq!(
+                    obligation_row(&read_journal(&cx, &root), &environment)
+                        .unwrap()
+                        .0,
+                    "pending"
+                );
+            } else {
+                assert!(reservation
+                    .commit_selection(
+                        &cx,
+                        &root,
+                        &environment_run,
+                        &session_run,
+                        &receipt,
+                        &launch
+                    )
+                    .is_err());
+                assert!(mapping(&read_journal(&cx, &root), &environment).is_none());
+                assert!(obligation_row(&read_journal(&cx, &root), &environment).is_none());
+            }
+            end_run(&cx, environment_run, WorkloadOutcome::NotStarted);
+            end_run(&cx, session_run, WorkloadOutcome::NotStarted);
+        }
+    }
 }

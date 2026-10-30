@@ -397,6 +397,53 @@ struct Held {
     key: Option<ServingKey>,
 }
 
+/// Pins owner-drop cleanup (and hence owner-gate release) until publication or
+/// completion has committed. No transport I/O runs while this guard is held.
+#[derive(Debug)]
+pub(crate) struct ServingCustody<'a> {
+    state: std::sync::MutexGuard<'a, LaunchState>,
+}
+
+impl ServingCustody<'_> {
+    pub(crate) fn revalidate(&self, lease: &ServingLease) -> Result<(), ServingRefusal> {
+        if self.state.live_bound()?.lease() != lease {
+            return Err(ServingRefusal::WrongSession);
+        }
+        Ok(())
+    }
+}
+
+impl LaunchState {
+    fn endpoint_and_pin(&self) -> Result<(SocketAddr, Digest), ServingRefusal> {
+        if !self.owned {
+            return Err(ServingRefusal::WrongSession);
+        }
+        if !self.qualified {
+            return Err(ServingRefusal::Unqualified);
+        }
+        let held = self.held.as_ref().ok_or(ServingRefusal::Stopped)?;
+        let listener = held.listener.as_ref().ok_or(ServingRefusal::Stopped)?;
+        match listener.phase() {
+            ListenerPhase::Stopped => return Err(ServingRefusal::Stopped),
+            ListenerPhase::Qualifying => return Err(ServingRefusal::Unqualified),
+            ListenerPhase::Holding | ListenerPhase::Serving => {}
+        }
+        Ok((
+            listener.endpoint().ok_or(ServingRefusal::Unbound)?,
+            held.key.as_ref().ok_or(ServingRefusal::Stopped)?.pin(),
+        ))
+    }
+
+    fn live_bound(&self) -> Result<&ChannelBound, ServingRefusal> {
+        let (endpoint, pin) = self.endpoint_and_pin()?;
+        let bound = self.bound.as_ref().ok_or(ServingRefusal::Unqualified)?;
+        if bound.lease.socket() != Some(endpoint) || bound.lease.pin() != &pin {
+            return Err(ServingRefusal::Unqualified);
+        }
+        Ok(bound)
+    }
+}
+
 impl SessionLaunch {
     /// Take custody of the key and the listener for `session`, on behalf of the
     /// run that owns it. The owner proof comes from that run itself, so custody
@@ -552,28 +599,10 @@ impl SessionLaunch {
     pub fn publish(&mut self, session_run: &Run<'_>) -> Result<ChannelBound, ServingRefusal> {
         self.require_live_owner(session_run)?;
         let mut state = self.lock();
-        if !state.qualified {
-            return Err(ServingRefusal::Unqualified);
+        let (endpoint, pin) = state.endpoint_and_pin()?;
+        if state.bound.is_some() {
+            return Ok(state.live_bound()?.clone());
         }
-        if let Some(bound) = &state.bound {
-            return Ok(bound.clone());
-        }
-        let (endpoint, pin) = {
-            let held = state.held.as_ref().ok_or(ServingRefusal::Stopped)?;
-            let listener = held.listener.as_ref().ok_or(ServingRefusal::Stopped)?;
-            match listener.phase() {
-                ListenerPhase::Stopped => return Err(ServingRefusal::Stopped),
-                ListenerPhase::Qualifying => return Err(ServingRefusal::Unqualified),
-                ListenerPhase::Holding | ListenerPhase::Serving => {}
-            }
-            let endpoint = listener.endpoint().ok_or(ServingRefusal::Unbound)?;
-            let pin = held
-                .key
-                .as_ref()
-                .map(ServingKey::pin)
-                .ok_or(ServingRefusal::Stopped)?;
-            (endpoint, pin)
-        };
         let binding = self.binding();
         let lease =
             ServingLease::published(binding.clone(), self.supervisor_id.clone(), endpoint, pin);
@@ -591,9 +620,20 @@ impl SessionLaunch {
     /// The published lease, if this launch published one.
     pub fn lease(&self) -> Option<ServingLease> {
         self.lock()
-            .bound
-            .as_ref()
+            .live_bound()
+            .ok()
             .map(|bound| bound.lease().clone())
+    }
+
+    pub(crate) fn hold_lease(
+        &self,
+        lease: &ServingLease,
+    ) -> Result<ServingCustody<'_>, ServingRefusal> {
+        let state = self.lock();
+        if state.live_bound()?.lease() != lease || self.binding() != *lease.session() {
+            return Err(ServingRefusal::WrongSession);
+        }
+        Ok(ServingCustody { state })
     }
 
     /// The serving supervisor adopted the session run: only now may the channel
@@ -602,18 +642,10 @@ impl SessionLaunch {
     pub fn serve(&mut self, session_run: &Run<'_>) -> Result<(), ServingRefusal> {
         self.require_live_owner(session_run)?;
         let mut state = self.lock();
-        if !state.qualified || state.bound.is_none() {
+        if state.bound.is_none() {
             return Err(ServingRefusal::Unqualified);
         }
-        let stopped = state
-            .held
-            .as_ref()
-            .and_then(|held| held.listener.as_ref())
-            .map(|listener| listener.phase() == ListenerPhase::Stopped)
-            .unwrap_or(true);
-        if stopped {
-            return Err(ServingRefusal::Stopped);
-        }
+        state.live_bound()?;
         state.served = true;
         Ok(())
     }
@@ -621,16 +653,7 @@ impl SessionLaunch {
     /// Whether the v1 channel may dispatch on this launch's listener.
     pub fn serving(&self, session_run: &Run<'_>) -> bool {
         let state = self.lock();
-        state.owned
-            && state.served
-            && state.qualified
-            && self.session_is_live(session_run)
-            && state
-                .held
-                .as_ref()
-                .and_then(|held| held.listener.as_ref())
-                .map(|listener| listener.phase().accepts())
-                .unwrap_or(false)
+        state.served && self.session_is_live(session_run) && state.live_bound().is_ok()
     }
 
     /// Release the owning run's custody while the launch lives: the session is
@@ -695,7 +718,7 @@ impl SessionLaunch {
             });
         }
         let state = self.lock();
-        let Some(bound) = &state.bound else {
+        let Ok(bound) = state.live_bound() else {
             return Observed::Absent(AbsenceProof::NoRow {
                 table: "workspace-session-listener".into(),
             });
@@ -705,19 +728,6 @@ impl SessionLaunch {
                 "the published endpoint is not a socket address".into(),
             ));
         };
-        let Some(held) = state.held.as_ref() else {
-            return Observed::Absent(AbsenceProof::NoRow {
-                table: "workspace-session-listener".into(),
-            });
-        };
-        match held.listener.as_ref() {
-            Some(listener) if listener.phase().accepts() => {}
-            _ => {
-                return Observed::Absent(AbsenceProof::NoRow {
-                    table: "workspace-session-listener".into(),
-                })
-            }
-        }
         probe.pinned_handshake(endpoint, &bound.lease.pin, deadline)
     }
 

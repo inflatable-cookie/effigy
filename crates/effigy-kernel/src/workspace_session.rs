@@ -2358,11 +2358,10 @@ impl WorkspaceActivationReservation {
         // The commit holds the session's live custody: the launch that published
         // this lease, for this session, with the key and listener still in hand.
         // A receipt alone cannot publish a session nothing is serving.
-        if launch.binding() != *plan.binding()
-            || launch.lease().as_ref() != Some(selection.serving())
-        {
+        if launch.binding() != *plan.binding() {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
+        let custody = launch.hold_lease(selection.serving())?;
         // The decision froze its inputs before anything was applied. Publishing
         // is the moment they are due: the artifact and target this run
         // acknowledged must be exactly the ones the decision recorded, or the
@@ -2547,6 +2546,7 @@ impl WorkspaceActivationReservation {
             // The selection obligation is written by this commit's own
             // transaction: there is no window in which the generation is
             // committed and no durable record of the pointers it needs.
+            custody.revalidate(selection.serving())?;
             let obligation = Some(selection::record_obligation(
                 txn,
                 &plan,

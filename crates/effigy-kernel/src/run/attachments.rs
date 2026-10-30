@@ -327,10 +327,13 @@ impl Attachments {
     /// missing object is refused and a receipt the caller assembled is never
     /// accepted. It also refuses a generation that no longer serves this
     /// obligation and a second completion: a selection completes or abandons
-    /// exactly once. No transaction spans guest I/O.
+    /// exactly once. The retained launch pins the successor owner gate through
+    /// completion and revalidates its bound listener after readback. No
+    /// transaction spans guest I/O.
     pub fn selection_switched(
         run: &mut Run<'_>,
         obligation: &crate::workspace_session::SelectionObligation,
+        launch: &crate::workspace_session::SessionLaunch,
         reader: &mut dyn crate::workspace_session::SelectorReader,
     ) -> Result<(), RunError> {
         use crate::workspace_session::SelectionState;
@@ -343,12 +346,14 @@ impl Attachments {
         }
         let receipt = obligation.observe(reader)?;
         obligation.validate_switch(&receipt)?;
+        let custody = launch.hold_lease(obligation.receipt().serving())?;
         let result = (|| {
             crate::fault_point!(SelectionSwitchBefore)?;
             run.store
                 .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                     journal::check_fence(txn.conn(), &run.owner)?;
                     obligation.require_serving(txn)?;
+                    custody.revalidate(obligation.receipt().serving())?;
                     obligation.finish(txn, SelectionState::Switched, None)
                 })?;
             crate::fault_point!(SelectionSwitchAfter)?;

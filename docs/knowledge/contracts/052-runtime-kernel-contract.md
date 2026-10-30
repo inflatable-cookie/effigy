@@ -3656,7 +3656,11 @@ Detached channel custody is handed to `workspace_session::SessionSupervisor::ado
 which consumes the admitted session Run. Only this retained supervisor registers
 custody; a client keeps a session reference, never the owning Run. Listener and
 key release actions belong to the Run's gate guard and execute on settlement or
-unsettled owner drop even when a launch handle remains. A Pending committed
+unsettled owner drop even when a launch handle remains. Live-path selection
+completion requires that retained launch, and holds its custody lock through the
+journal update so owner cleanup cannot release the private gate mid-completion.
+Publication retries, lease access, activation commit and switch completion
+revalidate the held listener phase, endpoint and key against the published lease. A Pending committed
 selection fences every new decision under Gate(Env), including when its owner
 is interrupted or absent; settlement and explicit abandonment precede replacement.
 

@@ -202,6 +202,8 @@ until the host-log writer has a safe secret-handling boundary.
   session owns its listener and memory-only serving key
   (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
   lifetime, and refuses to publish an unbound, unqualified or stopped listener.
+  Cached locators are revalidated, and a selection stays Pending if its
+  successor loses owner or listener custody before switch completion.
   Transport, TLS qualification and the runner/container adapters remain with
   #482/#483/#452.
 - **A container-mode workspace is prepared for the workspace client.** Host
