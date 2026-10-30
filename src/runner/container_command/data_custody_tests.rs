@@ -162,7 +162,11 @@ impl CustodyFixture {
     fn new(prefix: &str, shared: bool) -> Self {
         let fixture = Fixture::workspace(prefix).expect("fixture");
         let root = fixture.path().canonicalize().expect("canonical fixture");
-        let manifest = if shared { SHARED_MANIFEST } else { LOCAL_MANIFEST };
+        let manifest = if shared {
+            SHARED_MANIFEST
+        } else {
+            LOCAL_MANIFEST
+        };
         fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
         let home = root.join("home");
         let bin = home.join("bin");
@@ -266,7 +270,10 @@ exec "$@"
             ("HOME", Some(self.home.display().to_string())),
             ("PATH", Some(path)),
             ("EFFIGY_COMPOSE_BACKEND", Some(backend.to_owned())),
-            ("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", skip_colima_temp_root),
+            (
+                "EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK",
+                skip_colima_temp_root,
+            ),
             ("EFFIGY_TEST_PS_ROW", Some(ps_row.to_owned())),
             ("EFFIGY_TEST_SHARED_PS_ROW", Some(shared_row.to_owned())),
             ("EFFIGY_TEST_INSPECT_JSON", Some(inspect_json.to_owned())),
@@ -404,9 +411,14 @@ fn run_seed(fixture: &CustodyFixture, case: &Case) -> Result<(), crate::runner::
     let mut env = BTreeMap::new();
     env.insert(DB_SEEDS_JSON_ENV.to_owned(), metadata.to_string());
     let entries = resolve_builtin_db_seed_entries(&fixture.root, &manifest, &policy, &env)?;
-    run_builtin_db_seed_entries_with(&fixture.root, &policy, &entries, |policy, binding, plan, stdin_file| {
-        run_shared_data_command(policy, binding, plan, stdin_file)
-    })
+    run_builtin_db_seed_entries_with(
+        &fixture.root,
+        &policy,
+        &entries,
+        |policy, binding, plan, stdin_file| {
+            run_shared_data_command(policy, binding, plan, stdin_file)
+        },
+    )
 }
 
 fn run_dump(
@@ -419,7 +431,9 @@ fn run_dump(
         Some(case.profile),
         &[ContainerDbDumpInput {
             target: Some(case.target.to_owned()),
-            path: fixture.root.join(format!("{}-{}.sql", case.target, case.backend)),
+            path: fixture
+                .root
+                .join(format!("{}-{}.sql", case.target, case.backend)),
         }],
         false,
         output_json,
@@ -556,7 +570,11 @@ fn every_data_command_route_keeps_the_password_out_of_argv_and_reports() {
             assert!(
                 !calls.contains(&format!(
                     "label=com.docker.compose.project=custody-{}",
-                    if case.profile == "stack" { "hybrid" } else { "stack" }
+                    if case.profile == "stack" {
+                        "hybrid"
+                    } else {
+                        "stack"
+                    }
                 )),
                 "[{}] the other environment's project must not be selected: {calls}",
                 label(&case)
@@ -680,4 +698,3 @@ fn a_refused_local_dump_fails_without_leaking_the_password() {
         fixture.calls()
     );
 }
-
