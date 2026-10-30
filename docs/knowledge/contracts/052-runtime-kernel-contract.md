@@ -4202,8 +4202,10 @@ The v2 receipt parser remains closed and validates `version`, `paths` (host and 
 checkout, workdir, user and home), `sources` (kind/name/digest/snapshot), `binary_path`
 and `backend` as well as its existing identity, generation, credential and locator
 fields. `PublishInputs.guest` freezes the local-read fields before staging; the
-activation plan carries them to document validation. The artifact manifest's version
-must equal the frozen guest version and the host version. Source digests are
+activation plan carries them to document validation. A legacy reservation without these
+fields remains readable but cannot be attached as a complete v2 context. The artifact manifest's version
+must equal the exact host active version frozen in the guest inputs, including any
+local-build identity; it is never substituted with the kernel crate's package version. Source digests are
 `sha256:<hex>`; source identities are unique. Credential paths are scoped to their
 context/credential generation. A deserialized receipt still cannot commit, and the
 kernel never accepts unvalidated document bytes as proof.

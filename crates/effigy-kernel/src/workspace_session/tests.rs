@@ -851,7 +851,9 @@ fn admit_activation<'a>(
         claim,
     )
     .expect("activation run");
-    stage_fake_binary(reservation, &mut run, fake_artifact()).expect("stage fake binary");
+    if reservation.inputs().is_some() {
+        stage_fake_binary(reservation, &mut run, fake_artifact()).expect("stage fake binary");
+    }
     let ticket = Attachments::intend_guest_publication(&mut run).expect("publication intent");
     let receipt = publication_for(cx, root, reservation, &run);
     Attachments::workspace_guest_published(&mut run, &ticket, receipt)
@@ -2940,7 +2942,14 @@ fn admit_activation_publishing<'a>(
         claim,
     )
     .expect("activation run");
-    stage_fake_binary(reservation, &mut run, binary.clone()).expect("stage fake binary");
+    if let Some(inputs) = reservation.inputs() {
+        let staged = inputs
+            .artifact
+            .selected()
+            .cloned()
+            .unwrap_or_else(|| binary.clone());
+        stage_fake_binary(reservation, &mut run, staged).expect("stage fake binary");
+    }
     let ticket = Attachments::intend_guest_publication(&mut run).expect("publication intent");
     let plan = plan_of(reservation, &read_journal(cx, root)).expect("staged plan");
     let publication = WorkspacePublicationReceipt {
@@ -4494,9 +4503,18 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
     let fixture = home();
     let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
     let (environment, _predecessor) = active_environment(&cx, &root);
-    let reservation =
-        WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
-            .expect("reservation");
+    let reservation = match WorkspaceActivationReservation::decide(
+        &cx,
+        &root,
+        &environment,
+        &publish_inputs(63, None),
+        Wait::FailFast,
+    )
+    .expect("decision")
+    {
+        ActivationDecision::Activate(reservation) => *reservation,
+        ActivationDecision::Attach(_) => panic!("fresh generation"),
+    };
     let (mut session_run, _session) = admit_staged(&cx, &root, &reservation, run_id(220));
     let binary = artifact(63);
     let (_, publication) =
@@ -6891,6 +6909,24 @@ fn guest_stage_platform_is_image_selected_frozen_and_exact_target() {
     let root = StateRoot::effects(&cx, home.path()).expect("root");
     let (reservation, mut run) = binary_activation(&cx, &root, 216);
     let binding = binary_binding(run.id());
+    let mut local_inputs = reservation.inputs().expect("inputs").clone();
+    local_inputs.guest.as_mut().expect("guest").version = "0.14.1+local.exact-host".into();
+    let mut local_binding = binding.clone();
+    local_binding.artifact_version = "0.14.1+local.exact-host".into();
+    local_inputs
+        .validate()
+        .expect("host active version can include build identity");
+    local_binding
+        .validate(&local_inputs)
+        .expect("artifact matches exact frozen host version");
+    let mut contradictory = reservation.inputs().expect("inputs").clone();
+    let mut previous_image = binding.platform.clone();
+    previous_image.loader = LoaderFamily::Gnu;
+    contradictory.platform = Some(previous_image);
+    assert!(
+        binding.validate(&contradictory).is_err(),
+        "decision image evidence is binding"
+    );
     for mutation in 0..8 {
         let mut wrong = binding.clone();
         match mutation {
@@ -6972,15 +7008,23 @@ fn guest_stage_intent_readback_unknown_and_recovery_never_select_or_retarget() {
     assert!(
         matches!(run::unfinished_guest_binary(&read_journal(&cx, &root), run.fence()), Observed::Verified(Some(ref unfinished), _) if unfinished == &stage)
     );
-    let mut wrong = binary_receipt(&stage);
-    wrong.object.digest = Digest::of(b"wrong bytes");
-    assert!(Attachments::guest_binary_staged(
-        &mut run,
-        &recovered_ticket,
-        Observed::Verified(wrong, evidence())
-    )
-    .is_err());
-    assert!(run.verified_workspace_binary().is_err());
+    for field in 0..5 {
+        let mut wrong = binary_receipt(&stage);
+        match field {
+            0 => wrong.object.digest = Digest::of(b"wrong bytes"),
+            1 => wrong.object.path = "/run/effigy/bin/current".into(),
+            2 => wrong.target.vm_boot_id = "stale-boot".into(),
+            3 => wrong.target.backend = "foreign-backend".into(),
+            _ => wrong.platform.loader = LoaderFamily::Gnu,
+        }
+        assert!(Attachments::guest_binary_staged(
+            &mut run,
+            &recovered_ticket,
+            Observed::Verified(wrong, evidence())
+        )
+        .is_err());
+        assert!(run.verified_workspace_binary().is_err());
+    }
     Attachments::guest_binary_staged(
         &mut run,
         &recovered_ticket,
@@ -7177,4 +7221,142 @@ fn guest_stage_missing_or_unknown_cannot_replace_a_live_predecessor() {
             Some(first)
         );
     }
+}
+
+#[test]
+fn a_legacy_context_without_frozen_guest_fields_is_never_attached() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let environment = pending_environment(&cx, &root);
+    let (reservation, _session_run, first, activation) =
+        activate(&cx, &root, &environment, run_id(223), run_id(224));
+    finish_activation(&cx, activation);
+    let mut inputs = reservation.inputs().expect("frozen inputs").clone();
+    inputs.guest = None;
+    let mut store = Store::open(&cx, &root).expect("store");
+    store.transaction(&cx, |txn| {
+        txn.conn().execute("UPDATE workspace_activation_reservations SET inputs=?2 WHERE environment=?1 AND state='committed'", rusqlite::params![environment.name().to_string(), serde_json::to_string(&inputs)?])?;
+        Ok::<_, RunError>(())
+    }).expect("legacy journal fixture");
+    assert!(matches!(
+        WorkspaceActivationReservation::decide(&cx, &root, &environment, &inputs, Wait::FailFast)
+            .expect("decision"),
+        ActivationDecision::Activate(_)
+    ));
+    assert_eq!(
+        resolved(&read_journal(&cx, &root), &environment),
+        Some(first)
+    );
+}
+
+#[test]
+fn guest_stage_competitor_cannot_cross_any_held_owner_boundary() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let (reservation, mut run) = binary_activation(&cx, &root, 225);
+    let binding = binary_binding(run.id());
+    let mut ticket = None;
+    for boundary in 0..4 {
+        match boundary {
+            0 => {} // Target is bound, platform is not.
+            1 => {
+                reservation
+                    .bind_platform(&mut run, Observed::Verified(binding.clone(), evidence()))
+                    .expect("platform");
+            }
+            2 => {
+                let stage = reservation.guest_binary_stage(&run).expect("stage");
+                ticket = Some(Attachments::intend_guest_binary(&mut run, &stage).expect("intent"));
+            }
+            _ => {
+                let stage = reservation.guest_binary_stage(&run).expect("stage");
+                Attachments::guest_binary_staged(
+                    &mut run,
+                    ticket.as_ref().expect("ticket"),
+                    Observed::Verified(binary_receipt(&stage), evidence()),
+                )
+                .expect("readback");
+            }
+        }
+        let competitor_home = home.path().to_path_buf();
+        let inputs = reservation.inputs().expect("inputs").clone();
+        assert!(
+            std::thread::spawn(move || {
+                let cx = context();
+                let root = StateRoot::effects(&cx, &competitor_home).expect("competitor root");
+                WorkspaceActivationReservation::decide(
+                    &cx,
+                    &root,
+                    &environment(),
+                    &inputs,
+                    Wait::FailFast,
+                )
+                .is_err()
+            })
+            .join()
+            .expect("competitor"),
+            "a second activation cannot bypass the held Env owner at boundary {boundary}"
+        );
+        let target = target_candidate(run.id());
+        reservation
+            .bind_target(&mut run, Observed::Verified(vec![target], evidence()))
+            .expect("target replay");
+        if boundary > 0 {
+            reservation
+                .bind_platform(&mut run, Observed::Verified(binding.clone(), evidence()))
+                .expect("platform replay");
+        }
+        if boundary > 1 {
+            let stage = reservation.guest_binary_stage(&run).expect("stage");
+            Attachments::intend_guest_binary(&mut run, &stage).expect("intent replay");
+        }
+        if boundary > 2 {
+            let stage = reservation.guest_binary_stage(&run).expect("stage");
+            Attachments::guest_binary_staged(
+                &mut run,
+                ticket.as_ref().expect("ticket"),
+                Observed::Verified(binary_receipt(&stage), evidence()),
+            )
+            .expect("readback replay");
+        }
+    }
+    assert_eq!(
+        run.effects().expect("effects").len(),
+        3,
+        "one target, platform and required stage"
+    );
+}
+
+#[test]
+fn guest_stage_settlement_retains_uncertainty_without_replaying_a_write() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let (reservation, mut run) = binary_activation(&cx, &root, 226);
+    let binding = binary_binding(run.id());
+    reservation
+        .bind_platform(&mut run, Observed::Verified(binding, evidence()))
+        .expect("platform");
+    let stage = reservation.guest_binary_stage(&run).expect("stage");
+    let ticket = Attachments::intend_guest_binary(&mut run, &stage).expect("intent");
+    Attachments::guest_binary_unknown(&mut run, &ticket, UnknownReason::Injected)
+        .expect("uncertain partial write");
+    let fence = run.fence().clone();
+    end_run(
+        &cx,
+        run,
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        },
+    );
+    assert!(
+        matches!(run::unfinished_guest_binary(&read_journal(&cx, &root), &fence), Observed::Verified(Some(ref unfinished), _) if unfinished == &stage)
+    );
+    assert!(matches!(
+        SessionRef::resolve(&read_journal(&cx, &root), &environment()),
+        Observed::Absent(_)
+    ));
 }

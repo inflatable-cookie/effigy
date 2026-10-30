@@ -1161,6 +1161,9 @@ fn attachable(
     let Some(frozen) = record.inputs.clone() else {
         return Ok(None);
     };
+    if frozen.guest.is_none() || publishing.guest.is_none() {
+        return Ok(None);
+    }
     let publication = obligation.receipt().publication();
     // The target is fenced *first*, before the artifact or selection digest can
     // decide anything: a replaced container or changed boot is refused by name

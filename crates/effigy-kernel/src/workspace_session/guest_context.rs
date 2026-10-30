@@ -24,6 +24,7 @@ pub struct GuestSourcePin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GuestContextInputs {
+    /// Exact host active version, including local-build identity when present.
     pub version: String,
     pub paths: GuestPaths,
     pub sources: Vec<GuestSourcePin>,
@@ -36,7 +37,8 @@ fn absolute(path: &str) -> bool {
 }
 impl GuestContextInputs {
     pub fn validate(&self) -> Result<(), RunError> {
-        if self.version != env!("CARGO_PKG_VERSION")
+        if self.version.trim().is_empty()
+            || self.version.contains('\0')
             || !absolute(&self.paths.host_checkout)
             || !absolute(&self.paths.guest_checkout)
             || !absolute(&self.paths.workdir)
@@ -52,6 +54,7 @@ impl GuestContextInputs {
                 pin.kind.as_str(),
                 "bundle" | "catalog" | "manifest" | "source-lock" | "composed-manifest"
             ) || pin.name.trim().is_empty()
+                || Digest::parse_hex(pin.digest.strip_prefix("sha256:").unwrap_or("")).is_none()
                 || !seen.insert((&pin.kind, &pin.name))
                 || pin
                     .snapshot

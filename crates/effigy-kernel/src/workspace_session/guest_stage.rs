@@ -51,11 +51,10 @@ pub struct BoundPlatform {
 }
 impl BoundPlatform {
     pub(crate) fn validate(&self, inputs: &PublishInputs) -> Result<(), RunError> {
-        if self.artifact_version != env!("CARGO_PKG_VERSION")
-            || inputs
-                .guest
-                .as_ref()
-                .is_none_or(|guest| guest.version != self.artifact_version)
+        if inputs
+            .guest
+            .as_ref()
+            .is_none_or(|guest| guest.version != self.artifact_version)
         {
             return Err(RunError::refused(
                 "ArtifactMismatch: artifact version differs",
