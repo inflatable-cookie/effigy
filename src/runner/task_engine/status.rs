@@ -458,7 +458,11 @@ pub(in crate::runner) enum RunLiveness {
 }
 
 /// Pure read of one run's liveness (R2).
-pub(in crate::runner) fn run_liveness(run_id: &str, next: &[&str]) -> RunLiveness {
+pub(in crate::runner) fn run_liveness(
+    checkout: &std::path::Path,
+    run_id: &str,
+    next: &[&str],
+) -> RunLiveness {
     let Ok(id) = run_id.parse::<effigy_kernel::id::RunId>() else {
         return RunLiveness::NotFound;
     };
@@ -469,7 +473,7 @@ pub(in crate::runner) fn run_liveness(run_id: &str, next: &[&str]) -> RunLivenes
         return RunLiveness::Unknown("invalid recovery command".to_owned());
     };
     let cx = kernel::observe();
-    let root = match super::control::lookup(id) {
+    let root = match super::control::lookup_checkout(checkout, id) {
         super::control::Lookup::Found(record) => record.root,
         super::control::Lookup::NotFound => return RunLiveness::NotFound,
         super::control::Lookup::Unknown(reason) => return RunLiveness::Unknown(reason),
