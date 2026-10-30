@@ -1590,7 +1590,7 @@ fn redaction_covers_the_visible_form_of_a_secret_that_carries_a_control() {
     const SECRET: &[u8] = b"visible-\x1b[1mform";
     let cx = cx();
     for shape in [
-        vec![(STD, &SECRET[..])],
+        vec![(STD, SECRET)],
         // The same value with the control already removed.
         vec![(STD, &b"visible-form"[..])],
         // Split so the control falls in the middle of a read.
