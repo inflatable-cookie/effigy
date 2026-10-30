@@ -365,12 +365,19 @@ fn run_credential_bootstrap_exec(
 /// Wrap the verified runtime exec in a bootstrap that sources the private
 /// credential file first. The bootstrap and the file path are public; the value
 /// is only ever read from the file by the shell that then execs the client.
+///
+/// The verified invocation names the runtime, not where this host keeps it, so
+/// the program is resolved before it is embedded in a shell line: Effigy finds
+/// a Docker or OrbStack install in its application-bundle fallbacks when the
+/// directory is absent from `PATH`, and a bare name inside `sh -c` would lose
+/// that and fail with `not found` after the binding already verified.
 fn credential_bootstrap_invocation(
     program: &OsStr,
     args: &[OsString],
     credential: &DataCredentialFile,
     colima: bool,
 ) -> Result<(OsString, Vec<OsString>), RunnerError> {
+    let program = resolve_host_program(program);
     let quote_args = |args: &[OsString]| {
         args.iter()
             .map(|arg| shell_quote(&arg.to_string_lossy()))
@@ -398,7 +405,7 @@ fn credential_bootstrap_invocation(
             args = quote_args(inside)
         ));
         return Ok((
-            program.to_os_string(),
+            program,
             vec![
                 OsString::from("ssh"),
                 OsString::from("--profile"),
@@ -1220,17 +1227,31 @@ mod capture_deadline_tests {
 mod credential_bootstrap_tests {
     use super::*;
     use crate::runner::container_command::data_credentials::DataCredentialFile;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
 
     const PASSWORD: &str = "synthetic-487-password";
 
     fn credential(name: &str) -> (tempfile::TempDir, DataCredentialFile) {
         let home = tempfile::tempdir().expect("home");
-        let credential = DataCredentialFile::write(
-            home.path(),
+        let credential = credential_in(home.path(), name);
+        (home, credential)
+    }
+
+    /// Put `bin` first on `PATH` (with the system directories after it, so the
+    /// bootstrap's own `sh` resolves), for one test.
+    fn path_with(bin: &Path) -> crate::contract_test_support::EnvGuard {
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        crate::contract_test_support::EnvGuard::set_many(&[("PATH", Some(path))])
+    }
+
+    fn credential_in(home: &Path, name: &str) -> DataCredentialFile {
+        DataCredentialFile::write(
+            home,
             &BTreeMap::from([(name.to_owned(), PASSWORD.to_owned())]),
         )
-        .expect("credential");
-        (home, credential)
+        .expect("credential")
     }
 
     fn build(
@@ -1263,7 +1284,11 @@ mod credential_bootstrap_tests {
 
     #[test]
     fn host_backend_spawn_passes_the_credential_by_file_only() {
-        let (_home, credential) = credential("MYSQL_PWD");
+        let (home, credential) = credential("MYSQL_PWD");
+        let bin = home.path().join("bin");
+        fs::create_dir_all(&bin).expect("mkdir bin");
+        let docker = fake_runtime(&bin.join("docker"));
+        let _path = path_with(&bin);
         let (program, args) = build(
             "docker",
             &[
@@ -1282,10 +1307,11 @@ mod credential_bootstrap_tests {
         assert_eq!(program, "sh");
         assert_eq!(args[0], "-c");
         assert!(
-            args[1].contains(
-                "exec 'docker' 'exec' '-i' '-e' 'MYSQL_PWD' 'abcdef' 'mysqldump' '-uroot' 'legacy'"
-            ),
-            "{}",
+            args[1].contains(&format!(
+                "exec '{}' 'exec' '-i' '-e' 'MYSQL_PWD' 'abcdef' 'mysqldump' '-uroot' 'legacy'",
+                docker.display()
+            )),
+            "the resolved runtime path must be embedded: {}",
             args[1]
         );
         assert!(args[1].contains(". \"$1\""), "{}", args[1]);
@@ -1301,7 +1327,11 @@ mod credential_bootstrap_tests {
 
     #[test]
     fn colima_backend_spawn_passes_the_credential_by_file_only() {
-        let (_home, credential) = credential("PGPASSWORD");
+        let (home, credential) = credential("PGPASSWORD");
+        let bin = home.path().join("bin");
+        fs::create_dir_all(&bin).expect("mkdir bin");
+        let colima = fake_runtime(&bin.join("colima"));
+        let _path = path_with(&bin);
         let (program, args) = build(
             "colima",
             &[
@@ -1323,7 +1353,7 @@ mod credential_bootstrap_tests {
             &credential,
         );
 
-        assert_eq!(program, "colima");
+        assert_eq!(program, colima.to_string_lossy());
         assert_eq!(
             &args[..6],
             ["ssh", "--profile", "effigy-487", "--", "sh", "-c"]
@@ -1345,6 +1375,121 @@ mod credential_bootstrap_tests {
             args[6]
         );
         assert_no_value(&program, &args);
+    }
+
+    /// A fake runtime that records its argv, the credential names in its
+    /// environment and its stdin, in the shape of a host runtime install.
+    fn fake_runtime(path: &Path) -> PathBuf {
+        fs::write(
+            path,
+            "#!/bin/sh\nprintf 'call %s\\n' \"$*\" >> \"$EFFIGY_TEST_RUNTIME_LOG\"\nprintf 'env %s\\n' \"${MYSQL_PWD:+MYSQL_PWD}${PGPASSWORD:+PGPASSWORD}\" >> \"$EFFIGY_TEST_RUNTIME_LOG\"\ncase \"$*\" in exec*|*' exec '*) printf 'dump-body\\n' ;; esac\nexit 0\n",
+        )
+        .expect("write fake runtime");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("chmod fake runtime");
+        path.to_path_buf()
+    }
+
+    fn spawn_bootstrap(
+        program: &OsStr,
+        args: &[&str],
+        credential: &DataCredentialFile,
+        runtime_log: &Path,
+        stdin: Option<&Path>,
+    ) -> (String, Vec<String>, String) {
+        let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        let (program, args) =
+            credential_bootstrap_invocation(program, &args, credential, false).expect("bootstrap");
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+            "EFFIGY_TEST_RUNTIME_LOG",
+            Some(runtime_log.display().to_string()),
+        )]);
+        run_command_capture_until(Path::new("/"), &program, &args, stdin, None)
+            .expect("bootstrap exec");
+        (
+            program.to_string_lossy().into_owned(),
+            args.iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect(),
+            fs::read_to_string(runtime_log).unwrap_or_default(),
+        )
+    }
+
+    /// A host runtime that is only on `PATH` is embedded in the bootstrap as the
+    /// resolved absolute path, so the shell line never depends on its own lookup.
+    #[test]
+    fn the_host_bootstrap_embeds_the_resolved_runtime() {
+        let home = tempfile::tempdir().expect("home");
+        let credential = credential_in(home.path(), "MYSQL_PWD");
+        let bin = home.path().join("bin");
+        fs::create_dir_all(&bin).expect("mkdir bin");
+        let runtime = fake_runtime(&bin.join("docker"));
+        let log = home.path().join("runtime.log");
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[("PATH", Some(path))]);
+        let (program, args, calls) = spawn_bootstrap(
+            OsStr::new("docker"),
+            &["exec", "-e", "MYSQL_PWD", "abc", "mysql"],
+            &credential,
+            &log,
+            None,
+        );
+
+        assert_eq!(program, "sh");
+        assert!(
+            args[1].contains(&runtime.display().to_string()),
+            "the bootstrap must embed the resolved runtime path: {}",
+            args[1]
+        );
+        assert!(
+            calls.contains(&format!("call exec -e MYSQL_PWD abc mysql")),
+            "{calls}"
+        );
+        assert!(!calls.contains(PASSWORD), "credential in argv: {calls}");
+        assert!(calls.contains("env MYSQL_PWD"), "{calls}");
+    }
+
+    /// A fallback-only install — an application-bundle executable with no
+    /// `PATH` entry, the macOS layout — runs through the bootstrap, so a seed or
+    /// dump does not fail after the binding verified.
+    #[test]
+    fn a_fallback_only_runtime_layout_runs_through_the_bootstrap() {
+        let home = tempfile::tempdir().expect("home");
+        let credential = credential_in(home.path(), "PGPASSWORD");
+        let bundle = home
+            .path()
+            .join("Applications/Docker.app/Contents/Resources/bin");
+        fs::create_dir_all(&bundle).expect("mkdir bundle bin");
+        let runtime = fake_runtime(&bundle.join("docker"));
+        let log = home.path().join("runtime.log");
+        // `sh` resolves, `docker` does not: only the bundle supplies it.
+        let _path = crate::contract_test_support::EnvGuard::set_many(&[(
+            "PATH",
+            Some("/usr/bin:/bin".to_owned()),
+        )]);
+        let (program, args, calls) = spawn_bootstrap(
+            runtime.as_os_str(),
+            &["exec", "-e", "PGPASSWORD", "abc", "pg_dump"],
+            &credential,
+            &log,
+            None,
+        );
+
+        assert_eq!(program, "sh");
+        assert!(
+            args[1].contains(&runtime.display().to_string()),
+            "the bootstrap must run the bundle runtime: {}",
+            args[1]
+        );
+        assert!(
+            calls.contains("call exec -e PGPASSWORD abc pg_dump"),
+            "{calls}"
+        );
+        assert!(!calls.contains(PASSWORD), "credential in argv: {calls}");
+        assert!(calls.contains("env PGPASSWORD"), "{calls}");
     }
 
     #[test]

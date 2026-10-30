@@ -624,77 +624,79 @@ fn every_data_command_route_keeps_the_password_out_of_argv_and_reports() {
                 label(&case)
             );
         }
+
+        // Refused seed and dump for the same combination: the route's
+        // inventory does not name the target's service, so nothing may exec and
+        // no diagnostic may carry the value.
+        let (local_row, shared_row, inspect) = if shared {
+            (String::new(), String::new(), String::new())
+        } else {
+            let other = if case.service == "mysql" {
+                "pg"
+            } else {
+                "mysql"
+            };
+            (
+                fixture.ps_row(&policy.project_name, other),
+                String::new(),
+                fixture.inspect_json(&policy.project_name, other),
+            )
+        };
+        let _refused = fixture.env(case.backend, &local_row, &shared_row, &inspect);
+
+        fixture.clear_calls();
+        let seed_error =
+            run_seed(&fixture, &case).expect_err("a stopped target must refuse the seed");
+        assert!(
+            !seed_error.to_string().contains(PASSWORD),
+            "[{}] the refused seed carried the password: {seed_error}",
+            label(&case)
+        );
+        assert_no_value(&fixture, &format!("{} refused seed", label(&case)));
+        assert!(
+            !fixture
+                .calls()
+                .lines()
+                .any(|line| line.starts_with("call ") && line.contains(" exec ")),
+            "[{}] a refused seed must not exec: {}",
+            label(&case),
+            fixture.calls()
+        );
+
+        fixture.clear_calls();
+        let dump_path = fixture
+            .root
+            .join(format!("refused-{}-{}.sql", case.target, case.backend));
+        let dump_error = run_container_data_dump(
+            &fixture.root,
+            Some(case.profile),
+            &[ContainerDbDumpInput {
+                target: Some(case.target.to_owned()),
+                path: dump_path.clone(),
+            }],
+            false,
+            true,
+        )
+        .expect_err("a stopped target must refuse the dump");
+        assert!(
+            !dump_error.to_string().contains(PASSWORD),
+            "[{}] the refused dump carried the password: {dump_error}",
+            label(&case)
+        );
+        assert_no_value(&fixture, &format!("{} refused dump", label(&case)));
+        assert!(
+            !fixture
+                .calls()
+                .lines()
+                .any(|line| line.starts_with("call ") && line.contains(" exec ")),
+            "[{}] a refused dump must not exec: {}",
+            label(&case),
+            fixture.calls()
+        );
+        assert!(
+            !dump_path.exists(),
+            "[{}] a refused dump must not write an artifact",
+            label(&case)
+        );
     }
-}
-
-#[test]
-fn a_refused_shared_data_target_fails_without_leaking_the_password() {
-    let case = Case {
-        route: "shared",
-        profile: "stack",
-        target: "app",
-        service: "mysql",
-        engine: "mariadb",
-        backend: "docker",
-    };
-    let fixture = CustodyFixture::new("effigy-487-custody-refused-", true);
-    fixture.install_runtime();
-    // No shared inventory row: the declared shared container is not running.
-    let _env = fixture.env(case.backend, "", "", "");
-    let policy = fixture.policy(case.profile);
-    fixture.publish_shared_renders(&policy);
-
-    let error = run_seed(&fixture, &case)
-        .expect_err("a stopped shared service must refuse before any statement");
-    let rendered = error.to_string();
-    assert!(
-        !rendered.contains(PASSWORD),
-        "the refusal carried the password: {rendered}"
-    );
-    assert!(
-        !fixture.calls().contains(PASSWORD),
-        "the refusal spawned an argv with the password: {}",
-        fixture.calls()
-    );
-    assert!(
-        !fixture
-            .calls()
-            .lines()
-            .any(|line| line.starts_with("call ") && line.contains(" exec ")),
-        "a refused shared target must not exec: {}",
-        fixture.calls()
-    );
-}
-
-#[test]
-fn a_refused_local_dump_fails_without_leaking_the_password() {
-    let case = Case {
-        route: "local",
-        profile: "stack",
-        target: "app",
-        service: "mysql",
-        engine: "mariadb",
-        backend: "docker",
-    };
-    let fixture = CustodyFixture::new("effigy-487-custody-local-refused-", false);
-    fixture.install_runtime();
-    let _env = fixture.env(case.backend, "", "", "");
-    let policy = fixture.policy(case.profile);
-    // An inventory that does not name the service: the local exec must refuse.
-    let row = fixture.ps_row(&policy.project_name, "pg");
-    let inspect = fixture.inspect_json(&policy.project_name, "pg");
-    let _rows = fixture.env(case.backend, &row, "", &inspect);
-
-    let error = run_dump(&fixture, &case, true)
-        .expect_err("a service that is not running must refuse before the dump");
-    let rendered = error.to_string();
-    assert!(
-        !rendered.contains(PASSWORD),
-        "the refusal carried the password: {rendered}"
-    );
-    assert!(
-        !fixture.calls().contains(PASSWORD),
-        "the refusal spawned an argv with the password: {}",
-        fixture.calls()
-    );
 }
