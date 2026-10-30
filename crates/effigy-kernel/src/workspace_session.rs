@@ -824,6 +824,16 @@ pub struct ContainerIdentity {
     pub backend: String,
 }
 
+/// One candidate from the apply inventory. Fresh targets must carry the
+/// project and creating activation's identity; an unrelated container is never
+/// adopted merely because it is the only one the backend currently reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetCandidate {
+    pub identity: ContainerIdentity,
+    pub project: String,
+    pub created_by: Option<RunId>,
+}
+
 /// What a decision knows about the target. A fresh project has no container
 /// yet, so absence is its own evidence, recorded with the project and backend
 /// it names (052 §8.11).
@@ -1501,6 +1511,8 @@ pub enum ActivationRefusal {
     ActivationIncomplete,
     /// The target the decision observed disagrees with the live publication.
     TargetEvidenceMismatch,
+    /// The apply inventory did not identify exactly one target.
+    TargetAmbiguous,
     /// The committed generation's selection is unfinished, so nothing may
     /// attach to it or reserve around it.
     SelectionPending,
@@ -1547,6 +1559,7 @@ impl ActivationRefusal {
             Self::ActivationNotReady => "activation_not_ready",
             Self::ActivationIncomplete => "activation_incomplete",
             Self::TargetEvidenceMismatch => "target_evidence_mismatch",
+            Self::TargetAmbiguous => "target_ambiguous",
             Self::SelectionPending => "selection_pending",
             Self::SelectionAbandoned => "selection_abandoned",
             Self::SelectionMismatch => "selection_mismatch",
@@ -1619,6 +1632,7 @@ impl std::fmt::Display for ActivationRefusal {
             Self::ActivationIncomplete => {
                 "the environment activation run still has a required effect that is not applied, so it publishes nothing"
             }
+            Self::TargetAmbiguous => "the apply inventory must identify exactly one target",
             Self::TargetEvidenceMismatch => {
                 "the target this activation observed is not the container and boot the live publication names; re-prepare instead of re-targeting it"
             }
@@ -1957,6 +1971,44 @@ impl WorkspaceActivationReservation {
             }),
             Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
         }
+    }
+
+    /// Freeze the apply's one exact container and boot under the claimed Env
+    /// owner's gate. Unknown inventory and zero or several candidates refuse.
+    /// Repeating the same observation returns the original binding; no retry
+    /// can replace it. The inventory must attest this run created a fresh
+    /// target, or match the decision's already observed target exactly.
+    pub fn bind_target(
+        &self,
+        authority: &mut Run<'_>,
+        candidates: Observed<Vec<TargetCandidate>>,
+    ) -> Result<ContainerIdentity, RunError> {
+        authority.bind_workspace_target(self, candidates)
+    }
+
+    pub(crate) fn claimed_inputs(
+        &self,
+        conn: &rusqlite::Connection,
+        run: RunId,
+        fence: &Fence,
+    ) -> Result<PublishInputs, RunError> {
+        if fence.resource != self.record.environment || fence.generation != self.record.generation {
+            return Err(ActivationRefusal::WrongGeneration.into());
+        }
+        let stored = read_reservation(conn, &self.record.environment, self.record.generation)?
+            .ok_or(ActivationRefusal::WrongReservation)?;
+        if stored.id != self.record.id {
+            return Err(ActivationRefusal::WrongReservation.into());
+        }
+        if stored.state != ActivationReservationState::Reserved {
+            return Err(ActivationRefusal::Frozen.into());
+        }
+        if stored.environment_run != Some(run) {
+            return Err(ActivationRefusal::ClaimedByAnotherRun.into());
+        }
+        stored
+            .inputs
+            .ok_or_else(|| ActivationRefusal::Unfrozen.into())
     }
 
     pub fn id(&self) -> ActivationReservationId {

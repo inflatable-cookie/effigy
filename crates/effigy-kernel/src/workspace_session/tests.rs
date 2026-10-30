@@ -6605,3 +6605,205 @@ fn deserialized_receipt_and_unobserved_prior_values_cannot_commit() {
         .verified()
         .is_none());
 }
+
+fn target_candidate(run: RunId) -> TargetCandidate {
+    TargetCandidate {
+        identity: ContainerIdentity {
+            container_id: "a1".repeat(32),
+            vm_boot_id: "boot-0001".into(),
+            backend: "docker-desktop".into(),
+        },
+        project: "fixture".into(),
+        created_by: Some(run),
+    }
+}
+
+#[test]
+fn target_binding_is_exact_idempotent_and_preserves_decision() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let reservation = decided(&cx, &root, &environment());
+    let mut run = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(reservation.environment().clone(), "environment:up"),
+        opts(run_id(211)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().expect("claim"),
+    )
+    .expect("activation");
+    let original = reservation.inputs().cloned();
+    let candidate = target_candidate(run.id());
+    for _ in 0..2 {
+        assert_eq!(
+            reservation
+                .bind_target(
+                    &mut run,
+                    Observed::Verified(vec![candidate.clone()], evidence())
+                )
+                .expect("bound"),
+            candidate.identity
+        );
+    }
+    let mut stale = candidate.clone();
+    stale.identity.vm_boot_id = "another-boot".into();
+    assert!(reservation
+        .bind_target(&mut run, Observed::Verified(vec![stale], evidence()))
+        .is_err());
+    assert_eq!(
+        run.effects()
+            .expect("effects")
+            .iter()
+            .filter(|effect| effect.spec.kind == "kernel:workspace-target")
+            .count(),
+        1
+    );
+    let Observed::Verified(Some(recovered), _) = WorkspaceActivationReservation::recover(
+        &read_journal(&cx, &root),
+        reservation.environment(),
+    ) else {
+        panic!("recover reservation")
+    };
+    assert_eq!(recovered.inputs(), original.as_ref());
+}
+
+#[test]
+fn target_binding_refuses_ambiguous_unknown_and_foreign_creation_without_writing() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let reservation = decided(&cx, &root, &environment());
+    let mut run = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(reservation.environment().clone(), "environment:up"),
+        opts(run_id(212)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().expect("claim"),
+    )
+    .expect("activation");
+    let candidate = target_candidate(run.id());
+    for candidates in [vec![], vec![candidate.clone(), candidate.clone()]] {
+        assert!(reservation
+            .bind_target(&mut run, Observed::Verified(candidates, evidence()))
+            .is_err());
+    }
+    assert!(reservation
+        .bind_target(
+            &mut run,
+            Observed::Unknown(UnknownReason::Inconsistent("inventory failed".into()))
+        )
+        .is_err());
+    for change in 0..3 {
+        let mut foreign = candidate.clone();
+        match change {
+            0 => foreign.created_by = Some(run_id(213)),
+            1 => foreign.project = "foreign-project".into(),
+            _ => foreign.identity.backend = "foreign-backend".into(),
+        }
+        assert!(reservation
+            .bind_target(&mut run, Observed::Verified(vec![foreign], evidence()))
+            .is_err());
+    }
+    assert!(run.effects().expect("effects").is_empty());
+    reservation
+        .bind_target(&mut run, Observed::Verified(vec![candidate], evidence()))
+        .expect("valid retry");
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn target_binding_lost_reply_retains_one_immutable_fact() {
+    use crate::fault::{arm, arm_nth, fired, Fault, Point};
+    for (point, count) in [(Point::IntendBefore, 0), (Point::IntendAfter, 1)] {
+        let cx = context();
+        let home = home();
+        let root = StateRoot::effects(&cx, home.path()).expect("root");
+        let reservation = decided(&cx, &root, &environment());
+        let mut run = Run::begin_claimed(
+            &cx,
+            &root,
+            &inv(reservation.environment().clone(), "environment:up"),
+            opts(run_id(214)),
+            || Ok(cleanup(&cx)),
+            &mut adapter(),
+            reservation.claim().expect("claim"),
+        )
+        .expect("activation");
+        let candidate = target_candidate(run.id());
+        arm_nth(point, 0, Fault::Enospc);
+        assert!(reservation
+            .bind_target(
+                &mut run,
+                Observed::Verified(vec![candidate.clone()], evidence())
+            )
+            .is_err());
+        assert!(fired());
+        arm(None);
+        assert_eq!(run.effects().expect("effects").len(), count);
+        let Observed::Verified(Some(recovered), _) = WorkspaceActivationReservation::recover(
+            &read_journal(&cx, &root),
+            reservation.environment(),
+        ) else {
+            panic!("recover reservation")
+        };
+        assert_eq!(
+            recovered
+                .bind_target(
+                    &mut run,
+                    Observed::Verified(vec![candidate.clone()], evidence())
+                )
+                .expect("retry"),
+            candidate.identity
+        );
+        assert_eq!(run.effects().expect("effects").len(), 1);
+    }
+}
+
+#[test]
+fn target_binding_observed_identity_refuses_a_stale_boot_and_foreign_reservation() {
+    let cx = context();
+    let home = home();
+    let root = StateRoot::effects(&cx, home.path()).expect("root");
+    let mut candidate = target_candidate(run_id(215));
+    let mut inputs = decision_inputs(90);
+    inputs.target = TargetEvidence::Observed(candidate.identity.clone());
+    let ActivationDecision::Activate(reservation) =
+        WorkspaceActivationReservation::decide(&cx, &root, &environment(), &inputs, Wait::FailFast)
+            .expect("decision")
+    else {
+        panic!("activate")
+    };
+    let mut run = Run::begin_claimed(
+        &cx,
+        &root,
+        &inv(reservation.environment().clone(), "environment:up"),
+        opts(run_id(215)),
+        || Ok(cleanup(&cx)),
+        &mut adapter(),
+        reservation.claim().expect("claim"),
+    )
+    .expect("activation");
+    let mut stale = candidate.clone();
+    stale.identity.vm_boot_id = "replacement-boot".into();
+    assert!(reservation
+        .bind_target(&mut run, Observed::Verified(vec![stale], evidence()))
+        .is_err());
+    let mut foreign = (*reservation).clone();
+    foreign.record.id = ActivationReservationId::parse(&"ff".repeat(16)).expect("id");
+    assert!(foreign
+        .bind_target(
+            &mut run,
+            Observed::Verified(vec![candidate.clone()], evidence())
+        )
+        .is_err());
+    assert!(run.effects().expect("effects").is_empty());
+    // An observed target predates this apply, so no creation claim is needed.
+    candidate.created_by = None;
+    reservation
+        .bind_target(&mut run, Observed::Verified(vec![candidate], evidence()))
+        .expect("observed target");
+}

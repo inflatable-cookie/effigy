@@ -1124,6 +1124,17 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
+    /// Bind only the apply inventory for this run's claimed activation. The
+    /// caller cannot supply a different run or permit as authority.
+    pub fn bind_target(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        candidates: Observed<Vec<effigy_kernel::workspace_session::TargetCandidate>>,
+    ) -> Result<effigy_kernel::workspace_session::ContainerIdentity, EnvError> {
+        let result = reservation.bind_target(&mut self.run, candidates);
+        self.kernel(result)
+    }
+
     /// Commits a staged workspace activation under this run's held `Gate(Env)`:
     /// the guest publication this run recorded and the validated guest selection
     /// are validated against the staged plan, and then `active(E)`, the

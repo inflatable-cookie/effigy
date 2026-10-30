@@ -15,6 +15,8 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Security
 
+- Workspace activation owners can freeze one exact apply target in their journal; ambiguous, foreign and changed-boot candidates refuse without retargeting.
+
 - Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
   PM, APC and the other non-printing bytes) *before* redaction, over merged
   stdout/stderr arrival order, so a value a child split with a control

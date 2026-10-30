@@ -672,3 +672,80 @@ impl Run<'_> {
         Ok(())
     }
 }
+
+// A binding is a journal fact, not guest I/O. Insertion and its Applied receipt
+// are atomic, so a crash exposes either no binding or the entire binding.
+const WORKSPACE_TARGET_KIND: &str = "kernel:workspace-target";
+
+impl Run<'_> {
+    pub(crate) fn bind_workspace_target(
+        &mut self,
+        reservation: &crate::workspace_session::WorkspaceActivationReservation,
+        candidates: Observed<Vec<crate::workspace_session::TargetCandidate>>,
+    ) -> Result<crate::workspace_session::ContainerIdentity, RunError> {
+        use crate::workspace_session::{ActivationRefusal, ContainerIdentity, TargetEvidence};
+        self.can_effect()?;
+        let candidate = match candidates {
+            Observed::Verified(mut candidates, _) if candidates.len() == 1 => candidates.remove(0),
+            Observed::Unknown(reason) => return Err(RunError::unavailable(reason.to_string())),
+            _ => return Err(ActivationRefusal::TargetAmbiguous.into()),
+        };
+        let target = &candidate.identity;
+        if target.container_id.len() != 64
+            || !target.container_id.bytes().all(|b| b.is_ascii_hexdigit())
+            || target.vm_boot_id.trim().is_empty()
+            || target.backend.trim().is_empty()
+        {
+            return Err(ActivationRefusal::ReceiptIncomplete.into());
+        }
+        crate::fault_point!(IntendBefore)?;
+        self.store
+            .transaction(&self.cx, |txn| {
+                journal::check_fence(txn.conn(), &self.owner)?;
+                let inputs = reservation.claimed_inputs(txn.conn(), self.id, &self.owner)?;
+                match inputs.target {
+                    TargetEvidence::Observed(ref identity) if identity == target => {}
+                    TargetEvidence::Absent {
+                        ref project,
+                        ref backend,
+                    } if project == &candidate.project
+                        && backend == &target.backend
+                        && candidate.created_by == Some(self.id) => {}
+                    _ => return Err(ActivationRefusal::TargetEvidenceMismatch.into()),
+                }
+                let existing = journal::effects(txn.conn(), self.id)?
+                    .into_iter()
+                    .find(|effect| effect.spec.kind == WORKSPACE_TARGET_KIND);
+                if let Some(existing) = existing {
+                    let bound: ContainerIdentity = serde_json::from_value(existing.spec.payload)?;
+                    if &bound != target || existing.state != EffectState::Applied {
+                        return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+                    }
+                    return Ok(bound);
+                }
+                let value = serde_json::to_value(target)?;
+                let spec = EffectSpec {
+                    target: self.owner.clone(),
+                    kind: WORKSPACE_TARGET_KIND.to_owned(),
+                    payload: value.clone(),
+                    settlement: Settlement::Retain,
+                    // This is an atomic fact, not a workload completion obligation.
+                    required: false,
+                };
+                let sequence = journal::insert_effect(txn, self.id, &spec)?;
+                journal::write_effect(
+                    txn,
+                    self.id,
+                    sequence,
+                    EffectState::Applied,
+                    Some(&value),
+                    None,
+                )?;
+                Ok(target.clone())
+            })
+            .and_then(|bound| {
+                crate::fault_point!(IntendAfter)?;
+                Ok(bound)
+            })
+    }
+}

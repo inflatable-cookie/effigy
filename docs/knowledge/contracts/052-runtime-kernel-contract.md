@@ -4149,9 +4149,17 @@ impl WorkspaceActivationReservation {
     /// `AlreadyBound` (with the binding) when a previous attempt already wrote
     /// one — the write is at most once and idempotent to read.
     pub fn bind_target(
-        &self, cx: &EffectContext, root: &StateRoot, authority: &Run<'_>,
-        bound: ContainerIdentity,
-    ) -> Result<BoundTarget, RunError>;
+        &self, authority: &mut Run<'_>,
+        candidates: Observed<Vec<TargetCandidate>>,
+    ) -> Result<ContainerIdentity, RunError>;
+
+    // Target binding uses the claimed Run's own store and held gate; it never
+    // accepts a second root. TargetCandidate carries identity, project and
+    // created_by. An Absent decision requires this activation's creation
+    // identity and project/backend. An Observed decision requires exact
+    // container/boot/backend equality. The kernel records one Applied
+    // kernel:workspace-target fact atomically in the activation journal;
+    // replay returns the same identity and contradictory evidence refuses.
 
     /// Bind the image platform and the artifact it selects, in one fenced
     /// transaction with the same authority checks as `bind_target`: this
