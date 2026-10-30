@@ -106,16 +106,46 @@ impl From<ServingRefusal> for RunError {
 /// a selection records, so a client's locator and the listener the guest
 /// reaches are one fact, and it names the exact session that holds the key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServingLease {
     /// The session whose launch holds the key and the bound listener. A lease
     /// for another session is never a valid selection for this one.
-    pub session: SessionBinding,
-    pub supervisor_id: String,
-    pub endpoint: String,
-    pub pin: Digest,
+    session: SessionBinding,
+    supervisor_id: String,
+    endpoint: String,
+    pin: Digest,
 }
 
 impl ServingLease {
+    /// Only [`SessionLaunch::publish`] builds one, from a listener that is
+    /// actually bound and qualified and the key that launch still holds. A
+    /// durable receipt reads one back as data; a new one is never fabricated.
+    fn published(
+        session: SessionBinding,
+        supervisor_id: String,
+        endpoint: SocketAddr,
+        pin: Digest,
+    ) -> Self {
+        Self {
+            session,
+            supervisor_id,
+            endpoint: endpoint.to_string(),
+            pin,
+        }
+    }
+    /// The session whose launch must hold this listener and key.
+    pub fn session(&self) -> &SessionBinding {
+        &self.session
+    }
+    pub fn supervisor_id(&self) -> &str {
+        &self.supervisor_id
+    }
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+    pub fn pin(&self) -> &Digest {
+        &self.pin
+    }
     pub fn validate(&self) -> Result<(), RunError> {
         if self.supervisor_id.trim().is_empty() || self.endpoint.trim().is_empty() {
             return Err(ActivationRefusal::SelectionMismatch.into());
@@ -382,12 +412,12 @@ impl SessionLaunch {
         let endpoint = self.listener.endpoint().ok_or(ServingRefusal::Unbound)?;
         let bound = ChannelBound {
             session: self.session.clone(),
-            lease: ServingLease {
-                session: self.session.clone(),
-                supervisor_id: self.supervisor_id.clone(),
-                endpoint: endpoint.to_string(),
-                pin: self.key.pin(),
-            },
+            lease: ServingLease::published(
+                self.session.clone(),
+                self.supervisor_id.clone(),
+                endpoint,
+                self.key.pin(),
+            ),
         };
         // The lease is built from a bound endpoint and a held key, so this is
         // a shape check on values that already passed the refusals above.

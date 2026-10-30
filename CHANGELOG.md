@@ -186,12 +186,15 @@ until the host-log writer has a safe secret-handling boundary.
   the serving lease — in the same transaction as `active(E)`, the session
   mapping and the session's `Borrow` attachment. That is the only commit: the
   generic one refuses rather than publishing a generation with no durable
-  selection, and a lease another session's launch published is refused.
-  `unfinished_selection`, `Attachments::selection_switched`,
-  `selection_recovered` (three proven liveness facts *and* the exact switch
-  readback) and `selection_abandoned` (only once the exact successor is settled)
-  complete, complete-from-recovery or revoke it without ever publishing an
-  unserved generation or restoring the predecessor. One
+  selection, a generation never *decided* refuses as unfrozen, the artifact and
+  target must be the ones the decision froze, and the lease can only come from
+  the session's own bound, qualified launch. `unfinished_selection`,
+  `Attachments::selection_switched`, `selection_recovered` (three proven
+  liveness facts *and* every selector read back at its committed value) and
+  `selection_abandoned` (only once the exact successor is settled) complete,
+  complete-from-recovery or revoke it without ever publishing an unserved
+  generation or restoring the predecessor. Concurrent decision callers are
+  proven to reserve one generation or attach one session. One
   session owns its listener and memory-only serving key
   (`SessionLaunch`/`ChannelBound`/`ServingLease`) for the session's durable
   lifetime, and refuses to publish an unbound, unqualified or stopped listener.

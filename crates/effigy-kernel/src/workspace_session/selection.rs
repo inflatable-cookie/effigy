@@ -62,7 +62,11 @@ pub struct SelectorChange {
     pub next: String,
 }
 
-/// The complete guest selection one generation publishes.
+/// The complete guest selection one generation publishes. It names the objects
+/// and the three compare-and-swap switches; the locator is *not* here, because a
+/// selection cannot name an endpoint no session-owned listener holds. Only
+/// [`SelectionReceipt::new`], which takes a live [`SessionLaunch`], can attach
+/// one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuestSelection {
     pub backend: String,
@@ -70,7 +74,6 @@ pub struct GuestSelection {
     /// The three switches in the order the switch performs them: the binary
     /// pointer, the stable entry link, then the context pointer.
     pub switches: [SelectorChange; 3],
-    pub serving: super::ServingLease,
 }
 
 impl GuestSelection {
@@ -101,7 +104,6 @@ impl GuestSelection {
                 return Err(ActivationRefusal::SelectionMismatch.into());
             }
         }
-        self.serving.validate()?;
         Ok(())
     }
 }
@@ -112,11 +114,18 @@ impl GuestSelection {
 pub struct SelectionReceipt {
     publication: WorkspacePublicationReceipt,
     selection: GuestSelection,
+    /// The locator the session's own launch published. It is taken from a bound,
+    /// qualified listener, never supplied by the caller.
+    serving: super::ServingLease,
 }
 
 impl SelectionReceipt {
-    /// Build the receipt the publisher hands to `commit_selection`. The
-    /// document bytes are hashed here, once, and compared with the object the
+    /// Build the receipt the publisher hands to `commit_selection`.
+    ///
+    /// `launch` is the session's live listener and key custody: the receipt
+    /// publishes its locator here, from a listener this launch actually bound
+    /// and qualified, and refuses a launch that serves another session. The
+    /// document bytes are hashed once and compared with the object the
     /// selection names, so the context a guest will resolve is the context the
     /// receipt committed: no secret bytes are kept.
     pub fn new(
@@ -124,13 +133,19 @@ impl SelectionReceipt {
         publication: WorkspacePublicationReceipt,
         selection: GuestSelection,
         document: &[u8],
+        launch: &mut super::SessionLaunch,
     ) -> Result<Self, RunError> {
         if Digest::of(document) != selection.objects.context.digest {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
+        if launch.session() != plan.binding() {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        let serving = launch.publish()?.lease().clone();
         let receipt = Self {
             publication,
             selection,
+            serving,
         };
         receipt.validate(plan)?;
         Ok(receipt)
@@ -146,7 +161,8 @@ impl SelectionReceipt {
         // The locator this selection publishes must be the lease of *this*
         // session: a lease another launch holds serves another key, another
         // listener and another session, and is never this generation's.
-        if self.selection.serving.session != *plan.binding() {
+        self.serving.validate()?;
+        if self.serving.session() != plan.binding() {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         let selected = format!("sha256:{}", self.selection.objects.binary.digest.hex());
@@ -165,11 +181,23 @@ impl SelectionReceipt {
     pub fn selection(&self) -> &GuestSelection {
         &self.selection
     }
+    /// The locator this generation serves, published by its own launch.
+    pub fn serving(&self) -> &super::ServingLease {
+        &self.serving
+    }
+}
+
+/// One selector as the caller read it back from the exact target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectorReadback {
+    pub path: String,
+    pub value: String,
 }
 
 /// What the guest holds after the three compares, as the caller read it back.
 /// It is evidence to check, never authority: [`SelectionObligation::validate_switch`]
-/// refuses anything that is not the committed target.
+/// refuses anything that is not the committed target, including a selector that
+/// still holds an earlier value (a partial switch).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionSwitchReceipt {
     pub context_generation: Generation,
@@ -177,6 +205,9 @@ pub struct SelectionSwitchReceipt {
     pub binary_digest: Digest,
     pub credential_digest: Digest,
     pub serving_pin: Digest,
+    /// Every selector's path and the value read back from it, in the obligation's
+    /// order. A partial switch names an earlier value here and is refused.
+    pub selectors: [SelectorReadback; 3],
 }
 
 impl SelectionSwitchReceipt {
@@ -189,7 +220,21 @@ impl SelectionSwitchReceipt {
             context_digest: selection.objects.context.digest.clone(),
             binary_digest: selection.objects.binary.digest.clone(),
             credential_digest: selection.objects.credential.digest.clone(),
-            serving_pin: selection.serving.pin.clone(),
+            serving_pin: receipt.serving.pin().clone(),
+            selectors: [
+                SelectorReadback {
+                    path: selection.switches[0].path.clone(),
+                    value: selection.switches[0].next.clone(),
+                },
+                SelectorReadback {
+                    path: selection.switches[1].path.clone(),
+                    value: selection.switches[1].next.clone(),
+                },
+                SelectorReadback {
+                    path: selection.switches[2].path.clone(),
+                    value: selection.switches[2].next.clone(),
+                },
+            ],
         }
     }
 }

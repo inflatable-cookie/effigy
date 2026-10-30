@@ -3062,13 +3062,15 @@ incompatible schemas refuse with re-prepare guidance. Absent/incomplete session 
 pub struct GuestObject { pub path: String, pub digest: Digest }
 pub struct SelectionObjects { pub binary: GuestObject, pub context: GuestObject, pub credential: GuestObject, pub context_generation: Generation, pub credential_generation: Generation }
 pub struct SelectorChange { pub path: String, pub expected: Option<String>, pub next: String }
-pub struct ServingLease { pub session: SessionBinding, pub supervisor_id: String, pub endpoint: String, pub pin: Digest } // published by SessionLaunch
-pub struct GuestSelection { pub backend: String, pub objects: SelectionObjects, pub switches: [SelectorChange; 3], pub serving: ServingLease }
-pub struct SelectionReceipt { /* publication + selection, validated */ }
+pub struct ServingLease { /* session, supervisor, endpoint, pin; only SessionLaunch::publish builds one */ }
+pub struct GuestSelection { pub backend: String, pub objects: SelectionObjects, pub switches: [SelectorChange; 3] }
+pub struct SelectionReceipt { /* publication + selection + the lease its own launch published */ }
+pub struct SelectorReadback { pub path: String, pub value: String }
+pub struct SelectionSwitchReceipt { /* digests, generation, serving pin, [SelectorReadback; 3] */ }
 pub enum SelectionState { Pending, Switched, Abandoned }
 pub struct SelectionObligation { /* id, reservation, E, activation run, session run, receipt, state */ }
 impl SelectionReceipt {
-    pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8]) -> Result<Self, RunError>;
+    pub fn new(plan: &ActivationPlan, publication: WorkspacePublicationReceipt, selection: GuestSelection, document: &[u8], launch: &mut SessionLaunch) -> Result<Self, RunError>;
     pub fn validate(&self, plan: &ActivationPlan) -> Result<(), RunError>;
 }
 impl WorkspaceActivationReservation {
@@ -3086,11 +3088,17 @@ pub fn selection_abandoned(cx: &EffectContext, root: &StateRoot, obligation: &Se
 
 `commit_selection` takes the validated `SelectionReceipt`, not a bare `GuestSelection`: the receipt is the only value that has
 hashed the context document, and a selection that never hashed it cannot be committed. It is the **only** commit: the generic
-`commit` refuses `selection_required`, so no generation is published with no durable record of the bytes it selects. A receipt's
-`ServingLease` names its own session, so a lease another session's launch published (another key, listener and run) is refused.
+`commit` refuses `selection_required`, so no generation is published with no durable record of the bytes it selects, and a
+reservation that was never *decided* refuses `unfrozen` because nothing was frozen to publish. The commit re-checks the frozen
+`PublishInputs`: the artifact the activation acknowledged must be the decided digest and, when the decision observed a target, the
+published container and boot must be that observation. `SelectionReceipt::new` takes the session's live `SessionLaunch` and
+publishes the locator from it, so a selection can only name an endpoint and pin that a bound, qualified, session-owned listener
+holds; a launch serving another session, or one whose listener was never qualified, publishes nothing. A receipt's `ServingLease`
+names its own session, so a lease another session's launch published is refused.
 Recovery is completion, not assumption: `selection_recovered` requires both the three proven liveness facts **and** the exact
-`SelectionSwitchReceipt` readback, repeating the same compares a live switch does; a third value, a missing object or an unknown
-answer never completes. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
+`SelectionSwitchReceipt` readback, repeating the same compares a live switch does; the receipt carries each of the three selectors
+and the value read back from it, so a third value, a still-previous value (a partial switch), a missing object or an unknown answer
+never completes. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
 or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
 host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam
 is what they call.

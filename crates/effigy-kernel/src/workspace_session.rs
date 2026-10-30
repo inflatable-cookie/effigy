@@ -47,7 +47,7 @@ pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use selection::{
     selection_abandoned, selection_recovered, unfinished_selection, GuestObject, GuestSelection,
     SelectionLiveness, SelectionObjects, SelectionObligation, SelectionReceipt, SelectionState,
-    SelectionSwitchReceipt, SelectorChange,
+    SelectionSwitchReceipt, SelectorChange, SelectorReadback,
 };
 pub use serving::{
     ChannelBound, ChannelListener, HostChannelListener, ListenerPhase, ServingKey, ServingLease,
@@ -1441,6 +1441,9 @@ pub enum ActivationRefusal {
     /// A workspace activation must commit through `commit_selection`: the
     /// generic commit cannot publish a generation with no durable selection.
     SelectionRequired,
+    /// The generation was reserved without a decision, so no publish inputs
+    /// were frozen and nothing may be published under it.
+    Unfrozen,
     /// The exact successor is still running or unsettled, so its generation is
     /// not abandoned around it.
     SuccessorRunning,
@@ -1477,6 +1480,7 @@ impl ActivationRefusal {
             Self::SelectionMismatch => "selection_mismatch",
             Self::SelectionSettled => "selection_settled",
             Self::SelectionRequired => "selection_required",
+            Self::Unfrozen => "unfrozen",
             Self::SuccessorRunning => "successor_running",
             Self::ServingLost => "serving_lost",
             Self::SelectionStillCompletable => "selection_still_completable",
@@ -1561,6 +1565,9 @@ impl std::fmt::Display for ActivationRefusal {
             Self::SelectionRequired => {
                 "a workspace activation commit records the guest selection it published; use commit_selection with the validated receipt"
             }
+            Self::Unfrozen => {
+                "this environment generation was reserved without an activation decision, so no publish inputs were frozen; decide it before publishing"
+            }
             Self::SuccessorRunning => {
                 "the committed successor is still running or unsettled; stop and settle it before abandoning its generation"
             }
@@ -1609,12 +1616,10 @@ impl WorkspaceActivationReservation {
             return Err(ActivationRefusal::NotAnEnvironment.into());
         }
         let _gate = Gate::acquire(cx, root, std::slice::from_ref(environment), wait)?;
-        crate::fault_point!(ReservationBefore)?;
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let record = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
             Self::reserve_under(txn, environment, None)
         })?;
-        crate::fault_point!(ReservationAfter)?;
         Ok(Self { record })
     }
 
@@ -1691,24 +1696,46 @@ impl WorkspaceActivationReservation {
                 "the environment row is absent inside the transaction that wrote it",
             ));
         };
+        crate::fault_point!(ReservationBefore)?;
         let generation = Generation::new(current as u64)
             .next()
             .ok_or_else(|| RunError::refused("the environment generation cannot advance"))?;
         let existing = recoverable_reservation(txn.conn(), environment)?;
-        match existing {
+        let record = match existing {
             Some(existing)
                 if existing.state == ActivationReservationState::Reserved
                     && existing.generation <= generation =>
             {
                 // Recovery, not a second decision: keep the inputs the first
                 // attempt froze. A caller that decided on other inputs is a
-                // competing activation, and it meets the reserved fence.
-                if let (Some(frozen), Some(inputs)) = (&existing.inputs, inputs) {
-                    if frozen != inputs {
+                // competing activation, and it meets the reserved fence. A row
+                // reserved before any decision has nothing frozen yet, so the
+                // first decision to reach it freezes them here — before
+                // anything is applied — and every later one must match.
+                match (&existing.inputs, inputs) {
+                    (Some(frozen), Some(inputs)) if frozen != inputs => {
                         return Err(RunError::refused(
                             "this environment generation is reserved by a workspace activation with other publish inputs; wait for that activation or cancel its reservation",
                         ));
                     }
+                    (None, Some(inputs)) => {
+                        txn.conn().execute(
+                            "UPDATE workspace_activation_reservations SET inputs=?3,updated_at=?4 \
+                             WHERE environment=?1 AND environment_generation=?2 AND state='reserved' \
+                             AND inputs IS NULL",
+                            params![
+                                environment.name().to_string(),
+                                generation.get() as i64,
+                                serde_json::to_string(inputs)?,
+                                txn.now()
+                            ],
+                        )?;
+                        return Ok(ActivationReservationRecord {
+                            inputs: Some(inputs.clone()),
+                            ..existing
+                        });
+                    }
+                    _ => {}
                 }
                 Ok(existing)
             }
@@ -1743,7 +1770,9 @@ impl WorkspaceActivationReservation {
                 })
             }
             _ => Self::insert(txn, environment, generation, inputs),
-        }
+        }?;
+        crate::fault_point!(ReservationAfter)?;
+        Ok(record)
     }
 
     fn insert(
@@ -2131,7 +2160,7 @@ impl WorkspaceActivationReservation {
         // private Task slot across this entire commit; death of its process
         // necessarily aborts this transaction too. No Task gate is probed or
         // acquired while the environment run holds Env.
-        let plan = {
+        let (plan, frozen) = {
             let observe = activation_observe(cx)?;
             let reader = activation_reader(&observe, root)?;
             let stored = read_reservation(
@@ -2150,10 +2179,31 @@ impl WorkspaceActivationReservation {
             if !session_run.owns_workspace_session(root, &plan.session)? {
                 return Err(ActivationRefusal::SessionGone.into());
             }
-            plan
+            (plan, stored.inputs)
         };
         let receipt = plan.validate_publication(environment_run)?;
         selection.validate(&plan)?;
+        // The decision froze its inputs before anything was applied. Publishing
+        // is the moment they are due: the artifact and target this run
+        // acknowledged must be exactly the ones the decision recorded, or the
+        // generation would serve bytes nobody decided on.
+        let Some(frozen) = frozen else {
+            return Err(ActivationRefusal::Unfrozen.into());
+        };
+        match &frozen.artifact {
+            ArtifactEvidence::Selected { digest, .. }
+                if *digest == selection.selection().objects.binary.digest => {}
+            ArtifactEvidence::Selected { .. } | ArtifactEvidence::Unselected { .. } => {
+                return Err(ActivationRefusal::SelectionMismatch.into())
+            }
+        }
+        if let TargetEvidence::Observed(identity) = &frozen.target {
+            if receipt.publication.container_id != identity.container_id
+                || receipt.publication.vm_boot_id != identity.vm_boot_id
+            {
+                return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+            }
+        }
         // The receipt the commit publishes is the one the run recorded: a
         // selection built against another publication names other bytes.
         if selection.publication() != &receipt {

@@ -797,9 +797,10 @@ Three production facts remain to implement and prove:
   `selection_recovered`/`selection_abandoned`, and `SessionLaunch`/
   `ChannelBound`/`ServingLease` custody): the atomic attach-or-reserve decision,
   the durable `SelectionReceipt`/`SelectionObligation` commit (the only commit
-  that publishes a generation), the exact-readback switch/recovery order and the
-  settled-successor abandonment are implemented and fault-proven against the
-  real journal. What remains for #482 is the container/runner typed wrapper and
+  that publishes a generation, and only from inputs a decision froze and a lease
+  the session's own launch published), the per-selector readback switch/recovery
+  order and the settled-successor abandonment are implemented and fault-proven
+  against the real journal, including concurrent decision callers. What remains for #482 is the container/runner typed wrapper and
   guest selector switching, for #483 the transport, server-key generation and
   TLS qualification, and for #452 the glue and supervisor ownership transfer. The
   detailed appendix is still non-normative.
