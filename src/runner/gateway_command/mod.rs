@@ -586,7 +586,7 @@ fn inspect_existing_gateway(
     if gateway_status_matches_current_binary(&status) {
         let route_table = RouteTable::load(&config.route_table_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let tls = gateway_tls_summary(config, &route_table);
+        let tls = gateway_tls_summary(config, route_certificate_summary(config, &route_table));
         return render_gateway_up_result(
             config,
             GatewayUpState::AlreadyRunning(status.status),
@@ -718,7 +718,10 @@ fn run_private_gateway_up(
     )?;
     let status = verified_gateway_status(config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let tls = live_progress(
+    // The step reads the table and each certificate, and nothing else: the
+    // mkcert and trust-store probes belong to the render below, not to a wait
+    // whose label says it is reading routes.
+    let routes = live_progress(
         "reading the route table",
         &format!("the route table at {}", config.route_table_path.display()),
         |progress| {
@@ -727,6 +730,7 @@ fn run_private_gateway_up(
             Ok(summarize_published_routes(config, &route_table, progress))
         },
     )?;
+    let tls = gateway_tls_summary(config, routes);
     render_gateway_up_result(
         config,
         GatewayUpState::Started(status.status),
@@ -1045,7 +1049,7 @@ fn run_gateway_status_with_config(
     let status = resolve_status_for_status_command(config, probed, output_json)?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let mut tls = gateway_tls_summary(config, &route_table);
+    let mut tls = gateway_tls_summary(config, route_certificate_summary(config, &route_table));
     if let Some(https_addr) = status.as_ref().and_then(|value| value.https_addr) {
         tls.https_addr = Some(https_addr);
     }
@@ -1815,7 +1819,45 @@ struct GatewayTlsSummary {
     ca_installed: bool,
 }
 
-fn gateway_tls_summary(config: &GatewayConfig, route_table: &RouteTable) -> GatewayTlsSummary {
+/// What reading the existing table found: the TLS listener and, per route, its
+/// certificate. These are the only facts the live route-read step gathers, so it
+/// never runs a status-only probe while its label says it is reading routes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RouteCertificateSummary {
+    https_addr: Option<SocketAddr>,
+    route_count: usize,
+    cert_ready_count: usize,
+    missing_domains: Vec<String>,
+}
+
+/// The status render's TLS summary: the route facts just read, plus the
+/// operator's mkcert and certificate-authority state. Those two are separate
+/// unbounded probes (mkcert is a subprocess, the trust store may prompt), so
+/// only a status render asks for them, never a route read.
+fn gateway_tls_summary(
+    config: &GatewayConfig,
+    routes: RouteCertificateSummary,
+) -> GatewayTlsSummary {
+    GatewayTlsSummary {
+        https_addr: routes.https_addr,
+        route_count: routes.route_count,
+        cert_ready_count: routes.cert_ready_count,
+        missing_domains: routes.missing_domains,
+        mkcert_available: if config.is_private() {
+            TlsConfig::private_mkcert_available()
+        } else {
+            TlsConfig::mkcert_available()
+        },
+        ca_installed: !config.is_private() && TlsConfig::ca_installed(),
+    }
+}
+
+/// Route facts from an already-loaded table, for the status and already-running
+/// renders: nothing is shown live there, so no progress frames are produced.
+fn route_certificate_summary(
+    config: &GatewayConfig,
+    route_table: &RouteTable,
+) -> RouteCertificateSummary {
     summarize_published_routes(
         config,
         route_table,
@@ -2014,13 +2056,13 @@ fn observe_stop(progress: &ProgressSource, phase: StopPhase) {
 
 /// Read the existing route table one route at a time. Each route becomes the
 /// current object with its position before its certificate is looked up, and
-/// what that lookup found is the event that follows. Returns the same summary
-/// the status and up renders always used.
+/// what that lookup found is the event that follows. Returns the route and
+/// certificate facts the render summaries build on.
 fn summarize_published_routes(
     config: &GatewayConfig,
     route_table: &RouteTable,
     progress: &ProgressSource,
-) -> GatewayTlsSummary {
+) -> RouteCertificateSummary {
     summarize_routes(config, route_table, progress, |tls, domain| {
         tls.load_cert(domain).is_ok()
     })
@@ -2028,23 +2070,17 @@ fn summarize_published_routes(
 
 /// Read each route in the existing table. `certificate` answers whether a TLS
 /// route's certificate is present; production passes `TlsConfig::load_cert`.
+/// Only file reads happen here: mkcert and the trust store are asked by
+/// [`gateway_tls_summary`], which no live route-read step calls.
 fn summarize_routes(
     config: &GatewayConfig,
     route_table: &RouteTable,
     progress: &ProgressSource,
     mut certificate: impl FnMut(&TlsConfig, &str) -> bool,
-) -> GatewayTlsSummary {
-    let mut summary = GatewayTlsSummary {
+) -> RouteCertificateSummary {
+    let mut summary = RouteCertificateSummary {
         https_addr: config.proxy.tls_bind_addr,
-        route_count: 0,
-        cert_ready_count: 0,
-        missing_domains: Vec::new(),
-        mkcert_available: if config.is_private() {
-            TlsConfig::private_mkcert_available()
-        } else {
-            TlsConfig::mkcert_available()
-        },
-        ca_installed: !config.is_private() && TlsConfig::ca_installed(),
+        ..RouteCertificateSummary::default()
     };
     let routes = route_table.all_routes();
     let total = routes.len() as u64;

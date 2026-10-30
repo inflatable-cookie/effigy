@@ -126,7 +126,7 @@ fn render_gateway_status_json_includes_routes_when_stopped() {
         .collect(),
     };
     let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
-    let tls = gateway_tls_summary(&config, &table);
+    let tls = gateway_tls_summary(&config, route_certificate_summary(&config, &table));
 
     let rendered = serde_json::to_string(&render_routes_json(&gateway_route_dashboard(
         &config, &table, &tls,
@@ -2493,6 +2493,46 @@ fn reading_existing_routes_reports_an_absent_table_and_a_read_failure() {
     let error = read_existing_routes(&unreadable, &progress)
         .expect_err("a table under a regular file cannot be read");
     assert!(!error.to_string().is_empty(), "{error}");
+}
+
+/// The route-read step reads the table and each certificate and nothing else.
+/// mkcert and the trust store are status-only probes: a fixture mkcert that
+/// records every invocation proves the step never spawns it, while the status
+/// summary still asks.
+#[test]
+fn the_route_read_step_runs_no_mkcert_or_trust_probe() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("an empty gateway directory");
+    let marker = home.path().join("mkcert-ran");
+    let mkcert = home.path().join("mkcert");
+    std::fs::write(
+        &mkcert,
+        format!("#!/bin/sh\n: > '{}'\nexit 1\n", marker.display()),
+    )
+    .expect("fixture mkcert");
+    std::fs::set_permissions(&mkcert, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        effigy_gateway::tls::MKCERT_BIN_ENV,
+        Some(mkcert.display().to_string()),
+    )]);
+
+    let progress = ProgressSource::waiting_for("the route table at /state/routes.json");
+    read_existing_routes(&config, &progress).expect("an absent table reads as empty");
+    assert!(
+        !marker.exists(),
+        "reading the existing table must not run mkcert or the trust store"
+    );
+
+    // The status summary is where the operator's mkcert state belongs.
+    let tls = gateway_tls_summary(&config, RouteCertificateSummary::default());
+    assert!(!tls.mkcert_available);
+    assert!(
+        marker.exists(),
+        "the status summary still asks the operator's mkcert"
+    );
 }
 
 /// The read step ends with what it read, and a read failure ends the step with

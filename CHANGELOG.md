@@ -558,7 +558,10 @@ until the host-log writer has a safe secret-handling boundary.
   route table as they read it, with its position and certificate state; they
   read the published table and never publish a route, and a table that cannot
   be read ends that step with the read error while the command itself still
-  succeeds. `gateway setup` probes each low-port address in turn and names it as
+  succeeds. That step performs only the reads it names — the table snapshot and
+  each certificate file — so mkcert and trust-store state stay in `gateway
+  status` instead of blocking an already-started gateway. `gateway setup` probes
+  each low-port address in turn and names it as
   its outcome lands (bound, already in use, denied); a refusal stops at that
   address with the probe's own sentence. The platform setup action names each
   operation as it runs too — the resolver files, the loopback launch job, the
