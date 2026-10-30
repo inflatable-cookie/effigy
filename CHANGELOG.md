@@ -728,13 +728,44 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 
 - Database seed and dump keep the database password out of every spawned
-  command's arguments. The reset, import and dump clients (`mysql`, `psql`,
-  `mysqldump`, `pg_dump`) receive it by variable name, sourced from a private
+  command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
+  variable name and never the value, and each exec sources it from a private
   per-exec file that is removed afterwards, so `MYSQL_PWD=<value>` and
   `PGPASSWORD=<value>` no longer appear in a host argv, a process listing, a
-  receipt or a diagnostic. Target resolution, the selected Compose project,
-  seed/dump results, reports and cleanup are unchanged.
-
+  receipt or a diagnostic on either the checkout-local or the shared Compose
+  route. Target resolution, the selected Compose project, seed/dump results,
+  reports and cleanup are unchanged.
+- A declared database data target whose service is `shared = true` now seeds and
+  dumps in that service's own machine-wide Compose project and render, so
+  `stack` and `hybrid` declarations of one shared identity feed one database and
+  volume instead of failing against the checkout-local Compose that removed the
+  service. The selected environment's declarations are used, so `--name hybrid`
+  seeds hybrid's target rather than the manifest default. Before the first
+  statement Effigy proves the expected render's every file (Compose input and
+  bound configuration) is present, readable and unchanged, and that the runtime
+  reports exactly one running container of the declared service in the declared
+  project from the declared render digest; a missing, unreadable or altered
+  render file, stopped or absent container, stale render, several running
+  containers, an unreadable runtime or environments that declare the same
+  service with different shared identities refuse and name the project and
+  recovery command. A data step never publishes a render, starts or replaces a
+  shared service — its own or an unrelated one — or falls back to a local
+  service of the same name; a seed that selects a shared target skips its
+  environment activation, and every activation a data seed performs (including a
+  routed app-defined `data:seed` task) leaves shared services alone. A seed
+  whose environment has shared services and is stopped refuses and names
+  `effigy container up <NAME>` instead of bringing it up, because that would
+  reconcile them; an environment with no shared services keeps its prior
+  bring-up behaviour, and the decision is made per activated environment, so a
+  catalog-routed step cannot start another catalog's shared service. The exec forwards
+  the client credential by name only: each call creates its own private 0600 file
+  that the Compose client sources before it runs, on the host or through the
+  Colima VM transport, and removes it afterwards, so concurrent data commands
+  never share a credential path and no value reaches a command line or a report.
+  Every shared Compose call is bounded (15 minutes for a control call, one hour
+  for a data exec) and takes its process group with it on expiry, while the
+  complete output still feeds the dump artifact. Unshared targets keep the
+  checkout-local route.
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target
   libraries or linkers refuse the build before it can attest an artifact.
@@ -1002,6 +1033,12 @@ During v0.x, MINOR bumps may include breaking changes.
   unmounted volume or a permission refusal never prunes routes.
 - A repository task named `fmt` runs again for `effigy fmt`, and `effigy
   changelog` accepts a CommonMark lazy continuation line instead of refusing it.
+- The machine gateway stays running after its last route is withdrawn; it no
+  longer stops five minutes after `container down`. A private gateway still
+  stops once its route table stays empty for five minutes, and its operator log
+  records the cause as `route table empty for 300 s`. A managed `container up`
+  that finds the machine gateway positively stopped starts it, and a start that
+  cannot verify a running gateway refuses instead of claiming it up.
 
 ## [0.14.1] - 2026-10-08
 

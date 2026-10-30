@@ -319,6 +319,11 @@ fn activate_rhai_container_exec(repo_root: &Path, name: Option<&str>) -> Result<
             repo_override: Some(repo_root.to_path_buf()),
             route: RuntimeActivationRoute::Rhai,
             session_context: current_runtime_session_context(),
+            reconcile_shared_services:
+                crate::runner::container_runtime_prep::reconcile_shared_services_for(
+                    &policy,
+                    current_runtime_session_context(),
+                ),
         },
     )?;
     Ok(())

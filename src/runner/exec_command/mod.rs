@@ -266,6 +266,11 @@ fn activate_exec_surface(
                 repo_override: plan.request.repo_override.clone(),
                 route: plan.route,
                 session_context: current_runtime_session_context(),
+                reconcile_shared_services:
+                    crate::runner::container_runtime_prep::reconcile_shared_services_for(
+                        &surface.policy,
+                        current_runtime_session_context(),
+                    ),
             },
         )
     })

@@ -1170,6 +1170,55 @@ alias. A Docker engine backend supplies `host-gateway` for the same name, which
 Docker Desktop and Linux Docker both resolve. A service that receives no shared
 environment gets no entry.
 
+## Shared data targets (`data seed`, `data dump`)
+
+A declared data target whose manifest service is `shared = true` runs in that
+shared service's own machine-wide Compose project and render. The environment's
+generated Compose removes the service, so the checkout-local route could only
+ever reach a local service of the same name; the seed reset, staged-file import
+and logical dump instead use the shared render's Compose input and project
+name. `stack` and `hybrid` declarations of one shared identity therefore seed
+and dump the same project and named volume, and `data_from` does not redirect
+them, because `data_from` is a checkout-local volume feature (see below).
+
+Before the first statement Effigy proves the declared shared service: every
+file of the expected render (its Compose input and every configuration it
+binds) must be present, readable and unchanged, and the runtime must report
+exactly one running container of the declared service in the declared project,
+created from the declared render digest. A missing, unreadable or altered
+render file, a stopped or absent container, a container created from another
+render, more than one running container for the service, an unreadable
+inventory, or environments that declare the same service name with different
+shared identities all refuse and name the project and recovery command. The
+data step never publishes a render, starts or replaces a shared service — its
+own or an unrelated one — and never falls back to a checkout-local service of
+the same name. A seed that selects a shared target therefore skips its
+environment activation, and every activation a data seed performs (including an
+app-defined `data:seed` task's routed activation, through the data-seed runtime
+session) leaves shared services alone. Because bringing a stopped environment
+up would reconcile them, such a seed refuses and names `effigy container up
+<env>` instead of starting anything; an environment with no shared services keeps
+its ordinary activation, so a stopped local stack is still brought up before the
+seed. The decision is made per activated environment from that environment's own
+policy, so a sequence or catalog-routed step into another catalog's container
+also leaves that catalog's shared services alone. `data dump` starts nothing.
+
+A credential travels by name only. The exec forwards the client variable
+(`MYSQL_PWD`, `PGPASSWORD`) with `compose exec -e NAME`; its value lives in a
+per-operation private file under the Effigy home that the Compose client sources
+before it runs — on the host for a host backend, and through `colima ssh` inside
+the VM for the VM-hosted backend, the same transport managed task secrets use.
+The file is 0600 inside a 0700 directory, created exclusively, never rewritten
+and removed when the call returns, so concurrent data commands never share a
+credential path. The checkout-local route uses the same transport, so an
+unshared target does not regress to an `env NAME=value` prefix in argv. No value
+reaches a command line, the Compose invocation, a report or a diagnostic.
+
+Every shared Compose call carries one absolute deadline: 15 minutes for a
+control call and one hour for a data exec. Expiry terminates the owned process
+group, and the call's complete output stays captured so a dump is never
+truncated. An unshared target keeps the checkout-local route unchanged.
+
 ## Shared service data volumes (`data_from`)
 
 A container environment may declare `data_from = "<other-env>"`. Every service

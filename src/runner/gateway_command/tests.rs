@@ -1447,6 +1447,216 @@ fn permission_reuse_managed_unavailable_observations_warn_and_proceed_without_la
     }
 }
 
+/// A positively stopped gateway is started through the managed command. The
+/// container `up` path runs this before it registers any route, so a gateway
+/// that a route withdrawal or reboot left down comes back first (effigy#480).
+#[test]
+fn managed_start_launches_the_gateway_when_it_is_positively_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let marker = root.path().join("started");
+    gateway_up_for_managed_task_with(&format!("touch '{}'", marker.display()), |_| {
+        GatewayUpStatusProbe {
+            status: Err(effigy_gateway::GatewayError::NotRunning),
+            identity_permission_denied: false,
+        }
+    })
+    .unwrap();
+    assert!(marker.exists(), "a stopped gateway must be started");
+}
+
+fn machine_probe(
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+) -> GatewayUpStatusProbe {
+    GatewayUpStatusProbe {
+        status,
+        identity_permission_denied: false,
+    }
+}
+
+fn verified_running_start() -> ManagedStartOutcome {
+    ManagedStartOutcome {
+        status: "running",
+        ready: true,
+        reason: None,
+    }
+}
+
+/// The machine gateway is what `container up` starts. A positively stopped
+/// machine gateway starts once through the operator lifecycle, after the same
+/// preflight every managed start runs. The live machine gateway is never
+/// touched: both starts are injected (effigy#480).
+#[test]
+fn managed_start_for_the_machine_gateway_takes_the_operator_start_when_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    assert!(
+        !config.is_private(),
+        "the machine gateway is not a private root"
+    );
+    let starts = std::cell::Cell::new(0);
+    managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| {
+            starts.set(starts.get() + 1);
+            Ok(verified_running_start())
+        },
+        |_| machine_probe(Err(effigy_gateway::GatewayError::NotRunning)),
+    )
+    .unwrap();
+    assert_eq!(
+        starts.get(),
+        1,
+        "the stopped machine gateway starts once through the operator"
+    );
+}
+
+/// A refused operator start is an error for `container up`, never a silent
+/// success claim.
+#[test]
+fn managed_start_for_the_machine_gateway_surfaces_a_refused_operator_start() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    let refused = managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| Err(RunnerError::task_invocation("operator start refused")),
+        |_| machine_probe(Err(effigy_gateway::GatewayError::NotRunning)),
+    );
+    assert!(
+        refused.is_err(),
+        "a refused operator start must fail `container up`"
+    );
+}
+
+/// A start the operator lifecycle ran without verifying a ready gateway is a
+/// refusal: `container up` never registers routes behind an unverified
+/// identity, and the status it did observe is named (effigy#480).
+#[test]
+fn managed_start_for_the_machine_gateway_refuses_an_unverified_start_outcome() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    let refused = managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| {
+            Ok(ManagedStartOutcome {
+                status: "unknown",
+                ready: false,
+                reason: Some("gateway observation unknown: no owner".to_owned()),
+            })
+        },
+        |_| machine_probe(Err(effigy_gateway::GatewayError::NotRunning)),
+    )
+    .expect_err("an unverified start is never claimed up");
+    let message = refused.to_string();
+    assert!(message.contains("did not verify a running gateway"));
+    assert!(message.contains("operator status `unknown`"));
+    assert!(message.contains("gateway observation unknown"));
+    assert!(message.contains("effigy gateway status"));
+}
+
+/// A machine gateway whose identity cannot be verified is never started by a
+/// managed start, and the start reports that gap instead of claiming the
+/// gateway up (effigy#480).
+#[test]
+fn managed_start_for_the_machine_gateway_never_starts_an_unverifiable_gateway() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    let starts = std::cell::Cell::new(0);
+    managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| {
+            starts.set(starts.get() + 1);
+            Ok(verified_running_start())
+        },
+        |_| {
+            machine_probe(Err(effigy_gateway::GatewayError::ProcessStateUnknown {
+                pid: std::process::id(),
+            }))
+        },
+    )
+    .expect("an ambiguous observation warns and proceeds without a start");
+    assert_eq!(starts.get(), 0, "an unverifiable gateway is never started");
+}
+
+/// An unreadable or malformed identity is not a positive absence: the managed
+/// start defers to the operator lifecycle, and the observation that lifecycle
+/// reports is checked. A start that did not verify a ready gateway refuses
+/// instead of proceeding as a running gateway (effigy#480).
+#[test]
+fn managed_start_for_the_machine_gateway_checks_the_operator_observation_for_an_unreadable_identity(
+) {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    let lifecycle = std::cell::Cell::new(0);
+    let refused = managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| {
+            lifecycle.set(lifecycle.get() + 1);
+            Ok(ManagedStartOutcome {
+                status: "unknown",
+                ready: false,
+                reason: Some("gateway observation unknown: identity unreadable".to_owned()),
+            })
+        },
+        |_| {
+            machine_probe(Err(effigy_gateway::GatewayError::Io(
+                std::io::Error::other("identity unreadable"),
+            )))
+        },
+    )
+    .expect_err("an unreadable identity is never a running claim");
+    assert_eq!(
+        lifecycle.get(),
+        1,
+        "the operator lifecycle decides the start"
+    );
+    let message = refused.to_string();
+    assert!(message.contains("did not verify a running gateway"));
+    assert!(message.contains("operator status `unknown`"));
+}
+
+/// A legacy numeric-only identity is deferred to the operator lifecycle, whose
+/// explicit refusal reaches `container up`; no start body runs (effigy#480).
+#[test]
+fn managed_start_for_the_machine_gateway_defers_a_legacy_identity_refusal() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    let lifecycle = std::cell::Cell::new(0);
+    let refused = managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| {
+            lifecycle.set(lifecycle.get() + 1);
+            Err(RunnerError::task_invocation(
+                "legacy gateway identity migration required; refusing the managed start",
+            ))
+        },
+        |_| {
+            machine_probe(Err(effigy_gateway::GatewayError::LegacyIdentityRequired {
+                pid: 4242,
+            }))
+        },
+    )
+    .expect_err("a legacy identity is a refusal, never a start");
+    assert!(refused.to_string().contains("legacy gateway identity"));
+    assert_eq!(
+        lifecycle.get(),
+        1,
+        "the operator lifecycle owns the refusal"
+    );
+}
+
 /// Papercut 0694ef12: a headless caller cannot read a root-owned gateway's
 /// identity. Status must keep that truth (`ok: false`, exit non-zero, status
 /// unknown) and additionally expose the supported observation labels, so a

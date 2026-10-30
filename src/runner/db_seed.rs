@@ -21,7 +21,10 @@ use effigy_state::artifact::{
 };
 use serde_json::json;
 
-use crate::runner::container_command::run_container_exec_capture_with_credentials;
+use crate::runner::container_command::{
+    resolve_shared_data_binding, run_container_exec_capture_with_credentials,
+    run_shared_data_command, verify_shared_data_target,
+};
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
@@ -67,7 +70,10 @@ struct SeedMetadataEntry {
 }
 
 pub(in crate::runner) fn data_seed_runtime_session_context() -> RuntimeSessionContext {
-    RuntimeSessionContext::default()
+    RuntimeSessionContext {
+        data_seed_session: true,
+        ..RuntimeSessionContext::default()
+    }
 }
 
 /// One database dump staged into the repository for the seed task.
@@ -581,26 +587,73 @@ pub(in crate::runner) fn run_db_seed_task(
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     if manifest.tasks.contains_key(DB_SEED_TASK) {
         prepare_db_seed_runtime(repo_root, &manifest)?;
-        return with_runtime_session_context(data_seed_runtime_session_context(), || {
-            run_manifest_task_with_surface_and_env(
-                &TaskInvocation {
-                    name: DB_SEED_TASK.to_owned(),
-                    args: Vec::new(),
-                },
-                repo_root.to_path_buf(),
-                ExecutionSurface::DataSeed,
-                env_overrides,
-            )
-            .map(|_| ())
-            .map_err(|err| {
-                RunnerError::task_invocation(format!(
-                    "database seed task `{DB_SEED_TASK}` failed: {err}"
-                ))
-            })
-        });
+        return run_manifest_db_seed_task(repo_root, env_overrides);
     }
-    prepare_builtin_db_seed_runtime(repo_root)?;
-    run_builtin_db_seed_task(repo_root, &manifest, env_overrides)
+    let policy = effigy_containers::load_container_policy(repo_root, None)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    run_db_seed_task_for_policy(repo_root, env_overrides, &policy)
+}
+
+/// Run the database seed for one already-selected environment.
+///
+/// The public data command passes the policy its `--name` selected, so seed
+/// reads that environment's declarations rather than reloading the manifest's
+/// default. The built-in seed's declared shared targets are resolved and proved
+/// here, before anything reconciles the environment: an activation apply would
+/// publish, start or replace the shared service the data command must not
+/// touch. The activation therefore runs only when no selected target is shared,
+/// and a local target in a mixed selection needs its environment already
+/// running.
+pub(in crate::runner) fn run_db_seed_task_for_policy(
+    repo_root: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    if manifest.tasks.contains_key(DB_SEED_TASK) {
+        // An app-defined seed task owns its own environment binding.
+        prepare_db_seed_runtime(repo_root, &manifest)?;
+        return run_manifest_db_seed_task(repo_root, env_overrides);
+    }
+    let entries = resolve_builtin_db_seed_entries(repo_root, &manifest, policy, env_overrides)?;
+    let shared = shared_seed_bindings(&entries);
+    for binding in &shared {
+        verify_shared_data_target(policy, binding)?;
+    }
+    if shared.is_empty() {
+        prepare_builtin_db_seed_runtime(repo_root, policy)?;
+    }
+    run_builtin_db_seed_entries_with(
+        repo_root,
+        policy,
+        &entries,
+        |policy, binding, command, stdin_file| {
+            run_shared_data_command(policy, binding, command, stdin_file)
+        },
+    )
+}
+
+fn run_manifest_db_seed_task(
+    repo_root: &Path,
+    env_overrides: &BTreeMap<String, String>,
+) -> Result<(), RunnerError> {
+    with_runtime_session_context(data_seed_runtime_session_context(), || {
+        run_manifest_task_with_surface_and_env(
+            &TaskInvocation {
+                name: DB_SEED_TASK.to_owned(),
+                args: Vec::new(),
+            },
+            repo_root.to_path_buf(),
+            ExecutionSurface::DataSeed,
+            env_overrides,
+        )
+        .map(|_| ())
+        .map_err(|err| {
+            RunnerError::task_invocation(format!(
+                "database seed task `{DB_SEED_TASK}` failed: {err}"
+            ))
+        })
+    })
 }
 
 fn prepare_db_seed_runtime(
@@ -642,23 +695,30 @@ fn prepare_db_seed_runtime(
             repo_override: plan.request.repo_override.clone(),
             route: plan.route,
             session_context,
+            // An environment with no shared services keeps its ordinary
+            // activation, so a stopped local stack still starts before the seed.
+            reconcile_shared_services: policy.shared_services.is_empty(),
         },
     )?;
     Ok(())
 }
 
-fn prepare_builtin_db_seed_runtime(repo_root: &Path) -> Result<(), RunnerError> {
-    let policy = effigy_containers::load_container_policy(repo_root, None)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+fn prepare_builtin_db_seed_runtime(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
     let session_context = data_seed_runtime_session_context();
     activate_container_runtime_for_task(
         repo_root,
-        &policy,
+        policy,
         ActivationRequest {
             container_name: Some(policy.name.as_str()),
             repo_override: Some(repo_root.to_path_buf()),
             route: RuntimeActivationRoute::DataSeed,
             session_context,
+            // Only an environment that has shared services must leave them
+            // alone; one with none keeps its prior bring-up behaviour.
+            reconcile_shared_services: policy.shared_services.is_empty(),
         },
     )?;
     Ok(())
@@ -831,43 +891,31 @@ pub(in crate::runner) fn logical_database_targets(
     collect_manifest_data_targets(&input)
 }
 
-fn run_builtin_db_seed_task(
-    repo_root: &Path,
-    manifest: &effigy_manifest::TaskManifest,
-    env_overrides: &BTreeMap<String, String>,
-) -> Result<(), RunnerError> {
-    let mut exec = |repo_root: &Path,
-                    container_name: Option<&str>,
-                    command: &effigy_data::DatabaseCommandPlan,
-                    stdin_file: Option<&Path>| {
-        run_container_exec_capture_with_credentials(
-            repo_root,
-            container_name,
-            Some(&command.service),
-            &command.argv,
-            &command.credential_env,
-            stdin_file,
-        )
-    };
-    run_builtin_db_seed_task_with(repo_root, manifest, env_overrides, &mut exec)
+/// One built-in seed entry: the staged file, the manifest target it names, and
+/// the route the selected environment resolves for it.
+#[derive(Debug, Clone)]
+pub(in crate::runner) struct BuiltinDbSeedEntry {
+    pub target: String,
+    pub staged_path: String,
+    pub declared: ResolvedDataTarget,
+    pub service: String,
+    pub kind: DatabaseServiceKind,
+    pub password: String,
+    pub shared: Option<effigy_containers::SharedServiceBinding>,
 }
 
-/// The builtin seed body with the exec step injected, so the plan's argv and
-/// credential custody can be proven without a live runtime (effigy#487).
-fn run_builtin_db_seed_task_with<ExecFn>(
+/// Resolve the built-in seed's staged entries against the selected
+/// environment's own service declarations.
+///
+/// The public data command runs this for its selected `--name` policy before
+/// any activation, and the built-in task runs it again to execute, so neither
+/// path reloads the manifest's default environment.
+pub(in crate::runner) fn resolve_builtin_db_seed_entries(
     repo_root: &Path,
     manifest: &effigy_manifest::TaskManifest,
+    policy: &effigy_containers::EffectiveContainerPolicy,
     env_overrides: &BTreeMap<String, String>,
-    exec: &mut ExecFn,
-) -> Result<(), RunnerError>
-where
-    ExecFn: FnMut(
-        &Path,
-        Option<&str>,
-        &effigy_data::DatabaseCommandPlan,
-        Option<&Path>,
-    ) -> Result<std::process::Output, RunnerError>,
-{
+) -> Result<Vec<BuiltinDbSeedEntry>, RunnerError> {
     let metadata_json = env_overrides
         .get(DB_SEEDS_JSON_ENV)
         .or_else(|| env_overrides.get(LEGACY_BOOTSTRAP_DB_SEEDS_JSON_ENV))
@@ -884,16 +932,15 @@ where
     let containers = manifest.containers.as_ref().ok_or_else(|| {
         RunnerError::task_invocation("manifest does not define a `[containers]` registry")
     })?;
-    let container_name = containers.default.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation("manifest does not declare a default container")
-    })?;
-    let container = containers.environments.get(container_name).ok_or_else(|| {
+    let container = containers.environments.get(&policy.name).ok_or_else(|| {
         RunnerError::task_invocation(format!(
-            "default container `{container_name}` is not defined in `{}`",
+            "container `{}` is not defined in `{}`",
+            policy.name,
             repo_root.join(TASK_MANIFEST_FILE).display()
         ))
     })?;
 
+    let mut entries = Vec::with_capacity(seed_specs.len());
     for seed in &seed_specs {
         let target = seed
             .target
@@ -915,30 +962,124 @@ where
                 RunnerError::task_invocation(format!(
                     "database seed target `{target}` is not declared in `[bundle].databases` or `[data.targets]`"
                 ))
-        })?;
-        let (service_name, catalog, password) = resolve_builtin_seed_service(container, declared)?;
-        let stdin_file = repo_root.join(&seed.staged_path);
-        let kind = DatabaseServiceKind::from_catalog(catalog)
-            .expect("unsupported seed catalog should be filtered before rendering");
+            })?;
+        let (service, catalog, password) = resolve_builtin_seed_service(container, declared)?;
+        // A declared `shared = true` service belongs to its own machine-wide
+        // Compose project, so the reset and import run there. An unshared
+        // service keeps the checkout-local route byte for byte.
+        let shared = resolve_shared_data_binding(policy, manifest, &service)?;
+        entries.push(BuiltinDbSeedEntry {
+            target,
+            staged_path: seed.staged_path.clone(),
+            declared: declared.clone(),
+            service,
+            kind: DatabaseServiceKind::from_catalog(catalog)
+                .expect("unsupported seed catalog should be filtered before rendering"),
+            password,
+            shared,
+        });
+    }
+    Ok(entries)
+}
+
+/// One shared binding per distinct shared identity among the entries.
+pub(in crate::runner) fn shared_seed_bindings(
+    entries: &[BuiltinDbSeedEntry],
+) -> Vec<effigy_containers::SharedServiceBinding> {
+    let mut bindings = Vec::new();
+    for entry in entries {
+        let Some(binding) = entry.shared.as_ref() else {
+            continue;
+        };
+        if bindings
+            .iter()
+            .any(|seen: &effigy_containers::SharedServiceBinding| {
+                seen.project_name == binding.project_name
+                    && seen.compose_file == binding.compose_file
+                    && seen.render_digest == binding.render_digest
+            })
+        {
+            continue;
+        }
+        bindings.push(binding.clone());
+    }
+    bindings
+}
+
+/// The built-in seed with its shared-project exec injected, so the declared
+/// shared route and the unshared checkout-local route are both provable
+/// without a live runtime (effigy#477).
+#[cfg(test)]
+pub(in crate::runner) fn run_builtin_db_seed_task_with<SharedExec>(
+    repo_root: &Path,
+    manifest: &effigy_manifest::TaskManifest,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    env_overrides: &BTreeMap<String, String>,
+    shared_exec: SharedExec,
+) -> Result<(), RunnerError>
+where
+    SharedExec: Fn(
+        &effigy_containers::EffectiveContainerPolicy,
+        &effigy_containers::SharedServiceBinding,
+        &effigy_data::DatabaseCommandPlan,
+        Option<&Path>,
+    ) -> Result<std::process::Output, RunnerError>,
+{
+    let entries = resolve_builtin_db_seed_entries(repo_root, manifest, policy, env_overrides)?;
+    run_builtin_db_seed_entries_with(repo_root, policy, &entries, shared_exec)
+}
+
+pub(in crate::runner) fn run_builtin_db_seed_entries_with<SharedExec>(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    entries: &[BuiltinDbSeedEntry],
+    shared_exec: SharedExec,
+) -> Result<(), RunnerError>
+where
+    SharedExec: Fn(
+        &effigy_containers::EffectiveContainerPolicy,
+        &effigy_containers::SharedServiceBinding,
+        &effigy_data::DatabaseCommandPlan,
+        Option<&Path>,
+    ) -> Result<std::process::Output, RunnerError>,
+{
+    let container_name = policy.name.as_str();
+    for entry in entries {
+        let stdin_file = repo_root.join(&entry.staged_path);
         let seed_plan = DataSeedPlan::new(DataSeedInput::new(DataSeedSource::Local(
             stdin_file.clone(),
         )))
-        .resolved_target(declared.clone())
+        .resolved_target(entry.declared.clone())
         .reset_command(database_seed_reset_command(
-            &service_name,
-            kind,
-            &password,
-            &declared.database,
+            &entry.service,
+            entry.kind,
+            &entry.password,
+            &entry.declared.database,
         ))
         .command(
-            database_seed_import_command(&service_name, kind, &password, &declared.database)
-                .stdin(stdin_file.clone()),
+            database_seed_import_command(
+                &entry.service,
+                entry.kind,
+                &entry.password,
+                &entry.declared.database,
+            )
+            .stdin(stdin_file.clone()),
         );
         let reset_command = seed_plan
             .reset_command
             .as_ref()
             .expect("builtin seed plan should include reset command");
-        let reset_output = exec(repo_root, Some(container_name), reset_command, None)?;
+        let reset_output = match entry.shared.as_ref() {
+            Some(binding) => shared_exec(policy, binding, reset_command, None)?,
+            None => run_container_exec_capture_with_credentials(
+                repo_root,
+                Some(container_name),
+                Some(&reset_command.service),
+                &reset_command.argv,
+                &reset_command.credential_env,
+                None,
+            )?,
+        };
         if !reset_output.status.success() {
             let stderr = String::from_utf8_lossy(&reset_output.stderr)
                 .trim()
@@ -954,12 +1095,17 @@ where
             .command
             .as_ref()
             .expect("builtin seed plan should include import command");
-        let output = exec(
-            repo_root,
-            Some(container_name),
-            command,
-            command.stdin.as_deref(),
-        )?;
+        let output = match entry.shared.as_ref() {
+            Some(binding) => shared_exec(policy, binding, command, command.stdin.as_deref())?,
+            None => run_container_exec_capture_with_credentials(
+                repo_root,
+                Some(container_name),
+                Some(&command.service),
+                &command.argv,
+                &command.credential_env,
+                command.stdin.as_deref(),
+            )?,
+        };
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -968,8 +1114,14 @@ where
             )));
         }
     }
-    cleanup_builtin_seed_staging(repo_root, &seed_specs)?;
-    Ok(())
+    let staged = entries
+        .iter()
+        .map(|entry| SeedMetadataEntry {
+            target: Some(entry.target.clone()),
+            staged_path: entry.staged_path.clone(),
+        })
+        .collect::<Vec<_>>();
+    cleanup_builtin_seed_staging(repo_root, &staged)
 }
 
 fn cleanup_builtin_seed_staging(
@@ -1368,158 +1520,3 @@ database = "acowtancy"
     }
 }
 
-/// Proof for effigy#487: a builtin database seed keeps the password out of every
-/// spawned argv, forwards it by variable name only, and never prints it.
-#[cfg(test)]
-mod credential_seed_tests {
-    use super::{run_builtin_db_seed_task_with, DB_SEEDS_JSON_ENV};
-    use effigy_data::DatabaseCommandPlan;
-    use effigy_manifest::TaskManifest;
-    use std::collections::BTreeMap;
-    use std::fs;
-    use std::os::unix::process::ExitStatusExt;
-    use std::path::{Path, PathBuf};
-    use std::process::Output;
-
-    const PASSWORD: &str = "synthetic-487-seed-password";
-    const STAGED_PATH: &str = ".effigy/local/db-seeds/acowtancy.sql";
-
-    const MANIFEST: &str = r#"
-[containers]
-default = "stack"
-
-[containers.stack]
-primary_service = "db"
-project_name = "seed-credential"
-working_dir = "/workspace"
-
-[containers.stack.services.db]
-catalog = "mariadb"
-version = "10.11"
-database = "acowtancy"
-password = "synthetic-487-seed-password"
-
-[data.targets.acowtancy]
-service = "db"
-database = "acowtancy"
-"#;
-
-    fn repo() -> (tempfile::TempDir, PathBuf, TaskManifest) {
-        let temp = tempfile::tempdir().expect("temporary fixture root");
-        let repo = temp.path().join("repo");
-        fs::create_dir_all(repo.join(".effigy/local/db-seeds")).expect("mkdir staging");
-        fs::write(repo.join("effigy.toml"), MANIFEST).expect("write manifest");
-        fs::write(repo.join(STAGED_PATH), "select 1;\n").expect("write staged seed");
-        let manifest = crate::runner::manifest::load_task_manifest(&repo.join("effigy.toml"))
-            .expect("load manifest");
-        (temp, repo, manifest)
-    }
-
-    fn seed_env() -> BTreeMap<String, String> {
-        BTreeMap::from([(
-            DB_SEEDS_JSON_ENV.to_owned(),
-            format!(r#"[{{"target":"acowtancy","staged_path":"{STAGED_PATH}"}}]"#),
-        )])
-    }
-
-    fn success() -> Output {
-        Output {
-            status: ExitStatusExt::from_raw(0),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }
-    }
-
-    fn assert_credential_custody(command: &DatabaseCommandPlan) {
-        assert_eq!(
-            command.credential_env.get("MYSQL_PWD").map(String::as_str),
-            Some(PASSWORD),
-            "the seed credential must travel by name: {:?}",
-            command.credential_env_names()
-        );
-        assert!(
-            !command.argv.iter().any(|arg| arg.contains(PASSWORD)),
-            "a spawned argument carried the password: {:?}",
-            command.argv
-        );
-        assert!(
-            !command.argv.iter().any(|arg| arg.starts_with("MYSQL_PWD=")),
-            "the value must never be an argv assignment: {:?}",
-            command.argv
-        );
-    }
-
-    #[test]
-    fn a_builtin_seed_passes_the_password_by_name_only() {
-        let (_temp, repo, manifest) = repo();
-        let mut commands = Vec::new();
-
-        run_builtin_db_seed_task_with(
-            &repo,
-            &manifest,
-            &seed_env(),
-            &mut |_: &Path,
-                  container_name: Option<&str>,
-                  command: &DatabaseCommandPlan,
-                  stdin_file: Option<&Path>| {
-                assert_eq!(container_name, Some("stack"));
-                assert_credential_custody(command);
-                commands.push((command.argv.join(" "), stdin_file.map(Path::to_path_buf)));
-                Ok(success())
-            },
-        )
-        .expect("seed");
-
-        assert_eq!(commands.len(), 2, "reset then import");
-        assert!(
-            commands[0].0.starts_with("mysql -uroot -e DROP DATABASE"),
-            "{}",
-            commands[0].0
-        );
-        assert_eq!(commands[0].1, None, "the reset carries no stdin file");
-        assert!(
-            commands[1].0.starts_with("mysql -uroot acowtancy"),
-            "{}",
-            commands[1].0
-        );
-        assert_eq!(
-            commands[1].1,
-            Some(repo.join(STAGED_PATH)),
-            "the import keeps its staged seed stdin"
-        );
-    }
-
-    #[test]
-    fn a_refused_builtin_seed_import_reports_without_the_password() {
-        let (_temp, repo, manifest) = repo();
-        let mut calls = 0;
-
-        let error = run_builtin_db_seed_task_with(
-            &repo,
-            &manifest,
-            &seed_env(),
-            &mut |_: &Path, _: Option<&str>, command: &DatabaseCommandPlan, _: Option<&Path>| {
-                assert_credential_custody(command);
-                calls += 1;
-                Ok(if calls == 1 {
-                    success()
-                } else {
-                    Output {
-                        status: ExitStatusExt::from_raw(2),
-                        stdout: Vec::new(),
-                        stderr: b"import refused".to_vec(),
-                    }
-                })
-            },
-        )
-        .expect_err("a failed import fails the seed");
-
-        let rendered = error.to_string();
-        assert!(rendered.contains("SQL import failed"), "{rendered}");
-        assert!(rendered.contains("import refused"), "{rendered}");
-        assert!(
-            !rendered.contains(PASSWORD),
-            "the failure carried the password: {rendered}"
-        );
-    }
-}
