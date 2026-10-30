@@ -373,16 +373,31 @@ fn release_ci_gate_requires_a_successful_manual_run_for_the_exact_head() {
 
 #[test]
 fn release_gate_steps_name_the_gate_and_its_outcome() {
-    use super::ops::{release_gate_label, release_gate_summary};
-    use effigy_release::GateResult;
+    use super::ops::{gate_progress, release_gate_summary};
+    use effigy_release::{GateResult, ResolvedGate};
+    use std::time::Duration;
 
+    let gate = ResolvedGate {
+        name: "cargo test".to_owned(),
+        command: "effigy test".to_owned(),
+        task: Some("test".to_owned()),
+        description: None,
+        stage: effigy_release::GateStage::Certify,
+        reuse_hosted_evidence: false,
+        hosted_evidence: None,
+    };
     assert_eq!(
-        release_gate_label(2, 5, "cargo test", false),
-        "running gate cargo test (2/5)"
+        gate_progress(2, 5, &gate, false).frame_at(Duration::from_secs(3)),
+        "running gate cargo test (2/5); waiting for `effigy test` to exit; 3s elapsed"
     );
+    let reused = ResolvedGate {
+        name: "hosted ci".to_owned(),
+        reuse_hosted_evidence: true,
+        ..gate
+    };
     assert_eq!(
-        release_gate_label(1, 1, "hosted ci", true),
-        "reusing hosted evidence for gate hosted ci (1/1)"
+        gate_progress(1, 1, &reused, true).frame_at(Duration::from_secs(2)),
+        "reusing hosted evidence for gate hosted ci (1/1); waiting for hosted evidence for gate hosted ci; 2s elapsed"
     );
 
     let failed = GateResult {
@@ -414,18 +429,27 @@ fn release_gate_steps_name_the_gate_and_its_outcome() {
 
 #[test]
 fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
-    use super::ops::ReleaseRunSteps;
+    use super::ops::{ReleaseRunSteps, NEXT_GATE_OR_STAGE};
     use effigy_release::{GateObserver, GateResult, ResolvedGate};
+    use effigy_ui::steps::ProgressSource;
+    use std::time::Duration;
 
-    // A test process draws nothing, so this only carries the label.
-    let root = effigy_ui::steps::step("running the release");
+    // A test process draws nothing, so the frames are read from the source on a
+    // fake clock.
+    let progress = ProgressSource::waiting_for(NEXT_GATE_OR_STAGE);
+    progress.update("running the release through publish", None, None);
+    let root = effigy_ui::steps::live_step(progress.clone());
     let mut observer = ReleaseRunSteps {
         root: root.clone(),
+        progress: progress.clone(),
         gate: None,
     };
 
     observer.stage("certify");
-    assert_eq!(root.label(), "release: running stage certify");
+    assert_eq!(
+        progress.frame_at(Duration::from_secs(3)),
+        "running stage certify; waiting for the next gate or stage; 3s elapsed"
+    );
 
     let gate = ResolvedGate {
         name: "cargo test".to_owned(),
@@ -437,7 +461,10 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
         hosted_evidence: None,
     };
     observer.gate_started(2, 5, &gate, false);
-    assert_eq!(root.label(), "release: running gate cargo test (2/5)");
+    assert_eq!(
+        progress.frame_at(Duration::from_secs(4)),
+        "running gate cargo test (2/5); waiting for `effigy test` to exit; 4s elapsed"
+    );
 
     let result = GateResult {
         name: "cargo test".to_owned(),
@@ -456,5 +483,30 @@ fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
         hosted_repository: None,
     };
     observer.gate_finished(2, 5, &result);
-    assert_eq!(root.label(), "release: continuing");
+    assert_eq!(
+        progress.frame_at(Duration::from_secs(40)),
+        "checking the next gate or stage (2/5); last: gate `cargo test` passed after 12s (2/5); 40s elapsed"
+    );
+
+    // A wait that is not one gate names itself as the sub-step; the last gate
+    // outcome stays visible until a newer event replaces it.
+    observer.note("checking hosted GitHub Actions evidence");
+    assert_eq!(
+        progress.frame_at(Duration::from_secs(41)),
+        "checking hosted GitHub Actions evidence; last: gate `cargo test` passed after 12s (2/5); 41s elapsed"
+    );
+}
+
+#[test]
+fn a_paused_release_run_names_what_it_waits_on() {
+    use super::ops::release_run_summary_text;
+
+    assert_eq!(
+        release_run_summary_text("publish", "awaiting approval", Some("publish")),
+        "release reached stage `publish` (awaiting approval); waiting on `publish`"
+    );
+    assert_eq!(
+        release_run_summary_text("certify", "complete", None),
+        "release reached stage `certify` (complete)"
+    );
 }

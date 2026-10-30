@@ -125,6 +125,15 @@ impl ProgressSource {
         }
     }
 
+    /// Name the exact object or probe now awaited, when the work moves on to
+    /// something other than the one first named.
+    pub fn waiting_on(&self, awaiting: impl Into<String>) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .awaiting = awaiting.into();
+    }
+
     /// Update the current object or sub-step, known count and latest event.
     pub fn update(
         &self,
@@ -611,6 +620,16 @@ fn print_line_to(sink: &Sink, json: bool, line: &str) {
         return;
     }
     sink.write_above_bars(&format!("{line}\n"));
+}
+
+/// End an outcome that was immediate: one ✓/✗ line, no spinner. Use it where a
+/// step would start and succeed in the same breath.
+pub fn finish_line(ok: bool, summary: &str) {
+    if capture_finish(ok, summary) {
+        return;
+    }
+    let sink = global_sink();
+    sink.write_finish(sink.mode(), ok, summary);
 }
 
 /// Start a top-level step. The label is short, present tense and names its

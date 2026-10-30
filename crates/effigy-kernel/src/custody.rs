@@ -2,6 +2,7 @@
 mod anchor;
 pub(crate) mod capture;
 pub(crate) mod platform;
+mod terminal;
 /// Signal one external process only after the caller's fresh authority check.
 pub fn signal_verified_process(
     identity: &ProcessIdentity,
@@ -234,19 +235,26 @@ pub struct OwnedProcess {
 pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
     anchor: Option<ProcessIdentity>,
-    /// stdout and stderr logs, fed from the one merged redaction.
+    /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
-    /// Each byte comes from the merged redaction, attributed to the stream
-    /// that produced it, so joining the two never reconstructs a secret.
+    /// Each is the redacted projection of its own stream over the merged,
+    /// sanitized result: a projection can join halves that arrival order kept
+    /// apart, so it is redacted again. The merged output and tail are the
+    /// canonical capture; two projections are never concatenated into one.
     streams: [VecDeque<u8>; 2],
     queue_max: usize,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
     /// The owner's side of a `Terminal::Pipe` child's stdin.
     stdin: Option<OwnedFd>,
-    redactor: Redactor,
+    /// Sanitize then redact, once, over merged arrival order: every sink below
+    /// (per-stream logs, queues, merged output, tail) is a projection of it.
+    pipeline: OutputPipeline,
+    /// The canonical captured tail: the last bytes of that same merged,
+    /// sanitized and redacted arrival order. A reader never re-groups streams
+    /// to rebuild it.
     tail: VecDeque<u8>,
     tail_max: usize,
     capture: CaptureState,
@@ -257,9 +265,84 @@ pub(crate) struct ProcessCore {
     pty: bool,
     registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
 }
+/// The one path from a secret-bearing process's merged raw output to every
+/// sink (K12): terminal controls are removed first, so the redactor sees
+/// exactly the visible bytes a front end would show, then redaction runs.
+/// Splitting that order, or normalizing after redaction, reopens the split
+/// secret: `super` CSI `secret` is one value to a terminal and two
+/// non-matching runs to a redactor over the raw bytes.
+#[derive(Debug)]
+struct OutputPipeline {
+    /// `Some` only for a secret-bearing process. An ordinary process keeps its
+    /// terminal colour, exactly as before this seam existed.
+    sanitizer: Option<terminal::TerminalSanitizer>,
+    redactor: Redactor,
+    /// One redactor per stream, present only for a secret-bearing process.
+    ///
+    /// Splitting the merged result by origin stream is a byte removal, and a
+    /// removal can join two halves of a secret that the merged redaction
+    /// correctly left alone, because the other stream's *visible* bytes sat
+    /// between them (`super` on stdout, `noise` on stderr, `secret` on
+    /// stdout). Each projection is therefore redacted again over its own byte
+    /// stream before it reaches a stored log or a queue. Keeping both streams
+    /// in arrival order is the only capture that cannot be reordered, so the
+    /// merged output and the merged tail stay canonical, and a consumer that
+    /// wants both streams reads them, never a concatenation of projections.
+    projections: Option<[Redactor; 2]>,
+}
+impl OutputPipeline {
+    fn new(secrets: Vec<Vec<u8>>) -> Self {
+        let secret_bearing = !secrets.is_empty();
+        Self {
+            sanitizer: secret_bearing.then(terminal::TerminalSanitizer::new),
+            projections: secret_bearing.then(|| {
+                [
+                    Redactor::new(secrets.clone()),
+                    Redactor::new(secrets.clone()),
+                ]
+            }),
+            redactor: Redactor::new(secrets),
+        }
+    }
+    /// Sanitize, then redact, one merged arrival-order slice. Both steps keep
+    /// each byte's origin tag.
+    fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
+        match self.sanitizer.as_mut() {
+            Some(sanitizer) => {
+                let visible = sanitizer.push_tagged(bytes, eof);
+                // Empty is not a no-op: EOF still flushes the redactor.
+                self.redactor.push_tagged(&visible, eof)
+            }
+            None => self.redactor.push_tagged(bytes, eof),
+        }
+    }
+    /// Each stream's own safe projection of one merged result. A stream sink
+    /// is only ever written from this, never from a filtered merged slice.
+    fn project(&mut self, merged: &[(u8, u8)], eof: bool) -> [Vec<u8>; 2] {
+        let mut raw: [Vec<u8>; 2] = Default::default();
+        for &(tag, byte) in merged {
+            if let Some(part) = raw.get_mut(usize::from(tag)) {
+                part.push(byte);
+            }
+        }
+        let Some(projections) = self.projections.as_mut() else {
+            return raw;
+        };
+        for (stream, redactor) in projections.iter_mut().enumerate() {
+            // The projection is its own stream of bytes, so it is redacted as
+            // one: a secret its own bytes form is caught even when arrival
+            // order interleaved them with the other stream's.
+            raw[stream] = redactor.push(&raw[stream], eof);
+        }
+        raw
+    }
+}
 pub(crate) struct Redactor {
-    display: RedactionPass,
-    final_check: RedactionPass,
+    /// `None` when no reader-safe byte is absent from every secret, so no
+    /// replacement can be emitted that a reader cannot join across: nothing is
+    /// redacted and the capture stops (`blocked`) rather than leak.
+    display: Option<RedactionPass>,
+    final_check: Option<RedactionPass>,
 }
 impl std::fmt::Debug for Redactor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -285,14 +368,38 @@ impl Redactor {
             })
             .collect::<Vec<_>>();
         secrets.extend(terminal);
+        // A secret can itself carry a terminal control. The sanitizer removes
+        // it, so the bytes a reader shows are that value's visible form; match
+        // it too, or stripping a control out of a secret would leave a visible
+        // remainder no pattern covers (K12).
+        secrets.extend(
+            secrets
+                .iter()
+                .map(|secret| terminal::visible(secret))
+                .filter(|visible| !visible.is_empty())
+                .collect::<Vec<_>>(),
+        );
+        secrets.sort();
+        secrets.dedup();
+        // A secret can itself contain the display marker, or a replacement can
+        // join adjacent bytes into another secret. A second streaming pass
+        // replaces such an occurrence with one byte: a byte *no reader drops*
+        // and no secret contains. Both halves matter. A control byte (a NUL,
+        // say) is dropped by a reader, which joins the bytes either side of it
+        // and can rebuild the very secret this pass removed; a byte a secret
+        // contains could be part of one. With a byte in neither class, the
+        // replacement can neither hold a secret nor be spanned by one.
+        let replacement = final_replacement(&secrets);
         Self {
-            display: RedactionPass::new(secrets.clone(), b"[REDACTED]"),
-            // A secret can itself contain the display marker, or a replacement
-            // can join adjacent bytes into another secret. A second streaming
-            // pass uses NUL, which SecretValue forbids, so its replacement can
-            // neither contain a secret nor create one across its boundaries.
-            final_check: RedactionPass::new(secrets, b"\0"),
+            display: replacement
+                .map(|_| RedactionPass::new(secrets.clone(), b"[REDACTED]".to_vec())),
+            final_check: replacement.map(|byte| RedactionPass::new(secrets, vec![byte])),
         }
+    }
+    /// Whether no reader-safe replacement byte exists for this secret set, so
+    /// nothing can be emitted at all.
+    pub(crate) fn blocked(&self) -> bool {
+        self.display.is_none()
     }
     pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<u8> {
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (0, *byte)).collect();
@@ -305,17 +412,36 @@ impl Redactor {
     /// the stream of the secret's first byte, so a secret split across
     /// stdout and stderr is redacted whole and attributed to one stream.
     pub(crate) fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
-        let display = self.display.push(bytes, eof);
-        self.final_check.push(&display, eof)
+        let (Some(display), Some(final_check)) = (self.display.as_mut(), self.final_check.as_mut())
+        else {
+            return Vec::new();
+        };
+        let shown = display.push(bytes, eof);
+        final_check.push(&shown, eof)
     }
+}
+
+/// The byte a re-formed secret is replaced with: the first value a reader keeps
+/// and no secret contains, preferred in an order that keeps output readable.
+/// Every control is either dropped by a reader or moved by a renderer, so only
+/// printable ASCII is a candidate. `None` when the secrets cover them all: no
+/// replacement could then be both safe and readable.
+fn final_replacement(secrets: &[Vec<u8>]) -> Option<u8> {
+    const PREFERRED: &[u8] = b"~`^|\\{}<>$&*?!;:+=@%#/\"',()[]";
+    let absent = |byte: u8| !secrets.iter().any(|secret| secret.contains(&byte));
+    PREFERRED
+        .iter()
+        .copied()
+        .chain((0x20..=0x7e).filter(|byte| !PREFERRED.contains(byte)))
+        .find(|byte| absent(*byte))
 }
 struct RedactionPass {
     secrets: Vec<Vec<u8>>,
     pending: Vec<(u8, u8)>,
-    replacement: &'static [u8],
+    replacement: Vec<u8>,
 }
 impl RedactionPass {
-    fn new(mut secrets: Vec<Vec<u8>>, replacement: &'static [u8]) -> Self {
+    fn new(mut secrets: Vec<Vec<u8>>, replacement: Vec<u8>) -> Self {
         secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
         Self {
             secrets,
@@ -766,7 +892,7 @@ impl Custody {
                 stdout: Some(stdout),
                 stderr: Some(stderr),
                 stdin,
-                redactor: Redactor::new(secrets),
+                pipeline: OutputPipeline::new(secrets),
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
                 capture,
@@ -906,36 +1032,48 @@ impl OwnedProcess {
     }
 }
 impl ProcessCore {
-    /// One redaction over both streams in arrival order, before any sink:
-    /// per-stream redaction could reconstruct a secret split across them
-    /// wherever they are joined (a log reader, a tail, a terminal).
+    /// One sanitize-then-redact over both streams in arrival order, before any
+    /// sink: per-stream work could reconstruct a secret split across streams
+    /// wherever they are joined (a log reader, a tail, a terminal), and a
+    /// terminal control inside a known secret could hide it from redaction
+    /// while a front end still shows the value (K12).
     fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
-        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
-        let clean = self.redactor.push_tagged(&tagged, eof);
-        if clean.is_empty() {
+        // Nothing can be redacted into a form a reader cannot join across, so
+        // the capture stops instead of emitting a joinable marker (K12). The
+        // workload itself is untouched: this is capture state only.
+        if self.pipeline.redactor.blocked() {
+            if self.capture == CaptureState::Complete {
+                self.capture =
+                    CaptureState::Truncated("no reader-safe redaction replacement".into());
+            }
             return;
         }
-        for stream in 0..2 {
-            let part: Vec<u8> = clean
-                .iter()
-                .filter(|(tag, _)| usize::from(*tag) == stream)
-                .map(|(_, byte)| *byte)
-                .collect();
+        let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
+        let clean = self.pipeline.push_tagged(&tagged, eof);
+        // A stream's own sink is a projection, so it is written from its own
+        // redacted projection and never from a filtered merged slice: removing
+        // the other stream's bytes there could join halves of a secret the
+        // merged redaction could not see as one value.
+        let parts = self.pipeline.project(&clean, eof);
+        for (stream, part) in parts.iter().enumerate() {
             if part.is_empty() {
                 continue;
             }
             if let Some(log) = self.logs[stream].as_mut() {
-                if log.append(&part).is_err() {
+                if log.append(part).is_err() {
                     log.mark_truncated();
                     self.capture = CaptureState::Truncated("log write failed".into());
                     self.logs[stream] = None;
                 }
             }
             let queue = &mut self.streams[stream];
-            queue.extend(part);
+            queue.extend(part.iter().copied());
             while queue.len() > self.queue_max {
                 queue.pop_front();
             }
+        }
+        if clean.is_empty() {
+            return;
         }
         self.output.extend(clean.iter().map(|(_, byte)| *byte));
         while self.output.len() > self.queue_max {

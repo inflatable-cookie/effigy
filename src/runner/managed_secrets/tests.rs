@@ -536,3 +536,371 @@ fn managed_delivery_cleanup_refuses_a_replaced_directory_and_changed_owner() {
     assert!(remove(&replacement).is_err());
     assert!(replacement.path.join("env.delivery").exists());
 }
+
+/// What the managed TUI puts on screen for a process's stored output. The
+/// front end splits each stream's log on `\n` (`Shared::read_logs`), feeds the
+/// line to `ingest_log_payload`, and renders it with `ansi_line`; the visible
+/// text is the concatenation of the rendered spans. This is the reader that
+/// reassembles a value a control sequence split, so it is the one custody has
+/// to satisfy.
+fn managed_tui_display(stdout: &[u8], stderr: &[u8]) -> String {
+    use effigy_tui::core::LogEntryKind;
+    use effigy_tui::terminal_text::{ansi_line, ingest_log_payload};
+    let mut buffer = std::collections::VecDeque::new();
+    for (kind, bytes) in [
+        (LogEntryKind::Stdout, stdout),
+        (LogEntryKind::Stderr, stderr),
+    ] {
+        for line in bytes.split(|byte| *byte == b'\n') {
+            let text = String::from_utf8_lossy(line)
+                .trim_end_matches('\r')
+                .to_owned();
+            if !text.is_empty() {
+                ingest_log_payload(&mut buffer, kind.clone(), &text);
+            }
+        }
+    }
+    buffer
+        .iter()
+        .map(|entry| {
+            ansi_line(&entry.line, ratatui::style::Style::default())
+                .spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What a `pty` tab shows: the same bytes go through the session's terminal
+/// emulator, which interprets carriage returns and cursor moves rather than
+/// listing lines.
+fn managed_tui_vt_display(stdout: &[u8]) -> String {
+    let mut buffer = effigy_tui::terminal_text::LiveTerminalBuffer::new();
+    buffer.push_chunk(stdout);
+    buffer.finalize();
+    let (lines, _) = buffer.render_lines(200, 40, 0);
+    lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every byte a reader drops or a renderer moves, so a sink holding one hands
+/// the reader a join it will make: TAB is here because the terminal emulator
+/// renders it as a cursor-forward escape, which the pane's ANSI parser drops.
+/// The CR of a line ending is not one of them, because the LF beside it stays a
+/// separator.
+fn reader_removed(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'\t' | 0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f
+    )
+}
+
+/// What a sink must be for a renderer to print every byte of it: well-formed
+/// text with no C1 control, so nothing is dropped and no halves are joined.
+fn assert_printable_bytes(what: &str, bytes: &[u8]) {
+    let text = std::str::from_utf8(bytes);
+    assert!(
+        text.is_ok(),
+        "the {what} still carries a byte no renderer prints"
+    );
+    assert!(
+        !text
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .any(|character| ('\u{80}'..='\u{9f}').contains(&character)),
+        "the {what} still carries a C1 control"
+    );
+}
+
+fn shell_spec(root: &Path, script: String, secret: Option<&str>) -> ProcessSpec {
+    let mut env = BTreeMap::from([(
+        "PATH".into(),
+        EnvValue::Plain(std::env::var_os("PATH").unwrap()),
+    )]);
+    if let Some(secret) = secret {
+        env.insert(
+            "SPLIT_VALUE".into(),
+            EnvValue::Secret(SecretValue::new(secret.as_bytes().to_vec()).unwrap()),
+        );
+    }
+    ProcessSpec {
+        argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
+        cwd: root.into(),
+        env,
+        grace: Duration::from_secs(1),
+        lifetime: Lifetime::Finite(Duration::from_secs(10)),
+        terminal: Terminal::None,
+        label: "split value".into(),
+    }
+}
+
+fn wait_for_exit(owner: &mut TaskRun, child: &mut effigy_kernel::custody::OwnedProcess) -> i32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let exit = loop {
+        if let Observed::Verified(exit, _) = child.poll() {
+            break exit;
+        }
+        assert!(Instant::now() < deadline, "fixture did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    owner.complete(child, exit).unwrap();
+    exit.code
+}
+
+/// K12 on the TUI path: a known secret split by a control sequence reaches no
+/// sink, and the front end that interprets those controls shows no value.
+#[test]
+fn managed_delivery_redaction_sanitizes_terminal_controls_before_the_tui_reads_them() {
+    const SECRET: &str = "split-known-secret-value";
+    // A CSI inside the value, written in pieces, then the same value split
+    // across streams with an OSC opened on stdout and closed on stderr.
+    let csi = "printf 'split-known-'; printf '\\033[1m'; printf 'secret-value\\n'";
+    let osc = "printf 'split-known-\\033]0;ti'; printf 'tle\\007secret-value\\n' >&2";
+    for script in [csi, osc] {
+        let fixture = effigy_test_support::Fixture::workspace("managed-redaction-tui-").unwrap();
+        let root = fixture.path();
+        let mut owner = run(root, false);
+        let mut child = owner
+            .spawn(shell_spec(root, script.into(), Some(SECRET)), false)
+            .unwrap();
+        assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+        let tail = child.tail();
+        let (stdout, stderr) = child.take_stream_output();
+        // The front end first: this is the sink the counterexample leaked on.
+        let display = managed_tui_display(&stdout, &stderr);
+        assert!(
+            !display.contains(SECRET),
+            "the TUI display carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert!(
+            display.contains("[REDACTED]"),
+            "the TUI display keeps the marker"
+        );
+        for (what, bytes) in [
+            ("stdout queue", &stdout),
+            ("stderr queue", &stderr),
+            ("merged tail", &tail),
+        ] {
+            assert!(
+                !String::from_utf8_lossy(bytes).contains(SECRET),
+                "{what} carries a known secret ({} bytes)",
+                SECRET.len()
+            );
+            assert!(
+                !bytes.iter().any(|byte| reader_removed(*byte)),
+                "the {what} still carries a control a reader drops"
+            );
+            assert_printable_bytes(what, bytes);
+        }
+        assert!(
+            String::from_utf8_lossy(&tail).contains("[REDACTED]"),
+            "the merged tail keeps the marker"
+        );
+        // Reversible break probe: the reader itself reassembles the pre-fix
+        // arrival shape, so the display assertion is sensitive to the fix.
+        let pre_fix = managed_tui_display("split-known-\u{1b}[1msecret-value".as_bytes(), b"");
+        assert!(
+            pre_fix.contains(SECRET),
+            "the reader must reassemble a control-split value"
+        );
+        assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+    }
+    // The same value split by a lone carriage return, on a real pseudo-terminal.
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-pty-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(
+        root,
+        "printf 'split-known-\\rsecret-value\\n'".into(),
+        Some(SECRET),
+    );
+    spec.terminal = Terminal::Pty;
+    spec.label = "split value pty".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let tail = child.tail();
+    let (stdout, stderr) = child.take_stream_output();
+    let tail_text = String::from_utf8_lossy(&tail).into_owned();
+    // The CR of the line ending stays (a pty row still returns to column 0);
+    // the lone CR inside the value does not, so the halves reached redaction
+    // as one value.
+    assert!(tail_text.contains("\r\n"), "a pty line ending keeps its CR");
+    for (what, bytes) in [
+        ("pty stdout", &stdout),
+        ("pty stderr", &stderr),
+        ("pty merged tail", &tail),
+    ] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains(SECRET),
+            "the {what} carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert!(
+            !bytes
+                .iter()
+                .enumerate()
+                .any(|(index, byte)| *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')),
+            "the {what} still carries a lone carriage return"
+        );
+        assert!(
+            !bytes.iter().any(|byte| reader_removed(*byte)),
+            "the {what} still carries a control a reader drops"
+        );
+        assert_printable_bytes(what, bytes);
+    }
+    assert!(
+        tail_text.contains("[REDACTED]"),
+        "the pty merged tail keeps the marker"
+    );
+    let display = managed_tui_vt_display(&stdout);
+    assert!(display.contains("[REDACTED]"), "pty display: {display:?}");
+    assert!(
+        !display.contains(SECRET),
+        "the pty display carries a known secret ({} bytes)",
+        SECRET.len()
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+    // The same value split by a UTF-8 C1 control (U+009B, CSI), on a real
+    // pseudo-terminal: the terminal emulator drops that character instead of
+    // printing it, which would join the halves.
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-c1-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(
+        root,
+        "printf 'split-known-\\302\\233secret-value\\n'".into(),
+        Some(SECRET),
+    );
+    spec.terminal = Terminal::Pty;
+    spec.label = "split value c1".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let tail = child.tail();
+    let (stdout, stderr) = child.take_stream_output();
+    for (what, bytes) in [
+        ("c1 pty stdout", &stdout),
+        ("c1 pty stderr", &stderr),
+        ("c1 pty merged tail", &tail),
+    ] {
+        assert!(
+            !String::from_utf8_lossy(bytes).contains(SECRET),
+            "the {what} carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert_printable_bytes(what, bytes);
+    }
+    assert!(
+        String::from_utf8_lossy(&tail).contains("[REDACTED]"),
+        "the c1 pty merged tail keeps the marker"
+    );
+    let display = managed_tui_vt_display(&stdout);
+    assert!(
+        display.contains("[REDACTED]"),
+        "c1 pty display: {display:?}"
+    );
+    assert!(
+        !display.contains(SECRET),
+        "the c1 pty display carries a known secret ({} bytes)",
+        SECRET.len()
+    );
+    // Reversible break probe: the emulator drops the C1 character, so the
+    // pre-fix arrival shape would have reached the screen as one value.
+    let pre_fix = managed_tui_vt_display("split-known-\u{9b}secret-value".as_bytes());
+    assert!(
+        pre_fix.contains(SECRET),
+        "the terminal emulator must drop a C1 control and join its neighbours"
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+}
+
+/// The same value split by a TAB, on a real pseudo-terminal: the emulator
+/// renders a TAB as a cursor-forward escape, and the pane's ANSI parser drops
+/// that escape, so the bytes either side meet on screen.
+#[test]
+fn managed_delivery_redaction_drops_a_tab_the_pty_renderer_would_shift_with() {
+    const SECRET: &str = "split-known-secret-value";
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-tab-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(
+        root,
+        "printf 'split-known-\\tsecret-value\\n'".into(),
+        Some(SECRET),
+    );
+    spec.terminal = Terminal::Pty;
+    spec.label = "split value tab".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let tail = child.tail();
+    let (stdout, stderr) = child.take_stream_output();
+    for (what, bytes) in [
+        ("tab pty stdout", &stdout),
+        ("tab pty stderr", &stderr),
+        ("tab pty merged tail", &tail),
+    ] {
+        assert!(
+            !String::from_utf8_lossy(bytes).contains(SECRET),
+            "the {what} carries a known secret ({} bytes)",
+            SECRET.len()
+        );
+        assert!(
+            !bytes.iter().any(|byte| reader_removed(*byte)),
+            "the {what} still carries a control a reader drops or a renderer moves"
+        );
+        assert_printable_bytes(what, bytes);
+    }
+    assert!(
+        String::from_utf8_lossy(&tail).contains("[REDACTED]"),
+        "the tab pty merged tail keeps the marker"
+    );
+    let display = managed_tui_vt_display(&stdout);
+    assert!(
+        display.contains("[REDACTED]"),
+        "tab pty display: {display:?}"
+    );
+    assert!(
+        !display.contains(SECRET),
+        "the tab pty display carries a known secret ({} bytes)",
+        SECRET.len()
+    );
+    // Reversible break probe: the emulator renders a TAB as a cursor-forward
+    // escape and the pane drops it, so the pre-fix arrival shape reached the
+    // screen as one value.
+    let pre_fix = managed_tui_vt_display(b"split-known-\tsecret-value");
+    assert!(
+        pre_fix.contains(SECRET),
+        "the pane must drop the emulator's cursor-forward escape and join its neighbours"
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+}
+
+/// The same custody leaves an ordinary process's colour alone.
+#[test]
+fn managed_delivery_redaction_keeps_colour_for_a_child_without_secrets() {
+    let fixture = effigy_test_support::Fixture::workspace("managed-redaction-colour-").unwrap();
+    let root = fixture.path();
+    let mut owner = run(root, false);
+    let mut spec = shell_spec(root, "printf '\\033[31mred\\033[0m plain\\n'".into(), None);
+    spec.label = "colour".into();
+    let mut child = owner.spawn(spec, false).unwrap();
+    assert_eq!(wait_for_exit(&mut owner, &mut child), 0);
+    let (stdout, _) = child.take_stream_output();
+    assert!(
+        stdout.windows(4).any(|window| window == b"\x1b[31"),
+        "an ordinary process keeps its terminal colour"
+    );
+    assert!(owner.close(WorkloadOutcome::Succeeded).is_empty());
+}

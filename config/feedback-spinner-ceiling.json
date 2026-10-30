@@ -79,75 +79,51 @@
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    245,
+    254,
     ".then(|| sink.start_bar(label));",
     27
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    858,
+    877,
     "let _child = parent.step(\"waiting for web to report healthy\");",
     29
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1032,
+    1051,
     "let step = step(\"starting gateway\");",
     24
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1035,
+    1054,
     "let failed = step.step(\"starting DNS\");",
     31
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1037,
+    1056,
     "let cleared = step.step(\"starting proxy\");",
     32
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1039,
+    1058,
     "let unfinished = step.step(\"starting broker\");",
     35
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1056,
+    1075,
     "let (_, first) = capture_lines(|| step(\"starting web\").succeed(\"web is healthy\"));",
     43
   ],
   [
     "crates/effigy-ui/src/steps.rs",
-    1058,
+    1077,
     "let (_, second) = capture_lines(|| step(\"starting web\").fail(\"web is unhealthy\"));",
     44
-  ],
-  [
-    "src/cli/entrypoint.rs",
-    261,
-    ".then(|| effigy_ui::steps::step(transient_spinner_label(&command)));",
-    36
-  ],
-  [
-    "src/runner/bootstrap_command/mod.rs",
-    242,
-    "self.running = Some(effigy_ui::steps::step(&label));",
-    47
-  ],
-  [
-    "src/runner/bootstrap_command/mod.rs",
-    257,
-    "let step = effigy_ui::steps::step(&summary);",
-    46
-  ],
-  [
-    "src/runner/bundle_command.rs",
-    380,
-    "let step = effigy_ui::steps::step(&label);",
-    42
   ],
   [
     "src/runner/container_command/lifecycle.rs",
@@ -216,52 +192,10 @@
     13
   ],
   [
-    "src/runner/deploy_command/provider_package.rs",
-    251,
-    "let step = effigy_ui::steps::step(&resolving_provider_label(provider_name, fetch));",
-    34
-  ],
-  [
     "src/runner/execute/sequence_run.rs",
     471,
     "let step = effigy_ui::steps::step(&progress);",
     38
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    117,
-    "let step = effigy_ui::steps::step(&release_run_label(&action, to));",
-    34
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    178,
-    "self.gate = Some(self.root.step(&label));",
-    36
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    329,
-    "self.running = Some(effigy_ui::steps::step(&label));",
-    47
-  ],
-  [
-    "src/runner/release_command/ops.rs",
-    338,
-    "let step = effigy_ui::steps::step(&summary);",
-    46
-  ],
-  [
-    "src/runner/state_command.rs",
-    201,
-    "let step = effigy_ui::steps::step(&action.label(&layer.key));",
-    42
-  ],
-  [
-    "src/runner/state_command.rs",
-    841,
-    "effigy_ui::steps::step(&label)",
-    27
   ],
   [
     "src/runner/task_engine/admission.rs",
@@ -280,11 +214,5 @@
     591,
     "let step = effigy_ui::steps::step(&admission_wait_label(&target.label, None));",
     34
-  ],
-  [
-    "src/runner/workspace_command/mod.rs",
-    565,
-    "let spinner = renderer.spinner(label).ok();",
-    32
   ]
 ]
