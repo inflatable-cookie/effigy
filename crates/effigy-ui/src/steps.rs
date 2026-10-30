@@ -603,6 +603,16 @@ fn print_line_to(sink: &Sink, json: bool, line: &str) {
     sink.write_above_bars(&format!("{line}\n"));
 }
 
+/// End an outcome that was immediate: one ✓/✗ line, no spinner. Use it where a
+/// step would start and succeed in the same breath.
+pub fn finish_line(ok: bool, summary: &str) {
+    if capture_finish(ok, summary) {
+        return;
+    }
+    let sink = global_sink();
+    sink.write_finish(sink.mode(), ok, summary);
+}
+
 /// Start a top-level step. The label is short, present tense and names its
 /// subject: `starting web`.
 #[cfg_attr(

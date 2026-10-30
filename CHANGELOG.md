@@ -344,6 +344,11 @@ During v0.x, MINOR bumps may include breaking changes.
   layer that names the layer and action (task, SQL import, artifact stage, or
   hook), then one ✓/✗. `--json` and piped output stay silent. Real SQL-layer
   spinner timing still needs an exact-candidate proof.
+- `effigy bundle sync`, `bootstrap`, and deploy provider resolution show what
+  they are waiting on as time passes: each bundle or catalog source names its
+  exact revision, a `setup` or `start` phase names its selector, and a git
+  provider fetch names its source and pin, with elapsed time on every frame.
+  Immediate outcomes stay one line.
 - Run control for every run: `effigy --run-id <key> <task>` names a run,
   `effigy runs` lists them, and `effigy run status|logs|stop <run>` inspects and
   stops one. A managed task's `--detach` returns once every workload has
