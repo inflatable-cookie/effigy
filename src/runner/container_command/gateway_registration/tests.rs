@@ -576,6 +576,63 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
     assert_eq!(rows.len(), 2);
 }
 
+/// The wait reports each poll it makes: the runtime read in flight, then the
+/// blocker that read returned, so a stalled or repeatedly blocked poll is
+/// visible while it runs (effigy#460, Q-017).
+#[test]
+fn gateway_readiness_reports_each_poll_and_its_blocker() {
+    let policy = test_policy();
+    let repo_root = PathBuf::from("/tmp");
+    let mut waits = Vec::new();
+    let mut running_rows = |_: std::time::Duration| {
+        // One running service that has published no port for its declared
+        // gateway route yet: the poll is blocked, not complete.
+        Ok(vec![RunningComposeContainer {
+            container_name: "demo-web-dev-db-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: Vec::new(),
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp".to_owned()),
+            service: Some("db".to_owned()),
+            oneoff: false,
+        }])
+    };
+    let mut all_rows = |_: std::time::Duration| Ok(Vec::new());
+    let mut pause = |_: std::time::Duration| {};
+    let error = wait_for_gateway_service_ports_ready_observed(
+        &repo_root,
+        &policy,
+        std::time::Duration::from_millis(20),
+        std::time::Duration::from_millis(1),
+        &mut |wait| match wait {
+            GatewayPortWait::Reading { attempt } => waits.push(format!("reading {attempt}")),
+            GatewayPortWait::Blocked { attempt, detail } => {
+                waits.push(format!("blocked {attempt}: {detail}"))
+            }
+        },
+        PortPollReads {
+            running_rows: &mut running_rows,
+            all_rows: &mut all_rows,
+            pause: &mut pause,
+        },
+    )
+    .expect_err("ports that never publish are a timeout");
+
+    assert!(
+        waits.len() >= 2,
+        "each poll reports a read and its answer: {waits:?}"
+    );
+    assert_eq!(waits[0], "reading 1", "{waits:?}");
+    assert!(
+        waits[1].starts_with("blocked 1: "),
+        "the read's answer names what blocks it: {waits:?}"
+    );
+    assert!(
+        error.to_string().contains("gateway"),
+        "the timeout still names the wait: {error}"
+    );
+}
+
 #[test]
 fn gateway_readiness_reports_a_declared_service_exit() {
     let policy = test_policy();

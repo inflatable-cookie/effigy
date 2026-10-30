@@ -690,6 +690,31 @@ fn integration_stage(progress: &ProgressSource, finished: u64, stage: &str) {
     progress.update(stage, Some((finished, INTEGRATION_STAGES)), None);
 }
 
+/// The route stage while the declared gateway service ports are polled: the
+/// runtime read in flight, then the blocker that read reported — naming the
+/// service and domain when the detail knows them — with the stage count and
+/// elapsed time (effigy#460, Q-017).
+fn gateway_port_wait_stage(
+    progress: &ProgressSource,
+    wait: super::gateway_registration::GatewayPortWait<'_>,
+) {
+    let count = Some((5, INTEGRATION_STAGES));
+    match wait {
+        super::gateway_registration::GatewayPortWait::Reading { attempt } => progress.update(
+            format!(
+                "reading the runtime's containers for the declared gateway service ports (attempt {attempt})"
+            ),
+            count,
+            None,
+        ),
+        super::gateway_registration::GatewayPortWait::Blocked { attempt, detail } => progress.update(
+            format!("waiting for the declared gateway service ports (attempt {attempt})"),
+            count,
+            Some(detail.to_owned()),
+        ),
+    }
+}
+
 fn complete_container_up_runtime_integrations(
     repo_root: &Path,
     plan: &ContainerUpPlan,
@@ -768,11 +793,19 @@ fn complete_container_up_runtime_integrations(
         return Err(finish_container_up_failure(error, cleanup_result));
     }
     integration_stage(progress, 5, "registering gateway routes");
+    // The registration polls the runtime for the declared gateway service
+    // ports, so the stage names the read in flight and the blocker it reported
+    // rather than holding the stage label for the whole wait (effigy#460,
+    // Q-017).
+    let mut route_wait = |wait: super::gateway_registration::GatewayPortWait<'_>| {
+        gateway_port_wait_stage(progress, wait);
+    };
     let gateway_routes =
-        match super::gateway_registration::register_gateway_routes_for_verified_container(
+        match super::gateway_registration::register_gateway_routes_for_verified_container_observed(
             repo_root,
             policy,
             Some(&binding),
+            &mut route_wait,
         ) {
             Ok(routes) => routes,
             Err(error) => {
@@ -1808,6 +1841,39 @@ mod tests {
         assert_eq!(
             progress.frame_at(Duration::from_secs(51)),
             "asking the runtime to keep the containers of the `web` stack on `restart: unless-stopped`; waiting for `restart: unless-stopped` on the `web` stack; 51s elapsed"
+        );
+    }
+
+    #[test]
+    fn the_route_stage_names_the_port_read_and_the_blocker_it_reported() {
+        use std::time::Duration;
+
+        let progress = ProgressSource::waiting_for("the runtime integrations of this environment");
+        super::integration_stage(&progress, 5, "registering gateway routes");
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(2)),
+            "registering gateway routes (5/8); waiting for the runtime integrations of this environment; 2s elapsed"
+        );
+        // The runtime read now in flight, with its attempt and the stage count.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::Reading { attempt: 2 },
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(12)),
+            "reading the runtime's containers for the declared gateway service ports (attempt 2) (5/8); waiting for the runtime integrations of this environment; 12s elapsed"
+        );
+        // The read answered and its blocker names the service and domain.
+        super::gateway_port_wait_stage(
+            &progress,
+            super::super::gateway_registration::GatewayPortWait::Blocked {
+                attempt: 2,
+                detail: "service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`",
+            },
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(13)),
+            "waiting for the declared gateway service ports (attempt 2) (5/8); last: service `db` has not published its declared TCP alias port for gateway domain `db.demo.test`; 13s elapsed"
         );
     }
 

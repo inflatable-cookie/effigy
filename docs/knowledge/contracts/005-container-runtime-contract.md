@@ -160,6 +160,12 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
+The route-registration stage polls the runtime for the declared gateway service
+ports for up to 60s; its frame names the read in flight (`reading the runtime's
+containers for the declared gateway service ports (attempt 2)`) and then the
+blocker that read reported, with the service and domain when the detail knows
+them, instead of holding the stage label.
+
 Readiness is Running plus the service's own health check. Its progress names
 which of the probe's two runtime reads is running — the project's container
 list, or the inspect of the container names that list returned, with those

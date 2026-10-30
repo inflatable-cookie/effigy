@@ -236,7 +236,29 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     policy: &EffectiveContainerPolicy,
     binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows = wait_for_gateway_service_ports_ready(repo_root, policy)?;
+    register_gateway_routes_for_verified_container_observed(repo_root, policy, binding, &mut |_| {})
+}
+
+/// One poll of the declared gateway service ports, as the wait observes it: the
+/// runtime read now in flight, or that read's answer and what still blocks the
+/// ports. A caller that shows progress names the wait it is in rather than the
+/// whole stage (effigy#460, Q-017).
+pub(in crate::runner) enum GatewayPortWait<'a> {
+    /// The runtime container read now in flight.
+    Reading { attempt: u64 },
+    /// The read answered and the ports are still missing: what blocks them,
+    /// naming the service and domain where the detail knows them.
+    Blocked { attempt: u64, detail: &'a str },
+}
+
+/// The same registration, reporting each poll of the declared service ports.
+pub(in crate::runner) fn register_gateway_routes_for_verified_container_observed(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    let rows = wait_for_gateway_service_ports_ready(repo_root, policy, on_wait)?;
     if let Some(binding) = binding {
         binding.reverify(
             repo_root,
@@ -271,32 +293,40 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
 fn wait_for_gateway_service_ports_ready(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
     let deadline = Instant::now() + GATEWAY_SERVICE_PORT_READY_TIMEOUT;
-    wait_for_gateway_service_ports_ready_with(
+    let mut running_rows = |timeout| {
+        list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
+            .and_then(|rows| {
+                effigy_containers::exec::verify_owned_running_compose_rows(
+                    repo_root, policy, &rows, deadline,
+                )
+            })
+            .map_err(|error| error.to_string())
+    };
+    let mut all_rows = |timeout| {
+        list_compose_containers_for_policy_including_stopped_with_timeout(
+            repo_root, policy, timeout,
+        )
+        .map_err(|error| error.to_string())
+    };
+    let mut pause = thread::sleep;
+    wait_for_gateway_service_ports_ready_observed(
         repo_root,
         policy,
         GATEWAY_SERVICE_PORT_READY_TIMEOUT,
         GATEWAY_SERVICE_PORT_POLL_INTERVAL,
-        |timeout| {
-            list_running_compose_containers_for_policy_with_timeout(repo_root, policy, timeout)
-                .and_then(|rows| {
-                    effigy_containers::exec::verify_owned_running_compose_rows(
-                        repo_root, policy, &rows, deadline,
-                    )
-                })
-                .map_err(|error| error.to_string())
+        on_wait,
+        PortPollReads {
+            running_rows: &mut running_rows,
+            all_rows: &mut all_rows,
+            pause: &mut pause,
         },
-        |timeout| {
-            list_compose_containers_for_policy_including_stopped_with_timeout(
-                repo_root, policy, timeout,
-            )
-            .map_err(|error| error.to_string())
-        },
-        thread::sleep,
     )
 }
 
+#[cfg(test)]
 fn wait_for_gateway_service_ports_ready_with(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -306,40 +336,85 @@ fn wait_for_gateway_service_ports_ready_with(
     mut all_rows: impl FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
     mut pause: impl FnMut(Duration),
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    wait_for_gateway_service_ports_ready_observed(
+        repo_root,
+        policy,
+        timeout,
+        poll_interval,
+        &mut |_| {},
+        PortPollReads {
+            running_rows: &mut running_rows,
+            all_rows: &mut all_rows,
+            pause: &mut pause,
+        },
+    )
+}
+
+/// The runtime reads one port poll makes, grouped so the observed wait keeps a
+/// readable signature and a test can inject each read.
+struct PortPollReads<'a> {
+    running_rows: &'a mut dyn FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
+    all_rows: &'a mut dyn FnMut(Duration) -> Result<Vec<RunningComposeContainer>, String>,
+    pause: &'a mut dyn FnMut(Duration),
+}
+
+fn wait_for_gateway_service_ports_ready_observed(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    timeout: Duration,
+    poll_interval: Duration,
+    on_wait: &mut dyn FnMut(GatewayPortWait<'_>),
+    reads: PortPollReads<'_>,
+) -> Result<Vec<RunningComposeContainer>, RunnerError> {
     let deadline = Instant::now() + timeout;
     let mut last_detail = None;
+    let mut attempts = 0_u64;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break;
         }
-        let rows = match running_rows(remaining) {
+        attempts += 1;
+        // The frame names the runtime read now in flight, then the blocker that
+        // read reported, so a stalled or repeatedly blocked poll is visible
+        // (effigy#460, Q-017).
+        on_wait(GatewayPortWait::Reading { attempt: attempts });
+        let rows = match (reads.running_rows)(remaining) {
             Ok(rows) => rows,
             Err(error) => {
-                last_detail = Some(format!(
-                    "could not inspect running Compose services: {error}"
-                ));
+                let detail = format!("could not inspect running Compose services: {error}");
+                on_wait(GatewayPortWait::Blocked {
+                    attempt: attempts,
+                    detail: &detail,
+                });
+                last_detail = Some(detail);
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
                     break;
                 }
-                pause(poll_interval.min(remaining));
+                (reads.pause)(poll_interval.min(remaining));
                 continue;
             }
         };
         match gateway_routes_readiness_detail(repo_root, policy, &rows) {
             Ok(None) => return Ok(rows),
-            Ok(Some(detail)) => last_detail = Some(detail),
+            Ok(Some(detail)) => {
+                on_wait(GatewayPortWait::Blocked {
+                    attempt: attempts,
+                    detail: &detail,
+                });
+                last_detail = Some(detail);
+            }
             Err(error) => return Err(error),
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break;
         }
-        pause(poll_interval.min(remaining));
+        (reads.pause)(poll_interval.min(remaining));
     }
 
-    let exited = all_rows(GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT)
+    let exited = (reads.all_rows)(GATEWAY_EXIT_DIAGNOSTIC_TIMEOUT)
         .ok()
         .and_then(|rows| exited_gateway_service_detail(policy, &rows));
     let detail = exited.or(last_detail).unwrap_or_else(|| {

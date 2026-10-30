@@ -698,8 +698,10 @@ until the host-log writer has a safe secret-handling boundary.
   with its error. Activation shows the Compose call it waits on and the last
   runtime line it read, and each Compose child step moves with the runtime's
   reports instead of holding one fixed label. Integration stages count the
-  stages finished (`3/8`) and name the one now running; shared services name
-  the services they await. Every frame carries elapsed time. JSON, piped and
+  stages finished (`3/8`) and name the one now running; the gateway-route stage
+  names the runtime read polling the declared service ports and the blocker it
+  last reported, with the service and domain that blocker knows; shared
+  services name the services they await. Every frame carries elapsed time. JSON, piped and
   quiet output stay silent. Rendering is a single finished line, not a spinner.
   A readiness refusal carries its machine-readable `waiting_on` list in
   `--json`: one entry per service still unready, with its problem, and one for
