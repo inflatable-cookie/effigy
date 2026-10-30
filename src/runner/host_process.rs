@@ -1699,6 +1699,17 @@ fn nonsecret_host_environment(name: &str) -> bool {
             | "CARGO_MANIFEST_PATH"
             | "CARGO_PKG_NAME"
             | "CARGO_PKG_VERSION"
+            | "CARGO_PKG_VERSION_MAJOR"
+            | "CARGO_PKG_VERSION_MINOR"
+            | "CARGO_PKG_VERSION_PATCH"
+            | "CARGO_PKG_VERSION_PRE"
+            | "CARGO_PKG_AUTHORS"
+            | "CARGO_PKG_DESCRIPTION"
+            | "CARGO_PKG_HOMEPAGE"
+            | "CARGO_PKG_REPOSITORY"
+            | "CARGO_PKG_LICENSE"
+            | "CARGO_PKG_LICENSE_FILE"
+            | "CARGO_PKG_RUST_VERSION"
             | "MallocNanoZone"
             | "OSLogRateLimit"
             | "NoDefaultCurrentDirectoryInExePath"
@@ -2643,6 +2654,7 @@ mod tests {
             ("PATH", "/bin"),
             ("NEXTEST_ATTEMPT", "1"),
             ("CARGO_INCREMENTAL", "1"),
+            ("CARGO_PKG_VERSION_PATCH", "1"),
             ("TOKEN", "hidden-value"),
             ("ALIAS", "prefix-hidden-value-suffix"),
             ("UNKNOWN", "opaque"),
@@ -2678,6 +2690,7 @@ mod tests {
             "PUBLIC",
             "NEXTEST_ATTEMPT",
             "CARGO_INCREMENTAL",
+            "CARGO_PKG_VERSION_PATCH",
         ] {
             assert!(
                 matches!(
