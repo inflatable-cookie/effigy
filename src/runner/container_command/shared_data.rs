@@ -52,7 +52,7 @@ pub(in crate::runner) fn resolve_shared_data_binding(
         // A shared declaration always renders a binding. Falling back to the
         // checkout-local route here would silently seed a different database.
         return Err(RunnerError::task_invocation(format!(
-            "container `{env}` declares service `{service}` with `shared = true`, but its effective policy has no shared binding for it. Nothing was executed. Re-run `effigy container up {env}` to resolve the shared service, or correct the manifest.",
+            "container `{env}` declares service `{service}` with `shared = true`, but its effective policy has no shared binding for it. Nothing was executed. Re-run `effigy container {env} up` to resolve the shared service, or correct the manifest.",
             env = policy.name,
         )));
     };
@@ -255,7 +255,7 @@ fn expected_shared_render<'a>(
     });
     render.ok_or_else(|| {
         RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) has no rendered service under `{render}`, so a data command cannot prove its files. Nothing was executed. Run `effigy container up {env}` to render and start the shared service, then re-run.",
+            "shared {service} (project `{project}`) has no rendered service under `{render}`, so a data command cannot prove its files. Nothing was executed. Run `effigy container {env} up` to render and start the shared service, then re-run.",
             service = binding.service_name,
             project = binding.project_name,
             render = expected
@@ -280,7 +280,7 @@ fn verify_shared_render_files(
             Ok(bytes) if bytes == *expected => {}
             Ok(_) => {
                 return Err(RunnerError::task_invocation(format!(
-                    "shared {service} (project `{project}`) render file `{path}` was altered on disk, so it no longer matches the render this data target resolved. Nothing was executed, published or replaced. Run `effigy container up {env}` to publish the declared render, then re-run.",
+                    "shared {service} (project `{project}`) render file `{path}` was altered on disk, so it no longer matches the render this data target resolved. Nothing was executed, published or replaced. Run `effigy container {env} up` to publish the declared render, then re-run.",
                     service = binding.service_name,
                     project = binding.project_name,
                     path = path.display(),
@@ -289,7 +289,7 @@ fn verify_shared_render_files(
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(RunnerError::task_invocation(format!(
-                    "shared {service} (project `{project}`) render file `{path}` is missing, so the declared shared service cannot be proved. Nothing was started, replaced or published. Run `effigy container up {env}` to publish the shared render, then re-run.",
+                    "shared {service} (project `{project}`) render file `{path}` is missing, so the declared shared service cannot be proved. Nothing was started, replaced or published. Run `effigy container {env} up` to publish the shared render, then re-run.",
                     service = binding.service_name,
                     project = binding.project_name,
                     path = path.display(),
@@ -298,7 +298,7 @@ fn verify_shared_render_files(
             }
             Err(error) => {
                 return Err(RunnerError::task_invocation(format!(
-                    "shared {service} (project `{project}`) render file `{path}` cannot be read: {error}. Nothing was executed or replaced. Make the file readable, or run `effigy container up {env}` to republish the render, then re-run.",
+                    "shared {service} (project `{project}`) render file `{path}` cannot be read: {error}. Nothing was executed or replaced. Make the file readable, or run `effigy container {env} up` to republish the render, then re-run.",
                     service = binding.service_name,
                     project = binding.project_name,
                     path = path.display(),
@@ -326,7 +326,7 @@ fn verify_shared_data_containers(
         .collect::<Vec<_>>();
     if declared.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) has no container for service `{service}`, so it is not running and a data command cannot exec in it. Nothing was started or replaced. Run `effigy container up {env}`, then re-run.",
+            "shared {service} (project `{project}`) has no container for service `{service}`, so it is not running and a data command cannot exec in it. Nothing was started or replaced. Run `effigy container {env} up`, then re-run.",
         )));
     }
     let running = declared
@@ -340,7 +340,7 @@ fn verify_shared_data_containers(
             .collect::<Vec<_>>()
             .join(", ");
         return Err(RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) is stopped (container {names}), so a data command cannot exec in it. A data command never starts or replaces a shared service. Run `effigy container up {env}`, then re-run.",
+            "shared {service} (project `{project}`) is stopped (container {names}), so a data command cannot exec in it. A data command never starts or replaces a shared service. Run `effigy container {env} up`, then re-run.",
         )));
     }
     if running.len() > 1 {
@@ -350,7 +350,7 @@ fn verify_shared_data_containers(
             .collect::<Vec<_>>()
             .join(", ");
         return Err(RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) has more than one running container for the service ({names}), so Effigy cannot prove which one the target means; nothing was executed. Stop the extra container(s) or re-run `effigy container up {env}`.",
+            "shared {service} (project `{project}`) has more than one running container for the service ({names}), so Effigy cannot prove which one the target means; nothing was executed. Stop the extra container(s) or re-run `effigy container {env} up`.",
         )));
     }
     let container = running[0];
@@ -361,7 +361,7 @@ fn verify_shared_data_containers(
             .map(|render| format!("render `{render}`"))
             .unwrap_or_else(|| "no render label".to_owned());
         return Err(RunnerError::task_invocation(format!(
-            "shared {service} (project `{project}`) is running as {name} from {render}, not the declared render `{digest}`, so it does not match the declaration this data command resolved. Nothing was stopped, replaced or published. Run `effigy container up {env}` to reconcile the shared service, then re-run.",
+            "shared {service} (project `{project}`) is running as {name} from {render}, not the declared render `{digest}`, so it does not match the declaration this data command resolved. Nothing was stopped, replaced or published. Run `effigy container {env} up` to reconcile the shared service, then re-run.",
             name = container.container_name,
             digest = binding.render_digest,
             env = env,
@@ -886,7 +886,7 @@ shared = true
             missing.contains("no container for service `mysql`"),
             "{missing}"
         );
-        assert!(missing.contains("effigy container up stack"), "{missing}");
+        assert!(missing.contains("effigy container stack up"), "{missing}");
 
         let stopped = refusal(
             &binding,
@@ -924,6 +924,18 @@ shared = true
             other_service.contains("no container for service `mysql`"),
             "{other_service}"
         );
+    }
+
+    #[test]
+    fn the_shared_service_up_suggestion_parses_under_this_grammar() {
+        // effigy#490: the shared-service refusals suggest the environment's
+        // own up command, and the suggested-commands guard requires that
+        // form to parse. Pin both the exact suggestion text and its accepted
+        // parse here, without executing a container.
+        let missing = refusal(&binding_fixture(), &[]);
+        assert!(missing.contains("`effigy container stack up`"), "{missing}");
+        effigy_cli::parse_command(["container", "stack", "up"].into_iter().map(str::to_owned))
+            .expect("the suggested shared-service up command parses");
     }
 
     /// The complete shared render must be the bytes this declaration resolves:
@@ -1511,7 +1523,7 @@ shared = true
         .expect_err("a stopped environment must refuse instead of reconciling shared services");
         let message = error.to_string();
         assert!(message.contains("is not running"), "{message}");
-        assert!(message.contains("effigy container up stack"), "{message}");
+        assert!(message.contains("effigy container stack up"), "{message}");
         assert_no_shared_activity("builtin", &repo, &shared, &render_before);
     }
 
