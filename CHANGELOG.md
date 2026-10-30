@@ -782,7 +782,9 @@ until the host-log writer has a safe secret-handling boundary.
   that poll — confirming the primary container's binding, resolving the declared
   routes, writing the route table, and the timeout diagnostic's read of exited
   containers — is reported as its own stages, and entering a new stage clears
-  the previous stage's blocker; shared services name the services they await. Every frame carries elapsed time. JSON, piped and
+  the previous stage's blocker; shared services name the service they are
+  awaiting, and entering the next service replaces the previous one's subject
+  and event. Every frame carries elapsed time. JSON, piped and
   quiet output stay silent. Rendering is a single finished line, not a spinner.
   A readiness refusal carries its machine-readable `waiting_on` list in
   `--json`: one entry per service still unready, with its problem, and one for

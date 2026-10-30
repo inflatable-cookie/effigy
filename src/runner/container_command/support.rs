@@ -621,6 +621,11 @@ fn ensure_shared_services_with_renders_observed(
     let total = policy.shared_services.len() as u64;
     for (done, service) in policy.shared_services.iter().enumerate() {
         let done = done as u64;
+        // Each service is its own wait: entering it replaces the previous
+        // service's awaited subject and drops the event it ended on, so a
+        // stalled stage here never names the service that already finished
+        // (effigy#460, Q-017).
+        begin_shared_service_wait(progress, &service.service_name);
         // Held until this service's ensure is complete; a gate that cannot be
         // taken is named and the ensure proceeds, because the service still
         // has to run.
@@ -709,7 +714,7 @@ fn ensure_shared_services_with_renders_observed(
         // restart-policy apply stage by stage: the Compose declaration read,
         // the runtime inventory read, then the update. A stalled read names
         // that read, never the finished Compose call (effigy#460, Q-017).
-        let restart_subject = format!("shared `{}`", service.service_name);
+        let restart_subject = shared_service_subject(&service.service_name);
         let mut restart_stage = |stage: super::steps::RestartPolicyStage| {
             super::steps::restart_policy_stage(
                 progress,
@@ -737,6 +742,19 @@ fn ensure_shared_services_with_renders_observed(
         });
     }
     Ok(notes)
+}
+
+/// The awaited subject for one shared service's wait.
+fn shared_service_subject(service_name: &str) -> String {
+    format!("shared `{service_name}`")
+}
+
+/// Enter one shared service's wait: it names that service and drops the
+/// previous service's event, which described work that already finished
+/// (effigy#460, Q-017).
+fn begin_shared_service_wait(progress: &ProgressSource, service_name: &str) {
+    progress.waiting_on(shared_service_subject(service_name));
+    progress.clear_event();
 }
 
 /// A shared service's failed step, as the wait it was in: the service, its
@@ -2426,6 +2444,59 @@ mod tests {
             ("HOME", Some(root.display().to_string())),
             ("EFFIGY_COMPOSE_BACKEND", Some("docker".into())),
         ])
+    }
+
+    /// Each shared service is its own wait: entering it replaces the previous
+    /// service's subject and drops the event it ended on, so a stalled stage
+    /// never names the service that already finished (effigy#460, Q-017).
+    #[test]
+    fn each_shared_service_names_its_own_wait() {
+        use std::time::Duration;
+
+        let progress = ProgressSource::waiting_for("shared services");
+
+        // Service `db` reaches its restart-policy apply, which is where its
+        // wait ends.
+        super::begin_shared_service_wait(&progress, "db");
+        progress.update(
+            "waiting for the machine gate of shared project `demo-db`",
+            Some((0, 2)),
+            None,
+        );
+        super::super::steps::restart_policy_stage(
+            &progress,
+            &super::shared_service_subject("db"),
+            super::super::steps::RestartPolicyStage::Apply,
+            Some((0, 2)),
+        );
+        assert!(
+            progress
+                .frame_at(Duration::from_secs(5))
+                .contains("waiting for `restart: unless-stopped` on shared `db`"),
+            "{}",
+            progress.frame_at(Duration::from_secs(5))
+        );
+        // The completed service left an event behind for its own wait.
+        progress.event("shared `db` is running");
+
+        // Service `cache` is a different wait: its gate frame names `cache` and
+        // carries neither `db`'s subject nor its event.
+        super::begin_shared_service_wait(&progress, "cache");
+        progress.update(
+            "waiting for the machine gate of shared project `demo-cache`",
+            Some((1, 2)),
+            None,
+        );
+        let frame = progress.frame_at(Duration::from_secs(9));
+        assert_eq!(
+            frame,
+            "waiting for the machine gate of shared project `demo-cache` (1/2); waiting for shared `cache`; 9s elapsed"
+        );
+        assert!(!frame.contains("shared `db`"), "{frame}");
+        assert!(
+            !frame.contains("last:"),
+            "the previous service's event is cleared: {frame}"
+        );
     }
 
     /// A shared service's step follows the restart-policy apply stage by stage:

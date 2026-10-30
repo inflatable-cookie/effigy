@@ -160,6 +160,11 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
+Each shared service a bring-up ensures is its own wait: entering the next
+service replaces the awaited subject and drops the previous service's event, so
+a stalled gate, inventory read, render or Compose call never displays a
+finished service's wait.
+
 The route-registration stage polls the runtime for the declared gateway service
 ports for up to 60s; its frame names the read in flight (`reading the runtime's
 containers for the declared gateway service ports (attempt 2)`) and then the
