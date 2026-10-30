@@ -127,6 +127,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Runs(args) => crate::runner::run_control::run_runs(args),
         Command::InternalGateway(args) => run_internal_gateway(args),
         Command::InternalGatewayIdentity(args) => run_internal_gateway_identity(args),
+        Command::InternalGuestProbe(args) => crate::runner::workspace_client::guest_probe::run(args),
         Command::InternalScriptRun(args) => run_internal_script_run(args),
         // Retired with the lease: environments stop when their last holder
         // ends (contract 053). A v0.14.1 reaper never reaches this binary.

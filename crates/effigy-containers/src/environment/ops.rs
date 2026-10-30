@@ -73,7 +73,7 @@ pub fn reconcile_observing(
     result
 }
 
-fn reconcile_in(
+pub(super) fn reconcile_in(
     run: &mut EnvRun<'_>,
     request: Up<'_>,
     apply: impl FnOnce() -> Result<(), BackendError>,

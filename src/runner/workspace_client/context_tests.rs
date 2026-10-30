@@ -69,6 +69,7 @@ fn context(generation: u64) -> WorkspaceContext {
         binary: binary(),
         activation: activation(),
         session_run_id: Some("run-7".to_owned()),
+        session_generation: Some(7),
         paths: paths(),
         backend: WorkspaceBackendDescriptor {
             kind: "Docker Desktop".to_owned(),
@@ -95,6 +96,7 @@ fn live(generation: u64) -> LiveGuestRun {
         container: container(),
         environment_generation: "sha256:aa11".to_owned(),
         session_run_id: Some("run-7".to_owned()),
+        session_generation: Some(7),
         context_generation: generation,
     }
 }
@@ -303,4 +305,55 @@ fn an_enrolment_credential_never_prints_its_secret() {
     assert!(rendered.contains("<redacted>"));
     assert!(!rendered.contains("s3cret-token"));
     assert!(credential.file_body().contains("s3cret-token"));
+}
+
+#[test]
+fn session_generation_is_required_and_independent_of_the_environment_fence() {
+    let prepared = context(4);
+    for generation in [None, Some(0), Some(6), Some(8)] {
+        let mut invocation = live(4);
+        invocation.session_generation = generation;
+        assert!(prepared.verify(&invocation).is_err());
+    }
+    let mut missing = prepared.clone();
+    missing.session_generation = None;
+    assert!(missing.verify(&live(4)).is_err());
+    let mut input = WorkspaceContextInput {
+        generation: 1,
+        host: prepared.host,
+        binary: prepared.binary,
+        activation: prepared.activation,
+        session_run_id: None,
+        session_generation: None,
+        paths: prepared.paths,
+        backend: prepared.backend,
+        sources: vec![],
+        routes: vec![],
+        channel: prepared.channel,
+    };
+    let checkout = effigy_kernel::id::CheckoutId::new(
+        effigy_kernel::id::CheckoutKind::EphemeralClone,
+        [7; 16],
+    );
+    let owner = effigy_kernel::id::TaskId::new(
+        checkout,
+        "",
+        effigy_kernel::id::Surface::Published,
+        "workspace",
+        None,
+    )
+    .expect("owner")
+    .resource();
+    let session = effigy_kernel::workspace_session::SessionRef::new(
+        effigy_kernel::id::RunId::new(1_760_000_000_000, [7; 10]).expect("run"),
+        effigy_kernel::run::Fence {
+            resource: owner,
+            generation: effigy_kernel::id::Generation::new(41),
+        },
+        effigy_kernel::id::ResourceId::environment(checkout, "dev").expect("env"),
+        effigy_kernel::id::Generation::new(12),
+    );
+    input.bind_session(&session);
+    assert_eq!(input.session_generation, Some(41));
+    assert_eq!(input.session_run_id, Some(session.run().to_string()));
 }

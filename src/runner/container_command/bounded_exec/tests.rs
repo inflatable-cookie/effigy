@@ -615,6 +615,7 @@ fn write_public_guest_context(dir: &Path, repo_root: &Path, mode: &str) -> PathB
             },
         },
         session_run_id: Some("run-1".to_owned()),
+        session_generation: Some(1),
         paths: WorkspacePathMap {
             host_checkout: "/workspace".to_owned(),
             guest_checkout: "/workspace".to_owned(),

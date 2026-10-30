@@ -15,6 +15,8 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Security
 
+- Workspace guest probes read bounded independent mount-root, boot and ELF facts before alias resolution or pinned TLS-only qualification. Session context verification also requires the exact admitted session generation; missing or stale generations refuse host access.
+
 - Workspace activation owners freeze the exact apply target, image platform and pinned guest artifact before additive staging. Activation requires verified exact-target binary readback, and v2 context receipts bind guest paths, source pins and version to the frozen decision. Ambiguous, foreign, changed-boot and uncertain installs cannot publish a successor.
 
 - Secret-bearing process output drops terminal controls (CSI, OSC, DCS, SOS,
