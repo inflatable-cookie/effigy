@@ -22,6 +22,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Managed panes consume redacted typed style spans from a bounded tap after
   successful plain append. Managed Standard output remains merged plain text
   in its canonical stdout log; plain and JSON readers use those bytes directly.
+  Text followers bound partial lines and report expired-byte gaps without
+  joining text across them.
   Cargo/Oxide colour follows the initiating ANSI-pane capability and respects
   explicit colour preferences, NO_COLOR and CI.
 

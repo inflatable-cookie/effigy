@@ -57,6 +57,9 @@ pub(super) fn drain_process_events(
                 true
             }
             ProcessEventKind::Started => {
+                if let Some(buffer) = state.logs.get_mut(&event_item.process) {
+                    crate::terminal_text::ingest_generation_boundary(buffer);
+                }
                 state
                     .startup_states
                     .insert(event_item.process.clone(), ProcessStartupState::Running);

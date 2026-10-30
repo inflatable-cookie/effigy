@@ -1,6 +1,6 @@
-//! One host supervisor's canonical writer, shared by every child generation
-//! and its own messages. Per-generation custody journals retain identity/exit
-//! semantics; host output remains the host's single public log, as before.
+//! One writer for parsed, redacted and durably appended managed output.
+//! Host generations and owner messages share it; Standard processes and the
+//! managed supervisor use the same pipeline with their journal destination.
 use super::{
     CaptureState, EnvValue, MergedLog, OutputPipeline, OutputTag, ProcessSpec, StyledOutput,
 };
@@ -11,9 +11,44 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
-pub struct HostOutput(Arc<Mutex<Writer>>);
+pub struct CanonicalOutput(Arc<Mutex<Writer>>);
+enum Destination {
+    Host(MergedLog),
+    Run(super::capture::Log),
+}
+impl Destination {
+    fn committed_offset(&self) -> u64 {
+        match self {
+            Self::Host(log) => log.committed_offset(),
+            Self::Run(log) => log.committed_offset(),
+        }
+    }
+    fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
+        match self {
+            Self::Host(log) => log.append(bytes),
+            Self::Run(log) => {
+                let result = log.append_durable(bytes);
+                if result.is_err() {
+                    log.mark_truncated();
+                }
+                result
+            }
+        }
+    }
+    fn publish_styles(&mut self, chunk: StyledChunk) -> io::Result<()> {
+        match self {
+            Self::Host(log) => log.publish_styles(chunk),
+            Self::Run(log) => log.publish_styles(chunk),
+        }
+    }
+    fn mark_failed(&self) {
+        if let Self::Run(log) = self {
+            log.mark_truncated();
+        }
+    }
+}
 struct Writer {
-    log: MergedLog,
+    log: Destination,
     pipeline: OutputPipeline,
     secrets: Vec<Vec<u8>>,
     pending: Vec<(OutputTag, u8)>,
@@ -30,7 +65,7 @@ struct Writer {
 }
 impl std::fmt::Debug for Writer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HostOutput")
+        f.debug_struct("CanonicalOutput")
             .field("failed", &self.failed)
             .field("finished", &self.finished)
             .finish_non_exhaustive()
@@ -41,7 +76,7 @@ fn lock(writer: &Mutex<Writer>) -> std::sync::MutexGuard<'_, Writer> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
-impl HostOutput {
+impl CanonicalOutput {
     /// The complete classified producer environment establishes one secret
     /// boundary before any child or supervisor message reaches the file.
     pub fn new(
@@ -64,18 +99,39 @@ impl HostOutput {
         queue_max: usize,
         tail_max: usize,
     ) -> io::Result<Self> {
+        Self::with_destination(Destination::Host(log), secrets, queue_max, tail_max)
+    }
+    pub(crate) fn for_run(
+        mut log: super::capture::Log,
+        secrets: Vec<Vec<u8>>,
+        limits: &crate::ctx::Limits,
+    ) -> io::Result<Self> {
+        log.enable_plain()?;
+        Self::with_destination(
+            Destination::Run(log),
+            secrets,
+            limits.queue_bytes,
+            limits.capture_tail,
+        )
+    }
+    fn with_destination(
+        log: Destination,
+        secrets: Vec<Vec<u8>>,
+        queue_max: usize,
+        tail_max: usize,
+    ) -> io::Result<Self> {
         if secrets
             .iter()
             .any(|value| std::str::from_utf8(value).is_err())
         {
             return Err(io::Error::other(
-                "canonical host output requires classified UTF-8 secrets",
+                "canonical output requires classified UTF-8 secrets",
             ));
         }
         let pipeline = OutputPipeline::for_capture(secrets.clone(), true);
         if pipeline.redactor.blocked() {
             return Err(io::Error::other(
-                "host output has no reader-safe redaction replacement",
+                "canonical output has no reader-safe redaction replacement",
             ));
         }
         let line_start = log.committed_offset() == 0;
@@ -114,15 +170,22 @@ impl HostOutput {
         }
         Ok(())
     }
-    pub(super) fn feed(&self, stream: usize, bytes: &[u8], terminal_eof: bool) -> io::Result<()> {
+    pub(crate) fn feed(&self, stream: usize, bytes: &[u8], terminal_eof: bool) -> io::Result<()> {
         let mut writer = lock(&self.0);
         if writer.finished && bytes.is_empty() {
             return Ok(());
         }
         writer.check()?;
         let tagged: Vec<_> = bytes.iter().map(|byte| (stream as u8, *byte)).collect();
-        let clean = writer.pipeline.push_terminal(&tagged, terminal_eof, false);
-        writer.commit(clean, false)
+        let final_eof = terminal_eof && matches!(&writer.log, Destination::Run(_));
+        let clean = writer
+            .pipeline
+            .push_terminal(&tagged, terminal_eof, final_eof);
+        writer.commit(clean, final_eof)?;
+        if final_eof {
+            writer.finished = true;
+        }
+        Ok(())
     }
     /// Messages have their own terminal-control framing, so a child's partial
     /// OSC cannot swallow an owner message. They enter the SAME merged redactor
@@ -160,12 +223,14 @@ impl HostOutput {
         writer.finished = true;
         Ok(())
     }
-    pub(super) fn fail(&self) {
-        lock(&self.0).failed = true;
+    pub(crate) fn fail(&self) {
+        let mut writer = lock(&self.0);
+        writer.failed = true;
+        writer.log.mark_failed();
     }
     pub fn capture_state(&self) -> CaptureState {
         if lock(&self.0).failed {
-            CaptureState::Truncated("canonical host append failed".into())
+            CaptureState::Truncated("canonical capture failed".into())
         } else {
             CaptureState::Complete
         }
@@ -181,7 +246,7 @@ impl HostOutput {
     pub(super) fn take_output(&self) -> Vec<u8> {
         lock(&self.0).output.drain(..).collect()
     }
-    pub(super) fn tail(&self) -> Vec<u8> {
+    pub(crate) fn tail(&self) -> Vec<u8> {
         lock(&self.0).tail.iter().copied().collect()
     }
 }
@@ -189,7 +254,7 @@ impl Writer {
     fn check_finished(&self) -> io::Result<()> {
         if self.failed {
             Err(io::Error::other(
-                "canonical host output failed; inspect capture state",
+                "canonical output failed; inspect capture state",
             ))
         } else {
             Ok(())
@@ -199,22 +264,25 @@ impl Writer {
         self.check_finished()?;
         if self.finished {
             self.failed = true;
-            return Err(io::Error::other("canonical host output already finished"));
+            return Err(io::Error::other("canonical output already finished"));
         }
         Ok(())
     }
     fn commit(&mut self, mut clean: Vec<(OutputTag, u8)>, eof: bool) -> io::Result<()> {
+        let result = self.commit_inner(&mut clean, eof);
+        if result.is_err() {
+            self.log.mark_failed();
+        }
+        result
+    }
+    fn commit_inner(&mut self, clean: &mut Vec<(OutputTag, u8)>, eof: bool) -> io::Result<()> {
         self.failed = true;
-        self.pending.append(&mut clean);
+        self.pending.append(clean);
         let bytes: Vec<_> = self.pending.iter().map(|(_, byte)| *byte).collect();
         let complete = match std::str::from_utf8(&bytes) {
             Ok(_) => bytes.len(),
             Err(error) if error.error_len().is_none() && !eof => error.valid_up_to(),
-            Err(_) => {
-                return Err(io::Error::other(
-                    "invalid canonical host text; capture stopped",
-                ))
-            }
+            Err(_) => return Err(io::Error::other("invalid canonical text; capture stopped")),
         };
         let remainder = self.pending.split_off(complete);
         let clean = std::mem::replace(&mut self.pending, remainder);
@@ -289,7 +357,7 @@ mod tests {
         let home = effigy_test_support::short_tempdir("ho-").unwrap();
         let path = home.path().join("app.log");
         std::fs::write(&path, b"\x1b[31mlegacy-secret\n").unwrap();
-        let output = HostOutput::with_secrets(
+        let output = CanonicalOutput::with_secrets(
             MergedLog::prepare_test(&path).unwrap(),
             vec![b"supersecret".to_vec()],
             4096,
@@ -338,7 +406,7 @@ mod tests {
     fn an_owner_message_starts_a_line_after_a_held_child_prefix() {
         let home = effigy_test_support::short_tempdir("hm-").unwrap();
         let path = home.path().join("app.log");
-        let output = HostOutput::with_secrets(
+        let output = CanonicalOutput::with_secrets(
             MergedLog::prepare_test(&path).unwrap(),
             vec![b"partialtail".to_vec()],
             4096,
@@ -363,7 +431,7 @@ mod tests {
         for sync in [false, true] {
             let home = effigy_test_support::short_tempdir("hf-").unwrap();
             let path = home.path().join("app.log");
-            let output = HostOutput::with_secrets(
+            let output = CanonicalOutput::with_secrets(
                 MergedLog::prepare_test(&path).unwrap(),
                 vec![],
                 4096,

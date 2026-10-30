@@ -27,6 +27,7 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) mod anchor;
@@ -1583,97 +1584,109 @@ impl Drop for OwnerWatch {
 /// The run's own output log, fed from pipes on descriptors 1 and 2.
 struct OutputCapture {
     thread: std::thread::JoinHandle<()>,
+    done: Arc<std::sync::atomic::AtomicBool>,
 }
 /// The output log's journal position: no effect has sequence 0.
 pub const OUTPUT_SEQUENCE: i64 = 0;
 impl OutputCapture {
     fn start(run: &Run<'_>, secrets: Vec<Vec<u8>>) -> io::Result<Self> {
         let limits = run.limits();
-        let mut logs = [
-            crate::custody::Stream::Stdout,
-            crate::custody::Stream::Stderr,
-        ]
-        .map(|stream| {
-            run.capture_log(OUTPUT_SEQUENCE, stream, &limits)
-                .ok()
-                .flatten()
-        });
-        let mut readers = Vec::new();
-        for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
-            let (read, write) = crate::custody::spawn::pipe()?;
+        let log = run
+            .capture_log(OUTPUT_SEQUENCE, crate::custody::Stream::Stdout, &limits)?
+            .ok_or_else(|| io::Error::other("managed supervisor output needs a durable log"))?;
+        let output = crate::custody::CanonicalOutput::for_run(log, secrets, &limits)?;
+        let [(stdout, out_write), (stderr, err_write)] = [
+            crate::custody::spawn::pipe()?,
+            crate::custody::spawn::pipe()?,
+        ];
+        for (target, write) in [
+            (libc::STDOUT_FILENO, &out_write),
+            (libc::STDERR_FILENO, &err_write),
+        ] {
             // SAFETY: dup2 of a live pipe end onto a standard descriptor.
             if unsafe { libc::dup2(write.as_raw_fd(), target) } < 0 {
                 return Err(io::Error::last_os_error());
             }
-            readers.push(read);
         }
+        let readers = [stdout, stderr];
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = done.clone();
         let thread = std::thread::Builder::new()
             .name("effigy-run-output".into())
-            .spawn(move || {
-                let mut redactor = crate::custody::Redactor::new(secrets);
-                let mut open = [true, true];
-                let mut buf = [0u8; 8192];
-                while open.iter().any(|open| *open) {
-                    let mut fds: Vec<libc::pollfd> = readers
-                        .iter()
-                        .map(|fd| libc::pollfd {
-                            fd: fd.as_raw_fd(),
-                            events: libc::POLLIN,
-                            revents: 0,
-                        })
-                        .collect();
-                    // SAFETY: initialized pollfd array of its own length.
-                    if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 200) } < 0 {
-                        continue;
-                    }
-                    for (index, fd) in fds.iter().enumerate() {
-                        if !open[index] || fd.revents == 0 {
-                            continue;
-                        }
-                        // SAFETY: live pipe read end and writable stack buffer.
-                        let count =
-                            unsafe { libc::read(fd.fd, buf.as_mut_ptr().cast(), buf.len()) };
-                        if count <= 0 {
-                            open[index] = false;
-                            continue;
-                        }
-                        let tagged: Vec<(u8, u8)> = buf[..count as usize]
-                            .iter()
-                            .map(|b| (index as u8, *b))
-                            .collect();
-                        sink(&mut logs, redactor.push_tagged(&tagged, false));
-                    }
-                }
-                sink(&mut logs, redactor.push_tagged(&[], true));
-            })?;
-        Ok(Self { thread })
+            .spawn(move || pump_output(readers, output, stopping))?;
+        Ok(Self { thread, done })
     }
-    /// Closes this process's write ends so the reader drains to EOF. A child
-    /// still holding an inherited copy ends with its own settle.
+    /// The owner's settle has closed its children. Bound a remaining inherited
+    /// pipe holder: no frontend or reader can keep supervisor cleanup alive.
     fn finish(self) {
         let _ = null_onto(libc::STDOUT_FILENO);
         let _ = null_onto(libc::STDERR_FILENO);
+        self.done.store(true, std::sync::atomic::Ordering::Release);
         let _ = self.thread.join();
     }
 }
-fn sink(logs: &mut [Option<crate::custody::capture::Log>; 2], clean: Vec<(u8, u8)>) {
-    for (index, log) in logs.iter_mut().enumerate() {
-        let part: Vec<u8> = clean
-            .iter()
-            .filter(|(tag, _)| usize::from(*tag) == index)
-            .map(|(_, byte)| *byte)
-            .collect();
-        if part.is_empty() {
-            continue;
+/// Own both pipe reads and their one durable writer. A stopped owner cannot
+/// wait forever for a foreign inherited descriptor to reach EOF.
+fn pump_output(
+    readers: [std::os::fd::OwnedFd; 2],
+    output: crate::custody::CanonicalOutput,
+    stopping: Arc<std::sync::atomic::AtomicBool>,
+) {
+    let mut open = [true, true];
+    let mut deadline = None;
+    let mut buf = [0u8; 8192];
+    while open.iter().any(|open| *open) {
+        if stopping.load(std::sync::atomic::Ordering::Acquire) {
+            let until = deadline.get_or_insert_with(|| Instant::now() + Duration::from_secs(1));
+            if Instant::now() >= *until {
+                output.fail();
+                break;
+            }
         }
-        // Observability only: a failed write marks the log, never the run (K10).
-        if let Some(writer) = log.as_mut() {
-            if writer.append(&part).is_err() {
-                writer.mark_truncated();
-                *log = None;
+        let mut fds: [libc::pollfd; 2] = std::array::from_fn(|index| libc::pollfd {
+            fd: if open[index] {
+                readers[index].as_raw_fd()
+            } else {
+                -1
+            },
+            events: libc::POLLIN,
+            revents: 0,
+        });
+        // SAFETY: initialized pollfd array of its own length.
+        if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 50) } < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            output.fail();
+            break;
+        }
+        for (index, fd) in fds.iter().enumerate() {
+            if !open[index] || fd.revents == 0 {
+                continue;
+            }
+            // SAFETY: live pipe read end and writable stack buffer.
+            let count = unsafe { libc::read(fd.fd, buf.as_mut_ptr().cast(), buf.len()) };
+            if count == 0 {
+                open[index] = false;
+                continue;
+            }
+            if count < 0 {
+                let error = io::Error::last_os_error();
+                if !matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    output.fail();
+                    open[index] = false;
+                }
+                continue;
+            }
+            if output.feed(index, &buf[..count as usize], false).is_err() {
+                output.fail();
             }
         }
     }
+    let _ = output.finish();
 }
 fn private_dup(fd: RawFd) -> io::Result<std::os::fd::OwnedFd> {
     // SAFETY: duplicates a live standard descriptor to a fresh CLOEXEC fd.

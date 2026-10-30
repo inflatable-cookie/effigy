@@ -206,3 +206,26 @@ fn typed_writer_spans_keep_text_style_and_partial_chunk_boundaries() {
         Default::default()
     );
 }
+
+#[test]
+fn a_restarted_producer_cannot_complete_the_previous_typed_partial_line() {
+    use effigy_core::terminal_text::{StyledChunk, StyledSpan};
+    let chunk = |text: &str| StyledChunk {
+        offset: 0,
+        spans: vec![StyledSpan {
+            text: text.into(),
+            style: Default::default(),
+        }],
+    };
+    let mut buffer = VecDeque::new();
+    super::ingest_styled_chunk(&mut buffer, chunk("super"));
+    super::ingest_generation_boundary(&mut buffer);
+    super::ingest_styled_chunk(&mut buffer, chunk("secret\n"));
+    assert_eq!(buffer.len(), 3);
+    assert_eq!(buffer[0].line, "super");
+    assert!(buffer[1].line.contains("generation changed"));
+    assert_eq!(buffer[2].line, "secret\n");
+    assert!(buffer
+        .iter()
+        .all(|entry| !entry.line.contains("supersecret")));
+}

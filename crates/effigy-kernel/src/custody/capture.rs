@@ -83,6 +83,9 @@ impl Log {
             keep: limits.log_keep,
         })
     }
+    pub fn committed_offset(&self) -> u64 {
+        self.bases.back().copied().unwrap_or(0) + self.written
+    }
     pub fn enable_plain(&mut self) -> io::Result<()> {
         self.durable = true;
         let name = plain_name(self.sequence)?;

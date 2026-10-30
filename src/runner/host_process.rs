@@ -122,7 +122,7 @@ struct HostProcessRuntimeSpec {
     #[serde(default)]
     state_home: PathBuf,
     #[serde(skip)]
-    output: Option<effigy_kernel::custody::HostOutput>,
+    output: Option<effigy_kernel::custody::CanonicalOutput>,
 }
 
 /// The stop report a supervisor writes after it settles its own run: the
@@ -639,19 +639,26 @@ fn listener_output_tail(log_path: &Path) -> Option<String> {
     if text.chars().any(|ch| ch.is_control() && ch != '\n') {
         return None;
     }
+    listener_child_block(text)
+}
+
+fn listener_child_block(text: &str) -> Option<String> {
     let mut block_start = 0;
     let mut last_child_block = None;
     let mut position = 0;
     for line in text.split_inclusive('\n') {
         if line.starts_with("[effigy host-process]") {
             if position > block_start {
-                last_child_block = Some(&text[block_start..position]);
+                let block = &text[block_start..position];
+                if !block.trim().is_empty() {
+                    last_child_block = Some(block);
+                }
             }
             block_start = position + line.len();
         }
         position += line.len();
     }
-    let block = if position > block_start {
+    let block = if !text[block_start..position].trim().is_empty() {
         &text[block_start..position]
     } else {
         last_child_block?
@@ -1232,7 +1239,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         effigy_kernel::run::RunError::step_failed("host output environment provenance", error)
     })?;
     let output =
-        effigy_kernel::custody::HostOutput::new(log, &environment, cx.operation().limits())
+        effigy_kernel::custody::CanonicalOutput::new(log, &environment, cx.operation().limits())
             .map_err(|error| {
                 effigy_kernel::run::RunError::step_failed("host canonical output", error)
             })?;
@@ -2692,7 +2699,7 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Run
         .map_err(|error| RunnerError::task_invocation_failed_parse(path, error))
 }
 
-fn append_log_line(output: Option<&effigy_kernel::custody::HostOutput>, line: &str) {
+fn append_log_line(output: Option<&effigy_kernel::custody::CanonicalOutput>, line: &str) {
     let result = output
         .ok_or_else(|| std::io::Error::other("host output not installed"))
         .and_then(|output| output.message(line));
@@ -4074,6 +4081,19 @@ while True:
         assert!(
             !tail.contains("s3cr3tvalue"),
             "a value whose marker is outside the window is never printed: {tail}"
+        );
+    }
+
+    #[test]
+    fn listener_child_tail_skips_blank_frames_without_joining_child_blocks() {
+        let text = "old partial\n[effigy host-process] restarted\nvite: internal server error\n[effigy host-process] stopped\n\n";
+        assert_eq!(
+            listener_child_block(text).as_deref(),
+            Some("vite: internal server error\n")
+        );
+        assert_eq!(
+            listener_child_block("super\n[effigy host-process] message\nsecret\n").as_deref(),
+            Some("secret\n")
         );
     }
 

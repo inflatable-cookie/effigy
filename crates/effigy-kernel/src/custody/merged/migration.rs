@@ -41,7 +41,11 @@ struct Provenance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Boundary {
     BeforeRename,
+    AfterLegacyRename,
+    AfterQuarantineSync,
     AfterRename,
+    AfterExclusiveCreate,
+    AfterCanonicalSync,
     AfterCreate,
     BeforeReady,
     AfterReady,
@@ -221,7 +225,9 @@ pub(super) fn prepare(
                     return Err(refused("legacy identity changed before rename"));
                 }
                 dir.move_to(&name, &quarantine, &destination).map_err(io)?;
+                boundary(Boundary::AfterLegacyRename)?;
                 quarantine.sync().map_err(io)?;
+                boundary(Boundary::AfterQuarantineSync)?;
                 dir.sync().map_err(io)?;
                 boundary(Boundary::AfterRename)?;
             }
@@ -244,8 +250,10 @@ pub(super) fn prepare(
             .map_err(io)?
             .ok_or_else(|| refused("canonical creation missing"))?,
     };
+    boundary(Boundary::AfterExclusiveCreate)?;
     fs::fchmod(&file, 0o600)?;
     file.sync_all()?;
+    boundary(Boundary::AfterCanonicalSync)?;
     dir.sync().map_err(io)?;
     boundary(Boundary::AfterCreate)?;
     boundary(Boundary::BeforeReady)?;
@@ -401,7 +409,11 @@ mod tests {
     fn cutover_quarantines_raw_prefix_and_retries_every_boundary() {
         for stop in [
             Boundary::BeforeRename,
+            Boundary::AfterLegacyRename,
+            Boundary::AfterQuarantineSync,
             Boundary::AfterRename,
+            Boundary::AfterExclusiveCreate,
+            Boundary::AfterCanonicalSync,
             Boundary::AfterCreate,
             Boundary::BeforeReady,
             Boundary::AfterReady,
@@ -505,5 +517,30 @@ mod tests {
         std::fs::rename(replacement, &path).unwrap();
         assert!(prepare(&path, [3; 32], "retry", |_| Ok(())).is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"operator data");
+    }
+    #[test]
+    fn unowned_log_is_refused_without_changing_operator_data() {
+        struct RestoreUid;
+        impl Drop for RestoreUid {
+            fn drop(&mut self) {
+                crate::fault::set_operator_uid(None);
+            }
+        }
+        let home = effigy_test_support::short_tempdir("lu-").unwrap();
+        let path = home.path().join("app.log");
+        std::fs::write(&path, b"operator data").unwrap();
+        let (dir, name, _, _) = names(&path).unwrap();
+        let owner = std::fs::metadata(&path).unwrap().uid();
+        let _restore = RestoreUid;
+        // The existing strict fake changes the expected owner only on this
+        // thread. No host UID, real file owner or other test is changed.
+        crate::fault::set_operator_uid(Some(owner.wrapping_add(1)));
+        assert!(opened(&dir, &name, Trust::Operator)
+            .unwrap_err()
+            .to_string()
+            .contains("wrong owner"));
+        assert!(prepare(&path, [3; 32], "unowned", |_| Ok(())).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"operator data");
+        assert!(!home.path().join(".legacy-host-logs").exists());
     }
 }

@@ -1,10 +1,10 @@
 //! Journal-first local process custody (§5.7). No signal handlers live here.
 mod anchor;
+mod canonical_output;
 pub(crate) mod capture;
-mod host_output;
 mod merged;
 mod styled_tap;
-pub use host_output::HostOutput;
+pub use canonical_output::CanonicalOutput;
 pub use merged::{FileIdentity, MergedLog, PlainLog, PlainRead};
 pub(crate) mod platform;
 mod terminal;
@@ -259,11 +259,7 @@ pub(crate) struct ProcessCore {
     anchor: Option<ProcessIdentity>,
     /// stdout and stderr logs, fed from the one merged, sanitized redaction.
     logs: [Option<capture::Log>; 2],
-    host_output: Option<HostOutput>,
-    styled: VecDeque<effigy_core::terminal_text::StyledChunk>,
-    styled_bytes: usize,
-    styled_truncated: bool,
-    styled_offset: u64,
+    canonical_output: Option<CanonicalOutput>,
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
     /// Each is the redacted projection of its own stream over the merged,
@@ -279,7 +275,6 @@ pub(crate) struct ProcessCore {
     /// Sanitize then redact, once, over merged arrival order: every sink below
     /// (per-stream logs, queues, merged output, tail) is a projection of it.
     pipeline: OutputPipeline,
-    plain_pending: Vec<(OutputTag, u8)>,
     /// The canonical captured tail: the last bytes of that same merged,
     /// sanitized and redacted arrival order. A reader never re-groups streams
     /// to rebuild it.
@@ -930,7 +925,7 @@ impl Custody {
         run: &mut Run<'_>,
         spec: ProcessSpec,
         cx: &EffectContext,
-        output: HostOutput,
+        output: CanonicalOutput,
     ) -> Result<OwnedProcess, SpawnError> {
         if !matches!(spec.terminal, Terminal::None | Terminal::Pipe) {
             return Err(SpawnError::Refused(
@@ -971,7 +966,7 @@ impl Custody {
         required: bool,
         gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
-        host_output: Option<HostOutput>,
+        canonical_output: Option<CanonicalOutput>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -996,18 +991,12 @@ impl Custody {
                 "managed plain capture requires UTF-8 secret provenance".into(),
             ));
         }
-        let pipeline = if host_output.is_some() {
-            OutputPipeline::new(Vec::new())
-        } else if matches!(spec.terminal, Terminal::Styled { .. }) {
-            OutputPipeline::for_capture(secrets, true)
+        let styled = matches!(spec.terminal, Terminal::Styled { .. });
+        let pipeline = OutputPipeline::new(if canonical_output.is_some() || styled {
+            Vec::new()
         } else {
-            OutputPipeline::new(secrets)
-        };
-        if pipeline.plain && pipeline.redactor.blocked() {
-            return Err(SpawnError::Refused(
-                "managed output has no reader-safe redaction replacement".into(),
-            ));
-        }
+            secrets.clone()
+        });
         let ticket = run.intend_process(process_intent(&spec, run.fence().clone(), required)?)?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
@@ -1076,26 +1065,32 @@ impl Custody {
             } else {
                 CaptureState::Truncated("log open failed".into())
             };
-            let [mut stdout_log, stderr_log] = logs;
-            if matches!(spec.terminal, Terminal::Styled { .. }) {
-                stdout_log
-                    .as_mut()
+            let [stdout_log, stderr_log] = logs;
+            let (logs, canonical_output) = if styled {
+                let log = stdout_log
                     .map_err(|_| SpawnError::Refused("managed plain log unavailable".into()))?
-                    .as_mut()
                     .ok_or_else(|| {
                         SpawnError::Refused("managed plain capture needs a durable log".into())
-                    })?
-                    .enable_plain()?;
-            }
+                    })?;
+                (
+                    [None, stderr_log.ok().flatten()],
+                    Some(CanonicalOutput::for_run(
+                        log,
+                        secrets,
+                        cx.operation().limits(),
+                    )?),
+                )
+            } else {
+                (
+                    [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
+                    canonical_output,
+                )
+            };
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt: receipt.clone(),
                 anchor,
-                logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
-                styled_offset: 0,
-                host_output,
-                styled: VecDeque::new(),
-                styled_bytes: 0,
-                styled_truncated: false,
+                logs,
+                canonical_output,
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 queue_max: cx.operation().limits().queue_bytes,
@@ -1103,7 +1098,6 @@ impl Custody {
                 stderr: Some(stderr),
                 stdin,
                 pipeline,
-                plain_pending: Vec::new(),
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
                 capture,
@@ -1114,7 +1108,10 @@ impl Custody {
                     Lifetime::Open(_) => None,
                 },
                 terminal,
-                pty: matches!(spec.terminal, Terminal::Pty),
+                pty: matches!(
+                    spec.terminal,
+                    Terminal::Pty | Terminal::Styled { pty: true }
+                ),
                 registration,
                 capture_eof_sent: false,
             }));
@@ -1168,7 +1165,7 @@ impl OwnedProcess {
     }
     pub fn take_output(&self) -> Vec<u8> {
         let mut core = lock(&self.core);
-        if let Some(output) = &core.host_output {
+        if let Some(output) = &core.canonical_output {
             return output.take_output();
         }
         core.output.drain(..).collect()
@@ -1177,25 +1174,23 @@ impl OwnedProcess {
     /// Drain bounded, already-redacted style data. A gap is explicit; a front
     /// may use the canonical plain file to recover it without interpreting ANSI.
     pub fn take_styled_output(&self) -> StyledOutput {
-        let mut core = lock(&self.core);
-        if let Some(output) = &core.host_output {
-            return output.take_styled_output();
-        }
-        core.styled_bytes = 0;
-        StyledOutput {
-            chunks: core.styled.drain(..).collect(),
-            truncated: std::mem::take(&mut core.styled_truncated)
-                || matches!(core.capture, CaptureState::Truncated(_)),
-        }
+        let core = lock(&self.core);
+        core.canonical_output
+            .as_ref()
+            .map_or_else(StyledOutput::default, CanonicalOutput::take_styled_output)
     }
+    /// Managed output is one canonical stream; no per-stream regrouping.
     pub fn take_stream_output(&self) -> (Vec<u8>, Vec<u8>) {
         let mut core = lock(&self.core);
+        if let Some(output) = &core.canonical_output {
+            return (output.take_output(), Vec::new());
+        }
         let [stdout, stderr] = &mut core.streams;
         (stdout.drain(..).collect(), stderr.drain(..).collect())
     }
     pub fn tail(&self) -> Vec<u8> {
         let core = lock(&self.core);
-        if let Some(output) = &core.host_output {
+        if let Some(output) = &core.canonical_output {
             return output.tail();
         }
         core.tail.iter().copied().collect()
@@ -1272,9 +1267,10 @@ impl ProcessCore {
     /// terminal control inside a known secret could hide it from redaction
     /// while a front end still shows the value (K12).
     fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
-        if let Some(output) = &self.host_output {
+        if let Some(output) = &self.canonical_output {
             if output.feed(index, bytes, eof).is_err() {
-                self.capture = CaptureState::Truncated("canonical host capture failed".into());
+                output.fail();
+                self.capture = CaptureState::Truncated("canonical capture failed".into());
             }
             return;
         }
@@ -1289,65 +1285,7 @@ impl ProcessCore {
             return;
         }
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
-        let mut clean = self.pipeline.push_tagged(&tagged, eof);
-        if self.pipeline.plain {
-            // Redaction's bounded lookahead can split a validated scalar at a
-            // chunk boundary. A crash must not leave an invalid UTF-8 suffix
-            // that a plain reader could replace into a known secret.
-            self.plain_pending.append(&mut clean);
-            let bytes: Vec<_> = self.plain_pending.iter().map(|(_, byte)| *byte).collect();
-            let complete = match std::str::from_utf8(&bytes) {
-                Ok(_) => bytes.len(),
-                Err(error) if error.error_len().is_none() => error.valid_up_to(),
-                Err(_) => {
-                    self.capture = CaptureState::Truncated("invalid plain capture text".into());
-                    self.plain_pending.clear();
-                    return;
-                }
-            };
-            let remainder = self.plain_pending.split_off(complete);
-            clean = std::mem::replace(&mut self.plain_pending, remainder);
-            if eof && !self.plain_pending.is_empty() {
-                self.capture = CaptureState::Truncated("incomplete plain capture text".into());
-                self.plain_pending.clear();
-            }
-        }
-        if self.pipeline.plain {
-            let bytes: Vec<_> = clean.iter().map(|(_, byte)| *byte).collect();
-            if bytes.is_empty() {
-                return;
-            }
-            let Some(log) = self.logs[0].as_mut() else {
-                self.capture = CaptureState::Truncated("managed plain log unavailable".into());
-                return;
-            };
-            if log.append_durable(&bytes).is_err() {
-                log.mark_truncated();
-                self.logs[0] = None;
-                self.capture = CaptureState::Truncated("managed plain append failed".into());
-                return;
-            }
-            self.queue_styles(&clean);
-            self.streams[0].extend(bytes.iter().copied());
-            self.output.extend(bytes.iter().copied());
-            self.tail.extend(bytes);
-            for (queue, max) in [
-                (&mut self.streams[0], self.queue_max),
-                (&mut self.output, self.queue_max),
-                (&mut self.tail, self.tail_max),
-            ] {
-                while queue.len() > max {
-                    queue.pop_front();
-                }
-                while queue
-                    .front()
-                    .is_some_and(|byte| (0x80..=0xbf).contains(byte))
-                {
-                    queue.pop_front();
-                }
-            }
-            return;
-        }
+        let clean = self.pipeline.push_tagged(&tagged, eof);
         // A stream's own sink is a projection, so it is written from its own
         // redacted projection and never from a filtered merged slice: removing
         // the other stream's bytes there could join halves of a secret the
@@ -1382,47 +1320,6 @@ impl ProcessCore {
             self.tail.pop_front();
         }
     }
-    fn queue_styles(&mut self, clean: &[(OutputTag, u8)]) {
-        use effigy_core::terminal_text::{StyledChunk, StyledSpan};
-        let bytes: Vec<_> = clean.iter().map(|(_, byte)| *byte).collect();
-        let complete = clean.len();
-        let mut spans = Vec::new();
-        let mut begin = 0;
-        while begin < clean.len() {
-            let style = clean[begin].0.style;
-            let mut end = begin + 1;
-            while end < clean.len() && clean[end].0.style == style {
-                end += 1;
-            }
-            // The writer parser gives every byte of one scalar the same style.
-            let text = std::str::from_utf8(&bytes[begin..end]).expect("validated scalar styles");
-            spans.push(StyledSpan {
-                text: text.to_owned(),
-                style,
-            });
-            begin = end;
-        }
-        let offset = self.styled_offset;
-        self.styled_offset = self.styled_offset.saturating_add(complete as u64);
-        self.styled_bytes = self.styled_bytes.saturating_add(complete);
-        let chunk = StyledChunk { offset, spans };
-        if self.logs[0]
-            .as_mut()
-            .is_some_and(|log| log.publish_styles(chunk.clone()).is_err())
-        {
-            self.styled_truncated = true;
-        }
-        self.styled.push_back(chunk);
-        while self.styled_bytes > self.queue_max {
-            let Some(expired) = self.styled.pop_front() else {
-                break;
-            };
-            self.styled_bytes = self
-                .styled_bytes
-                .saturating_sub(expired.spans.iter().map(|span| span.text.len()).sum());
-            self.styled_truncated = true;
-        }
-    }
     fn drain(&mut self) {
         for index in 0..2 {
             let fd = if index == 0 {
@@ -1453,7 +1350,7 @@ impl ProcessCore {
                         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                     ) {
                         self.capture = CaptureState::Truncated("capture read failed".into());
-                        if let Some(output) = &self.host_output {
+                        if let Some(output) = &self.canonical_output {
                             output.fail();
                         }
                         eof = true;
@@ -1721,9 +1618,9 @@ impl ProcessCore {
             capture: match &self.capture {
                 CaptureState::Truncated(_) => self.capture.clone(),
                 CaptureState::Complete => self
-                    .host_output
+                    .canonical_output
                     .as_ref()
-                    .map_or(CaptureState::Complete, HostOutput::capture_state),
+                    .map_or(CaptureState::Complete, CanonicalOutput::capture_state),
             },
             signals,
             residue,
@@ -1763,20 +1660,12 @@ pub(crate) fn verify_foreground_receipt(
 /// log stream or historical record, and does not expose the process core.
 pub(crate) fn diagnostic_tail(core: &Arc<Mutex<ProcessCore>>) -> String {
     let core = lock(core);
-    if let Some(output) = &core.host_output {
-        return String::from_utf8(output.tail()).unwrap_or_default();
-    }
-    if core.pipeline.plain {
-        let bytes: Vec<_> = core
-            .tail
-            .iter()
-            .skip(core.tail.len().saturating_sub(4096))
-            .copied()
-            .collect();
-        let start = bytes
-            .iter()
-            .take_while(|byte| (0x80..=0xbf).contains(*byte))
-            .count();
+    if let Some(output) = &core.canonical_output {
+        let bytes = output.tail();
+        let mut start = bytes.len().saturating_sub(4096);
+        while start < bytes.len() && (0x80..=0xbf).contains(&bytes[start]) {
+            start += 1;
+        }
         return std::str::from_utf8(&bytes[start..])
             .map(str::to_owned)
             .unwrap_or_default();

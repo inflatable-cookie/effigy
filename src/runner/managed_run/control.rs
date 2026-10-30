@@ -367,6 +367,7 @@ pub(in crate::runner) fn logs(
     }
     let prefix = sources.len() > 1;
     let mut offsets = vec![[0u64; 2]; sources.len()];
+    let mut truncated = vec![[false; 2]; sources.len()];
     let mut text = String::new();
     loop {
         let mut moved = false;
@@ -377,20 +378,35 @@ pub(in crate::runner) fn logs(
                 else {
                     continue;
                 };
+                let gap = read.from != offsets[index][slot];
+                let failed = read.truncated && !truncated[index][slot];
+                truncated[index][slot] |= read.truncated;
                 offsets[index][slot] = read.from + read.bytes.len() as u64;
-                if read.bytes.is_empty() {
+                if read.bytes.is_empty() && !gap && !failed {
                     continue;
                 }
                 moved = true;
-                let chunk = String::from_utf8_lossy(&read.bytes);
-                let rendered = if prefix {
+                let chunk = std::str::from_utf8(&read.bytes).ok().filter(|text|
+                    !text.chars().any(|ch| ch.is_control() && ch != '\n'))
+                    .ok_or_else(|| RunnerError::task_invocation("managed output contains invalid plain text; inspect the run before reopening"))?;
+                let mut rendered = if gap {
+                    "\n[effigy] output gap: older canonical bytes expired\n".to_owned()
+                } else {
+                    String::new()
+                };
+                if failed {
+                    rendered.push_str(
+                        "\n[effigy] capture truncated: inspect the run before restarting\n",
+                    );
+                }
+                rendered.push_str(&if prefix {
                     chunk
                         .lines()
                         .map(|line| format!("[{name}] {line}\n"))
                         .collect::<String>()
                 } else {
-                    chunk.into_owned()
-                };
+                    chunk.to_owned()
+                });
                 if follow {
                     let mut out = std::io::stdout().lock();
                     let _ = out.write_all(rendered.as_bytes());

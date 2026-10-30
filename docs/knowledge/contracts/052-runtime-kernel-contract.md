@@ -1319,16 +1319,25 @@ streams reads the merged capture, never a concatenation of the projections,
 and a consumer that wants a bounded tail takes the merged tail.
 
 Host producers use `Custody::spawn_logged_auxiliary` with captured pipes and
-one `HostOutput` shared across child generations and supervisor messages. The
+one `CanonicalOutput` shared across child generations and supervisor messages. The
 existing custody sanitizer records style data and feeds the existing two-pass
 redactor in merged observed arrival order. Child EOF resets terminal framing;
 only supervisor completion finishes the shared redactor. CR is removed from
 CRLF before redaction. Complete UTF-8 text is appended and synced before any
 live/tail fanout. A failed append poisons capture; no unwritten output is
 acknowledged. A partial failed append can leave an unacknowledged plain suffix.
-Managed Standard workloads opt into `Terminal::Styled`, which persists their
-merged plain output in the stdout log (the stderr log is empty). Ordinary
+Managed Standard workloads opt into `Terminal::Styled`, which uses the same
+writer with a journal destination and persists merged plain output in stdout
+(the stderr log is empty). The managed supervisor's own sequence-0 pipe capture
+uses that same writer; it never filters the result back into separate streams.
+A producer restart frames an unfinished pane line as a generation boundary,
+so a new generation cannot complete an old partial value. Ordinary
 custody callers retain their existing separate-stream contract.
+Text followers discard a held partial line at an expired-byte gap, emit an
+explicit gap, and stop a line exceeding 64 KiB with a diagnostic. They validate
+plain UTF-8 without lossy repair or terminal normalization. Listener excerpts
+select the last nonempty contiguous child block without joining across owner
+messages or letting a later blank frame hide an earlier error.
 
 Tom's 2026-10-30 one-time cutover ruling accepts that safe appends cannot make
 an untrusted historical prefix safe. Under the newly admitted host owner gate,

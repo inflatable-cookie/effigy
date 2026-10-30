@@ -9,7 +9,7 @@ mod vt;
 
 pub use ansi::ansi_line;
 pub use format::{format_elapsed, runtime_meta_line, styled_text};
-pub use ingest::ingest_styled_chunk;
+pub use ingest::{ingest_generation_boundary, ingest_styled_chunk};
 pub use ingest::{ingest_log_payload, push_entry};
 pub use live::take_complete_terminal_bytes;
 pub use live::{render_vt_lines, LiveTerminalBuffer};

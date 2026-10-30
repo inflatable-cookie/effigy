@@ -80,6 +80,23 @@ fn replace_last_renderable_line(buffer: &mut VecDeque<LogEntry>, kind: LogEntryK
     );
 }
 
+/// A producer restart cannot complete a previous generation's partial line.
+pub fn ingest_generation_boundary(buffer: &mut VecDeque<LogEntry>) {
+    if buffer
+        .back()
+        .is_some_and(|entry| entry.styles.is_some() && !entry.line.ends_with('\n'))
+    {
+        push_entry(
+            buffer,
+            LogEntry {
+                kind: LogEntryKind::Stdout,
+                styles: None,
+                line: "[effigy] producer generation changed; output resumes in a new frame".into(),
+            },
+        );
+    }
+}
+
 /// Append typed writer output without terminal parsing or another normalizer.
 /// Span/line text is validated, never repaired or joined after elision.
 pub fn ingest_styled_chunk(

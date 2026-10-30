@@ -524,6 +524,107 @@ fn kernel_nonce_is_observed_from_real_spawn_environment() {
     );
 }
 
+#[test]
+fn styled_pty_eof_preserves_safe_colour_and_completes_capture() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf '\\033[32mcolour\\033[0m\\n'; printf '%s\\n' \"$TOKEN\"".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::from([(
+                "TOKEN".into(),
+                EnvValue::Secret(SecretValue::new(b"pty-capture-private".to_vec()).unwrap()),
+            )]),
+            grace: Duration::from_millis(10),
+            lifetime: Lifetime::Finite(Duration::from_secs(5)),
+            terminal: Terminal::Styled { pty: true },
+            label: "styled PTY".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    let exit = child.wait(cx.operation());
+    let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    assert_eq!(exit.verified(), Some(&Exit { code: 0 }));
+    assert_eq!(report.capture, CaptureState::Complete, "{report:?}");
+    assert_eq!(child.tail(), b"colour\n[REDACTED]\n");
+    let styles = child.take_styled_output();
+    assert!(!styles.truncated);
+    assert!(styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .any(|span| span.text.contains("colour") && span.style != Default::default()));
+    assert!(styles
+        .chunks
+        .iter()
+        .flat_map(|chunk| &chunk.spans)
+        .filter(|span| span.text.contains("REDACTED"))
+        .all(|span| span.style == Default::default()));
+}
+
+#[test]
+fn legacy_cutover_waits_for_the_existing_host_owner_gate() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut spec = inv().spec().clone();
+    spec.owner = ResourceId::host_process(
+        CheckoutId::new(CheckoutKind::EphemeralClone, [5; 16]),
+        "web",
+        "dev",
+        "app",
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let options = |n| BeginOpts {
+        id: RunId::new(1, [n; 10]).unwrap(),
+        wait: crate::gate::Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: Some(LifecyclePlan {
+            executable: executable(),
+            placement: crate::supervise::Placement::Inline,
+        }),
+    };
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    let mut prior =
+        Run::begin(&cx, &root, &invocation, options(11), &cleanup, &mut Strict).unwrap();
+    let path = home.path().join("app.log");
+    let raw = b"\x1b[31mlegacy-owner-secret\n";
+    std::fs::write(&path, raw).unwrap();
+    assert!(Run::begin(&cx, &root, &invocation, options(12), &cleanup, &mut Strict).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), raw);
+    assert!(MergedLog::identity(&path).is_err());
+    assert!(!home.path().join(".legacy-host-logs").exists());
+    prior
+        .finish(crate::outcome::WorkloadOutcome::Succeeded)
+        .unwrap();
+    prior.settle(&cleanup, &mut Strict).unwrap();
+    let mut replacement =
+        Run::begin(&cx, &root, &invocation, options(13), &cleanup, &mut Strict).unwrap();
+    let _log = MergedLog::prepare(&mut replacement, &path).unwrap();
+    assert!(std::fs::read(&path).unwrap().is_empty());
+    assert!(MergedLog::identity(&path).is_ok());
+    replacement
+        .finish(crate::outcome::WorkloadOutcome::Succeeded)
+        .unwrap();
+    replacement.settle(&cleanup, &mut Strict).unwrap();
+}
+
 /// A stop never inherits the budget its caller minted earlier. A supervisor
 /// mints its cleanup budget when its run begins, so a workload that outlives
 /// that budget would otherwise be reported as "group closure unverified" with
@@ -1291,11 +1392,7 @@ impl FakeCapture {
             receipt,
             anchor: None,
             logs,
-            host_output: None,
-            styled: VecDeque::new(),
-            styled_bytes: 0,
-            styled_truncated: false,
-            styled_offset: 0,
+            canonical_output: None,
             output: VecDeque::new(),
             streams: [VecDeque::new(), VecDeque::new()],
             queue_max: 4096,
@@ -1303,7 +1400,6 @@ impl FakeCapture {
             stderr: None,
             stdin: None,
             pipeline: OutputPipeline::new(secrets),
-            plain_pending: Vec::new(),
             tail: VecDeque::new(),
             tail_max: 4096,
             capture: CaptureState::Complete,
@@ -1330,20 +1426,20 @@ impl FakeCapture {
     fn close(&self) {
         let mut core = lock(&self.core);
         core.sink(0, &[], true);
-        if let Some(output) = &core.host_output {
+        if let Some(output) = &core.canonical_output {
             let _ = output.finish();
         }
     }
     fn tail(&self) -> Vec<u8> {
         let core = lock(&self.core);
-        if let Some(output) = &core.host_output {
+        if let Some(output) = &core.canonical_output {
             return output.tail();
         }
         core.tail.iter().copied().collect()
     }
     fn merged(&self) -> Vec<u8> {
         let core = lock(&self.core);
-        if let Some(output) = &core.host_output {
+        if let Some(output) = &core.canonical_output {
             return output.take_output();
         }
         core.output.iter().copied().collect()
@@ -1358,9 +1454,9 @@ impl FakeCapture {
     /// The capture state a stop report reads.
     fn capture(&self) -> CaptureState {
         let core = lock(&self.core);
-        core.host_output
+        core.canonical_output
             .as_ref()
-            .map_or_else(|| core.capture.clone(), HostOutput::capture_state)
+            .map_or_else(|| core.capture.clone(), CanonicalOutput::capture_state)
     }
     /// The bounded stderr excerpt a settle or doctor report quotes.
     fn excerpt(&self) -> String {
@@ -2091,8 +2187,8 @@ fn merged_log_is_plain_redacted_and_committed_before_fanout() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.host_output = Some(
-            HostOutput::with_secrets(
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
                 MergedLog::prepare_test(&path).unwrap(),
                 vec![b"supersecret".to_vec()],
                 4096,
@@ -2122,9 +2218,14 @@ fn merged_append_failure_withholds_all_capture_fanout() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.host_output = Some(
-            HostOutput::with_secrets(MergedLog::prepare_test(&path).unwrap(), vec![], 4096, 4096)
-                .unwrap(),
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
+                MergedLog::prepare_test(&path).unwrap(),
+                vec![],
+                4096,
+                4096,
+            )
+            .unwrap(),
         );
     }
     crate::fault::arm_point(
@@ -2154,8 +2255,8 @@ fn writer_styles_are_redacted_and_masked_ranges_lose_style() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.host_output = Some(
-            HostOutput::with_secrets(
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
                 MergedLog::prepare_test(&path).unwrap(),
                 vec![b"supersecret".to_vec()],
                 4096,
@@ -2169,7 +2270,7 @@ fn writer_styles_are_redacted_and_masked_ranges_lose_style() {
     }
     capture.close();
     let core = lock(&capture.core);
-    let styles = core.host_output.as_ref().unwrap().take_styled_output();
+    let styles = core.canonical_output.as_ref().unwrap().take_styled_output();
     let spans: Vec<_> = styles
         .chunks
         .iter()
@@ -2196,8 +2297,8 @@ fn every_durable_plain_prefix_is_complete_utf8() {
     let path = capture._home.path().join("canonical.log");
     {
         let mut core = lock(&capture.core);
-        core.host_output = Some(
-            HostOutput::with_secrets(
+        core.canonical_output = Some(
+            CanonicalOutput::with_secrets(
                 MergedLog::prepare_test(&path).unwrap(),
                 vec!["x�".as_bytes().to_vec()],
                 4096,
@@ -2233,8 +2334,14 @@ fn managed_standard_capture_keeps_merged_order_styles_and_complete_utf8_reads() 
     let capture = FakeCapture::new(home(), &cx, vec![]);
     {
         let mut core = lock(&capture.core);
-        core.pipeline = OutputPipeline::for_capture(vec![b"supersecret".to_vec()], true);
-        core.logs[0].as_mut().unwrap().enable_plain().unwrap();
+        core.canonical_output = Some(
+            CanonicalOutput::for_run(
+                core.logs[0].take().unwrap(),
+                vec![b"supersecret".to_vec()],
+                cx.operation().limits(),
+            )
+            .unwrap(),
+        );
     }
     capture.feed(STD, b"\x1b[32mready\x1b[0m super");
     capture.feed(ERR, "secret\nété\n".as_bytes());
