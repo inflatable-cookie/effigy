@@ -831,6 +831,7 @@ impl Store {
             && has_column(&self.conn, "engine")?
             && has_session_owner(&self.conn)?
             && has_activation_session_owner(&self.conn)?
+            && has_activation_inputs(&self.conn)?
             && !stale_build
             && !adds_index
             && !adds_table
@@ -857,6 +858,11 @@ impl Store {
                 txn.conn.execute_batch("ALTER TABLE workspace_activation_reservations ADD COLUMN session_owner TEXT;
                     UPDATE workspace_activation_reservations SET session_owner=(SELECT owner FROM runs WHERE run_id=session_run)
                     WHERE session_run IS NOT NULL")?;
+            }
+            if !has_activation_inputs(txn.conn)? {
+                txn.conn.execute_batch(
+                    "ALTER TABLE workspace_activation_reservations ADD COLUMN inputs TEXT",
+                )?;
             }
             if !has_session_owner(txn.conn)? {
                 txn.conn.execute_batch(
@@ -1509,6 +1515,16 @@ fn has_activation_session_owner(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_activation_reservations') WHERE name='session_owner')",
         [], |row| row.get(0))
 }
+/// The frozen publish inputs an activation decision recorded, added like every
+/// other schema-1 change: an old reader selects explicit columns and simply
+/// does not see it.
+fn has_activation_inputs(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workspace_activation_reservations') WHERE name='inputs')",
+        [],
+        |row| row.get(0),
+    )
+}
 pub(crate) fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
@@ -1576,7 +1592,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// tables it knows, so a new table is invisible to it and needs no version
 /// bump. A new table is still created here, in the same bounded transaction
 /// that adds the additive indexes.
-const ADDITIVE_TABLES: [(&str, &str); 6] = [
+const ADDITIVE_TABLES: [(&str, &str); 7] = [
     (
         "foreground_terminals",
         "CREATE TABLE IF NOT EXISTS foreground_terminals (
@@ -1670,6 +1686,7 @@ CREATE INDEX IF NOT EXISTS run_attachments_run
   session_owner TEXT,
   session_run TEXT,
   session_generation INTEGER,
+  inputs TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (environment, environment_generation)
@@ -1688,6 +1705,30 @@ CREATE INDEX IF NOT EXISTS workspace_activation_reservations_session
   gate_key TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS workspace_session_runs_owner ON workspace_session_runs(owner)",
+    ),
+    // 052 §8.11: the durable selection a workspace activation committed. The
+    // obligation is written in the same transaction as `active(E)`, the
+    // session mapping and the session's `Borrow` attachment, so there is no
+    // window in which a generation is published without the record of the
+    // guest bytes it selected. `state` is text without a CHECK on purpose, so
+    // a reader that meets a state it does not know refuses instead of guessing;
+    // `selection` and `publication` are the exact receipts the commit validated
+    // and never carry secret bytes.
+    (
+        "workspace_selection_obligations",
+        "CREATE TABLE IF NOT EXISTS workspace_selection_obligations (
+  environment TEXT NOT NULL,
+  environment_generation INTEGER NOT NULL,
+  reservation_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  session_run TEXT NOT NULL,
+  state TEXT NOT NULL,
+  receipt TEXT NOT NULL,
+  reason TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (environment, environment_generation)
+) STRICT;",
     ),
 ];
 

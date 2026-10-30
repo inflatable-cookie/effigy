@@ -1,0 +1,726 @@
+//! The durable guest selection one activation commits (052 §8.11).
+//!
+//! An environment's published generation is not only a row: it selects the
+//! exact guest bytes a container-mode client executes. This module owns the
+//! record of that selection, so the bytes, the credential, the endpoint and
+//! the expected previous pointer values are one durable obligation written by
+//! the same transaction that publishes `active(E)`, the session mapping and the
+//! session's `Borrow` attachment. There is therefore no window in which a
+//! generation is advertised and no record of what it selected, and no
+//! transaction spans guest I/O: staging writes no selector, and the selector
+//! switch follows the commit and is recorded by [`Attachments::selection_switched`]
+//! (or, after a crash, by [`Attachments::selection_recovered`]).
+//!
+//! Nothing here hashes a secret or stores one. A selection names objects by
+//! digest and path; the document bytes are hashed once by
+//! [`SelectionReceipt::new`] before anything is committed, and the receipt the
+//! journal keeps is the validated record, never the bytes.
+//!
+//! Recovery is [`unfinished_selection`] plus the two terminal answers:
+//! completion needs a live session, a verifying target **and** a pinned
+//! listener answering, so an unserved generation is never published; anything
+//! else is abandoned, which revokes the mapping without restoring the
+//! predecessor. Unknown liveness is neither: it stays `Pending`.
+
+use super::*;
+
+/// The guest binary the entry link and `bin/current` select.
+pub const BINARY_SELECTOR: &str = "/run/effigy/bin/current";
+/// The stable entry link a person and a client call.
+pub const ENTRY_SELECTOR: &str = "/usr/local/bin/effigy";
+/// The pointer that names the context generation the guest must resolve.
+pub const CONTEXT_SELECTOR: &str = "/run/effigy/context/current";
+
+/// One immutable guest object: where it lives and the digest it must hash to.
+/// An object is additive and digest-addressed, so a retry hashes what is there
+/// rather than rewriting it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestObject {
+    pub path: String,
+    pub digest: Digest,
+}
+
+/// The three objects and two generations one selection names. The credential
+/// is generation-scoped, so it needs no pointer of its own: the context
+/// document `context_generation` selects it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionObjects {
+    pub binary: GuestObject,
+    pub context: GuestObject,
+    pub credential: GuestObject,
+    pub context_generation: Generation,
+    pub credential_generation: Generation,
+}
+
+/// One compare-and-swap the switch has to perform, with the value the exact
+/// target held before it. `expected` is read under `Gate(Env)`, never guessed:
+/// `None` is "the target said there was nothing there".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectorChange {
+    pub path: String,
+    pub expected: Option<String>,
+    pub next: String,
+}
+
+/// The complete guest selection one generation publishes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestSelection {
+    pub backend: String,
+    pub objects: SelectionObjects,
+    /// The three switches in the order the switch performs them: the binary
+    /// pointer, the stable entry link, then the context pointer.
+    pub switches: [SelectorChange; 3],
+    pub serving: super::ServingLease,
+}
+
+impl GuestSelection {
+    /// Check the selection's own shape: the three selectors are exactly the
+    /// three this kernel knows, each names the object it is supposed to select,
+    /// and the fields a publication depends on are present. The publication
+    /// cross-check is [`SelectionReceipt::validate`].
+    pub fn validate(&self) -> Result<(), RunError> {
+        if self.backend.trim().is_empty()
+            || self.objects.binary.path.trim().is_empty()
+            || self.objects.context.path.trim().is_empty()
+            || self.objects.credential.path.trim().is_empty()
+            || self.objects.context_generation.get() == 0
+            || self.objects.credential_generation.get() == 0
+        {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        let expects = [
+            (BINARY_SELECTOR, self.objects.binary.path.clone()),
+            (ENTRY_SELECTOR, self.objects.binary.path.clone()),
+            (
+                CONTEXT_SELECTOR,
+                self.objects.context_generation.get().to_string(),
+            ),
+        ];
+        for (change, (path, next)) in self.switches.iter().zip(expects) {
+            if change.path != path || change.next != next {
+                return Err(ActivationRefusal::SelectionMismatch.into());
+            }
+        }
+        self.serving.validate()?;
+        Ok(())
+    }
+}
+
+/// The validated selection one commit records: the publication the activation
+/// run acknowledged and the bytes and endpoints that generation selects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionReceipt {
+    publication: WorkspacePublicationReceipt,
+    selection: GuestSelection,
+}
+
+impl SelectionReceipt {
+    /// Build the receipt the publisher hands to `commit_selection`. The
+    /// document bytes are hashed here, once, and compared with the object the
+    /// selection names, so the context a guest will resolve is the context the
+    /// receipt committed: no secret bytes are kept.
+    pub fn new(
+        plan: &ActivationPlan,
+        publication: WorkspacePublicationReceipt,
+        selection: GuestSelection,
+        document: &[u8],
+    ) -> Result<Self, RunError> {
+        if Digest::of(document) != selection.objects.context.digest {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        let receipt = Self {
+            publication,
+            selection,
+        };
+        receipt.validate(plan)?;
+        Ok(receipt)
+    }
+
+    /// Validate a receipt against the frozen activation plan: the publication
+    /// names this plan's E and frozen session, the selection's shape is the one
+    /// this kernel performs, and the artifact and context generation it selects
+    /// are the ones the publication acknowledged.
+    pub fn validate(&self, plan: &ActivationPlan) -> Result<(), RunError> {
+        plan.validate_receipt(&self.publication)?;
+        self.selection.validate()?;
+        let selected = format!("sha256:{}", self.selection.objects.binary.digest.hex());
+        if self.publication.publication.artifact_digest != selected
+            || self.publication.publication.context_generation
+                != self.selection.objects.context_generation.get()
+        {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        Ok(())
+    }
+
+    pub fn publication(&self) -> &WorkspacePublicationReceipt {
+        &self.publication
+    }
+    pub fn selection(&self) -> &GuestSelection {
+        &self.selection
+    }
+}
+
+/// What the guest holds after the three compares, as the caller read it back.
+/// It is evidence to check, never authority: [`SelectionObligation::validate_switch`]
+/// refuses anything that is not the committed target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionSwitchReceipt {
+    pub context_generation: Generation,
+    pub context_digest: Digest,
+    pub binary_digest: Digest,
+    pub credential_digest: Digest,
+    pub serving_pin: Digest,
+}
+
+impl SelectionSwitchReceipt {
+    /// The receipt for a selection that was just read back: every digest is the
+    /// one the obligation committed.
+    pub fn of(receipt: &SelectionReceipt) -> Self {
+        let selection = &receipt.selection;
+        Self {
+            context_generation: selection.objects.context_generation,
+            context_digest: selection.objects.context.digest.clone(),
+            binary_digest: selection.objects.binary.digest.clone(),
+            credential_digest: selection.objects.credential.digest.clone(),
+            serving_pin: selection.serving.pin.clone(),
+        }
+    }
+}
+
+/// The obligation's own lifecycle. A state this kernel does not know is
+/// refused, never guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionState {
+    /// Committed with the generation, not yet switched.
+    Pending,
+    /// Every selector holds the committed target and the objects were read back.
+    Switched,
+    /// Completion became impossible; the publication is revoked.
+    Abandoned,
+}
+
+impl SelectionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Switched => "switched",
+            Self::Abandoned => "abandoned",
+        }
+    }
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "pending" => Some(Self::Pending),
+            "switched" => Some(Self::Switched),
+            "abandoned" => Some(Self::Abandoned),
+            _ => None,
+        }
+    }
+}
+
+/// The durable record of one generation's selection, written by the commit that
+/// published it. Its id is derived from the activation it belongs to, so a retry
+/// reads the same obligation instead of creating a second one.
+#[derive(Debug, Clone)]
+pub struct SelectionObligation {
+    id: run::RequestId,
+    reservation: ActivationReservationId,
+    environment: ResourceId,
+    environment_generation: Generation,
+    run: RunId,
+    session_run: RunId,
+    receipt: SelectionReceipt,
+    state: SelectionState,
+}
+
+impl SelectionObligation {
+    fn new(
+        reservation: &ActivationPlan,
+        run: RunId,
+        receipt: SelectionReceipt,
+    ) -> Result<Self, RunError> {
+        let mut material = reservation.reservation_id().bytes().to_vec();
+        material.extend_from_slice(run.to_string().as_bytes());
+        material.extend_from_slice(reservation.session_run().to_string().as_bytes());
+        material.extend_from_slice(b"effigy.workspace-selection-obligation.v1");
+        let digest = Digest::of(&material);
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest.0[..16]);
+        Ok(Self {
+            id: run::RequestId::new(bytes),
+            reservation: reservation.reservation_id(),
+            environment: reservation.environment().clone(),
+            environment_generation: reservation.environment_generation(),
+            run,
+            session_run: reservation.session_run(),
+            receipt,
+            state: SelectionState::Pending,
+        })
+    }
+
+    pub fn id(&self) -> run::RequestId {
+        self.id
+    }
+    pub fn reservation(&self) -> ActivationReservationId {
+        self.reservation
+    }
+    pub fn environment(&self) -> &ResourceId {
+        &self.environment
+    }
+    pub fn environment_generation(&self) -> Generation {
+        self.environment_generation
+    }
+    /// The environment activation run whose commit wrote this obligation.
+    pub fn run(&self) -> RunId {
+        self.run
+    }
+    pub fn session_run(&self) -> RunId {
+        self.session_run
+    }
+    pub fn receipt(&self) -> &SelectionReceipt {
+        &self.receipt
+    }
+    pub fn state(&self) -> SelectionState {
+        self.state
+    }
+    /// The fence a switch must hold: the obligation's own environment at E.
+    pub(crate) fn fence(&self) -> Fence {
+        Fence {
+            resource: self.environment.clone(),
+            generation: self.environment_generation,
+        }
+    }
+
+    /// Refuse a switch receipt that is not the obligation's exact target. The
+    /// caller reads the guest back; this is the check that turns that read into
+    /// evidence or a refusal, so a third value is never recorded as complete.
+    pub fn validate_switch(&self, receipt: &SelectionSwitchReceipt) -> Result<(), RunError> {
+        let expected = SelectionSwitchReceipt::of(&self.receipt);
+        if expected != *receipt {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        Ok(())
+    }
+}
+
+/// The three independent liveness facts recovery judges before it completes or
+/// abandons a selection. Each is `Verified` only with positive evidence; an
+/// unknown answer is neither live nor dead.
+#[derive(Debug, Clone)]
+pub struct SelectionLiveness {
+    /// The committed session run is live and still the environment's mapping.
+    pub session: Observed<()>,
+    /// The target the publication names still verifies as that exact container
+    /// and boot.
+    pub target: Observed<()>,
+    /// The listener that holds the session's key answers a bounded pinned
+    /// handshake. No application frame, credential or admission record.
+    pub listener: Observed<()>,
+}
+
+impl SelectionLiveness {
+    /// All three facts proven together. Only then may a selection complete.
+    pub fn complete(&self) -> bool {
+        [&self.session, &self.target, &self.listener]
+            .into_iter()
+            .all(|fact| matches!(fact, Observed::Verified(..)))
+    }
+    /// A fact positively disproves the selection: nothing can complete it.
+    pub fn disproven(&self) -> bool {
+        [&self.session, &self.target, &self.listener]
+            .into_iter()
+            .any(|fact| matches!(fact, Observed::Absent(_)))
+    }
+}
+
+const OBLIGATIONS: &str = "workspace_selection_obligations";
+
+type ObligationRow = (
+    String,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+);
+
+fn decode_obligation(
+    environment: &ResourceId,
+    row: ObligationRow,
+) -> Result<SelectionObligation, RunError> {
+    let (reservation, environment_generation, run, session_run, state, receipt, _created, _reason) =
+        row;
+    let Some(state) = SelectionState::parse(&state) else {
+        return Err(RunError::broken(format!(
+            "a stored workspace selection state (`{state}`)"
+        )));
+    };
+    let receipt: SelectionReceipt = serde_json::from_str(&receipt).map_err(|error| {
+        RunError::broken(format!("a stored workspace selection receipt ({error})"))
+    })?;
+    Ok(SelectionObligation {
+        id: derived_id(&reservation, &run, &session_run)?,
+        reservation: ActivationReservationId::parse(&reservation).map_err(|error| {
+            RunError::broken(format!(
+                "a stored workspace selection reservation ({error})"
+            ))
+        })?,
+        environment: environment.clone(),
+        environment_generation: Generation::new(environment_generation as u64),
+        run: parse_run(&run)?,
+        session_run: parse_run(&session_run)?,
+        receipt,
+        state,
+    })
+}
+
+fn parse_run(text: &str) -> Result<RunId, RunError> {
+    text.parse()
+        .map_err(|error: crate::id::IdentityError| RunError::Store(error.into()))
+}
+
+/// The obligation id is derived, never stored: it names the same activation the
+/// row does, so a reader and the writer that created it agree without a second
+/// authority. It grants nothing by being known.
+fn derived_id(reservation: &str, run: &str, session_run: &str) -> Result<run::RequestId, RunError> {
+    let reservation = ActivationReservationId::parse(reservation).map_err(|error| {
+        RunError::broken(format!(
+            "a stored workspace selection reservation ({error})"
+        ))
+    })?;
+    let mut material = reservation.bytes().to_vec();
+    material.extend_from_slice(run.as_bytes());
+    material.extend_from_slice(session_run.as_bytes());
+    material.extend_from_slice(b"effigy.workspace-selection-obligation.v1");
+    let digest = Digest::of(&material);
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest.0[..16]);
+    Ok(run::RequestId::new(bytes))
+}
+
+const OBLIGATION_COLUMNS: &str = "reservation_id, environment_generation, run_id, session_run, \
+ state, receipt, created_at, reason";
+
+fn obligation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ObligationRow> {
+    Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, i64>(1)?,
+        row.get::<_, String>(2)?,
+        row.get::<_, String>(3)?,
+        row.get::<_, String>(4)?,
+        row.get::<_, String>(5)?,
+        row.get::<_, i64>(6)?,
+        row.get::<_, Option<String>>(7)?,
+    ))
+}
+
+pub(super) fn read_obligation(
+    conn: &rusqlite::Connection,
+    environment: &ResourceId,
+    generation: Generation,
+) -> Result<Option<SelectionObligation>, RunError> {
+    let sql = format!(
+        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 AND environment_generation=?2"
+    );
+    let row = conn
+        .query_row(
+            &sql,
+            params![environment.name().to_string(), generation.get() as i64],
+            obligation_row,
+        )
+        .optional()?;
+    row.map(|row| decode_obligation(environment, row))
+        .transpose()
+}
+
+/// The one unfinished selection for `environment`, if any. `Absent` means no
+/// obligation was ever committed or the latest one finished; `Unknown` never
+/// becomes either.
+pub fn unfinished_selection(
+    reader: &StoreReader,
+    environment: &ResourceId,
+) -> Observed<Option<SelectionObligation>> {
+    let sql = format!(
+        "SELECT {OBLIGATION_COLUMNS} FROM {OBLIGATIONS} WHERE environment=?1 \
+         ORDER BY environment_generation DESC LIMIT 1"
+    );
+    let row = match reader
+        .conn()
+        .query_row(&sql, [environment.name().to_string()], obligation_row)
+    {
+        Ok(row) => Some(row),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(error) => {
+            return Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string()));
+        }
+    };
+    let Some(row) = row else {
+        return Observed::Absent(AbsenceProof::NoRow {
+            table: OBLIGATIONS.into(),
+        });
+    };
+    match decode_obligation(environment, row) {
+        Ok(obligation) if obligation.state == SelectionState::Pending => {
+            Observed::Verified(Some(obligation), super::activation_evidence())
+        }
+        Ok(_) => Observed::Absent(AbsenceProof::NoRow {
+            table: OBLIGATIONS.into(),
+        }),
+        Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
+    }
+}
+
+/// Write the obligation row inside the commit that publishes its generation.
+pub(super) fn record_obligation(
+    txn: &mut Txn<'_>,
+    plan: &ActivationPlan,
+    run: RunId,
+    receipt: &SelectionReceipt,
+) -> Result<SelectionObligation, RunError> {
+    let obligation = SelectionObligation::new(plan, run, receipt.clone())?;
+    txn.conn().execute(
+        &format!(
+            "INSERT INTO {OBLIGATIONS} (environment, environment_generation, reservation_id, run_id, \
+             session_run, state, receipt, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,'pending',?6,?7,?7)"
+        ),
+        params![
+            obligation.environment.name().to_string(),
+            obligation.environment_generation.get() as i64,
+            obligation.reservation.to_string(),
+            obligation.run.to_string(),
+            obligation.session_run.to_string(),
+            serde_json::to_string(receipt)?,
+            txn.now()
+        ],
+    )?;
+    Ok(obligation)
+}
+
+impl SelectionObligation {
+    /// Move this pending obligation to a terminal state, in the caller's
+    /// transaction. Exactly one writer finishes a selection: a retry sees the
+    /// terminal row and is answered with it, never written twice.
+    pub(crate) fn finish(
+        &self,
+        txn: &Txn<'_>,
+        state: SelectionState,
+        reason: Option<&str>,
+    ) -> Result<(), RunError> {
+        let obligation = self;
+        let stored = read_obligation(
+            txn.conn(),
+            obligation.environment(),
+            obligation.environment_generation(),
+        )?
+        .ok_or_else(|| {
+            RunError::broken("the workspace selection obligation vanished before it finished")
+        })?;
+        if stored.id != obligation.id {
+            return Err(ActivationRefusal::SelectionMismatch.into());
+        }
+        if stored.state != SelectionState::Pending {
+            return Err(ActivationRefusal::SelectionSettled.into());
+        }
+        let changed = txn.conn().execute(
+            &format!(
+                "UPDATE {OBLIGATIONS} SET state=?3,reason=?4,updated_at=?5 \
+                 WHERE environment=?1 AND environment_generation=?2 AND state='pending'"
+            ),
+            params![
+                obligation.environment().name().to_string(),
+                obligation.environment_generation().get() as i64,
+                state.as_str(),
+                reason,
+                txn.now()
+            ],
+        )?;
+        if changed != 1 {
+            return Err(ActivationRefusal::SelectionSettled.into());
+        }
+        Ok(())
+    }
+
+    /// The committed generation must still be the one this obligation published
+    /// and the environment must still be serving it. A recovery never
+    /// re-targets a generation another activation replaced.
+    pub(crate) fn require_serving(&self, txn: &Txn<'_>) -> Result<(), RunError> {
+        let active = txn
+            .conn()
+            .query_row(
+                "SELECT state='active' AND last_applied=?2 FROM resources WHERE name=?1",
+                params![
+                    self.environment.name().to_string(),
+                    self.environment_generation.get().to_string()
+                ],
+                |row| row.get::<_, Option<bool>>(0),
+            )?
+            .unwrap_or(false);
+        if !active {
+            return Err(ActivationRefusal::ServingLost.into());
+        }
+        let mapped = txn
+            .conn()
+            .query_row(
+                "SELECT run_id, environment_generation FROM workspace_sessions WHERE environment=?1",
+                [self.environment.name().to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        match mapped {
+            Some((run, generation))
+                if run == self.session_run.to_string()
+                    && generation as u64 == self.environment_generation.get() => {}
+            _ => return Err(ActivationRefusal::ServingLost.into()),
+        }
+        // The session run itself must be open at its own generation: a settled
+        // session serves nothing, whatever the mapping still says.
+        let open: Option<(String, i64)> = txn
+            .conn()
+            .query_row(
+                "SELECT phase, generation FROM runs WHERE run_id=?1",
+                [self.session_run.to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        let staged: Option<i64> = txn
+            .conn()
+            .query_row(
+                "SELECT generation FROM workspace_session_runs WHERE run_id=?1",
+                [self.session_run.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        match open {
+            Some((phase, generation))
+                if phase != "closed"
+                    && phase != "stopping"
+                    && generation == staged.unwrap_or(generation) => {}
+            _ => return Err(ActivationRefusal::ServingLost.into()),
+        }
+        Ok(())
+    }
+}
+
+/// Revoke a published generation whose selection can never complete. The
+/// successor's mapping and the environment's `active` publication are removed;
+/// the predecessor's own authority is not restored and no third value is
+/// guessed.
+fn revoke(txn: &Txn<'_>, obligation: &SelectionObligation) -> Result<(), RunError> {
+    txn.conn().execute(
+        "UPDATE resources SET state='pending',last_applied=NULL,updated_at=?2 WHERE name=?1",
+        params![obligation.environment.name().to_string(), txn.now()],
+    )?;
+    txn.conn().execute(
+        "DELETE FROM workspace_sessions WHERE environment=?1 AND run_id=?2",
+        params![
+            obligation.environment.name().to_string(),
+            obligation.session_run.to_string()
+        ],
+    )?;
+    Ok(())
+}
+
+impl WorkspaceActivationReservation {
+    /// Commit the staged activation with the guest selection it published.
+    ///
+    /// This is the workspace path: it re-validates the stored plan, the held
+    /// runs and the receipt, then writes `active(E)`, the session mapping, the
+    /// session's `Borrow` attachment and a `Pending` selection obligation in
+    /// one transaction, or none of them. A retry after a lost answer reads the
+    /// committed obligation back instead of writing a second one, and a retry
+    /// that names different bytes is refused: a committed generation's
+    /// selection is frozen.
+    pub fn commit_selection(
+        &self,
+        cx: &EffectContext,
+        root: &StateRoot,
+        environment_run: &Run<'_>,
+        session_run: &Run<'_>,
+        receipt: &SelectionReceipt,
+    ) -> Result<CommittedActivation, RunError> {
+        self.commit_with(cx, root, environment_run, session_run, Some(receipt))
+    }
+}
+
+impl CommittedActivation {
+    /// The selection obligation this commit wrote, if it committed one.
+    pub fn selection_obligation(&self) -> Option<&SelectionObligation> {
+        self.obligation.as_ref()
+    }
+}
+
+/// Complete a selection from recovery, without a live activation-run handle.
+///
+/// Completion is possible only with all three facts proven together: the
+/// session is live, the target it names still verifies and the listener holding
+/// its key answered a bounded pinned handshake. Anything less is refused with
+/// [`ActivationRefusal::ServingLost`] for the caller to abandon; unknown
+/// liveness completes nothing.
+pub fn selection_recovered(
+    cx: &EffectContext,
+    root: &StateRoot,
+    obligation: &SelectionObligation,
+    liveness: &SelectionLiveness,
+    wait: Wait,
+) -> Result<(), RunError> {
+    if !liveness.complete() {
+        return Err(ActivationRefusal::ServingLost.into());
+    }
+    let _gate = Gate::acquire(
+        cx,
+        root,
+        std::slice::from_ref(obligation.environment()),
+        wait,
+    )?;
+    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+    store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+        obligation.require_serving(txn)?;
+        obligation.finish(txn, SelectionState::Switched, None)
+    })
+}
+
+/// Abandon a selection that can no longer be completed.
+///
+/// Recovery-only, and it refuses **only** while completion is still possible:
+/// a live session with a verifying target and a live listener is not abandoned.
+/// A live session whose listener is established dead *is*, because completing
+/// it would publish a generation nothing serves. Unknown liveness is neither:
+/// the obligation stays `Pending`. The revocation removes this generation's
+/// publication; it never restores the predecessor.
+pub fn selection_abandoned(
+    cx: &EffectContext,
+    root: &StateRoot,
+    obligation: &SelectionObligation,
+    liveness: &SelectionLiveness,
+    reason: &str,
+    wait: Wait,
+) -> Result<(), RunError> {
+    if liveness.complete() {
+        return Err(ActivationRefusal::SelectionStillCompletable.into());
+    }
+    if !liveness.disproven() {
+        // Nothing positively disproves the selection yet: an unknown listener
+        // or session is not an established dead one, so the obligation stays
+        // Pending rather than being abandoned on a guess.
+        return Err(RunError::unavailable(
+            "workspace selection liveness is unknown; it stays pending",
+        ));
+    }
+    let _gate = Gate::acquire(
+        cx,
+        root,
+        std::slice::from_ref(obligation.environment()),
+        wait,
+    )?;
+    let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+    store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
+        crate::fault_point!(SelectionAbandonBefore)?;
+        revoke(txn, obligation)?;
+        obligation.finish(txn, SelectionState::Abandoned, Some(reason))?;
+        Ok::<_, RunError>(())
+    })?;
+    crate::fault_point!(SelectionAbandonAfter)?;
+    Ok(())
+}
