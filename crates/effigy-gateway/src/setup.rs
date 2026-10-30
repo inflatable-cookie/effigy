@@ -318,7 +318,10 @@ pub fn command(
     }
     Ok(output)
 }
-fn command_outcome(
+/// Run one setup child and keep its exit code with its output. A caller that
+/// reads a structured report from a child which exits non-zero on refusal (the
+/// low-port bind probe) needs both; [`command`] keeps only the success bytes.
+pub fn command_outcome(
     run: &mut Run<'_>,
     cx: &EffectContext,
     argv: Vec<OsString>,

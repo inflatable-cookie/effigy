@@ -1811,8 +1811,8 @@ fn listener_readiness_frames_name_each_blocker_as_it_happens() {
         frames,
         vec![
             "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; 1s elapsed",
-            "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; last: the gateway is not answering yet; 2s elapsed",
-            "checking the verified listener; waiting for the gateway to answer on 127.0.0.1:8080; last: the gateway record is not published yet; 3s elapsed",
+            "checking the verified listener; last: the gateway is not answering yet; 2s elapsed",
+            "checking the verified listener; last: the gateway record is not published yet; 3s elapsed",
         ]
     );
 }
@@ -1878,7 +1878,7 @@ fn operator_start_frames_follow_the_supervisor_then_the_self_test() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        "checking the gateway self-test; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting; 4s elapsed"
+        "checking the gateway self-test; last: gateway status is starting; 4s elapsed"
     );
 }
 
@@ -1897,7 +1897,7 @@ fn operator_start_frame_carries_the_self_test_blocker() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(6)),
-        "checking the gateway self-test; waiting for the gateway to answer on 127.0.0.1:80; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
+        "checking the gateway self-test; last: gateway status is starting: the listener on 127.0.0.1:80 is not bound yet; 6s elapsed"
     );
 }
 
@@ -1915,7 +1915,7 @@ fn operator_start_frame_names_an_unreadable_status() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(3)),
-        "checking the gateway self-test; waiting for the gateway to answer on 127.0.0.1:80; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
+        "checking the gateway self-test; last: cannot read the gateway status: permission denied reading the gateway record; 3s elapsed"
     );
 }
 
@@ -1939,7 +1939,7 @@ fn operator_stop_frames_follow_the_request_then_the_daemon_winding_down() {
     );
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "waiting for the gateway to stop; waiting for the gateway process to exit; last: gateway status is stopping: the daemon is closing its listeners; 5s elapsed"
+        "waiting for the gateway to stop; last: gateway status is stopping: the daemon is closing its listeners; 5s elapsed"
     );
 }
 
@@ -1957,29 +1957,31 @@ fn bind_probe_frames_name_each_address_as_it_is_probed() {
         calls += 1;
         frames.push(progress.frame_at(fake_clock(calls)));
         let outcome = outcomes[calls as usize - 1].clone();
-        Ok(bind_report(&[(address, outcome)]))
+        Ok(bind_probe_child(&[(address, outcome)], 0))
     });
     result.expect("no address refused");
     assert_eq!(
         frames,
         vec![
-            format!("probing 127.0.0.1:53 (0/3); waiting for {awaited}; 1s elapsed"),
-            format!("probing 127.0.0.1:80 (1/3); waiting for {awaited}; last: 127.0.0.1:53 bound; 2s elapsed"),
-            format!("probing 127.0.0.1:443 (2/3); waiting for {awaited}; last: 127.0.0.1:80 already in use; 3s elapsed"),
+            format!("probing 127.0.0.1:53 (1/3); waiting for {awaited}; 1s elapsed"),
+            format!("probing 127.0.0.1:80 (2/3); last: 127.0.0.1:53 bound; 2s elapsed"),
+            format!("probing 127.0.0.1:443 (3/3); last: 127.0.0.1:80 already in use; 3s elapsed"),
         ]
     );
     assert_eq!(
         progress.frame_at(fake_clock(4)),
-        format!("probing 127.0.0.1:443 (3/3); waiting for {awaited}; last: 127.0.0.1:443 bound; 4s elapsed")
+        format!("probing 127.0.0.1:443 (3/3); last: 127.0.0.1:443 bound; 4s elapsed")
     );
 }
 
-/// Negative: a refused address stops the probe. The later addresses are not
-/// probed, and the error is the refusal's own sentence.
+/// Negative: a denied bind refuses setup at the real child-result boundary. The
+/// child prints its report, writes its own reason and exits non-zero, so the
+/// report is still read: the refused address and its count reach the operator
+/// frame before the error, and the error is the refusal's own sentence.
 #[test]
-fn bind_probe_refusal_stops_at_the_refused_address() {
-    let progress =
-        ProgressSource::waiting_for("the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443");
+fn bind_probe_refusal_reports_the_child_refusal_before_returning_it() {
+    let awaited = "the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443";
+    let progress = ProgressSource::waiting_for(awaited);
     let addresses = ["127.0.0.1:53", "127.0.0.1:80", "127.0.0.1:443"].map(str::to_owned);
     let mut probed = Vec::new();
     let result = probe_bind_addresses(&addresses, &progress, |address| {
@@ -1989,18 +1991,85 @@ fn bind_probe_refusal_stops_at_the_refused_address() {
         } else {
             BindOutcome::Bound
         };
-        Ok(bind_report(&[(address, outcome)]))
+        let code = i32::from(address == "127.0.0.1:80");
+        Ok(bind_probe_child(&[(address, outcome)], code))
     });
     let error = result.expect_err("a denied bind refuses setup");
     assert_eq!(probed, vec!["127.0.0.1:53", "127.0.0.1:80"]);
-    assert!(
-        error.to_string().contains("cannot bind 127.0.0.1:80"),
-        "{error}"
+    assert_eq!(
+        error.to_string(),
+        "the installed gateway binary still cannot bind 127.0.0.1:80 as the operator: CAP_NET_BIND_SERVICE is not effective. Run `effigy gateway setup` again; if the binary moved, install it again first"
     );
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        "probing 127.0.0.1:80 (2/3); waiting for the bind probe for 127.0.0.1:53, 127.0.0.1:80, 127.0.0.1:443; last: 127.0.0.1:80 denied; 5s elapsed"
+        "probing 127.0.0.1:80 (2/3); last: 127.0.0.1:80 denied; 5s elapsed"
     );
+}
+
+/// The same boundary for a failed bind: the failed address and its count are
+/// the last event, and the refusal keeps the child's own reason.
+#[test]
+fn bind_probe_failure_names_the_address_and_keeps_its_reason() {
+    let progress = ProgressSource::waiting_for("the bind probe for 127.0.0.1:53");
+    let addresses = ["127.0.0.1:53"].map(str::to_owned);
+    let result = probe_bind_addresses(&addresses, &progress, |address| {
+        Ok(bind_probe_child(
+            &[(
+                address,
+                BindOutcome::Failed("Address already in use (os error 48)".into()),
+            )],
+            1,
+        ))
+    });
+    let error = result.expect_err("a failed bind refuses setup");
+    assert_eq!(
+        error.to_string(),
+        "the low-port probe for 127.0.0.1:53 failed: Address already in use (os error 48)"
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(2)),
+        "probing 127.0.0.1:53 (1/1); last: 127.0.0.1:53 failed: Address already in use (os error 48); 2s elapsed"
+    );
+}
+
+/// The custody tail keeps both child streams in arrival order, so the report is
+/// the output line that parses as one; a child that printed no readable report
+/// keeps the adapter's own refusal.
+#[test]
+fn a_bind_probe_child_result_is_read_from_its_own_output() {
+    let report = bind_report(&[("127.0.0.1:80", BindOutcome::Bound)]);
+    let json = serde_json::to_string(&report).expect("report JSON");
+    for output in [
+        format!("{json}\n"),
+        format!("a startup warning\n{json}\n"),
+    ] {
+        let child = BindProbeChildResult {
+            code: 0,
+            output: output.into_bytes(),
+        };
+        assert_eq!(child.report().expect("the report line"), report);
+    }
+    let child = BindProbeChildResult {
+        code: 2,
+        output: b"cannot spawn the probe\n".to_vec(),
+    };
+    assert!(child.report().is_err());
+    assert_eq!(
+        child.adapter_failure().to_string(),
+        "gateway setup adapter failed (exit 2): cannot spawn the probe\n"
+    );
+}
+
+fn bind_probe_child(addresses: &[(&str, BindOutcome)], code: i32) -> BindProbeChildResult {
+    let report = bind_report(addresses);
+    let mut output = serde_json::to_vec(&report).expect("report JSON");
+    output.push(b'\n');
+    if let Some(reason) = report.refusal() {
+        // `probe_entry` writes its reason after printing the report.
+        output.extend(reason.as_bytes());
+        output.push(b'\n');
+    }
+    BindProbeChildResult { code, output }
 }
 
 /// Fake-clock frames through the real route summary: each route is named as it
@@ -2037,6 +2106,123 @@ fn route_frames_name_each_route_as_it_is_read() {
     assert_eq!(summary.missing_domains, vec!["a.test", "b.test"]);
     assert_eq!(
         progress.frame_at(fake_clock(5)),
-        format!("reading route b.test (2/2); waiting for {awaited}; last: b.test has no certificate yet; 5s elapsed")
+        "reading route b.test (2/2); last: b.test has no certificate yet; 5s elapsed"
     );
+}
+
+/// Fake-clock frames through the real route summary. Each route becomes the
+/// current object, with its position, before its certificate is looked up; the
+/// outcome is the event that follows, and the next route's frame keeps it as
+/// the last event. The frame while a lookup runs never names the route before
+/// it.
+#[test]
+fn route_frames_name_each_route_before_its_certificate_lookup() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    let mut route_table = RouteTable::new();
+    for domain in ["b.test", "a.test", "c.test"] {
+        route_table.routes.insert(
+            domain.to_owned(),
+            Route {
+                domain: domain.to_owned(),
+                target: Some("127.0.0.1:8080".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                source: RouteSource::Manual,
+                project: "/tmp/demo".to_owned(),
+                tls: true,
+                managed_listener: None,
+                registered: Utc::now(),
+            },
+        );
+    }
+    let awaited = format!("the route table at {}", config.route_table_path.display());
+    let progress = ProgressSource::waiting_for(&awaited);
+    progress.update("reading the existing route table", None, None);
+    let mut frames = Vec::new();
+    let mut lookups = 0;
+    let summary = summarize_routes(&config, &route_table, &progress, |_, domain| {
+        lookups += 1;
+        frames.push(progress.frame_at(fake_clock(lookups)));
+        // a.test and c.test have their certificate; b.test does not.
+        domain != "b.test"
+    });
+    assert_eq!(
+        frames,
+        vec![
+            format!("reading route a.test (1/3); waiting for {awaited}; 1s elapsed"),
+            format!("reading route b.test (2/3); last: a.test has its certificate; 2s elapsed"),
+            format!("reading route c.test (3/3); last: b.test has no certificate yet; 3s elapsed"),
+        ]
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(4)),
+        "reading route c.test (3/3); last: c.test has its certificate; 4s elapsed"
+    );
+    assert_eq!(lookups, 3);
+    assert_eq!(summary.route_count, 3);
+    assert_eq!(summary.cert_ready_count, 2);
+    assert_eq!(summary.missing_domains, vec!["b.test"]);
+}
+
+/// A route table with no routes is stated, not left as a stale label: there is
+/// nothing to read, and the step says so.
+#[test]
+fn an_empty_route_table_is_read_without_a_route_frame() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    let progress = ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:80");
+    progress.update("reading the existing route table", None, None);
+    let mut lookups = 0;
+    let summary = summarize_routes(&config, &RouteTable::new(), &progress, |_, _| {
+        lookups += 1;
+        false
+    });
+    assert_eq!(lookups, 0);
+    assert_eq!(summary.route_count, 0);
+    assert_eq!(
+        progress.frame_at(fake_clock(2)),
+        "reading the existing route table; waiting for the gateway to answer on 127.0.0.1:80; 2s elapsed"
+    );
+}
+
+/// The operator path reads through the real loader. An absent table is no
+/// routes yet and an unreadable one is the step's last event: `up` and `setup`
+/// read the published table, so neither read can change their outcome.
+#[test]
+fn observing_existing_routes_reads_the_table_without_changing_the_outcome() {
+    let home = tempfile::tempdir().expect("gateway fixture");
+    let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+    std::fs::create_dir_all(config.route_table_path.parent().expect("gateway directory"))
+        .expect("an empty gateway directory");
+    let progress = ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:80");
+    progress.update("checking the gateway self-test", None, None);
+    observe_existing_routes(&config, &progress);
+    assert_eq!(
+        progress.summary(),
+        "the route table has no routes registered yet"
+    );
+    assert_eq!(
+        progress.frame_at(fake_clock(2)),
+        format!(
+            "the route table has no routes registered yet; waiting for the route table at {}; 2s elapsed",
+            config.route_table_path.display()
+        )
+    );
+
+    // A table path under a regular file cannot be read; the step keeps going
+    // and names the read failure as its last event.
+    let blocked = home.path().join("not-a-directory");
+    std::fs::write(&blocked, b"not a directory").expect("blocking file");
+    let unreadable = GatewayConfig::standard(blocked.join("gateway"));
+    let progress = ProgressSource::waiting_for("the gateway to answer on 127.0.0.1:80");
+    progress.update("checking the gateway self-test", None, None);
+    observe_existing_routes(&unreadable, &progress);
+    let frame = progress.frame_at(fake_clock(3));
+    assert!(
+        frame.starts_with("cannot read the route table at "),
+        "{frame}"
+    );
+    assert!(frame.contains("; last: "), "{frame}");
 }

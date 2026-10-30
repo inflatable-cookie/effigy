@@ -123,7 +123,7 @@ pub(super) fn wait_for_private_gateway_ready(
         Duration::from_secs(15),
         effigy_kernel::ctx::EffectClass::Observe,
     );
-    progress.set_awaiting(format!(
+    progress.now_waiting_for(format!(
         "the gateway to answer on {}",
         config.proxy.bind_addr
     ));
