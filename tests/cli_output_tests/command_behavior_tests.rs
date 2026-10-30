@@ -4543,7 +4543,16 @@ detach_timeout_secs = 1
         bin_dir.display(),
         std::env::var("PATH").expect("PATH")
     );
-    let base_env: Vec<(String, String)> = vec![
+    // A fixture-owned gateway: both environments below claim one route domain,
+    // and a fixture process never starts, stops or replaces the operator's
+    // machine gateway (effigy#382). Its state root, CA and loopback ports are
+    // disposable and it stops through its own control path when this test ends.
+    let gateway = FixturePrivateGateway::start(&root, home.path(), &path);
+    // Route registration probes the published host ports for a foreign
+    // listener; this fixture owns none, and the operator's machine is never
+    // consulted for one.
+    write_quiet_listener_probe(&bin_dir.join("lsof"));
+    let mut base_env: Vec<(String, String)> = vec![
         ("NO_COLOR".to_owned(), "1".to_owned()),
         (
             "EFFIGY_EXECUTABLE".to_owned(),
@@ -4581,6 +4590,7 @@ detach_timeout_secs = 1
             log_follow.display().to_string(),
         ),
     ];
+    base_env.extend(gateway.env());
     let spawn_headless = |task: &str, extra_env: &[(&str, &str)]| {
         Command::new(binary)
             .arg("--repo")
@@ -5379,4 +5389,187 @@ fn cli_docs_check_without_paths_keeps_the_repository_root_default_scope() {
         stderr.contains("README.md") && stderr.contains("./gone.md"),
         "the default scan should read the repository-root README: {stderr}"
     );
+}
+
+/// A disposable private gateway for one fixture, with a fixture-owned state
+/// root, a fixture CA and ephemeral loopback ports. A fixture process never
+/// starts, stops or replaces the operator's machine gateway (effigy#382); it
+/// owns a private one and stops it through the same control path.
+struct FixturePrivateGateway {
+    root: PathBuf,
+    home: PathBuf,
+    mkcert: PathBuf,
+    ca: PathBuf,
+    path: String,
+}
+
+impl FixturePrivateGateway {
+    fn start(root: &std::path::Path, home: &std::path::Path, path: &str) -> Self {
+        let gateway_root = root.join("private-gateway");
+        private_fixture_directory(&gateway_root);
+        // The fixture CA stands in for the operator's `CAROOT`: the gateway's
+        // private TLS setup creates its own CA under its private state root and
+        // must never read or write the host's trust material.
+        let ca = root.join("private-ca");
+        private_fixture_directory(&ca);
+        let mkcert = root.join("fixture-mkcert");
+        write_fixture_mkcert(&mkcert);
+        let gateway = Self {
+            root: gateway_root,
+            home: home.to_path_buf(),
+            mkcert,
+            ca,
+            path: path.to_owned(),
+        };
+        let tls = gateway.run("setup-tls", &[]);
+        assert!(tls.status.success(), "private gateway setup-tls: {tls:?}");
+        let up = gateway.run(
+            "up",
+            &[
+                "--dns-addr",
+                "127.0.0.1:0",
+                "--proxy-addr",
+                "127.0.0.1:0",
+                "--https-addr",
+                "127.0.0.1:0",
+            ],
+        );
+        assert!(up.status.success(), "private gateway up: {up:?}");
+        gateway
+    }
+
+    fn run(&self, subcommand: &str, extra: &[&str]) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(["gateway", subcommand, "--private-state-root"])
+            .arg(&self.root)
+            .args(extra)
+            .arg("--json")
+            .env("HOME", &self.home)
+            .env("EFFIGY_GATEWAY_MKCERT_BIN", &self.mkcert)
+            .env("CAROOT", &self.ca)
+            .env("FOREIGN_CAROOT", &self.ca)
+            .env("PATH", &self.path)
+            .stdin(Stdio::null())
+            .output_owned()
+            .expect("fixture private gateway CLI")
+    }
+
+    /// The facts every fixture child needs to select and trust this gateway.
+    fn env(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "EFFIGY_GATEWAY_PRIVATE_STATE_ROOT".to_owned(),
+                self.root.display().to_string(),
+            ),
+            (
+                "EFFIGY_GATEWAY_MKCERT_BIN".to_owned(),
+                self.mkcert.display().to_string(),
+            ),
+            ("CAROOT".to_owned(), self.ca.display().to_string()),
+            ("FOREIGN_CAROOT".to_owned(), self.ca.display().to_string()),
+        ]
+    }
+}
+
+impl Drop for FixturePrivateGateway {
+    fn drop(&mut self) {
+        // Stop the daemon while its private root and pid record still exist.
+        let _ = self.run("down", &[]);
+    }
+}
+
+/// A fixture directory with a stated mode rather than one inherited from the
+/// ambient umask: a Linux caller with umask `0002` would otherwise get a
+/// group-writable root, which private-root rules refuse.
+fn private_fixture_directory(path: &std::path::Path) {
+    fs::create_dir_all(path).expect("fixture private directory");
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("fixture private directory mode");
+}
+
+/// The fixture `mkcert`: it creates a disposable CA and a server certificate
+/// with the host's `openssl`, and never touches the operator's trust store.
+fn write_fixture_mkcert(path: &std::path::Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+set -eu
+if [ "${1-}" = "-help" ]; then
+    exit 0
+fi
+if [ "${1-}" = "-install" ]; then
+    # A fixture mkcert never installs a CA into this user's trust store.
+    exit 97
+fi
+cert=
+key=
+domain=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -cert-file) cert=$2; shift 2 ;;
+        -key-file) key=$2; shift 2 ;;
+        *) domain=$1; shift ;;
+    esac
+done
+if [ -z "$cert" ] || [ -z "$key" ] || [ -z "$domain" ]; then
+    exit 97
+fi
+if [ -z "${CAROOT-}" ] || [ "$CAROOT" = "${FOREIGN_CAROOT-}" ]; then
+    exit 97
+fi
+mkdir -p "$CAROOT"
+if [ ! -f "$CAROOT/rootCA.pem" ] || [ ! -f "$CAROOT/rootCA-key.pem" ]; then
+    ca_config="$CAROOT/rootCA.cnf"
+    {
+        printf '%s\n' '[req]'
+        printf '%s\n' 'distinguished_name=dn'
+        printf '%s\n' 'x509_extensions=v3_ca'
+        printf '%s\n' 'prompt=no'
+        printf '%s\n' '[dn]'
+        printf '%s\n' 'CN=Effigy disposable fixture CA'
+        printf '%s\n' '[v3_ca]'
+        printf '%s\n' 'basicConstraints=critical,CA:TRUE'
+        printf '%s\n' 'keyUsage=critical,keyCertSign,cRLSign'
+    } > "$ca_config"
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -keyout "$CAROOT/rootCA-key.pem" -out "$CAROOT/rootCA.pem" \
+        -config "$ca_config"
+    rm -f "$ca_config"
+fi
+csr="$cert.csr"
+ext="$cert.ext"
+{
+    printf '%s\n' '[req]'
+    printf '%s\n' 'distinguished_name=dn'
+    printf '%s\n' 'req_extensions=v3_req'
+    printf '%s\n' 'prompt=no'
+    printf '%s\n' '[dn]'
+    printf 'CN=%s\n' "$domain"
+    printf '%s\n' '[v3_req]'
+    printf 'subjectAltName=DNS:%s\n' "$domain"
+    printf '%s\n' 'basicConstraints=critical,CA:FALSE'
+    printf '%s\n' 'keyUsage=critical,digitalSignature,keyEncipherment'
+    printf '%s\n' 'extendedKeyUsage=serverAuth'
+} > "$ext"
+openssl req -newkey rsa:2048 -nodes -sha256 -keyout "$key" -out "$csr" -config "$ext"
+openssl x509 -req -in "$csr" -CA "$CAROOT/rootCA.pem" \
+    -CAkey "$CAROOT/rootCA-key.pem" -CAcreateserial -sha256 -days 365 \
+    -extfile "$ext" -extensions v3_req -out "$cert"
+rm -f "$csr" "$ext"
+"#,
+    )
+    .expect("write fixture mkcert executable");
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("make fixture mkcert executable");
+}
+
+/// A quiet host-listener probe: this fixture owns no listeners, and route
+/// registration must not borrow the operator's machine state to decide it.
+fn write_quiet_listener_probe(path: &std::path::Path) {
+    fs::write(path, "#!/bin/sh\nexit 1\n").expect("write quiet listener probe");
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("make quiet listener probe executable");
 }

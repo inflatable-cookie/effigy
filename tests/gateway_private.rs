@@ -5227,7 +5227,7 @@ impl PlainEnvironmentFixture {
 
     /// The headless session, logged where the test reads what it showed.
     fn session(&self, cleanup: &ManagedContainerCleanup, log: &Path) -> Command {
-        let mut command = fixture_task_command(&self.checkout, cleanup, &["dev", "--headless"]);
+        let mut command = self.command(cleanup, &["dev", "--headless"]);
         command
             .env("FAKE_HEALTHY", &self.healthy)
             .stdout(Stdio::from(
@@ -5237,6 +5237,27 @@ impl PlainEnvironmentFixture {
                 fs::File::create(log.with_extension("err")).expect("headless session errors"),
             ));
         command
+    }
+
+    /// This environment's lifecycle CLI. The Linux workspace artifact is not
+    /// this fixture's subject: readiness probes exercise the exec path, and
+    /// the environment stays plain because its declared workspace publishes
+    /// no guest here.
+    fn command(&self, cleanup: &ManagedContainerCleanup, args: &[&str]) -> Command {
+        let mut command = fixture_task_command(&self.checkout, cleanup, args);
+        command.env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1");
+        command
+    }
+
+    /// The environment's CLI with this fixture's own inputs, so its status and
+    /// teardown resolve the same plain environment the session did.
+    fn container_cli(&self, cleanup: &ManagedContainerCleanup, args: &[&str]) -> Output {
+        run_container_cli_with_env(
+            &self.checkout,
+            cleanup,
+            args,
+            &[("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")],
+        )
     }
 }
 
@@ -5313,7 +5334,8 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         thread::sleep(Duration::from_millis(50));
     }
 
-    let stop = fixture_task_command(&plain.checkout, &cleanup, &["dev", "stop"])
+    let stop = plain
+        .command(&cleanup, &["dev", "stop"])
         .output_owned()
         .expect("stop the managed session");
     assert_success(stop);
@@ -5327,7 +5349,7 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
     for pid_file in [&plain.api_pid, &plain.worker_pid] {
         assert_host_process_stopped(pid_file, &report);
     }
-    let status_json = run_container_cli(&plain.checkout, &cleanup, &["status", "--json"]);
+    let status_json = plain.container_cli(&cleanup, &["status", "--json"]);
     assert!(
         status_json.status.success(),
         "container status failed: {}",
@@ -5377,7 +5399,8 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         )
     };
 
-    let up = fixture_task_command(&plain.checkout, &cleanup, &["container", "up", "--detach"])
+    let up = plain
+        .command(&cleanup, &["container", "up", "--detach"])
         .env("FAKE_HEALTHY", &plain.healthy)
         .output_owned()
         .expect("explicit container up");
@@ -5401,7 +5424,8 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         );
         thread::sleep(Duration::from_millis(50));
     }
-    let stop = fixture_task_command(&plain.checkout, &cleanup, &["dev", "stop"])
+    let stop = plain
+        .command(&cleanup, &["dev", "stop"])
         .output_owned()
         .expect("stop the managed session");
     assert_success(stop);
@@ -5422,7 +5446,7 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         "a borrowed environment's host process survived the session's stop: {}",
         report()
     );
-    let status_json = run_container_cli(&plain.checkout, &cleanup, &["status", "--json"]);
+    let status_json = plain.container_cli(&cleanup, &["status", "--json"]);
     assert!(
         status_json.status.success(),
         "container status failed: {}",
@@ -5450,7 +5474,7 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
             "a borrowed environment's host process keeps running: {process}"
         );
     }
-    let down = run_container_cli(&plain.checkout, &cleanup, &["down", "--json"]);
+    let down = plain.container_cli(&cleanup, &["down", "--json"]);
     assert_success(down);
 }
 
