@@ -98,10 +98,155 @@ const CHANNEL_OPEN_BUDGET: std::time::Duration = std::time::Duration::from_secs(
 /// it, so a pinned snapshot read can never become a general host read.
 const GUEST_STORE_ROOT: &str = "/run/effigy/";
 
-/// The one capability a guest stores for itself after an entry hands it over
-/// (§8.8). It is guest-private, never in the checkout and never in a frame.
-fn client_capability_path() -> String {
-    format!("{CLIENT_ROOT}/capability")
+/// The environment the entry that opened a terminal exports for it (§8.8).
+/// One value per terminal, so two terminals never share or overwrite each
+/// other's authority.
+const CLIENT_ID_ENV: &str = "EFFIGY_WORKSPACE_CLIENT_ID";
+
+/// One terminal's own capability file: guest-private, per client, never in the
+/// checkout and never in a frame. There is deliberately no shared file: a
+/// single `{CLIENT_ROOT}/capability` would let one terminal present another's
+/// authority, and let the last writer silently replace it.
+fn client_capability_path(client: &str) -> String {
+    format!("{CLIENT_ROOT}/capabilities/{client}")
+}
+
+/// The client this process acts for: the id the entry that opened its terminal
+/// exported, or this process's own id when it exported none. Anything that is
+/// not a plain name is refused before it can name a path.
+fn client_id() -> Result<String, RunnerError> {
+    if let Some(declared) = std::env::var_os(CLIENT_ID_ENV) {
+        let declared = declared.to_string_lossy();
+        let valid = !declared.is_empty()
+            && declared.len() <= 64
+            && declared
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
+            && declared != "."
+            && declared != "..";
+        if !valid {
+            return Err(RunnerError::task_invocation(format!(
+                "`{CLIENT_ID_ENV}` is not a client name (1-64 characters of letters, digits,                  `.`, `_` and `-`); a capability is never shared between terminals"
+            )));
+        }
+        return Ok(declared.into_owned());
+    }
+    // A terminal that was not opened by an entry still gets its own file rather
+    // than a shared one: its commands reuse one capability, and no other client
+    // can present or replace it.
+    Ok(format!("pid-{}", std::process::id()))
+}
+
+/// What one terminal's file records: the capability the host issued it and the
+/// session generation it was issued for. The generation travels with the secret
+/// so a successor generation never presents a revoked capability.
+#[derive(Debug, Clone)]
+pub(crate) struct StoredCapability {
+    pub(crate) generation: Generation,
+    pub(crate) secret: Secret,
+}
+
+fn render_capability(stored: &StoredCapability) -> String {
+    format!(
+        "generation={}\ncapability={}\n",
+        stored.generation.get(),
+        hex32(stored.secret.bytes())
+    )
+}
+
+fn parse_capability(text: &str) -> Option<StoredCapability> {
+    let mut generation = None;
+    let mut capability = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("generation=") {
+            generation = value.trim().parse::<u64>().ok().map(Generation::new);
+        } else if let Some(value) = line.strip_prefix("capability=") {
+            capability = Secret::parse(value.trim()).ok();
+        }
+    }
+    Some(StoredCapability {
+        generation: generation?,
+        secret: capability?,
+    })
+}
+
+/// Store one terminal's capability 0600 in guest-private storage, replacing only
+/// that terminal's own record. A directory this process cannot write is an
+/// unavailable host authority, never a reason to keep the secret elsewhere.
+pub(crate) fn store_capability(
+    root: &std::path::Path,
+    client: &str,
+    stored: &StoredCapability,
+) -> Result<(), RunnerError> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let directory = root.join("capabilities");
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "the workspace capability directory `{}` cannot be created: {error}",
+            directory.display()
+        ))
+    })?;
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).map_err(
+        |error| {
+            RunnerError::task_invocation(format!(
+                "the workspace capability directory `{}` cannot be private: {error}",
+                directory.display()
+            ))
+        },
+    )?;
+    let path = directory.join(client);
+    // Replace this client's record atomically: a reader sees the old capability
+    // or the new one, never a truncated file.
+    let temporary = directory.join(format!(".{client}.{}.tmp", std::process::id()));
+    let body = render_capability(stored);
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "the workspace capability `{}` cannot be written: {error}",
+                    temporary.display()
+                ))
+            })?;
+        file.write_all(body.as_bytes()).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "the workspace capability `{}` cannot be written: {error}",
+                temporary.display()
+            ))
+        })?;
+        file.sync_all().map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "the workspace capability `{}` cannot be flushed: {error}",
+                temporary.display()
+            ))
+        })?;
+    }
+    std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600)).map_err(
+        |error| {
+            RunnerError::task_invocation(format!(
+                "the workspace capability `{}` cannot be private: {error}",
+                temporary.display()
+            ))
+        },
+    )?;
+    std::fs::rename(&temporary, &path).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        RunnerError::task_invocation(format!(
+            "the workspace capability `{}` cannot be installed: {error}",
+            path.display()
+        ))
+    })
+}
+
+/// 64 lowercase hex characters: the one text form a capability has.
+fn hex32(bytes: &[u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Where this Effigy is running.
@@ -547,19 +692,25 @@ pub(crate) struct SessionIdentity {
 pub(crate) fn load_auth(
     guest: &mut dyn GuestReader,
     context: &WorkspaceContextV2,
+    client: &str,
 ) -> Result<GuestAuth, RunnerError> {
-    if let Some(bytes) = guest.read_file(&client_capability_path())? {
+    let path = client_capability_path(client);
+    if let Some(bytes) = guest.read_file(&path)? {
         let text = String::from_utf8_lossy(&bytes);
         let text = text.trim();
         if !text.is_empty() {
-            let capability = Secret::parse(text).map_err(|_| {
+            let stored = parse_capability(text).ok_or_else(|| {
                 RunnerError::task_invocation(format!(
-                    "the stored workspace capability in `{}` is not a capability; run \
-                     `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace",
-                    client_capability_path()
+                    "the stored workspace capability in `{path}` is not a capability; run \
+                     `{HOST_REPREPARE_COMMAND}` on the host to re-prepare the workspace"
                 ))
             })?;
-            return Ok(GuestAuth::Capability(capability));
+            // The host revokes a capability with its generation, so a record
+            // from another generation is never presented: this terminal enrols
+            // again instead of replaying authority that has ended.
+            if stored.generation == Generation::new(context.session.generation) {
+                return Ok(GuestAuth::Capability(stored.secret));
+            }
         }
     }
     let path = context.credential.path.as_str();
@@ -738,6 +889,10 @@ pub(crate) struct WorkspaceClient<T: Transport> {
     /// so a resume asks from where it stopped. A `gap` leaves a stream where it
     /// was: missing bytes are never reported as consumed.
     cursors: std::collections::BTreeMap<u32, u64>,
+    /// The capability this connection minted when it enrolled. It becomes the
+    /// terminal's own only once the host accepted it; until then it is nothing
+    /// and it is never written anywhere.
+    enrolled: Option<StoredCapability>,
 }
 
 impl<T: Transport> fmt::Debug for WorkspaceClient<T> {
@@ -796,6 +951,7 @@ impl<T: Transport> WorkspaceClient<T> {
             live,
             admitted: None,
             cursors: std::collections::BTreeMap::new(),
+            enrolled: None,
         })
     }
 
@@ -810,21 +966,31 @@ impl<T: Transport> WorkspaceClient<T> {
             GuestAuth::Enrolment {
                 credential,
                 session,
-            } => Frame::Enrol(EnrolRequest {
-                credential,
-                capability: fresh_capability(),
-                session_run_id: session.run,
-                session_generation: session.generation,
-                environment_generation: Generation::new(
+            } => {
+                let environment_generation =
                     self.live.environment_generation.parse().map_err(|_| {
                         ChannelError::local(
                             "the workspace context's environment generation is not a number",
                         )
-                    })?,
-                ),
-                container_id: self.live.container.container_id.clone(),
-                vm_boot_id: self.live.container.vm_boot_id.clone(),
-            }),
+                    })?;
+                let minted = fresh_capability();
+                // Held until the host answers: a refused enrolment stores
+                // nothing, so a terminal never keeps a capability it was not
+                // granted.
+                self.enrolled = Some(StoredCapability {
+                    generation: Generation::new(session.generation.get()),
+                    secret: Secret::new(minted),
+                });
+                Frame::Enrol(EnrolRequest {
+                    credential,
+                    capability: minted,
+                    session_run_id: session.run,
+                    session_generation: session.generation,
+                    environment_generation: Generation::new(environment_generation),
+                    container_id: self.live.container.container_id.clone(),
+                    vm_boot_id: self.live.container.vm_boot_id.clone(),
+                })
+            }
         };
         match channel::write_frame(&mut self.transport, &frame) {
             Ok(()) => Ok(()),
@@ -858,6 +1024,28 @@ impl<T: Transport> WorkspaceClient<T> {
     /// acknowledged and dropped: output streams belong to the session front
     /// end, and this glue never attaches.
     fn exchange(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
+        let outcome = self.exchange_authenticated(intent);
+        if outcome.is_ok() {
+            self.keep_capability();
+        }
+        outcome
+    }
+
+    /// Store the capability this connection enrolled once the host accepted it.
+    /// A terminal that cannot store it reports nothing extra: the host granted
+    /// the capability and the terminal enrols again next time, which is the
+    /// authority it was given either way.
+    fn keep_capability(&mut self) {
+        let Some(stored) = self.enrolled.take() else {
+            return;
+        };
+        let Ok(client) = client_id() else {
+            return;
+        };
+        let _ = store_capability(std::path::Path::new(CLIENT_ROOT), &client, &stored);
+    }
+
+    fn exchange_authenticated(&mut self, intent: &Intent) -> Result<ChannelOutcome, ChannelError> {
         let id = intent.id();
         let request = self.request_for(intent);
         channel::write_frame(&mut self.transport, &Frame::Request(request))
@@ -1259,7 +1447,7 @@ fn ask_host(
     let mut client = opener
         .open(&verified, &live)
         .map_err(ChannelError::into_runner)?;
-    let auth = load_auth(guest, &published.document)?;
+    let auth = load_auth(guest, &published.document, &client_id()?)?;
     // Only an authority-bearing request enrols a direct terminal; a Static or
     // Observe request that holds no capability refuses instead (§8.8).
     let auth = match (auth, class.requires_enrolment()) {

@@ -205,6 +205,20 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Added
 
+- **A workspace terminal keeps its own capability, and a session's service has
+  recovery, down and retirement seams.** A guest capability is now stored per
+  client (`/run/effigy/client/capabilities/<client>`, 0600 in a 0700 directory,
+  named by `EFFIGY_WORKSPACE_CLIENT_ID` or the process's own id) instead of one
+  shared file, so no terminal can present or overwrite another's authority; the
+  capability an enrolment mints is kept once the host accepts it, and a record
+  from another session generation is never presented. `recover_before_service`
+  completes a Pending selection through the kernel's own `recover_selection`
+  before custody serves (completed, still unproven or disproven, with only
+  positive evidence completing it), `ServiceOwner::down` answers a down with the
+  kernel's own coordination (naming only this session's children, refusing a
+  foreign holder), and `ServiceOwner::retire_for` names why a session ended
+  while taking the same single release and settle.
+
 - **A committed workspace session's service outlives the call that selected it.**
   `workspace_client::supervisor` binds the container-up handoff to a durable
   owner: `ServingHandoff` accepts only the committed selected session (the

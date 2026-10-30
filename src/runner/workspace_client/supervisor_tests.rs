@@ -28,15 +28,19 @@ use effigy_kernel::workspace_session::{ServingLease, SessionRef, SessionSupervis
 use super::super::tests::{
     cleanup, prepare_owned_channel, with_serving_session, NoEffects, GUEST_CHECKOUT,
 };
-use super::{discover, HandoffRefusal, ServiceOwner, ServingHandoff};
+use super::{
+    discover, HandoffRefusal, RecoveryOutcome, RetirementCause, ServiceOwner, ServingHandoff,
+};
 use crate::runner::workspace_client::serving::OwnedWorkspaceChannel;
 use crate::runner::workspace_client::ServingFacts;
 use crate::runner::workspace_transport::qualification::PreparedHostChannel;
 use crate::runner::workspace_transport::TlsChannelTransport;
 
-/// The custody #452's container-up caller hands over: the adopted supervisor,
-/// the prepared listener and key, and the validated facts, moved in whole.
-fn custody<'a>(
+/// The custody #452's activation emits (`WorkspaceUp::Selected`): the adopted
+/// supervisor, the prepared listener and key, and the validated facts, moved in
+/// whole. Production hands the activation's own owner; the proofs build the same
+/// value from the same fields.
+fn owner<'a>(
     supervisor: SessionSupervisor<'a>,
     session: &SessionRef,
     prepared: PreparedHostChannel,
@@ -167,7 +171,7 @@ fn select_and_hand_off<'a>(
 ) -> (ServiceOwner<'a>, ServingLease) {
     let lease = published(&prepared);
     let handoff = ServingHandoff::validated(
-        custody(supervisor, session, prepared, cx, observe, root),
+        owner(supervisor, session, prepared, cx, observe, root),
         &lease,
     )
     .expect("the committed lease is the custody's own published lease");
@@ -175,6 +179,24 @@ fn select_and_hand_off<'a>(
         ServiceOwner::adopt(handoff).expect("the committed session is adopted"),
         lease,
     )
+}
+
+/// The committed custody's own lease, adopted and ready to serve.
+fn serving<'a>(
+    supervisor: SessionSupervisor<'a>,
+    session: &SessionRef,
+    prepared: PreparedHostChannel,
+    cx: &'a EffectContext,
+    observe: &'a ObserveContext,
+    root: &'a StateRoot,
+) -> ServiceOwner<'a> {
+    let lease = published(&prepared);
+    let handoff = ServingHandoff::validated(
+        owner(supervisor, session, prepared, cx, observe, root),
+        &lease,
+    )
+    .expect("the committed lease is the custody's own");
+    ServiceOwner::adopt(handoff).expect("the committed session is adopted")
 }
 
 /// A guest is negotiated and granted by the retained facts after the call that
@@ -286,7 +308,7 @@ fn only_the_committed_lease_hands_off() {
         );
         assert!(matches!(
             ServingHandoff::validated(
-                custody(supervisor, &other, prepared, cx, observe, root),
+                owner(supervisor, &other, prepared, cx, observe, root),
                 &lease,
             ),
             Err(HandoffRefusal::WrongSession)
@@ -308,7 +330,7 @@ fn only_the_committed_lease_hands_off() {
         let endpoint = prepared.launch.endpoint().expect("bound");
         assert!(matches!(
             ServingHandoff::validated(
-                custody(supervisor, &session, prepared, cx, observe, root),
+                owner(supervisor, &session, prepared, cx, observe, root),
                 &foreign_lease,
             ),
             Err(HandoffRefusal::Unpublished)
@@ -325,7 +347,7 @@ fn only_the_committed_lease_hands_off() {
         let other = published(&second);
         assert!(matches!(
             ServingHandoff::validated(
-                custody(supervisor, &session, first, cx, observe, root),
+                owner(supervisor, &session, first, cx, observe, root),
                 &other,
             ),
             Err(HandoffRefusal::Unpublished)
@@ -343,7 +365,7 @@ fn only_the_committed_lease_hands_off() {
         prepared.launch.stop();
         assert!(matches!(
             ServingHandoff::validated(
-                custody(supervisor, &session, prepared, cx, observe, root),
+                owner(supervisor, &session, prepared, cx, observe, root),
                 &lease,
             ),
             Err(HandoffRefusal::KeyReleased)
@@ -360,7 +382,7 @@ fn an_interrupted_handoff_serves_nothing() {
         let lease = published(&prepared);
         let endpoint = prepared.launch.endpoint().expect("bound");
         let handoff = ServingHandoff::validated(
-            custody(supervisor, &session, prepared, cx, observe, root),
+            owner(supervisor, &session, prepared, cx, observe, root),
             &lease,
         )
         .expect("committed custody");
@@ -449,7 +471,7 @@ fn a_server_that_published_another_lease_is_not_retained() {
         assert_ne!(other, published(&first), "two prepares publish two leases");
 
         let adopted =
-            ServingOwner::adopt_production(custody(supervisor, &session, first, cx, observe, root))
+            ServingOwner::adopt_production(owner(supervisor, &session, first, cx, observe, root))
                 .expect("the first channel adopts under its own lease");
         let refused = ServiceOwner::retained(adopted, session, other);
         assert!(
@@ -510,6 +532,90 @@ fn the_session_is_discovered_from_durable_identity_alone() {
             ),
             Observed::Verified(None, _) | Observed::Absent(_) => {}
             Observed::Unknown(reason) => panic!("settlement leaves a readable journal: {reason}"),
+        }
+    });
+}
+
+/// A Pending selection is completed only by positive evidence: an unproven fact
+/// leaves it pending, and only a well-formed refusal disproves it. Nothing here
+/// serves or settles from a partial answer.
+#[test]
+fn a_pending_selection_is_only_completed_by_positive_evidence() {
+    use effigy_containers::environment::EnvError;
+    use effigy_kernel::run::RunError;
+
+    let refused = RecoveryOutcome::classify(Err(EnvError::Kernel(RunError::refused(
+        "the published target is gone",
+    ))));
+    assert!(
+        matches!(refused, RecoveryOutcome::Disproven(_)),
+        "a refusal disproves the selection: {refused:?}"
+    );
+
+    for pending in [
+        EnvError::Kernel(RunError::unavailable("the listener did not answer")),
+        EnvError::Kernel(RunError::broken("the obligation row is unreadable")),
+        EnvError::Busy("another transition holds Gate(Env)".to_owned()),
+    ] {
+        let outcome = RecoveryOutcome::classify(Err(pending));
+        assert!(
+            matches!(outcome, RecoveryOutcome::Pending(_)),
+            "an unproven fact leaves the selection pending: {outcome:?}"
+        );
+    }
+
+    assert!(
+        matches!(
+            RecoveryOutcome::classify(Ok(())),
+            RecoveryOutcome::Completed
+        ),
+        "proven liveness and readback complete the selection"
+    );
+}
+
+/// Retirement names why the session ended, and every cause takes the same one
+/// release: the listener is closed and the run settles once.
+#[test]
+fn retirement_names_its_cause_and_releases_once() {
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let endpoint = prepared.launch.endpoint().expect("bound");
+        let service = serving(supervisor, &session, prepared, cx, observe, root);
+
+        let cleanup = cleanup(cx);
+        let retired = service
+            .retire_for(RetirementCause::Down, &cleanup, &mut NoEffects)
+            .expect("the session settles");
+        assert_eq!(retired.cause, RetirementCause::Down);
+        assert_eq!(retired.cause.as_str(), "down");
+        assert_eq!(retired.session.run(), session.run());
+        assert!(
+            TcpStream::connect(endpoint).is_err(),
+            "no listener outlives a down's retirement"
+        );
+    });
+}
+
+/// A down is the kernel's own coordination: this session may go down only when
+/// nothing else holds its environment, and the answer names only its children.
+#[test]
+fn a_down_is_answered_by_the_kernel_coordination() {
+    use effigy_kernel::workspace_session::DownStart;
+
+    with_serving_session(|mut supervisor, session, cx, root, observe| {
+        let prepared = prepare_owned_channel(&mut supervisor, &session);
+        let service = serving(supervisor, &session, prepared, cx, observe, root);
+        match service.down(observe, root) {
+            Observed::Verified(DownStart::Ready(children), _) => {
+                assert!(
+                    children.children().is_empty(),
+                    "the fixture session started no child run of its own"
+                );
+            }
+            Observed::Verified(DownStart::Refused { holders }, _) => {
+                panic!("the session is the environment's own holder here: {holders:?}")
+            }
+            other => panic!("a down of this session is readable: {other:?}"),
         }
     });
 }

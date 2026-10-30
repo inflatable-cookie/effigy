@@ -160,9 +160,20 @@ fn publish(guest: &mut FakeGuest, document: &WorkspaceContextV2, capability: Opt
     );
     guest.put_file(&snapshot_path(&sha256_text(MANIFEST)), MANIFEST, 0o444);
     if let Some(capability) = capability {
-        guest.put_file(&client_capability_path(), secret_text(capability), 0o600);
+        guest.put_file(
+            &client_capability_path(TEST_CLIENT),
+            render_capability(&StoredCapability {
+                generation: Generation::new(document.session.generation),
+                secret: capability.clone(),
+            })
+            .as_bytes(),
+            0o600,
+        );
     }
 }
+
+/// One terminal's own name in the capability-storage proofs.
+const TEST_CLIENT: &str = "test-terminal";
 
 /// The hex form a capability is stored and presented in.
 fn secret_text(secret: &Secret) -> String {
@@ -595,7 +606,7 @@ fn a_direct_terminal_enrols_with_the_published_session_generation_and_credential
     publish(&mut guest, &context, None);
     guest.put_file(&enrolment_path(), enrolment_body(), 0o600);
 
-    let auth = load_auth(&mut guest, &context).expect("the published credential");
+    let auth = load_auth(&mut guest, &context, TEST_CLIENT).expect("the published credential");
     match auth {
         GuestAuth::Enrolment {
             session,
@@ -609,7 +620,7 @@ fn a_direct_terminal_enrols_with_the_published_session_generation_and_credential
 
     // Bytes the document did not pin are refused instead of presented.
     guest.put_file(&enrolment_path(), b"credential=not-the-staged-one\n", 0o600);
-    let error = load_auth(&mut guest, &context).expect_err("a replaced credential");
+    let error = load_auth(&mut guest, &context, TEST_CLIENT).expect_err("a replaced credential");
     assert!(error.to_string().contains("context pins"), "{error}");
 }
 
@@ -2334,4 +2345,146 @@ fn the_production_owner_builds_its_server_only_from_matching_validated_facts() {
         owner.stop();
         assert!(!owner.key_held(), "stopping the owner wipes the key");
     });
+}
+
+// ---------------------------------------------------------------------------
+// The scoped, per-client capability handoff (§8.8, §8.11; effigy#507).
+// ---------------------------------------------------------------------------
+
+/// Every terminal has its own capability path, so no client can present or
+/// overwrite another's authority.
+#[test]
+fn a_capability_belongs_to_one_named_client() {
+    assert_ne!(
+        client_capability_path("terminal-a"),
+        client_capability_path("terminal-b")
+    );
+    assert!(
+        !client_capability_path("terminal-a").ends_with("/capability"),
+        "there is no shared capability file"
+    );
+    assert_eq!(
+        client_capability_path("terminal-a"),
+        format!("{CLIENT_ROOT}/capabilities/terminal-a")
+    );
+}
+
+/// Storage is 0600 inside a 0700 directory, replaces only that client's own
+/// record, and reads back as the same capability for the same generation.
+#[test]
+fn a_stored_capability_is_private_replaceable_and_readable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().expect("a private fixture root");
+    let first = StoredCapability {
+        generation: Generation::new(1),
+        secret: capability(),
+    };
+    store_capability(root.path(), "terminal-a", &first).expect("stored");
+    let path = root.path().join("capabilities/terminal-a");
+    let mode = std::fs::metadata(&path)
+        .expect("the record exists")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "a capability is owner-only");
+    let directory = std::fs::metadata(root.path().join("capabilities"))
+        .expect("the directory exists")
+        .permissions()
+        .mode();
+    assert_eq!(
+        directory & 0o777,
+        0o700,
+        "the capability directory is private"
+    );
+
+    let text = std::fs::read_to_string(&path).expect("the record is readable");
+    let stored = parse_capability(&text).expect("the record parses");
+    assert_eq!(stored.generation, Generation::new(1));
+    assert!(
+        stored.secret.matches(&capability()),
+        "the stored capability is the one that was written"
+    );
+
+    // A successor generation replaces this client's own record and leaves the
+    // other client's alone.
+    let other = StoredCapability {
+        generation: Generation::new(1),
+        secret: Secret::new([0xcd; 32]),
+    };
+    store_capability(root.path(), "terminal-b", &other).expect("stored");
+    let successor = StoredCapability {
+        generation: Generation::new(2),
+        secret: Secret::new([0xef; 32]),
+    };
+    store_capability(root.path(), "terminal-a", &successor).expect("replaced");
+    let replaced =
+        parse_capability(&std::fs::read_to_string(&path).expect("the record is readable"))
+            .expect("the record parses");
+    assert_eq!(replaced.generation, Generation::new(2));
+    let untouched = parse_capability(
+        &std::fs::read_to_string(root.path().join("capabilities/terminal-b"))
+            .expect("the other record is readable"),
+    )
+    .expect("the other record parses");
+    assert!(
+        untouched.secret.matches(&other.secret),
+        "another client's capability is never replaced"
+    );
+}
+
+/// A capability from another generation is never presented: the host revokes it
+/// with its generation, so the terminal enrols again instead of replaying it.
+#[test]
+fn a_stale_capability_is_not_presented() {
+    let context = workspace_document(Some(session_run()), None);
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, None);
+    guest.put_file(&enrolment_path(), enrolment_body(), 0o600);
+    // A capability the previous generation issued this client.
+    guest.put_file(
+        &client_capability_path(TEST_CLIENT),
+        render_capability(&StoredCapability {
+            generation: Generation::new(context.session.generation - 1),
+            secret: capability(),
+        })
+        .as_bytes(),
+        0o600,
+    );
+
+    match load_auth(&mut guest, &context, TEST_CLIENT).expect("a fallback exists") {
+        GuestAuth::Enrolment { session, .. } => {
+            assert_eq!(
+                session.generation,
+                Generation::new(context.session.generation)
+            )
+        }
+        other => panic!("a stale capability is never presented, got {other:?}"),
+    }
+
+    // The same capability at the context's own generation is presented.
+    guest.put_file(
+        &client_capability_path(TEST_CLIENT),
+        render_capability(&StoredCapability {
+            generation: Generation::new(context.session.generation),
+            secret: capability(),
+        })
+        .as_bytes(),
+        0o600,
+    );
+    match load_auth(&mut guest, &context, TEST_CLIENT).expect("the capability is presented") {
+        GuestAuth::Capability(presented) => {
+            assert!(presented.matches(&capability()), "the stored capability")
+        }
+        other => panic!("a current capability is presented, got {other:?}"),
+    }
+
+    // A record that is not a capability refuses instead of being guessed at.
+    guest.put_file(
+        &client_capability_path(TEST_CLIENT),
+        b"capability=not-a-capability\n",
+        0o600,
+    );
+    let error =
+        load_auth(&mut guest, &context, TEST_CLIENT).expect_err("an unreadable record refuses");
+    assert!(error.to_string().contains("is not a capability"), "{error}");
 }

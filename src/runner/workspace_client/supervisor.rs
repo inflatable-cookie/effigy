@@ -36,9 +36,61 @@
 //! The process that hosts the supervision is the session run's own detached
 //! supervisor (contract §5.8, §8.3: "the listener lives exactly as long as that
 //! run"). [`ServiceOwner::serve`] is that supervisor's loop and
-//! [`ServiceOwner::retire`] is its settle; a supervisor re-execs before it
+//! [`ServiceOwner::retire_for`] is its settle; a supervisor re-execs before it
 //! builds the listener, so no live listener or key ever has to cross a process
 //! boundary, and a supervisor that dies takes its socket and key with it.
+//!
+//! # The recovery, down and retirement seams #452 drives
+//!
+//! - [`recover_before_service`] completes a *Pending* selection through the
+//!   kernel's own `recover_selection` before any custody serves: it takes
+//!   `Gate(Env)`, re-reads the durable obligation, requires positively probed
+//!   target and listener liveness and re-reads every selector and object at its
+//!   committed value. [`RecoveryOutcome`] says whether it completed, is still
+//!   unproven (leave it durable and pending) or was disproven (abandon or
+//!   settle; never resume).
+//! - [`ServiceOwner::down`] answers a down request with the kernel's own
+//!   `DownCoordination`: `Ready` names only this session's children, and
+//!   `Refused` names every other live or unknown holder. The driver stops those
+//!   children, waits for them, and then retires the service.
+//! - [`ServiceOwner::retire_for`] takes the one release-and-settle with the
+//!   cause named ([`RetirementCause`]): its own settlement, a stop request, its
+//!   owner's loss, a coordinated down or a listener failure. Every cause closes
+//!   the socket, wipes the key and settles the run once.
+//!
+//! # What a *detached process* still needs from the kernel
+//!
+//! Holding this custody in another process needs a release/adopt protocol the
+//! kernel does not have in this head, so the container-up caller must instead
+//! start the session run's supervisor before it builds the listener (052 §8.3,
+//! §8.7). The exact missing signatures, for the kernel owner:
+//!
+//! 1. `SessionLaunch::release_to(&mut self) -> Result<ReleasedLaunch,
+//!    ServingRefusal>` plus `SessionLaunch::adopt_released(&mut Run<'_>,
+//!    ReleasedLaunch) -> Result<Self, ServingRefusal>`, where the released value
+//!    carries the session binding, supervisor id, the **published** lease
+//!    including its guest locator, the key and the listener descriptor.
+//!    `ChannelBound` is only ever built by `publish()` and `GuestLocator` is
+//!    private, so a second process cannot re-publish the exact committed lease.
+//! 2. A listener adoption constructor: `HostChannelListener::bind` is the only
+//!    way to make one, and `engine::EngineLaunch::handoff` is a one-way pipe, so
+//!    it can carry key bytes but never a bound descriptor (SCM_RIGHTS).
+//! 3. A run-custody handover: `launch`, `serve` and `publish` all take `&Run`
+//!    whose `session_owner()` names the session, and a `Run` is begun and
+//!    exclusively locked by one process. Without `Run::release_custody()`/
+//!    `Run::adopt_custody()` (or an equivalent durable journal handover) no
+//!    process but the one that began the session run can serve its launch.
+//! 4. One owner per session in the kernel: `SessionLaunch::launch` accepts a
+//!    second launch for a session that is already serving (`AlreadyPublished` is
+//!    per-launch state, not a session record), so two live listeners and keys
+//!    can exist for one session.
+//!
+//! The failing crash window today: the CLI commits the selection, then returns
+//! without settling. `ServingOwner`'s custody drop stops the listener and wipes
+//! the key while `workspace_selection_obligations` still records that lease as
+//! the committed one, so the guest's dial fails the pin, no owner remains to
+//! call `recover_selection`, and the successor must revoke the generation and
+//! publish a fresh key and endpoint.
 
 #[cfg(test)]
 #[path = "supervisor_tests.rs"]
@@ -47,7 +99,9 @@ mod tests;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use effigy_kernel::ctx::CleanupContext;
+use effigy_containers::environment::EnvError;
+use effigy_kernel::ctx::{CleanupContext, ObserveContext};
+use effigy_kernel::human::Category;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::Outcome;
 use effigy_kernel::root::StateRoot;
@@ -55,7 +109,8 @@ use effigy_kernel::run::{Phase, RunError, Settled, SettlementAdapter};
 use effigy_kernel::store::Store;
 use effigy_kernel::workspace_channel::Streams;
 use effigy_kernel::workspace_session::{
-    phase, unfinished_selection, SelectionObligation, SelectionReceipt, ServingLease, SessionRef,
+    phase, unfinished_selection, DownCoordination, DownStart, SelectionObligation,
+    SelectionReceipt, ServingLease, ServingProbe, SessionRef, TargetProbe,
 };
 
 use super::host_dispatch::HostDispatch;
@@ -210,6 +265,93 @@ impl<'a> ServingHandoff<'a> {
     }
 }
 
+/// What completing a Pending selection proved, or failed to prove.
+///
+/// Contract 052 §8.11 recovery: a selection completes only on positive evidence
+/// of the target, the session and the listener *and* every selector and object
+/// read back at its committed value. Anything less is either still pending (a
+/// fact this process could not prove) or disproven (a fact that says the
+/// selection cannot complete). Neither case serves, and neither case kills the
+/// session's recoverable authority.
+#[derive(Debug)]
+pub(crate) enum RecoveryOutcome {
+    /// Every fact held and the selection is complete: the custody may adopt.
+    Completed,
+    /// A fact could not be proven. The selection stays durable and pending; this
+    /// custody serves nothing and settles nothing from it.
+    Pending(String),
+    /// A fact disproved the selection. It must be abandoned or settled by its
+    /// owner; it is never served, and a fresh key never resurrects it.
+    Disproven(String),
+}
+
+impl RecoveryOutcome {
+    /// Classify a recovery attempt by the kernel's own error categories: only a
+    /// well-formed refusal disproves a selection, and only positive success
+    /// completes one.
+    pub(crate) fn classify(result: Result<(), EnvError>) -> Self {
+        match result {
+            Ok(()) => Self::Completed,
+            Err(error) => {
+                // Only the kernel's own refusal is evidence that the selection
+                // cannot complete. An unavailable fact is what "not proven"
+                // means, and a broken invariant is Effigy's own data being
+                // wrong: neither disproves the commit, so both stay pending.
+                match category_of(&error) {
+                    Category::Refused => Self::Disproven(error.to_string()),
+                    Category::Unavailable | Category::Broken => Self::Pending(error.to_string()),
+                }
+            }
+        }
+    }
+}
+
+/// The kernel category one environment error carries. An environment-level
+/// failure (busy gate, foreign holder, backend) is environmental: it proves
+/// nothing about the selection.
+fn category_of(error: &EnvError) -> Category {
+    match error {
+        EnvError::Kernel(inner) => inner.category(),
+        EnvError::Cleanup { cause, .. } => category_of(cause),
+        _ => Category::Unavailable,
+    }
+}
+
+/// Complete one session's Pending selection before its custody serves anything.
+///
+/// A committed generation can be *pending*: the commit recorded it but the
+/// selector switch or its readback never completed. Contract 052 §8.11 allows
+/// exactly one recovery, through the kernel's own `recover_selection`, which
+/// takes `Gate(Env)`, re-reads the exact durable obligation, requires positively
+/// probed target *and* listener liveness, and re-reads every selector and object
+/// at its committed value.
+///
+/// This is the recovery driver seam for #452: call it on the activation's own
+/// owner before handing that owner to [`ServingHandoff`], then act on the
+/// outcome. [`RecoveryOutcome::Completed`] may hand off and serve,
+/// [`RecoveryOutcome::Pending`] serves nothing and leaves the durable record for
+/// the next driver, and [`RecoveryOutcome::Disproven`] must be abandoned or
+/// settled and never resumed. A fresh listener and key never resurrect a
+/// disproven selection.
+pub(crate) fn recover_before_service(
+    owner: &mut WorkspaceOwner,
+    obligation: &SelectionObligation,
+    guest: &mut dyn crate::runner::environment::workspace::WorkspaceSelectionIo,
+    target: &mut dyn TargetProbe,
+    probe: &mut dyn ServingProbe,
+) -> RecoveryOutcome {
+    if obligation.session_run() != owner.session.run() {
+        return RecoveryOutcome::Disproven(format!(
+            "the pending selection names session run {}; this owner holds {}",
+            obligation.session_run(),
+            owner.session.run()
+        ));
+    }
+    RecoveryOutcome::classify(crate::runner::environment::workspace::recover_selection(
+        owner, obligation, guest, target, probe,
+    ))
+}
+
 /// What an interrupted handoff closed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Interrupted {
@@ -315,7 +457,7 @@ impl<'a> ServiceOwner<'a> {
             session,
             lease,
         } = handoff;
-        let adopted = ServingOwner::adopt_owned(owner, server)?;
+        let adopted = ServingOwner::adopt_owned(owner.into(), server)?;
         Self::retained(adopted, session, lease)
     }
 
@@ -410,6 +552,24 @@ impl<'a> ServiceOwner<'a> {
         }
     }
 
+    /// The environment's own down coordination for this session, read from the
+    /// journal: `Ready` names only this session's children to stop, and
+    /// `Refused` names every other live or unknown holder, in which case nothing
+    /// is stopped and nothing settles (§8.7, R4).
+    ///
+    /// This is the down/reset seam for #452: drive the returned children
+    /// (`DownChildren::stop`, `unresolved`, `settle_session`), then retire this
+    /// service with [`RetirementCause::Down`]. The coordination is the kernel's;
+    /// this module adds no second stop path.
+    pub(crate) fn down(&self, observe: &ObserveContext, root: &StateRoot) -> Observed<DownStart> {
+        let reader = match Store::read(observe, root) {
+            Observed::Verified(reader, _) => reader,
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+            Observed::Absent(absent) => return Observed::Absent(absent),
+        };
+        DownCoordination::begin(observe, root, &reader, &self.session)
+    }
+
     /// Retire the session: stop serving, release the listener and key, and
     /// settle the adopted run through its own close transaction, exactly once.
     ///
@@ -421,6 +581,18 @@ impl<'a> ServiceOwner<'a> {
     /// rather than claiming completion.
     pub(crate) fn retire(
         self,
+        cleanup: &CleanupContext,
+        adapter: &mut impl SettlementAdapter,
+    ) -> Result<Retired, RunError> {
+        self.retire_for(RetirementCause::Settled, cleanup, adapter)
+    }
+
+    /// Retire with the cause named, so the journal says why this session ended:
+    /// its own settlement, a stop request, its owner's loss, a coordinated down
+    /// or a listener failure. Every cause takes the same one release and settle.
+    pub(crate) fn retire_for(
+        self,
+        cause: RetirementCause,
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Retired, RunError> {
@@ -438,6 +610,7 @@ impl<'a> ServiceOwner<'a> {
             lease,
             outcome,
             served,
+            cause,
         })
     }
 
@@ -453,6 +626,33 @@ impl<'a> ServiceOwner<'a> {
     }
 }
 
+/// Why one serving session was retired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RetirementCause {
+    /// The session reached its own end.
+    Settled,
+    /// A stop request ended it.
+    Stopped,
+    /// Its owning client went away without a detach.
+    OwnerLost,
+    /// A coordinated down of its environment ended it.
+    Down,
+    /// Its custody or listener failed terminally.
+    ListenerFailed,
+}
+
+impl RetirementCause {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Settled => "settled",
+            Self::Stopped => "stopped",
+            Self::OwnerLost => "owner-lost",
+            Self::Down => "down",
+            Self::ListenerFailed => "listener-failed",
+        }
+    }
+}
+
 /// One settled session.
 #[derive(Debug)]
 pub(crate) struct Retired {
@@ -464,6 +664,8 @@ pub(crate) struct Retired {
     pub outcome: Outcome<Settled>,
     /// Connections dispatched before settlement.
     pub served: usize,
+    /// Why the session was retired.
+    pub cause: RetirementCause,
 }
 
 impl Retired {
