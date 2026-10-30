@@ -3110,6 +3110,31 @@ impl SelectorReader for FakeSelectors {
 
 /// One session's own listener and key custody, bound and qualified, launched on
 /// behalf of the run that owns the session.
+/// A fake target probe: what a test says the container and boot are.
+#[derive(Debug, Default)]
+struct FakeTarget {
+    answer: Option<Observed<()>>,
+}
+
+impl TargetProbe for FakeTarget {
+    fn verify_target(
+        &mut self,
+        _container_id: &str,
+        _vm_boot_id: &str,
+        _deadline: Duration,
+    ) -> Observed<()> {
+        self.answer
+            .clone()
+            .unwrap_or_else(|| Observed::Unknown(UnknownReason::Unparsable("no target".into())))
+    }
+}
+
+fn verifying_target() -> FakeTarget {
+    FakeTarget {
+        answer: Some(Observed::Verified((), evidence())),
+    }
+}
+
 /// A probe that answers the pinned handshake, for recovery tests.
 fn verifying_probe() -> FakeProbe {
     FakeProbe {
@@ -3886,6 +3911,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
         &cx,
         &root,
         &pending,
+        &mut verifying_target(),
         &mut FakeProbe {
             answer: Some(Observed::Absent(crate::observe::AbsenceProof::NoRow {
                 table: "workspace-session-listener".into(),
@@ -3904,6 +3930,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
         &cx,
         &root,
         &pending,
+        &mut verifying_target(),
         &mut verifying_probe(),
         &mut FakeSelectors::third(&receipt),
         Wait::FailFast,
@@ -3915,6 +3942,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
             &cx,
             &root,
             &pending,
+            &mut verifying_target(),
             &mut verifying_probe(),
             &mut FakeSelectors::missing_object(&receipt),
             Wait::FailFast,
@@ -3941,6 +3969,7 @@ fn a_crashed_switch_is_recovered_from_the_durable_obligation() {
         &cx,
         &root,
         &pending,
+        &mut verifying_target(),
         &mut verifying_probe(),
         &mut FakeSelectors::exact(&receipt),
         Wait::FailFast,
@@ -4530,9 +4559,8 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
         Box::new(listener),
     )
     .expect("launch");
-    // The caller that asked for the session goes away; the launch is what the
-    // detached supervisor holds, and nothing about it changed.
-    drop(session_run);
+    // The supervisor holds both the run and the launch: the caller that asked
+    // for the session is gone, and the launch keeps its listener and key.
     assert_eq!(launch.phase(), ListenerPhase::Qualifying);
     assert_eq!(stops.get(), 0);
     assert!(
@@ -4582,8 +4610,8 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
         "the held key answers a bounded pinned handshake"
     );
     // Only an adopted session serves the channel.
-    launch.serve().expect("adopted");
-    assert!(launch.serving());
+    launch.serve(&session_run).expect("adopted");
+    assert!(launch.serving(&session_run));
     launch.release();
     assert_eq!(stops.get(), 1, "release stops the listener");
 }
@@ -4698,7 +4726,10 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     launch.publish().expect("published before it stops");
     launch.stop();
     assert!(matches!(launch.publish(), Err(ServingRefusal::Stopped)));
-    assert!(matches!(launch.serve(), Err(ServingRefusal::Unqualified)));
+    assert!(matches!(
+        launch.serve(&session_run),
+        Err(ServingRefusal::Unqualified)
+    ));
     let absent = launch.liveness(
         &mut FakeProbe {
             answer: Some(Observed::Verified((), evidence())),
@@ -4886,6 +4917,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
                 &cx,
                 &root,
                 &pending,
+                &mut verifying_target(),
                 &mut verifying_probe(),
                 &mut FakeSelectors::exact(pending.receipt()),
                 Wait::FailFast,
@@ -5360,6 +5392,7 @@ fn recovery_observes_under_the_environment_gate() {
         &cx,
         &root,
         &obligation,
+        &mut verifying_target(),
         &mut verifying_probe(),
         &mut UnreadableReaders,
         Wait::FailFast,
@@ -5380,6 +5413,7 @@ fn recovery_observes_under_the_environment_gate() {
         &cx,
         &root,
         &obligation,
+        &mut verifying_target(),
         &mut verifying_probe(),
         &mut FakeSelectors::exact(&receipt),
         Wait::FailFast,
@@ -5580,14 +5614,17 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .expect("qualified");
     let lease = launch.publish().expect("published").lease().clone();
-    launch.serve().expect("adopted");
-    assert!(launch.serving());
+    launch.serve(&session_run).expect("adopted");
+    assert!(launch.serving(&session_run));
     // Releasing the owning run's custody leaves nothing to serve, even though
     // the listener and key are still here.
     launch.abandon_owner();
     assert!(!launch.owned());
-    assert!(!launch.serving());
-    assert!(matches!(launch.serve(), Err(ServingRefusal::WrongSession)));
+    assert!(!launch.serving(&session_run));
+    assert!(matches!(
+        launch.serve(&session_run),
+        Err(ServingRefusal::WrongSession)
+    ));
     assert!(matches!(
         launch.publish(),
         Err(ServingRefusal::WrongSession)
@@ -5603,4 +5640,91 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
     assert_eq!(stops.get(), 1);
     drop(session_run);
     let _ = lease;
+}
+
+#[test]
+fn a_settled_session_stops_serving() {
+    let fixture = ServingFixture::new();
+    let (mut session_run, session) = fixture.admit(79);
+    let (listener, _stops) = FakeListener::bound();
+    let key = ServingKey::new(vec![6u8; 32], Digest::of(b"settle pin")).expect("key");
+    let mut launch = SessionLaunch::launch(
+        &session,
+        session_run.session_owner().expect("owner"),
+        "supervisor-1",
+        key,
+        Box::new(listener),
+    )
+    .expect("launch");
+    launch
+        .qualify(&mut verifying_probe(), Duration::from_secs(1))
+        .expect("qualified");
+    launch.publish().expect("published");
+    launch.serve(&session_run).expect("adopted");
+    assert!(launch.serving(&session_run));
+    // The session run starts settling: its fence is no longer open, so the
+    // locator it published may not be called until it is settled.
+    session_run
+        .interrupt(
+            &cleanup(&fixture.cx),
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        )
+        .expect("interrupt the session");
+    assert!(
+        !launch.serving(&session_run),
+        "a settling session serves nothing"
+    );
+    assert!(matches!(
+        launch.serve(&session_run),
+        Err(ServingRefusal::WrongSession)
+    ));
+    session_run
+        .settle(&cleanup(&fixture.cx), &mut adapter())
+        .expect("settle the session");
+    launch.release();
+}
+
+#[test]
+fn recovery_refuses_a_target_that_is_not_the_published_container() {
+    let cx = context();
+    let fixture = home();
+    let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+    let (environment, _predecessor) = active_environment(&cx, &root);
+    let (_, _session_run, _session, environment_run, receipt, obligation) =
+        commit_pending_selection(
+            &cx,
+            &root,
+            &environment,
+            run_id(252),
+            run_id(253),
+            &publish_inputs(100, None),
+        );
+    finish_activation(&cx, environment_run);
+    // The target the publication names is gone (a replaced container), even
+    // though the session, listener and readback would all verify.
+    let mut replaced = FakeTarget {
+        answer: Some(Observed::Absent(crate::observe::AbsenceProof::NoRow {
+            table: "container".into(),
+        })),
+    };
+    let error = selection_recovered(
+        &cx,
+        &root,
+        &obligation,
+        &mut replaced,
+        &mut verifying_probe(),
+        &mut FakeSelectors::exact(&receipt),
+        Wait::FailFast,
+    )
+    .expect_err("a replaced target never completes a generation");
+    assert!(matches!(error, RunError::Refused(_)), "{error:?}");
+    let reader = read_journal(&cx, &root);
+    assert_eq!(
+        obligation_row(&reader, &environment).map(|row| row.0),
+        Some("pending".to_owned()),
+        "the obligation stays Pending for a live recovery"
+    );
 }

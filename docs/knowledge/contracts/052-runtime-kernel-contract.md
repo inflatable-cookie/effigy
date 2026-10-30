@@ -3111,7 +3111,8 @@ holds; a launch serving another session, or one whose listener was never qualifi
 names its own session, so a lease another session's launch published is refused.
 Recovery is completion, not assumption: `selection_recovered` takes `Gate(Env)` first and then revalidates *under that gate* —
 it probes the successor session's owner state (Held required; Interrupted/absent is `ServingLost`; unknown refuses), runs the
-pinned handshake against the committed lease itself, and only then reads the selectors and objects back through a `SelectorReader`. The kernel reads every selector and every selected object back through that reader under
+pinned handshake against the committed lease itself, verifies through a `TargetProbe` that the publication's container and boot are
+still the exact ones it names, and only then reads the selectors and objects back through a `SelectorReader`. The kernel reads every selector and every selected object back through that reader under
 that same gate (a read taken before it could describe a target another activation replaced), compares each answer with the committed
 target, and only then builds the `SelectionSwitchReceipt` it records — its fields are private and nothing else constructs one. A
 third value, a still-previous value (a partial switch), a missing object, an unreadable target or a receipt the caller assembled is
@@ -3123,7 +3124,9 @@ environment run a caller assembled. The proof carries the session's own gate cus
 dropped run handle cannot leave a served locator whose session nobody owns, and `SessionLaunch::abandon_owner` drops that custody
 and makes every later publish/serve refuse. Qualification is this launch's own attested pinned handshake —
 `SessionLaunch::qualify(probe, deadline)` dials the bound endpoint with the key the launch holds — and only a verified answer sets
-the launch's qualified flag, so a listener that merely advertises a serving phase mints no locator. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
+the launch's qualified flag, so a listener that merely advertises a serving phase mints no locator. Serving is a fact about the live
+session, not a latch: `SessionLaunch::serve`/`serving` take the session `Run` and refuse once it is stopping or closed, so a settled
+session has no callable locator. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
 `Gate(Env)`, attaches only to `Held`, treats `Interrupted` as no live session, and refuses `unavailable` when liveness is unknown. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
 or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
 host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam

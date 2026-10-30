@@ -349,6 +349,18 @@ pub trait ServingProbe {
     ) -> Observed<()>;
 }
 
+/// A bounded verification of the exact container and VM boot a publication
+/// names, supplied by the owning engine. The kernel does not inspect a backend
+/// itself; recovery asks, and only a verified answer lets a generation complete.
+pub trait TargetProbe {
+    fn verify_target(
+        &mut self,
+        container_id: &str,
+        vm_boot_id: &str,
+        deadline: Duration,
+    ) -> Observed<()>;
+}
+
 /// The published locator. Only [`SessionLaunch::publish`] constructs one, and
 /// only from a bound listener that answered qualification and whose key is
 /// still held, so "published" cannot mean "maybe bound".
@@ -530,8 +542,9 @@ impl SessionLaunch {
     /// The serving supervisor adopted the session run: only now may the channel
     /// serve. A lease that was never published cannot serve, and neither can one
     /// whose owner custody this launch no longer holds.
-    pub fn serve(&mut self) -> Result<(), ServingRefusal> {
+    pub fn serve(&mut self, session_run: &Run<'_>) -> Result<(), ServingRefusal> {
         self.require_custody()?;
+        self.require_live_session(session_run)?;
         if !self.qualified || self.bound.is_none() {
             return Err(ServingRefusal::Unqualified);
         }
@@ -546,8 +559,32 @@ impl SessionLaunch {
     }
 
     /// Whether the v1 channel may dispatch on this launch's listener.
-    pub fn serving(&self) -> bool {
-        self.served && self.qualified && self.owner.held() && self.listener.phase().accepts()
+    pub fn serving(&self, session_run: &Run<'_>) -> bool {
+        self.served
+            && self.qualified
+            && self.owner.held()
+            && self.session_is_live(session_run)
+            && self.listener.phase().accepts()
+    }
+
+    /// A settled or replaced session run serves nothing, whatever this launch
+    /// once published: the locator is only callable while the run it names is
+    /// still open at its own fence.
+    fn session_is_live(&self, session_run: &Run<'_>) -> bool {
+        session_run.id() == self.session.run()
+            && session_run.fence() == self.session.fence()
+            && !matches!(
+                session_run.phase(),
+                Ok(crate::run::Phase::Stopping) | Ok(crate::run::Phase::Closed) | Err(_)
+            )
+    }
+
+    fn require_live_session(&self, session_run: &Run<'_>) -> Result<(), ServingRefusal> {
+        if self.session_is_live(session_run) {
+            Ok(())
+        } else {
+            Err(ServingRefusal::WrongSession)
+        }
     }
 
     /// Release the owning run's custody while the launch lives: the session is

@@ -51,7 +51,7 @@ pub use selection::{
 };
 pub use serving::{
     ChannelBound, ChannelListener, HostChannelListener, ListenerPhase, ServingKey, ServingLease,
-    ServingProbe, ServingRefusal, SessionLaunch, SessionOwner,
+    ServingProbe, ServingRefusal, SessionLaunch, SessionOwner, TargetProbe,
 };
 
 use crate::ctx::{CleanupContext, EffectContext, ObserveContext, StopCause};

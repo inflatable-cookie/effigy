@@ -885,6 +885,7 @@ pub fn selection_recovered(
     cx: &EffectContext,
     root: &StateRoot,
     obligation: &SelectionObligation,
+    target: &mut dyn super::TargetProbe,
     probe: &mut dyn super::ServingProbe,
     reader: &mut dyn SelectorReader,
     wait: Wait,
@@ -916,15 +917,28 @@ pub fn selection_recovered(
             )))
         }
     }
-    let serving = obligation.receipt().serving();
-    let Some(endpoint) = serving.socket() else {
-        return Err(ActivationRefusal::ServingLost.into());
-    };
     let deadline = cx
         .operation()
         .remaining()
         .map(|left| left.min(std::time::Duration::from_secs(5)))
         .unwrap_or_else(|| std::time::Duration::from_secs(5));
+    // The target the publication names must still be that exact container and
+    // boot: a recovered generation is never completed against a replaced one.
+    let publication = obligation.receipt().publication();
+    match target.verify_target(
+        &publication.publication.container_id,
+        &publication.publication.vm_boot_id,
+        deadline,
+    ) {
+        Observed::Verified(..) => {}
+        Observed::Absent(_) | Observed::Unknown(_) => {
+            return Err(ActivationRefusal::ServingLost.into())
+        }
+    }
+    let serving = obligation.receipt().serving();
+    let Some(endpoint) = serving.socket() else {
+        return Err(ActivationRefusal::ServingLost.into());
+    };
     match probe.pinned_handshake(endpoint, serving.pin(), deadline) {
         Observed::Verified(..) => {}
         Observed::Absent(_) | Observed::Unknown(_) => {
