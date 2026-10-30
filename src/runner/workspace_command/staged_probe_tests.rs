@@ -250,23 +250,26 @@ fn identity_observes_the_staged_object_in_the_verified_target() {
     assert!(argv.iter().any(|arg| arg == CONTAINER_ID));
     assert!(!argv.iter().any(|arg| arg == "app"));
     let script = argv.last().expect("the shell that runs the object");
-    // The object's digest is gated in the same process that then execs it, and
-    // a refusal is marker-signalled so a guest exit status is never mistaken
-    // for one.
+    // The digest is taken from the descriptor the gate then executes, and a
+    // refusal is marker-signalled so a guest exit status is never mistaken for
+    // one.
     assert!(script.contains(&staged.digest.hex()));
-    assert!(script.contains("exec \"$p\""));
+    assert!(script.contains("exec 3< \"$p\""));
+    assert!(script.contains("sha256sum <&3"));
+    assert!(script.contains("exec /proc/self/fd/3"));
+    assert!(!script.contains("exec \"$p\""), "never the mutable path");
     assert!(
         script
             .find("h=${h%% *}")
             .expect("the digest field the gate compares")
-            < script.find("exec \"$p\"").expect("object exec"),
+            < script.find("exec /proc/self/fd/3").expect("object exec"),
         "the digest gate precedes the exec"
     );
     assert!(
         script
             .find(GATE_OBJECT_DIFFERS)
             .expect("the gate's own refusal marker")
-            < script.find("exec \"$p\"").expect("object exec"),
+            < script.find("exec /proc/self/fd/3").expect("object exec"),
         "a refusal comes from the gate, before the object runs"
     );
     assert!(script.contains("__guest-identity"));
@@ -332,7 +335,7 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
 
     // A staged program that exits with the gate's old-style code is not an
     // absence proof: the gate's marker must name the refusal too.
-    for code in ["3", "64", "65", "66"] {
+    for code in ["3", "64", "65", "66", "67", "68"] {
         backend.body(&format!("printf 'the object is fine' >&2; exit {code}"));
         let mut probe = backend.linked_probe(&policy);
         let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
@@ -368,6 +371,25 @@ fn identity_distinguishes_absence_from_an_unreadable_object() {
     let mut probe = backend.linked_probe(&policy);
     let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
     assert!(reason.contains("requested immutable digest"), "{reason}");
+
+    // A path occupied by something that is not the immutable regular file is a
+    // refusal, not the absence of the object.
+    backend.body(&format!(
+        "printf '{GATE_OBJECT_NOT_REGULAR}\\n' >&2; exit 67"
+    ));
+    let mut probe = backend.linked_probe(&policy);
+    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
+    assert!(
+        reason.contains("not the immutable regular file"),
+        "{reason}"
+    );
+
+    backend.body(&format!(
+        "printf '{GATE_OBJECT_UNREADABLE}\\n' >&2; exit 68"
+    ));
+    let mut probe = backend.linked_probe(&policy);
+    let reason = observed_unknown(&probe.identity(&claimed(), &staged, Duration::from_secs(5)));
+    assert!(reason.contains("could not be opened"), "{reason}");
 
     backend.body("printf 'not a probe document'");
     let mut probe = backend.linked_probe(&policy);
@@ -408,14 +430,17 @@ fn the_object_gate_runs_the_pinned_bytes_and_refuses_everything_else() {
     let fixture = Fixture::new("effigy-staged-probe-gate-").expect("fixture root");
     let object_bytes = b"#!/bin/sh\nprintf 'probe-ran'\n".to_vec();
     let digest = Digest::of(&object_bytes);
+    let replacement_bytes = b"#!/bin/sh\nprintf 'replaced'\n";
     // The object path is digest-addressed, as production object paths are, so a
     // path token can never stand in for the hashed bytes.
     let object_path = fixture.path().join(digest.hex());
+    let object_text = object_path.display().to_string();
     std::fs::write(&object_path, &object_bytes).expect("staged object");
     std::fs::set_permissions(&object_path, std::fs::Permissions::from_mode(0o755))
         .expect("staged object mode");
     let empty_bin = fixture.path().join("empty-bin");
     std::fs::create_dir(&empty_bin).expect("empty bin");
+    let system_path = Path::new("/usr/bin:/bin:/usr/sbin:/sbin");
 
     let gate = |path: &str, digest: Digest, search_path: &Path| {
         let script = staged_object_probe_script(
@@ -437,40 +462,100 @@ fn the_object_gate_runs_the_pinned_bytes_and_refuses_everything_else() {
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         )
     };
-    let system_path = Path::new("/usr/bin:/bin:/usr/sbin:/sbin");
 
-    let (code, stdout, stderr) = gate(
-        &object_path.display().to_string(),
-        digest.clone(),
-        system_path,
-    );
-    assert_eq!((code, stderr.as_str()), (0, ""));
-    assert_eq!(stdout, "probe-ran", "the pinned bytes run");
+    #[cfg(target_os = "linux")]
+    {
+        let (code, stdout, stderr) = gate(&object_text, digest.clone(), system_path);
+        assert_eq!(
+            (code, stdout.as_str(), stderr.as_str()),
+            (0, "probe-ran", "")
+        );
+    }
 
-    // Same digest-named path, different bytes: refused before it runs.
-    std::fs::write(&object_path, b"#!/bin/sh\nprintf 'replaced'\n").expect("replaced object");
-    let (code, stdout, stderr) = gate(
-        &object_path.display().to_string(),
-        digest.clone(),
-        system_path,
-    );
+    // A path replaced before the gate runs is refused, never executed.
+    std::fs::write(&object_path, replacement_bytes).expect("replaced object");
+    let (code, stdout, stderr) = gate(&object_text, digest.clone(), system_path);
     assert_eq!(code, 66);
     assert_eq!(stderr, GATE_OBJECT_DIFFERS);
     assert!(stdout.is_empty(), "a refused object never runs");
 
+    // The gate takes the digest from the descriptor it then executes, so a path
+    // replaced *after* the digest was read is neither hashed nor run. This tool
+    // hashes the pinned bytes honestly and then swaps the object behind the
+    // gate's back: exactly the race a path-only check loses.
+    std::fs::write(&object_path, &object_bytes).expect("restore staged object");
+    let racing_bin = fixture.path().join("racing-bin");
+    std::fs::create_dir(&racing_bin).expect("racing bin");
+    let racing_tool = racing_bin.join("sha256sum");
+    std::fs::write(
+        &racing_tool,
+        format!(
+            "#!/bin/sh\nh=$(shasum -a 256)\nprintf '%s\\n' \"$h\"\nrm -f {object} && printf '%s' {replacement} > {object}\n",
+            object = shell_quote(&object_text),
+            replacement = shell_quote(&String::from_utf8_lossy(replacement_bytes)),
+        ),
+    )
+    .expect("racing digest tool");
+    std::fs::set_permissions(&racing_tool, std::fs::Permissions::from_mode(0o755))
+        .expect("racing tool mode");
+    let racing_path = format!(
+        "{}:{system_path}",
+        racing_bin.display(),
+        system_path = system_path.display()
+    );
+    let (code, stdout, stderr) = gate(&object_text, digest.clone(), Path::new(&racing_path));
+    assert_eq!(
+        std::fs::read(&object_path).expect("swapped object"),
+        replacement_bytes,
+        "the proof actually performed the swap"
+    );
+    #[cfg(target_os = "linux")]
+    {
+        // The descriptor still names the pinned inode, so the pinned bytes run.
+        assert_eq!((code, stderr.as_str()), (0, ""));
+        assert_eq!(
+            stdout, "probe-ran",
+            "the executed bytes are the bytes the digest was taken from"
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // A digest taken from the path would have differed (66); reaching the
+        // exec proves the digest came from the descriptor. This kernel cannot
+        // execute a descriptor, so the gate refuses instead of falling back to
+        // the mutable path.
+        assert_eq!(
+            code, 126,
+            "the digest came from the descriptor, and the run fails closed: {stderr}"
+        );
+        assert!(stdout.is_empty(), "the gate never falls back to `$p`");
+    }
+
+    // Something occupying the object path that is not the immutable regular
+    // file is its own refusal, never a verified absence.
+    let occupied = fixture.path().join("occupied-object");
+    std::fs::create_dir(&occupied).expect("occupied object");
+    let (code, stdout, stderr) = gate(&occupied.display().to_string(), digest.clone(), system_path);
+    assert_eq!(code, 67);
+    assert_eq!(stderr, GATE_OBJECT_NOT_REGULAR);
+    assert!(stdout.is_empty());
+    std::fs::remove_dir(&occupied).expect("remove occupied object");
+    std::os::unix::fs::symlink(&object_path, &occupied).expect("symlinked object");
+    let (code, _, stderr) = gate(&occupied.display().to_string(), digest.clone(), system_path);
+    assert_eq!((code, stderr.as_str()), (67, GATE_OBJECT_NOT_REGULAR));
+    std::fs::remove_file(&occupied).expect("remove symlink");
+
+    // Only a path with nothing at it is a verified absence.
     let missing = fixture.path().join("missing-object");
     let (code, stdout, stderr) = gate(&missing.display().to_string(), digest.clone(), system_path);
     assert_eq!(code, 64);
     assert_eq!(stderr, GATE_OBJECT_ABSENT);
     assert!(stdout.is_empty());
 
+    // An image with no digest tool is unavailable, not a pass.
     std::fs::write(&object_path, &object_bytes).expect("restore staged object");
-    let (code, stdout, stderr) = gate(
-        &object_path.display().to_string(),
-        digest,
-        empty_bin.as_path(),
-    );
-    assert_eq!(code, 65, "an image with no digest tool is unavailable");
+    let (code, stdout, stderr) = gate(&object_text, digest, empty_bin.as_path());
+    assert_eq!(code, 65);
     assert_eq!(stderr, GATE_NO_HASH_TOOL);
     assert!(stdout.is_empty());
 }

@@ -179,9 +179,13 @@ pub(in crate::runner) struct StagedGuestProbe<'a> {
 const EXIT_OBJECT_ABSENT: i32 = 64;
 const EXIT_NO_HASH_TOOL: i32 = 65;
 const EXIT_OBJECT_DIFFERS: i32 = 66;
+const EXIT_OBJECT_NOT_REGULAR: i32 = 67;
+const EXIT_OBJECT_UNREADABLE: i32 = 68;
 const GATE_OBJECT_ABSENT: &str = "effigy-staged-guest-gate:object-absent";
 const GATE_NO_HASH_TOOL: &str = "effigy-staged-guest-gate:no-hash-tool";
 const GATE_OBJECT_DIFFERS: &str = "effigy-staged-guest-gate:object-differs";
+const GATE_OBJECT_NOT_REGULAR: &str = "effigy-staged-guest-gate:object-not-regular";
+const GATE_OBJECT_UNREADABLE: &str = "effigy-staged-guest-gate:object-unreadable";
 /// The guest entry's reply schema. A reply that does not name it is another
 /// program's output.
 const GUEST_PROBE_SCHEMA: &str = "effigy.guest-probe.v1";
@@ -328,6 +332,18 @@ impl<'a> StagedGuestProbe<'a> {
                     "the staged object differs from the requested immutable digest".into(),
                 ))
             }
+            Some(GateRefusal::ObjectNotRegular) => {
+                return Observed::Unknown(UnknownReason::Inconsistent(
+                    "the staged object path is occupied by something that is not the immutable \
+                     regular file this publication staged"
+                        .into(),
+                ))
+            }
+            Some(GateRefusal::ObjectUnreadable) => {
+                return Observed::Unknown(UnknownReason::Inconsistent(
+                    "the staged object could not be opened for the pinned run".into(),
+                ))
+            }
             None => {}
         }
         if !captured.status.success() {
@@ -395,13 +411,20 @@ impl<'a> StagedGuestProbe<'a> {
 
 /// The shell that gates and then runs the staged object.
 ///
-/// The digest is compared in the same process that `exec`s the path, so a
-/// replaced object is refused before it runs. `sha256sum` and `shasum` print the
-/// digest first and `openssl` last, so each branch reduces the output to the
-/// digest field and only that field is compared: a digest that happens to
-/// appear in the object's own path is never taken as the hash. The digest tool
-/// is the one `GuestReader::file_sha256` already requires of the image; a guest
-/// without one is an unavailable observation, never a pass.
+/// One `open` describes the bytes: the digest is read from that descriptor and
+/// the same descriptor is what `exec`s (`/dev/fd/3`), so a path replaced between
+/// the check and the run cannot be executed — the descriptor keeps the inode the
+/// digest was taken from. A guest whose `/dev/fd` cannot be executed fails closed
+/// rather than falling back to the path. `sha256sum` and `shasum` print the digest first and `openssl`
+/// last, so each branch reduces the output to the digest field, and only that
+/// field is compared: a digest that appears in the object's own path is never
+/// taken as the hash. The digest tool is the one `GuestReader::file_sha256`
+/// already requires of the image.
+///
+/// A path that exists but is not the immutable regular file (a symlink, a
+/// directory, a fifo, a device, a socket) is its own refusal, never an absence
+/// proof: an object was put there and it is not the one this publication
+/// staged.
 fn staged_object_probe_script(object: &GuestObject, args: &[String]) -> String {
     let path = shell_quote(&object.path);
     let digest = object.digest.hex();
@@ -412,21 +435,31 @@ fn staged_object_probe_script(object: &GuestObject, args: &[String]) -> String {
         .join(" ");
     format!(
         "p={path}\n\
-         [ -f \"$p\" ] || {{ printf '%s\\n' {absent_marker} >&2; exit {absent}; }}\n\
-         if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum \"$p\")\n\
-         elif command -v shasum >/dev/null 2>&1; then h=$(shasum -a 256 \"$p\")\n\
-         elif command -v openssl >/dev/null 2>&1; then h=$(openssl dgst -sha256 \"$p\"); h=${{h##* }}\n\
+         if [ -L \"$p\" ]; then printf '%s\\n' {not_regular_marker} >&2; exit {not_regular}\n\
+         elif [ -f \"$p\" ]; then :\n\
+         elif [ -d \"$p\" ] || [ -p \"$p\" ] || [ -S \"$p\" ] || [ -b \"$p\" ] || [ -c \"$p\" ]; then printf '%s\\n' {not_regular_marker} >&2; exit {not_regular}\n\
+         else printf '%s\\n' {absent_marker} >&2; exit {absent}\n\
+fi\n\
+         exec 3< \"$p\" || {{ printf '%s\\n' {unreadable_marker} >&2; exit {unreadable}; }}\n\
+         if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum <&3)\n\
+         elif command -v shasum >/dev/null 2>&1; then h=$(shasum -a 256 <&3)\n\
+         elif command -v openssl >/dev/null 2>&1; then h=$(openssl dgst -sha256 <&3); h=${{h##* }}\n\
          else printf '%s\\n' {no_tool_marker} >&2; exit {no_tool}\n\
 fi\n\
          h=${{h%% *}}\n\
+         [ -n \"$h\" ] || {{ printf '%s\\n' {no_tool_marker} >&2; exit {no_tool}; }}\n\
          [ \"$h\" = {digest} ] || {{ printf '%s\\n' {differs_marker} >&2; exit {differs}; }}\n\
-         exec \"$p\" {args}",
+         exec /proc/self/fd/3 {args}",
         absent = EXIT_OBJECT_ABSENT,
         no_tool = EXIT_NO_HASH_TOOL,
         differs = EXIT_OBJECT_DIFFERS,
+        not_regular = EXIT_OBJECT_NOT_REGULAR,
+        unreadable = EXIT_OBJECT_UNREADABLE,
         absent_marker = shell_quote(GATE_OBJECT_ABSENT),
         no_tool_marker = shell_quote(GATE_NO_HASH_TOOL),
         differs_marker = shell_quote(GATE_OBJECT_DIFFERS),
+        not_regular_marker = shell_quote(GATE_OBJECT_NOT_REGULAR),
+        unreadable_marker = shell_quote(GATE_OBJECT_UNREADABLE),
     )
 }
 
@@ -435,6 +468,8 @@ enum GateRefusal {
     ObjectAbsent,
     NoHashTool,
     ObjectDiffers,
+    ObjectNotRegular,
+    ObjectUnreadable,
 }
 
 /// A gate refusal needs both its reserved exit code and its exact marker line.
@@ -445,6 +480,8 @@ fn gate_refusal(captured: &BoundedCapture) -> Option<GateRefusal> {
         EXIT_OBJECT_ABSENT => (GateRefusal::ObjectAbsent, GATE_OBJECT_ABSENT),
         EXIT_NO_HASH_TOOL => (GateRefusal::NoHashTool, GATE_NO_HASH_TOOL),
         EXIT_OBJECT_DIFFERS => (GateRefusal::ObjectDiffers, GATE_OBJECT_DIFFERS),
+        EXIT_OBJECT_NOT_REGULAR => (GateRefusal::ObjectNotRegular, GATE_OBJECT_NOT_REGULAR),
+        EXIT_OBJECT_UNREADABLE => (GateRefusal::ObjectUnreadable, GATE_OBJECT_UNREADABLE),
         _ => return None,
     };
     let stderr = String::from_utf8_lossy(&captured.stderr);
