@@ -152,6 +152,7 @@ pub(in crate::runner) fn bootstrap_runtime_session_context(phase: &str) -> Runti
         } else {
             PublicWorkspaceCleanupOverride::Default
         },
+        data_seed_session: false,
     }
 }
 

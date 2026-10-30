@@ -1,3 +1,4 @@
+use super::activate_routed_container_runtime_with;
 use super::{
     activate_container_runtime_plan_for_task_using, candidate_host_mount_paths,
     ensure_exec_container_running_with, ensure_runtime_gateway_readiness_stage_using,
@@ -451,6 +452,102 @@ fn runtime_compose_up_stage_propagates_a_compose_failure() {
 /// A task's environment ensure starts the shared services and delivers the
 /// compose-env secrets before the same apply `container up` runs, so
 /// alternating the two paths recreates nothing (effigy#371).
+/// A data seed's routed activation judges the policy it actually activates: an
+/// environment with shared services is left alone, one without them keeps its
+/// ordinary activation, and an ordinary session still reconciles both
+/// (effigy#477 review).
+#[test]
+fn a_data_seed_session_decides_from_the_policy_being_activated() {
+    use crate::runner::db_seed::data_seed_runtime_session_context;
+    use crate::runner::runtime_session_context::{
+        with_runtime_session_context, RuntimeSessionContext,
+    };
+
+    fn policy_with_shared_service() -> EffectiveContainerPolicy {
+        let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+        policy.shared_services = vec![effigy_containers::SharedServiceBinding {
+            service_name: "mysql".to_owned(),
+            catalog: "mariadb".to_owned(),
+            domain_label: "mysql".to_owned(),
+            project_name: "effigy-shared-mariadb-0721de3e".to_owned(),
+            compose_file: PathBuf::from("/machine/shared/mariadb/compose.yml"),
+            host: "127.0.0.1".to_owned(),
+            host_port: 33_066,
+            container_port: 3306,
+            host_env_vars: vec![],
+            port_env_vars: vec![],
+            render_digest: "abc".to_owned(),
+        }];
+        policy
+    }
+
+    fn capture(session: RuntimeSessionContext, policy: &EffectiveContainerPolicy) -> Option<bool> {
+        let mut captured = None;
+        with_runtime_session_context(session, || {
+            let _ = activate_routed_container_runtime_with(
+                Path::new("/tmp/demo-repo"),
+                "web",
+                |_repo_root, _container_name| Ok(policy.clone()),
+                |_repo_root, _policy, request, _plan| {
+                    captured = Some(request.reconcile_shared_services);
+                    Err(crate::runner::error::RunnerError::task_invocation(
+                        "stop after capture",
+                    ))
+                },
+            );
+        });
+        captured
+    }
+
+    let shared = policy_with_shared_service();
+    let unshared = test_policy(PathBuf::from("docker-compose.yml"));
+    assert_eq!(
+        capture(data_seed_runtime_session_context(), &shared),
+        Some(false),
+        "a data seed must leave an activated environment's shared services alone"
+    );
+    assert_eq!(
+        capture(data_seed_runtime_session_context(), &unshared),
+        Some(true),
+        "an environment with no shared services keeps its ordinary activation"
+    );
+    assert_eq!(
+        capture(RuntimeSessionContext::default(), &shared),
+        Some(true),
+        "an ordinary task activation still reconciles shared services"
+    );
+}
+
+/// A data command's apply passes `false` and must never start a shared
+/// service; the ordinary task apply still does (effigy#477 review).
+#[test]
+fn apply_shared_services_honours_the_reconciliation_decision() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+
+    let started = AtomicBool::new(false);
+    super::apply_shared_services(&policy, false, |_| {
+        started.store(true, Ordering::SeqCst);
+        Ok(vec!["unrelated shared mysql started".to_owned()])
+    })
+    .expect("apply without shared reconciliation");
+    assert!(
+        !started.load(Ordering::SeqCst),
+        "a data command's activation must not ensure an unrelated shared service"
+    );
+
+    let started = AtomicBool::new(false);
+    super::apply_shared_services(&policy, true, |_| {
+        started.store(true, Ordering::SeqCst);
+        Ok(Vec::new())
+    })
+    .expect("apply with shared reconciliation");
+    assert!(
+        started.load(Ordering::SeqCst),
+        "the ordinary task apply still reconciles shared services"
+    );
+}
+
 #[test]
 fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply() {
     let repo_root = Path::new("/tmp/demo-repo");
@@ -462,6 +559,7 @@ fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply()
     run_task_apply(
         repo_root,
         &policy,
+        true,
         move |_| {
             shared_order
                 .lock()
@@ -750,11 +848,13 @@ fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
             repo_override: Some(repo_root.to_path_buf()),
             route: RuntimeActivationRoute::Task,
             session_context: RuntimeSessionContext::default(),
+            reconcile_shared_services: true,
         },
     );
     let activation = activate_container_runtime_plan_for_task_using(
         &plan,
         &policy,
+        true,
         {
             let events = Arc::clone(&events);
             move |repo_root, policy, route, container_name, repo_override, _start| {
@@ -852,11 +952,13 @@ fn task_activation_in_a_managed_workspace_keeps_its_stack_without_gateway_readin
                 lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
                 ..RuntimeSessionContext::default()
             },
+            reconcile_shared_services: true,
         },
     );
     let activation = activate_container_runtime_plan_for_task_using(
         &plan,
         &policy,
+        true,
         {
             let events = Arc::clone(&events);
             move |_, _, _, _, _, _| {
@@ -907,11 +1009,13 @@ fn task_activation_surfaces_workspace_permission_failure() {
             repo_override: Some(repo_root.to_path_buf()),
             route: RuntimeActivationRoute::Task,
             session_context: RuntimeSessionContext::default(),
+            reconcile_shared_services: true,
         },
     );
     let error = activate_container_runtime_plan_for_task_using(
         &plan,
         &policy,
+        true,
         {
             let events = Arc::clone(&events);
             move |_, _, _, _, _, _| {
@@ -964,11 +1068,13 @@ fn task_activation_surfaces_dependency_volume_failure() {
             repo_override: Some(repo_root.to_path_buf()),
             route: RuntimeActivationRoute::Task,
             session_context: RuntimeSessionContext::default(),
+            reconcile_shared_services: true,
         },
     );
     let error = activate_container_runtime_plan_for_task_using(
         &plan,
         &policy,
+        true,
         {
             let events = Arc::clone(&events);
             move |_, _, _, _, _, _| {
@@ -1044,11 +1150,13 @@ fn activation_returns_the_published_snapshot_for_its_exec_caller() {
                 repo_override: None,
                 route: RuntimeActivationRoute::Task,
                 session_context: RuntimeSessionContext::default(),
+                reconcile_shared_services: true,
             },
         );
         let activation = activate_container_runtime_plan_for_task_using(
             &plan,
             &prepared,
+            true,
             |_, policy, _, _, _, _| {
                 effigy_containers::policy::render::verify(policy).unwrap();
                 // Editing source after activation must not replace the caller's snapshot.
