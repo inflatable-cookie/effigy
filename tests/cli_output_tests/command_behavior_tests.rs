@@ -3555,16 +3555,13 @@ fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::pro
         "seeded"
     );
 
-    // No lease file: the seed held the stack it started, and holder-based
-    // idle stop brought it down (volumes kept) once the seed ended.
-    assert!(!root
-        .join(".effigy/runtime/host-container-leases/dev/fixture-web-dev/web.json")
-        .exists());
+    // This app-defined seed runs on the host and does not start or hold the
+    // environment, so there is no runtime activity to idle-stop afterward.
     let colima = fs::read_to_string(root.join("colima-args.log")).unwrap_or_default();
     let docker = fs::read_to_string(root.join("docker-args.log")).unwrap_or_default();
     assert!(
-        colima.contains("down --remove-orphans") || docker.contains("down --remove-orphans"),
-        "expected the idle stop after the seed:\ncolima: {colima}\ndocker: {docker}"
+        colima.is_empty() && docker.is_empty(),
+        "unexpected runtime activity:\ncolima: {colima}\ndocker: {docker}"
     );
 }
 

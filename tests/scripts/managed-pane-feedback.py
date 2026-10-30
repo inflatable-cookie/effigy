@@ -78,7 +78,7 @@ run = ["printf 'child-before\\\\n'; sleep 2; printf 'child-after\\\\n'"]
         assert pane and b"finished" in pane, (bytes(output[-5000:]), pane, logs)
         assert b"EFFIGY" not in pane and b"\x1b" not in pane, pane
         assert b"\r" not in pane.replace(b"\r\n", b""), pane
-        assert pane.count(b"Started: running nested\r\n") == 1, pane
+        assert pane.count(b"Started: running nested; waiting for step `1` to exit;") == 1, pane
         assert pane.count(b" finished") == 2, pane
         assert b"child-before\r\n" in pane and b"child-after\r\n" in pane, pane
         assert any(b"adjacent-before\r\n" in log.read_bytes() and b"adjacent-after\r\n" in log.read_bytes() and b"\x1b[31mVite error\x1b[0m" in log.read_bytes() for log in logs)
