@@ -18,12 +18,6 @@
     16
   ],
   [
-    "crates/effigy-containers/src/health.rs",
-    49,
-    "let step = effigy_ui::steps::step(&format!(\"waiting for {container_name} to report healthy\"));",
-    34
-  ],
-  [
     "crates/effigy-runtime/src/write.rs",
     77,
     ".then(|| effigy_containers::exec::phase(format!(\"stopping the `{}` stack\", policy.name)));",
@@ -121,13 +115,13 @@
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    419,
+    420,
     "let settling = steps::phase(\"settling the environment\");",
     27
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    486,
+    487,
     "let ports_step = steps::phase(\"preparing ports and loopback\");",
     29
   ],

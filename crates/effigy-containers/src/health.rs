@@ -44,23 +44,30 @@ pub fn wait_for_ready(
     };
     let started = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
-    // A health wait is exactly the work the operator needs to watch: the
-    // label names the container and how many attempts it has taken so far.
-    let step = effigy_ui::steps::step(&format!("waiting for {container_name} to report healthy"));
+    // A health wait is exactly the work the operator needs to watch: the frame
+    // names the probe now in flight and its attempt, and keeps the last answer
+    // the check gave, with elapsed time (effigy#460, Q-017).
+    let progress = effigy_ui::steps::ProgressSource::waiting_for(format!(
+        "`{check}` to report `{container_name}` healthy"
+    ));
+    let step = effigy_ui::steps::live_step(progress.clone());
     let mut attempts = 0_u32;
     while started.elapsed() <= timeout {
         if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
             step.finish_clear();
             return Ok(Some("interrupted"));
         }
+        attempts += 1;
+        progress.update(
+            format!("probing `{check}` for {container_name} (attempt {attempts})"),
+            None,
+            None,
+        );
         if probe_health(check) {
             step.succeed(&format!("{container_name} reports healthy"));
             return Ok(Some("ready"));
         }
-        attempts += 1;
-        step.set_label(&format!(
-            "waiting for {container_name} to report healthy (attempt {attempts}, {check})"
-        ));
+        progress.event(format!("`{check}` did not answer healthy"));
         std::thread::sleep(Duration::from_millis(250));
     }
     step.fail(&format!(

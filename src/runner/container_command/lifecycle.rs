@@ -250,7 +250,6 @@ fn detached_activation_failure(
             }
             RunnerError::TaskInvocation(_) => "invocation_refusal",
             RunnerError::ManagedHostReadiness { .. } => "managed_readiness",
-            RunnerError::ContainerReadinessWait { .. } => "container_readiness",
             RunnerError::GatewayRouteTable { .. }
             | RunnerError::GatewayRouteRegistration { .. }
             | RunnerError::GatewayRouteShape { .. }
@@ -273,8 +272,10 @@ fn detached_activation_failure(
                 "retirement_removes_mutable_data": true,
                 "message": message,
         });
-        if let Some(waits) = readiness_waiting_on(&error) {
-            rendered["waiting_on"] = waits;
+        // A wait the bring-up could not finish names its own kind and waits.
+        if let Some(details) = wait_refusal_details(&error) {
+            rendered["failure_kind"] = details["failure_kind"].clone();
+            rendered["waiting_on"] = details["waiting_on"].clone();
         }
         return RunnerError::CommandJsonFailure {
             rendered: rendered.to_string(),
@@ -643,14 +644,12 @@ fn activation_source(up_label: &str, stack: &str) -> ProgressSource {
     progress
 }
 
-/// The machine-readable waits a readiness refusal ended on, when it has any.
-fn readiness_waiting_on(error: &RunnerError) -> Option<serde_json::Value> {
-    let RunnerError::ContainerReadinessWait { details_json, .. } = error else {
+/// The machine-readable details of a container wait that ended unfinished.
+fn wait_refusal_details(error: &RunnerError) -> Option<serde_json::Value> {
+    let RunnerError::ContainerWaitRefused { details_json, .. } = error else {
         return None;
     };
-    serde_json::from_str::<serde_json::Value>(details_json)
-        .ok()
-        .map(|details| details["waiting_on"].clone())
+    serde_json::from_str::<serde_json::Value>(details_json).ok()
 }
 
 fn container_up_stop_requested(plan: &ContainerUpPlan) -> bool {
@@ -1771,20 +1770,19 @@ mod tests {
             stage: Some("readiness"),
             ..Default::default()
         };
-        let error = RunnerError::ContainerReadinessWait {
-            environment: "demo".to_owned(),
-            diagnostic: "environment `demo` did not become ready within 60s".to_owned(),
-            details_json: serde_json::json!({
-                "environment": "demo",
+        let error = RunnerError::container_wait_refused(
+            "demo",
+            "environment `demo` did not become ready within 60s".to_owned(),
+            serde_json::json!({
+                "failure_kind": "container_readiness",
                 "readiness": "unverified",
                 "waiting_on": [{
                     "kind": "service",
                     "service": "web",
                     "problem": "web is unhealthy after 4 failed checks",
                 }],
-            })
-            .to_string(),
-        };
+            }),
+        );
         let RunnerError::CommandJsonFailure { rendered } =
             detached_activation_failure(&operation, true, error)
         else {

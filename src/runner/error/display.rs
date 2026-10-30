@@ -33,7 +33,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::Task(err) => write!(f, "{err}"),
         RunnerError::Ui(msg) => write!(f, "ui render failed: {msg}"),
         RunnerError::TaskInvocation(msg) => write!(f, "{msg}"),
-        RunnerError::ContainerReadinessWait { diagnostic, .. } => f.write_str(diagnostic),
+        RunnerError::ContainerWaitRefused { diagnostic, .. } => f.write_str(diagnostic),
         RunnerError::ManagedHostReadiness {
             process,
             diagnostic,

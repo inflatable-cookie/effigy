@@ -79,14 +79,6 @@ pub(super) fn await_services_ready(
     let started = Instant::now();
     let deadline = deadline.unwrap_or_else(|| observation_deadline(policy));
     let progress = ProgressSource::waiting_for("the environment's services to report healthy");
-    progress.update(
-        format!(
-            "reading the health of every service in project `{}`",
-            policy.project_name
-        ),
-        None,
-        None,
-    );
     let parent = TimedStep::live(progress.clone());
     let mut steps = BTreeMap::<String, ServiceStep>::new();
     let mut attempts = BTreeMap::<String, u32>::new();
@@ -94,6 +86,8 @@ pub(super) fn await_services_ready(
     let mut last_services: Vec<ServiceHealth> = Vec::new();
     let mut last_probe_error: Option<String> = None;
     let mut observed = false;
+    let mut probes = 0_u64;
+    let mut known_counts: Option<(u64, u64)> = None;
 
     loop {
         if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
@@ -104,6 +98,14 @@ pub(super) fn await_services_ready(
             return Ok(ReadinessEnd::Interrupted);
         }
         let probe_deadline = probe_budget_deadline(Instant::now(), deadline);
+        probes += 1;
+        observe_probe_started(
+            &progress,
+            &policy.project_name,
+            probes,
+            probe_deadline.saturating_duration_since(Instant::now()),
+            known_counts,
+        );
         match inspect_project_health(repo_root, policy, Some(probe_deadline)) {
             Ok(services) if services.is_empty() => {
                 for waiting in steps.values() {
@@ -121,6 +123,10 @@ pub(super) fn await_services_ready(
                 last_probe_error = None;
                 last_services = services.clone();
                 observe_parent(&progress, &services);
+                known_counts = Some((
+                    services.iter().filter(|service| service.is_ready()).count() as u64,
+                    services.len() as u64,
+                ));
                 let ready = report_services(&services, &mut steps, &mut attempts);
                 if ready.is_empty() {
                     for waiting in steps.values() {
@@ -205,6 +211,27 @@ fn observe_parent(progress: &ProgressSource, services: &[ServiceHealth]) {
     );
 }
 
+/// The parent step while one runtime health read is in flight: which probe it
+/// is, how long it may take, and the counts and last event already known. The
+/// frame names the probe, not the last result, so a slow read is never shown
+/// as an idle wait (effigy#460, Q-017).
+fn observe_probe_started(
+    progress: &ProgressSource,
+    project: &str,
+    probe: u64,
+    budget: Duration,
+    known: Option<(u64, u64)>,
+) {
+    progress.update(
+        format!(
+            "reading the health of project `{project}` from the runtime (probe {probe}, up to {}s)",
+            budget.as_secs()
+        ),
+        known,
+        None,
+    );
+}
+
 /// The waits a readiness wait ended on, machine-readable: one entry per
 /// service still unready, and one for a health read the runtime did not answer.
 fn waiting_on_entries(
@@ -242,16 +269,15 @@ fn readiness_wait_error(
     diagnostic: String,
     waiting_on: Vec<serde_json::Value>,
 ) -> RunnerError {
-    RunnerError::ContainerReadinessWait {
-        environment: policy.name.clone(),
+    RunnerError::container_wait_refused(
+        &policy.name,
         diagnostic,
-        details_json: serde_json::json!({
-            "environment": policy.name,
+        serde_json::json!({
+            "failure_kind": "container_readiness",
             "readiness": "unverified",
             "waiting_on": waiting_on,
-        })
-        .to_string(),
-    }
+        }),
+    )
 }
 
 /// The parent step after a probe the runtime could not answer: it names the
@@ -484,6 +510,29 @@ mod tests {
         assert_eq!(waits[1]["kind"], "probe");
         assert_eq!(waits[1]["project"], "demo");
         assert_eq!(waits[1]["error"], "docker: daemon not responding");
+    }
+
+    #[test]
+    fn a_health_read_in_flight_names_its_probe_and_keeps_the_last_known_state() {
+        let progress = ProgressSource::waiting_for("the environment's services to report healthy");
+        observe_parent(
+            &progress,
+            &[
+                health(
+                    "web",
+                    "running",
+                    Some(HealthState::Unhealthy),
+                    4,
+                    Some("GET / HTTP/1.1 404"),
+                ),
+                health("db", "running", Some(HealthState::Healthy), 0, None),
+            ],
+        );
+        observe_probe_started(&progress, "demo", 3, Duration::from_secs(15), Some((1, 2)));
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(20)),
+            "reading the health of project `demo` from the runtime (probe 3, up to 15s) (1/2); last: web is unhealthy after 4 failed checks; 20s elapsed"
+        );
     }
 
     #[test]

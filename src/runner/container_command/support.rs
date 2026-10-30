@@ -86,7 +86,27 @@ pub(super) fn wait_for_container_ready(
         policy.health_timeout_secs,
         stop_requested,
     )
-    .map_err(RunnerError::task_invocation)
+    .map_err(|message| declared_health_refusal(policy, message))
+}
+
+/// A declared health check that did not turn ready in time, as the wait it
+/// was in: the container, the check and its budget (effigy#460, Q-017).
+fn declared_health_refusal(policy: &EffectiveContainerPolicy, message: String) -> RunnerError {
+    RunnerError::container_wait_refused(
+        &policy.name,
+        message,
+        serde_json::json!({
+            "failure_kind": "container_readiness",
+            "readiness": "unverified",
+            "waiting_on": [{
+                "kind": "health_check",
+                "container": policy.name,
+                "check": policy.health_check,
+                "timeout_secs": policy.health_timeout_secs,
+                "probe": "declared health check",
+            }],
+        }),
+    )
 }
 
 pub(in crate::runner) fn validate_running_container_runtime_match(
@@ -450,7 +470,8 @@ fn ensure_shared_services_with_renders_observed(
             None,
         );
         let containers = read_shared_containers(policy, service);
-        refuse_vanished_shared_render(policy, service, containers.as_deref())?;
+        refuse_vanished_shared_render(policy, service, containers.as_deref())
+            .map_err(|error| shared_service_refusal(policy, service, "render check", error))?;
         if let Some(render) = renders
             .iter()
             .find(|render| Some(render.directory.as_path()) == service.compose_file.parent())
@@ -461,10 +482,15 @@ fn ensure_shared_services_with_renders_observed(
                 None,
             );
             effigy_containers::policy::render::publish_shared_render(render).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "cannot publish shared {} render: {error}",
-                    service.service_name
-                ))
+                shared_service_refusal(
+                    policy,
+                    service,
+                    "render publication",
+                    RunnerError::task_invocation(format!(
+                        "cannot publish shared {} render: {error}",
+                        service.service_name
+                    )),
+                )
             })?;
         }
         progress.update(
@@ -475,7 +501,10 @@ fn ensure_shared_services_with_renders_observed(
             Some((done, total)),
             None,
         );
-        let replaced = replace_stale_shared_render(policy, service, containers.as_deref())?;
+        let replaced = replace_stale_shared_render(policy, service, containers.as_deref())
+            .map_err(|error| {
+                shared_service_refusal(policy, service, "render replacement", error)
+            })?;
         let workdir = service.compose_file.parent().ok_or_else(|| {
             RunnerError::task_invocation("shared service compose file has no parent directory")
         })?;
@@ -492,7 +521,8 @@ fn ensure_shared_services_with_renders_observed(
             policy,
             &shared_compose_args(service, ["up", "-d", "--remove-orphans"]),
             &format!("docker compose up (shared {})", service.service_name),
-        )?;
+        )
+        .map_err(|error| shared_service_refusal(policy, service, "docker compose up", error))?;
         // The shared stack is started, so it gets the restart policy here too
         // (effigy#383).
         effigy_containers::policy::restart::apply_after_start(
@@ -511,6 +541,33 @@ fn ensure_shared_services_with_renders_observed(
         });
     }
     Ok(notes)
+}
+
+/// A shared service's failed step, as the wait it was in: the service, its
+/// project and the step that did not finish. A refusal that already carries
+/// its own machine-readable document keeps it (effigy#460, Q-017).
+fn shared_service_refusal(
+    policy: &EffectiveContainerPolicy,
+    service: &effigy_containers::SharedServiceBinding,
+    step: &str,
+    error: RunnerError,
+) -> RunnerError {
+    if error.json_error_details().is_some() {
+        return error;
+    }
+    RunnerError::container_wait_refused(
+        &policy.name,
+        error.to_string(),
+        serde_json::json!({
+            "failure_kind": "shared_service",
+            "waiting_on": [{
+                "kind": "shared_service",
+                "service": service.service_name,
+                "project": service.project_name,
+                "step": step,
+            }],
+        }),
+    )
 }
 
 /// The shared project's containers as the runtime reports them. A failed read is
@@ -2168,6 +2225,17 @@ variant = "default"
         ] {
             assert!(message.contains(expected), "{expected}: {message}");
         }
+        // The refusal names the shared wait it was in, machine-readably.
+        let details: serde_json::Value = serde_json::from_str(
+            error
+                .json_error_details()
+                .expect("a shared-service refusal carries its wait"),
+        )
+        .expect("the wait details are JSON");
+        assert_eq!(details["failure_kind"], "shared_service");
+        assert_eq!(details["waiting_on"][0]["kind"], "shared_service");
+        assert_eq!(details["waiting_on"][0]["service"], "db");
+        assert_eq!(details["waiting_on"][0]["step"], "render check");
         assert!(
             !render_dir.exists(),
             "the refusal does not re-render the shared service: {}",

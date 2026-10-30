@@ -681,7 +681,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `--json`: one entry per service still unready, with its problem, and one for
   a health read the runtime did not answer. Shared-service waits name the
   machine gate, the runtime container read, the render publication, or the
-  `docker compose up` they are in.
+  `docker compose up` they are in. A readiness frame names the runtime health
+  read in flight with its probe number and budget, and keeps the last known
+  counts and event. A declared health check names its probe and attempt. A
+  failed shared-service step, and a declared health check that times out, carry
+  the same `waiting_on` list in `--json` and keep their text unchanged.
 
 ### Removed
 
