@@ -209,6 +209,59 @@ fn show() {
             (root / 'src' / 'commented.rs').write_text(source)
             self.assertEqual(lint.indicatif_errors(root), [])
 
+    def test_a_suppression_in_a_comment_or_literal_is_not_a_suppression(self):
+        # The suppression scan used to read raw text, so a doc or message
+        # string mentioning the attribute failed an unrelated change.
+        source = """// #[allow(deprecated)] would hide a real use
+/* #![allow(warnings)] is not written here */
+pub const NOTE: &str = "#[allow(deprecated)] is forbidden";
+pub fn message() -> &'static str {
+    r#"use #[allow(disallowed_methods)] never"#
+}
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'notes.rs').write_text(source)
+            self.assertEqual(lint.suppression_errors(root), [])
+
+    def test_a_real_suppression_attribute_is_reported_at_its_line(self):
+        source = """fn unrelated() {}
+
+#[allow(deprecated)]
+fn hidden() {}
+
+#[expect(clippy::disallowed_methods)]
+fn also_hidden() {}
+
+#![allow(warnings)]
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'hidden.rs').write_text(source)
+            errors = lint.suppression_errors(root)
+        self.assertEqual(len(errors), 3, errors)
+        self.assertIn('src/hidden.rs:3:', errors[0])
+        self.assertIn('#[allow(deprecated)]', errors[0])
+        self.assertIn('src/hidden.rs:6:', errors[1])
+        self.assertIn('src/hidden.rs:9:', errors[2])
+        for error in errors:
+            self.assertIn('migrate to a live progress source', error)
+
+    def test_a_suppression_of_an_unrelated_lint_is_not_reported(self):
+        source = """#[allow(dead_code)]
+fn kept_for_later() {}
+
+#[expect(unused_variables)]
+fn unused(value: u8) { let _ = value; }
+"""
+        with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
+            root = pathlib.Path(directory)
+            (root / 'src').mkdir()
+            (root / 'src' / 'ordinary.rs').write_text(source)
+            self.assertEqual(lint.suppression_errors(root), [])
+
     def test_the_sink_cannot_re_export_the_spinner_crate(self):
         reviewed = """use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 

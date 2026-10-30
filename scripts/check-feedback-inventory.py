@@ -297,15 +297,31 @@ def sink_errors(root):
     return errors
 
 
-def suppression_errors():
+SUPPRESSION = re.compile(
+    r'#\s*!?\s*\[[^]]*\b(?:allow|expect)\s*\([^]]*'
+    r'\b(?:deprecated|warnings|disallowed_methods|all)\b[^]]*\]'
+)
+
+
+def suppression_errors(root=None):
+    """Find real suppression attributes, not comments or literal contents.
+
+    The scan reads `code_only` output, so a comment or a doc/message string
+    that mentions `#[allow(deprecated)]` is not a suppression, while the
+    attribute in code is still found at its own line.
+    """
+    root = root or ROOT
     errors = []
-    pattern = re.compile(r'#\s*!?\s*\[[^]]*\b(?:allow|expect)\s*\([^]]*\b(?:deprecated|warnings|disallowed_methods|all)\b[^]]*\]', re.S)
-    for root in (ROOT / 'src', ROOT / 'crates'):
-        for source in root.rglob('*.rs'):
-            text = source.read_text()
-            for match in pattern.finditer(text):
-                line = text.count('\n', 0, match.start()) + 1
-                errors.append(f'{source.relative_to(ROOT)}:{line}: do not suppress feedback diagnostics; migrate to a live progress source')
+    for source in source_files(root, 'src', 'crates', 'tests'):
+        text = source.read_text()
+        masked = code_only(text)
+        for match in SUPPRESSION.finditer(masked):
+            line = masked.count('\n', 0, match.start()) + 1
+            errors.append(
+                f'{source.relative_to(root).as_posix()}:{line}: '
+                f'{source_line(text, line)}; do not suppress feedback diagnostics; '
+                'migrate to a live progress source'
+            )
     return errors
 
 
@@ -333,7 +349,7 @@ def run():
         return code
     observed = entries(messages)
     failures = (
-        suppression_errors()
+        suppression_errors(ROOT)
         + indicatif_errors(ROOT)
         + sink_errors(ROOT)
         + check(observed)
