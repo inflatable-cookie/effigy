@@ -81,9 +81,12 @@ all reach the same behaviour.
 
 ### Step progress
 
-Start a step with `effigy_ui::steps::step(label)`; the handle offers
-`set_label`, `succeed(summary)`, `fail(summary)`, `finish_clear` and nested
-sub-steps via `step(label)`.
+Start a live wait with `ProgressSource::waiting_for(probe)` and
+`effigy_ui::steps::live_step(source)`. The source supplies the current
+sub-step, known count, last event and elapsed wait; when no further event
+exists it names that exact probe. Finish with `succeed(summary)`,
+`fail(summary)` or `finish_clear`. The legacy `step(label)` constructor
+remains only for sites still on the feedback-spinner inventory.
 
 Labels are short, present tense and name their subject:
 
@@ -126,7 +129,8 @@ it acts on, with the count or mode in parentheses only when it adds something.
 | kernel and gateway | `waiting for the environment to settle`, `releasing the gateway route` | `✓ environment settled` |
 | bootstrap and setup | `pulling <url> into <path>`, `running setup <selector>`, `starting <selector>` | `✓ setup complete (<selector>)` |
 | bundle and catalog sources | `fetching bundle <name> <rev>`, `fetching catalog <name> <rev>` | `✓ fetched bundle <name>` / `✗ could not fetch bundle <name>: <why>` |
-| secrets | `unlocking vault`, `running the vault generate hook` | `✓ vault unlocked` |
+| doctor | `scanning for god files (1/2); last: shared scan inventory; 4s elapsed`, `running health task; waiting for health --json; 3s elapsed` | `✓ god files: no problems found` / `✗ health task: stopped at the time budget` |
+| secrets | `waiting for machine vault write gate; 12s elapsed`, `decrypting vault; waiting for vault decrypt; 2s elapsed`, `removing local unlock files (1/2); last: removed local-dev key; 1s elapsed`, `running generate hook; last: task \`secrets generate\`; 4s elapsed` | `✓ vault unlocked for commands and tasks` / `✓ vault locked; the next secret-backed task requires a passphrase` / `✓ generated the missing vault secrets` |
 | release | `running gate <name> (2/5)`, `reusing hosted evidence for gate <name> (1/1)` | `✓ gate <name> passed after 12s (2/5)` |
 | deploy | `resolving deploy provider <name> (offline)` | `✓ resolved deploy provider <name> from cached checkout at commit <sha>` |
 | task runs | ``waiting for heavy admission (task `dev`, 2 ahead)``, `running dev`, `running dev step 2/4: build` | ``✓ admitted heavy task `dev` after 12s`` |

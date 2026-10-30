@@ -13,6 +13,13 @@ status-level = "fail"
 final-status-level = "leak"
 
 [[profile.default.overrides]]
+# Match the focused gateway profile: these real listener fixtures must reach
+# listener startup before their enclosing activation budget expires, including
+# when selected alongside the milestone suite's other fixture processes.
+filter = 'test(container_up_exposure_tests::)'
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
 # These fixtures require a ready child inside a cold, subsecond deadline.
 # Reserve this runner's slots without changing the deadline or its assertions.
 # Other tests retain ordinary concurrency. The focused profile inherits this.

@@ -2790,8 +2790,13 @@ side effects; retries re-observe and may return newer facts. Neither retry
 rule grants authority after capability revocation or generation change.
 
 A `stream` frame names `id`, `stream_id`, monotonically increasing `seq`,
-`kind` and payload. Kinds are `event`, `stdout`, `stderr`, `terminal_output`,
-`terminal_input`, `resize`, `ack`, `end` and `gap`; events carry typed host
+`kind` and payload. `id` is the attach request that opened the connection's
+attachment, `stream_id` 0 is that attachment's terminal, and `seq` is one
+strictly increasing series per stream id shared by every kind on it — retained
+output's series is the absolute log position of each frame, and a source that
+keeps no position numbers frames instead. Kinds are `event`, `stdout`,
+`stderr`, `terminal_output`, `terminal_input`, `resize`, `ack`, `end` and
+`gap`; events carry typed host
 status or outcome, resize carries positive rows and columns, and `end`
 carries the final sequence and outcome where known. Per stream, the receiver
 acknowledges consumed sequence numbers; the sender permits at most 16
@@ -3004,14 +3009,78 @@ Revoking a generation ends the enrolment credential with the capabilities it
 issued, so re-enrolment cannot mint a live capability for a dead generation.
 A connection owns at most one attachment: attaching to another run refuses,
 replacing this connection's own secondary releases the replaced row, and only
-the connection that admitted a run holds its owner handle. Captured output is
+the connection that admitted a run holds its owner handle. A connection that
+ends on a refused or malformed frame releases its own secondary row with it, so
+a rejected frame can neither exhaust the run's secondary slots nor orphan one,
+while an owning client's lifetime is still released only by its own end of
+stream: malformed traffic records no owner stop. Captured output is
 published through a pump bounded by the acknowledgement window, so a control
 request is answered while data is backpressured; the connection's lifetime is
 its session's, and a closed connection whose frames were malformed releases no
 owner lifetime. Each connection starts and ends with no queued stream state, so
 a server that serves a reconnect publishes nothing from the previous connection
-and never carries an unpublished chunk or a full window into it. The transport, the guest client and the runner integration
-remain separate tasks. `test:kernel:workspace-channel` owns these proofs.
+and never carries an unpublished chunk or a full window into it.
+
+Stream sequences are numbered once per stream id and shared by every kind on
+it, so a stream's stdout and stderr form `0, 1` rather than restarting each
+other, and the acknowledgement window frees frames in that one series. A source
+that reads a retained log publishes each chunk with its absolute position, and
+the sequence is then that position: one frame's sequence is its first byte's
+offset, so a cursor, a frame sequence and the retained log are one coordinate
+system across reconnects and chunk boundaries with no replay store or second
+cursor. `RetainedStreams` is the kernel's own
+endpoint over `run::read_log`. Retained streams have independent logs and
+independent lengths, so an attach reports the position it consumed on each
+stream id it read (`cursors`), with `cursor` as the default for the primary
+stream; one position for the whole connection would skip the bytes a client
+never read on a shorter stream or replay the bytes it had consumed on a longer
+one. Negotiation is per stream and pure: `resume(run, cursors)` answers the
+start position of **every** stream the endpoint publishes, and refuses the
+attach — opening none — when a stream the client did not name individually
+would have to be guessed, when a cursor names a stream the endpoint does not
+carry, when a position is past that stream's retained end, or when a position
+cannot be established because no retained log exists (a nonzero cursor cannot be
+resumed after retention removed the bytes). A stream's position at or before its
+retained end continues from there; bytes the log rotated past become one `gap`
+frame naming the first missing offset, ahead of the data that resumes there — and
+that gap is published even when the surviving segment is empty and no data
+follows it, so a run that ends there does not leave the client believing it saw
+everything. Every emitted frame on a stream keeps a strictly increasing sequence
+and no gap is presented as complete output. Nothing moves until
+`start(attachment, positions)` runs for the attachment that actually opened, so a
+replacement the host then refuses leaves the connection's working attachment
+exactly where it was. The endpoint re-checks the connection's attachment with
+`Attachment::attached_observed` on every read, so a released or replaced row
+stops publication. `input` delivers one validated terminal input frame exactly
+once to the terminal owner — `Terminal::input` — and `resize` hands over the
+newest size with no queue behind it. Delivery is fenced on the attachment's own
+lifetime twice: the channel re-reads the row immediately before the call, and
+`Terminal` receives the live `Attachment` rather than its identifier, so the
+owner's final check before writing is `Attachment::attached_observed` and a row
+released, replaced or ended by its run's closure in between writes nothing. An
+inbound frame is accepted only for the connection's own attach request id, its
+own terminal stream and the stream's next sequence, and only as
+`terminal_input`, `resize` or `ack`; an acknowledgement must also be shape-only
+and name a data frame this connection published and has not freed. An unknown
+stream, a foreign request, a repeated, out-of-order, duplicate, stale or
+resumed-unsent sequence, a malformed payload or an outbound kind refuses and
+closes with no host effect — no input reaches a terminal, no size is recorded
+and no frame is freed. A replacement attachment is rebound in one step: the
+previous attachment's window, held chunk, numbering and inbound sequence are
+dropped before the requested cursor positions its own stream, so a replacement
+resumes at its own cursor and its acknowledgements cannot free the previous
+attachment's frames. The acknowledgement window is shared by every stream on a
+connection while each frame stays its own stream's: an acknowledgement releases
+that stream's frames that sit between other streams' frames, so an interleaved
+stream's consumption is never blocked by another stream's order. A host with no
+terminal owner refuses input and resize (`NoTerminal`) instead of reporting a
+delivery it did not make. The kernel has no per-run terminal input/resize
+writer, and no host front end owns a session terminal yet (the transport, the
+guest client and the runner integration are separate tasks), so channel-owned
+delivery stops at the `Terminal` contract: the production runner terminal writer
+and the serving-loop binding are a separately owned follow-up, and nothing here
+claims production terminal delivery.
+`test:kernel:workspace-channel` owns these proofs.
 
 ## 9. Authority map
 

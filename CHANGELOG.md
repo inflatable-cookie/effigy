@@ -190,6 +190,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Add a live-state progress source and a feedback lint ratchet for migrating legacy spinner construction.
 
+- **Environment and Colima profile progress shows live state.** A container
+  environment transition is one step whose label moves with the work: while it
+  waits it names `Gate(Env)` and the holder the gate's own body records (run,
+  pid, task and process state), then each reconcile phase and what it observed
+  (the published render, the record it wrote, the live runs attached, the
+  backend effect). A refused transition shows the live holder that refused it,
+  and every frame carries the elapsed wait. `effigy container profile
+  repair|reset-runtime|resize|recreate|purge|prune-health-pid-files` run under
+  the same live step: the profile operation now running, how many Colima calls
+  it has left, and the state `colima list --json` last reported for the profile.
+  Timeouts, gate authority and repair behavior are unchanged; the lint
+  baseline for these sites is reduced to zero.
+
 - **Linux runs the operator gateway from a launch-only systemd user unit.**
   `effigy gateway setup` installs and enables
   `~/.config/systemd/user/effigy-gateway.service`, whose only actions are
@@ -275,6 +288,47 @@ During v0.x, MINOR bumps may include breaking changes.
   it, so a retry returns the recorded admission, its recorded outcome, or
   `unknown` — never a second run — across a reconnect or supervisor restart.
   No transport, guest client or command surface is wired to it yet.
+- The workspace channel binds one attachment's streams to its terminal
+  (contract 052 §8.11). Output sequence numbers are one series per stream id
+  shared by every kind on it, so a stream's stdout and stderr no longer restart
+  each other, and a retained chunk is published with its absolute log position
+  so a client's resume cursor, the frame sequence and the retained log are one
+  coordinate system across reconnects and chunk boundaries. `RetainedStreams`
+  is the kernel's own endpoint over `run::read_log`: retained streams have
+  independent logs and lengths, so an attach reports the position it consumed on
+  each stream id (`cursors`), with `cursor` as the primary default, and one
+  position for the whole connection is refused rather than skipping bytes on a
+  shorter stream or replaying them on a longer one. Negotiation covers every
+  stream and is pure, so a reconnect resumes each retained stream at its own
+  position and a replacement the host refuses leaves the working attachment's
+  reader where it was; a future cursor, a cursor for a stream the endpoint does
+  not carry, a position on a stream with no retained log, or an unreadable log
+  refuses the attach, and a position the log rotated past becomes one `gap`
+  frame naming the first missing offset, ahead of the data that resumes there —
+  even when the surviving segment is empty — so every frame on a stream keeps a
+  strictly increasing sequence. A connection that ends on a refused or malformed
+  frame releases its own secondary row, so a rejected frame cannot exhaust the
+  run's secondary slots or orphan one; an owning client is released only by its
+  own end of stream. The endpoint
+  re-checks the connection's attachment on every read. `Terminal::input`
+  receives one validated terminal input frame exactly once and
+  `Terminal::resize` the newest size with no queue behind it, fenced on the
+  attachment's own lifetime twice: the channel re-reads the row before the call
+  and the owner receives the live attachment so its last check can be
+  `Attachment::attached_observed`; a host with no terminal owner refuses both
+  instead of reporting a delivery it did not make. An inbound frame is accepted
+  only for the connection's own attach request, its own terminal stream and the
+  stream's next sequence, and an acknowledgement must be shape-only and name a
+  data frame this connection published and has not freed, so an unknown stream,
+  a foreign request, a repeated or out-of-order frame, a duplicate or stale
+  acknowledgement or a malformed payload refuses and closes with no host
+  effect. A replacement attachment drops the previous window, held chunk,
+  numbering and inbound sequence before its own cursor positions the stream,
+  so it resumes at its own cursor and cannot free the previous attachment's
+  frames; an acknowledgement releases its own stream's frames between other
+  streams' frames. The retained reader, the terminal owner and its host front
+  end, and the transport remain separate tasks.
+
 - The workspace session layer (contract 052 §8.7): one environment-owned
   `Detached` session run, resolved through its own validated
   environment→session record so a borrowing child or host hold is never mistaken
@@ -349,6 +403,15 @@ During v0.x, MINOR bumps may include breaking changes.
   unchanged.
 
 ### Changed
+
+- Doctor scan checks and vault lock, unlock and generate-hook waits now draw
+  through the live progress source: the current sub-step, known count, elapsed
+  wait and last event or exact probe, instead of a label fixed for the whole
+  operation. Unlock and lock name the machine vault write gate until that
+  acquire returns (up to 60s), then the decrypt or lock sub-step. Secret
+  values and credential paths stay out of those labels. JSON, piped and quiet
+  output stay silent. The feedback-spinner inventory dropped the four owned
+  call sites.
 
 - Workspace guest publication now completes as a journalled obligation under
   the environment activation gate before publishing active or attaching task
@@ -483,6 +546,47 @@ During v0.x, MINOR bumps may include breaking changes.
   the child is alive the wait has no deadline and reports progress; once the
   port accepts a connection, `readiness.timeout_secs` bounds reaching the
   declared status. A restart binds the address its declaration names.
+- **A host run in a linked worktree reaches that worktree's database.** A
+  scoped checkout answers its backing services on its own apex, and everything
+  Effigy delivers to a host run receives the scoped alias where the
+  declaration carries the canonical one - `[tasks.<name>].env`, an env-schema
+  or `.env` value, a declared secret, a sequence step's environment, a managed
+  session's (`mode = "tui"`) process plan and setup steps, and a configured
+  test suite's own environment, command and `setup`/`teardown` steps - so
+  application configuration keeps `postgres.<apex>` and the run still reaches
+  this checkout's own database. Value precedence is unchanged, a primary
+  checkout keeps its declared name, and a `--plan` render refuses nothing (a
+  task plan shows the aliases it would deliver). Only an endpoint is rewritten
+  - the whole value, a URL authority host, or `host:port` - so text that merely
+  names the alias keeps its bytes, and Effigy never rewrites a command body. URL
+  credentials are never the host: a name that appears in `user:password@`, or a
+  URL naming another server, keeps its bytes and proves nothing.
+  Before the run starts - including every alias a selected test suite would
+  use, before any suite runs - Effigy proves the scope's route belongs to this
+  checkout and publishes an upstream port; otherwise it refuses with the
+  alias, the service and `effigy container up <NAME>`, and the command never
+  runs. The proof reads the endpoints Effigy delivered, so text that merely
+  mentions the alias proves nothing, and a suite this run does not select is
+  never proved. It also asks the recorded upstream to accept a connection, so a
+  route a stopped stack left behind refuses instead of authorizing a run that
+  cannot connect, and a managed session proves only the processes it places on
+  the host. A value the child would otherwise inherit unchanged - an exported
+  `DATABASE_URL`, say - is resolved and proved the same way for a host task, a
+  sequence step, a managed host workload and a selected host suite with its
+  lifecycle, so the caller's own environment cannot reach another checkout's
+  service; each child boundary decides its own precedence, so a `setup` step's
+  assignment — and a key that only appears in a command's text — hides nothing
+  from the workload or suite command that inherits the value, and a managed
+  session decides inherited values per host workload. A worktree's first host run records the
+  checkout's scope token before resolving, so a fresh worktree is scoped rather
+  than canonical; a container registry this scoped checkout declares but Effigy
+  cannot read is refused instead of falling back to the canonical names; and a
+  sensitive value the task's or a sequence step's own environment overrides is
+  dropped rather than delivered, so it is neither resolved nor proved. A
+  container-bound run is untouched: its target's own network already answers
+  both names. A checkout that names no default container environment still
+  resolves. See
+  [contract 005](docs/knowledge/contracts/005-container-runtime-contract.md).
 - **Host processes get resolved facts instead of a wrapper script:**
   `${service.<name>.host}`, `${route.<domain>.public_url}`,
   `${host_process.<name>.internal_url}`, `${apex}`, `${domains}` and
@@ -608,6 +712,36 @@ During v0.x, MINOR bumps may include breaking changes.
 - Show Colima workspace sizing recommendations only for a selected workspace
   service, avoiding misleading advice for hybrid and database-only environments.
 
+- A failing managed host listener withholds only its own route. `container up`
+  now decides exposure per declared route target: a listener that answers its
+  readiness request with the wrong status, or never opens its port, keeps its
+  own route absent while the container's verified routes and every other
+  ready listener stay published. `container up --detach` reports the partial
+  exposure in text and JSON, naming the published routes and the withheld
+  listener with its observed status and a bounded, redacted child-output tail,
+  instead of the whole activation's readiness and exposure as unverified. A
+  definite status mismatch is refused as soon as it is observed rather than
+  spending `readiness.timeout_secs`, and a still-closed port's progress line
+  carries the child's own bounded output tail. Progress and activation-budget
+  refusals name the supervisor's actual probe phase: an open port with no HTTP
+  status keeps its running readiness clock and is never described as closed.
+  A port that never opens is
+  bounded by the bring-up's observation budget instead of holding `up` open,
+  and its progress carries that same bounded, redacted tail. The timed-out
+  generation is settled before the command returns, so it cannot publish a
+  route after the report. A listener the activation did not start is reconciled
+  against its own published generation and the current declaration (domain,
+  TLS, bind, live readiness), so only a generation that still serves the
+  declared target keeps its route; a generation that fails that check is
+  settled and its route withdrawn, and a withheld listener's `depends_on`
+  chain withholds every dependent route, settling previously running dependents
+  under the current declaration even after the activation budget expires.
+  Retrying listener failures are settled too, including failures before the
+  first child, so detach cannot hang waiting for them to become active or let
+  them publish a late route. An incomplete settlement remains a refusal.
+  A log line whose `key=` marker falls
+  outside the bounded read window is dropped rather than printed unredacted
+  (effigy#455).
 - An environment transition settles on a budget that starts when settlement
   does. The cleanup context used to be made when the transition opened, so a
   cold stack whose activation ran past 60 seconds left its settlement already

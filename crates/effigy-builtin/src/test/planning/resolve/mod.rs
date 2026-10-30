@@ -16,8 +16,9 @@ pub(super) fn resolve_builtin_test_targets(
     prefix: Option<&str>,
     resolved_root: &Path,
     catalogs: &[LoadedCatalog],
+    ports: Option<&dyn crate::BuiltinRuntimePorts>,
 ) -> Result<BuiltinTestTargetSet, BuiltinError> {
-    targets::resolve_builtin_test_targets(prefix, resolved_root, catalogs)
+    targets::resolve_builtin_test_targets(prefix, resolved_root, catalogs, ports)
 }
 
 pub(super) fn apply_builtin_test_runner_config(

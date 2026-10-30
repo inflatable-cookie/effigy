@@ -33,7 +33,44 @@ pub(super) fn fmt_runner_error(
         RunnerError::Task(err) => write!(f, "{err}"),
         RunnerError::Ui(msg) => write!(f, "ui render failed: {msg}"),
         RunnerError::TaskInvocation(msg) => write!(f, "{msg}"),
-        RunnerError::ManagedHostReadiness { process, diagnostic } => write!(f, "managed host listener `{process}` failed before readiness ({diagnostic})"),
+        RunnerError::ManagedHostReadiness {
+            process,
+            diagnostic,
+            observed_status,
+        } => match observed_status {
+            Some(status) => write!(
+                f,
+                "managed host listener `{process}` failed before readiness after answering HTTP {status} ({diagnostic})"
+            ),
+            None => write!(
+                f,
+                "managed host listener `{process}` failed before readiness ({diagnostic})"
+            ),
+        },
+        RunnerError::ManagedListenerExposure {
+            environment,
+            exposed,
+            failures,
+        } => {
+            write!(
+                f,
+                "environment `{environment}` settled with {} route(s) withheld and {} verified and published{}",
+                failures.len(),
+                exposed.len(),
+                if exposed.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", exposed.join(", "))
+                }
+            )?;
+            for failure in failures {
+                write!(f, "\n[withheld] {}", failure.summary())?;
+                if let Some(tail) = &failure.output_tail {
+                    write!(f, "\n  last child output: {tail}")?;
+                }
+            }
+            Ok(())
+        }
         RunnerError::ContainerSurfaceRegistryMissing => {
             write!(f, "manifest does not define a `[containers]` registry")
         }

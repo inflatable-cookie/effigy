@@ -140,6 +140,34 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
         self.suite_parent.is_some()
     }
 
+    fn host_suite_env_aliases(
+        &self,
+        root: &Path,
+    ) -> Result<Vec<effigy_builtin::BuiltinHostAlias>, BuiltinError> {
+        crate::runner::execute::host_alias::host_env_aliases(root)
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))
+    }
+
+    fn resolve_host_suite_inherited_env(
+        &self,
+        root: &Path,
+        label: &str,
+        delivered: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<(String, String)>, BuiltinError> {
+        crate::runner::execute::host_alias::resolve_host_env_inherited(root, label, delivered)
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))
+    }
+
+    fn prove_host_suite_aliases(
+        &self,
+        root: &Path,
+        label: &str,
+        texts: &[&str],
+    ) -> Result<(), BuiltinError> {
+        crate::runner::execute::host_alias::prove_host_env_aliases(root, label, texts)
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))
+    }
+
     fn has_test_tui_source(&self) -> bool {
         self.suite_parent.is_some()
     }
