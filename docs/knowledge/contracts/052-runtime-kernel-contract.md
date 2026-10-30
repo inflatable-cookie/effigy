@@ -2647,6 +2647,10 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   activation leaves the predecessor authoritative: new Borrow attachments and
   their remote intents may still use its exact mapped environment generation
   while that generation remains `last_applied` and the state is active or pending.
+  Ordinary held/no-op reconciliation and activation preserve that applied fence,
+  even after reservation cancellation; newly attached holders may only Borrow it.
+  The current Env transition counter may advance without changing the published
+  workspace's applied generation. Only the atomic successor commit replaces it.
   Exclusive attachment and transition authority retain the current generation
   check. The predecessor exception ends when the atomic mapping changes or the
   applied environment stops; it never authorizes the unpublished successor.

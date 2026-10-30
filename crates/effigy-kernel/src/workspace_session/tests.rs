@@ -2504,7 +2504,7 @@ fn a_failed_successor_keeps_the_predecessor_fence_usable_for_new_borrowed_work()
         .expect("remote callback");
     assert_eq!(
         resolved(&read_journal(&cx, &root), &environment),
-        Some(first)
+        Some(first.clone())
     );
     // Borrowing authority never authorizes an environment transition, nor
     // the unpublished E. A distinct holder tests each refusal without poison reuse.
@@ -2558,6 +2558,80 @@ fn a_failed_successor_keeps_the_predecessor_fence_usable_for_new_borrowed_work()
     reservation
         .cancel(&cx, &root, Wait::FailFast)
         .expect("cancel failed activation");
+    // EnvRun::finish uses publish_active after HeldByRuns without applying.
+    // A later ordinary activate uses publish_active_for. Neither owns a new
+    // workspace session or may retarget the still-published predecessor.
+    for id in [160, 162] {
+        let mut borrower = Run::begin(
+            &cx,
+            &root,
+            &inv(task(&format!("held-operation-{id}")), "held-operation"),
+            opts(run_id(id)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect("fresh borrower");
+        let mut ordinary = Run::begin(
+            &cx,
+            &root,
+            &inv(environment.clone(), "environment:up"),
+            opts(run_id(id + 1)),
+            &cleanup(&cx),
+            &mut adapter(),
+        )
+        .expect("ordinary held reconcile after cancellation");
+        assert!(ordinary.fence().generation > reservation.generation());
+        if id == 160 {
+            Attachments::publish_active(&mut ordinary).expect("no-op held publication");
+        } else {
+            Attachments::publish_active_for(&mut ordinary, &[(borrower.id(), AttachMode::Borrow)])
+                .expect("activate borrows the preserved fence");
+        }
+        ordinary
+            .finish(WorkloadOutcome::Succeeded)
+            .expect("finish no-op");
+        ordinary
+            .settle(&cleanup(&cx), &mut adapter())
+            .expect("settle no-op");
+        let reader = read_journal(&cx, &root);
+        let applied: String = reader
+            .conn()
+            .query_row(
+                "SELECT last_applied FROM resources WHERE name=?1 AND state='active'",
+                [environment.name().to_string()],
+                |row| row.get(0),
+            )
+            .expect("applied predecessor generation");
+        assert_eq!(applied, fence.generation.get().to_string());
+        assert_eq!(
+            SessionRef::resolve(&reader, &environment).verified(),
+            Some(&Some(first.clone()))
+        );
+        if id == 160 {
+            Attachments::attach(&mut borrower, &fence, AttachMode::Borrow, Wait::FailFast)
+                .expect("new Borrow remains usable after ordinary held reconciliation");
+        }
+        borrower
+            .intend_remote(EffectSpec {
+                target: fence.clone(),
+                kind: crate::remote::KIND.into(),
+                payload: serde_json::Value::Null,
+                settlement: Settlement::Retain,
+                required: false,
+            })
+            .expect("remote intent uses the unchanged predecessor fence");
+        assert!(borrower
+            .effects()
+            .expect("effects")
+            .iter()
+            .all(|effect| effect.spec.target == fence));
+        borrower
+            .finish(WorkloadOutcome::Succeeded)
+            .expect("finish borrower");
+        borrower
+            .settle(&cleanup(&cx), &mut adapter())
+            .expect("settle borrower");
+    }
     holder
         .intend_remote(EffectSpec {
             target: fence.clone(),

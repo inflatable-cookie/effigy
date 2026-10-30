@@ -1030,9 +1030,9 @@ fn run_needs_settlement(
     }
 }
 
-/// The published predecessor's applied fence remains usable while an additive
-/// successor activation is pending or has failed. This grants only borrowing,
-/// never transition authority, and stops matching at the atomic mapping commit.
+/// The published session's applied fence remains usable across successor and
+/// ordinary no-op transitions. This grants only borrowing, never transition
+/// authority, and stops matching at the atomic mapping commit.
 pub(crate) fn preserved_environment(
     conn: &rusqlite::Connection,
     fence: &Fence,
@@ -1046,10 +1046,6 @@ pub(crate) fn preserved_environment(
     Ok(conn
         .query_row(
             "SELECT r.state IN ('active','pending') AND r.last_applied=?2 \
-             AND EXISTS(SELECT 1 FROM workspace_activation_reservations a \
-                 JOIN runs ar ON ar.run_id=a.environment_run \
-                 WHERE a.environment=r.name AND a.environment_generation=r.generation \
-                 AND ar.owner=r.name AND ar.generation=r.generation AND a.state IN ('reserved','cancelled')) \
              AND EXISTS(SELECT 1 FROM runs WHERE run_id=?3 AND phase IN ('admitted','starting','active')) \
              FROM resources r WHERE r.name=?1",
             params![
@@ -1060,6 +1056,30 @@ pub(crate) fn preserved_environment(
             |row| row.get::<_, Option<bool>>(0),
         )?
         .unwrap_or(false))
+}
+
+/// A no-op publication must not advance the applied fence away from the live
+/// mapped session. The caller holds Gate(Env) and checked its transition fence;
+/// only the atomic successor commit may publish a different workspace fence.
+pub(crate) fn preserve_active_predecessor(
+    txn: &mut Txn<'_>,
+    owner: &Fence,
+) -> Result<Option<Fence>, RunError> {
+    let Some(session) = live_session_row(txn.conn(), &owner.resource)? else {
+        return Ok(None);
+    };
+    let applied = Fence {
+        resource: owner.resource.clone(),
+        generation: session.environment_generation,
+    };
+    if !preserved_environment(txn.conn(), &applied)? {
+        return Ok(None);
+    }
+    txn.conn().execute(
+        "UPDATE resources SET state='active',updated_at=?2 WHERE name=?1",
+        params![owner.resource.name().to_string(), txn.now()],
+    )?;
+    Ok(Some(applied))
 }
 
 /// A reserved session uses a private liveness slot, not another Task owner.

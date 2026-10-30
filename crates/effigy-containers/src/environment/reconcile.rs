@@ -911,6 +911,8 @@ impl<'r> EnvRun<'r> {
 
     /// Ends the run. A run that changed nothing republishes the state it
     /// found, so an inspection never makes an active environment inactive.
+    /// For a live mapped workspace this retains the predecessor's applied
+    /// generation, including after HeldByRuns; only its successor commit replaces it.
     pub fn finish(mut self, ok: bool) -> Result<CleanupOutcome, EnvError> {
         if ok
             && !self.published

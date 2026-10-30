@@ -625,6 +625,8 @@ During v0.x, MINOR bumps may include breaking changes.
   atomically. Register detached successors under their private liveness slot and
   retain the owning successor handle throughout publication. Read-only workspace
   replay also works on older schema-1 journals without triggering migration.
+  Ordinary held reconciliation keeps the published session's Borrow fence usable
+  after a failed successor is cancelled.
 
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target

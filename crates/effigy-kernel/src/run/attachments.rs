@@ -329,6 +329,8 @@ impl Attachments {
     }
 
     /// Publishes an environment's applied generation under its owner gate.
+    /// A still-mapped workspace session retains its applied fence through a
+    /// no-op publication; changing that fence requires its atomic successor commit.
     /// Engines call this only after their required startup effects completed.
     pub fn publish_active(run: &mut Run<'_>) -> Result<(), RunError> {
         run.can_effect()?;
@@ -348,6 +350,10 @@ impl Attachments {
                     &run.owner.resource,
                     run.owner.generation,
                 )?;
+                if crate::workspace_session::preserve_active_predecessor(txn, &run.owner)?.is_some()
+                {
+                    return Ok(());
+                }
                 publish_active_state(txn, &run.owner)
             })
     }
@@ -457,6 +463,8 @@ impl Attachments {
     /// and inserts each requesting run's attachment in the same transaction,
     /// as an `Applied` effect of that holder's own journal. The holder's
     /// settle releases it exactly as if it had attached itself.
+    /// A live mapped workspace retains its applied fence; new holders can only
+    /// Borrow that fence until an atomic workspace activation replaces it.
     pub fn publish_active_for(
         run: &mut Run<'_>,
         holders: &[(RunId, AttachMode)],
@@ -478,7 +486,13 @@ impl Attachments {
                     crate::workspace_session::refuse_reserved_generation(
                         txn.conn(), &run.owner.resource, run.owner.generation,
                     )?;
-                    publish_active_state(txn, &run.owner)?;
+                    let applied = match crate::workspace_session::preserve_active_predecessor(txn, &run.owner)? {
+                        Some(applied) => applied,
+                        None => {
+                            publish_active_state(txn, &run.owner)?;
+                            run.owner.clone()
+                        }
+                    };
                     for (holder, mode) in holders {
                         let exists: bool = txn.conn().query_row(
                             "SELECT EXISTS(SELECT 1 FROM attachments WHERE environment=?1 AND run_id=?2 AND state<>'released')",
@@ -488,7 +502,10 @@ impl Attachments {
                         if exists {
                             continue;
                         }
-                        holder_attachment(txn, &run.owner, *holder, *mode)?;
+                        if applied != run.owner && !matches!(mode, AttachMode::Borrow) {
+                            return Err(RunError::refused("a preserved workspace fence permits only Borrow holders"));
+                        }
+                        holder_attachment(txn, &applied, *holder, *mode)?;
                     }
                     Ok::<_, RunError>(())
                 })?;
