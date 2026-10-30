@@ -3421,9 +3421,9 @@ ServingOwner::adopt_owned(
         channel: PreparedHostChannel,
         effect: Arc<EffectContext>,     // the activation's own retained operation
         observe: Arc<ObserveContext>,   // derived from that same operation
+        root: &'a StateRoot,            // the environment's cached state root
     },
     dispatcher,
-    root: &'a StateRoot,
 ) -> Result<ServingOwner, AdoptError>
 ```
 

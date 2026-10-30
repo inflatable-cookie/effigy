@@ -139,6 +139,9 @@ pub(crate) struct OwnedWorkspaceChannel<'a> {
     pub(crate) effect: Arc<EffectContext>,
     /// The observation context derived from that same operation.
     pub(crate) observe: Arc<ObserveContext>,
+    /// `environment::workspace::WorkspaceOwner::root`: the environment's cached
+    /// state root, which the dispatcher fences every request against.
+    pub(crate) root: &'a StateRoot,
 }
 
 /// Why the frozen channel was not adopted for serving.
@@ -217,7 +220,6 @@ where
     pub(crate) fn adopt_owned(
         owned: OwnedWorkspaceChannel<'a>,
         server: channel::Server<Ad, Rs, Ob, Id>,
-        root: &'a StateRoot,
     ) -> Result<Self, AdoptError> {
         let OwnedWorkspaceChannel {
             supervisor,
@@ -225,6 +227,7 @@ where
             channel: prepared,
             effect,
             observe,
+            root,
         } = owned;
         let PreparedHostChannel {
             launch,

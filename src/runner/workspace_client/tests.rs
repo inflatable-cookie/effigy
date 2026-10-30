@@ -1581,9 +1581,9 @@ fn the_owned_channel_is_adopted_retained_and_settled() {
                 channel: prepared,
                 effect: Arc::new(cx.clone()),
                 observe: Arc::new(observe.clone()),
+                root,
             },
             serving_server_for(calls.clone(), root),
-            root,
         )
         .expect("the frozen channel is adopted");
 
@@ -1646,9 +1646,9 @@ fn a_channel_published_for_another_session_is_never_adopted() {
                 channel: prepared,
                 effect: Arc::new(cx.clone()),
                 observe: Arc::new(observe.clone()),
+                root,
             },
             serving_server_for(Arc::new(Mutex::new(Calls::default())), root),
-            root,
         )
         .expect_err("a channel published for another session is refused");
 
@@ -2114,9 +2114,9 @@ fn a_session_keeps_its_custody_until_the_close_and_loses_it_there() {
                 channel: prepared,
                 effect: Arc::new(cx.clone()),
                 observe: Arc::new(observe.clone()),
+                root,
             },
             serving_server_for(Arc::new(Mutex::new(Calls::default())), root),
-            root,
         )
         .expect("adopted");
         let mut owner = owner;
