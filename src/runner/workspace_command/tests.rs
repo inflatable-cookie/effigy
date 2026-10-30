@@ -1973,6 +1973,27 @@ mod live_progress_tests {
     use std::time::Duration;
 
     #[test]
+    fn download_frames_name_artifact_checksum_and_cache_waits() {
+        let ((), lines) = steps::capture_lines(|| {
+            let url = "https://example.test/effigy-x86_64";
+            let progress = WorkspaceOpProgress::start(false, format!("GET `{url}`"), false);
+            progress.update("downloading linux effigy `x86_64`", None, None);
+            assert_eq!(progress.frame_at(Duration::from_secs(3)),
+                "downloading linux effigy `x86_64`; waiting for GET `https://example.test/effigy-x86_64`; 3s elapsed");
+            progress.now_waiting_for(format!("GET `{url}.sha256`"));
+            progress.update("fetching linux effigy release checksum", None, None);
+            assert_eq!(progress.frame_at(Duration::from_secs(7)),
+                "fetching linux effigy release checksum; waiting for GET `https://example.test/effigy-x86_64.sha256`; 7s elapsed");
+            progress.now_waiting_for("write and rename `/cache/effigy.tmp`");
+            progress.update("caching verified linux effigy artifact", None, None);
+            assert_eq!(progress.frame_at(Duration::from_secs(9)),
+                "caching verified linux effigy artifact; waiting for write and rename `/cache/effigy.tmp`; 9s elapsed");
+            progress.finish_clear();
+        });
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
+    #[test]
     fn context_and_provisioning_frames_name_sub_steps_count_and_elapsed() {
         let ((), lines) = steps::capture_lines(|| {
             let progress = WorkspaceOpProgress::start(false, PROBE_GUEST_PUBLICATION, false);

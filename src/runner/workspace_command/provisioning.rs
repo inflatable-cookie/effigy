@@ -2730,16 +2730,34 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
         &format!("downloading linux effigy release artifact from `{url}`"),
         false,
     );
-    let digest = download_linux_workspace_effigy_release(&url, &cache_path)?;
-    // The download records the receipt its consumer authenticates against, so
-    // a cached artifact is never trusted on a version sidecar alone.
-    write_workspace_artifact_receipt(&cache_path, target, &digest, "release-download")?;
-    ensure_workspace_effigy_active_version_file(
-        &cache_path,
-        &effigy_core::build_info::active_version(),
-    )?;
-    ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
-    Ok(cache_path)
+    let progress = super::WorkspaceOpProgress::start(false, format!("GET `{url}`"), false);
+    progress.update(
+        format!("downloading linux effigy `{}`", target.release_triple()),
+        None,
+        None,
+    );
+    let result = (|| {
+        let digest = download_linux_workspace_effigy_release(&url, &cache_path, &progress)?;
+        // The download records the receipt its consumer authenticates against, so
+        // a cached artifact is never trusted on a version sidecar alone.
+        progress.now_waiting_for(format!(
+            "write artifact receipt and identity in `{}`",
+            parent.display()
+        ));
+        progress.update("recording linux effigy artifact identity", None, None);
+        write_workspace_artifact_receipt(&cache_path, target, &digest, "release-download")?;
+        ensure_workspace_effigy_active_version_file(
+            &cache_path,
+            &effigy_core::build_info::active_version(),
+        )?;
+        ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
+        Ok(())
+    })();
+    match &result {
+        Ok(_) => progress.finish_clear(),
+        Err(error) => progress.fail_error(error),
+    }
+    result.map(|()| cache_path)
 }
 
 /// Write the producer receipt an artifact is authenticated against.
@@ -2875,6 +2893,7 @@ pub(super) fn linux_workspace_effigy_release_url(target: LinuxWorkspaceTarget) -
 pub(super) fn download_linux_workspace_effigy_release(
     url: &str,
     dest: &Path,
+    progress: &super::WorkspaceOpProgress,
 ) -> Result<String, RunnerError> {
     let client = reqwest::blocking::Client::builder()
         .build()
@@ -2893,7 +2912,11 @@ pub(super) fn download_linux_workspace_effigy_release(
                 "failed to download linux effigy release artifact from `{url}`: {error}"
             ))
         })?;
+    progress.now_waiting_for(format!("GET `{url}{RELEASE_CHECKSUM_SUFFIX}`"));
+    progress.update("fetching linux effigy release checksum", None, None);
     let expected = published_release_checksum(&client, url)?;
+    progress.now_waiting_for("SHA-256 artifact digest comparison");
+    progress.update("verifying linux effigy release checksum", None, None);
     let digest = render_digest(sha256(&bytes));
     if !digest_matches(&digest, &expected) {
         return Err(RunnerError::task_invocation(format!(
@@ -2903,6 +2926,8 @@ pub(super) fn download_linux_workspace_effigy_release(
     }
 
     let tmp_path = dest.with_extension("tmp");
+    progress.now_waiting_for(format!("write and rename `{}`", tmp_path.display()));
+    progress.update("caching verified linux effigy artifact", None, None);
     std::fs::write(&tmp_path, &bytes).map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to write linux effigy release artifact to `{}`: {error}",
