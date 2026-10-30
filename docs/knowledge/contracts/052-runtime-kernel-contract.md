@@ -1326,7 +1326,16 @@ existing follower path. Each successful append syncs its bytes before any
 queue or diagnostic-tail fanout. A failed append poisons the destination and
 reports truncated capture; unwritten bytes are never acknowledged to those
 consumers. A partial failed append may leave an unacknowledged plain suffix on
-disk. Style primitives and the existing ANSI line/parser/SGR implementation live
+disk.
+
+An existing prefix is unchanged, including any controls or unredacted data
+from the earlier inherited-descriptor writer. `MergedLog` establishes no
+provenance for that prefix: successful durable appends qualify the new bytes,
+not historical contents. A fully canonical plain file at a reused path needs
+an explicit legacy-log migration contract with direct path/offset followers;
+writer-side capture cannot remove previously persisted bytes by appending.
+
+Style primitives and the existing ANSI line/parser/SGR implementation live
 in `effigy-core::terminal_text`; TUI's ANSI facade reuses them. Custody's
 writer sanitizer records SGR as style data with a bounded parameter buffer.
 The same two-pass redactor carries those tags and clears style on replacement
