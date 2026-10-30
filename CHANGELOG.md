@@ -6,11 +6,6 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Fixed
-
-- Keep the existing workspace session and its holders authoritative until a
-  reserved successor activation commits its session mapping atomically.
-
 ### Security
 
 - Require the release secret audit to scan the committed candidate tree and
@@ -624,6 +619,9 @@ During v0.x, MINOR bumps may include breaking changes.
   it and a manifest that names it is refused; use `silo`.
 
 ### Fixed
+
+- Keep the existing workspace session and its holders authoritative until a
+  reserved successor activation commits its session mapping atomically.
 
 - Linux workspace artifact builds select the requested Rust architecture/libc
   target and retain a separate receipt beside each target binary. Missing target
