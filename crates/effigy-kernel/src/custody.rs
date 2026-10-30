@@ -239,8 +239,10 @@ pub(crate) struct ProcessCore {
     logs: [Option<capture::Log>; 2],
     output: VecDeque<u8>,
     /// stdout and stderr kept apart for engines that report them separately.
-    /// Each byte comes from the merged, sanitized redaction, attributed to the
-    /// stream that produced it, so joining the two never reconstructs a secret.
+    /// Each is the redacted projection of its own stream over the merged,
+    /// sanitized result: a projection can join halves that arrival order kept
+    /// apart, so it is redacted again. The merged output and tail are the
+    /// canonical capture; two projections are never concatenated into one.
     streams: [VecDeque<u8>; 2],
     queue_max: usize,
     stdout: Option<OwnedFd>,
@@ -275,17 +277,35 @@ struct OutputPipeline {
     /// terminal colour, exactly as before this seam existed.
     sanitizer: Option<terminal::TerminalSanitizer>,
     redactor: Redactor,
+    /// One redactor per stream, present only for a secret-bearing process.
+    ///
+    /// Splitting the merged result by origin stream is a byte removal, and a
+    /// removal can join two halves of a secret that the merged redaction
+    /// correctly left alone, because the other stream's *visible* bytes sat
+    /// between them (`super` on stdout, `noise` on stderr, `secret` on
+    /// stdout). Each projection is therefore redacted again over its own byte
+    /// stream before it reaches a stored log or a queue. Keeping both streams
+    /// in arrival order is the only capture that cannot be reordered, so the
+    /// merged output and the merged tail stay canonical, and a consumer that
+    /// wants both streams reads them, never a concatenation of projections.
+    projections: Option<[Redactor; 2]>,
 }
 impl OutputPipeline {
     fn new(secrets: Vec<Vec<u8>>) -> Self {
+        let secret_bearing = !secrets.is_empty();
         Self {
-            sanitizer: (!secrets.is_empty()).then(terminal::TerminalSanitizer::new),
+            sanitizer: secret_bearing.then(terminal::TerminalSanitizer::new),
+            projections: secret_bearing.then(|| {
+                [
+                    Redactor::new(secrets.clone()),
+                    Redactor::new(secrets.clone()),
+                ]
+            }),
             redactor: Redactor::new(secrets),
         }
     }
     /// Sanitize, then redact, one merged arrival-order slice. Both steps keep
-    /// each byte's origin tag, so a per-stream sink stays a projection of this
-    /// one merged result.
+    /// each byte's origin tag.
     fn push_tagged(&mut self, bytes: &[(u8, u8)], eof: bool) -> Vec<(u8, u8)> {
         match self.sanitizer.as_mut() {
             Some(sanitizer) => {
@@ -295,6 +315,26 @@ impl OutputPipeline {
             }
             None => self.redactor.push_tagged(bytes, eof),
         }
+    }
+    /// Each stream's own safe projection of one merged result. A stream sink
+    /// is only ever written from this, never from a filtered merged slice.
+    fn project(&mut self, merged: &[(u8, u8)], eof: bool) -> [Vec<u8>; 2] {
+        let mut raw: [Vec<u8>; 2] = Default::default();
+        for &(tag, byte) in merged {
+            if let Some(part) = raw.get_mut(usize::from(tag)) {
+                part.push(byte);
+            }
+        }
+        let Some(projections) = self.projections.as_mut() else {
+            return raw;
+        };
+        for (stream, redactor) in projections.iter_mut().enumerate() {
+            // The projection is its own stream of bytes, so it is redacted as
+            // one: a secret its own bytes form is caught even when arrival
+            // order interleaved them with the other stream's.
+            raw[stream] = redactor.push(&raw[stream], eof);
+        }
+        raw
     }
 }
 pub(crate) struct Redactor {
@@ -967,30 +1007,30 @@ impl ProcessCore {
     fn sink(&mut self, index: usize, bytes: &[u8], eof: bool) {
         let tagged: Vec<(u8, u8)> = bytes.iter().map(|byte| (index as u8, *byte)).collect();
         let clean = self.pipeline.push_tagged(&tagged, eof);
-        if clean.is_empty() {
-            return;
-        }
-        for stream in 0..2 {
-            let part: Vec<u8> = clean
-                .iter()
-                .filter(|(tag, _)| usize::from(*tag) == stream)
-                .map(|(_, byte)| *byte)
-                .collect();
+        // A stream's own sink is a projection, so it is written from its own
+        // redacted projection and never from a filtered merged slice: removing
+        // the other stream's bytes there could join halves of a secret the
+        // merged redaction could not see as one value.
+        let parts = self.pipeline.project(&clean, eof);
+        for (stream, part) in parts.iter().enumerate() {
             if part.is_empty() {
                 continue;
             }
             if let Some(log) = self.logs[stream].as_mut() {
-                if log.append(&part).is_err() {
+                if log.append(part).is_err() {
                     log.mark_truncated();
                     self.capture = CaptureState::Truncated("log write failed".into());
                     self.logs[stream] = None;
                 }
             }
             let queue = &mut self.streams[stream];
-            queue.extend(part);
+            queue.extend(part.iter().copied());
             while queue.len() > self.queue_max {
                 queue.pop_front();
             }
+        }
+        if clean.is_empty() {
+            return;
         }
         self.output.extend(clean.iter().map(|(_, byte)| *byte));
         while self.output.len() > self.queue_max {

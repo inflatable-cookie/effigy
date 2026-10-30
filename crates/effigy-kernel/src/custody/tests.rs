@@ -1611,3 +1611,56 @@ fn redaction_covers_the_visible_form_of_a_secret_that_carries_a_control() {
         }
     }
 }
+
+#[test]
+fn redaction_redacts_a_projection_that_joins_a_secret_across_an_interleaved_stream() {
+    // Arrival order never carries this value contiguously — the other stream's
+    // visible bytes sit between the halves — so the merged redaction correctly
+    // leaves it alone. Projecting one stream's bytes into its own log removes
+    // the other stream's bytes, which would put the halves back together, so
+    // each projection is redacted again over its own byte stream.
+    const SECRET: &[u8] = b"custody-split-secret-value";
+    let cx = cx();
+    for steps in [
+        // stdout holds both halves, stderr sits between them.
+        vec![
+            (STD, &b"custody-split-"[..]),
+            (ERR, &b"noise"[..]),
+            (STD, &b"secret-value\n"[..]),
+        ],
+        // Several interleaves, and the halves split further.
+        vec![
+            (STD, &b"custody-"[..]),
+            (ERR, &b"x"[..]),
+            (STD, &b"split-"[..]),
+            (ERR, &b"\x1b[1my\n"[..]),
+            (STD, &b"secret-value"[..]),
+        ],
+        // The other stream interleaves with its own newline-terminated line.
+        vec![
+            (STD, &b"prefix custody-split-"[..]),
+            (ERR, &b"a whole stderr line\n"[..]),
+            (STD, &b"secret-value suffix\n"[..]),
+        ],
+    ] {
+        let capture = FakeCapture::new(home(), &cx, vec![SECRET.to_vec()]);
+        for (stream, bytes) in steps {
+            capture.feed(stream, bytes);
+        }
+        capture.close();
+        for (what, bytes) in capture.sinks(&cx) {
+            assert_absent(&what, &bytes, SECRET);
+        }
+        // The merged capture keeps arrival order, so it never held the value.
+        assert!(!capture
+            .tail()
+            .windows(SECRET.len())
+            .any(|window| window == SECRET));
+        // The projected stream the halves landed in shows the marker instead.
+        let (stdout, _) = capture.streams();
+        assert!(
+            String::from_utf8_lossy(&stdout).contains("[REDACTED]"),
+            "the projection must be redacted on its own bytes"
+        );
+    }
+}

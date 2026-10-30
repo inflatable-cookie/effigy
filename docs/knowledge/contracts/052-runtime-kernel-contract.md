@@ -398,7 +398,7 @@ names the rule or invariant it relies on.
 | K9 | **One signal router.** One router per process, installed in `main` before any spawn. Libraries take a cancel token and never install handlers. HUP, INT and TERM are handled. | A library swallowing INT or TERM; HUP killing an owner with no cascade. |
 | K10 | **Observability is not outcome.** A failed status, log or report write never changes a workload's outcome or exit code. | A succeeded task turned into an error by a status write; ENOSPC on a log failing the workload. |
 | K11 | **Output independence.** Output format never changes execution. One output owner per invocation. | `--json` selecting a different executor, scheduler, timeout or cleanup. |
-| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output drops terminal controls, then redacts, in merged arrival order, before every sink; the canonical captured tail is that same merged result. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; terminal-byte normalization after redaction. |
+| K12 | **Secrets stay out of argv and global env.** Secrets reach a child only through its spawn spec's environment or a 0600 file or descriptor. Secret-bearing output drops terminal controls, then redacts, in merged arrival order, before every sink; the canonical captured tail is that same merged result, and a stream log or queue is redacted as its own byte stream. | Secret bytes in `ps`-visible argv; `set_var` of secrets or run tokens; unredacted TUI transcripts; a secret split by a CSI or OSC sequence; a stream sink assembled by filtering the merged result without redacting that projection; terminal-byte normalization after redaction. |
 | K13 | **Safe files.** Every kernel open is descriptor-relative, no-follow, owner- and mode-checked and size-bounded. Mutation on a network filesystem is refused. | Following a symlink in the state root; reading an unbounded or non-regular file; flock on NFS or SMB. |
 | K14 | **Acquisition order.** Multi-gate acquisition follows canonical order. No store transaction or allocator/resource gate other than an owner gate is held across a subprocess, prompt or network call. Native custody leases (§7.1) protect cleanup lifetime and never serialize allocation. | A global allocator lock held during `colima list`; an admin prompt under `routes.lock`. |
 | K15 | **Bounded retention.** Retention never removes an unsettled run, a referenced object or a live claim. Garbage collection never runs in Static or Observe. | Unbounded history; deleting evidence a settle still needs. |
@@ -1266,12 +1266,17 @@ sequence's bytes are discarded as they arrive, so no read or stream boundary
 can split a decision and nothing is buffered. It fails closed — a malformed
 or unterminated control drops its bytes, an open sequence never completes at
 EOF, and no byte the machine cannot classify is emitted. Only the visible
-bytes it emits keep their origin tags, so the separately reported stdout and
-stderr queues are projections of the same sanitize-then-redact result and
-joining them never rebuilds a secret. A process whose spec carries no secret
-skips the sanitizer and keeps its colour. A secret whose own bytes hold a
-control is also matched in its visible form, so stripping the control from it
-cannot leave an unredacted remainder.
+bytes it emits keep their origin tags. Keeping the streams apart is itself a
+byte removal, and a removal can join two halves of a secret that arrival order
+kept apart — `super` on stdout, `noise` on stderr, `secret` on stdout leaves
+the merged stream safe and would leave the stdout projection unsafe — so each
+stream's stored log and queue is redacted again over its own byte stream
+before it is written. The merged output queue and the merged tail stay
+canonical: they are the only capture that keeps arrival order, and no consumer
+concatenates two projections into one. A process whose spec carries no secret
+skips both the sanitizer and the projection pass and keeps its colour. A
+secret whose own bytes hold a control is also matched in its visible form, so
+stripping the control from it cannot leave an unredacted remainder.
 
 Every reader draws from that one result: the per-stream rotating logs, the
 per-stream queues, the merged output queue, the bounded merged arrival-order
@@ -1279,8 +1284,8 @@ tail (`tail()`, the canonical captured tail), the bounded diagnostic excerpt a
 settle or doctor report quotes, and any JSON envelope carrying their bytes.
 Nothing normalizes terminal bytes after redaction; a post-redaction
 normalization path would recreate the split. A consumer that needs both
-streams joins the projections, never the raw streams, and a consumer that
-wants a bounded tail takes the merged one rather than concatenating streams.
+streams reads the merged capture, never a concatenation of the projections,
+and a consumer that wants a bounded tail takes the merged tail.
 
 #### Failure model
 
@@ -1378,6 +1383,11 @@ wants a bounded tail takes the merged one rather than concatenating streams.
 - `redaction_drops_an_unterminated_control_and_its_tail_at_eof` shows the
   fail-closed rule: an unterminated OSC, CSI or DCS word drops everything
   after its introducer, and a later read never resumes inside it.
+- `redaction_redacts_a_projection_that_joins_a_secret_across_an_interleaved_stream`
+  pins the projection rule: with the halves on one stream and the other
+  stream's visible bytes between them, the merged capture never held the
+  value, and the stream's own log and queue show the marker instead of the
+  joined halves.
 - `redaction_keeps_terminal_colour_for_a_process_without_secrets` and
   `redaction_covers_the_visible_form_of_a_secret_that_carries_a_control`
   keep ordinary colour intact and redact a secret that itself holds a
