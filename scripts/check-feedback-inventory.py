@@ -12,6 +12,10 @@ Each failure names the file and line and the exact migration: a step that can
 wait is driven by a live `ProgressSource`, and an immediate outcome is one
 `finish_line`. A suppression (`#[allow(deprecated)]` and friends) is itself a
 failure, so a site cannot be hidden instead of migrated.
+
+The build covers every workspace target (`--workspace --all-targets`) and not a
+chosen package list: a crate compiled only as another package's dependency is
+never linted as a package, so a wrapper there would escape a `-p` selection.
 """
 import json
 import os
@@ -46,6 +50,18 @@ def migration(text):
         if needle in text:
             return action
     return DEFAULT_MIGRATION
+
+
+def clippy_command():
+    """The inventory build: every workspace target, no chosen package list.
+
+    `--workspace` is the enforcement, not a convenience: a crate that is only
+    compiled as a dependency of a selected package is not linted as a package,
+    so a fixed-label wrapper in it would escape a `-p` list.
+    """
+    return ['sh', 'scripts/oxide-selector.sh', 'clippy', '--workspace', '--all-targets',
+            '--message-format=json', '--',
+            '-W', 'deprecated', '-W', 'clippy::disallowed_methods']
 
 
 def entries(messages):
@@ -98,7 +114,7 @@ def run():
     # Collect the inventory even if an unrelated Clippy lint fails; the
     # separate lint:feedback Clippy step still enforces it without this flag.
     env['RUSTFLAGS'] = env.get('RUSTFLAGS', '') + ' -A clippy::never_loop'
-    command = ['sh', 'scripts/oxide-selector.sh', 'clippy', '-p', 'effigy', '-p', 'effigy-cli', '-p', 'effigy-ui', '-p', 'effigy-kernel', '-p', 'effigy-containers', '-p', 'effigy-runtime', '-p', 'effigy-doctor', '-p', 'effigy-manifest', '-p', 'effigy-release', '-p', 'effigy-secrets', '--all-targets', '--message-format=json', '--', '-W', 'deprecated', '-W', 'clippy::disallowed_methods']
+    command = clippy_command()
     proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE, text=True)
     messages = []
     for line in proc.stdout:

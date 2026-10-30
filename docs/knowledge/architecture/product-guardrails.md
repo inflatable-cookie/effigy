@@ -82,12 +82,13 @@ when the real cause was two named services failing their health checks.
   The UI's `ProgressSource` supplies the current subject, count, latest event
   and elapsed wait to `live_step`. When no event is available, it names the
   exact awaited object or probe with the elapsed time. `lint:feedback` is the
-  gate: `effigy-ui` keeps its legacy fixed-label constructors only as
-  deprecated anchors, and the check fails on every compiler-resolved use,
-  including through an alias or wrapper, naming the file, the line and the
-  migration. There is no allowlist, no exemption to add and no ceiling: a new
-  fixed-label spinner fails the lint instead of joining an inventory, and a
-  suppressed diagnostic fails it too. `clippy::disallowed_methods` rejects
+  gate, and `validate`, `qa` and `qa:gates` all run it: `effigy-ui` keeps its
+  legacy fixed-label constructors only as deprecated anchors, and the check
+  fails on every compiler-resolved use in any workspace target, including
+  through an alias or wrapper in another crate, naming the file, the line and
+  the migration. There is no allowlist, no exemption to add and no ceiling: a
+  new fixed-label spinner fails the lint instead of joining an inventory, and
+  a suppressed diagnostic fails it too. `clippy::disallowed_methods` rejects
   every `indicatif::ProgressBar::new_spinner` except the one reviewed sink.
   Every site's disposition is recorded in
   [live progress sites](036-live-progress-sites.md).

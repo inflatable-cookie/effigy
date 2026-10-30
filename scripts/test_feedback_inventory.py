@@ -55,15 +55,25 @@ class InventoryTests(unittest.TestCase):
     def test_a_clean_tree_reports_nothing(self):
         self.assertEqual(lint.check(lint.entries([{'reason': 'compiler-artifact'}])), [])
 
+    def test_the_inventory_builds_every_workspace_package(self):
+        # A `-p` list omits a crate that is only another package's dependency,
+        # and an omitted crate is never linted as a package (finding: a
+        # fixed-label wrapper there would escape the inventory).
+        command = lint.clippy_command()
+        self.assertIn('--workspace', command)
+        self.assertIn('--all-targets', command)
+        self.assertNotIn('-p', command)
+
     def test_compiler_resolves_a_renamed_static_helper(self):
         # Build a standalone fixture in an isolated directory through Oxide.
         # Its API carries the same deprecation marker as the checked API.
         fixture = r"""
 #[deprecated(note = "feedback legacy spinner: migrate to a live progress source")]
-fn step(_: &str) {}
+pub fn step(_: &str) {}
 use step as renamed_static_helper;
-struct Source;
-fn live_step(_: Source) {}
+pub struct Source;
+pub fn live_step(_: Source) {}
+mod wrapper;
 fn fixture() {
     step("working...");
     let fixed = "fixed wait";
@@ -72,9 +82,17 @@ fn fixture() {
     live_step(Source);
 }
 """
+        # A wrapper in another module, standing in for another crate's helper:
+        # the diagnostic must name that file and line, not this one.
+        wrapper = r"""
+pub fn show(label: &str) {
+    crate::step(label);
+}
+"""
         with tempfile.TemporaryDirectory(dir='/Volumes/Builds/scratch/effigy') as directory:
             source = pathlib.Path(directory) / 'fixture.rs'
             source.write_text(fixture)
+            (pathlib.Path(directory) / 'wrapper.rs').write_text(wrapper)
             result = subprocess.run(
                 ['oxide', 'exec', '--', 'rustc', '--crate-type', 'lib', '--error-format=json',
                  '--emit=metadata', '-o', str(pathlib.Path(directory) / 'fixture.rmeta'), str(source)],
@@ -94,6 +112,12 @@ fn fixture() {
             self.assertTrue(any('step(fixed)' in text for text in texts), texts)
             self.assertTrue(any('renamed_static_helper("waiting...")' in text for text in texts), texts)
             self.assertFalse(any('live_step(Source)' in text for text in texts), texts)
+            wrapped = [item for item in found if item[0].endswith('wrapper.rs')]
+            self.assertEqual(len(wrapped), 1, found)
+            self.assertIn('step(label)', wrapped[0][1])
+            errors = lint.check(wrapped)
+            self.assertIn('wrapper.rs:', errors[0])
+            self.assertIn('live_step(ProgressSource::waiting_for', errors[0])
 
 
 if __name__ == '__main__':
