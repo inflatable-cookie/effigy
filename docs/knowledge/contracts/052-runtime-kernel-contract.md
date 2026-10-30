@@ -3427,6 +3427,21 @@ ServingOwner::adopt_owned(
 ) -> Result<ServingOwner, AdoptError>
 ```
 
+**Guest entry (v2, binding when #482 lands).** The guest's context read is one
+call site. It becomes `workspace_client::context::v2::read_published_v2(&mut dyn
+GuestReader) -> Result<Option<WorkspaceContextV2>, ContextReadError>` — a strict
+parse of the canonical kernel document, where v1 refuses and nothing is
+reinterpreted — followed by `WorkspaceContextV2::verify(&mut dyn GuestIdentity,
+&LiveGuestRun) -> Result<VerifiedWorkspaceContext, ContextRefusal>`, which
+observes the full container id, boot, platform and libc before it yields the
+session run and generation. `GuestIdentity` is the module's existing seam
+(`fn container(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError>`),
+so one observer serves both the adopter's liveness check and the context
+verification, and the enrolled direct terminal takes its session generation from
+the verified value instead of refusing. Until that entry lands, the v1
+`read_published_context`/`LiveGuestRun` path is the bridge and an unprepared
+workspace still reads as "not a guest".
+
 The adopted run — not a bare `Run` — is what the entry takes, because a
 `PreparedHostChannel` cannot exist before that adoption: the kernel's
 `SessionLaunch::launch` requires the run's custody record
