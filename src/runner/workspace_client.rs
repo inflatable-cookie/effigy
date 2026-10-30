@@ -50,6 +50,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod context;
+pub(crate) mod serving;
 
 #[cfg(test)]
 pub(crate) mod guest_fake;
@@ -58,8 +59,9 @@ use effigy_cli::Command;
 use effigy_kernel::id::{Digest, Generation, RunId};
 use effigy_kernel::run::RequestId;
 use effigy_kernel::workspace_channel::{
-    self as channel, EnrolRequest, ExitStatus, Frame, Hello, InvocationBody, ObserveBody,
-    OutputMode as ChannelOutputMode, Request, RequestBody, Secret, Selector, Target, Transport,
+    self as channel, AttachBody, EnrolRequest, ExitStatus, Frame, Hello, InvocationBody,
+    ObserveBody, OutputMode as ChannelOutputMode, Request, RequestBody, Secret, Selector,
+    StreamKind, Target, Transport,
 };
 use std::fmt;
 use std::io::Read;
@@ -395,6 +397,8 @@ pub(crate) enum ChannelOutcome {
         outcome: serde_json::Value,
         exit: ExitStatus,
     },
+    /// The host opened this connection's attachment to a run it authorised.
+    Attached(channel::AttachView),
 }
 
 /// The host's placement label, kept typed so a guest can never claim one.
@@ -419,6 +423,36 @@ impl Intent {
             id: RequestId::new(fresh_bytes()),
             body,
         }
+    }
+
+    /// One attach, at a caller's retained cursor. Replaying this same intent on
+    /// a fresh connection names the same request id, so the host resumes the
+    /// attachment it already recorded rather than opening a second one
+    /// (§8.11). The cursor is where the caller's own stream reader stopped;
+    /// `None` starts at the beginning.
+    pub(crate) fn attach(
+        run: RunId,
+        streams: Vec<StreamKind>,
+        cursors: std::collections::BTreeMap<u32, u64>,
+    ) -> Self {
+        Self::new(RequestBody::Attach(AttachBody {
+            run,
+            streams,
+            cursor: None,
+            cursors: (!cursors.is_empty()).then_some(cursors),
+        }))
+    }
+
+    /// A fresh attach at the cursor this client has consumed so far. Use this
+    /// after a `gap`, which is never presented as complete output: the caller
+    /// asks again from where it truly stopped instead of replaying an intent
+    /// whose answer the host already recorded.
+    pub(crate) fn resume_attach(
+        run: RunId,
+        streams: Vec<StreamKind>,
+        client: &WorkspaceClient<impl Transport>,
+    ) -> Self {
+        Self::attach(run, streams, client.resume_cursors())
     }
 
     pub(crate) fn id(&self) -> RequestId {
@@ -661,6 +695,10 @@ pub(crate) struct WorkspaceClient<T: Transport> {
     live: LiveGuestRun,
     /// The one run this connection admitted. Only it may detach.
     admitted: Option<RunId>,
+    /// The highest sequence this client consumed and acknowledged per stream,
+    /// so a resume asks from where it stopped. A `gap` leaves a stream where it
+    /// was: missing bytes are never reported as consumed.
+    cursors: std::collections::BTreeMap<u32, u64>,
 }
 
 impl<T: Transport> fmt::Debug for WorkspaceClient<T> {
@@ -675,14 +713,23 @@ impl<T: Transport> fmt::Debug for WorkspaceClient<T> {
 
 impl<T: Transport> WorkspaceClient<T> {
     /// Pin, negotiate, authenticate, then hold the connection open for one
-    /// request. Nothing is read or written before the negotiation, and no
-    /// request is sent before authentication (§8.11).
+    /// request. The pinned host identity is checked before a single byte is
+    /// written, so a mispinned peer receives no `hello` and no credential;
+    /// nothing else is read or written before the negotiation, and no request
+    /// is sent before authentication (§8.11).
     pub(crate) fn connect(
         mut transport: T,
         verified: VerifiedWorkspaceContext,
         live: LiveGuestRun,
         auth: GuestAuth,
     ) -> Result<Self, ChannelError> {
+        // §8.11 orders this first: the server identity the selected context
+        // pinned, against the identity this transport verified. A peer that is
+        // not the pinned host must learn nothing — not the schema, not the
+        // version, not the digest, and certainly not a capability.
+        let pinned = pinned_server_identity(&verified.channel)?;
+        channel::check_server_pin(&pinned, transport.verified_peer().as_ref())
+            .map_err(ChannelError::from_refusal)?;
         let session_run_id = parse_run_id(&verified.session_run_id)?;
         let hello = Hello {
             schema: channel::SCHEMA.to_owned(),
@@ -733,6 +780,7 @@ impl<T: Transport> WorkspaceClient<T> {
             verified,
             live,
             admitted: None,
+            cursors: std::collections::BTreeMap::new(),
         })
     }
 
@@ -765,7 +813,21 @@ impl<T: Transport> WorkspaceClient<T> {
                 Frame::Response(response) if response.id == id => {
                     return match response.outcome {
                         channel::ResponseOutcome::Observed(value) => {
-                            Ok(ChannelOutcome::Observed(value))
+                            if matches!(intent.body, RequestBody::Attach(_)) {
+                                // An attach answers with the host's own view of
+                                // the attachment it opened; a body that is not
+                                // one is not this client's business to guess.
+                                let view: channel::AttachView = serde_json::from_value(value)
+                                    .map_err(|_| {
+                                        ChannelError::local(
+                                            "the workspace host answered an attach with an \
+                                             unreadable attachment view",
+                                        )
+                                    })?;
+                                Ok(ChannelOutcome::Attached(view))
+                            } else {
+                                Ok(ChannelOutcome::Observed(value))
+                            }
                         }
                         channel::ResponseOutcome::Accepted(accepted) => {
                             self.admitted = Some(accepted.run);
@@ -797,18 +859,24 @@ impl<T: Transport> WorkspaceClient<T> {
                 // was dispatched, so nothing was admitted (§8.11).
                 Frame::Refuse(refusal) => return Err(ChannelError::from_refusal(refusal)),
                 Frame::Stream(stream) => {
-                    if stream.kind.is_data() {
-                        channel::write_frame(
-                            &mut self.transport,
-                            &Frame::Stream(channel::StreamFrame {
-                                kind: channel::StreamKind::Ack,
-                                payload: None,
-                                rows: None,
-                                columns: None,
-                                ..stream
-                            }),
-                        )
-                        .map_err(ChannelError::from_refusal)?;
+                    // A gap names bytes this client never received, so it never
+                    // advances the cursor; `end` reports the final sequence.
+                    if stream.kind.is_data() || stream.kind == channel::StreamKind::End {
+                        if stream.kind.is_data() {
+                            channel::write_frame(
+                                &mut self.transport,
+                                &Frame::Stream(channel::StreamFrame {
+                                    kind: channel::StreamKind::Ack,
+                                    payload: None,
+                                    rows: None,
+                                    columns: None,
+                                    ..stream.clone()
+                                }),
+                            )
+                            .map_err(ChannelError::from_refusal)?;
+                        }
+                        let consumed = self.cursors.entry(stream.stream_id).or_insert(stream.seq);
+                        *consumed = (*consumed).max(stream.seq);
                     }
                 }
                 _ => {
@@ -852,6 +920,32 @@ fn read_frame<T: Transport>(transport: &mut T) -> Result<Frame, ChannelError> {
             _ => ChannelError::from_refusal(refusal),
         }),
     }
+}
+
+impl<T: Transport> WorkspaceClient<T> {
+    /// Where this connection's stream readers stopped, for a resume. A stream
+    /// this client never read is absent, so the host resumes it from its
+    /// retained frames rather than from a guess.
+    pub(crate) fn resume_cursors(&self) -> std::collections::BTreeMap<u32, u64> {
+        self.cursors.clone()
+    }
+}
+
+/// The server identity the selected context pinned. A context without one has
+/// no channel to pin, so nothing is sent.
+fn pinned_server_identity(
+    channel_locator: &context::WorkspaceChannelLocator,
+) -> Result<Digest, ChannelError> {
+    let pinned =
+        channel_locator
+            .server_identity
+            .as_deref()
+            .ok_or_else(|| ChannelError::Refused {
+                code: channel::RefusalCode::Unavailable.as_str(),
+                message: "the workspace context pins no host identity, so no connection is made"
+                    .to_owned(),
+            })?;
+    parse_digest(pinned)
 }
 
 fn parse_run_id(text: &str) -> Result<RunId, ChannelError> {
@@ -1223,6 +1317,13 @@ fn render_outcome(outcome: ChannelOutcome, wants_json: bool) -> String {
                 .to_string()
             } else {
                 format!("admitted run {run} on the workspace host")
+            }
+        }
+        ChannelOutcome::Attached(view) => {
+            if wants_json {
+                serde_json::to_string(&view).unwrap_or_else(|_| "{}".to_owned())
+            } else {
+                format!("attached to run {} from cursor {}", view.run, view.cursor)
             }
         }
         ChannelOutcome::Completed { outcome, exit } => {

@@ -16,6 +16,7 @@ use super::*;
 use crate::runner::workspace_client::guest_fake::FakeGuest;
 use effigy_cli::{parse_command, Command};
 use std::collections::{BTreeMap, VecDeque};
+
 use std::io;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
@@ -49,7 +50,7 @@ fn container() -> WorkspaceContainerIdentity {
 fn ready_channel() -> context::WorkspaceChannelLocator {
     context::WorkspaceChannelLocator {
         endpoint: Some("unix:///run/effigy/channel".to_owned()),
-        server_identity: Some("sha256:server".to_owned()),
+        server_identity: Some(format!("sha256:{}", server_identity().hex())),
     }
 }
 
@@ -855,12 +856,11 @@ struct PeerTransport {
 
 impl PeerTransport {
     fn new(stream: UnixStream) -> Self {
-        stream
-            .set_read_timeout(Some(Duration::from_secs(20)))
-            .expect("read timeout");
-        stream
-            .set_write_timeout(Some(Duration::from_secs(20)))
-            .expect("write timeout");
+        // A peer that already closed cannot take a timeout; the connection then
+        // reads end of stream rather than hanging, which is what the proof
+        // wants anyway.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(20)));
         Self {
             stream,
             pinned: server_identity(),
@@ -896,10 +896,17 @@ struct MuteTransport {
     input: Vec<u8>,
     cursor: usize,
     written: Arc<Mutex<Vec<u8>>>,
+    peer: Option<Digest>,
 }
 
 impl MuteTransport {
     fn answering_negotiation() -> Self {
+        Self::answering_negotiation_with_peer(server_identity())
+    }
+
+    /// A peer that verifies as `peer`, so a mispinned connection can be proved
+    /// to send nothing at all.
+    fn answering_negotiation_with_peer(peer: Digest) -> Self {
         let hello_ok = host::encode_frame(&host::Frame::HelloOk(host::HelloOk {
             protocol: host::PROTOCOL_V1,
             effigy_version: running_binary().version,
@@ -912,6 +919,7 @@ impl MuteTransport {
             input,
             cursor: 0,
             written: Arc::new(Mutex::new(Vec::new())),
+            peer: Some(peer),
         }
     }
 }
@@ -937,9 +945,9 @@ impl Transport for MuteTransport {
     }
 
     fn verified_peer(&self) -> Option<host::ServerIdentity> {
-        Some(host::ServerIdentity {
-            digest: server_identity(),
-        })
+        self.peer
+            .clone()
+            .map(|digest| host::ServerIdentity { digest })
     }
 }
 
@@ -1202,4 +1210,191 @@ fn an_observation_reaches_the_hosts_observe_engine() {
         served[0].as_ref().expect("a served connection").responses,
         1
     );
+}
+
+// ---------------------------------------------------------------------------
+// The pinned host identity, checked before anything is written (§8.11).
+// ---------------------------------------------------------------------------
+
+fn mispinned() -> Digest {
+    Digest::of(b"a host this context did not pin")
+}
+
+#[test]
+fn a_mispinned_peer_receives_no_hello_and_no_credential() {
+    let mut transport = MuteTransport::answering_negotiation_with_peer(mispinned());
+    let written = transport.written.clone();
+    let error = WorkspaceClient::connect(
+        transport,
+        verified(),
+        live_run(),
+        // A real capability is present: it must never reach the wire.
+        GuestAuth::Capability(capability()),
+    )
+    .expect_err("an unpinned peer has no session");
+
+    match error {
+        ChannelError::Refused { code, .. } => assert_eq!(code, "identity_mismatch"),
+        other => panic!("a mispinned peer is an identity refusal, not {other:?}"),
+    }
+    assert!(
+        written.lock().expect("written").is_empty(),
+        "a mispinned peer receives no hello and no credential bytes"
+    );
+}
+
+#[test]
+fn a_mispinned_peer_refuses_the_guest_dispatch_before_any_effect() {
+    let context = workspace_context(Some(session_run()), ready_channel());
+    let mut guest = FakeGuest::new();
+    publish(&mut guest, &context, Some(&capability()));
+    let before = guest.tree_digest();
+    let mut checkout = FakeCheckout::default();
+    let mut identity = ObservedContainer(container());
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let mut opener = ScriptedPeerChannel {
+        peer: mispinned(),
+        written: written.clone(),
+    };
+
+    let error = dispatch_in(
+        &parsed(&["build"]),
+        &published(&context),
+        &mut guest,
+        &mut checkout,
+        &mut identity,
+        &mut opener,
+        Path::new(GUEST_CHECKOUT),
+    )
+    .expect_err("the peer is not the pinned host");
+
+    assert!(error.to_string().contains("identity_mismatch"), "{error}");
+    assert!(written.lock().expect("written").is_empty());
+    assert_eq!(guest.tree_digest(), before, "a pin refusal writes nothing");
+}
+
+/// Opens a connection to a peer that verifies as `peer`, for the pin proof.
+struct ScriptedPeerChannel {
+    peer: Digest,
+    written: Arc<Mutex<Vec<u8>>>,
+}
+
+impl ChannelOpener for ScriptedPeerChannel {
+    fn open(
+        &mut self,
+        verified: &VerifiedWorkspaceContext,
+        live: &LiveGuestRun,
+        auth: GuestAuth,
+    ) -> Result<Box<dyn ChannelRequest>, ChannelError> {
+        let mut transport = MuteTransport::answering_negotiation_with_peer(self.peer.clone());
+        transport.written = self.written.clone();
+        let client = WorkspaceClient::connect(transport, verified.clone(), live.clone(), auth)?;
+        Ok(Box::new(client))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Attach, cursor and replay against the real host dispatcher.
+// ---------------------------------------------------------------------------
+
+fn attach_view(outcome: &ChannelOutcome) -> host::AttachView {
+    match outcome {
+        ChannelOutcome::Attached(view) => view.clone(),
+        other => panic!("an attach answers with the host's typed view, not {other:?}"),
+    }
+}
+
+#[test]
+fn an_attach_intent_replays_to_the_same_attachment() {
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let (client_side, host_side) = connection_pair();
+    let (_served, handle) = serve_host(vec![host_side], calls.clone(), &[9]);
+
+    // The owning connection admits the run and then opens its own attachment.
+    let mut owner = WorkspaceClient::connect(
+        PeerTransport::new(client_side),
+        verified(),
+        live_run(),
+        GuestAuth::Capability(capability()),
+    )
+    .expect("the owning connection");
+    let invoke = Intent::new(RequestBody::Invoke(InvocationBody {
+        selector: Selector::Task("build".to_owned()),
+        cwd: "packages/app".to_owned(),
+        target: Target::Host,
+        args: vec![],
+        output: ChannelOutputMode::Text,
+    }));
+    let ChannelOutcome::Accepted { run, .. } = owner.send(&invoke).expect("admitted") else {
+        panic!("a fresh invocation is admitted");
+    };
+
+    let attach = Intent::attach(run, vec![StreamKind::Stdout], Default::default());
+    let first = attach_view(&owner.send(&attach).expect("attached"));
+    assert_eq!(first.run, run);
+    assert_eq!(
+        first.cursor, 0,
+        "the attachment starts at the host's beginning"
+    );
+    // The same intent is the same attachment, never a second one: the request
+    // id is the attachment's identity, so a lost response is resumed rather
+    // than allocated twice (§8.11).
+    let second = attach_view(&owner.send(&attach).expect("replayed"));
+    assert_eq!(second.attachment, first.attachment);
+    drop(owner);
+    handle.join().expect("host thread");
+    assert_eq!(
+        calls.lock().expect("calls").admitted,
+        vec![run],
+        "an attach and its replay admit nothing"
+    );
+}
+
+#[test]
+fn an_unresumable_cursor_is_a_typed_refusal_with_no_fallback() {
+    let calls: SharedCalls = Arc::new(Mutex::new(Calls::default()));
+    let (owner_client, owner_host) = connection_pair();
+    let (cursor_client, cursor_host) = connection_pair();
+    let (_served, handle) = serve_host(vec![owner_host, cursor_host], calls.clone(), &[9]);
+
+    let mut owner = WorkspaceClient::connect(
+        PeerTransport::new(owner_client),
+        verified(),
+        live_run(),
+        GuestAuth::Capability(capability()),
+    )
+    .expect("the owning connection");
+    let invoke = Intent::new(RequestBody::Invoke(InvocationBody {
+        selector: Selector::Task("build".to_owned()),
+        cwd: "packages/app".to_owned(),
+        target: Target::Host,
+        args: vec![],
+        output: ChannelOutputMode::Text,
+    }));
+    let ChannelOutcome::Accepted { run, .. } = owner.send(&invoke).expect("admitted") else {
+        panic!("a fresh invocation is admitted");
+    };
+    drop(owner);
+
+    let mut cursors = std::collections::BTreeMap::new();
+    cursors.insert(1u32, 0u64);
+    let mut terminal = WorkspaceClient::connect(
+        PeerTransport::new(cursor_client),
+        verified(),
+        live_run(),
+        GuestAuth::Capability(capability()),
+    )
+    .expect("the attaching terminal");
+    let error = terminal
+        .send(&Intent::attach(run, vec![StreamKind::Stdout], cursors))
+        .expect_err("the host cannot resume a stream that wrote nothing");
+
+    match error {
+        ChannelError::Refused { code, .. } => assert_eq!(code, "invalid_request"),
+        other => panic!("an unresumable cursor is a typed refusal, not {other:?}"),
+    }
+    drop(terminal);
+    handle.join().expect("host thread");
+    // The refusal recorded no second run and stopped nothing.
+    assert_eq!(calls.lock().expect("calls").admitted, vec![run]);
 }

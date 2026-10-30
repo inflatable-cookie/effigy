@@ -482,6 +482,14 @@ until the host-log writer has a safe secret-handling boundary.
   Until a guest transport, a guest-local container observation and a published
   session generation land, host authority reports itself unavailable with the
   specific missing fact named, and local reads keep working.
+
+- **The workspace channel checks its pinned host identity before it speaks.**
+  A guest client compares the server identity the context pinned against the
+  identity its transport verified before writing a single byte, so a mispinned
+  peer receives no hello, version, digest or capability. A connection that dies
+  before answering is replayed under the same request id, an attach is resumed
+  by that id at the cursor the client actually consumed, and a gap never
+  advances it.
 - **No command plane shows a canned progress label.** The Q-017 live-state
   rule is now a required lint gate rather than a migration list. A task-run
   step names its ordinal, the exact child step it waits on and the elapsed

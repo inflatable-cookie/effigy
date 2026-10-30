@@ -3331,6 +3331,22 @@ no run, no resolution and no second credential.
   accepted only for the run this connection admitted, so a secondary terminal
   leaving writes no control frame. Stream frames are acknowledged and dropped:
   output belongs to the session front end that attaches.
+- **Pin before hello.** The server identity the selected context pinned is
+  checked against what the transport verified *before* the first byte is
+  written: a mispinned peer receives no `hello`, no version, no digest and no
+  capability (§8.11). The negotiation follows, then the credential, then the
+  request.
+- **Attach, cursor and reconnect.** An attach is an `Intent` like any other, so
+  its request id is its attachment identity: the same intent on the same
+  connection is the same attachment, never a second one. The client
+  acknowledges data frames and records the highest consumed sequence per stream;
+  a `gap` never advances it, and `Intent::resume_attach` asks from where the
+  reader truly stopped. A cursor the host cannot resume is a typed refusal, not
+  a silent restart.
+- **Typed refusals.** A refusal code is preserved (`identity_mismatch`,
+  `stale_context`, `unauthenticated`, `forbidden`, `held_by`, `invalid_request`,
+  …) and a transport failure is reported as unavailable/`unknown`, never as a
+  success or a refusal. Neither becomes a different claim on the way out.
 
 Three facts the merged lanes do not give a guest are refused for rather than
 guessed at. Each refusal names what is missing; none of them falls back:
@@ -3360,6 +3376,32 @@ terminal writing no control frame. Lane A's `test:kernel:workspace-channel`
 and lane B's `test:kernel:workspace` own the wire and session halves. The
 transport, the guest container observation and the published session
 generation remain their own tasks.
+
+**Serving owner (effigy#452, trace finding 6).** `workspace_client/serving.rs`
+consumes what a prepared channel was waiting for. `ServingOwner` holds the
+adopted `SessionSupervisor`, the `SessionLaunch` with its listener and key, the
+accept source and the kernel dispatcher. Its turn marks the launch serving for
+the adopted run *before* it accepts anything, so no connection is taken for a
+session nothing owns or a locator that was never published; it then feeds the
+accepted transport to the kernel's `Server::serve`, which keeps its own pin
+check, session fence, grants and frame limits. Accepting is bounded and returns
+"nothing waiting", so the supervisor owns the cadence; `run` polls until its own
+stop flag. Dropping or stopping the owner stops the listener and wipes the key,
+and the run's settlement takes the same custody — so neither the socket nor the
+signing key outlives its owner. `ChannelAccept` is the typed seam: production
+binds `HostChannelAcceptor`, and a proof supplies scripted transports.
+
+Proofs for it: a connection is refused acceptance until the run serves (the
+fake acceptor asserts `launch.serving(run)` on every hand-over), an accepted
+connection's negotiation reaches the dispatcher and is answered, and both
+`stop` and dropping the owner close the bound socket and wipe the key.
+
+Still not implementable in this module, and blocking production end-to-end
+evidence: #482 owns production context generation and the guest identity
+observation, and #504 owns the typed advertised locator. Until they merge, a
+container-mode guest refuses host authority rather than trusting the context's
+own claim or an unqualified locator (§8.1), and the serving owner has no
+production caller because nothing publishes a `QualifiedHostLocator` yet.
 
 ## 9. Authority map
 
