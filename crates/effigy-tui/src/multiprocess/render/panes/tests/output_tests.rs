@@ -84,3 +84,32 @@ fn waiting_for_output_lines_uses_spinner_frame_and_message() {
         " waiting for first output..."
     );
 }
+
+#[test]
+fn a_starting_pane_names_its_wait_and_the_elapsed_time_not_just_a_glyph() {
+    let frame = |elapsed| {
+        let lines = waiting_for_output_lines(
+            0,
+            Duration::from_secs(elapsed),
+            0,
+            ProcessStartupState::Starting,
+            None,
+        );
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let early = frame(2);
+    let later = frame(45);
+    assert_ne!(early, later, "a fixed label under a moving glyph is noise");
+    assert!(early.contains("startup: starting (2s elapsed)"), "{early}");
+    assert!(later.contains("starting process..."), "{later}");
+    assert!(later.contains("startup: starting (45s elapsed)"), "{later}");
+}

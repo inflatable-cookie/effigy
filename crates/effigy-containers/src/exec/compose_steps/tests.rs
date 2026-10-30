@@ -1,5 +1,6 @@
 use super::{ComposeSteps, TimedStep};
 use crate::exec::ComposeStepEvent;
+use effigy_ui::steps::ProgressSource;
 
 #[test]
 fn a_duration_is_named_the_way_a_person_reads_it() {
@@ -148,7 +149,7 @@ fn a_finished_step_is_never_rewritten_by_a_repeated_runtime_line() {
         };
         steps.observe(&removed);
         steps.observe(&removed);
-        let step = TimedStep::new("checking the stack");
+        let step = TimedStep::live(ProgressSource::waiting_for("the stack check"));
         step.succeed("the stack is checked");
         step.fail("a second ending would be wrong");
         step.finish_clear();
@@ -178,7 +179,7 @@ fn image_build_and_container_steps_stay_distinct() {
 
 #[test]
 fn a_runtime_step_frame_moves_with_the_runtime_and_names_its_wait() {
-    let step = super::runtime_step("pulling postgres:16".to_owned());
+    let step = super::runtime_wait("pulling postgres:16");
     let frame = step.label();
     assert!(
         frame.starts_with("pulling postgres:16; waiting for the runtime's next report; "),

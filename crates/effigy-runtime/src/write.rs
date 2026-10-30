@@ -73,8 +73,9 @@ where
     ));
     // A runtime that narrates nothing this parser recognises still gets one
     // live step, so an operator is never looking at a silent teardown.
-    let whole_stack = prepared
-        .then(|| effigy_containers::exec::phase(format!("stopping the `{}` stack", policy.name)));
+    let whole_stack = prepared.then(|| {
+        effigy_containers::exec::runtime_wait(format!("stopping the `{}` stack", policy.name))
+    });
     let stopped = transition(repo_root, &policy, &|| {
         if prepared {
             run_shutdown_compose_watched(repo_root, &policy, &mut |line| {
@@ -386,14 +387,25 @@ fn finish_whole_stack(whole_stack: &effigy_containers::exec::TimedStep, ending: 
 mod tests {
     use super::{finish_whole_stack, whole_stack_ending, WholeStackEnding};
     use crate::EffigyRuntimeError;
-    use effigy_containers::exec::{phase, ComposeStepEvent, ComposeSteps};
+    use effigy_containers::exec::{runtime_wait, ComposeStepEvent, ComposeSteps};
+
+    #[test]
+    fn a_silent_runtime_teardown_step_names_the_phase_its_report_and_elapsed_time() {
+        let step = runtime_wait("stopping the `web` stack");
+        let frame = step.label();
+        assert!(
+            frame.starts_with("stopping the `web` stack; waiting for the runtime's next report; "),
+            "{frame}"
+        );
+        assert!(frame.ends_with("s elapsed"), "{frame}");
+    }
 
     #[test]
     fn a_stop_the_runtime_never_narrated_ends_the_stack_step_with_a_check() {
         let (_, lines) = effigy_ui::steps::capture_lines(|| {
             let ending = whole_stack_ending(0, &Ok(()));
             assert_eq!(ending, WholeStackEnding::Stopped);
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(&runtime_wait("stopping the `web` stack"), ending);
         });
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
@@ -415,7 +427,7 @@ mod tests {
                     "the stack did not stop: docker compose down exited 1".to_owned()
                 )
             );
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(&runtime_wait("stopping the `web` stack"), ending);
         });
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
@@ -436,7 +448,7 @@ mod tests {
             });
             let ending = whole_stack_ending(steps.touched(), &Ok(()));
             assert_eq!(ending, WholeStackEnding::Cleared);
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(&runtime_wait("stopping the `web` stack"), ending);
             steps.finish_unfinished_teardown(Some(&["demo-web-dev-web-1".to_owned()]));
         });
         assert_eq!(lines.len(), 1, "{lines:?}");
@@ -451,7 +463,7 @@ mod tests {
                 subject: "demo-web-dev-web-1".to_owned(),
             });
             let ending = whole_stack_ending(steps.touched(), &Ok(()));
-            finish_whole_stack(&phase("stopping the `web` stack"), ending);
+            finish_whole_stack(&runtime_wait("stopping the `web` stack"), ending);
             steps.finish_unfinished_teardown(Some(&[]));
         });
         assert_eq!(lines.len(), 1, "{lines:?}");

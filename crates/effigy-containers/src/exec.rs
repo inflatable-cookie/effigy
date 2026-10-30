@@ -28,7 +28,7 @@ pub use colima_runtime::{
 pub use compose_progress::{
     parse_compose_step_event, service_from_container_name, ComposeStepEvent,
 };
-pub use compose_steps::{phase, ComposeSteps, TimedStep};
+pub use compose_steps::{runtime_wait, ComposeSteps, TimedStep};
 pub use healthcheck_pidfiles::{
     parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles, HealthCheckPidFilePrune,
     HEALTHCHECK_PIDFILE_PATTERN, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,

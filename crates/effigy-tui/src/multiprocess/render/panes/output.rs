@@ -7,7 +7,7 @@ use crate::core::{LogEntry, LogEntryKind};
 use crate::multiprocess::state::ProcessStartupState;
 use crate::waits::{EntryPhase, EntryState};
 
-use super::super::super::terminal_text::{ansi_line, runtime_meta_line};
+use super::super::super::terminal_text::{ansi_line, format_elapsed, runtime_meta_line};
 
 pub(super) fn output_lines(
     active_logs: &[LogEntry],
@@ -84,18 +84,27 @@ fn startup_meta_line(
     active_restart_count: usize,
 ) -> Line<'static> {
     match startup_state {
-        ProcessStartupState::Waiting => status_meta_line("pending"),
-        ProcessStartupState::Starting => status_meta_line("starting"),
+        ProcessStartupState::Waiting => status_meta_line("pending", Some(active_elapsed)),
+        ProcessStartupState::Starting => status_meta_line("starting", Some(active_elapsed)),
         ProcessStartupState::Running => runtime_meta_line(active_elapsed, active_restart_count),
-        ProcessStartupState::Failed => status_meta_line("failed"),
+        ProcessStartupState::Failed => status_meta_line("failed", None),
     }
 }
 
-fn status_meta_line(status: &'static str) -> Line<'static> {
-    Line::from(vec![
+/// A phase that names no further state still shows how long it has waited, so
+/// its pane is never a fixed label under a moving glyph (Q-017).
+fn status_meta_line(status: &'static str, elapsed: Option<Duration>) -> Line<'static> {
+    let mut spans = vec![
         Span::styled("startup: ", Style::default().fg(Color::LightBlue)),
         Span::styled(status, Style::default().fg(Color::DarkGray)),
-    ])
+    ];
+    if let Some(elapsed) = elapsed {
+        spans.push(Span::styled(
+            format!(" ({} elapsed)", format_elapsed(elapsed)),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn waiting_label(startup_state: ProcessStartupState) -> &'static str {
