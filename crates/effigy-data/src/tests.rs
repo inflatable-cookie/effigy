@@ -1,5 +1,6 @@
 mod tests {
     use crate::*;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     #[test]
@@ -326,7 +327,7 @@ mod tests {
         assert_eq!(
             plan.reset_command
                 .as_ref()
-                .map(|command| command.argv[2].as_str()),
+                .map(|command| command.argv[0].as_str()),
             Some("psql")
         );
         assert_eq!(
@@ -448,8 +449,6 @@ mod tests {
         assert_eq!(
             plan.argv,
             vec![
-                "env",
-                "PGPASSWORD=secret",
                 "pg_dump",
                 "-U",
                 "postgres",
@@ -459,6 +458,11 @@ mod tests {
                 "--no-privileges",
             ]
         );
+        assert_eq!(
+            plan.credential_env,
+            BTreeMap::from([("PGPASSWORD".to_owned(), "secret".to_owned())])
+        );
+        assert!(!plan.argv.iter().any(|arg| arg.contains("secret")));
     }
 
     #[test]
@@ -568,8 +572,6 @@ mod tests {
         assert_eq!(
             plan.argv,
             vec![
-                "env",
-                "MYSQL_PWD=secret",
                 "mysqldump",
                 "-uroot",
                 "--single-transaction",
@@ -579,6 +581,11 @@ mod tests {
                 "legacy",
             ]
         );
+        assert_eq!(
+            plan.credential_env,
+            BTreeMap::from([("MYSQL_PWD".to_owned(), "secret".to_owned())])
+        );
+        assert!(!plan.argv.iter().any(|arg| arg.contains("secret")));
     }
 
     #[test]
@@ -591,8 +598,6 @@ mod tests {
         assert_eq!(
             postgres.argv,
             vec![
-                "env",
-                "PGPASSWORD=secret",
                 "psql",
                 "-v",
                 "ON_ERROR_STOP=1",
@@ -605,16 +610,25 @@ mod tests {
             ]
         );
         assert_eq!(
+            postgres.credential_env,
+            BTreeMap::from([("PGPASSWORD".to_owned(), "secret".to_owned())])
+        );
+        assert_eq!(
             mariadb.argv,
             vec![
-                "env",
-                "MYSQL_PWD=secret",
                 "mysql",
                 "-uroot",
                 "-e",
                 "DROP DATABASE IF EXISTS `legacy`; CREATE DATABASE `legacy`;",
             ]
         );
+        assert_eq!(
+            mariadb.credential_env,
+            BTreeMap::from([("MYSQL_PWD".to_owned(), "secret".to_owned())])
+        );
+        for plan in [&postgres, &mariadb] {
+            assert!(!plan.argv.iter().any(|arg| arg.contains("secret")));
+        }
     }
 
     #[test]
@@ -631,8 +645,6 @@ mod tests {
         assert_eq!(
             postgres.argv,
             vec![
-                "env",
-                "PGPASSWORD=secret",
                 "psql",
                 "-v",
                 "ON_ERROR_STOP=1",
@@ -643,8 +655,30 @@ mod tests {
             ]
         );
         assert_eq!(
-            mariadb.argv,
-            vec!["env", "MYSQL_PWD=secret", "mysql", "-uroot", "legacy",]
+            postgres.credential_env,
+            BTreeMap::from([("PGPASSWORD".to_owned(), "secret".to_owned())])
         );
+        assert_eq!(mariadb.argv, vec!["mysql", "-uroot", "legacy"]);
+        assert_eq!(
+            mariadb.credential_env,
+            BTreeMap::from([("MYSQL_PWD".to_owned(), "secret".to_owned())])
+        );
+        for plan in [&postgres, &mariadb] {
+            assert!(!plan.argv.iter().any(|arg| arg.contains("secret")));
+        }
+    }
+
+    #[test]
+    fn database_command_debug_redacts_credential_values() {
+        let plan =
+            database_dump_command("postgres", DatabaseServiceKind::Postgres, "hunter2", "app");
+        let rendered = format!("{plan:?}");
+        assert!(!rendered.contains("hunter2"), "{rendered}");
+        assert!(rendered.contains("PGPASSWORD"), "{rendered}");
+
+        let service =
+            DatabaseService::new("postgres", DatabaseServiceKind::Postgres).password("hunter2");
+        let rendered = format!("{service:?}");
+        assert!(!rendered.contains("hunter2"), "{rendered}");
     }
 }

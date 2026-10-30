@@ -725,6 +725,15 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Fixed
 
+- Database seed and dump keep the database password out of every spawned
+  command's arguments. The command plan carries `MYSQL_PWD` / `PGPASSWORD` by
+  variable name and never the value, and each exec sources it from a private
+  per-exec file that is removed afterwards, so `MYSQL_PWD=<value>` and
+  `PGPASSWORD=<value>` no longer appear in a host argv, a process listing, a
+  receipt or a diagnostic on either the checkout-local or the shared Compose
+  route. Target resolution, the selected Compose project, seed/dump results,
+  reports and cleanup are unchanged.
+
 - Keep the existing workspace session and its holders authoritative, including
   new borrowed operations after a failed activation, until the successor commits
   atomically. Register detached successors under their private liveness slot and
