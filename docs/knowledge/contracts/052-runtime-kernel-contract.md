@@ -3428,19 +3428,32 @@ ServingOwner::adopt_owned(
 ```
 
 **Guest entry (v2, binding when #482 lands).** The guest's context read is one
-call site. It becomes `workspace_client::context::v2::read_published_v2(&mut dyn
-GuestReader) -> Result<Option<WorkspaceContextV2>, ContextReadError>` — a strict
-parse of the canonical kernel document, where v1 refuses and nothing is
-reinterpreted — followed by `WorkspaceContextV2::verify(&mut dyn GuestIdentity,
-&LiveGuestRun) -> Result<VerifiedWorkspaceContext, ContextRefusal>`, which
-observes the full container id, boot, platform and libc before it yields the
-session run and generation. `GuestIdentity` is the module's existing seam
-(`fn container(&mut self) -> Result<WorkspaceContainerIdentity, RunnerError>`),
-so one observer serves both the adopter's liveness check and the context
-verification, and the enrolled direct terminal takes its session generation from
-the verified value instead of refusing. Until that entry lands, the v1
-`read_published_context`/`LiveGuestRun` path is the bridge and an unprepared
-workspace still reads as "not a guest".
+call site, and the binding replaces the bridge entirely rather than adding a
+second seam:
+
+- `workspace_client::context::v2::read_published_v2(&mut dyn GuestReader) ->
+  Result<Option<WorkspaceContextV2>, ContextReadError>` strictly parses the
+  canonical kernel document; v1 refuses and nothing is reinterpreted. An
+  unprepared workspace still reads as "not a guest".
+- `WorkspaceContextV2::verify(&mut dyn identity::GuestIdentity, &LiveGuestRun) ->
+  Result<VerifiedWorkspaceContext, ContextRefusal>` takes the shared identity
+  trait `workspace_client::identity::GuestIdentity { fn observe(&mut self) ->
+  Result<GuestSelfObservation, GuestIdentityRefusal> }`, whose production
+  implementation is `ProcGuestIdentity::process()`. The observation carries the
+  full container id, VM boot, platform and libc and compares them itself
+  (`GuestSelfObservation::compare`), so no guest trusts the context's own claim.
+- The verified value carries `session_run_id: String` and a nonzero exact
+  `session_generation: u64`, the admitted session's own S, distinct from the
+  environment generation and the context generation. A direct terminal's
+  enrolment therefore takes `SessionIdentity { run: RunId parsed from
+  session_run_id, generation: Generation::new(session_generation) }` from it, and
+  the "no published session generation" refusal disappears.
+
+The binding commit deletes this module's placeholder identity seam
+(`GuestIdentity`, `UnobservedContainer`, `live_guest_run`) and binds the paths
+above at the same call site; until then the v1
+`read_published_context`/`LiveGuestRun` path is the bridge and keeps host
+authority refused rather than trusting a claim nothing observed.
 
 The adopted run — not a bare `Run` — is what the entry takes, because a
 `PreparedHostChannel` cannot exist before that adoption: the kernel's
