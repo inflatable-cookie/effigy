@@ -3567,14 +3567,16 @@ fn a_decision_refuses_a_target_the_live_publication_does_not_name() {
         vm_boot_id: published_target().vm_boot_id,
         backend: published_target().backend,
     };
-    let error = WorkspaceActivationReservation::decide(
-        &cx,
-        &root,
-        &environment,
-        &publish_inputs(21, Some(other)),
-        Wait::FailFast,
-    )
-    .expect_err("a replaced container is refused, never superseded silently");
+    // The artifact changed too, so a comparison that looked at the artifact
+    // first would quietly reserve a successor; the target fence comes first.
+    let mut changed = publish_inputs(22, Some(other));
+    changed.artifact = ArtifactEvidence::Selected {
+        digest: artifact(23),
+        object: format!("/run/effigy/objects/bin/{}", artifact(23)),
+    };
+    let error =
+        WorkspaceActivationReservation::decide(&cx, &root, &environment, &changed, Wait::FailFast)
+            .expect_err("a replaced container is refused, never superseded silently");
     assert!(
         matches!(error, RunError::Refused(ref message) if message.contains("is not the container and boot")),
         "{error:?}"
@@ -4599,6 +4601,7 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     );
     assert_eq!(stops.get(), 0);
     let probed = launch.liveness(
+        &session_run,
         &mut FakeProbe {
             answer: Some(Observed::Verified((), evidence())),
             calls: 0,
@@ -4731,6 +4734,7 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
         Err(ServingRefusal::Unqualified)
     ));
     let absent = launch.liveness(
+        &session_run,
         &mut FakeProbe {
             answer: Some(Observed::Verified((), evidence())),
             calls: 0,
@@ -5629,7 +5633,7 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
         launch.publish(),
         Err(ServingRefusal::WrongSession)
     ));
-    let probed = launch.liveness(&mut verifying_probe(), Duration::from_secs(1));
+    let probed = launch.liveness(&session_run, &mut verifying_probe(), Duration::from_secs(1));
     assert!(
         matches!(probed, Observed::Absent(_)),
         "a released owner has no served locator"
@@ -5681,9 +5685,27 @@ fn a_settled_session_stops_serving() {
         launch.serve(&session_run),
         Err(ServingRefusal::WrongSession)
     ));
+    assert!(
+        matches!(
+            launch.liveness(&session_run, &mut verifying_probe(), Duration::from_secs(1)),
+            Observed::Absent(_)
+        ),
+        "a settling session has no servable locator"
+    );
     session_run
         .settle(&cleanup(&fixture.cx), &mut adapter())
         .expect("settle the session");
+    // Settlement released the session's gate: a successor activation can take
+    // the environment's next generation rather than meeting a held slot.
+    let decision = WorkspaceActivationReservation::decide(
+        &fixture.cx,
+        &fixture.root,
+        &fixture.environment,
+        &publish_inputs(101, None),
+        Wait::FailFast,
+    )
+    .expect("the settled session holds no gate");
+    assert!(matches!(decision, ActivationDecision::Activate(_)));
     launch.release();
 }
 
@@ -5727,4 +5749,49 @@ fn recovery_refuses_a_target_that_is_not_the_published_container() {
         Some("pending".to_owned()),
         "the obligation stays Pending for a live recovery"
     );
+}
+
+/// The activation CLI hands its session and custody to the serving supervisor.
+/// What the caller built is returned; nothing of the caller's scope remains
+/// when the supervisor uses it, which is the caller-EOF handoff the brief names.
+fn activation_hands_off(fixture: &ServingFixture, id: u8) -> (Run<'_>, SessionRef, SessionLaunch) {
+    let (mut session_run, session) = fixture.admit(id);
+    let (listener, _stops) = FakeListener::bound();
+    let key = ServingKey::new(vec![4u8; 32], Digest::of(b"handoff pin")).expect("key");
+    let launch = SessionLaunch::launch(
+        &session,
+        session_run.session_owner().expect("owner"),
+        "supervisor-1",
+        key,
+        Box::new(listener),
+    )
+    .expect("launch");
+    (session_run, session, launch)
+}
+
+#[test]
+fn custody_survives_the_activation_clients_eof() {
+    let fixture = ServingFixture::new();
+    // The activation CLI ran and exited: only its handoff remains.
+    let (session_run, session, mut launch) = activation_hands_off(&fixture, 80);
+    assert_eq!(launch.session().run(), session.run());
+    launch
+        .qualify(&mut verifying_probe(), Duration::from_secs(1))
+        .expect("qualified");
+    let lease = launch.publish().expect("published").lease().clone();
+    assert_eq!(
+        launch.publish().expect("retried publish").lease(),
+        &lease,
+        "a retry after the caller's EOF answers the same locator"
+    );
+    assert!(
+        launch
+            .liveness(&session_run, &mut verifying_probe(), Duration::from_secs(1))
+            .verified()
+            .is_some(),
+        "the supervisor's held key answers after the caller's EOF"
+    );
+    launch.serve(&session_run).expect("adopted");
+    assert!(launch.serving(&session_run));
+    launch.release();
 }

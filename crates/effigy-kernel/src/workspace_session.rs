@@ -1137,11 +1137,28 @@ fn attachable(
     let Some(frozen) = record.inputs.clone() else {
         return Ok(None);
     };
+    let publication = obligation.receipt().publication();
+    // The target is fenced *first*, before the artifact or selection digest can
+    // decide anything: a replaced container or changed boot is refused by name
+    // rather than hidden behind a superseding generation.
+    if let TargetEvidence::Observed(frozen_target) = &frozen.target {
+        if publication.publication.container_id != frozen_target.container_id
+            || publication.publication.vm_boot_id != frozen_target.vm_boot_id
+        {
+            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+        }
+    }
+    if let Some(observed) = publishing.target.container() {
+        if publication.publication.container_id != observed.container_id
+            || publication.publication.vm_boot_id != observed.vm_boot_id
+        {
+            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
+        }
+    }
     if frozen.selection != publishing.selection || frozen.inputs_digest != publishing.inputs_digest
     {
         return Ok(None);
     }
-    let publication = obligation.receipt().publication();
     let Some(digest) = publishing.artifact.selected() else {
         return Ok(None);
     };
@@ -1162,23 +1179,6 @@ fn attachable(
         != publication.publication.context_generation
     {
         return Ok(None);
-    }
-    // A target the live generation froze must still be the container and boot
-    // its publication names, and a re-observation must agree with that same
-    // publication: a replaced container is never attached to.
-    if let TargetEvidence::Observed(frozen_target) = &frozen.target {
-        if publication.publication.container_id != frozen_target.container_id
-            || publication.publication.vm_boot_id != frozen_target.vm_boot_id
-        {
-            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
-        }
-    }
-    if let Some(observed) = publishing.target.container() {
-        if publication.publication.container_id != observed.container_id
-            || publication.publication.vm_boot_id != observed.vm_boot_id
-        {
-            return Err(ActivationRefusal::TargetEvidenceMismatch.into());
-        }
     }
     Ok(Some(SessionRef::new(
         live.run,

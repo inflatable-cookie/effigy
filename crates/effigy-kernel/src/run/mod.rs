@@ -799,18 +799,12 @@ impl<'a> Run<'a> {
                 "only an admitted workspace session owns a channel listener",
             ));
         }
-        // The owner proof carries the session's own gate custody: a duplicate of
-        // the private slot this run holds. Whoever holds the proof — the
-        // listener launch — keeps the session owned, so dropping the run handle
-        // cannot leave a served locator whose session nobody owns.
-        let custody = self
-            .guard
-            .share_custody()
-            .map_err(|error| RunError::unavailable(format!("session custody: {error}")))?;
+        // The proof names the exact detached run. The session's gate stays with
+        // that run, so settlement releases it; a launch only serves while the
+        // run it names is still open (and can abandon the proof explicitly).
         Ok(crate::workspace_session::SessionOwner::of(
             self.id,
             self.owner.clone(),
-            custody,
         ))
     }
 

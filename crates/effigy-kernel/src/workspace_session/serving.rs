@@ -173,19 +173,17 @@ impl ServingLease {
 pub struct SessionOwner {
     run: RunId,
     fence: Fence,
-    /// The session's private slot, held by this proof. Dropping it releases the
-    /// slot, and a launch that holds it keeps the session owned for as long as
-    /// the listener lives.
-    custody: Vec<std::os::fd::OwnedFd>,
+    /// Whether this proof still owns the session. The session's *gate* stays
+    /// with its run, so settlement releases it; this flag is the explicit
+    /// handover a launch can drop when the owner goes away.
     held: bool,
 }
 
 impl SessionOwner {
-    pub(crate) fn of(run: RunId, fence: Fence, custody: Vec<std::os::fd::OwnedFd>) -> Self {
+    pub(crate) fn of(run: RunId, fence: Fence) -> Self {
         Self {
             run,
             fence,
-            custody,
             held: true,
         }
     }
@@ -193,10 +191,9 @@ impl SessionOwner {
     pub fn held(&self) -> bool {
         self.held
     }
-    /// Release the owner custody early: the session is no longer owned by this
-    /// proof, so nothing it published may keep serving.
+    /// Release the owner proof early: the session is no longer owned here, so
+    /// nothing it published may keep serving.
     fn abandon(&mut self) {
-        self.custody.clear();
         self.held = false;
     }
     pub fn run(&self) -> RunId {
@@ -611,7 +608,17 @@ impl SessionLaunch {
     /// One bounded pinned liveness probe, for recovery to judge a selection
     /// before it completes. It proves the key holder is alive and accepting; it
     /// grants nothing and, once the launch serves, is no longer needed.
-    pub fn liveness(&self, probe: &mut dyn ServingProbe, deadline: Duration) -> Observed<()> {
+    pub fn liveness(
+        &self,
+        session_run: &Run<'_>,
+        probe: &mut dyn ServingProbe,
+        deadline: Duration,
+    ) -> Observed<()> {
+        if !self.session_is_live(session_run) {
+            return Observed::Absent(AbsenceProof::NoRow {
+                table: "workspace-session-listener".into(),
+            });
+        }
         let Some(bound) = &self.bound else {
             return Observed::Absent(AbsenceProof::NoRow {
                 table: "workspace-session-listener".into(),
