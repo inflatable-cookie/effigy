@@ -281,14 +281,18 @@ During v0.x, MINOR bumps may include breaking changes.
   each other, and a retained chunk is published with its absolute log position
   so a client's resume cursor, the frame sequence and the retained log are one
   coordinate system across reconnects and chunk boundaries. `RetainedStreams`
-  is the kernel's own endpoint over `run::read_log`: negotiation covers every
-  stream the endpoint publishes and is pure, so a reconnect resumes each
-  retained stream at its own position (never restarting one at zero) and a
-  replacement the host refuses leaves the working attachment's reader where it
-  was; a future cursor on the primary stream or an unreadable log refuses the
-  attach, and a position the log rotated past becomes one `gap` frame naming the
-  first missing offset, ahead of the data that resumes there — so every frame on
-  a stream keeps a strictly increasing sequence. The endpoint
+  is the kernel's own endpoint over `run::read_log`: retained streams have
+  independent logs and lengths, so an attach reports the position it consumed on
+  each stream id (`cursors`), with `cursor` as the primary default, and one
+  position for the whole connection is refused rather than skipping bytes on a
+  shorter stream or replaying them on a longer one. Negotiation covers every
+  stream and is pure, so a reconnect resumes each retained stream at its own
+  position and a replacement the host refuses leaves the working attachment's
+  reader where it was; a future cursor, a position on a stream with no retained
+  log, or an unreadable log refuses the attach, and a position the log rotated
+  past becomes one `gap` frame naming the first missing offset, ahead of the data
+  that resumes there — so every frame on a stream keeps a strictly increasing
+  sequence. The endpoint
   re-checks the connection's attachment on every read. `Terminal::input`
   receives one validated terminal input frame exactly once and
   `Terminal::resize` the newest size with no queue behind it, fenced on the

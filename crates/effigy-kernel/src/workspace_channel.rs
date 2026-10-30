@@ -61,6 +61,11 @@ pub const MAX_QUEUED_STREAM_BYTES: usize = 512 << 10;
 /// terminal input and resize all name it, so one attachment has one terminal
 /// and one inbound sequence (052 §8.11).
 pub const TERMINAL_STREAM: u32 = 0;
+/// The largest cursor an attach request may name, in a stream's own units.
+pub const MAX_STREAM_CURSOR: u64 = 1 << 40;
+/// Per-stream cursors one attach request may name: the connection carries at
+/// most nine kinds, and a source publishes bounded ids.
+pub const MAX_PER_STREAM_CURSORS: usize = 16;
 /// Longest diagnostic a refusal carries: a sentence, never a transcript.
 pub const MAX_DIAGNOSTIC_BYTES: usize = 512;
 
@@ -409,12 +414,20 @@ impl ObserveBody {
 /// What an `attach` request asks to read. A cursor asks to resume; when
 /// rotation removed those bytes the first read reports a gap, never complete
 /// output.
+///
+/// Retained streams have independent logs and independent lengths, so a client
+/// that consumed more of one than another reports each position in `cursors`,
+/// keyed by the stream id it read. `cursor` remains the default for a
+/// connection that names a single position, and the only cursor a
+/// single-stream attach needs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttachBody {
     pub run: RunId,
     pub streams: Vec<StreamKind>,
     pub cursor: Option<u64>,
+    #[serde(default)]
+    pub cursors: Option<BTreeMap<u32, u64>>,
 }
 impl AttachBody {
     fn check(&self) -> Result<(), Refusal> {
@@ -427,10 +440,28 @@ impl AttachBody {
         if unique.len() != self.streams.len() {
             return Err(Refusal::invalid("an attach request names each stream once"));
         }
-        if self.cursor.is_some_and(|cursor| cursor > (1 << 40)) {
+        if self.cursor.is_some_and(|cursor| cursor > MAX_STREAM_CURSOR) {
             return Err(Refusal::invalid("a stream cursor is bounded"));
         }
+        if let Some(cursors) = &self.cursors {
+            if cursors.len() > MAX_PER_STREAM_CURSORS {
+                return Err(Refusal::invalid(
+                    "an attach request names at most sixteen stream cursors",
+                ));
+            }
+            if cursors.values().any(|cursor| *cursor > MAX_STREAM_CURSOR) {
+                return Err(Refusal::invalid("a stream cursor is bounded"));
+            }
+        }
         Ok(())
+    }
+    /// The positions this request reports, per stream id, with its default
+    /// cursor for a stream it did not name individually.
+    fn positions(&self) -> Cursors {
+        Cursors {
+            primary: self.cursor.unwrap_or(0),
+            streams: self.cursors.clone().unwrap_or_default(),
+        }
     }
 }
 
@@ -1379,12 +1410,41 @@ pub struct StreamChunk {
     pub bytes: Vec<u8>,
 }
 
-/// Where every stream a connection carries starts publishing, for the cursor
-/// the client asked to resume from (052 §8.11). Each stream has its own
-/// retained log, so each has its own position; a stream whose log no longer
-/// holds the requested bytes starts where its log starts and reports that
-/// bounded range as a gap before any data.
+/// Where every stream a connection carries starts publishing (052 §8.11).
+/// Each stream has its own retained log, so each has its own position; a stream
+/// whose log no longer holds the requested bytes starts where its log starts and
+/// reports that bounded range as a gap before any data.
 pub type StreamStart = BTreeMap<u32, u64>;
+
+/// The positions a client reports it has already consumed: one default, and one
+/// per stream id for the streams it read independently. Retained streams have
+/// independent logs and lengths, so one position for a whole connection cannot
+/// describe them — a client that reports only a default is resumed on the stream
+/// that default belongs to and nothing else.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Cursors {
+    /// The position for the connection's primary stream, from `attach.cursor`.
+    pub primary: u64,
+    /// Consumed positions per stream id, which may differ from each other.
+    pub streams: BTreeMap<u32, u64>,
+}
+impl Cursors {
+    /// A fresh connection that has consumed nothing.
+    pub fn fresh() -> Self {
+        Self::default()
+    }
+    /// Whether this is a first read: no position named at all.
+    pub fn is_fresh(&self) -> bool {
+        self.primary == 0 && self.streams.is_empty()
+    }
+    /// The position named for `stream_id`, if the client named one.
+    pub fn position(&self, stream_id: u32) -> Option<u64> {
+        self.streams
+            .get(&stream_id)
+            .copied()
+            .or((stream_id == TERMINAL_STREAM).then_some(self.primary))
+    }
+}
 
 /// The attached run's terminal owner, as lane B implements it: the front end
 /// that holds the terminal and hands validated bytes and sizes to it.
@@ -1437,19 +1497,20 @@ pub trait Streams {
     /// passed so the endpoint can re-check its own lifetime before reading.
     fn next_chunk(&mut self, attachment: Option<&Attachment>) -> Option<StreamChunk>;
 
-    /// Where **every** stream this connection carries starts, for the client's
-    /// requested `cursor`: `None` refuses the attach. It is asked before the
-    /// attachment opens and is pure — nothing about the current reader moves —
-    /// so a host that refuses the replacement leaves the connection's working
-    /// attachment exactly where it was.
+    /// Where **every** stream this connection carries starts, for the positions
+    /// the client reports it has consumed: `None` refuses the attach. It is
+    /// asked before the attachment opens and is pure — nothing about the current
+    /// reader moves — so a host that refuses the replacement leaves the
+    /// connection's working attachment exactly where it was.
     ///
     /// The default is a source with nothing retained: it serves the start of the
     /// stream and refuses any later cursor, so a reconnect is never presented as
     /// an uninterrupted sequence from zero. A source that keeps several retained
-    /// streams answers for each of them, so no stream silently replays consumed
-    /// output.
-    fn resume(&mut self, _run: RunId, cursor: u64) -> Option<StreamStart> {
-        if cursor == 0 {
+    /// streams answers for each of them — refusing when the client's position
+    /// for one cannot be established — so no stream silently replays consumed
+    /// output or skips bytes it never read.
+    fn resume(&mut self, _run: RunId, cursors: &Cursors) -> Option<StreamStart> {
+        if cursors.is_fresh() {
             Some(StreamStart::from([(TERMINAL_STREAM, 0)]))
         } else {
             None
@@ -1585,34 +1646,51 @@ impl<T: Terminal> Streams for RetainedStreams<T> {
         None
     }
 
-    fn resume(&mut self, run: RunId, cursor: u64) -> Option<StreamStart> {
+    fn resume(&mut self, run: RunId, cursors: &Cursors) -> Option<StreamStart> {
         if run != self.run {
             return None;
         }
-        // Every stream this endpoint publishes is negotiated, not just the
-        // primary one: each has its own retained log, and a stream left at zero
-        // would replay output the client already consumed as if uninterrupted.
+        // Every stream this endpoint publishes is negotiated at its own
+        // position: retained logs have independent lengths, so one position for
+        // the whole connection would skip bytes the client never read on a
+        // shorter stream, or replay bytes it had consumed on a longer one.
         let mut start = StreamStart::new();
         for (stream_id, &(sequence, stream)) in self.plan.iter().enumerate() {
-            let primary = stream_id as u32 == TERMINAL_STREAM;
-            let retained =
-                run::read_log(&self.observe, &self.root, run, sequence, stream, cursor, 1);
-            let position = match retained {
-                // The log's end is its extent: a cursor at or before it is a
-                // position this stream continues from.
-                Observed::Verified(read, _) if cursor <= read.end => cursor,
-                // A cursor past the primary stream's end is a future position:
-                // the attach is refused rather than clamped or restarted at
-                // zero. A secondary stream is measured by its own log, so a
-                // cursor beyond it means that stream has nothing left to give
-                // and continues at its end.
-                Observed::Verified(read, _) if !primary => read.end,
-                // A stream nothing was captured for has nothing to replay; any
-                // later output is new.
-                Observed::Absent(_) => 0,
-                Observed::Verified(..) | Observed::Unknown(_) => return None,
+            let stream_id = stream_id as u32;
+            let requested = match cursors.position(stream_id) {
+                Some(position) => position,
+                // A stream the client never named cannot be resumed safely: it
+                // may already have consumed part of it. Only a fresh read, which
+                // reports no position at all, starts here.
+                None if cursors.is_fresh() => 0,
+                None => return None,
             };
-            start.insert(stream_id as u32, position);
+            let retained = run::read_log(
+                &self.observe,
+                &self.root,
+                run,
+                sequence,
+                stream,
+                requested,
+                1,
+            );
+            let position = match retained {
+                // The log's end is its extent: a position at or before it is a
+                // place this stream continues from.
+                Observed::Verified(read, _) if requested <= read.end => requested,
+                // A position past the retained end is a future one, refused
+                // rather than clamped to the end (which would skip the bytes in
+                // between) or restarted at zero.
+                Observed::Verified(..) => return None,
+                // No retained log: either nothing was captured yet or retention
+                // removed it, and this read cannot tell which. A fresh read
+                // starts at zero; a resume at any later position cannot be
+                // established, so the attach is refused rather than opened as if
+                // it had resumed.
+                Observed::Absent(_) if requested == 0 => 0,
+                Observed::Absent(_) | Observed::Unknown(_) => return None,
+            };
+            start.insert(stream_id, position);
         }
         Some(start)
     }
@@ -2850,7 +2928,7 @@ impl<A: Admission, R: Resolver, O: Observer, I: RunIds> Server<A, R, O, I> {
                     // refuses has moved nothing, so the stream this connection
                     // is still serving keeps its position (§8.11).
                     let cursor = body.cursor.unwrap_or(0);
-                    let Some(start) = streams.resume(body.run, cursor) else {
+                    let Some(start) = streams.resume(body.run, &body.positions()) else {
                         return Err(Refusal::invalid(
                             "this attachment cannot resume at the requested cursor",
                         ));

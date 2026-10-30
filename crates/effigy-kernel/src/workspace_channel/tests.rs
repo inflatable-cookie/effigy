@@ -1228,6 +1228,7 @@ fn a_guest_placement_cannot_invoke_and_a_foreign_run_cannot_be_steered() {
                     run: foreign.run,
                     streams: vec![StreamKind::Stdout],
                     cursor: None,
+                    cursors: None,
                 },
             )
             .expect_err("a foreign run cannot be attached")
@@ -1293,6 +1294,7 @@ fn an_owner_detach_and_a_secondary_eof_both_leave_the_run_running() {
                 run: accepted.run,
                 streams: vec![StreamKind::Stdout],
                 cursor: Some(0),
+                cursors: None,
             },
         )
         .expect("owner attachment");
@@ -1317,6 +1319,7 @@ fn an_owner_detach_and_a_secondary_eof_both_leave_the_run_running() {
                 run: accepted.run,
                 streams: vec![StreamKind::Stdout, StreamKind::Stderr],
                 cursor: None,
+                cursors: None,
             },
         )
         .expect("secondary attachment");
@@ -1907,6 +1910,7 @@ fn an_attachment_is_replaced_or_refused_and_never_orphaned() {
                 run,
                 streams: vec![StreamKind::Stdout],
                 cursor: None,
+                cursors: None,
             }),
             id,
         ))
@@ -2021,6 +2025,7 @@ fn a_full_stream_window_still_serves_cancel_and_resumes_after_an_ack() {
                     run: live,
                     streams: vec![StreamKind::Stdout],
                     cursor: None,
+                    cursors: None,
                 }),
                 1,
             )),
@@ -2197,6 +2202,7 @@ fn a_reused_server_starts_each_connection_with_no_stream_state() {
                 run: live,
                 streams: vec![StreamKind::Stdout],
                 cursor: None,
+                cursors: None,
             }),
             id,
         ))
@@ -2314,8 +2320,10 @@ impl Terminal for RecordingTerminal {
     }
 }
 impl Streams for RecordingTerminal {
-    fn resume(&mut self, _run: RunId, cursor: u64) -> Option<StreamStart> {
-        (cursor == 0).then(|| StreamStart::from([(TERMINAL_STREAM, 0)]))
+    fn resume(&mut self, _run: RunId, cursors: &Cursors) -> Option<StreamStart> {
+        cursors
+            .is_fresh()
+            .then(|| StreamStart::from([(TERMINAL_STREAM, 0)]))
     }
     fn next_chunk(&mut self, _attachment: Option<&Attachment>) -> Option<StreamChunk> {
         self.chunks.pop_front()
@@ -2341,6 +2349,29 @@ fn attach_frame(
             run,
             streams,
             cursor,
+            cursors: None,
+        }),
+        id,
+    ))
+}
+
+/// An attach that reports the position it consumed on each stream id, which is
+/// what a reconnecting client that read several retained logs reports.
+fn attach_frame_cursors(
+    session: Session,
+    run: RunId,
+    id: u8,
+    streams: Vec<StreamKind>,
+    cursor: Option<u64>,
+    cursors: BTreeMap<u32, u64>,
+) -> Frame {
+    Frame::Request(request(
+        session,
+        RequestBody::Attach(AttachBody {
+            run,
+            streams,
+            cursor,
+            cursors: Some(cursors),
         }),
         id,
     ))
@@ -3055,11 +3086,13 @@ fn a_refused_replacement_leaves_the_current_stream_where_it_was() {
 }
 
 #[test]
-fn a_reconnect_resumes_every_retained_stream_not_only_the_first() {
+fn a_reconnect_resumes_every_retained_stream_at_its_own_position() {
     let (_fixture, cx, root, session) = journal("effigy-channel-two-streams");
     let (_run, live) = admitted_run(&cx, &root, session, 83, &[158]);
     let stdout_bytes: Vec<u8> = (0..40u32).map(|n| b'a' + (n % 26) as u8).collect();
-    let stderr_bytes: Vec<u8> = (0..40u32).map(|n| b'A' + (n % 26) as u8).collect();
+    // Stderr is shorter and the client consumed far less of it: one cursor for
+    // the whole connection would skip the bytes between 5 and 30.
+    let stderr_bytes: Vec<u8> = (0..30u32).map(|n| b'A' + (n % 26) as u8).collect();
     write_segment(&root, live, 1, Stream::Stdout, 0, &stdout_bytes);
     write_segment(&root, live, 1, Stream::Stderr, 0, &stderr_bytes);
     let mut host = server(session, &[159, 160]);
@@ -3068,23 +3101,24 @@ fn a_reconnect_resumes_every_retained_stream_not_only_the_first() {
         stream(&[
             Frame::Hello(hello()),
             Frame::Authenticate(capability()),
-            // A reconnect at 20 on a fresh endpoint: both retained streams must
-            // resume there, not just stream 0.
-            attach_frame(
+            // The client read stdout through 20 and stderr only through 5.
+            attach_frame_cursors(
                 session,
                 live,
                 1,
                 vec![StreamKind::Stdout, StreamKind::Stderr],
-                Some(20),
+                None,
+                BTreeMap::from([(0, 20), (1, 5)]),
             ),
-            // A replacement at 30 on the same connection moves both streams to
-            // their own retained position at 30.
-            attach_frame(
+            // A replacement on the same connection moves both streams to their
+            // own positions again.
+            attach_frame_cursors(
                 session,
                 live,
                 2,
                 vec![StreamKind::Stdout, StreamKind::Stderr],
-                Some(30),
+                None,
+                BTreeMap::from([(0, 30), (1, 10)]),
             ),
         ]),
         peer(),
@@ -3112,12 +3146,12 @@ fn a_reconnect_resumes_every_retained_stream_not_only_the_first() {
     assert_eq!(
         one(1, 0),
         vec![(20, stdout_bytes[20..].to_vec())],
-        "stdout resumed at the reconnecting client's position"
+        "stdout resumed at its own consumed position"
     );
     assert_eq!(
         one(1, 1),
-        vec![(20, stderr_bytes[20..].to_vec())],
-        "stderr resumed at its own retained position, not at zero"
+        vec![(5, stderr_bytes[5..].to_vec())],
+        "stderr resumed at its own, shorter position instead of skipping to its end"
     );
     assert_eq!(
         one(2, 0),
@@ -3126,14 +3160,132 @@ fn a_reconnect_resumes_every_retained_stream_not_only_the_first() {
     );
     assert_eq!(
         one(2, 1),
-        vec![(30, stderr_bytes[30..].to_vec())],
+        vec![(10, stderr_bytes[10..].to_vec())],
         "the replacement moved stderr to its own cursor"
     );
     assert!(
         !stream_frames(&frames)
             .iter()
-            .any(|stream| stream.kind.is_data() && stream.seq < 20),
-        "no retained frame restarted at zero: {frames:?}"
+            .any(|stream| stream.kind.is_data() && stream.seq == 0),
+        "no retained stream restarted at zero: {frames:?}"
+    );
+}
+
+#[test]
+fn a_multi_stream_resume_without_per_stream_positions_is_refused() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-one-cursor");
+    let (_run, live) = admitted_run(&cx, &root, session, 84, &[161]);
+    let stdout_bytes: Vec<u8> = (0..40u32).map(|n| b'a' + (n % 26) as u8).collect();
+    let stderr_bytes: Vec<u8> = (0..30u32).map(|n| b'A' + (n % 26) as u8).collect();
+    write_segment(&root, live, 1, Stream::Stdout, 0, &stdout_bytes);
+    write_segment(&root, live, 1, Stream::Stderr, 0, &stderr_bytes);
+    let mut host = server(session, &[162]);
+    let mut streams = retained_plan(&root, live, vec![(1, Stream::Stdout), (1, Stream::Stderr)]);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            // One cursor cannot describe two independently consumed logs, so
+            // the attach refuses instead of skipping or replaying one of them.
+            attach_frame(
+                session,
+                live,
+                1,
+                vec![StreamKind::Stdout, StreamKind::Stderr],
+                Some(20),
+            ),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    let frames = written_frames(&pipe);
+    assert!(
+        frames.iter().any(|frame| matches!(
+            frame,
+            Frame::Response(Response {
+                outcome: ResponseOutcome::Refused(Refusal {
+                    code: RefusalCode::InvalidRequest,
+                    ..
+                }),
+                ..
+            })
+        )),
+        "an unrepresentable multi-stream resume is refused: {frames:?}"
+    );
+    assert!(!stream_frames(&frames)
+        .iter()
+        .any(|stream| stream.kind.is_data()));
+    let reader = match Store::read(&observe_context(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("root {other:?}"),
+    };
+    let secondaries: i64 = reader
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM run_attachments WHERE run_id=?1 AND lifetime='secondary'",
+            [live.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(secondaries, 0, "a refused resume opened no attachment");
+}
+
+#[test]
+fn a_resume_without_a_retained_log_is_refused() {
+    let (_fixture, cx, root, session) = journal("effigy-channel-no-log");
+    let (_run, live) = admitted_run(&cx, &root, session, 85, &[163]);
+    // Nothing is captured for this stream, so a later cursor cannot be
+    // established: the attach is refused rather than opened as if it resumed.
+    let mut host = server(session, &[164]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 1, vec![StreamKind::Stdout], Some(40)),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    let frames = written_frames(&pipe);
+    assert!(
+        frames.iter().any(|frame| matches!(
+            frame,
+            Frame::Response(Response {
+                outcome: ResponseOutcome::Refused(Refusal {
+                    code: RefusalCode::InvalidRequest,
+                    ..
+                }),
+                ..
+            })
+        )),
+        "a cursor with no retained log is refused: {frames:?}"
+    );
+
+    // A first read of that same stream still opens: nothing was consumed.
+    let mut host = server(session, &[165]);
+    let mut streams = retained_stdout(&root, live);
+    let mut pipe = Pipe::new(
+        stream(&[
+            Frame::Hello(hello()),
+            Frame::Authenticate(capability()),
+            attach_frame(session, live, 3, vec![StreamKind::Stdout], None),
+        ]),
+        peer(),
+    );
+    host.serve(&mut pipe, &cx, &observe_context(), &root, &mut streams)
+        .expect("served");
+    assert!(
+        written_frames(&pipe).iter().any(|frame| matches!(
+            frame,
+            Frame::Response(Response {
+                outcome: ResponseOutcome::Observed(_),
+                ..
+            })
+        )),
+        "a fresh read of an uncaptured stream still opens"
     );
 }
 

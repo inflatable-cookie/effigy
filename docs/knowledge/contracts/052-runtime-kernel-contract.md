@@ -3025,18 +3025,24 @@ the sequence is then that position: one frame's sequence is its first byte's
 offset, so a cursor, a frame sequence and the retained log are one coordinate
 system across reconnects and chunk boundaries with no replay store or second
 cursor. `RetainedStreams` is the kernel's own
-endpoint over `run::read_log`. Negotiation is per stream and pure: `resume(run,
-cursor)` answers the start position of **every** stream the endpoint publishes,
-so a reconnect resumes stdout and stderr at their own retained positions rather
-than replaying one of them from zero, while a future cursor on the primary
-stream, an unreadable log, or a cursor no stream can serve refuses the attach
-and opens none. Nothing moves until `start(attachment, positions)` runs for the
-attachment that actually opened, so a replacement the host then refuses leaves
-the connection's working attachment exactly where it was. A retained position
-the log rotates past becomes one `gap` frame naming the first missing offset,
-ahead of the data that resumes there, so every emitted frame on a stream keeps a
-strictly increasing sequence and the gap is never presented as complete
-output. The endpoint re-checks the connection's attachment with
+endpoint over `run::read_log`. Retained streams have independent logs and
+independent lengths, so an attach reports the position it consumed on each
+stream id it read (`cursors`), with `cursor` as the default for the primary
+stream; one position for the whole connection would skip the bytes a client
+never read on a shorter stream or replay the bytes it had consumed on a longer
+one. Negotiation is per stream and pure: `resume(run, cursors)` answers the
+start position of **every** stream the endpoint publishes, and refuses the
+attach — opening none — when a stream the client did not name individually
+would have to be guessed, when a position is past that stream's retained end,
+or when a position cannot be established because no retained log exists (a
+nonzero cursor cannot be resumed after retention removed the bytes). A stream's
+position at or before its retained end continues from there; bytes the log
+rotated past become one `gap` frame naming the first missing offset, ahead of the
+data that resumes there, so every emitted frame on a stream keeps a strictly
+increasing sequence and the gap is never presented as complete output. Nothing
+moves until `start(attachment, positions)` runs for the attachment that actually
+opened, so a replacement the host then refuses leaves the connection's working
+attachment exactly where it was. The endpoint re-checks the connection's attachment with
 `Attachment::attached_observed` on every read, so a released or replaced row
 stops publication. `input` delivers one validated terminal input frame exactly
 once to the terminal owner — `Terminal::input` — and `resize` hands over the
