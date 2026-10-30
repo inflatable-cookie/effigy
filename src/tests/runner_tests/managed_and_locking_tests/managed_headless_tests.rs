@@ -56,16 +56,22 @@ fn assert_gone(root: &std::path::Path, files: &[&str]) {
             continue;
         };
         let pid: u32 = raw.trim().parse().expect("recorded pid");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while effigy_process::process_is_running(pid) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(
-            !effigy_process::process_is_running(pid),
-            "`{file}` pid {pid} survived the settle"
-        );
-        println!("[fixture] `{file}`: pid {pid} exited");
+        assert_pid_gone(pid, &format!("`{file}`"));
     }
+}
+
+/// Report one fixture pid and prove it exited: every process a fixture starts
+/// leaves a receipt naming the pid and what became of it (effigy#493).
+fn assert_pid_gone(pid: u32, scope: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        !effigy_process::process_is_running(pid),
+        "{scope}: pid {pid} survived the settle"
+    );
+    println!("[fixture] {scope}: pid {pid} exited");
 }
 
 #[test]

@@ -5251,13 +5251,17 @@ impl PlainEnvironmentFixture {
 
     /// The environment's CLI with this fixture's own inputs, so its status and
     /// teardown resolve the same plain environment the session did.
-    fn container_cli(&self, cleanup: &ManagedContainerCleanup, args: &[&str]) -> Output {
-        run_container_cli_with_env(
-            &self.checkout,
-            cleanup,
-            args,
-            &[("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")],
-        )
+    fn container_cli(
+        &self,
+        cleanup: &ManagedContainerCleanup,
+        scope: &str,
+        args: &[&str],
+    ) -> Output {
+        let mut command = container_command_for_env(&self.checkout, cleanup, "web");
+        command
+            .args(args)
+            .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1");
+        run_fixture_cli(scope, &mut command)
     }
 }
 
@@ -5280,6 +5284,66 @@ fn assert_host_process_stopped(pid_file: &Path, report: &dyn Fn() -> String) {
         "[fixture] host process {pid} (from {}) exited",
         pid_file.display()
     );
+}
+
+/// Run one fixture CLI child, reporting its exact pid and exit: every process a
+/// fixture starts leaves a receipt naming the pid and what became of it
+/// (effigy#493).
+fn run_fixture_cli(scope: &str, command: &mut Command) -> Output {
+    // Capture the child's own output exactly as `output_owned` does, while
+    // keeping the retained leader so its pid can be reported.
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn_owned().expect("spawn fixture CLI");
+    let pid = child.id();
+    let output = child.wait_with_output().expect("wait for fixture CLI");
+    println!(
+        "[fixture] {scope}: pid {pid} exited ({}, code {:?})",
+        output.status,
+        output.status.code()
+    );
+    output
+}
+
+/// The pid a fixture private gateway recorded for its own daemon.
+fn private_gateway_daemon_pid(root: &Path) -> u32 {
+    let path = root.join("gateway.pid");
+    let raw = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()));
+    raw.trim()
+        .parse()
+        .unwrap_or_else(|error| panic!("private gateway pid record {}: {error}", path.display()))
+}
+
+/// Stop one fixture private gateway through its own control path and prove the
+/// exact daemon it recorded exited. The gateway is untracked afterwards so the
+/// shared cleanup does not race a second `down` (effigy#493).
+fn stop_private_gateway(
+    gateway_cleanup: &mut GatewayCleanup<'_>,
+    effects: &HostEffectSentinels,
+    foreign_ca: &Path,
+    root: &Path,
+    scope: &str,
+) {
+    let pid = private_gateway_daemon_pid(root);
+    let down = run_gateway(root, "down", effects, Some(foreign_ca), &[]);
+    assert!(
+        down.status.success(),
+        "{scope}: private gateway down failed: {}",
+        String::from_utf8_lossy(&down.stderr)
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while effigy_process::process_is_running(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        !effigy_process::process_is_running(pid),
+        "{scope}: private gateway daemon {pid} outlived its down"
+    );
+    gateway_cleanup.untrack(root);
+    println!("[fixture] {scope}: private gateway daemon {pid} exited");
 }
 
 /// Report the exact fixture PIDs the session's own log recorded — its
@@ -5354,6 +5418,7 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         .session(&cleanup, &output_path)
         .spawn_owned()
         .expect("spawn managed session");
+    let dev_pid = dev.id();
 
     // The session shows the environment's host processes, with their status
     // and their live output, and its own workload starts beside them. The
@@ -5379,10 +5444,10 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         thread::sleep(Duration::from_millis(50));
     }
 
-    let stop = plain
-        .command(&cleanup, &["dev", "stop"])
-        .output_owned()
-        .expect("stop the managed session");
+    let stop = run_fixture_cli(
+        "plain environment dev stop",
+        &mut plain.command(&cleanup, &["dev", "stop"]),
+    );
     assert_success(stop);
     let status = dev.wait_with_output().expect("wait for the session client");
     assert!(
@@ -5390,12 +5455,17 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         "the stopped session did not exit cleanly: {}",
         report()
     );
+    println!(
+        "[fixture] plain environment session client: pid {dev_pid} exited ({})",
+        status.status
+    );
     report_session_processes_absent(&output_path, "plain environment");
 
     for pid_file in [&plain.api_pid, &plain.worker_pid] {
         assert_host_process_stopped(pid_file, &report);
     }
-    let status_json = plain.container_cli(&cleanup, &["status", "--json"]);
+    let status_json =
+        plain.container_cli(&cleanup, "plain environment status", &["status", "--json"]);
     assert!(
         status_json.status.success(),
         "container status failed: {}",
@@ -5419,6 +5489,13 @@ fn managed_plain_environment_session_shows_host_processes_and_stops_them() {
         );
     }
     cleanup.checkouts.clear();
+    stop_private_gateway(
+        &mut gateway_cleanup,
+        &effects,
+        &foreign_ca,
+        &private_gateway,
+        "plain environment",
+    );
 }
 
 /// The same session over an environment an explicit `container up` already
@@ -5445,11 +5522,12 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         )
     };
 
-    let up = plain
-        .command(&cleanup, &["container", "up", "--detach"])
-        .env("FAKE_HEALTHY", &plain.healthy)
-        .output_owned()
-        .expect("explicit container up");
+    let up = run_fixture_cli(
+        "borrowed plain environment container up",
+        &mut plain
+            .command(&cleanup, &["container", "up", "--detach"])
+            .env("FAKE_HEALTHY", &plain.healthy),
+    );
     assert_success(up);
     wait_for_path_exists(&plain.api_pid, Duration::from_secs(60), "the host process");
 
@@ -5458,6 +5536,7 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         .session(&cleanup, &output_path)
         .spawn_owned()
         .expect("spawn managed session");
+    let dev_pid = dev.id();
     let deadline = Instant::now() + Duration::from_secs(120);
     while !fs::read_to_string(&output_path)
         .unwrap_or_default()
@@ -5470,16 +5549,20 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         );
         thread::sleep(Duration::from_millis(50));
     }
-    let stop = plain
-        .command(&cleanup, &["dev", "stop"])
-        .output_owned()
-        .expect("stop the managed session");
+    let stop = run_fixture_cli(
+        "borrowed plain environment dev stop",
+        &mut plain.command(&cleanup, &["dev", "stop"]),
+    );
     assert_success(stop);
     let status = dev.wait_with_output().expect("wait for the session client");
     assert!(
         status.status.success(),
         "the stopped session did not exit cleanly: {}",
         fs::read_to_string(&output_path).unwrap_or_default()
+    );
+    println!(
+        "[fixture] borrowed plain environment session client: pid {dev_pid} exited ({})",
+        status.status
     );
     report_session_processes_absent(&output_path, "borrowed plain environment");
 
@@ -5493,7 +5576,11 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
         "a borrowed environment's host process survived the session's stop: {}",
         report()
     );
-    let status_json = plain.container_cli(&cleanup, &["status", "--json"]);
+    let status_json = plain.container_cli(
+        &cleanup,
+        "borrowed plain environment status",
+        &["status", "--json"],
+    );
     assert!(
         status_json.status.success(),
         "container status failed: {}",
@@ -5521,8 +5608,19 @@ fn managed_plain_environment_session_leaves_a_borrowed_environment_running() {
             "a borrowed environment's host process keeps running: {process}"
         );
     }
-    let down = plain.container_cli(&cleanup, &["down", "--json"]);
+    let down = plain.container_cli(
+        &cleanup,
+        "borrowed plain environment down",
+        &["down", "--json"],
+    );
     assert_success(down);
+    stop_private_gateway(
+        &mut gateway_cleanup,
+        &effects,
+        &foreign_ca,
+        &private_gateway,
+        "borrowed plain environment",
+    );
 }
 
 /// A foreign route owner still refuses before any effect.
