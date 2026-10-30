@@ -1030,7 +1030,9 @@ line, and then the next commands (`effigy container logs --service <service>`,
 `effigy container status`). A stack whose unready services all fail the same
 way — every check reporting `command not found`, for example — is diagnosed
 after a few observations rather than waited out. `container status` shows an
-unhealthy service's last check output next to its status. An environment that
+unhealthy service's last check output next to its status, and a readiness frame
+names which of the probe's two runtime reads is running — the project's
+container list, or the inspect of the names that list returned. An environment that
 declares `[containers.<name>.health]` keeps that check as its final gate: the
 wait names that probe and its attempt, and a check that answers a complete
 definite status outside `2xx`/`3xx` is refused at once with the status it

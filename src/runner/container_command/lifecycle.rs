@@ -1836,6 +1836,10 @@ mod tests {
                 CreationPolicyStage::RenderInputs,
                 "preparing render inputs and owned mount directories",
             ),
+            (
+                CreationPolicyStage::ResolvedDeclaration,
+                "resolving the declaration again with the workspace and extra mounts",
+            ),
             (CreationPolicyStage::Render, "rendering the Compose stack"),
             (
                 CreationPolicyStage::MountSources,

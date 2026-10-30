@@ -160,7 +160,12 @@ migration completes on retry. A key declared in a bundle refuses. JSON uses
 `effigy container eject` is retired with it: generated Compose stays internal
 and `effigy container render` shows it.
 
-Readiness is Running plus the service's own health check. A service that
+Readiness is Running plus the service's own health check. Its progress names
+which of the probe's two runtime reads is running — the project's container
+list, or the inspect of the container names that list returned, with those
+names in the frame — because a stalled `ps` and a stalled `inspect` are
+different waits. A service whose health regresses after reporting healthy opens
+a fresh step with its own attempt and last check output. A service that
 declared `restart: "no"` and exited successfully is complete, not unready, so a
 one-shot job does not fail the stack's readiness; a failed exit is unready. A declared environment health check that answers
 a definite status line outside `2xx`/`3xx` is refused at once, naming the status

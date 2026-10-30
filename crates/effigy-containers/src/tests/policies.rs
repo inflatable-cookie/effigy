@@ -558,6 +558,7 @@ primary_service = "app"
             crate::CreationPolicyStage::CheckoutIdentity,
             crate::CreationPolicyStage::Declaration,
             crate::CreationPolicyStage::RenderInputs,
+            crate::CreationPolicyStage::ResolvedDeclaration,
             crate::CreationPolicyStage::Render,
             crate::CreationPolicyStage::MountSources,
         ],

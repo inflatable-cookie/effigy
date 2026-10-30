@@ -126,6 +126,10 @@ pub enum CreationPolicyStage {
     Declaration,
     /// Preparing render inputs and the owned mount directories they name.
     RenderInputs,
+    /// Re-resolving the declaration with the workspace and extra-mount
+    /// decisions the render inputs produced. This is a second manifest and
+    /// declaration read of its own, not the render-input preparation.
+    ResolvedDeclaration,
     /// Rendering the Compose stack for the resolved generation.
     Render,
     /// Preparing the mount sources the stack binds.
@@ -139,6 +143,9 @@ impl CreationPolicyStage {
             Self::CheckoutIdentity => "recording the checkout identity",
             Self::Declaration => "resolving the container declaration, ports and loopback",
             Self::RenderInputs => "preparing render inputs and owned mount directories",
+            Self::ResolvedDeclaration => {
+                "resolving the declaration again with the workspace and extra mounts"
+            }
             Self::Render => "rendering the Compose stack",
             Self::MountSources => "preparing the mount sources the stack binds",
         }
@@ -170,6 +177,7 @@ pub fn load_container_policy_for_creation_observed(
     let declared = load_container_policy(repo_root, requested_name)?;
     stage(CreationPolicyStage::RenderInputs);
     super::render::prepare_inputs(&declared)?;
+    stage(CreationPolicyStage::ResolvedDeclaration);
     let resolved =
         load_container_policy_with_workspace_decisions(repo_root, requested_name, None, true)?;
     stage(CreationPolicyStage::Render);

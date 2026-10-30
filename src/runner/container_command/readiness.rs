@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use effigy_containers::exec::container_last_log_line_for_policy;
 use effigy_containers::health::readiness::{
-    inspect_project_health, readiness_diagnostic, repeated_failure_diagnostic, unready,
-    ServiceHealth, SharedFailureTracker,
+    inspect_project_health_observed, readiness_diagnostic, repeated_failure_diagnostic, unready,
+    HealthProbeStage, ServiceHealth, SharedFailureTracker,
 };
 use effigy_containers::EffectiveContainerPolicy;
 
@@ -119,7 +119,25 @@ pub(super) fn await_services_ready(
             probe_deadline.saturating_duration_since(Instant::now()),
             known_counts,
         );
-        match inspect_project_health(repo_root, policy, Some(probe_deadline)) {
+        // The probe is two runtime reads; the frame follows the one in flight,
+        // naming the containers the inspect will read (effigy#460, Q-017).
+        let budget = probe_deadline.saturating_duration_since(Instant::now());
+        let mut probe_stage = |stage: HealthProbeStage<'_>| {
+            observe_probe_stage(
+                &progress,
+                &policy.project_name,
+                probes,
+                budget,
+                known_counts,
+                stage,
+            );
+        };
+        match inspect_project_health_observed(
+            repo_root,
+            policy,
+            Some(probe_deadline),
+            &mut probe_stage,
+        ) {
             Ok(services) if services.is_empty() => {
                 for waiting in steps.values() {
                     waiting.step.finish_clear();
@@ -231,6 +249,49 @@ fn observe_parent(progress: &ProgressSource, services: &[ServiceHealth]) {
         Some((ready as u64, services.len() as u64)),
         latest,
     );
+}
+
+/// The parent step while one of the probe's two runtime reads is in flight: the
+/// operation, its subjects, the probe number and its budget. The frame names
+/// the read now running, not the last result, so a stalled `ps` and a stalled
+/// `inspect` are told apart (effigy#460, Q-017).
+fn observe_probe_stage(
+    progress: &ProgressSource,
+    project: &str,
+    probe: u64,
+    budget: Duration,
+    known: Option<(u64, u64)>,
+    stage: HealthProbeStage<'_>,
+) {
+    let sub_step = match stage {
+        HealthProbeStage::ListingContainers => format!(
+            "listing the containers of project `{project}` from the runtime (probe {probe}, up to {}s)",
+            budget.as_secs()
+        ),
+        HealthProbeStage::InspectingContainers { containers } => format!(
+            "inspecting {} container{} of project `{project}`: {} (probe {probe}, up to {}s)",
+            containers.len(),
+            if containers.len() == 1 { "" } else { "s" },
+            bounded_names(containers),
+            budget.as_secs()
+        ),
+    };
+    progress.update(sub_step, known, None);
+}
+
+/// The containers one inspect read covers, bounded so one frame stays short.
+fn bounded_names(containers: &[String]) -> String {
+    const LIMIT: usize = 3;
+    let shown = containers
+        .iter()
+        .take(LIMIT)
+        .map(|container| format!("`{container}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if containers.len() <= LIMIT {
+        return shown;
+    }
+    format!("{shown} and {} more", containers.len() - LIMIT)
 }
 
 /// The parent step while one runtime health read is in flight: which probe it
@@ -397,6 +458,10 @@ fn exited_logs(
 /// Update one step per service and return the ones that are not ready. A
 /// waiting service's frame names its attempt and the last thing its health
 /// check or container state reported.
+///
+/// A healthy service's step finishes and leaves the map, so a service whose
+/// health regresses later opens a fresh step with its own attempt and last
+/// check output instead of updating a step that already ended (effigy#460).
 fn report_services(
     services: &[ServiceHealth],
     steps: &mut BTreeMap<String, ServiceStep>,
@@ -405,11 +470,13 @@ fn report_services(
     let mut not_ready = Vec::new();
     for service in services {
         if service.is_ready() {
-            if let Some(waiting) = steps.get(&service.service) {
+            if let Some(waiting) = steps.remove(&service.service) {
                 waiting
                     .step
                     .succeed(format!("{} is healthy", service.service));
             }
+            // The next wait for this service starts its own attempt count.
+            attempts.remove(&service.service);
             continue;
         }
         let attempt = attempts.entry(service.service.clone()).or_insert(0);
@@ -533,6 +600,117 @@ mod tests {
         assert_eq!(waits[1]["kind"], "probe");
         assert_eq!(waits[1]["project"], "demo");
         assert_eq!(waits[1]["error"], "docker: daemon not responding");
+    }
+
+    #[test]
+    fn the_probe_frame_names_the_runtime_read_in_flight_and_its_subjects() {
+        let progress = ProgressSource::waiting_for("the environment's services to report healthy");
+        observe_parent(
+            &progress,
+            &[
+                health(
+                    "web",
+                    "running",
+                    Some(HealthState::Unhealthy),
+                    4,
+                    Some("GET / HTTP/1.1 404"),
+                ),
+                health("db", "running", Some(HealthState::Healthy), 0, None),
+            ],
+        );
+        // The probe is two runtime reads: the list, then the inspect of the
+        // names it returned. Each frame names the one now in flight.
+        observe_probe_stage(
+            &progress,
+            "demo",
+            3,
+            Duration::from_secs(15),
+            Some((1, 2)),
+            HealthProbeStage::ListingContainers,
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(20)),
+            "listing the containers of project `demo` from the runtime (probe 3, up to 15s) (1/2); last: web is unhealthy after 4 failed checks; 20s elapsed"
+        );
+        let containers = ["demo-web-1".to_owned(), "demo-db-1".to_owned()];
+        observe_probe_stage(
+            &progress,
+            "demo",
+            4,
+            Duration::from_secs(5),
+            Some((1, 2)),
+            HealthProbeStage::InspectingContainers {
+                containers: &containers,
+            },
+        );
+        assert_eq!(
+            progress.frame_at(Duration::from_secs(24)),
+            "inspecting 2 containers of project `demo`: `demo-web-1`, `demo-db-1` (probe 4, up to 5s) (1/2); last: web is unhealthy after 4 failed checks; 24s elapsed"
+        );
+        // A long list stays one bounded frame.
+        let many = (0..5)
+            .map(|index| format!("demo-{index}-1"))
+            .collect::<Vec<_>>();
+        observe_probe_stage(
+            &progress,
+            "demo",
+            5,
+            Duration::from_secs(5),
+            None,
+            HealthProbeStage::InspectingContainers { containers: &many },
+        );
+        assert!(
+            progress
+                .frame_at(Duration::from_secs(25))
+                .contains("`demo-0-1`, `demo-1-1`, `demo-2-1` and 2 more"),
+            "{}",
+            progress.frame_at(Duration::from_secs(25))
+        );
+    }
+
+    #[test]
+    fn a_service_that_regresses_opens_a_fresh_step_with_its_own_attempt() {
+        let mut steps = BTreeMap::new();
+        let mut attempts = BTreeMap::new();
+        let healthy = vec![
+            health("web", "running", Some(HealthState::Healthy), 0, None),
+            health(
+                "db",
+                "running",
+                Some(HealthState::Starting),
+                0,
+                Some("waiting for connections"),
+            ),
+        ];
+        let not_ready = report_services(&healthy, &mut steps, &mut attempts);
+        assert_eq!(not_ready, vec!["db"]);
+        assert!(
+            !steps.contains_key("web"),
+            "a healthy service's finished step leaves the map"
+        );
+        assert!(!attempts.contains_key("web"));
+
+        // `web` regresses while `db` is still starting: the next observation
+        // opens a new step with its own attempt and last check output.
+        let regressed = vec![
+            health(
+                "web",
+                "running",
+                Some(HealthState::Unhealthy),
+                1,
+                Some("GET / HTTP/1.1 500"),
+            ),
+            health("db", "running", Some(HealthState::Healthy), 0, None),
+        ];
+        let not_ready = report_services(&regressed, &mut steps, &mut attempts);
+        assert_eq!(not_ready, vec!["web"]);
+        assert_eq!(attempts.get("web"), Some(&1));
+        let waiting = steps.get("web").expect("the regressed service waits again");
+        assert_eq!(
+            waiting.progress.frame_at(Duration::from_secs(7)),
+            "waiting for web to report healthy (attempt 1); last: GET / HTTP/1.1 500; 7s elapsed"
+        );
+        assert!(!steps.contains_key("db"));
     }
 
     #[test]

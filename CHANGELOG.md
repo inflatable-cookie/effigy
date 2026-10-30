@@ -681,9 +681,13 @@ During v0.x, MINOR bumps may include breaking changes.
   `--json`: one entry per service still unready, with its problem, and one for
   a health read the runtime did not answer. Shared-service waits name the
   machine gate, the runtime container read, the render publication, or the
-  `docker compose up` they are in. A readiness frame names the runtime health
-  read in flight with its probe number and budget, and keeps the last known
-  counts and event. A declared health check names its probe and attempt. A
+  `docker compose up` they are in. A readiness frame names which of the probe's
+  two runtime reads is in flight — the project's container list, then the
+  inspect of the names that list returned, with those names shown — alongside
+  its probe number, budget and the last known counts and event. A service whose
+  health regresses after reporting healthy opens a fresh step with its own
+  attempt and last check output. A declared health check names its probe and
+  attempt. A
   failed shared-service step, and a declared health check that times out, carry
   the same `waiting_on` list in `--json` and keep their text unchanged.
 - `container up` activation and preparation report their own state instead of a
@@ -691,9 +695,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Compose returns, and a shared service's step does the same, so a stalled
   `restart: unless-stopped` read never shows a finished Compose call. The
   creation-time policy load names the preparation stage now running (checkout
-  identity, declaration with ports and loopback, render inputs, render, mount
-  sources), and environment activation draws only the transition's own live
-  step instead of a second fixed one. A declared
+  identity, declaration with ports and loopback, render inputs, the second
+  declaration resolution that follows them, render, mount sources), and
+  environment activation draws only the transition's own live step instead of a
+  second fixed one. A declared
   `[containers.<NAME>.health]` check that answers a definite status outside
   `2xx`/`3xx` is refused at once with the status it observed and the primary
   container's last output, instead of spending the whole health budget on an

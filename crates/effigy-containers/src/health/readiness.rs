@@ -286,6 +286,31 @@ pub fn inspect_project_health(
     policy: &EffectiveContainerPolicy,
     deadline: Option<Instant>,
 ) -> Result<Vec<ServiceHealth>, ContainerExecError> {
+    inspect_project_health_observed(repo_root, policy, deadline, &mut |_| {})
+}
+
+/// One runtime read a project health probe makes, in the order it makes them.
+///
+/// The probe is two calls, not one: it lists the project's containers and then
+/// inspects those names. A caller that shows progress names the stage now in
+/// flight, so a stalled operation is never reported as one generic health read
+/// (effigy#460, Q-017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthProbeStage<'a> {
+    /// Listing the project's containers, running and stopped.
+    ListingContainers,
+    /// Inspecting these containers' own health.
+    InspectingContainers { containers: &'a [String] },
+}
+
+/// The same probe, reporting each runtime read as it starts.
+pub fn inspect_project_health_observed(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<Instant>,
+    stage: &mut dyn FnMut(HealthProbeStage<'_>),
+) -> Result<Vec<ServiceHealth>, ContainerExecError> {
+    stage(HealthProbeStage::ListingContainers);
     let rows = list_compose_containers_for_policy_including_stopped_with_deadline(
         repo_root, policy, deadline,
     )?;
@@ -297,6 +322,7 @@ pub fn inspect_project_health(
     if names.is_empty() {
         return Ok(Vec::new());
     }
+    stage(HealthProbeStage::InspectingContainers { containers: &names });
     let output = inspect_containers_for_policy(repo_root, policy, &names, deadline)?;
     let mut health =
         parse_inspect_health(&output.stdout).map_err(|reason| ContainerExecError::Failure {
