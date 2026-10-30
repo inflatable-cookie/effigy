@@ -1445,7 +1445,7 @@ mod credential_bootstrap_tests {
             args[1]
         );
         assert!(
-            calls.contains(&format!("call exec -e MYSQL_PWD abc mysql")),
+            calls.contains("call exec -e MYSQL_PWD abc mysql"),
             "{calls}"
         );
         assert!(!calls.contains(PASSWORD), "credential in argv: {calls}");

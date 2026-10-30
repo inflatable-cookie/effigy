@@ -691,7 +691,8 @@ mod tests {
         std::fs::write(bundle.join("docker"), "#!/bin/sh\n").expect("write docker");
         let previous = std::env::var_os("PATH");
         std::env::set_var("PATH", empty_path.display().to_string());
-        let resolved = resolve_host_cli_program_path_with_extra("docker", &[bundle.clone()]);
+        let resolved =
+            resolve_host_cli_program_path_with_extra("docker", std::slice::from_ref(&bundle));
         std::env::set_var("PATH", previous.unwrap_or_default());
 
         assert_eq!(resolved, Some(bundle.join("docker")));
