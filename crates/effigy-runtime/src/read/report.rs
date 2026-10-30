@@ -11,11 +11,11 @@ pub(super) fn render_container_report(report: ContainerCommandReport, output_jso
 }
 
 pub(super) fn annotate_warning_lines(report: &mut ContainerCommandReport, warnings: &[String]) {
-    if warnings.is_empty() {
-        return;
-    }
     if let Some(json_object) = report.json.as_object_mut() {
         json_object.insert("warnings".to_owned(), serde_json::json!(warnings));
+    }
+    if warnings.is_empty() {
+        return;
     }
     for warning in warnings {
         report.success_text.push('\n');

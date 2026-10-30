@@ -2031,6 +2031,20 @@ fn private_home(root: &std::path::Path) -> std::path::PathBuf {
     home
 }
 
+fn assert_container_status_matches_schema(payload: &Value) {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../docs/knowledge/contracts/payload-schemas/effigy.container.status.v1.json"
+    ))
+    .expect("parse container status schema");
+    let schema = effigy_json_schema::CompiledSchema::compile(&schema)
+        .expect("compile container status schema");
+    let errors = schema.validate(payload);
+    assert!(
+        errors.is_empty(),
+        "container status schema errors: {errors:?}"
+    );
+}
+
 fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, mount: &str) {
     write_container_fixture_with_task(root, health_check, mount, false);
 }
@@ -2800,6 +2814,7 @@ fn cli_container_status_json_reports_default_container_contract() {
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    fs::write(&colima_state, "running\n").expect("mark fake Colima running");
     let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
     let log_follow = root.join("log-follow.marker");
@@ -2810,6 +2825,7 @@ fn cli_container_status_json_reports_default_container_contract() {
     );
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("container")
+        .arg("web")
         .arg("status")
         .arg("--repo")
         .arg(&root)
@@ -2831,10 +2847,12 @@ fn cli_container_status_json_reports_default_container_contract() {
     assert!(output.status.success(), "status failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
+    assert_container_status_matches_schema(&parsed["result"]);
+    assert_eq!(parsed["result"]["warnings"], serde_json::json!([]));
     assert_eq!(parsed["result"]["container"], "web");
     assert_eq!(parsed["result"]["primary_service"], "app");
     assert_eq!(parsed["result"]["backend"], "containerd");
-    assert_eq!(parsed["result"]["runtime_running"], false);
+    assert_eq!(parsed["result"]["runtime_running"], true);
     assert_eq!(parsed["result"]["ports"][0], "8080:80");
     // Host mounts are canonicalised under the repo root at policy
     // resolve time, so the JSON contract surfaces the absolute path
@@ -2847,6 +2865,67 @@ fn cli_container_status_json_reports_default_container_contract() {
             .display()
     );
     assert_eq!(parsed["result"]["mounts"][0], expected_mount);
+}
+
+#[test]
+fn cli_container_status_json_reports_warnings_matching_its_schema() {
+    let private = effigy_test_support::Fixture::workspace("effigy-status-warning-private-")
+        .expect("exclusive fake runtime fixture");
+    let root = fs::canonicalize(private.path()).expect("canonical fixture root");
+    fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
+    write_container_fixture(&root, None, "./app:/workspace");
+    let manifest_path = root.join("effigy.toml");
+    let manifest = fs::read_to_string(&manifest_path).expect("read container manifest");
+    fs::write(
+        manifest_path,
+        manifest.replace("profile = \"dev\"", "profile = \"default\""),
+    )
+    .expect("set default profile for warning");
+
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    fs::write(&colima_state, "running\n").expect("mark fake Colima running");
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("container")
+        .arg("web")
+        .arg("status")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .env("HOME", private_home(&root))
+        .env(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            private_home(&root).join(".effigy"),
+        )
+        .env("EFFIGY_COMPOSE_BACKEND", "colima")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "status failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
+    assert_container_status_matches_schema(&parsed["result"]);
+    let warnings = parsed["result"]["warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0]
+        .as_str()
+        .expect("warning string")
+        .contains("shared with unrelated Colima workloads"));
 }
 
 #[test]

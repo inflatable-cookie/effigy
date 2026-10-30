@@ -792,6 +792,7 @@ dependencies = [
  "effigy-exec",
  "effigy-execution",
  "effigy-gateway",
+ "effigy-json-schema",
  "effigy-kernel",
  "effigy-managed",
  "effigy-manifest",
