@@ -837,7 +837,7 @@ fn open(
             return Err(RunError::refused("this run is closed"));
         }
         let fence = fence(conn, &record.owner, record.generation)?;
-        journal::check_fence(conn, &fence)?;
+        service_fence(conn, run, &fence)?;
         live_owner(&cx.operation().observe().map_err(|_| RunError::refused("observation required"))?, root, conn, run, &record)?;
         match opening {
             Opening::Owner => {
@@ -929,7 +929,7 @@ fn release_attachment(
             txn.conn(),
             attachment.run,
         )?;
-        journal::check_fence(txn.conn(), &attachment.fence)?;
+        journal::check_run_fence(txn.conn(), attachment.run, &attachment.fence)?;
         release_row(txn, cx, attachment, cause)?;
         Ok::<_, RunError>(())
     })?;
@@ -1192,7 +1192,11 @@ fn current_session(
     if invocation.spec().owner.name().to_string() != record.owner {
         return Err(RunError::refused("the workspace session owner changed"));
     }
-    journal::check_fence(conn, &fence(conn, &record.owner, record.generation)?)?;
+    service_fence(
+        conn,
+        session.run,
+        &fence(conn, &record.owner, record.generation)?,
+    )?;
     Ok(record.owner)
 }
 
@@ -1210,6 +1214,31 @@ pub(super) fn require_live_owner(
     live_owner(cx, root, conn, run, &record)
 }
 
+/// A staged session is unavailable until atomic publication. Committed older
+/// sessions may still serve their existing clients at their own run fence.
+fn service_fence(conn: &Connection, run: RunId, fence: &Fence) -> Result<(), RunError> {
+    // Observe never migrates an older schema-1 journal. Without the additive
+    // overlap tables, only the legacy current-generation fence can authorize it.
+    if !crate::store::has_table(conn, "workspace_session_runs")?
+        || !crate::store::has_table(conn, "workspace_activation_reservations")?
+    {
+        return journal::check_fence(conn, fence);
+    }
+    let staged: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM workspace_session_runs s \
+         JOIN workspace_activation_reservations a ON a.reservation_id=s.reservation_id \
+         WHERE s.run_id=?1 AND a.state='reserved')",
+        [run.to_string()],
+        |row| row.get(0),
+    )?;
+    if staged {
+        return Err(RunError::refused(
+            "the workspace session activation has not committed",
+        ));
+    }
+    journal::check_run_fence(conn, run, fence)
+}
+
 /// A historical run row alone cannot establish a serviceable supervisor.
 fn live_owner(
     cx: &ObserveContext,
@@ -1219,7 +1248,7 @@ fn live_owner(
     record: &JournalRun,
 ) -> Result<(), RunError> {
     let fence = fence(conn, &record.owner, record.generation)?;
-    journal::check_fence(conn, &fence)?;
+    service_fence(conn, run, &fence)?;
     let identity: Option<String> = conn.query_row(
         "SELECT owner_identity FROM runs WHERE run_id=?1",
         [run.to_string()],
@@ -1229,7 +1258,8 @@ fn live_owner(
         &identity
             .ok_or_else(|| RunError::unavailable("the run has no recoverable owner identity"))?,
     )?;
-    let holder_matches = match Gate::probe(cx, root, &fence.resource) {
+    let slot = crate::workspace_session::session_run_gate(conn, &fence.resource, run)?;
+    let holder_matches = match Gate::probe(cx, root, &slot) {
         Observed::Verified(crate::gate::GateState::Held(holder), _) => {
             holder.verified().is_some_and(|holder| {
                 holder.pid == identity.pid
@@ -1427,7 +1457,7 @@ impl Run<'_> {
         // workspace session cannot keep a dead terminal's custody row alive.
         self.store
             .transaction_within(&cx, BusyWait::Context, |txn| {
-                journal::check_fence(txn.conn(), &self.owner)?;
+                journal::check_run_fence(txn.conn(), self.id, &self.owner)?;
                 release_row(txn, &cx, attachment, Release::Eof)
             })?;
         attachment.released = true;
