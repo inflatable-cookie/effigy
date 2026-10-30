@@ -47,7 +47,8 @@ pub use down::{DownChildren, DownCoordination, DownHolder, DownStart};
 pub use selection::{
     selection_abandoned, selection_recovered, unfinished_selection, GuestObject, GuestSelection,
     SelectionLiveness, SelectionObjects, SelectionObligation, SelectionReceipt, SelectionState,
-    SelectionSwitchReceipt, SelectorChange, SelectorReadback, SelectorReader,
+    SelectionSwitchReceipt, SelectorChange, SelectorReadback, SelectorReader, BINARY_SELECTOR,
+    CONTEXT_SELECTOR, ENTRY_SELECTOR,
 };
 pub use serving::{
     ChannelBound, ChannelListener, HostChannelListener, ListenerPhase, ServingKey, ServingLease,
@@ -1675,11 +1676,25 @@ impl WorkspaceActivationReservation {
             let observe = cx.operation().observe().map_err(|_| {
                 RunError::broken("an activation decision needs an observing context")
             })?;
-            let reader = activation_reader(&observe, root)?;
-            live_session_row(reader.conn(), environment)?.map(|live| {
-                let liveness = reader.run_owner_state(&observe, root, &live.run);
-                (live.run, liveness)
-            })
+            // A store that has never been written has no live session to
+            // observe: `Absent` here is an absence of evidence, not a broken
+            // journal, and the deciding transaction creates what it needs.
+            let reader = match crate::store::Store::read(&observe, root) {
+                Observed::Verified(reader, _) => Some(reader),
+                Observed::Absent(_) => None,
+                Observed::Unknown(reason) => {
+                    return Err(RunError::unavailable(format!(
+                        "the kernel store is not readable: {reason}"
+                    )))
+                }
+            };
+            match reader {
+                Some(reader) => live_session_row(reader.conn(), environment)?.map(|live| {
+                    let liveness = reader.run_owner_state(&observe, root, &live.run);
+                    (live.run, liveness)
+                }),
+                None => None,
+            }
         };
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         let decision = store.transaction(&cx.child(std::time::Duration::from_secs(30)), |txn| {
@@ -2241,7 +2256,9 @@ impl WorkspaceActivationReservation {
         // The commit holds the session's live custody: the launch that published
         // this lease, for this session, with the key and listener still in hand.
         // A receipt alone cannot publish a session nothing is serving.
-        if launch.binding() != *plan.binding() || launch.lease() != Some(selection.serving()) {
+        if launch.binding() != *plan.binding()
+            || launch.lease().as_ref() != Some(selection.serving())
+        {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
         // The decision froze its inputs before anything was applied. Publishing

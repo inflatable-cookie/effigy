@@ -3152,13 +3152,11 @@ fn receipt_selection(reservation: &WorkspaceActivationReservation) -> Digest {
 }
 
 fn launch_for(session_run: &mut Run<'_>, session: &SessionRef) -> Result<SessionLaunch, RunError> {
-    let owner = session_run.session_owner()?;
-    let (mut listener, _stops) = FakeListener::bound();
-    ChannelListener::qualify(&mut listener).expect("qualified");
+    let (listener, _stops) = FakeListener::bound();
     let key = ServingKey::new(vec![7u8; 32], Digest::of(b"session pin")).expect("key");
     Ok(SessionLaunch::launch(
+        session_run,
         session,
-        owner,
         "supervisor-1",
         key,
         Box::new(listener),
@@ -3190,6 +3188,7 @@ fn commit_receipt(
         binary,
         None,
         &selection_digest,
+        session_run,
         &mut launch,
     );
     Ok((receipt, launch))
@@ -3234,6 +3233,7 @@ fn selection_receipt(
     binary: Digest,
     previous: Option<&str>,
     selection_digest: &Digest,
+    session_run: &Run<'_>,
     launch: &mut SessionLaunch,
 ) -> SelectionReceipt {
     // The document never names its own digest, so it is built from a
@@ -3282,14 +3282,18 @@ fn selection_receipt(
     launch
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .expect("qualified");
-    let lease = launch.publish().expect("published").lease().clone();
+    let lease = launch
+        .publish(&session_run)
+        .expect("published")
+        .lease()
+        .clone();
     let document = context_document(plan, &publication, &selection, &lease, selection_digest);
     let context = Digest::of(&document);
     selection.objects.context = GuestObject {
         path: format!("/run/effigy/objects/context/{context}"),
         digest: context,
     };
-    SelectionReceipt::new(plan, publication, selection, &document, launch)
+    SelectionReceipt::new(plan, publication, selection, &document, session_run, launch)
         .expect("selection receipt")
 }
 
@@ -3347,6 +3351,7 @@ fn activate_with_selection<'a>(
         binary,
         None,
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     );
     let committed = reservation
@@ -3628,6 +3633,7 @@ fn a_pending_selection_refuses_attach_and_reservation() {
         binary,
         None,
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     );
     reservation
@@ -3787,6 +3793,7 @@ fn commit_pending_selection<'a>(
         binary,
         None,
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     );
     let committed = reservation
@@ -4220,6 +4227,7 @@ fn a_selection_never_names_another_session_s_listener() {
         binary.clone(),
         None,
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     )
     .selection()
@@ -4234,8 +4242,8 @@ fn a_selection_never_names_another_session_s_listener() {
     let key = ServingKey::new(vec![1u8; 32], Digest::of(b"session pin")).expect("key");
     assert!(matches!(
         SessionLaunch::launch(
+            &mut session_run,
             &elsewhere,
-            session_run.session_owner().expect("owner"),
             "supervisor-1",
             key,
             Box::new(listener)
@@ -4247,8 +4255,8 @@ fn a_selection_never_names_another_session_s_listener() {
     let (listener, _stops) = FakeListener::bound();
     let key = ServingKey::new(vec![1u8; 32], Digest::of(b"session pin")).expect("key");
     let mut unqualified = SessionLaunch::launch(
+        &mut session_run,
         &plan.session(),
-        session_run.session_owner().expect("owner"),
         "supervisor-1",
         key,
         Box::new(listener),
@@ -4259,7 +4267,11 @@ fn a_selection_never_names_another_session_s_listener() {
         published
             .qualify(&mut verifying_probe(), Duration::from_secs(1))
             .expect("qualified");
-        let lease = published.publish().expect("published").lease().clone();
+        let lease = published
+            .publish(&session_run)
+            .expect("published")
+            .lease()
+            .clone();
         context_document(
             &plan,
             &publication,
@@ -4268,8 +4280,15 @@ fn a_selection_never_names_another_session_s_listener() {
             &receipt_selection(&reservation),
         )
     };
-    let error = SelectionReceipt::new(&plan, publication, selection, &document, &mut unqualified)
-        .expect_err("an unqualified listener publishes nothing");
+    let error = SelectionReceipt::new(
+        &plan,
+        publication,
+        selection,
+        &document,
+        &session_run,
+        &mut unqualified,
+    )
+    .expect_err("an unqualified listener publishes nothing");
     assert!(
         matches!(error, RunError::Refused(ref message) if message.contains("qualified")),
         "{error:?}"
@@ -4323,6 +4342,7 @@ fn a_selection_commit_is_idempotent_and_refuses_other_bytes() {
         binary.clone(),
         None,
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     );
     let committed = reservation
@@ -4362,6 +4382,7 @@ fn a_selection_commit_is_idempotent_and_refuses_other_bytes() {
         binary,
         Some("an earlier value"),
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     );
     let error = reservation
@@ -4414,6 +4435,7 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
         binary,
         None,
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     );
     assert!(good.validate(&plan).is_ok());
@@ -4422,7 +4444,15 @@ fn a_selection_receipt_refuses_a_document_that_is_not_the_committed_context() {
     wrong.objects.context.digest = Digest::of(b"not the document");
     let mut launch = launch_for(&mut session_run, &plan.session()).expect("session custody");
     assert!(
-        SelectionReceipt::new(&plan, publication, wrong, b"the document", &mut launch).is_err(),
+        SelectionReceipt::new(
+            &plan,
+            publication,
+            wrong,
+            b"the document",
+            &session_run,
+            &mut launch
+        )
+        .is_err(),
         "the document digest is hashed, never taken on trust"
     );
 }
@@ -4552,10 +4582,8 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     let (listener, stops) = FakeListener::bound();
     let key = ServingKey::new(vec![7u8; 32], Digest::of(b"session pin")).expect("key");
     let mut launch = SessionLaunch::launch(
+        &mut session_run,
         &session,
-        session_run
-            .session_owner()
-            .expect("the session's owning run"),
         "supervisor-1",
         key,
         Box::new(listener),
@@ -4566,7 +4594,10 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     assert_eq!(launch.phase(), ListenerPhase::Qualifying);
     assert_eq!(stops.get(), 0);
     assert!(
-        matches!(launch.publish(), Err(ServingRefusal::Unqualified)),
+        matches!(
+            launch.publish(&session_run),
+            Err(ServingRefusal::Unqualified)
+        ),
         "an unqualified listener is never published"
     );
     // The transport qualifies the endpoint; the launch owns the fact.
@@ -4580,7 +4611,7 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
         )
         .expect("qualified");
     let lease = launch
-        .publish()
+        .publish(&session_run)
         .expect("a bound, qualified listener publishes")
         .lease()
         .clone();
@@ -4589,13 +4620,19 @@ fn custody_survives_the_caller_and_publishes_only_a_bound_qualified_listener() {
     assert_eq!(lease.supervisor_id(), "supervisor-1");
     assert_eq!(lease.session(), &session_binding(&session));
     assert_eq!(
-        launch.publish().expect("publish is idempotent").lease(),
+        launch
+            .publish(&session_run)
+            .expect("publish is idempotent")
+            .lease(),
         &lease,
         "one session has one locator"
     );
     // A retried publish still answers the same lease: retrying never rebinds.
     assert_eq!(
-        launch.publish().expect("retried publish").lease(),
+        launch
+            .publish(&session_run)
+            .expect("retried publish")
+            .lease(),
         &lease,
         "a retry does not re-lease the session"
     );
@@ -4637,8 +4674,8 @@ fn a_listener_is_only_launched_for_the_run_that_owns_the_session() {
     let key = ServingKey::new(vec![5u8; 32], Digest::of(b"pin")).expect("key");
     assert!(matches!(
         SessionLaunch::launch(
+            &mut session_run,
             &elsewhere,
-            session_run.session_owner().expect("owner"),
             "supervisor-1",
             key,
             Box::new(listener)
@@ -4674,7 +4711,7 @@ fn admit_activation_stub<'a>(
 fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     let fixture = ServingFixture::new();
     let (mut session_run, session) = fixture.admit(71);
-    let owner = session_run.session_owner().expect("owner");
+    let _owner = session_run.session_owner().expect("owner");
     // No endpoint at all is not a listener.
     let stops = std::rc::Rc::new(std::cell::Cell::new(0));
     let unbound = FakeListener {
@@ -4685,8 +4722,8 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     let key = ServingKey::new(vec![1u8; 32], Digest::of(b"pin")).expect("key");
     assert!(matches!(
         SessionLaunch::launch(
+            &mut session_run,
             &session,
-            session_run.session_owner().expect("owner"),
             "supervisor-1",
             key,
             Box::new(unbound)
@@ -4703,8 +4740,8 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     let key = ServingKey::new(vec![1u8; 32], Digest::of(b"pin")).expect("key");
     assert!(matches!(
         SessionLaunch::launch(
+            &mut session_run,
             &session,
-            session_run.session_owner().expect("owner"),
             "supervisor-1",
             key,
             Box::new(stopped)
@@ -4714,9 +4751,14 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
     // And one stopped after publication refuses both publish and serve.
     let (listener, _stops) = FakeListener::bound();
     let key = ServingKey::new(vec![2u8; 32], Digest::of(b"pin")).expect("key");
-    let mut launch =
-        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
-            .expect("launch");
+    let mut launch = SessionLaunch::launch(
+        &mut session_run,
+        &session,
+        "supervisor-1",
+        key,
+        Box::new(listener),
+    )
+    .expect("launch");
     launch
         .qualify(
             &mut FakeProbe {
@@ -4726,9 +4768,14 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
             Duration::from_secs(1),
         )
         .expect("qualified");
-    launch.publish().expect("published before it stops");
+    launch
+        .publish(&session_run)
+        .expect("published before it stops");
     launch.stop();
-    assert!(matches!(launch.publish(), Err(ServingRefusal::Stopped)));
+    assert!(matches!(
+        launch.publish(&session_run),
+        Err(ServingRefusal::Stopped)
+    ));
     assert!(matches!(
         launch.serve(&session_run),
         Err(ServingRefusal::Unqualified)
@@ -4751,18 +4798,26 @@ fn a_stopped_or_unbound_listener_never_yields_channel_bound() {
 fn a_real_bound_socket_is_the_endpoint_the_lease_names() {
     let fixture = ServingFixture::new();
     let (mut session_run, session) = fixture.admit(74);
-    let owner = session_run.session_owner().expect("owner");
     let listener =
         HostChannelListener::bind("127.0.0.1:0".parse().expect("address")).expect("bind");
     let endpoint = listener.endpoint().expect("bound endpoint");
     let key = ServingKey::new(vec![3u8; 32], Digest::of(b"real pin")).expect("key");
-    let mut launch =
-        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
-            .expect("launch");
+    let mut launch = SessionLaunch::launch(
+        &mut session_run,
+        &session,
+        "supervisor-1",
+        key,
+        Box::new(listener),
+    )
+    .expect("launch");
     launch
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .expect("qualified");
-    let lease = launch.publish().expect("publish").lease().clone();
+    let lease = launch
+        .publish(&session_run)
+        .expect("publish")
+        .lease()
+        .clone();
     assert_eq!(lease.endpoint(), endpoint.to_string());
     // The published locator is reachable while the launch holds it.
     std::net::TcpStream::connect(endpoint).expect("the published endpoint accepts");
@@ -4841,6 +4896,7 @@ fn every_selection_boundary_keeps_the_generation_and_its_obligation_atomic() {
                 binary,
                 None,
                 &receipt_selection(&reservation),
+                session_run.as_ref().expect("owning successor"),
                 &mut launch,
             );
             let committed = reservation.commit_selection(
@@ -5156,6 +5212,7 @@ fn a_commit_refuses_an_artifact_the_decision_did_not_freeze() {
         published,
         None,
         &receipt_selection(&reservation),
+        &session_run,
         &mut launch,
     );
     let error = reservation
@@ -5289,13 +5346,15 @@ fn a_context_document_for_another_activation_is_refused() {
         admit_activation_publishing(&cx, &root, &reservation, run_id(249), &binary);
     let plan = plan_of(&reservation, &read_journal(&cx, &root)).expect("claimed plan");
     let selection_digest = receipt_selection(&reservation);
+    let mut good_launch = launch_for(&mut session_run, &plan.session()).expect("custody");
     let good = selection_receipt(
         &plan,
         publication.clone(),
         binary,
         None,
         &selection_digest,
-        &mut launch_for(&mut session_run, &plan.session()).expect("custody"),
+        &session_run,
+        &mut good_launch,
     );
     // The document a prepare would write for this activation, byte for byte.
     let base_document = context_document(
@@ -5307,7 +5366,11 @@ fn a_context_document_for_another_activation_is_refused() {
             launch
                 .qualify(&mut verifying_probe(), Duration::from_secs(1))
                 .expect("qualified");
-            launch.publish().expect("published").lease().clone()
+            launch
+                .publish(&session_run)
+                .expect("published")
+                .lease()
+                .clone()
         },
         &selection_digest,
     );
@@ -5338,9 +5401,15 @@ fn a_context_document_for_another_activation_is_refused() {
         let mut selection = good.selection().clone();
         selection.objects.context.digest = Digest::of(&bytes);
         let mut launch = launch_for(&mut session_run, &plan.session()).expect("custody");
-        let error =
-            SelectionReceipt::new(&plan, publication.clone(), selection, &bytes, &mut launch)
-                .expect_err("a context for another activation is never published");
+        let error = SelectionReceipt::new(
+            &plan,
+            publication.clone(),
+            selection,
+            &bytes,
+            &session_run,
+            &mut launch,
+        )
+        .expect_err("a context for another activation is never published");
         assert!(matches!(error, RunError::Refused(_)), "{error:?}");
     }
     let reader = read_journal(&cx, &root);
@@ -5468,6 +5537,7 @@ fn a_fresh_project_freezes_the_artifact_its_first_publication_selected() {
         binary.clone(),
         None,
         &inputs.selection,
+        &session_run,
         &mut launch,
     );
     let committed = reservation
@@ -5592,12 +5662,19 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
     let (mut listener, stops) = FakeListener::bound();
     listener.phase = ListenerPhase::Holding;
     let key = ServingKey::new(vec![8u8; 32], Digest::of(b"unprobed pin")).expect("key");
-    let owner = session_run.session_owner().expect("owner");
-    let mut launch =
-        SessionLaunch::launch(&session, owner, "supervisor-1", key, Box::new(listener))
-            .expect("launch");
+    let mut launch = SessionLaunch::launch(
+        &mut session_run,
+        &session,
+        "supervisor-1",
+        key,
+        Box::new(listener),
+    )
+    .expect("launch");
     assert!(
-        matches!(launch.publish(), Err(ServingRefusal::Unqualified)),
+        matches!(
+            launch.publish(&session_run),
+            Err(ServingRefusal::Unqualified)
+        ),
         "a phase flag is not a qualification"
     );
     // An unanswered probe qualifies nothing either.
@@ -5613,11 +5690,18 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
         ),
         Err(ServingRefusal::Unqualified)
     ));
-    assert!(matches!(launch.publish(), Err(ServingRefusal::Unqualified)));
+    assert!(matches!(
+        launch.publish(&session_run),
+        Err(ServingRefusal::Unqualified)
+    ));
     launch
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .expect("qualified");
-    let lease = launch.publish().expect("published").lease().clone();
+    let lease = launch
+        .publish(&session_run)
+        .expect("published")
+        .lease()
+        .clone();
     launch.serve(&session_run).expect("adopted");
     assert!(launch.serving(&session_run));
     // Releasing the owning run's custody leaves nothing to serve, even though
@@ -5630,7 +5714,7 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
         Err(ServingRefusal::WrongSession)
     ));
     assert!(matches!(
-        launch.publish(),
+        launch.publish(&session_run),
         Err(ServingRefusal::WrongSession)
     ));
     let probed = launch.liveness(&session_run, &mut verifying_probe(), Duration::from_secs(1));
@@ -5650,11 +5734,14 @@ fn an_unprobed_listener_and_a_released_owner_never_serve() {
 fn a_settled_session_stops_serving() {
     let fixture = ServingFixture::new();
     let (mut session_run, session) = fixture.admit(79);
-    let (listener, _stops) = FakeListener::bound();
+    // A real socket, so settlement can be proven to close it.
+    let listener =
+        HostChannelListener::bind("127.0.0.1:0".parse().expect("address")).expect("bind");
+    let endpoint = listener.endpoint().expect("bound endpoint");
     let key = ServingKey::new(vec![6u8; 32], Digest::of(b"settle pin")).expect("key");
     let mut launch = SessionLaunch::launch(
+        &mut session_run,
         &session,
-        session_run.session_owner().expect("owner"),
         "supervisor-1",
         key,
         Box::new(listener),
@@ -5663,7 +5750,7 @@ fn a_settled_session_stops_serving() {
     launch
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .expect("qualified");
-    launch.publish().expect("published");
+    launch.publish(&session_run).expect("published");
     launch.serve(&session_run).expect("adopted");
     assert!(launch.serving(&session_run));
     // The session run starts settling: its fence is no longer open, so the
@@ -5695,6 +5782,15 @@ fn a_settled_session_stops_serving() {
     session_run
         .settle(&cleanup(&fixture.cx), &mut adapter())
         .expect("settle the session");
+    // Settlement released the listener and the key: the socket no longer
+    // accepts and the launch holds no key.
+    assert!(
+        std::net::TcpStream::connect(endpoint).is_err(),
+        "settlement closes the published socket"
+    );
+    assert!(!launch.key_held(), "settlement wipes the session key");
+    assert!(!launch.owned(), "settlement releases the owner custody");
+    assert_eq!(launch.lease(), None, "a settled owner has no locator");
     // Settlement released the session's gate: a successor activation can take
     // the environment's next generation rather than meeting a held slot.
     let decision = WorkspaceActivationReservation::decide(
@@ -5759,8 +5855,8 @@ fn activation_hands_off(fixture: &ServingFixture, id: u8) -> (Run<'_>, SessionRe
     let (listener, _stops) = FakeListener::bound();
     let key = ServingKey::new(vec![4u8; 32], Digest::of(b"handoff pin")).expect("key");
     let launch = SessionLaunch::launch(
+        &mut session_run,
         &session,
-        session_run.session_owner().expect("owner"),
         "supervisor-1",
         key,
         Box::new(listener),
@@ -5778,9 +5874,16 @@ fn custody_survives_the_activation_clients_eof() {
     launch
         .qualify(&mut verifying_probe(), Duration::from_secs(1))
         .expect("qualified");
-    let lease = launch.publish().expect("published").lease().clone();
+    let lease = launch
+        .publish(&session_run)
+        .expect("published")
+        .lease()
+        .clone();
     assert_eq!(
-        launch.publish().expect("retried publish").lease(),
+        launch
+            .publish(&session_run)
+            .expect("retried publish")
+            .lease(),
         &lease,
         "a retry after the caller's EOF answers the same locator"
     );

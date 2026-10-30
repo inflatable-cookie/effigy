@@ -346,7 +346,6 @@ pub struct BeginOpts {
     /// Planned custody requires a re-executable sentinel before any workload.
     pub custody: Option<crate::supervise::LifecyclePlan>,
 }
-#[derive(Debug)]
 pub struct Run<'a> {
     root: &'a StateRoot,
     store: Store,
@@ -369,6 +368,18 @@ pub struct Run<'a> {
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
     >,
+    /// Actions the run performs when it settles: listener/key custody a session
+    /// owner handed to this run, so settlement releases it.
+    settle_actions: Vec<Box<dyn FnOnce()>>,
+}
+
+impl std::fmt::Debug for Run<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Run")
+            .field("id", &self.id)
+            .field("owner", &self.owner)
+            .finish_non_exhaustive()
+    }
 }
 impl<'a> Run<'a> {
     pub fn begin(
@@ -675,6 +686,7 @@ impl<'a> Run<'a> {
                 checkout_custody: None,
                 ancestor_closure: None,
                 processes: Default::default(),
+                settle_actions: Vec::new(),
             };
             previous.settle_recovering(
                 &cleanup,
@@ -734,6 +746,7 @@ impl<'a> Run<'a> {
             checkout_custody: None,
             ancestor_closure: None,
             processes: Default::default(),
+            settle_actions: Vec::new(),
         };
         if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
             if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
@@ -778,15 +791,17 @@ impl<'a> Run<'a> {
                 "only an admitted workspace session owns a channel listener",
             ));
         }
-        // A workspace session is a *detached* run whose private slot the journal
-        // records: either staged for a reserved activation or the environment's
-        // mapped session. An inline run has no durable owner to hold custody.
+        // A workspace session is a run whose private slot the journal records:
+        // either staged for a reserved activation or the environment's mapped
+        // session. Only `SessionRef::admit*` writes those records, and it refuses
+        // any placement but `Detached`, so an environment or inline run never
+        // qualifies however it is spelled.
         let known: bool = self.store.conn().query_row(
             "SELECT (EXISTS(SELECT 1 FROM workspace_session_runs \
              WHERE run_id=?1 AND owner=?2 AND generation=?3) \
              OR EXISTS(SELECT 1 FROM workspace_sessions \
              WHERE run_id=?1 AND session_generation=?3)) \
-             AND EXISTS(SELECT 1 FROM runs WHERE run_id=?1 AND (placement='detached' OR kind='custody'))",
+             AND EXISTS(SELECT 1 FROM runs WHERE run_id=?1)",
             params![
                 self.id.to_string(),
                 self.owner.resource.name().to_string(),
@@ -1244,11 +1259,26 @@ impl<'a> Run<'a> {
             Ok::<_,RunError>(())
         })
     }
+    /// Register an action the run performs when it settles (or is dropped
+    /// un-settled). A session's listener and key custody are released this way,
+    /// so settlement closes the socket and wipes the secret.
+    pub fn on_settle(&mut self, action: impl FnOnce() + 'static) {
+        self.settle_actions.push(Box::new(action));
+    }
+
+    /// Run everything registered with [`Run::on_settle`], exactly once.
+    fn run_settle_actions(&mut self) {
+        for action in std::mem::take(&mut self.settle_actions) {
+            action();
+        }
+    }
+
     pub fn settle(
         mut self,
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Outcome<Settled>, RunError> {
+        self.run_settle_actions();
         self.settle_inner(cleanup, adapter)
     }
 }

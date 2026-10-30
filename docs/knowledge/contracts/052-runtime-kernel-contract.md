@@ -3127,7 +3127,8 @@ and makes every later publish/serve refuse. Qualification is this launch's own a
 `SessionLaunch::qualify(probe, deadline)` dials the bound endpoint with the key the launch holds — and only a verified answer sets
 the launch's qualified flag, so a listener that merely advertises a serving phase mints no locator. Serving is a fact about the live
 session, not a latch: `SessionLaunch::serve`/`serving`/`liveness` take the session `Run` and refuse once it is stopping or closed, so a
-settled session has no callable locator, and the session's gate stays with its run so settlement releases it for the successor. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
+settled session has no callable locator, and the session's gate stays with its run so settlement releases it for the successor. The launch
+registers itself with the run: settlement (or an un-settled drop) closes the listener and wipes the key, so custody never outlives the session. A mapped session is attachable only while its owner is positively live: `decide` probes that owner under the same
 `Gate(Env)`, attaches only to `Held`, treats `Interrupted` as no live session, and refuses `unavailable` when liveness is unknown. Abandonment first requires the exact successor run to be settled (closed with a complete cleanup); a live
 or unsettled successor refuses `successor_running` rather than being revoked around. The typed container/runner wrapper and the
 host recovery driver (`publish_workspace_selection_with`, `recover_selection`) remain #482's code-first handoff; this kernel seam

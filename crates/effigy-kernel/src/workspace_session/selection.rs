@@ -181,6 +181,7 @@ impl SelectionReceipt {
         publication: WorkspacePublicationReceipt,
         selection: GuestSelection,
         document: &[u8],
+        session_run: &Run<'_>,
         launch: &mut super::SessionLaunch,
     ) -> Result<Self, RunError> {
         if Digest::of(document) != selection.objects.context.digest {
@@ -189,7 +190,7 @@ impl SelectionReceipt {
         if launch.binding() != *plan.binding() {
             return Err(ActivationRefusal::SelectionMismatch.into());
         }
-        let serving = launch.publish()?.lease().clone();
+        let serving = launch.publish(session_run)?.lease().clone();
         let parsed: ContextDocument = serde_json::from_slice(document)
             .map_err(|_| RunError::from(ActivationRefusal::SelectionMismatch))?;
         let mismatch = ActivationRefusal::SelectionMismatch;
