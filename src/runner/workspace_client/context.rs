@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::runner::error::RunnerError;
 
+#[path = "context_v2.rs"]
+pub(crate) mod v2;
+
 /// Wire schema of the published context. A context naming any other schema is
 /// unprepared, not a newer version to guess at (§8.11 unknown version).
 pub(crate) const CONTEXT_SCHEMA: &str = "effigy.workspace-context.v1";
@@ -275,6 +278,7 @@ pub(crate) struct WorkspaceContext {
     /// then has local reads only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) session_run_id: Option<String>,
+    pub(crate) session_generation: Option<u64>,
     pub(crate) paths: WorkspacePathMap,
     pub(crate) backend: WorkspaceBackendDescriptor,
     #[serde(default)]
@@ -292,6 +296,7 @@ pub(crate) struct LiveGuestRun {
     pub(crate) container: WorkspaceContainerIdentity,
     pub(crate) environment_generation: String,
     pub(crate) session_run_id: Option<String>,
+    pub(crate) session_generation: Option<u64>,
     pub(crate) context_generation: u64,
 }
 
@@ -302,6 +307,7 @@ pub(crate) struct VerifiedWorkspaceContext {
     pub(crate) generation: u64,
     pub(crate) activation: WorkspaceActivationIdentity,
     pub(crate) session_run_id: String,
+    pub(crate) session_generation: u64,
     pub(crate) binary: GuestBinaryIdentity,
     pub(crate) protocol: u32,
     pub(crate) channel: WorkspaceChannelLocator,
@@ -736,6 +742,24 @@ pub(crate) trait GuestWorkspace: GuestReader {
     fn ensure_dir(&mut self, path: &str, mode: u32) -> Result<(), RunnerError>;
     /// Publish one immutable file with `mode`.
     fn write_file(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError>;
+    /// Atomically create an immutable object without replacing any inode.
+    /// An adapter without this operation refuses reserved publication.
+    fn write_no_replace(
+        &mut self,
+        _path: &str,
+        _bytes: &[u8],
+        _mode: u32,
+    ) -> Result<(), RunnerError> {
+        Err(RunnerError::task_invocation(
+            "guest adapter has no immutable publication operation",
+        ))
+    }
+    /// Install staged executable bytes without replacing a selected inode.
+    fn install_no_replace(&mut self, _staging: &str, _path: &str) -> Result<(), RunnerError> {
+        Err(RunnerError::task_invocation(
+            "guest adapter has no immutable executable operation",
+        ))
+    }
     /// Give a published file to the workspace user (§8.2 grants, §8.8).
     fn set_owner(&mut self, path: &str, owner: &str) -> Result<(), RunnerError>;
     /// Copy a host file into a guest staging path before it is installed.
@@ -826,11 +850,19 @@ pub(crate) struct WorkspaceContextInput {
     pub(crate) binary: GuestBinaryIdentity,
     pub(crate) activation: WorkspaceActivationIdentity,
     pub(crate) session_run_id: Option<String>,
+    pub(crate) session_generation: Option<u64>,
     pub(crate) paths: WorkspacePathMap,
     pub(crate) backend: WorkspaceBackendDescriptor,
     pub(crate) sources: Vec<WorkspacePinnedSource>,
     pub(crate) routes: Vec<WorkspaceRoute>,
     pub(crate) channel: WorkspaceChannelLocator,
+}
+
+impl WorkspaceContextInput {
+    pub(crate) fn bind_session(&mut self, session: &effigy_kernel::workspace_session::SessionRef) {
+        self.session_run_id = Some(session.run().to_string());
+        self.session_generation = Some(session.generation().get());
+    }
 }
 
 impl WorkspaceContext {
@@ -842,6 +874,7 @@ impl WorkspaceContext {
             binary: input.binary,
             activation: input.activation,
             session_run_id: input.session_run_id,
+            session_generation: input.session_generation,
             paths: input.paths,
             backend: input.backend,
             sources: input.sources,
@@ -959,6 +992,19 @@ impl WorkspaceContext {
                 self.activation.environment.resource_id
             )));
         };
+        let session_generation = self
+            .session_generation
+            .filter(|generation| *generation > 0)
+            .ok_or_else(|| {
+                ContextRefusal::unavailable(
+                    "workspace context has no admitted session generation".to_owned(),
+                )
+            })?;
+        if live.session_generation != Some(session_generation) {
+            return Err(ContextRefusal::identity_mismatch(
+                "workspace session generation differs from the admitted context".to_owned(),
+            ));
+        }
         if live.session_run_id.as_deref() != Some(session_run_id) {
             return Err(ContextRefusal::identity_mismatch(format!(
                 "workspace context serves session run `{session_run_id}`, but this client is \
@@ -978,6 +1024,7 @@ impl WorkspaceContext {
             generation: self.generation,
             activation: self.activation.clone(),
             session_run_id: session_run_id.to_owned(),
+            session_generation,
             binary: self.binary.clone(),
             protocol: self.binary.protocol,
             channel: self.channel.clone(),

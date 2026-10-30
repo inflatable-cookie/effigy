@@ -7,6 +7,8 @@
 //! is the module root.
 
 pub(crate) mod context;
+pub(crate) mod guest_probe;
+pub(crate) mod identity;
 
 #[cfg(test)]
 pub(crate) mod guest_fake;

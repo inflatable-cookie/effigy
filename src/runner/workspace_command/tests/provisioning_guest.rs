@@ -154,6 +154,7 @@ fn prepare(
             policy: &policy,
             operator_workspace: workspace,
             session_run_id: session_run_id.map(str::to_owned),
+            session_generation: Some(7),
             enrolment,
             channel: WorkspaceChannelLocator {
                 endpoint: Some("host.docker.internal:47121".to_owned()),
@@ -185,6 +186,7 @@ fn prepare_refusal(repo: &Path, guest: &mut FakeGuest, artifact: &Path) -> Strin
             policy: &policy,
             operator_workspace: Some(operator_workspace()),
             session_run_id: Some("run-7".to_owned()),
+            session_generation: Some(7),
             enrolment: None,
             channel: WorkspaceChannelLocator::default(),
             backend: crate::runner::workspace_client::context::WorkspaceBackendDescriptor {
@@ -234,6 +236,7 @@ fn live(generation: u64) -> crate::runner::workspace_client::context::LiveGuestR
         container: container_identity(),
         environment_generation: local_identity().generation,
         session_run_id: Some("run-7".to_owned()),
+        session_generation: Some(7),
         context_generation: generation,
     }
 }
@@ -1488,6 +1491,7 @@ fn explicitly_selected_non_default_workspaces_prepare_and_verify_the_guest() {
                 policy: &policy,
                 operator_workspace: workspace,
                 session_run_id: Some("run-7".to_owned()),
+                session_generation: Some(7),
                 enrolment: None,
                 channel: WorkspaceChannelLocator::default(),
                 backend: crate::runner::workspace_client::context::WorkspaceBackendDescriptor {
@@ -1860,6 +1864,7 @@ fn prepare_disk(
             policy: &policy,
             operator_workspace: workspace,
             session_run_id: session_run_id.map(str::to_owned),
+            session_generation: Some(7),
             enrolment: None,
             channel: WorkspaceChannelLocator {
                 endpoint: Some("host.docker.internal:47121".to_owned()),
@@ -2102,6 +2107,7 @@ fn a_musl_only_image_refuses_a_glibc_artifact() {
             policy: &policy,
             operator_workspace: Some(operator_workspace()),
             session_run_id: Some("run-7".to_owned()),
+            session_generation: Some(7),
             enrolment: None,
             channel: WorkspaceChannelLocator::default(),
             backend: crate::runner::workspace_client::context::WorkspaceBackendDescriptor {
@@ -2293,6 +2299,7 @@ fn concurrent_activation_publications_pin_distinct_immutable_fake_guest_contexts
                         policy: &policy,
                         operator_workspace: Some(operator_workspace()),
                         session_run_id: None,
+                        session_generation: Some(7),
                         enrolment: None,
                         channel: WorkspaceChannelLocator::default(),
                         backend:

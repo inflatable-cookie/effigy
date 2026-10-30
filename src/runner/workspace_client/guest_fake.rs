@@ -188,6 +188,23 @@ impl GuestWorkspace for FakeGuest {
         Ok(())
     }
 
+    fn write_no_replace(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError> {
+        if self.nodes.contains_key(path) {
+            return Err(RunnerError::task_invocation(
+                "immutable fake object already exists",
+            ));
+        }
+        self.put_file(path, bytes, mode);
+        Ok(())
+    }
+
+    fn install_no_replace(&mut self, staging: &str, path: &str) -> Result<(), RunnerError> {
+        let bytes = self
+            .read_file(staging)?
+            .ok_or_else(|| RunnerError::task_invocation("staged object missing"))?;
+        self.write_no_replace(path, &bytes, 0o555)
+    }
+
     fn set_owner(&mut self, path: &str, owner: &str) -> Result<(), RunnerError> {
         let node = self.nodes.get_mut(path).ok_or_else(|| {
             RunnerError::task_invocation(format!("cannot give `{path}` to `{owner}`: not present"))

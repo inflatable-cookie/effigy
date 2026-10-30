@@ -1,3 +1,6 @@
+#[path = "staging.rs"]
+mod staging;
+
 use effigy_containers::{load_workspace_ownership_plan, EffectiveContainerPolicy};
 use effigy_core::repo_markers::has_task_manifest;
 use effigy_core::shell::shell_quote;
@@ -349,6 +352,7 @@ pub(in crate::runner) struct WorkspacePrepareFacts<'a> {
     pub(in crate::runner) operator_workspace: Option<OperatorWorkspace>,
     /// The session run lane B admitted for this environment (§8.7).
     pub(in crate::runner) session_run_id: Option<String>,
+    pub(in crate::runner) session_generation: Option<u64>,
     /// The narrow enrolment credential lane B minted for direct terminals (§8.8).
     pub(in crate::runner) enrolment: Option<WorkspaceEnrolmentCredential>,
     pub(in crate::runner) channel: WorkspaceChannelLocator,
@@ -422,6 +426,7 @@ pub(in crate::runner) fn prepare_workspace_guest(
             binary: binary.clone(),
             activation: activation.clone(),
             session_run_id: facts.session_run_id.clone(),
+            session_generation: facts.session_generation,
             paths: paths.clone(),
             backend: facts.backend.clone(),
             sources: closure.pins,
@@ -598,6 +603,7 @@ fn publish_workspace_guest_effect(
             // are bound to and the host republishes it when the session is
             // admitted (§8.2, §8.7).
             session_run_id: None,
+            session_generation: None,
             enrolment: None,
             channel: WorkspaceChannelLocator::default(),
             backend: WorkspaceBackendDescriptor {
@@ -1070,7 +1076,7 @@ fn workspace_artifact_receipt(artifact: &Path) -> Result<BTreeMap<String, String
     Ok(fields)
 }
 
-pub(super) fn operator_workspace_for_policy(
+pub(in crate::runner) fn operator_workspace_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Option<OperatorWorkspace>, RunnerError> {
@@ -1767,6 +1773,17 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
         self.run_root(&script, "publish a guest file")
     }
 
+    fn write_no_replace(&mut self, path: &str, bytes: &[u8], mode: u32) -> Result<(), RunnerError> {
+        let staging = render_workspace_effigy_staging_path();
+        let host_file = stage_host_bytes(bytes)?;
+        self.stage(host_file.path(), &staging)?;
+        self.install_immutable(&staging, path, mode)
+    }
+
+    fn install_no_replace(&mut self, staging: &str, path: &str) -> Result<(), RunnerError> {
+        self.install_immutable(staging, path, 0o555)
+    }
+
     fn set_owner(&mut self, path: &str, owner: &str) -> Result<(), RunnerError> {
         let script = format!(
             "chown {owner} {path}",
@@ -1837,6 +1854,22 @@ impl GuestWorkspace for ComposeWorkspaceGuest<'_> {
 }
 
 impl ComposeWorkspaceGuest<'_> {
+    fn install_immutable(
+        &mut self,
+        staging: &str,
+        path: &str,
+        mode: u32,
+    ) -> Result<(), RunnerError> {
+        // The exclusive local staging file shares the destination filesystem.
+        // link(2) is no-replace even when an external creator races the gate.
+        let script = format!(
+            "object=$(mktemp {template}) || exit 1; trap 'rm -f \"$object\" {staging}' EXIT; install -m {mode:04o} {staging} \"$object\" && ln \"$object\" {path}",
+            template = shell_quote(&format!("{path}.stage.XXXXXX")),
+            staging = shell_quote(staging), path = shell_quote(path),
+        );
+        self.run_root(&script, "create an immutable guest object")
+    }
+
     fn run_root(&mut self, script: &str, what: &str) -> Result<(), RunnerError> {
         let output = self.run_script(script, true)?;
         if output.status.success() {

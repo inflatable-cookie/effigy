@@ -120,6 +120,11 @@ where
         )),
         "script" => parse_internal_script_command(args),
         "__gateway-run" => parse_internal_gateway_command(args),
+        "__guest-identity" => {
+            if args.next().is_some() { return Err(CliParseError::InvalidArguments("__guest-identity accepts no arguments".into())); }
+            Ok(Command::InternalGuestProbe(crate::GuestProbeArgs::Identity))
+        }
+        "__guest-reach" => parse_guest_probe(args),
         "__gateway-identity" => parse_internal_gateway_identity_command(args),
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
@@ -1627,4 +1632,91 @@ where
         name,
         args: task_args,
     }))
+}
+
+fn parse_guest_probe(mut args: impl Iterator<Item = String>) -> Result<Command, CliParseError> {
+    let invalid = || {
+        CliParseError::InvalidArguments("__guest-reach requires --resolve or --dial --endpoint effigy-host:<port> --pin sha256:<hex> --timeout-ms <1..30000>".into())
+    };
+    match args.next().as_deref() {
+        Some("--resolve") if args.next().is_none() => {
+            Ok(Command::InternalGuestProbe(crate::GuestProbeArgs::Resolve))
+        }
+        Some("--dial") => {
+            if args.next().as_deref() != Some("--endpoint") {
+                return Err(invalid());
+            }
+            let endpoint = args.next().ok_or_else(invalid)?;
+            if args.next().as_deref() != Some("--pin") {
+                return Err(invalid());
+            }
+            let pin = args.next().ok_or_else(invalid)?;
+            if args.next().as_deref() != Some("--timeout-ms") {
+                return Err(invalid());
+            }
+            let timeout_ms: u64 = args
+                .next()
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(invalid)?;
+            if !(1..=30000).contains(&timeout_ms) || args.next().is_some() {
+                return Err(invalid());
+            }
+            Ok(Command::InternalGuestProbe(crate::GuestProbeArgs::Dial {
+                endpoint,
+                pin,
+                timeout_ms,
+            }))
+        }
+        _ => Err(invalid()),
+    }
+}
+
+#[cfg(test)]
+mod guest_probe_tests {
+    use super::*;
+    fn parse(args: &[&str]) -> Result<Command, CliParseError> {
+        parse_command(args.iter().map(|arg| (*arg).to_owned()))
+    }
+    #[test]
+    fn guest_probe_entries_are_context_free_and_bounded() {
+        assert_eq!(
+            parse(&["__guest-identity"]).expect("identity"),
+            Command::InternalGuestProbe(crate::GuestProbeArgs::Identity)
+        );
+        assert_eq!(
+            parse(&["__guest-reach", "--resolve"]).expect("resolve"),
+            Command::InternalGuestProbe(crate::GuestProbeArgs::Resolve)
+        );
+        assert!(parse(&["__guest-identity", "--context", "/copied"]).is_err());
+        assert!(parse(&["__guest-reach", "--resolve", "--credential", "secret"]).is_err());
+        for timeout in ["0", "30001", "forever"] {
+            assert!(parse(&[
+                "__guest-reach",
+                "--dial",
+                "--endpoint",
+                "effigy-host:47121",
+                "--pin",
+                "sha256:pin",
+                "--timeout-ms",
+                timeout
+            ])
+            .is_err());
+        }
+        assert!(matches!(
+            parse(&[
+                "__guest-reach",
+                "--dial",
+                "--endpoint",
+                "effigy-host:47121",
+                "--pin",
+                "sha256:pin",
+                "--timeout-ms",
+                "1000"
+            ]),
+            Ok(Command::InternalGuestProbe(crate::GuestProbeArgs::Dial {
+                timeout_ms: 1000,
+                ..
+            }))
+        ));
+    }
 }

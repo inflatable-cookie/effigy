@@ -762,3 +762,52 @@ fn a_catalog_dockerfile_keeps_every_dollar_through_compose_interpolation() {
         );
     });
 }
+
+#[test]
+fn workspace_host_alias_render_is_pure_frozen_idempotent_and_refuses_conflicts() {
+    let (fixture, checkout, home) = fixture();
+    crate::with_test_effigy_home(&home, || {
+        let policy = load_container_policy(&checkout, None).expect("policy");
+        let before = snapshot(fixture.path());
+        for address in ["host-gateway", "192.0.2.12", "2001:db8::12"] {
+            let next = policy
+                .with_workspace_host_alias(address)
+                .expect("explicit observed plan");
+            let render = next.render.as_ref().expect("render");
+            assert_ne!(
+                render.closure.digest(),
+                policy.render.as_ref().expect("original").closure.digest()
+            );
+            assert!(next
+                .compose_files
+                .iter()
+                .all(|file| file.starts_with(&render.path)));
+            let override_path = next.compose_files.last().expect("override");
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&next.read_compose(override_path).expect("in-memory closure"))
+                    .expect("yaml");
+            assert_eq!(
+                document["services"]["app"]["extra_hosts"]["effigy-host"].as_str(),
+                Some(address)
+            );
+            assert_eq!(
+                next.with_workspace_host_alias(address)
+                    .expect("retry")
+                    .render
+                    .expect("render")
+                    .closure
+                    .digest(),
+                render.closure.digest()
+            );
+            assert!(next.with_workspace_host_alias("192.0.2.99").is_err());
+            assert_eq!(
+                snapshot(fixture.path()),
+                before,
+                "render creates no network, files or host authority"
+            );
+        }
+        for address in ["", "guessed-host", "0.0.0.0", "::", "224.0.0.1"] {
+            assert!(policy.with_workspace_host_alias(address).is_err());
+        }
+    });
+}

@@ -1190,6 +1190,19 @@ impl<'r> EnvRun<'r> {
         selection: &effigy_kernel::workspace_session::SelectionReceipt,
         launch: &effigy_kernel::workspace_session::SessionLaunch,
     ) -> Result<effigy_kernel::workspace_session::SessionRef, EnvError> {
+        self.commit_workspace_selection(reservation, session_run, selection, launch)
+            .map(|committed| committed.session())
+    }
+
+    /// Return the durable selection obligation so the caller can perform CAS
+    /// and record readback before reporting successful activation.
+    pub fn commit_workspace_selection(
+        &mut self,
+        reservation: &effigy_kernel::workspace_session::WorkspaceActivationReservation,
+        session_run: &effigy_kernel::run::Run<'_>,
+        selection: &effigy_kernel::workspace_session::SelectionReceipt,
+        launch: &effigy_kernel::workspace_session::SessionLaunch,
+    ) -> Result<effigy_kernel::workspace_session::CommittedActivation, EnvError> {
         let result = reservation.commit_selection(
             &self.cx,
             self.root,
@@ -1200,7 +1213,17 @@ impl<'r> EnvRun<'r> {
         );
         let committed = self.kernel(result)?;
         self.published = true;
-        Ok(committed.session())
+        Ok(committed)
+    }
+
+    pub fn workspace_selection_switched(
+        &mut self,
+        obligation: &effigy_kernel::workspace_session::SelectionObligation,
+        launch: &effigy_kernel::workspace_session::SessionLaunch,
+        reader: &mut dyn effigy_kernel::workspace_session::SelectorReader,
+    ) -> Result<(), EnvError> {
+        let result = Attachments::selection_switched(&mut self.run, obligation, launch, reader);
+        self.kernel(result)
     }
 
     /// Ends the run. A run that changed nothing republishes the state it

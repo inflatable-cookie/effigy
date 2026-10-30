@@ -271,6 +271,7 @@ pub fn apply_global_cli_options(
             | Command::Gateway(_)
             | Command::InternalGateway(_)
             | Command::InternalGatewayIdentity(_)
+            | Command::InternalGuestProbe(_)
             | Command::InternalScriptRun(_)
             | Command::InternalContainerLeaseReaper(_) => return Err(unknown_argument("--repo")),
             Command::Help(_) | Command::HelpGroup(_) => {}
@@ -379,6 +380,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Doctor(args) => args.output_json = true,
         Command::InternalGateway(_) => {}
         Command::InternalGatewayIdentity(_) => {}
+        Command::InternalGuestProbe(_) => {}
         Command::InternalScriptRun(_) => {}
         Command::InternalContainerLeaseReaper(_) => {}
         Command::Help(_) | Command::HelpGroup(_) => {}
@@ -418,6 +420,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Task(task) => runtime_flag_present_before_passthrough(&task.args, "--json"),
         Command::InternalGateway(_) => false,
         Command::InternalGatewayIdentity(_) => false,
+        Command::InternalGuestProbe(_) => false,
         Command::InternalScriptRun(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,
         Command::Help(_) | Command::HelpGroup(_) => false,

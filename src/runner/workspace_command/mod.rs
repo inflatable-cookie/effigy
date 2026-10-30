@@ -1,6 +1,7 @@
 pub(in crate::runner) mod permissions;
 mod provisioning;
 mod session;
+pub(in crate::runner) use provisioning::operator_workspace_for_policy;
 
 use effigy_cli::{ContainerArgs, ContainerSubcommand, WorkspaceArgs};
 use effigy_containers::EffectiveContainerPolicy;
