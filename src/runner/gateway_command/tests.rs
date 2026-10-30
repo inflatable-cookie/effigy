@@ -1465,12 +1465,21 @@ fn managed_start_launches_the_gateway_when_it_is_positively_stopped() {
     assert!(marker.exists(), "a stopped gateway must be started");
 }
 
-/// The machine gateway is what `container up` starts. Its managed start takes
-/// the operator lifecycle, not the preflight-and-command path, so this test
-/// drives that branch with the operator start injected. The live machine
-/// gateway is never touched (effigy#480).
+fn machine_probe(
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+) -> GatewayUpStatusProbe {
+    GatewayUpStatusProbe {
+        status,
+        identity_permission_denied: false,
+    }
+}
+
+/// The machine gateway is what `container up` starts. A positively stopped
+/// machine gateway starts once through the operator lifecycle, after the same
+/// preflight every managed start runs. The live machine gateway is never
+/// touched: both starts are injected (effigy#480).
 #[test]
-fn managed_start_for_the_machine_gateway_takes_the_operator_start() {
+fn managed_start_for_the_machine_gateway_takes_the_operator_start_when_stopped() {
     let root = tempfile::tempdir().unwrap();
     let _home = set_test_gateway_home(root.path());
     let config = gateway_config().expect("config");
@@ -1486,13 +1495,13 @@ fn managed_start_for_the_machine_gateway_takes_the_operator_start() {
             starts.set(starts.get() + 1);
             Ok(())
         },
-        |_| panic!("the operator start does not preflight or run the command"),
+        |_| machine_probe(Err(effigy_gateway::GatewayError::NotRunning)),
     )
     .unwrap();
     assert_eq!(
         starts.get(),
         1,
-        "the machine gateway starts once through the operator"
+        "the stopped machine gateway starts once through the operator"
     );
 }
 
@@ -1507,12 +1516,38 @@ fn managed_start_for_the_machine_gateway_surfaces_a_refused_operator_start() {
         &config,
         "touch never-run",
         |_| Err(RunnerError::task_invocation("operator start refused")),
-        |_| panic!("the operator start does not preflight"),
+        |_| machine_probe(Err(effigy_gateway::GatewayError::NotRunning)),
     );
     assert!(
         refused.is_err(),
         "a refused operator start must fail `container up`"
     );
+}
+
+/// A machine gateway whose identity cannot be verified is never started by a
+/// managed start, and the start reports that gap instead of claiming the
+/// gateway up (effigy#480).
+#[test]
+fn managed_start_for_the_machine_gateway_never_starts_an_unverifiable_gateway() {
+    let root = tempfile::tempdir().unwrap();
+    let _home = set_test_gateway_home(root.path());
+    let config = gateway_config().expect("config");
+    let starts = std::cell::Cell::new(0);
+    managed_gateway_up(
+        &config,
+        "touch never-run",
+        |_| {
+            starts.set(starts.get() + 1);
+            Ok(())
+        },
+        |_| {
+            machine_probe(Err(effigy_gateway::GatewayError::ProcessStateUnknown {
+                pid: std::process::id(),
+            }))
+        },
+    )
+    .unwrap();
+    assert_eq!(starts.get(), 0, "an unverifiable gateway is never started");
 }
 
 /// Papercut 0694ef12: a headless caller cannot read a root-owned gateway's

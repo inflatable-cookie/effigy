@@ -124,23 +124,40 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
     )
 }
 
-/// The machine gateway's managed start goes through the operator lifecycle; a
-/// private root or an installed-override build takes the preflight-and-command
-/// path. `container up` reaches this branch through
-/// `gateway_up_for_managed_task`, so the branch choice is tested here with
-/// both starts injected.
-fn managed_gateway_up(
+/// The managed start `container up` runs. A private root or an
+/// installed-override build takes the preflight-and-command path. The machine
+/// gateway starts through the operator lifecycle, but under the same managed
+/// rule: only a positively stopped gateway is started, a running or unverifiable
+/// one is never started or replaced, and an unverifiable one is reported as
+/// such rather than claimed up (effigy#480). Both starts are injected so tests
+/// drive this branch without touching the machine gateway.
+pub(in crate::runner) fn managed_gateway_up(
     config: &GatewayConfig,
     command: &str,
     operator_up: impl FnOnce(&GatewayConfig) -> Result<(), RunnerError>,
     preflight: impl FnOnce(&GatewayConfig) -> GatewayUpStatusProbe,
 ) -> Result<(), RunnerError> {
-    if !config.is_private() && effigy_core::executable_override::current().is_none() {
-        // A task run, not an operator command: name it as what it is.
-        record_managed_gateway_start(config);
-        return operator_up(config);
+    if config.is_private() || effigy_core::executable_override::current().is_some() {
+        return gateway_up_for_managed_task_with(command, preflight);
     }
-    gateway_up_for_managed_task_with(command, preflight)
+    match preflight(config).status {
+        Ok(running) => {
+            if let Some(note) = running_gateway_build_note(&running.status) {
+                eprintln!("{note}");
+            }
+            Ok(())
+        }
+        Err(effigy_gateway::GatewayError::NotRunning) => {
+            // A task run, not an operator command: name it as what it is.
+            emit_gateway_startup_notice(ManagedStartState::Stopped);
+            record_managed_gateway_start(config);
+            operator_up(config)
+        }
+        Err(error) => {
+            eprintln!("[gateway] cannot verify the running gateway ({error}); proceeding without starting or replacing it");
+            Ok(())
+        }
+    }
 }
 
 fn operator_gateway_up(config: &GatewayConfig) -> Result<(), RunnerError> {
@@ -427,9 +444,9 @@ fn gateway_identity_probe_with(
     }
 }
 
-struct GatewayUpStatusProbe {
-    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
-    identity_permission_denied: bool,
+pub(in crate::runner) struct GatewayUpStatusProbe {
+    pub(in crate::runner) status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+    pub(in crate::runner) identity_permission_denied: bool,
 }
 
 /// Keep replacement preflight read-only and local. If a live identity is
@@ -1307,7 +1324,7 @@ fn ensure_gateway_tls_ca_ready(
     Ok(already_installed)
 }
 
-fn gateway_config() -> Result<GatewayConfig, RunnerError> {
+pub(in crate::runner) fn gateway_config() -> Result<GatewayConfig, RunnerError> {
     gateway_config_with_private(None)
 }
 
