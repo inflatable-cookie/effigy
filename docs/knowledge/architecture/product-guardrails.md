@@ -61,6 +61,24 @@ when the real cause was two named services failing their health checks.
   time. A changing glyph alone is not progress. Managed TUI entries have their
   own dependency-derived state; a waiting entry never borrows another entry's
   label. This rule applies to every command plane for the v0.15 gate (Q-017).
+- **A managed entry's wait comes from the ordering graph.** Each entry's tab
+  and status say what actually blocks it: the entry the resolved start order or
+  a host process's `depends_on` puts first and that entry's current phase, the
+  environment phase with the containers that are healthy, the listener's
+  declared readiness request with its elapsed time, or the accepted legacy
+  `start_after_ms` delay with what remains of it. A prerequisite failure is
+  terminal and attributed (`front: not started — api failed (status 500)`), and
+  no dependent starts, and a host tab is never announced as started while its
+  published wait still holds it (a missing record is never evidence of a start),
+  the scheduler's own hold names the launch being performed now and that
+  entry's actual phase (never a queued neighbour, never an invented dependency),
+  an aborted plan leaves every unstarted entry terminal with the plan's own
+  attribution, and each publisher of the environment's entries stages a
+  complete snapshot and commits it atomically. The same state reaches the tab, the
+  `--headless` text and `status --json` (`waiting_on`, and a `waits` list scoped
+  `workload`, `host` or `environment`), published before the environment phase
+  can block; nothing derives a label from screen or tab order, and no wait
+  borrows another entry's clock (effigy#458).
   The UI's `ProgressSource` supplies the current subject, count, latest event
   and elapsed wait to `live_step`. When no event is available, it names the
   exact awaited object or probe with the elapsed time. `lint:feedback` checks

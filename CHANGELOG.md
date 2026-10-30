@@ -433,6 +433,64 @@ until the host-log writer has a safe secret-handling boundary.
 
 ### Changed
 
+- **A managed session names what each entry waits for.** Every tab, the
+  `--headless` text and `status` show the entry's own dependency-derived state
+  instead of a generic waiting spinner: `front [waiting: api starting]` while
+  the resolved start order or a host process's `depends_on` blocks it,
+  `waiting for environment (containers 3/4 healthy)` during the environment
+  phase, `waiting for GET / -> 200 (12s)` for a listener's declared readiness
+  request, and `scheduled delay: 1.2s remaining` for the accepted legacy
+  `start_after_ms` — which names no dependency. A prerequisite failure is
+  terminal and attributed (`front: not started — api failed (status 500)`), and
+  no dependent starts. `effigy <task> status --json` keeps every existing field
+  and adds `waiting_on` to a waiting process plus a `waits` list of entries that
+  have not started, each with the `scope` that published it (`workload`, `host`
+  or `environment`) so the run's own phase, its workloads and its environment's
+  host processes appear in one projection. The run publishes its host graph and
+  environment identity before its phase can block, so a host tab says it waits
+  for the environment (and its healthy container count) during bring-up and is
+  announced as started only once it actually is. Each publisher of the
+  environment's entries — the run before readiness, the host planner after —
+  stages a complete snapshot and commits it with one atomic record, so readers
+  always resolve a whole snapshot: a write that races the handoff never
+  replaces the other's state, and the window before the commit still shows the
+  run's environment waits instead of announcing a host as started. The
+  environment phase keeps its own reserved record, so a host an operator names
+  `environment` keeps its own wait, and the run's owner reads its container
+  counts from that record — the one the container readiness publisher writes. A
+  read accepts a snapshot only while it is still the visible one, re-resolving
+  one a commit retires mid-read, so an in-flight tab or status never observes a
+  missing or partial snapshot across the handoff. A host process that declares
+  no dependency of its own still names its real wait while the plan launches
+  entries one at a time in its resolved order — the launch being performed now
+  and that entry's actual phase, `jobs [waiting: api starting]` — reported as
+  its own `launch` identity in JSON and never attributed as a dependency. A
+  launch that aborts the plan marks every entry it never started terminal
+  (`not started — plan stopped after api failed: …500…`), so no wait outlives
+  the plan, a restart names the reader readiness it re-confirms
+  (`waiting for api (running)`) while publishing only the entries it replaces,
+  and a host nothing has observed yet reports no status at all, so neither the
+  headless text nor a tab claims it is starting before the bring-up launched
+  it. A non-listener's launch stops holding the scheduler as soon as it
+  returns, so a queued entry never names an entry that already finished.
+  Only a dependent that needs a failed entry's readiness loses it: a workload
+  that only needed its predecessor to start keeps going after that predecessor
+  exits non-zero, even inside its own scheduled delay. The environment phase's
+  record is terminal on every exit (settled on success, stop or
+  nothing-to-await, attributed on failure or timeout), and a new session resets
+  it at its own boundary — for every named environment, with or without host
+  processes, before the run starts polling it, and before a bring-up composes —
+  so an interrupted prior run's counts are never projected into the new run; the
+  reset never touches the staged host snapshot. A host
+  failure the planner published
+  survives the run's generic `up` exit: the run's error names the failing entry
+  and its observed status. A wait is recorded as
+  settled when it ends, and only a changed meaning or a live wait's refresh
+  writes a record, so a settled entry is never rewritten on an owner-loop tick
+  and a tab or a status never keeps a wait the entry has left behind. Record
+  paths encode an accepted entry or scope name injectively, so two distinct
+  names (`api-v1` and `api v1`, or the task/profile pairs `a-b`/`c` and
+  `a`/`b-c`) never share a record and `status` reports each one.
 - Doctor scan checks and vault lock, unlock and generate-hook waits now draw
   through the live progress source: the current sub-step, known count, elapsed
   wait and last event or exact probe, instead of a label fixed for the whole

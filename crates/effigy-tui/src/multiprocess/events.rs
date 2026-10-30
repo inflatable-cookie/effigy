@@ -57,6 +57,9 @@ pub(super) fn drain_process_events(
                 true
             }
             ProcessEventKind::Started => {
+                // It has started, so it no longer waits: the tab follows the
+                // process's own state from here (effigy#458).
+                state.entry_waits.remove(&event_item.process);
                 state
                     .startup_states
                     .insert(event_item.process.clone(), ProcessStartupState::Running);

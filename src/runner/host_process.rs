@@ -39,11 +39,19 @@ use effigy_kernel::run::RunError;
 use effigy_kernel::supervise::EngineSession;
 
 mod kernel_run;
+// #458's per-entry waits: the run publishes the phase's boundary and the host
+// graph before it starts polling, and both its own boundary and the plan's
+// bring-up use this one model.
+mod waits;
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
     owns_supervise_payload, restart_host_processes_for_container,
     start_host_processes_for_container, stop_host_processes_for_container, CustodyStop,
     HostProcessStopReport,
+};
+pub(in crate::runner) use waits::{
+    attributed_environment_failure, begin_environment_phase, run_host_activation, HostActivation,
+    HostWaitGraph, ReadinessOutcome,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
@@ -526,7 +534,10 @@ fn dependency_env_prefix(name: &str) -> String {
     format!("EFFIGY_MANAGED_HOST_{normalized}")
 }
 
-fn write_private_json(path: &Path, value: &impl Serialize) -> Result<(), RunnerError> {
+pub(in crate::runner) fn write_private_json(
+    path: &Path,
+    value: &impl Serialize,
+) -> Result<(), RunnerError> {
     let rendered = serde_json::to_vec_pretty(value)
         .map_err(|error| RunnerError::task_invocation_failed_render(path, error))?;
     let temp = path.with_extension(format!(
@@ -756,18 +767,29 @@ enum ListenerWait {
 /// is spent withholds only its own route: the caller gets `Withheld` instead of
 /// waiting for a build that outlasts the activation (effigy#455). A supervisor
 /// that exited without publishing is still the failure this wait names.
+///
+/// `on_wait` runs about once a second while the wait continues, so the caller
+/// can publish what it waits for: the entry's own tab names the probe and its
+/// elapsed time instead of a generic spinner (effigy#458).
 fn wait_for_listener_state(
     path: &Path,
     process_name: &str,
     owner: &str,
     route_table_path: &Path,
     deadline: Option<Instant>,
+    mut on_wait: impl FnMut(Instant),
 ) -> Result<ListenerWait, RunnerError> {
     let mut last_probe = None;
     let mut next_liveness_check = Instant::now();
     let started = Instant::now();
     let mut next_progress = started + listener_progress_interval();
+    let mut next_wait_report = started;
     loop {
+        let now = Instant::now();
+        if now >= next_wait_report {
+            next_wait_report = now + Duration::from_secs(1);
+            on_wait(now);
+        }
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
                 return Err(RunnerError::task_invocation(format!(

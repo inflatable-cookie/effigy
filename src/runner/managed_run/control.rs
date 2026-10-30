@@ -10,6 +10,7 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::{Effect, EffectState};
 use effigy_kernel::supervise::OUTPUT_SEQUENCE;
+use effigy_tui::waits::EntryState;
 use serde::Serialize;
 
 use super::engine::SETTLE_BUDGET;
@@ -36,6 +37,10 @@ pub(in crate::runner) struct ProcessView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) exit: Option<i32>,
     pub(in crate::runner) starts: usize,
+    /// What this process waits for, when it is starting against a named wait
+    /// (effigy#458). A started process usually has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::runner) waiting_on: Option<effigy_tui::waits::WaitOn>,
     #[serde(skip)]
     pub(in crate::runner) sequence: i64,
 }
@@ -72,6 +77,64 @@ pub(in crate::runner) struct ManagedStatus {
     pub(in crate::runner) residue: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(in crate::runner) warnings: Vec<String>,
+    /// Every managed entry that has not started or is waiting — the run's
+    /// workloads and its environment's host processes — with the exact
+    /// dependency, probe or delay it waits for, the scope that published it,
+    /// and the prerequisite that stopped it (effigy#458). Started processes
+    /// carry `waiting_on` instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::runner) waits: Vec<ManagedWaitView>,
+}
+
+/// One waiting entry as `status` reports it: the state every front end renders,
+/// and the scope that published it.
+#[derive(Debug, Clone, Serialize)]
+pub(in crate::runner) struct ManagedWaitView {
+    /// `workload`, `host` or `environment`.
+    pub(in crate::runner) scope: &'static str,
+    #[serde(flatten)]
+    pub(in crate::runner) state: EntryState,
+}
+
+/// Every waiting entry of one managed task: the run's own record and, when it
+/// has an environment, that environment's host processes and phase. The same
+/// facts the tabs and the headless text show, in one public projection.
+pub(in crate::runner) fn wait_views(
+    repo_root: &std::path::Path,
+    task: &str,
+    profile: &str,
+    environment: Option<&str>,
+) -> Vec<ManagedWaitView> {
+    let mut views = super::super::managed_wait::WaitLedger::task(repo_root, task, profile)
+        .read_all()
+        .into_iter()
+        .filter(EntryState::holds_a_wait)
+        .map(|state| ManagedWaitView {
+            scope: "workload",
+            state,
+        })
+        .collect::<Vec<_>>();
+    if let Some(environment) = environment {
+        let ledger = super::super::managed_wait::WaitLedger::environment(repo_root, environment);
+        // The phase has its own storage key, so a host process an operator
+        // named `environment` is a host — never the phase (effigy#458).
+        if let Some(phase) = ledger.read_phase().filter(EntryState::holds_a_wait) {
+            views.push(ManagedWaitView {
+                scope: "environment",
+                state: phase,
+            });
+        }
+        for state in ledger.read_all() {
+            if !state.holds_a_wait() {
+                continue;
+            }
+            views.push(ManagedWaitView {
+                scope: "host",
+                state,
+            });
+        }
+    }
+    views
 }
 
 /// One managed task and profile, addressed as the user typed it.
@@ -128,6 +191,7 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
         notes: effigy_manifest::bundle_update_notes(),
         residue: Vec::new(),
         warnings: view.warnings.clone(),
+        waits: Vec::new(),
     };
     if let Some(run) = &status.run {
         match run.run_id.parse::<RunId>() {
@@ -162,6 +226,35 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
             Err(_) => status.warnings.push("run id is unreadable".to_owned()),
         }
     }
+    // The waits the run published: a started process's own wait, and every
+    // entry that never started with the prerequisite that stopped it. The
+    // environment's host processes and phase publish in their own scope, so
+    // both are part of this projection (effigy#458).
+    let task_waits = super::super::managed_wait::WaitLedger::task(
+        &addressed.target.root,
+        addressed.task,
+        addressed.profile,
+    );
+    for process in &mut status.processes {
+        process.waiting_on = task_waits
+            .read(&process.name)
+            .filter(EntryState::holds_a_wait)
+            .and_then(|state| state.waiting_on);
+    }
+    // The run publishes its environment identity before the phase can block,
+    // so status reports the host waits throughout bring-up, not only once the
+    // `ENVIRONMENT` effect is recorded (effigy#458).
+    let environment_name = status
+        .environment
+        .as_ref()
+        .map(|environment| environment.name.clone())
+        .or_else(|| task_waits.environment_identity());
+    status.waits = wait_views(
+        &addressed.target.root,
+        addressed.task,
+        addressed.profile,
+        environment_name.as_deref(),
+    );
     status.next = match status.state.as_str() {
         "running" | "stopping" => vec![addressed.command("logs"), addressed.command("stop")],
         "interrupted" => vec![addressed.command("stop")],
@@ -217,6 +310,7 @@ pub(in crate::runner) fn processes(effects: &[Effect], live: bool) -> Vec<Proces
                 .flatten(),
             exit,
             starts: 1,
+            waiting_on: None,
             sequence: effect.sequence,
         };
         match views.iter_mut().find(|known| known.name == label) {
@@ -300,6 +394,14 @@ pub(in crate::runner) fn render(status: &ManagedStatus) -> String {
             line.push_str(&format!("  starts {}", process.starts));
         }
         lines.push(line);
+    }
+    for wait in &status.waits {
+        lines.push(format!(
+            "  {:<12} {} ({})",
+            wait.state.entry,
+            wait.state.status_line(),
+            wait.scope
+        ));
     }
     for residue in &status.residue {
         lines.push(format!("  residue: {residue}"));
@@ -550,4 +652,270 @@ fn not_running(addressed: &Addressed<'_>, status: &ManagedStatus) -> RunnerError
          `effigy {} --headless`",
         addressed.task, addressed.profile, status.state, addressed.task, addressed.task
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runner::managed_wait::WaitLedger;
+    use effigy_tui::waits::{Attribution, EntryPhase, WaitOn};
+
+    fn waiting(entry: &str, waiting_on: WaitOn) -> EntryState {
+        EntryState {
+            entry: entry.to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(waiting_on),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 4_000,
+        }
+    }
+
+    /// `status` reports a managed run's own waits and its environment's host
+    /// waits in one projection, with the scope that published each one
+    /// (effigy#458).
+    #[test]
+    fn status_reports_the_run_and_its_environment_waits_with_their_scope() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let repo = dir.path();
+        let task = WaitLedger::task(repo, "dev", "default");
+        task.clear();
+        task.publish(&waiting(
+            "jobs",
+            WaitOn::Delay {
+                remaining_ms: 1_200,
+            },
+        ));
+        // A settled record is not a wait and is never reported.
+        task.settle("api");
+
+        let environment = WaitLedger::environment(repo, "app");
+        environment.clear();
+        environment.publish(&waiting(
+            "front",
+            WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            },
+        ));
+        environment.publish(&EntryState {
+            entry: "admin".to_owned(),
+            phase: EntryPhase::NotStarted,
+            waiting_on: None,
+            not_started_because: Some(Attribution::new(
+                "api",
+                "failed: readiness probe GET / returned 500",
+            )),
+            detail: None,
+            elapsed_ms: 0,
+        });
+        environment.publish(&EntryState {
+            entry: "api".to_owned(),
+            phase: EntryPhase::Starting,
+            waiting_on: Some(WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 12_000,
+        });
+        environment.settle("stale-host");
+
+        let views = wait_views(repo, "dev", "default", Some("app"));
+        let described = views
+            .iter()
+            .map(|view| (view.scope, view.state.entry.as_str(), view.state.phase))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            vec![
+                ("workload", "jobs", EntryPhase::Waiting),
+                ("host", "admin", EntryPhase::NotStarted),
+                ("host", "api", EntryPhase::Starting),
+                ("host", "front", EntryPhase::Waiting),
+            ]
+        );
+        assert_eq!(
+            views[1].state.status_line(),
+            "not started — api failed: readiness probe GET / returned 500"
+        );
+        assert_eq!(
+            views[3].state.status_line(),
+            "waiting for api (starting) (4s)"
+        );
+
+        // The public JSON keeps the state's fields and adds the scope.
+        let json = serde_json::to_value(&views[3]).expect("view json");
+        assert_eq!(json["scope"], "host");
+        assert_eq!(json["entry"], "front");
+        assert_eq!(json["phase"], "waiting");
+        assert_eq!(json["waiting_on"]["kind"], "entry");
+        assert_eq!(json["waiting_on"]["name"], "api");
+        assert_eq!(json["waiting_on"]["phase"], "starting");
+
+        // Without an environment, only the run's own waits are reported.
+        let only_run = wait_views(repo, "dev", "default", None);
+        assert_eq!(only_run.len(), 1);
+        assert_eq!(only_run[0].state.entry, "jobs");
+    }
+
+    /// A host process named `environment` is reported as a host, and the
+    /// environment phase as the phase: they never share a record or a scope
+    /// (effigy#458).
+    #[test]
+    fn status_keeps_a_host_named_environment_apart_from_the_phase() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let repo = dir.path();
+        let environment = WaitLedger::environment(repo, "app");
+        environment.clear();
+        environment.publish_phase(&EntryState {
+            entry: "environment".to_owned(),
+            phase: EntryPhase::Waiting,
+            waiting_on: Some(WaitOn::Environment {
+                healthy: Some(3),
+                total: Some(4),
+            }),
+            not_started_because: None,
+            detail: None,
+            elapsed_ms: 0,
+        });
+        environment.publish(&waiting(
+            "environment",
+            WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            },
+        ));
+
+        let described = wait_views(repo, "dev", "default", Some("app"))
+            .into_iter()
+            .map(|view| (view.scope, view.state.entry))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            vec![
+                ("environment", "environment".to_owned()),
+                ("host", "environment".to_owned()),
+            ]
+        );
+    }
+
+    /// Status reports every waiting entry, including two names that a lossy
+    /// file name would have merged into one record (effigy#458).
+    #[test]
+    fn status_reports_distinctly_named_entries_separately() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let repo = dir.path();
+        let task = WaitLedger::task(repo, "dev", "default");
+        task.clear();
+        task.publish(&waiting(
+            "api v1",
+            WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            },
+        ));
+        task.publish(&waiting(
+            "api-v1",
+            WaitOn::Delay {
+                remaining_ms: 2_000,
+            },
+        ));
+        let described = wait_views(repo, "dev", "default", None)
+            .into_iter()
+            .map(|view| view.state.entry)
+            .collect::<Vec<_>>();
+        assert_eq!(described, vec!["api v1", "api-v1"]);
+    }
+
+    fn target(root: &std::path::Path) -> crate::runner::task_engine::TaskTarget {
+        crate::runner::task_engine::TaskTarget {
+            root: root.to_path_buf(),
+            catalog: String::new(),
+            task: "dev".to_owned(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+            profile: Some("default".to_owned()),
+            shared_lock: None,
+            argument_scope: None,
+            label: "dev".to_owned(),
+        }
+    }
+
+    /// The public status path while the environment is still coming up: the
+    /// run has recorded no `ENVIRONMENT` effect yet, but it published its
+    /// environment identity before the phase could block, so `status --json`
+    /// reports the host waits and the environment's own counts (effigy#458).
+    #[test]
+    fn status_reports_the_host_waits_while_the_environment_is_still_coming_up() {
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let repo = dir.path();
+        let task = WaitLedger::task(repo, "dev", "default");
+        task.clear();
+        task.publish_environment_identity("app");
+        let environment = WaitLedger::environment(repo, "app");
+        environment.clear();
+        environment.publish(&waiting(
+            "api",
+            WaitOn::Probe {
+                probe: "GET / -> 200".to_owned(),
+            },
+        ));
+        environment.publish(&waiting(
+            "front",
+            WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            },
+        ));
+        environment.publish(&waiting(
+            "admin",
+            WaitOn::Entry {
+                name: "api".to_owned(),
+                phase: EntryPhase::Starting,
+            },
+        ));
+
+        let target = target(repo);
+        let addressed = Addressed {
+            target: &target,
+            task: "dev",
+            profile: "default",
+        };
+        let status = status_view(&addressed);
+        assert!(
+            status.environment.is_none(),
+            "the environment effect is not recorded while its phase runs"
+        );
+        let described = status
+            .waits
+            .iter()
+            .map(|view| (view.scope, view.state.entry.as_str(), view.state.phase))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            vec![
+                ("host", "admin", EntryPhase::Waiting),
+                ("host", "api", EntryPhase::Waiting),
+                ("host", "front", EntryPhase::Waiting),
+            ]
+        );
+        // The JSON carries the identity and the phase of what each waits for.
+        let json = serde_json::to_value(&status).expect("status json");
+        assert_eq!(json["waits"][2]["scope"], "host");
+        assert_eq!(json["waits"][2]["entry"], "front");
+        assert_eq!(json["waits"][2]["waiting_on"]["kind"], "entry");
+        assert_eq!(json["waits"][2]["waiting_on"]["name"], "api");
+        assert_eq!(json["waits"][2]["waiting_on"]["phase"], "starting");
+        let rendered = render(&status);
+        assert!(
+            rendered.contains("waiting for api (starting) (4s) (host)"),
+            "{rendered}"
+        );
+
+        // The environment reported ready and the planner settled every wait.
+        for entry in ["api", "front", "admin"] {
+            environment.settle(entry);
+        }
+        let status = status_view(&addressed);
+        assert!(status.waits.is_empty(), "{:?}", status.waits);
+    }
 }

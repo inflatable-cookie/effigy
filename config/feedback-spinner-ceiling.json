@@ -127,49 +127,49 @@
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    397,
+    409,
     "let integrations = steps::during(",
     31
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    414,
+    426,
     "let settling = steps::phase(\"settling the environment\");",
     27
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    481,
+    493,
     "let ports_step = steps::phase(\"preparing ports and loopback\");",
     29
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    496,
+    508,
     "let rendering_step = steps::phase(\"rendering the stack\");",
     33
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    521,
+    533,
     "steps::during(\"starting shared services\", \"shared services ready\", || {",
     16
   ],
   [
     "src/runner/container_command/lifecycle.rs",
-    563,
+    575,
     "let whole_stack = steps::phase(format!(\"starting the `{}` stack\", plan.policy.name));",
     30
   ],
   [
     "src/runner/container_command/readiness.rs",
-    74,
+    134,
     "let parent = TimedStep::new(\"waiting for services to report healthy\");",
     29
   ],
   [
     "src/runner/container_command/readiness.rs",
-    260,
+    344,
     "steps.insert(service.service.clone(), TimedStep::new(label));",
     66
   ],
