@@ -2690,3 +2690,44 @@ fn successor_death_at_the_commit_boundary_cannot_publish_a_dead_session() {
         },
     );
 }
+
+#[test]
+fn generic_active_publication_cannot_bypass_a_reserved_session_commit() {
+    for with_holders in [false, true] {
+        let cx = context();
+        let fixture = home();
+        let root = StateRoot::effects(&cx, fixture.path()).expect("state root");
+        let environment = pending_environment(&cx, &root);
+        let (_, _predecessor, first, activation) =
+            activate(&cx, &root, &environment, run_id(170), run_id(171));
+        end_run(
+            &cx,
+            activation,
+            WorkloadOutcome::Cancelled {
+                cause: StopCause::Requested,
+                signal: None,
+            },
+        );
+        let reservation =
+            WorkspaceActivationReservation::reserve(&cx, &root, &environment, Wait::FailFast)
+                .expect("reservation");
+        let (_successor, session) = admit_staged(&cx, &root, &reservation, run_id(172));
+        let mut activation = admit_activation(&cx, &root, &reservation, run_id(173));
+        let result = if with_holders {
+            Attachments::publish_active_for(&mut activation, &[(session.run(), AttachMode::Borrow)])
+        } else {
+            Attachments::publish_active(&mut activation)
+        };
+        assert!(
+            result.is_err(),
+            "reserved activation requires the atomic session commit"
+        );
+        let reader = read_journal(&cx, &root);
+        assert_eq!(resolved(&reader, &environment), Some(first));
+        assert_eq!(
+            resource_row(&reader, &environment),
+            (2, Some("pending".into()), Some("1".into()))
+        );
+        assert_eq!(attachment_row(&reader, &environment, session.run()), None);
+    }
+}

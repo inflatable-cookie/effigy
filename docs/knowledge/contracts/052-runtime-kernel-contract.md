@@ -2634,8 +2634,9 @@ host, so overlapping app roles and shared data claims conflict there (§5.9).
   Detached custody registration authenticates this same run-specific owner slot.
   One transaction compares the Task's preceding generation, advances it to S,
   and writes active(E),
-  the session mapping and its Borrow attachment. No Task gate wait happens under
-  Env. Private liveness identities remain durable across later mapping changes;
+  the session mapping and its Borrow attachment. Generic `publish_active` and
+  `publish_active_for` refuse an uncommitted workspace reservation, so neither
+  can bypass that atomic publication. No Task gate wait happens under Env. Private liveness identities remain durable across later mapping changes;
   recovery takes the exact dead run's slot and never substitutes the shared Task
   gate. Ordinary admission refuses reserved, live or unsettled private sessions,
   including checkout-equivalent owner spellings. A failed or crashed pre-commit

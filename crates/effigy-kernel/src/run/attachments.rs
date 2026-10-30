@@ -343,6 +343,11 @@ impl Attachments {
         run.store
             .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                 journal::check_fence(txn.conn(), &run.owner)?;
+                crate::workspace_session::refuse_reserved_generation(
+                    txn.conn(),
+                    &run.owner.resource,
+                    run.owner.generation,
+                )?;
                 publish_active_state(txn, &run.owner)
             })
     }
@@ -470,6 +475,9 @@ impl Attachments {
             run.store
                 .transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                     journal::check_fence(txn.conn(), &run.owner)?;
+                    crate::workspace_session::refuse_reserved_generation(
+                        txn.conn(), &run.owner.resource, run.owner.generation,
+                    )?;
                     publish_active_state(txn, &run.owner)?;
                     for (holder, mode) in holders {
                         let exists: bool = txn.conn().query_row(
